@@ -153,6 +153,7 @@ describe("scan report JSON export", () => {
         reason?: string;
       } | null;
       aiReview: unknown;
+      registryStatus: { status: string; observedAt: string | null } | null;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
     expect(body.schema).toBe("drydock.report.v2");
@@ -170,6 +171,9 @@ describe("scan report JSON export", () => {
       reason: "computed-digest-unavailable",
     });
     expect(body.aiReview).toBeNull();
+    // Additive and optional: a scan nobody has resolved a registry status for
+    // exports null, not a guess.
+    expect(body.registryStatus).toBeNull();
     expect(body.findings).toEqual([
       expect.objectContaining({ ruleId: "install-script.lifecycle", severity: "high" }),
     ]);

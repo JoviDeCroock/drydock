@@ -33,6 +33,8 @@ Organizations store their own encrypted npm connection. Operators should recomme
 
 In npm's granular-token form that is `Packages and scopes: Read-only` over the staged packages (or their scope) and `Organizations: No access` — an org-scoped package such as `@nanostores/i18n` is reached by selecting the `@nanostores` scope, not by granting the Organizations permission, which covers member and settings management Drydock never reads. The npm connection card in `Organization settings → npm access` states this permission set verbatim; keep the two in sync.
 
+The npm version-status endpoint (`docs/registry-version-status.md`) documents a publish-access requirement and returns authorization failures as `404`. That does not widen this stance: the lookup is advisory, fails closed to "no status", and a read-only token that cannot ask simply gets nothing. Do not broaden the requested scope to enable it.
+
 Implementation requirements:
 
 - configure `NPM_CONNECTIONS_ENCRYPTION_KEY` for deployed instances;

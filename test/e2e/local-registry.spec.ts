@@ -213,9 +213,16 @@ test("registry journal limits credential forwarding", async () => {
     expect(entry.authorization, entry.path).toBe("present");
   }
 
+  // Credentialed paths are allowlisted, not merely observed: this is what fails
+  // when a new npm call starts forwarding the token somewhere unreviewed. The
+  // version-status branch matches the escaping npm's spec requires — scoped
+  // names fully encoded (`/-/package/%40scope%2Fname/version/1.2.3/status`),
+  // unlike the packument branch, which takes the un-escaped `@scope/name`.
+  // Whether that lookup fires within a run is background-timing dependent, so
+  // it is asserted for shape here and for exact URL in test/npm-version-status.
   for (const entry of journal.filter((item) => item.authorization === "present")) {
     expect(entry.path).toMatch(
-      /^\/(?:-\/(?:whoami|stage(?:\?|\/))|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/))/i,
+      /^\/(?:-\/(?:whoami|stage(?:\?|\/)|package\/[^/]+\/version\/[^/]+\/status)|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/))/i,
     );
   }
 });

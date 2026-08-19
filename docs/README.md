@@ -39,6 +39,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
 - [`ai-review-eval.md`](./ai-review-eval.md) — versioned AI reviewer contract, recorded-output evals, live model comparison, traces, and feedback loop.
 - [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
+- [`registry-version-status.md`](./registry-version-status.md) — npm's own lifecycle status for a staged version (`blocked` / `validating` / `published` / …), the forgotten-approval reminder, and why an unresolved lookup is never a verdict.
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.

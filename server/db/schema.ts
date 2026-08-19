@@ -182,6 +182,23 @@ export const scans = sqliteTable(
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
     publicPackageKey: text("public_package_key"),
+    // npm's own lifecycle status for this exact package version, as reported by
+    // `GET /-/package/{name}/version/{version}/status`. This is the registry's
+    // view of the release, never Drydock's: `decision` records what the
+    // organization decided, this records what npm did with it afterwards.
+    // Null means "not known" — the lookup is best-effort and npm answers 404
+    // for both an unknown version and an unauthorized one, so absence can never
+    // be read as a negative signal.
+    registryVersionStatus: text("registry_version_status"),
+    // When the lookup last ran, set whether or not it produced a status. This
+    // is the throttle: the discovery sweep only re-asks about a release whose
+    // last attempt is old enough, so an unresolvable scan costs one call per
+    // interval instead of one per sweep.
+    registryVersionStatusAt: integer("registry_version_status_at", { mode: "timestamp_ms" }),
+    // Send-once stamp for the "you approved this, npm is still waiting" nudge.
+    // A separate column rather than an event lookup because the sweep decides
+    // whether to send while holding only this row.
+    registryPublishReminderAt: integer("registry_publish_reminder_at", { mode: "timestamp_ms" }),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -215,6 +232,15 @@ export const scans = sqliteTable(
       table.organizationId,
       table.createdAt,
       table.id,
+    ),
+    // Serves the discovery sweep's "which reviewed releases still need a
+    // registry status?" scan, which filters by organization and orders by the
+    // last attempt. Without it that query walks every scan the org has ever
+    // run, every 15 minutes.
+    orgRegistryStatusIdx: index("scans_org_registry_status_idx").on(
+      table.organizationId,
+      table.registryVersionStatus,
+      table.registryVersionStatusAt,
     ),
     // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
     // user FK on delete; without this index both walk the whole table.

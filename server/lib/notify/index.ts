@@ -6,6 +6,7 @@ import {
   resolveNotificationEmails,
 } from "../../db/organizations";
 import { getScan } from "../../db/scans";
+import { isValidStageId } from "../ecosystems/npm/stage-id";
 import { getSlackConnectionSecret } from "../../db/slack-connection";
 import { sendNotificationEmail } from "./email";
 import { normalizeReleaseConsistency, type ReleaseConsistency } from "../scan/release-memory";
@@ -227,6 +228,96 @@ export async function notifyNpmConnectionExpired(
     metadata: {
       channel: "email",
       trigger: "token_expired",
+      recipient,
+      ...(result.ok ? {} : { reason: result.reason }),
+    },
+  }));
+}
+
+export interface NotifyStagedReleaseAwaitingApprovalInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  ownerUserId: string;
+  scanId: string;
+  stageId: string;
+  packageName: string;
+  version: string;
+  decidedAt: Date | string | number | null;
+}
+
+/**
+ * Email the organization that a release it approved in Drydock is still sitting
+ * staged on npm.
+ *
+ * Approving here records a decision; it does not publish anything. The gap
+ * between the two is easy to lose — the reviewer finishes in Drydock, closes
+ * the tab, and the version never ships because npm's own approve was never run.
+ * This is the only signal that closes it, and it is deliberately worded as a
+ * reminder rather than a failure: nothing is wrong, something is unfinished.
+ *
+ * Send-once is owned by the caller, which claims the row's reminder marker
+ * before calling. Delivery is best-effort and never blocks the sweep. The body
+ * carries release identity and a dashboard link only — no token, header, or
+ * package bytes.
+ */
+export async function notifyStagedReleaseAwaitingApproval(
+  input: NotifyStagedReleaseAwaitingApprovalInput,
+): Promise<void> {
+  const { env, db, organizationId, ownerUserId, scanId, stageId, packageName, version } = input;
+  // The sweep's actor is whoever connected the token (cron) or pressed the
+  // button (on-demand), which is not necessarily who should hear about an
+  // unfinished release. Fall back to the organization owner, like every other
+  // notification here.
+  const notificationOwnerUserId =
+    (await getOrganizationOwnerUserId(db, organizationId)) ?? ownerUserId;
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
+  if (recipients.length === 0) {
+    await recordScanEvent(db, {
+      organizationId,
+      scanId,
+      actorUserId: ownerUserId,
+      type: "scan.notification_failed",
+      metadata: {
+        channel: "email",
+        trigger: "awaiting_registry_approval",
+        reason: "no_recipients",
+      },
+    });
+    return;
+  }
+
+  const release = `${packageName}@${version}`;
+  const link = scanUrl(env, scanId, organizationId);
+  const decidedLabel = formatTimestamp(input.decidedAt);
+  const subject = `${release} is approved in Drydock but still staged on npm`;
+  const lines = [
+    "Hi there,",
+    "",
+    `${release} was approved in Drydock${decidedLabel ? ` on ${decidedLabel}` : ""}, but npm still reports it as staged — so it has not been published yet.`,
+    "",
+    organizationName ? `Organization: ${organizationName}` : null,
+    ...approvalInstructions(stageId),
+    "",
+    link ? `Review: ${link}` : null,
+    "",
+    "If you meant to leave it staged, no action is needed — this is sent once per release.",
+    "",
+    "— Drydock",
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+
+  await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+    organizationId,
+    scanId,
+    actorUserId: ownerUserId,
+    type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+    metadata: {
+      channel: "email",
+      trigger: "awaiting_registry_approval",
       recipient,
       ...(result.ok ? {} : { reason: result.reason }),
     },
@@ -635,6 +726,39 @@ function formatPackageLabel(
 ) {
   if (packageName && version) return `${packageName}@${version}`;
   return packageName ?? "a staged release";
+}
+
+/**
+ * The "finish the publish" block, or nothing.
+ *
+ * The instruction and the command it introduces stand or fall together — a
+ * "run npm's own approval:" with no command under it reads like a truncated
+ * email. The id is validated rather than interpolated raw because this line is
+ * meant to be pasted into a shell, so registry-supplied text must never reach
+ * one with shell metacharacters intact.
+ */
+function approvalInstructions(stageId: string): string[] {
+  if (!isValidStageId(stageId)) return [];
+  return [
+    `Stage: ${stageId}`,
+    "",
+    "Drydock never publishes on your behalf. To finish the release, run npm's own approval:",
+    "",
+    `  npm stage approve ${stageId}`,
+  ];
+}
+
+/**
+ * A UTC date for an email body. Deliberately not localized: the recipient's
+ * timezone is unknown here, and an unlabelled local-looking timestamp is worse
+ * than an explicitly-UTC one.
+ */
+function formatTimestamp(value: Date | string | number | null): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  const ms = date.getTime();
+  if (Number.isNaN(ms)) return null;
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 function scanUrl(env: Cloudflare.Env, scanId: string, organizationId?: string): string | null {

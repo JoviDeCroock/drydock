@@ -5,7 +5,10 @@ import {
   claimScanForRun,
   discardScanAttempt,
   markScanFailed,
+  recordRegistryVersionStatus,
 } from "../../db/scans";
+import { lookupStagedReleaseFate } from "../ecosystems/npm/release-outcome";
+import type { NpmVersionStatus } from "../ecosystems/npm/version-status";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
@@ -130,10 +133,13 @@ export async function executeScanJob(
     }
     return result;
   } catch (err) {
-    const safe = classifyScanError(err);
+    const classified = classifyScanError(err);
+    // A staged tarball we cannot read is the one failure whose cause we can
+    // actually go and ask about, and the default reading of it ("your token is
+    // wrong") is the least likely one. Refine before deciding anything.
+    const { error: safe, registryStatus } = await refineStagedFailure(env, db, message, classified);
     if (!safe.retryable || options.finalAttempt) {
-      const skip =
-        message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
+      const skip = message.source === "auto_discovery" && WITHDRAWN_STAGE_CODES.has(safe.code);
       if (skip) {
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
@@ -142,7 +148,8 @@ export async function executeScanJob(
           stageId: message.stageId,
           source: message.source,
           attempt,
-          reason: "staged_tarball_unavailable",
+          reason: safe.code,
+          registryStatus,
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
@@ -154,11 +161,20 @@ export async function executeScanJob(
           organizationId: message.organizationId,
           ecosystem: "npm",
           source: message.source ?? "auto_discovery",
-          reason: "staged_tarball_unavailable",
+          reason: safe.code,
           durationMs: durationMsSince(startedAtMs),
         });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
+        // Recorded after the failure so the workbench can say what npm did with
+        // the release even though there is no report to show for it.
+        if (registryStatus) {
+          await recordRegistryVersionStatus(db, {
+            scanId: message.scanId,
+            organizationId: message.organizationId,
+            status: registryStatus,
+          }).catch(() => undefined);
+        }
         // Counted only on a terminal failure, so a scan that succeeds on retry
         // is not filed as a failure in the aggregate.
         recordProductEvent(env, {
@@ -177,6 +193,7 @@ export async function executeScanJob(
           attempt,
           finalAttempt: Boolean(options.finalAttempt),
           durationMs: durationMsSince(startedAtMs),
+          registryStatus,
           error: safe,
         });
         if (message.source !== "workflow_gate") {
@@ -206,6 +223,52 @@ export async function executeScanJob(
     }
     throw err;
   }
+}
+
+/**
+ * Terminal classifications that mean the staged release itself went away, as
+ * opposed to the review failing. Auto-discovered candidates in this family are
+ * discarded rather than shown as failures: nobody asked for the scan, and the
+ * thing it was going to review no longer exists.
+ */
+const WITHDRAWN_STAGE_CODES = new Set([
+  "staged_tarball_unavailable",
+  "staged_release_published",
+  "staged_release_withdrawn",
+  "staged_release_blocked",
+]);
+
+export interface RefinedScanFailure {
+  error: SafeScanError;
+  registryStatus: NpmVersionStatus | null;
+}
+
+/**
+ * Narrow a staged-tarball failure using what npm says became of the release.
+ *
+ * The mapping from lifecycle status to failure lives in the npm adapter; this
+ * only decides when it is safe to ask. Workflow-gate reviews are excluded
+ * because they are not staged publishes and span three ecosystems — npm's stage
+ * lifecycle has nothing to say about a PyPI or VS Code release. Strictly
+ * advisory: an unanswerable lookup leaves the classification untouched.
+ */
+export async function refineStagedFailure(
+  env: Cloudflare.Env,
+  db: AppDb,
+  message: ScanQueueMessage,
+  error: SafeScanError,
+): Promise<RefinedScanFailure> {
+  if (error.code !== "staged_tarball_unavailable" || message.source === "workflow_gate") {
+    return { error, registryStatus: null };
+  }
+  const fate = await lookupStagedReleaseFate(env, db, message.scanId, message.organizationId);
+  if (!fate) return { error, registryStatus: null };
+  return {
+    // Every refined code is as terminal as the one it replaces: the staged
+    // bytes are gone, and no retry brings them back.
+    error: fate.failure ? { ...fate.failure, retryable: false } : error,
+    registryStatus: fate.status,
+  };
 }
 
 export function classifyScanError(err: unknown): SafeScanError {
