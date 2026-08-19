@@ -235,7 +235,7 @@ describe("registry version status resolution", () => {
   test("stops asking once npm's answer is terminal", async () => {
     const org = await seedOrg();
     await seedCompletedScan(org);
-    const fetchMock = stubRegistry(() => statusResponse("published"));
+    const fetchMock = stubRegistry(() => statusResponse("blocked"));
     const args = {
       db: createDb(env.DB),
       env,
@@ -249,6 +249,37 @@ describe("registry version status resolution", () => {
 
     expect(second.checked).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("rechecks a published version and records a later removal", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const publishedAt = new Date("2026-08-19T12:00:00.000Z");
+    const args = {
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    await resolveNpmReleaseOutcomes({ ...args, now: publishedAt });
+    const tooSoon = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(publishedAt.getTime() + 60 * 60 * 1000),
+    });
+    expect(tooSoon.checked).toBe(0);
+
+    fetchMock.mockImplementation(async () => statusResponse("deleted"));
+    const rechecked = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(publishedAt.getTime() + 25 * 60 * 60 * 1000),
+    });
+
+    expect(rechecked).toMatchObject({ checked: 1, resolved: 1, statuses: { deleted: 1 } });
+    expect((await readScan(scanId)).registryVersionStatus).toBe("deleted");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test("keeps asking while npm is still validating", async () => {
@@ -520,7 +551,7 @@ describe("staged failure refinement", () => {
 
   test.each([
     ["published", "staged_release_published"],
-    ["deleted", "staged_release_withdrawn"],
+    ["deleted", "staged_release_deleted"],
     ["blocked", "staged_release_blocked"],
   ])("a %s release stops being blamed on the token", async (status, code) => {
     const org = await seedOrg();

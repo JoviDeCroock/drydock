@@ -45,6 +45,10 @@ const LOOKUP_CONCURRENCY = 4;
 // too, so "due every sweep" must not mean "due on every button press".
 const PENDING_RECHECK_MS = 5 * 60 * 1000;
 const STAGED_RECHECK_MS = 60 * 60 * 1000;
+// A published version can still be removed. Rechecking daily during the
+// bounded release window catches that transition without polling the much
+// larger published set on every discovery sweep.
+const PUBLISHED_RECHECK_MS = 24 * 60 * 60 * 1000;
 
 // Releases older than this stop being asked about at all. A state we could not
 // resolve in a month is not going to resolve, and the alternative is re-asking
@@ -108,6 +112,7 @@ export async function resolveNpmReleaseOutcomes(
       { status: null, recheckBefore: new Date(now.getTime() - PENDING_RECHECK_MS) },
       { status: "validating", recheckBefore: new Date(now.getTime() - PENDING_RECHECK_MS) },
       { status: "staged", recheckBefore: new Date(now.getTime() - STAGED_RECHECK_MS) },
+      { status: "published", recheckBefore: new Date(now.getTime() - PUBLISHED_RECHECK_MS) },
     ],
   });
   if (!due.length) return result;
@@ -186,14 +191,14 @@ export async function resolveNpmReleaseOutcomes(
  * and we still could not read it, which is the token-scope problem the
  * unrefined classification already describes correctly.
  */
-const WITHDRAWN_STAGE_FAILURES: Partial<Record<NpmVersionStatus, StagedReleaseFailure>> = {
+const RELEASE_OUTCOME_FAILURES: Partial<Record<NpmVersionStatus, StagedReleaseFailure>> = {
   published: {
     code: "staged_release_published",
     message: "This version was approved and published to npm before the review could read it.",
   },
   deleted: {
-    code: "staged_release_withdrawn",
-    message: "The staged release was withdrawn from npm before the review could read it.",
+    code: "staged_release_deleted",
+    message: "This version was published to npm and then removed before the review could read it.",
   },
   blocked: {
     code: "staged_release_blocked",
@@ -245,7 +250,7 @@ export async function lookupStagedReleaseFate(
       { allowInsecureLocalhost: allowInsecureLocalRegistry(env) },
     );
     if (!lookup.ok) return null;
-    return { status: lookup.status, failure: WITHDRAWN_STAGE_FAILURES[lookup.status] ?? null };
+    return { status: lookup.status, failure: RELEASE_OUTCOME_FAILURES[lookup.status] ?? null };
   } catch {
     // Decryption, D1, or the registry — none of it changes what already went
     // wrong with the scan, and the caller is mid-failure-handling.

@@ -15,11 +15,11 @@ const NPM_VERSION_STATUSES = ["published", "validating", "staged", "blocked", "d
 export type NpmVersionStatus = (typeof NPM_VERSION_STATUSES)[number];
 
 /**
- * Statuses that can still change. A version that is `staged` or `validating`
- * has not landed anywhere yet, so a recorded value is a snapshot worth
- * re-checking; the other three are terminal and never need another lookup.
+ * Statuses that can still change. `staged` and `validating` are still moving
+ * toward a release outcome, while `published` can become `deleted` if the live
+ * version is later removed. Only `blocked` and `deleted` are terminal.
  */
-const NON_TERMINAL_STATUSES = new Set<string>(["staged", "validating"]);
+const NON_TERMINAL_STATUSES = new Set<string>(["staged", "validating", "published"]);
 
 function isNpmVersionStatus(value: unknown): value is NpmVersionStatus {
   return typeof value === "string" && (NPM_VERSION_STATUSES as readonly string[]).includes(value);
@@ -121,14 +121,23 @@ export async function fetchNpmVersionStatus(
   }
 
   const data = (await response.json().catch(() => null)) as unknown;
-  const status = readStatus(data);
+  const status = readStatus(data, packageName, version);
   if (!status) return unavailable("unavailable", response.status);
   return { ok: true, status };
 }
 
-function readStatus(data: unknown): NpmVersionStatus | null {
+function readStatus(
+  data: unknown,
+  expectedPackageName: string,
+  expectedVersion: string,
+): NpmVersionStatus | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
-  const value = (data as Record<string, unknown>).status;
+  const record = data as Record<string, unknown>;
+  // The registry response carries the exact coordinates because the status is
+  // meaningful only for that release. Fail closed on a mismatched proxy/cache
+  // response rather than persisting another version's verdict against this scan.
+  if (record.packageName !== expectedPackageName || record.version !== expectedVersion) return null;
+  const value = record.status;
   // An unrecognized value means npm grew a state we do not model. Treat it as
   // unknown rather than passing it through: everything downstream branches on
   // the enum, and a surprise string would render as an unexplained badge.

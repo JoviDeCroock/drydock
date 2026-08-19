@@ -37,8 +37,8 @@ may not ask about, and the endpoint documents `429`. Every failure mode
 therefore collapses to "we do not know":
 
 - `fetchNpmVersionStatus` never throws and never returns a status it did not
-  read; unrecognized enum values are treated as unknown rather than passed
-  through.
+  read for the requested package and version; mismatched coordinates and
+  unrecognized enum values are treated as unknown rather than passed through.
 - An unresolved first lookup persists only
   `registry_version_status_attempted_at` (so the next sweep is throttled) and
   leaves `registry_version_status` null. An unresolved recheck preserves the
@@ -59,8 +59,9 @@ Lookups are bounded per organization per invocation (16, concurrency 4), so
 four worst-case five-second waves leave headroom inside Workers' 30-second
 `waitUntil` lifetime for persistence and notification delivery. They use
 recheck floors by last known status: 5 minutes for never-asked and `validating`,
-1 hour for `staged`, never for the three terminal states. Reviews older than 30
-days stop being asked about at all. Only npm staged-publish scans are eligible;
+1 hour for `staged`, and 24 hours for `published`, which can later become
+`deleted`. The terminal `blocked` and `deleted` states are never rechecked.
+Reviews older than 30 days stop being asked about at all. Only npm staged-publish scans are eligible;
 workflow-gate scans are excluded because their package coordinates may describe
 PyPI or VS Code releases. Due rows are ordered by their oldest lookup timestamp
 so a backlog drains instead of repeatedly selecting the newest rows. Status
@@ -81,13 +82,18 @@ stage lifecycle means nothing):
 | npm status                           | code                         | meaning                                                                                      |
 | ------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------- |
 | `published`                          | `staged_release_published`   | Approved and published before the review could read it.                                      |
-| `deleted`                            | `staged_release_withdrawn`   | Withdrawn before the review could read it.                                                   |
+| `deleted`                            | `staged_release_deleted`     | Published, then removed before the review could read it.                                     |
 | `blocked`                            | `staged_release_blocked`     | npm's validation rejected it; the staged bytes are gone.                                     |
 | `staged` / `validating` / unresolved | `staged_tarball_unavailable` | The release is still there and we still could not read it — genuinely a token-scope problem. |
 
 Auto-discovered candidates in every one of these cases are discarded rather than
 shown as failures, as before: nobody asked for the scan and there is nothing left
 to review. The recorded `reason` now says which.
+
+Failed scans are not eligible for the background sweep. They therefore persist
+only terminal `blocked` and `deleted` registry statuses; a `published` lookup is
+kept in the refined failure message instead of storing a snapshot that could
+later become stale.
 
 ## Forgotten-approval reminder
 

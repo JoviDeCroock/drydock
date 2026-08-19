@@ -47,7 +47,11 @@ describe("npm version status lookup", () => {
   });
 
   test("accepts npm-safe tildes in package names", async () => {
-    const fetchMock = respond(200, { status: "staged" });
+    const fetchMock = respond(200, {
+      packageName: "pkg~canary",
+      version: "1.2.3",
+      status: "staged",
+    });
 
     const result = await fetchNpmVersionStatus(
       "https://registry.npmjs.org",
@@ -63,7 +67,11 @@ describe("npm version status lookup", () => {
   });
 
   test("carries the token in the Authorization header and nowhere else", async () => {
-    const fetchMock = respond(200, { status: "validating" });
+    const fetchMock = respond(200, {
+      packageName: "pkg",
+      version: "1.0.0",
+      status: "validating",
+    });
 
     await fetchNpmVersionStatus("https://registry.npmjs.org", "npm_secret", "pkg", "1.0.0");
 
@@ -91,6 +99,17 @@ describe("npm version status lookup", () => {
 
   test("a status npm has not documented is unknown, not passed through", async () => {
     respond(200, { packageName: "pkg", version: "1.0.0", status: "quarantined" });
+
+    const result = await fetchNpmVersionStatus("https://registry.npmjs.org", "t", "pkg", "1.0.0");
+
+    expect(result).toEqual({ ok: false, reason: "unavailable", httpStatus: 200 });
+  });
+
+  test.each([
+    ["package name", { packageName: "other", version: "1.0.0", status: "published" }],
+    ["version", { packageName: "pkg", version: "2.0.0", status: "published" }],
+  ])("a response for a different %s is unknown", async (_field, body) => {
+    respond(200, body);
 
     const result = await fetchNpmVersionStatus("https://registry.npmjs.org", "t", "pkg", "1.0.0");
 
@@ -150,8 +169,8 @@ describe("npm version status lookup", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("only staged and validating are worth asking about again", () => {
-    expect(isTerminalNpmVersionStatus("published")).toBe(true);
+  test("published remains open because npm can later report it deleted", () => {
+    expect(isTerminalNpmVersionStatus("published")).toBe(false);
     expect(isTerminalNpmVersionStatus("blocked")).toBe(true);
     expect(isTerminalNpmVersionStatus("deleted")).toBe(true);
     expect(isTerminalNpmVersionStatus("staged")).toBe(false);

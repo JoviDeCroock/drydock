@@ -40,7 +40,7 @@ describe("registry status variant", () => {
   test("maps the remaining lifecycle states", () => {
     expect(registryStatusVariant({ registryVersionStatus: "validating" })).toBe("validating");
     expect(registryStatusVariant({ registryVersionStatus: "published" })).toBe("published");
-    expect(registryStatusVariant({ registryVersionStatus: "deleted" })).toBe("withdrawn");
+    expect(registryStatusVariant({ registryVersionStatus: "deleted" })).toBe("deleted");
   });
 });
 
@@ -59,5 +59,9 @@ describe("registry status badge", () => {
     expect(registryStatusBadge({ registryVersionStatus: "blocked" })?.tone).toBe("critical");
     expect(registryStatusBadge({ registryVersionStatus: "published" })?.tone).toBe("ok");
     expect(registryStatusBadge({})).toBe(null);
+  });
+
+  test("describes deleted versions as removed rather than pre-publication withdrawals", () => {
+    expect(registryStatusBadge({ registryVersionStatus: "deleted" })?.label).toBe("npm removed");
   });
 });
