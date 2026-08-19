@@ -191,7 +191,7 @@ const WITHDRAWN_STAGE_FAILURES: Partial<Record<NpmVersionStatus, StagedReleaseFa
   },
 };
 
-export interface StagedReleaseFailure {
+interface StagedReleaseFailure {
   code: string;
   message: string;
 }
