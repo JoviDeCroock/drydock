@@ -27,8 +27,8 @@ export type RegistryStatusVariant =
   | "validating"
   /** Live and installable. */
   | "published"
-  /** Published and since removed, or discarded before publishing. */
-  | "withdrawn";
+  /** Published and subsequently removed from npm. */
+  | "deleted";
 
 export interface RegistryStatusScan {
   registryVersionStatus?: string | null;
@@ -53,7 +53,7 @@ export function registryStatusVariant(scan: RegistryStatusScan): RegistryStatusV
     case "published":
       return "published";
     case "deleted":
-      return "withdrawn";
+      return "deleted";
     case "staged":
       return scan.decision === "publish" ? "awaiting_approval" : null;
     default:
@@ -66,7 +66,7 @@ const BADGE_LABELS: Record<RegistryStatusVariant, { label: string; tone: BadgeTo
   awaiting_approval: { label: "npm awaiting approval", tone: "medium" },
   validating: { label: "npm validating", tone: "info" },
   published: { label: "npm published", tone: "ok" },
-  withdrawn: { label: "npm withdrawn", tone: "unchanged" },
+  deleted: { label: "npm removed", tone: "unchanged" },
 };
 
 export function registryStatusBadge(
@@ -133,7 +133,7 @@ export function RegistryStatusNotice({ scan }: { scan: RegistryStatusScan }) {
       ? "npm is still validating this version — it is not installable yet."
       : variant === "published"
         ? "Published to npm."
-        : "No longer on npm — this version was withdrawn or removed.";
+        : "Published and subsequently removed from npm.";
   return (
     <p class="m-0 text-[13px] text-ink-muted">
       {text}

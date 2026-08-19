@@ -8,7 +8,10 @@ import {
   recordRegistryVersionStatus,
 } from "../../db/scans";
 import { lookupStagedReleaseFate } from "../ecosystems/npm/release-outcome";
-import type { NpmVersionStatus } from "../ecosystems/npm/version-status";
+import {
+  isTerminalNpmVersionStatus,
+  type NpmVersionStatus,
+} from "../ecosystems/npm/version-status";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
@@ -139,7 +142,8 @@ export async function executeScanJob(
     // wrong") is the least likely one. Refine before deciding anything.
     const { error: safe, registryStatus } = await refineStagedFailure(env, db, message, classified);
     if (!safe.retryable || options.finalAttempt) {
-      const skip = message.source === "auto_discovery" && WITHDRAWN_STAGE_CODES.has(safe.code);
+      const skip =
+        message.source === "auto_discovery" && AUTO_DISCOVERY_DISCARD_CODES.has(safe.code);
       if (skip) {
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
@@ -154,8 +158,8 @@ export async function executeScanJob(
           error: safe,
         });
         // Terminal counterpart to this scan's `scan.queued`, so a discovered
-        // candidate withdrawn before review does not read as a scan that queued
-        // and vanished.
+        // candidate that npm removed before we could review it does not read
+        // as a scan that queued and vanished.
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
@@ -166,9 +170,11 @@ export async function executeScanJob(
         });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
-        // Recorded after the failure so the workbench can say what npm did with
-        // the release even though there is no report to show for it.
-        if (registryStatus) {
+        // Failed scans are not part of the background outcome sweep, so persist
+        // only statuses that cannot subsequently change. The refined error
+        // already explains a published release; storing that nonterminal
+        // snapshot here would leave a green "published" badge after deletion.
+        if (isTerminalNpmVersionStatus(registryStatus)) {
           await recordRegistryVersionStatus(db, {
             scanId: message.scanId,
             organizationId: message.organizationId,
@@ -231,10 +237,10 @@ export async function executeScanJob(
  * discarded rather than shown as failures: nobody asked for the scan, and the
  * thing it was going to review no longer exists.
  */
-const WITHDRAWN_STAGE_CODES = new Set([
+const AUTO_DISCOVERY_DISCARD_CODES = new Set([
   "staged_tarball_unavailable",
   "staged_release_published",
-  "staged_release_withdrawn",
+  "staged_release_deleted",
   "staged_release_blocked",
 ]);
 
