@@ -39,8 +39,10 @@ therefore collapses to "we do not know":
 - `fetchNpmVersionStatus` never throws and never returns a status it did not
   read; unrecognized enum values are treated as unknown rather than passed
   through.
-- An unresolved lookup persists `registry_version_status_at` (so the next sweep
-  is throttled) and leaves `registry_version_status` null.
+- An unresolved first lookup persists only
+  `registry_version_status_attempted_at` (so the next sweep is throttled) and
+  leaves `registry_version_status` null. An unresolved recheck preserves the
+  last status npm actually returned and its observation timestamp.
 - The UI renders nothing for a null status — no badge, no notice, no
   reassurance. `RegistryStatusNotice` and `registryStatusVariant` own that rule.
 - A `staged` status with no decision recorded also renders nothing: that is the
@@ -53,13 +55,17 @@ therefore collapses to "we do not know":
 | `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button), via `waitUntil` | Resolves status for completed reviews and sends the forgotten-approval nudge. Never blocks or fails discovery. |
 | `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                                     | Asks npm what happened before deciding the message.                                                            |
 
-Lookups are bounded per organization per invocation (25, concurrency 4), with
+Lookups are bounded per organization per invocation (16, concurrency 4), so
+four worst-case five-second waves leave headroom inside Workers' 30-second
+`waitUntil` lifetime for persistence and notification delivery. They use
 recheck floors by last known status: 5 minutes for never-asked and `validating`,
 1 hour for `staged`, never for the three terminal states. Reviews older than 30
 days stop being asked about at all. Only npm staged-publish scans are eligible;
 workflow-gate scans are excluded because their package coordinates may describe
 PyPI or VS Code releases. Due rows are ordered by their oldest lookup timestamp
-so a backlog drains instead of repeatedly selecting the newest 25.
+so a backlog drains instead of repeatedly selecting the newest rows. Status
+writes are fenced by that attempt timestamp, so an older overlapping sweep
+cannot replace a newer answer.
 
 The dashboard refreshes immediately for newly queued scans, then performs a
 bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
@@ -89,7 +95,9 @@ Sent once per release, when all four hold: the organization decided `publish`,
 npm still reports `staged` (not `validating` — that is npm working, not a human
 forgetting), the decision is at least 6 hours old, and
 `registry_publish_reminder_at` is unset. The sweep claims that column before
-sending, so overlapping sweeps cannot double-send. The email carries release
+sending only if the approval and `staged` observation it acted on are still
+current, so overlapping sweeps cannot double-send and an in-flight decision or
+registry-status change cannot produce a stale reminder. The email carries release
 identity, the stage id, the `npm stage approve` command, and a dashboard link —
 no token, header, or package bytes.
 
@@ -109,11 +117,12 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Three columns on `scans` (migration `0027`):
+Four columns on `scans` (migrations `0027`–`0028`):
 
 - `registry_version_status` — last known npm status, or null.
-- `registry_version_status_at` — when the lookup last ran, set even on failure;
-  this is the throttle.
+- `registry_version_status_at` — when npm last returned that status.
+- `registry_version_status_attempted_at` — when the lookup last ran, set even on
+  failure; this is the throttle and overlapping-sweep fence.
 - `registry_publish_reminder_at` — send-once marker for the nudge.
 
 Exported additively as `registryStatus: { status, observedAt } | null` on

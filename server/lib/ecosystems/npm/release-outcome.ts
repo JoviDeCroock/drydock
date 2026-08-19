@@ -32,7 +32,9 @@ import { fetchNpmVersionStatus, type NpmVersionStatus } from "./version-status";
 // endpoint and the sweep runs every 15 minutes across every connected
 // organization, so the ceiling is per-org-per-tick rather than "however many
 // are outstanding". A backlog drains over successive ticks.
-const LOOKUPS_PER_SWEEP = 25;
+// Four worst-case five-second lookup waves leave roughly ten seconds inside
+// Workers' 30-second waitUntil lifetime for D1 writes and notification delivery.
+const LOOKUPS_PER_SWEEP = 16;
 const LOOKUP_CONCURRENCY = 4;
 
 // A version npm is still validating resolves in minutes, so it is re-asked on
@@ -122,7 +124,7 @@ export async function resolveNpmReleaseOutcomes(
     const status = lookup.ok ? lookup.status : null;
 
     try {
-      await recordRegistryVersionStatus(db, {
+      const persisted = await recordRegistryVersionStatus(db, {
         scanId: candidate.id,
         organizationId,
         status,
@@ -130,6 +132,7 @@ export async function resolveNpmReleaseOutcomes(
         // batch keeps an injected clock meaningful and the recheck floors exact.
         checkedAt: now,
       });
+      if (!persisted) return;
     } catch (err) {
       // A write failure just means this scan is retried next sweep. The rest of
       // the batch is unaffected and must not be abandoned for it.
@@ -146,10 +149,17 @@ export async function resolveNpmReleaseOutcomes(
     result.statuses[status] = (result.statuses[status] ?? 0) + 1;
 
     if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
+    if (!candidate.decidedAt) return;
     // Claim the send before sending, so two overlapping sweeps cannot both
     // email about the same release. A failed send costs the reminder rather
     // than risking a duplicate — the release is still visible in the workbench.
-    const claimed = await markRegistryPublishReminderSent(db, candidate.id, organizationId, now);
+    const claimed = await markRegistryPublishReminderSent(db, {
+      scanId: candidate.id,
+      organizationId,
+      expectedDecidedAt: candidate.decidedAt,
+      expectedRegistryStatusAt: now,
+      sentAt: now,
+    });
     if (!claimed) return;
     result.reminded += 1;
     await notifyStagedReleaseAwaitingApproval({
