@@ -60,6 +60,7 @@ const ATPM_PROTOCOL = "at://";
 
 const PUBLIC_CACHE_SCOPE = "atpm-public";
 const ATPM_PAIR_CACHE_TTL_SECONDS = 5 * 60;
+const ATPM_CACHE_ENVELOPE_VERSION = "absolute-expiry-v1";
 const DID_WEB_NOTICE =
   "This publisher uses did:web, whose control follows the domain. The canonical URL pins the current DID spelling but cannot permanently pin publisher ownership.";
 
@@ -67,10 +68,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
   rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}+identity-${ATPM_IDENTITY_RULES_VERSION}`,
-  // v3: atpm pairs use a bounded cache lifetime because an AT repository record,
-  // its PDS location, and its verified display handle may all change. Old v2
-  // entries were written with the registry-default 30-day lifetime.
-  payloadVersion: "v3",
+  // v4 carries the metadata resolution's absolute expiry through every cache
+  // layer. Old v3 values could restart their five-minute TTL when re-warmed.
+  payloadVersion: "v4",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -81,13 +81,17 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
-    const { ref, identity, pkg } = await loadAtpmPackage(env, ctx, packageName);
+    const { ref, identity, pkg, cacheExpiresAt } = await loadAtpmPackage(env, ctx, packageName);
     const { versions, suggested } = listAtpmVersions(pkg);
-    return { ...canonicalNames(ref, identity), versions, suggested };
+    return { ...canonicalNames(ref, identity), versions, suggested, cacheExpiresAt };
   },
 
   async acquire(env, ctx, input) {
-    const { ref, identity, pkg } = await loadAtpmPackage(env, ctx, input.packageName);
+    const { ref, identity, pkg, cacheExpiresAt } = await loadAtpmPackage(
+      env,
+      ctx,
+      input.packageName,
+    );
     const from = requireAtpmVersion(pkg, input.fromVersion);
     const to = requireAtpmVersion(pkg, input.toVersion);
 
@@ -109,6 +113,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       provenance: resolutionTrail(ref, identity),
       ...(identity.did.startsWith("did:web:") ? { notices: [DID_WEB_NOTICE] } : {}),
       ...(displayName ? { displayName } : {}),
+      cacheExpiresAt,
       buildFindings: (fileDiff, manifestDiff) => [
         // The artifact is an npm tarball, so it gets the npm rule set verbatim.
         // `details` stays null: those findings describe an npm stage record,
@@ -140,6 +145,12 @@ interface LoadedAtpmPackage {
   ref: AtpmPackageRef;
   identity: AtpmRepoIdentity;
   pkg: AtpmPackage;
+  cacheExpiresAt: string;
+}
+
+interface AtpmCacheEnvelope<T> {
+  value: T;
+  expiresAt: string;
 }
 
 /**
@@ -161,25 +172,31 @@ async function loadAtpmPackage(
   if (!ref) throw new PublicDiffError("invalid package name", 400);
 
   const identity = await resolveIdentityCached(env, ctx, ref);
-  const pkg = await fetchRecordCached(env, ctx, ref, identity);
-  return { ref, identity, pkg };
+  const pkg = await fetchRecordCached(env, ctx, ref, identity.value);
+  return {
+    ref,
+    identity: identity.value,
+    pkg: pkg.value,
+    cacheExpiresAt: earliestExpiry(identity.expiresAt, pkg.expiresAt),
+  };
 }
 
 async function resolveIdentityCached(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   ref: AtpmPackageRef,
-): Promise<AtpmRepoIdentity> {
+): Promise<AtpmCacheEnvelope<AtpmRepoIdentity>> {
   // Keyed by the authority, not the package: every package a publisher ships
   // resolves through the same identity.
   const authority =
     ref.authority.kind === "handle" ? `@${ref.authority.handle}` : ref.authority.did;
   const key = await identityCacheKey(authority);
-  const cached = await readCompareMetadataCache<AtpmRepoIdentity>(env, key);
-  if (cached) return cached;
+  const cached = await readCompareMetadataCache<AtpmCacheEnvelope<AtpmRepoIdentity>>(env, key);
+  if (isFreshEnvelope(cached)) return cached;
 
   const identity = await resolveAtpmRepoIdentity(ref);
-  const writes = [writeCompareMetadataCache(env, ctx, key, identity)];
+  const envelope = cacheEnvelope(identity);
+  const writes = [writeCompareMetadataCache(env, ctx, key, envelope)];
   // Store the same result under the DID too. Typing a handle into /diff
   // redirects to the DID form, which would otherwise miss this cache and redo
   // the whole chain — including the reverse handle lookup that a DID-addressed
@@ -187,19 +204,19 @@ async function resolveIdentityCached(
   if (ref.authority.kind === "handle") {
     writes.push(
       identityCacheKey(identity.did).then((didKey) =>
-        writeCompareMetadataCache(env, ctx, didKey, identity),
+        writeCompareMetadataCache(env, ctx, didKey, envelope),
       ),
     );
   }
   await Promise.all(writes);
-  return identity;
+  return envelope;
 }
 
 function identityCacheKey(authority: string): Promise<string> {
   return computeCompareMetadataCacheKey({
     registryUrl: ATPM_PROTOCOL,
     packageName: authority,
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity-${ATPM_IDENTITY_RULES_VERSION}`,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-identity-${ATPM_IDENTITY_RULES_VERSION}-${ATPM_CACHE_ENVELOPE_VERSION}`,
   });
 }
 
@@ -208,7 +225,7 @@ async function fetchRecordCached(
   ctx: ExecutionContext,
   ref: AtpmPackageRef,
   identity: AtpmRepoIdentity,
-): Promise<AtpmPackage> {
+): Promise<AtpmCacheEnvelope<AtpmPackage>> {
   // Keyed by DID rather than by the name as typed, so the handle form and the
   // DID form of one package share a single cached record.
   const key = await computeCompareMetadataCacheKey({
@@ -216,14 +233,30 @@ async function fetchRecordCached(
     packageName: `${identity.did}/${ref.name}`,
     // Parsing is part of the trust boundary. A rules bump must not revive a
     // record reduced under older ambiguity or validation semantics.
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-record-${ATPM_RULES_VERSION}`,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-record-${ATPM_RULES_VERSION}-${ATPM_CACHE_ENVELOPE_VERSION}`,
   });
-  const cached = await readCompareMetadataCache<AtpmPackage>(env, key);
-  if (cached) return cached;
+  const cached = await readCompareMetadataCache<AtpmCacheEnvelope<AtpmPackage>>(env, key);
+  if (isFreshEnvelope(cached)) return cached;
 
   const pkg = await fetchAtpmPackageRecord(identity, ref.name);
-  await writeCompareMetadataCache(env, ctx, key, pkg);
-  return pkg;
+  const envelope = cacheEnvelope(pkg);
+  await writeCompareMetadataCache(env, ctx, key, envelope);
+  return envelope;
+}
+
+function cacheEnvelope<T>(value: T): AtpmCacheEnvelope<T> {
+  return {
+    value,
+    expiresAt: new Date(Date.now() + ATPM_PAIR_CACHE_TTL_SECONDS * 1000).toISOString(),
+  };
+}
+
+function isFreshEnvelope<T>(value: AtpmCacheEnvelope<T> | null): value is AtpmCacheEnvelope<T> {
+  return Boolean(value && Date.parse(value.expiresAt) > Date.now());
+}
+
+function earliestExpiry(first: string, second: string): string {
+  return Date.parse(first) <= Date.parse(second) ? first : second;
 }
 
 /**
@@ -309,6 +342,7 @@ async function downloadAtpmBlob(
       tarballUrl: url,
       archiveFormat: "tgz",
       publicArtifactUrls: [url],
+      archiveDigestAlgorithms: ["SHA-1", "SHA-256", "SHA-512"],
     });
   } catch (err) {
     throw publicDiffDownloadError(err);

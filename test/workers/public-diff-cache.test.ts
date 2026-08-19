@@ -5,6 +5,7 @@ import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import {
   computePublicDiffCacheKey,
   jsonStringByteLength,
+  payloadCacheTtlSeconds,
   readPublicDiffCache,
   SAMPLE_OMITTED_FLAG,
   serializePublicDiffCachePayload,
@@ -13,7 +14,10 @@ import {
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
 import { PYPI_RULES_VERSION } from "../../server/lib/ecosystems/pypi/types";
-import { writePublicDiffDisplayName } from "../../server/lib/public-diff/display-metadata";
+import {
+  readPublicDiffDisplayName,
+  writePublicDiffDisplayName,
+} from "../../server/lib/public-diff/display-metadata";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
@@ -117,14 +121,52 @@ describe("public diff cache", () => {
       },
     } as ExecutionContext;
 
-    writePublicDiffDisplayName(cacheEnv, ctx, "pair-key", "@ebey.dev/counter", 300);
+    writePublicDiffDisplayName(
+      cacheEnv,
+      ctx,
+      "pair-key",
+      "@ebey.dev/counter",
+      300,
+      "2026-08-19T12:05:00.000Z",
+    );
     await pending;
 
     expect(write).toEqual({
       key: "pair-key:display-metadata",
-      value: JSON.stringify({ displayName: "@ebey.dev/counter" }),
+      value: JSON.stringify({
+        displayName: "@ebey.dev/counter",
+        expiresAt: "2026-08-19T12:05:00.000Z",
+      }),
       options: { expirationTtl: 300 },
     });
+  });
+
+  test("never restarts a mutable pair's absolute freshness lifetime", () => {
+    const now = Date.parse("2026-08-19T12:00:00.000Z");
+    const mutable = {
+      ...payload(),
+      ecosystem: "atpm",
+      cacheExpiresAt: "2026-08-19T12:02:00.000Z",
+    };
+
+    expect(payloadCacheTtlSeconds(mutable, now)).toBe(120);
+    expect(payloadCacheTtlSeconds(mutable, now + 119_000)).toBe(1);
+    expect(payloadCacheTtlSeconds(mutable, now + 120_000)).toBe(0);
+    expect(payloadCacheTtlSeconds({ ...mutable, cacheExpiresAt: undefined }, now)).toBe(0);
+  });
+
+  test("rejects display metadata after its inherited absolute expiry", async () => {
+    const cacheEnv = {
+      ...env,
+      COMPARE_CACHE: {
+        get: async () => ({
+          displayName: "@stale.example/counter",
+          expiresAt: "2000-01-01T00:00:00.000Z",
+        }),
+      },
+    } as unknown as Cloudflare.Env;
+
+    await expect(readPublicDiffDisplayName(cacheEnv, "pair-key")).resolves.toBeUndefined();
   });
 
   test("uses UTF-8 bytes when deciding whether to omit samples", () => {
@@ -248,16 +290,24 @@ describe("atpm identity cache", () => {
     const currentKey = await computeCompareMetadataCacheKey({
       registryUrl: "at://",
       packageName: "@ebey.dev",
-      cacheScope: "atpm-public-identity-2",
+      cacheScope: "atpm-public-identity-2-absolute-expiry-v1",
     });
+    const identityExpiresAt = new Date(Date.now() + 120_000).toISOString();
     const reads: string[] = [];
     const pending: Promise<unknown>[] = [];
     const compareCache = {
       async get(key: string) {
         reads.push(key);
-        return key === oldKey
-          ? { did, pds: "https://stale.example", handle: "ebey.dev", handleMethod: "dns" }
-          : null;
+        if (key === oldKey) {
+          return { did, pds: "https://stale.example", handle: "ebey.dev", handleMethod: "dns" };
+        }
+        if (key === currentKey) {
+          return {
+            value: { did, pds, handle: "ebey.dev", handleMethod: "dns" },
+            expiresAt: identityExpiresAt,
+          };
+        }
+        return null;
       },
       async put() {},
     } as unknown as KVNamespace;
@@ -321,6 +371,7 @@ describe("atpm identity cache", () => {
     expect(reads).toContain(currentKey);
     expect(reads).not.toContain(oldKey);
     expect(listing.packageName).toBe(`${did}/counter`);
+    expect(listing.cacheExpiresAt).toBe(identityExpiresAt);
   });
 });
 

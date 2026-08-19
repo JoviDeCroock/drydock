@@ -80,6 +80,15 @@ describe("parseAtpmPackageName", () => {
     });
   });
 
+  test("accepts npm record names that contain a tilde", () => {
+    expect(parseAtpmPackageName("@ebey.dev/counter~next")).toEqual({
+      authority: { kind: "handle", handle: "ebey.dev" },
+      name: "counter~next",
+      packageName: "@ebey.dev/counter~next",
+    });
+    expect(parseAtpmPackageName(`${DID}/counter~next`)?.name).toBe("counter~next");
+  });
+
   test("rejects names atpm cannot address", () => {
     for (const name of [
       "counter", // unscoped: every atpm package is published under an identity

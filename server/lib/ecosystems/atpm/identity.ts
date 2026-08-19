@@ -135,7 +135,7 @@ function isValidRecordName(name: string): boolean {
   if (name.length > 128) return false;
   if (name === "." || name === "..") return false;
   if (name.startsWith(".") || name.startsWith("_")) return false;
-  return /^[a-z0-9][a-z0-9._-]*$/.test(name);
+  return /^[a-z0-9][a-z0-9._~-]*$/.test(name);
 }
 
 function normalizeHandle(input: string): string | null {

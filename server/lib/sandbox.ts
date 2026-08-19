@@ -217,6 +217,10 @@ export interface DownloadResult {
   archiveSha512?: string | null;
 }
 
+export type ArchiveDigestAlgorithm = "SHA-1" | "SHA-256" | "SHA-512";
+
+const ARCHIVE_DIGEST_ALGORITHMS = new Set<ArchiveDigestAlgorithm>(["SHA-1", "SHA-256", "SHA-512"]);
+
 export interface DownloadOptions {
   stageId?: string;
   tarballUrl?: string;
@@ -225,6 +229,8 @@ export interface DownloadOptions {
   maxFiles?: number;
   npmToken?: string;
   npmRegistry?: string;
+  /** Defaults to SHA-1; content-addressed adapters opt into stronger digests. */
+  archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
 }
 
 export class SandboxError extends Error {
@@ -356,6 +362,7 @@ async function parseInCredentialsFreeSandbox(
       MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
+      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -421,6 +428,7 @@ export async function downloadInSandbox(
       MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
+      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(options.archiveDigestAlgorithms),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -487,7 +495,14 @@ export default {
     // *decompressed* bytes), so verification covers every archive the sandbox is
     // willing to review instead of switching itself off above 1/10th of it.
     if (!res.body) return json({ error: "archive download failed", status: 400 }, 400);
-    const archive = digestArchiveStream(res.body, maxStreamTarBytes, ["SHA-1", "SHA-256", "SHA-512"]);
+    const archiveDigestAlgorithms = String(env.ARCHIVE_DIGEST_ALGORITHMS || "SHA-1")
+      .split(",")
+      .filter((algorithm) => algorithm === "SHA-1" || algorithm === "SHA-256" || algorithm === "SHA-512");
+    const archive = digestArchiveStream(
+      res.body,
+      maxStreamTarBytes,
+      archiveDigestAlgorithms.length ? archiveDigestAlgorithms : ["SHA-1"],
+    );
     if (archiveFormat === "vsix") {
       // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
       // their sizes in data descriptors — only the central directory (what
@@ -569,4 +584,13 @@ export default {
 
 function json(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8" } }); }
 `;
+}
+
+function serializeArchiveDigestAlgorithms(
+  requested: readonly ArchiveDigestAlgorithm[] = ["SHA-1"],
+): string {
+  const algorithms = [
+    ...new Set(requested.filter((value) => ARCHIVE_DIGEST_ALGORITHMS.has(value))),
+  ];
+  return (algorithms.length ? algorithms : ["SHA-1"]).join(",");
 }

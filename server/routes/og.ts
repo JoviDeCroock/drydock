@@ -16,6 +16,7 @@ import { renderSvgToPng } from "../lib/public-diff/card-render";
 import {
   computePublicDiffCacheKey,
   readPublicDiffCache,
+  remainingCacheTtlSeconds,
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
@@ -109,9 +110,14 @@ function cardCacheKey(requestUrl: string, spec: CardSpec): Request {
   return new Request(new URL(path, requestUrl), { method: "GET" });
 }
 
-function cardCacheControl(adapter: PublicDiffAdapter): string {
+function cardCacheControl(adapter: PublicDiffAdapter, cacheExpiresAt?: string): string {
   if (!adapter.cacheTtlSeconds) return CARD_CACHE_CONTROL;
-  return `public, max-age=${Math.min(3600, adapter.cacheTtlSeconds)}, s-maxage=${Math.min(86400, adapter.cacheTtlSeconds)}`;
+  const maxAge = remainingCacheTtlSeconds(cacheExpiresAt, Math.min(3600, adapter.cacheTtlSeconds));
+  const sharedMaxAge = remainingCacheTtlSeconds(
+    cacheExpiresAt,
+    Math.min(86400, adapter.cacheTtlSeconds),
+  );
+  return `public, max-age=${maxAge}, s-maxage=${sharedMaxAge}`;
 }
 
 function highestSeverityRisk(payload: PublicPackageDiff): OgRiskLevel {
@@ -154,7 +160,7 @@ function cardStats(payload: PublicPackageDiff): OgCardStats {
 async function readCachedCardData(
   c: OgContext,
   spec: CardSpec,
-): Promise<{ stats?: OgCardStats; displayName?: string }> {
+): Promise<{ stats?: OgCardStats; displayName?: string; cacheExpiresAt?: string }> {
   try {
     const key = await computePublicDiffCacheKey({
       ecosystem: spec.adapter.ecosystem,
@@ -168,6 +174,7 @@ async function readCachedCardData(
     return {
       stats: cardStats(cached),
       ...(cached.displayName ? { displayName: cached.displayName } : {}),
+      ...(cached.cacheExpiresAt ? { cacheExpiresAt: cached.cacheExpiresAt } : {}),
     };
   } catch {
     return {};
@@ -221,7 +228,7 @@ ogRoutes.get("/diff/*", async (c) => {
     throw err;
   }
 
-  const { stats, displayName } = await readCachedCardData(c, spec);
+  const { stats, displayName, cacheExpiresAt } = await readCachedCardData(c, spec);
   const svg = renderOgCardSvg({
     ecosystem: spec.ecosystem,
     packageName: displayName ?? spec.packageName,
@@ -246,12 +253,17 @@ ogRoutes.get("/diff/*", async (c) => {
     headers: {
       "content-type": "image/png",
       "content-length": String(png.byteLength),
-      "cache-control": cardCacheControl(spec.adapter),
+      "cache-control": cardCacheControl(spec.adapter, cacheExpiresAt),
       "cache-tag": spec.adapter.cacheTag(spec.packageName),
       "x-og-card-size": `${OG_CARD_WIDTH}x${OG_CARD_HEIGHT}`,
       "x-og-card-stats": stats ? "cached" : "unavailable",
     },
   });
-  c.executionCtx.waitUntil(coloCache().put(cacheKey, response.clone()));
+  if (
+    !cacheExpiresAt ||
+    remainingCacheTtlSeconds(cacheExpiresAt, spec.adapter.cacheTtlSeconds ?? 0) > 0
+  ) {
+    c.executionCtx.waitUntil(coloCache().put(cacheKey, response.clone()));
+  }
   return response;
 });

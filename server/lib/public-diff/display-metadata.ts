@@ -3,6 +3,7 @@ const DISPLAY_METADATA_READ_COLO_TTL_SECONDS = 60;
 
 interface PublicDiffDisplayMetadata {
   displayName: string;
+  expiresAt?: string;
 }
 
 function displayMetadataKey(publicDiffCacheKey: string): string {
@@ -20,6 +21,10 @@ export async function readPublicDiffDisplayName(
       displayMetadataKey(publicDiffCacheKey),
       { type: "json", cacheTtl: DISPLAY_METADATA_READ_COLO_TTL_SECONDS },
     );
+    if (cached?.expiresAt) {
+      const expiresAtMs = Date.parse(cached.expiresAt);
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return undefined;
+    }
     return typeof cached?.displayName === "string" && cached.displayName
       ? cached.displayName
       : undefined;
@@ -35,11 +40,14 @@ export function writePublicDiffDisplayName(
   publicDiffCacheKey: string,
   displayName: string | undefined,
   ttlSeconds: number,
+  expiresAt?: string,
 ): void {
-  if (!env.COMPARE_CACHE || !displayName) return;
+  // KV requires at least a 60-second expiration TTL. Below that bound the
+  // metadata simply falls back to the canonical DID spelling.
+  if (!env.COMPARE_CACHE || !displayName || ttlSeconds < 60) return;
   const write = env.COMPARE_CACHE.put(
     displayMetadataKey(publicDiffCacheKey),
-    JSON.stringify({ displayName }),
+    JSON.stringify({ displayName, ...(expiresAt ? { expiresAt } : {}) }),
     {
       expirationTtl: ttlSeconds,
     },

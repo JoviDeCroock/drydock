@@ -11,6 +11,7 @@ import {
   loadPublicPackageDiff,
   PublicDiffError,
   readPublicDiffCache,
+  remainingCacheTtlSeconds,
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
@@ -30,11 +31,15 @@ type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 const VERSION_LIST_CACHE_TTL_SECONDS = 5 * 60;
 const VERSION_LIST_STALE_TTL_SECONDS = 10 * 60;
 
-export function publicDiffVersionCacheControl(adapter: PublicDiffAdapter): string {
-  const maxAge = Math.min(
+export function publicDiffVersionCacheControl(
+  adapter: PublicDiffAdapter,
+  cacheExpiresAt?: string,
+): string {
+  const maximum = Math.min(
     VERSION_LIST_CACHE_TTL_SECONDS,
     adapter.cacheTtlSeconds ?? VERSION_LIST_CACHE_TTL_SECONDS,
   );
+  const maxAge = remainingCacheTtlSeconds(cacheExpiresAt, maximum);
   // Mutable identity metadata must stop being served when its adapter-defined
   // lifetime ends. Registry listings keep the existing stale revalidation
   // window because their package identity does not move between publishers.
@@ -236,7 +241,7 @@ publicDiffRoutes.get("/versions", async (c) => {
     },
     200,
     {
-      "cache-control": publicDiffVersionCacheControl(adapter),
+      "cache-control": publicDiffVersionCacheControl(adapter, listing.cacheExpiresAt),
       "cache-tag": adapter.cacheTag(packageName),
     },
   );

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ECOSYSTEMS,
   getEcosystem,
@@ -17,6 +17,7 @@ import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
 // Drydock?". These assertions pin the capability matrix so adding or removing a
 // capability is a deliberate, visible change rather than a silent one.
 describe("ecosystem capability registry", () => {
+  afterEach(() => vi.useRealTimers());
   test("declares the expected capability matrix", () => {
     const matrix = Object.fromEntries(
       ECOSYSTEMS.map((eco) => [
@@ -63,11 +64,16 @@ describe("ecosystem capability registry", () => {
   });
 
   test("bounds atpm computed pairs to its mutable resolution lifetime", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
     const adapter = getPublicDiffAdapter("atpm");
-    expect(adapter?.payloadVersion).toBe("v3");
+    expect(adapter?.payloadVersion).toBe("v4");
     expect(adapter?.rulesVersionSegment).toContain("identity-2");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
+    expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(
+      "public, max-age=120",
+    );
     expect(publicDiffVersionCacheControl(getPublicDiffAdapter("npm")!)).toBe(
       "public, max-age=300, stale-while-revalidate=600",
     );

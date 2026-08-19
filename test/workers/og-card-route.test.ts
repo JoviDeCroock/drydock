@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import worker from "../../server/index";
 import { resetOgFontCacheForTests } from "../../server/lib/public-diff/card-render";
 import { OG_CARD_RATE_LIMIT, OG_CARD_RATE_WINDOW_MS } from "../../server/routes/og";
+import type { PublicPackageDiff } from "../../server/lib/public-diff";
 
 // The share-card route is anonymous like the diff API it decorates: crawlers
 // unfurl it without a session. These tests cover the trust-boundary behavior —
@@ -118,6 +119,55 @@ describe("package-diff share card route", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("public, max-age=300, s-maxage=300");
+  });
+
+  test("uses only a warmed atpm pair's remaining lifetime", async () => {
+    const cacheExpiresAt = new Date(Date.now() + 120_000).toISOString();
+    const cached = {
+      ecosystem: "atpm",
+      packageName: "did:plc:twegdcgytckr5cxm57gyruxa/counter",
+      fromVersion: "0.0.12-remaining",
+      toVersion: "0.0.13-remaining",
+      fromPackageJson: null,
+      toPackageJson: null,
+      fromFiles: [],
+      toFiles: [],
+      diff: [],
+      packageJsonDiff: {},
+      findings: [],
+      risk: {
+        artifactRisk: "low",
+        releaseRisk: "low",
+        contextRisk: "low",
+        releaseFindingCount: 0,
+        contextFindingCount: 0,
+        unknownFindingCount: 0,
+        priorApprovedContextFindingCount: 0,
+      },
+      cachedAt: new Date().toISOString(),
+      cacheExpiresAt,
+    } satisfies PublicPackageDiff;
+    const requestEnv = envWithAssets({
+      COMPARE_CACHE: {
+        get: async () => cached,
+        put: async () => undefined,
+      } as unknown as KVNamespace,
+    });
+
+    const res = await cardFetch(
+      "/og/diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.12-remaining/0.0.13-remaining/card.png",
+      { requestEnv },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-og-card-stats")).toBe("cached");
+    const match = res.headers
+      .get("cache-control")
+      ?.match(/^public, max-age=(\d+), s-maxage=(\d+)$/);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBeGreaterThan(0);
+    expect(Number(match?.[1])).toBeLessThanOrEqual(120);
+    expect(match?.[2]).toBe(match?.[1]);
   });
 
   test("falls back to the static card when the fonts cannot be loaded", async () => {

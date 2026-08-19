@@ -45,6 +45,12 @@ export interface PublicDiffAcquiredSources {
   provenance?: PublicDiffProvenanceEntry[];
   /** Friendlier spelling of the package name; see PublicDiffVersionListing. */
   displayName?: string;
+  /**
+   * Absolute freshness bound inherited from mutable resolution metadata.
+   * Downstream caches must use only the remaining lifetime so moving a value
+   * between layers cannot restart its TTL.
+   */
+  cacheExpiresAt?: string;
 }
 
 export interface PublicDiffInput {
@@ -79,6 +85,8 @@ export interface PublicDiffVersionListing {
    * value. `did:web` is still domain-bound and is disclosed separately.
    */
   displayName?: string;
+  /** Internal freshness bound for the HTTP response cache; not serialized. */
+  cacheExpiresAt?: string;
   versions: PublicDiffVersion[];
   suggested: { from: string; to: string } | null;
 }
