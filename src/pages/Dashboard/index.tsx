@@ -175,8 +175,9 @@ async function discoverStagedPublishes(
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>,
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
 ) {
-  await stagedPublishes.discover();
+  const result = await stagedPublishes.discover();
   await scans.refresh();
+  if (result) scans.scheduleRegistryStatusRefreshes();
 }
 
 function RecentReviewsSection({

@@ -61,8 +61,8 @@ const LOOKUP_TIMEOUT_MS = 5_000;
 // could alter the request path out of the URL. Rejecting here rather than
 // escaping means a malformed name is never silently asked about under some
 // other name.
-const PACKAGE_NAME_RE = /^(?:@[a-z0-9-][a-z0-9._-]*\/)?[a-z0-9-][a-z0-9._-]*$/i;
-const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,127}$/;
+const PACKAGE_NAME_RE = /^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
 /**
  * Ask npm where an exact package version stands.
@@ -82,7 +82,7 @@ export async function fetchNpmVersionStatus(
   options: NormalizeRegistryUrlOptions = {},
 ): Promise<NpmVersionStatusLookup> {
   if (!packageName || !version) return unavailable("incomplete_input");
-  if (!PACKAGE_NAME_RE.test(packageName) || !VERSION_RE.test(version)) {
+  if (packageName.length > 214 || !PACKAGE_NAME_RE.test(packageName) || !VERSION_RE.test(version)) {
     return unavailable("rejected");
   }
 

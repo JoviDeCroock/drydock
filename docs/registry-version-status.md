@@ -56,7 +56,15 @@ therefore collapses to "we do not know":
 Lookups are bounded per organization per invocation (25, concurrency 4), with
 recheck floors by last known status: 5 minutes for never-asked and `validating`,
 1 hour for `staged`, never for the three terminal states. Reviews older than 30
-days stop being asked about at all.
+days stop being asked about at all. Only npm staged-publish scans are eligible;
+workflow-gate scans are excluded because their package coordinates may describe
+PyPI or VS Code releases. Due rows are ordered by their oldest lookup timestamp
+so a backlog drains instead of repeatedly selecting the newest 25.
+
+The dashboard refreshes immediately for newly queued scans, then performs a
+bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
+This keeps the **Check npm** request responsive without requiring a second
+manual refresh to see registry outcomes.
 
 ## Failure codes
 
