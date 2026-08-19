@@ -10,13 +10,7 @@ import { reliableFetch } from "../../platform/reliable-fetch";
  * per-check detail behind these values — `blocked` says npm's automated
  * validation rejected the version, not why.
  */
-export const NPM_VERSION_STATUSES = [
-  "published",
-  "validating",
-  "staged",
-  "blocked",
-  "deleted",
-] as const;
+const NPM_VERSION_STATUSES = ["published", "validating", "staged", "blocked", "deleted"] as const;
 
 export type NpmVersionStatus = (typeof NPM_VERSION_STATUSES)[number];
 
@@ -27,7 +21,7 @@ export type NpmVersionStatus = (typeof NPM_VERSION_STATUSES)[number];
  */
 const NON_TERMINAL_STATUSES = new Set<string>(["staged", "validating"]);
 
-export function isNpmVersionStatus(value: unknown): value is NpmVersionStatus {
+function isNpmVersionStatus(value: unknown): value is NpmVersionStatus {
   return typeof value === "string" && (NPM_VERSION_STATUSES as readonly string[]).includes(value);
 }
 
@@ -40,7 +34,7 @@ export function isTerminalNpmVersionStatus(value: unknown): boolean {
  * never "nothing is wrong" and never "something is wrong" — see
  * `NpmVersionStatusLookup`.
  */
-export type NpmVersionStatusUnavailableReason =
+type NpmVersionStatusUnavailableReason =
   /** 404. npm returns this both for an unknown version and for an authorization failure, so it is irreducibly ambiguous. */
   | "not_found"
   /** 401/403. The token cannot ask about this package. */
