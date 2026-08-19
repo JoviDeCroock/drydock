@@ -190,11 +190,16 @@ export const scans = sqliteTable(
     // for both an unknown version and an unauthorized one, so absence can never
     // be read as a negative signal.
     registryVersionStatus: text("registry_version_status"),
-    // When the lookup last ran, set whether or not it produced a status. This
-    // is the throttle: the discovery sweep only re-asks about a release whose
-    // last attempt is old enough, so an unresolvable scan costs one call per
-    // interval instead of one per sweep.
+    // When npm last returned the status above. Kept separate from the attempt
+    // clock so a transient failure never makes a known status look freshly
+    // observed or erases it from the workbench/report export.
     registryVersionStatusAt: integer("registry_version_status_at", { mode: "timestamp_ms" }),
+    // When the lookup last ran, whether or not it produced a status. This is
+    // the throttle and overlap fence: an unresolvable scan costs one call per
+    // interval, and an older in-flight sweep cannot overwrite a newer result.
+    registryVersionStatusAttemptedAt: integer("registry_version_status_attempted_at", {
+      mode: "timestamp_ms",
+    }),
     // Send-once stamp for the "you approved this, npm is still waiting" nudge.
     // A separate column rather than an event lookup because the sweep decides
     // whether to send while holding only this row.
@@ -240,7 +245,7 @@ export const scans = sqliteTable(
     orgRegistryStatusIdx: index("scans_org_registry_status_idx").on(
       table.organizationId,
       table.registryVersionStatus,
-      table.registryVersionStatusAt,
+      table.registryVersionStatusAttemptedAt,
     ),
     // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
     // user FK on delete; without this index both walk the whole table.

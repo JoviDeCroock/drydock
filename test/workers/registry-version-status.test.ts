@@ -9,7 +9,9 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createScanJob,
+  markRegistryPublishReminderSent,
   persistScan,
+  recordRegistryVersionStatus,
   recordScanDecision,
   type ScanSource,
 } from "../../server/db/scans";
@@ -106,7 +108,7 @@ async function readScan(scanId: string) {
   return rows[0]!;
 }
 
-function stubRegistry(handler: (url: string) => Response) {
+function stubRegistry(handler: (url: string) => Response | Promise<Response>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
     handler(typeof input === "string" ? input : input instanceof URL ? input.href : input.url),
   );
@@ -150,6 +152,7 @@ describe("registry version status resolution", () => {
     const scan = await readScan(scanId);
     expect(scan.registryVersionStatus).toBe("blocked");
     expect(scan.registryVersionStatusAt).toBeTruthy();
+    expect(scan.registryVersionStatusAttemptedAt).toBeTruthy();
   });
 
   test("a 404 leaves the status unset but still stamps the attempt", async () => {
@@ -171,7 +174,62 @@ describe("registry version status resolution", () => {
     expect(result).toMatchObject({ checked: 1, resolved: 0 });
     const scan = await readScan(scanId);
     expect(scan.registryVersionStatus).toBeNull();
-    expect(scan.registryVersionStatusAt).toBeTruthy();
+    expect(scan.registryVersionStatusAt).toBeNull();
+    expect(scan.registryVersionStatusAttemptedAt).toBeTruthy();
+  });
+
+  test("an unresolved recheck preserves the last status npm actually returned", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const firstCheckedAt = new Date();
+    const secondCheckedAt = new Date(firstCheckedAt.getTime() + 20 * 60 * 1000);
+    stubRegistry(() => statusResponse("validating"));
+    const args = {
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    await resolveNpmReleaseOutcomes({ ...args, now: firstCheckedAt });
+    stubRegistry(() => new Response(null, { status: 429 }));
+    await resolveNpmReleaseOutcomes({ ...args, now: secondCheckedAt });
+
+    const scan = await readScan(scanId);
+    expect(scan.registryVersionStatus).toBe("validating");
+    expect(scan.registryVersionStatusAt?.getTime()).toBe(firstCheckedAt.getTime());
+    expect(scan.registryVersionStatusAttemptedAt?.getTime()).toBe(secondCheckedAt.getTime());
+  });
+
+  test("an older overlapping sweep cannot replace a newer registry result", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const db = createDb(env.DB);
+    const older = new Date("2026-08-19T12:00:00.000Z");
+    const newer = new Date("2026-08-19T12:01:00.000Z");
+
+    await expect(
+      recordRegistryVersionStatus(db, {
+        scanId,
+        organizationId: org.organizationId,
+        status: "published",
+        checkedAt: newer,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      recordRegistryVersionStatus(db, {
+        scanId,
+        organizationId: org.organizationId,
+        status: "staged",
+        checkedAt: older,
+      }),
+    ).resolves.toBe(false);
+
+    const scan = await readScan(scanId);
+    expect(scan.registryVersionStatus).toBe("published");
+    expect(scan.registryVersionStatusAt?.getTime()).toBe(newer.getTime());
+    expect(scan.registryVersionStatusAttemptedAt?.getTime()).toBe(newer.getTime());
   });
 
   test("stops asking once npm's answer is terminal", async () => {
@@ -253,7 +311,7 @@ describe("registry version status resolution", () => {
 
   test("drains rows beyond one sweep's lookup budget", async () => {
     const org = await seedOrg();
-    const versions = Array.from({ length: 26 }, (_, index) => `2.0.${index}`);
+    const versions = Array.from({ length: 17 }, (_, index) => `2.0.${index}`);
     for (const version of versions) await seedCompletedScan(org, { version });
     const seenVersions = new Set<string>();
     stubRegistry((url) => {
@@ -276,8 +334,8 @@ describe("registry version status resolution", () => {
       now: new Date(now.getTime() + 20 * 60 * 1000),
     });
 
-    expect(first.checked).toBe(25);
-    expect(second.checked).toBe(25);
+    expect(first.checked).toBe(16);
+    expect(second.checked).toBe(16);
     expect(seenVersions).toEqual(new Set(versions));
   });
 
@@ -289,7 +347,7 @@ describe("registry version status resolution", () => {
       scanId,
       organizationId: org.organizationId,
       decision: "publish",
-      decidedByUserId: org.userId,
+      actorUserId: org.userId,
     });
     // Backdate the approval past the grace period, so this reads as forgotten
     // rather than as a publish still in progress.
@@ -313,11 +371,89 @@ describe("registry version status resolution", () => {
     // The hourly recheck will select this row again; it must not re-send.
     await db
       .update(schema.scans)
-      .set({ registryVersionStatusAt: new Date(Date.now() - 6 * 60 * 60 * 1000) })
+      .set({ registryVersionStatusAttemptedAt: new Date(Date.now() - 6 * 60 * 60 * 1000) })
       .where(eq(schema.scans.id, scanId));
     const second = await resolveNpmReleaseOutcomes(args);
     expect(second.checked).toBe(1);
     expect(second.reminded).toBe(0);
+  });
+
+  test("does not send a stale reminder after the approval changes in flight", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const db = createDb(env.DB);
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    await db
+      .update(schema.scans)
+      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .where(eq(schema.scans.id, scanId));
+
+    let finishLookup: ((response: Response) => void) | undefined;
+    const lookupResponse = new Promise<Response>((resolve) => {
+      finishLookup = resolve;
+    });
+    const fetchMock = stubRegistry(() => lookupResponse);
+    const resolving = resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: org.organizationId,
+      decision: "no_publish",
+      actorUserId: org.userId,
+    });
+    finishLookup?.(statusResponse("staged"));
+
+    await expect(resolving).resolves.toMatchObject({ reminded: 0 });
+    expect((await readScan(scanId)).registryPublishReminderAt).toBeNull();
+  });
+
+  test("does not claim a reminder after a newer registry observation wins", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const db = createDb(env.DB);
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    const decidedAt = (await readScan(scanId)).decidedAt!;
+    const stagedAt = new Date("2026-08-19T12:00:00.000Z");
+    const publishedAt = new Date("2026-08-19T12:01:00.000Z");
+    await recordRegistryVersionStatus(db, {
+      scanId,
+      organizationId: org.organizationId,
+      status: "staged",
+      checkedAt: stagedAt,
+    });
+    await recordRegistryVersionStatus(db, {
+      scanId,
+      organizationId: org.organizationId,
+      status: "published",
+      checkedAt: publishedAt,
+    });
+
+    await expect(
+      markRegistryPublishReminderSent(db, {
+        scanId,
+        organizationId: org.organizationId,
+        expectedDecidedAt: decidedAt,
+        expectedRegistryStatusAt: stagedAt,
+      }),
+    ).resolves.toBe(false);
+    expect((await readScan(scanId)).registryPublishReminderAt).toBeNull();
   });
 
   test("does not nudge about a release we never approved", async () => {
