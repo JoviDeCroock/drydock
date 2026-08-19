@@ -7,7 +7,12 @@ import {
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, persistScan, recordScanDecision } from "../../server/db/scans";
+import {
+  createScanJob,
+  persistScan,
+  recordScanDecision,
+  type ScanSource,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { resolveNpmReleaseOutcomes } from "../../server/lib/ecosystems/npm/release-outcome";
@@ -55,7 +60,7 @@ async function seedOrg(): Promise<Seeded> {
 /** A completed review, which is the only kind the sweep asks npm about. */
 async function seedCompletedScan(
   org: Seeded,
-  overrides: { stageId?: string; version?: string; createdAt?: Date } = {},
+  overrides: { stageId?: string; version?: string; createdAt?: Date; source?: ScanSource } = {},
 ) {
   const db = createDb(env.DB);
   const scanId = crypto.randomUUID();
@@ -65,6 +70,7 @@ async function seedCompletedScan(
     stageId,
     organizationId: org.organizationId,
     ownerUserId: org.userId,
+    source: overrides.source,
     packageName: PACKAGE,
     stagedVersion: overrides.version ?? VERSION,
   });
@@ -226,6 +232,53 @@ describe("registry version status resolution", () => {
 
     expect(result.checked).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("does not ask npm about workflow-gate scans from other ecosystems", async () => {
+    const org = await seedOrg();
+    await seedCompletedScan(org, { source: "workflow_gate" });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result.checked).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("drains rows beyond one sweep's lookup budget", async () => {
+    const org = await seedOrg();
+    const versions = Array.from({ length: 26 }, (_, index) => `2.0.${index}`);
+    for (const version of versions) await seedCompletedScan(org, { version });
+    const seenVersions = new Set<string>();
+    stubRegistry((url) => {
+      const match = /\/version\/([^/]+)\/status$/.exec(new URL(url).pathname);
+      if (match?.[1]) seenVersions.add(decodeURIComponent(match[1]));
+      return new Response(null, { status: 404 });
+    });
+    const now = new Date();
+    const args = {
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    const first = await resolveNpmReleaseOutcomes({ ...args, now });
+    const second = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(now.getTime() + 20 * 60 * 1000),
+    });
+
+    expect(first.checked).toBe(25);
+    expect(second.checked).toBe(25);
+    expect(seenVersions).toEqual(new Set(versions));
   });
 
   test("nudges once when we approved a release npm is still holding", async () => {

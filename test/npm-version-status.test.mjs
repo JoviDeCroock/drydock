@@ -46,6 +46,22 @@ describe("npm version status lookup", () => {
     );
   });
 
+  test("accepts npm-safe tildes in package names", async () => {
+    const fetchMock = respond(200, { status: "staged" });
+
+    const result = await fetchNpmVersionStatus(
+      "https://registry.npmjs.org",
+      "npm_token",
+      "pkg~canary",
+      "1.2.3",
+    );
+
+    expect(result).toEqual({ ok: true, status: "staged" });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://registry.npmjs.org/-/package/pkg~canary/version/1.2.3/status",
+    );
+  });
+
   test("carries the token in the Authorization header and nowhere else", async () => {
     const fetchMock = respond(200, { status: "validating" });
 

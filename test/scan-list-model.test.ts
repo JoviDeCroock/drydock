@@ -279,3 +279,43 @@ describe("ScanListModel hasAnyScan after deletion", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ScanListModel registry status refreshes", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("refreshes while the Check npm background work can still be completing", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    model.scheduleRegistryStatusRefreshes();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(39_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  test("cancels pending refreshes when the model is disposed", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    model.scheduleRegistryStatusRefreshes();
+    model[Symbol.dispose]();
+    model = null;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
