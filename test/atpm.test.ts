@@ -211,10 +211,18 @@ describe("parseAtpmPackageRecord", () => {
           blob: { $type: "blob", ref: { $link: CID_A }, size: 604, mimeType: "" },
         },
         versionEntry("0.0.4", CID_A, { dist: { integrity: { hostile: true } } }),
+        versionEntry("0.0.3", CID_A, { dist: { shasum: "not-a-sha1" } }),
+        versionEntry("0.0.2", CID_A, { dist: { shasum: { hostile: true } } }),
+        versionEntry("0.0.1", CID_A, {
+          dist: {
+            integrity: INTEGRITY_A,
+            tarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
+          },
+        }),
         "nonsense",
       ],
     });
-    expect(parsed?.versions.map((entry) => entry.version)).toEqual(["0.0.15", "0.0.14"]);
+    expect(parsed?.versions.map((entry) => entry.version)).toEqual(["0.0.15", "0.0.14", "0.0.1"]);
   });
 
   test("rejects values that are not an atpm package record", () => {

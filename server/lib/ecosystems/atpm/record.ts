@@ -176,8 +176,12 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
   if (typeof blob.mimeType !== "string" || !blob.mimeType) return null;
 
   const dist = isRecord(meta.dist) ? meta.dist : {};
-  // Absence is allowed for legacy records, but a present value must retain its
-  // type so malformed SRI cannot be reduced to the same state as no claim.
+  // Absence is allowed for legacy records, but a present digest claim must be
+  // readable so malformed metadata cannot collapse into the same state as no claim.
+  const declaredShasum = typeof dist.shasum === "string" ? dist.shasum.trim() : null;
+  if (dist.shasum !== undefined && (!declaredShasum || !/^[0-9a-f]{40}$/i.test(declaredShasum))) {
+    return null;
+  }
   if (dist.integrity !== undefined && typeof dist.integrity !== "string") return null;
   return {
     version,
@@ -187,7 +191,7 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
     createdAt: value.createdAt,
     declaredName: meta.name,
     declaredVersion: meta.version,
-    declaredShasum: typeof dist.shasum === "string" ? dist.shasum : null,
+    declaredShasum,
     declaredTarball: typeof dist.tarball === "string" ? dist.tarball : null,
     declaredIntegrity: typeof dist.integrity === "string" ? dist.integrity : null,
   };

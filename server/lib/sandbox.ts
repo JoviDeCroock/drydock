@@ -217,7 +217,7 @@ export interface DownloadResult {
   archiveSha512?: string | null;
 }
 
-export type ArchiveDigestAlgorithm = "SHA-1" | "SHA-256" | "SHA-512";
+type ArchiveDigestAlgorithm = "SHA-1" | "SHA-256" | "SHA-512";
 
 const ARCHIVE_DIGEST_ALGORITHMS = new Set<ArchiveDigestAlgorithm>(["SHA-1", "SHA-256", "SHA-512"]);
 
