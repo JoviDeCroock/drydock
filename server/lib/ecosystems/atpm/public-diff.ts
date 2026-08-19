@@ -103,6 +103,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     assertAtpmBaselineMetadata({
       entry: from,
       manifest: fromArchive.packageJson ?? null,
+      archiveSha1: fromArchive.archiveSha1 ?? null,
       recordName: ref.name,
     });
 

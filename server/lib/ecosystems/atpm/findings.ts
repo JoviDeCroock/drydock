@@ -42,9 +42,11 @@ export function atpmRecordFindings(args: {
 export function assertAtpmBaselineMetadata(args: {
   entry: AtpmVersion;
   manifest: PackageJsonSummary | null;
+  archiveSha1: string | null;
   recordName: string;
 }): void {
-  if (manifestMismatches(args).length) {
+  const integrity = evaluateStagedArtifactIntegrity(args.entry.declaredShasum, args.archiveSha1);
+  if (integrity.status === "mismatch" || manifestMismatches(args).length) {
     throw new PublicDiffError("baseline package metadata does not match its tarball", 502);
   }
 }

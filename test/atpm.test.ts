@@ -437,7 +437,12 @@ describe("atpmRecordFindings", () => {
 
   test("requires the baseline manifest to authenticate the selected version", () => {
     expect(() =>
-      assertAtpmBaselineMetadata({ entry, manifest, recordName: "counter" }),
+      assertAtpmBaselineMetadata({
+        entry,
+        manifest,
+        archiveSha1: entry.declaredShasum,
+        recordName: "counter",
+      }),
     ).not.toThrow();
 
     for (const baselineManifest of [
@@ -449,10 +454,22 @@ describe("atpmRecordFindings", () => {
         assertAtpmBaselineMetadata({
           entry,
           manifest: baselineManifest,
+          archiveSha1: entry.declaredShasum,
           recordName: "counter",
         }),
       ).toThrow(PublicDiffError);
     }
+  });
+
+  test("requires the baseline tarball to match the record's declared digest", () => {
+    expect(() =>
+      assertAtpmBaselineMetadata({
+        entry,
+        manifest,
+        archiveSha1: "f".repeat(40),
+        recordName: "counter",
+      }),
+    ).toThrow(PublicDiffError);
   });
 
   test("flags a tarball that does not hash to the digest the record declares", () => {
