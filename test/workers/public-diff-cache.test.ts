@@ -285,12 +285,12 @@ describe("atpm identity cache", () => {
     const oldKey = await computeCompareMetadataCacheKey({
       registryUrl: "at://",
       packageName: "@ebey.dev",
-      cacheScope: "atpm-public-identity",
+      cacheScope: "atpm-public-identity-2-absolute-expiry-v1",
     });
     const currentKey = await computeCompareMetadataCacheKey({
       registryUrl: "at://",
       packageName: "@ebey.dev",
-      cacheScope: "atpm-public-identity-2-absolute-expiry-v1",
+      cacheScope: "atpm-public-identity-3-absolute-expiry-v1",
     });
     const identityExpiresAt = new Date(Date.now() + 120_000).toISOString();
     const reads: string[] = [];

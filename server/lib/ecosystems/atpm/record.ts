@@ -24,11 +24,12 @@ export const ATPM_PACKAGE_COLLECTION = "dev.atpm.alpha.package";
 const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
 
 /**
- * Cache-identity segment for this module's own reading of a record. Bump it when
- * the pruned shape or the version-selection rules change, so a cached diff
- * computed under the old reading cannot be served.
+ * Cache-identity segment for this module's reading and validation of a record.
+ * Bump it when the pruned shape, version-selection rules, or atpm-specific
+ * metadata checks change, so a cached diff computed under the old rules cannot
+ * be served.
  */
-export const ATPM_RULES_VERSION = "7";
+export const ATPM_RULES_VERSION = "8";
 
 const RECORD_TIMEOUT_MS = 10_000;
 

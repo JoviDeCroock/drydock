@@ -122,16 +122,35 @@ function manifestMismatches(args: {
     ["record meta.name", entry.declaredName],
     ["package.json name", manifestName],
   ] as const) {
-    const unscoped = packageName?.includes("/")
-      ? packageName.slice(packageName.lastIndexOf("/") + 1)
-      : packageName;
-    if (unscoped && unscoped !== args.recordName) {
+    if (packageName && !isHistoricalAtpmNameForRecord(packageName, args.recordName)) {
       mismatches.push(
         `${label} ${packageName} is not published under record key "${args.recordName}"`,
       );
     }
   }
   return mismatches;
+}
+
+/**
+ * Historical metadata keeps the handle that was current when it was published,
+ * so it must not be checked against today's resolved handle or public-host
+ * policy. It must still be a syntactically scoped atpm package name whose only
+ * path segment is the stable record key.
+ */
+function isHistoricalAtpmNameForRecord(packageName: string, recordName: string): boolean {
+  if (!packageName.startsWith("@") || packageName.length > 512) return false;
+  const slash = packageName.indexOf("/");
+  if (slash <= 1 || slash !== packageName.lastIndexOf("/")) return false;
+  if (packageName.slice(slash + 1) !== recordName) return false;
+
+  const handle = packageName.slice(1, slash);
+  if (handle.length < 3 || handle.length > 253 || handle !== handle.toLowerCase()) return false;
+  const labels = handle.split(".");
+  if (labels.length < 2) return false;
+  if (!labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
+    return false;
+  }
+  return /^[a-z]/.test(labels[labels.length - 1]);
 }
 
 function metadataMismatchFinding(mismatches: string[]): Finding[] {

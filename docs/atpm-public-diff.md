@@ -60,7 +60,7 @@ An atpm version is an ordinary npm tarball, so it runs the npm deterministic rul
 atpm also splits apart two things npm keeps together. `meta` in the record is a manifest the publisher wrote; the blob is the artifact that installs. A client reads the former and runs the latter. `server/lib/ecosystems/atpm/findings.ts` checks them against each other:
 
 - `stage.tarball-digest-mismatch` — the blob's SHA-1 (computed by the sandbox over the wire bytes) disagrees with the record's `dist.shasum`. Fails to silent, never to "mismatch", when either digest is absent.
-- `stage.metadata-mismatch` — the tarball has no readable package name/version, or the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`. Both package-name claims must also use the stable record key as their unscoped name. Their scope is compared with each other, not with the publisher's current verified handle: a historical release may legitimately retain the handle that was current when it was published.
+- `stage.metadata-mismatch` — the tarball has no readable package name/version, or the record's `meta.name` / `meta.version` / version key disagrees with the tarball's `package.json`. Both package-name claims must be syntactically scoped atpm names whose only path segment is the stable record key. Their scope is compared with each other, not with the publisher's current verified handle: a historical release may legitimately retain the handle that was current when it was published.
 
 A mismatch on the target is reported as the critical finding above. A mismatch on the baseline fails acquisition instead: otherwise the page would label the left side with a version its tarball does not authenticate.
 

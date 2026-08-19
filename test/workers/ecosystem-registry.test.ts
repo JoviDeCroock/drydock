@@ -68,7 +68,7 @@ describe("ecosystem capability registry", () => {
     vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
     const adapter = getPublicDiffAdapter("atpm");
     expect(adapter?.payloadVersion).toBe("v4");
-    expect(adapter?.rulesVersionSegment).toContain("identity-2");
+    expect(adapter?.rulesVersionSegment).toContain("atpm-8+identity-3");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
     expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(

@@ -576,6 +576,28 @@ describe("atpmRecordFindings", () => {
     expect(findings[0].evidence).toContain("record meta.name @ebey.dev/not-counter");
     expect(findings[0].evidence).toContain("package.json name @ebey.dev/not-counter");
   });
+
+  test("rejects malformed package names even when their suffix is the record key", () => {
+    for (const malformedName of [
+      "bad/",
+      "@ebey.dev/",
+      "not/a/real/counter",
+      "@localhost/counter",
+      "@-bad.dev/counter",
+    ]) {
+      const findings = atpmRecordFindings({
+        entry: { ...entry, declaredName: malformedName },
+        manifest: { name: malformedName, version: "1.0.0" },
+        archiveSha1: null,
+        recordName: "counter",
+      });
+
+      expect(findings, malformedName).toHaveLength(1);
+      expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
+      expect(findings[0].evidence).toContain(`record meta.name ${malformedName}`);
+      expect(findings[0].evidence).toContain(`package.json name ${malformedName}`);
+    }
+  });
 });
 
 describe("resolveAtpmRepoIdentity", () => {
@@ -737,6 +759,32 @@ describe("resolveAtpmRepoIdentity", () => {
     await expect(
       resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
     ).resolves.toMatchObject({ pds: PDS });
+  });
+
+  test("fails closed when the first matching PDS service is malformed", async () => {
+    stubFetch({
+      "https://cloudflare-dns.com/dns-query": dnsAnswer,
+      "https://plc.directory/": () =>
+        Response.json({
+          ...didDocument,
+          service: [
+            {
+              id: "#atproto_pds",
+              type: "AtprotoPersonalDataServer",
+              serviceEndpoint: { uri: "https://malformed.example" },
+            },
+            {
+              id: `${DID}#atproto_pds`,
+              type: "AtprotoPersonalDataServer",
+              serviceEndpoint: PDS,
+            },
+          ],
+        }),
+    });
+
+    await expect(
+      resolveAtpmRepoIdentity(parseAtpmPackageName("@ebey.dev/counter")!),
+    ).rejects.toThrow(/declares no atproto PDS/);
   });
 
   test("ignores a service id that merely ends with the PDS fragment", async () => {

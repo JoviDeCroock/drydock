@@ -39,7 +39,7 @@ const DID_DOCUMENT_TIMEOUT_MS = 8_000;
  * Bump whenever an identity accepted by an older deployment would be rejected
  * now, so cached trust decisions cannot cross that deployment boundary.
  */
-export const ATPM_IDENTITY_RULES_VERSION = "2";
+export const ATPM_IDENTITY_RULES_VERSION = "3";
 
 // Every URL on this path is attacker-influenced, including redirect targets.
 // Three hops accommodates ordinary canonicalization/CDN routing without turning
@@ -519,7 +519,9 @@ function pdsEndpoint(document: DidDocument): string | null {
     const id = typeof entry.id === "string" ? entry.id : "";
     if (id !== "#atproto_pds" && id !== `${document.id}#atproto_pds`) continue;
     if (entry.type !== "AtprotoPersonalDataServer") continue;
-    if (typeof entry.serviceEndpoint === "string") return entry.serviceEndpoint;
+    // The DID document's first matching service is authoritative. Do not skip
+    // a malformed first declaration and silently trust a later duplicate.
+    return typeof entry.serviceEndpoint === "string" ? entry.serviceEndpoint : null;
   }
   return null;
 }
