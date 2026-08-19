@@ -59,6 +59,12 @@ const HANDLE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const DID_PLC_RE = /^did:plc:[a-z2-7]{24}$/;
 
+// npm caps the complete scoped package name at 214 characters. A public handle
+// can be as short as `a.b`, so no record key longer than this can form a valid
+// atpm package name under any handle.
+const NPM_PACKAGE_NAME_MAX_LENGTH = 214;
+const MAX_ATPM_RECORD_NAME_LENGTH = NPM_PACKAGE_NAME_MAX_LENGTH - "@a.b/".length;
+
 /** Raw SHA-256 blob CIDs as atproto renders them: 36 bytes in canonical base32. */
 export const BLOB_CID_RE = /^b[a-z2-7]{58}$/;
 
@@ -101,7 +107,9 @@ export function parseAtpmPackageName(input: string): AtpmPackageRef | null {
   if (scope.startsWith("@")) {
     const handle = normalizeHandle(scope.slice(1));
     if (!handle) return null;
-    return { authority: { kind: "handle", handle }, name, packageName: `@${handle}/${name}` };
+    const packageName = `@${handle}/${name}`;
+    if (packageName.length > NPM_PACKAGE_NAME_MAX_LENGTH) return null;
+    return { authority: { kind: "handle", handle }, name, packageName };
   }
   if (scope.startsWith("did:")) {
     const did = normalizeDid(scope);
@@ -132,7 +140,7 @@ export function normalizeAtpmPackageName(name: string): string {
  * it narrow means the value is safe to interpolate anywhere a package name goes.
  */
 function isValidRecordName(name: string): boolean {
-  if (name.length > 128) return false;
+  if (name.length > MAX_ATPM_RECORD_NAME_LENGTH) return false;
   if (name === "." || name === "..") return false;
   if (name.startsWith(".") || name.startsWith("_")) return false;
   return /^[a-z0-9][a-z0-9._~-]*$/.test(name);

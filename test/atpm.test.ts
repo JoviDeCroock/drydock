@@ -89,6 +89,17 @@ describe("parseAtpmPackageName", () => {
     expect(parseAtpmPackageName(`${DID}/counter~next`)?.name).toBe("counter~next");
   });
 
+  test("applies npm's length limit to the complete handle-form package name", () => {
+    const longestForHandle = "a".repeat(207);
+    expect(parseAtpmPackageName(`@x.dev/${longestForHandle}`)?.name).toBe(longestForHandle);
+    expect(parseAtpmPackageName(`${DID}/${longestForHandle}`)?.name).toBe(longestForHandle);
+    expect(parseAtpmPackageName(`@x.dev/${longestForHandle}a`)).toBeNull();
+
+    const longestForAnyHandle = "a".repeat(209);
+    expect(parseAtpmPackageName(`${DID}/${longestForAnyHandle}`)?.name).toBe(longestForAnyHandle);
+    expect(parseAtpmPackageName(`${DID}/${longestForAnyHandle}a`)).toBeNull();
+  });
+
   test("rejects names atpm cannot address", () => {
     for (const name of [
       "counter", // unscoped: every atpm package is published under an identity
@@ -197,7 +208,13 @@ describe("parseAtpmPackageRecord", () => {
         { ...versionEntry("0.0.10", CID_A), meta: undefined },
         { ...versionEntry("0.0.9", CID_A), meta: "not a manifest" },
         { ...versionEntry("0.0.8", CID_A), meta: {} },
+        versionEntry("0.0.79", CID_A, { dist: undefined }),
+        versionEntry("0.0.78", CID_A, { dist: "not dist metadata" }),
+        versionEntry("0.0.77", CID_A, { dist: {} }),
+        versionEntry("0.0.76", CID_A, { dist: { tarball: 42 } }),
         { ...versionEntry("0.0.75", CID_A), $type: "app.bsky.feed.post" },
+        versionEntry("0.0.74", CID_A, { dist: { tarball: "" } }),
+        versionEntry("0.0.73", CID_A, { dist: { tarball: "   " } }),
         {
           ...versionEntry("0.0.7", CID_A),
           blob: { ref: { $link: CID_A }, size: 604, mimeType: "application/gzip" },
@@ -230,7 +247,13 @@ describe("parseAtpmPackageRecord", () => {
       "0.0.10",
       "0.0.9",
       "0.0.8",
+      "0.0.79",
+      "0.0.78",
+      "0.0.77",
+      "0.0.76",
       "0.0.75",
+      "0.0.74",
+      "0.0.73",
       "0.0.7",
       "0.0.6",
       "0.0.5",
@@ -348,6 +371,18 @@ describe("listAtpmVersions", () => {
         versionEntry("2.0.0", CID_A, { dist: { shasum: "not-a-sha1" } }),
         versionEntry("1.9.1", CID_B),
       ],
+    }) as AtpmPackage;
+
+    expect(() => listAtpmVersions(unreadableLatest)).toThrow(
+      "latest version metadata is unreadable",
+    );
+  });
+
+  test("fails closed when latest has no install tarball URL", () => {
+    const unreadableLatest = parseAtpmPackageRecord({
+      ...RECORD,
+      tags: { latest: "2.0.0" },
+      versions: [versionEntry("2.0.0", CID_A, { dist: {} }), versionEntry("1.9.1", CID_B)],
     }) as AtpmPackage;
 
     expect(() => listAtpmVersions(unreadableLatest)).toThrow(

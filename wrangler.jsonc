@@ -4,7 +4,8 @@
 	"main": "./server/index.ts",
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
-		"nodejs_compat"
+		"nodejs_compat",
+		"global_fetch_strictly_public"
 	],
 	"workers_dev": true,
 	"observability": {

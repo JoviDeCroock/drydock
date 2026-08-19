@@ -351,7 +351,13 @@ describe("atpm identity cache", () => {
                     size: 604,
                     mimeType: "application/gzip",
                   },
-                  meta: { name: "@ebey.dev/counter", version: "1.0.0" },
+                  meta: {
+                    name: "@ebey.dev/counter",
+                    version: "1.0.0",
+                    dist: {
+                      tarball: `${pds}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`,
+                    },
+                  },
                 },
               ],
             },

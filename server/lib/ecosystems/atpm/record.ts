@@ -29,7 +29,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * metadata checks change, so a cached diff computed under the old rules cannot
  * be served.
  */
-export const ATPM_RULES_VERSION = "9";
+export const ATPM_RULES_VERSION = "10";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -182,7 +182,10 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
   if (!Number.isInteger(blob.size) || (blob.size as number) < 0) return null;
   if (typeof blob.mimeType !== "string" || !blob.mimeType) return null;
 
-  const dist = isRecord(meta.dist) ? meta.dist : {};
+  if (!isRecord(meta.dist)) return null;
+  const dist = meta.dist;
+  const declaredTarball = typeof dist.tarball === "string" ? dist.tarball : null;
+  if (!declaredTarball?.trim()) return null;
   // Absence is allowed for legacy records, but a present digest claim must be
   // readable so malformed metadata cannot collapse into the same state as no claim.
   const declaredShasum = typeof dist.shasum === "string" ? dist.shasum.trim() : null;
@@ -199,7 +202,7 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
     declaredName: meta.name,
     declaredVersion: meta.version,
     declaredShasum,
-    declaredTarball: typeof dist.tarball === "string" ? dist.tarball : null,
+    declaredTarball,
     declaredIntegrity: typeof dist.integrity === "string" ? dist.integrity : null,
   };
 }

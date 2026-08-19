@@ -11,3 +11,16 @@ describe("Wrangler static asset routing", () => {
     expect(assetsBlock).toContain('"run_worker_first": true');
   });
 });
+
+describe("Wrangler public egress routing", () => {
+  test.each(["../wrangler.jsonc", "../docs/examples/wrangler.self-host.jsonc"])(
+    "%s routes global fetch through the public Internet",
+    (path) => {
+      const config = readFileSync(new URL(path, import.meta.url), "utf8");
+      const flagsBlock = config.match(/"compatibility_flags"\s*:\s*\[(?<body>[\s\S]*?)\]/)?.groups
+        ?.body;
+
+      expect(flagsBlock).toContain('"global_fetch_strictly_public"');
+    },
+  );
+});
