@@ -6,6 +6,7 @@ import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan"
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
+import { registryStatusBadge } from "./RegistryStatusNotice";
 import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 /**
@@ -41,6 +42,11 @@ export function ScanDetailHeader({
   const decidedAt = detail?.scan.decidedAt;
   const isComplete = detail?.scan.status === "complete";
   const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
+  // npm's own state for the version, next to our risk verdict. The two answer
+  // different questions and are deliberately labelled so nobody reads
+  // "npm blocked" as Drydock's finding, or a clean release risk as proof the
+  // version shipped.
+  const registryBadge = detail ? registryStatusBadge(detail.scan) : null;
   const dashboardHref = getDashboardReturnUrl();
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
@@ -60,6 +66,11 @@ export function ScanDetailHeader({
               releaseRisk ? (
                 <Badge key="risk" tone={severityTone(releaseRisk)}>
                   release {releaseRisk}
+                </Badge>
+              ) : null,
+              registryBadge ? (
+                <Badge key="registry" tone={registryBadge.tone}>
+                  {registryBadge.label}
                 </Badge>
               ) : null,
             ]}

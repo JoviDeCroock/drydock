@@ -55,6 +55,11 @@ export function buildReportExport(detail: ScanDetail) {
       stagedVersion: scan.stagedVersion ?? null,
       previousVersion: scan.previousVersion ?? null,
     },
+    // What the registry did with this version after the review, distinct from
+    // `scan.decision`, which is what the organization decided about it. Additive
+    // and optional: null whenever the lookup never ran, was not supported, or
+    // could not be authorized — never as a statement about the release.
+    registryStatus: exportRegistryStatus(scan),
     baseline: summary.baseline ?? null,
     safety: summary.safety ?? null,
     // Byte-continuity record: the reviewed artifacts + the digests recomputed
@@ -96,6 +101,12 @@ export function buildReportExport(detail: ScanDetail) {
         reason: finding.reason,
       })),
   };
+}
+
+function exportRegistryStatus(scan: ScanDetail["scan"]) {
+  const status = scan.registryVersionStatus;
+  if (typeof status !== "string" || !status) return null;
+  return { status, observedAt: toIso(scan.registryVersionStatusAt) };
 }
 
 export type ReportExportDocument = ReturnType<typeof buildReportExport>;

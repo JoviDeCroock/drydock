@@ -6,6 +6,7 @@
   "actor": "e2e-bot",
   "actorType": "automation",
   "createdAt": "2026-05-26T00:00:00.000Z",
+  "versionStatus": "staged",
   "previous": {
     "directory": "previous",
     "tag": "latest",

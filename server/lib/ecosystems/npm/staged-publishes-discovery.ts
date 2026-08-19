@@ -13,6 +13,7 @@ import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
+import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -232,6 +233,33 @@ export async function discoverAndQueueStagedPublishes(
   });
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
+  // Resolving npm's own state for already-reviewed releases is background
+  // annotation, not part of discovery's answer: it must never add latency to
+  // the "Check npm" button or fail a sweep. Scheduled here because this is the
+  // only per-organization loop that already holds a usable token.
+  executionCtx.waitUntil(
+    resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId,
+      ownerUserId: actorUserId,
+      connection,
+      allowInsecureLocalhost,
+    })
+      .then((outcome) => {
+        if (!outcome.checked) return;
+        emitOperationalEvent("info", "npm.release_outcome.resolved", {
+          organizationId,
+          ...outcome,
+        });
+      })
+      .catch((err) => {
+        emitOperationalEvent("warn", "npm.release_outcome.failed", {
+          organizationId,
+          error: describeOperationalError(err),
+        });
+      }),
+  );
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
   const scanStarts = await mapWithConcurrency(
