@@ -29,7 +29,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * metadata checks change, so a cached diff computed under the old rules cannot
  * be served.
  */
-export const ATPM_RULES_VERSION = "8";
+export const ATPM_RULES_VERSION = "9";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -70,6 +70,8 @@ export interface AtpmPackage {
   /** Dist-tag map, e.g. `{ latest: "0.0.15" }`. */
   tags: Record<string, string>;
   versions: AtpmVersion[];
+  /** Valid version names whose release metadata could not be read safely. */
+  unreadableVersions: string[];
 }
 
 /**
@@ -134,6 +136,7 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   if (!Array.isArray(record.versions)) return null;
 
   const versions: AtpmVersion[] = [];
+  const unreadableVersions: string[] = [];
   const seenVersions = new Set<string>();
   for (const entry of record.versions) {
     const rawVersion = isRecord(entry) && typeof entry.version === "string" ? entry.version : null;
@@ -142,7 +145,10 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
       seenVersions.add(rawVersion);
     }
     const parsed = parseVersionEntry(entry);
-    if (!parsed) continue;
+    if (!parsed) {
+      if (rawVersion && isValidAtpmVersion(rawVersion)) unreadableVersions.push(rawVersion);
+      continue;
+    }
     versions.push(parsed);
   }
 
@@ -150,7 +156,7 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   for (const [tag, target] of Object.entries(record.tags)) {
     if (typeof target === "string" && target) tags[tag] = target;
   }
-  return { tags, versions };
+  return { tags, versions, unreadableVersions };
 }
 
 function parseVersionEntry(entry: unknown): AtpmVersion | null {
@@ -383,6 +389,9 @@ export function listAtpmVersions(pkg: AtpmPackage): {
   // `tags` is an untyped publisher-written object. A stale or malformed latest
   // target must not produce a suggested URL that immediately 404s.
   const taggedLatest = pkg.tags.latest;
+  if (taggedLatest && pkg.unreadableVersions.includes(taggedLatest)) {
+    throw new PublicDiffError("latest version metadata is unreadable", 502);
+  }
   const latest = taggedLatest && byVersion.has(taggedLatest) ? taggedLatest : versions[0]?.version;
   const previous = latest
     ? (versions.find(
@@ -395,6 +404,11 @@ export function listAtpmVersions(pkg: AtpmPackage): {
 /** Look up one version's entry, or 404 the way a registry would. */
 export function requireAtpmVersion(pkg: AtpmPackage, version: string): AtpmVersion {
   const entry = pkg.versions.find((candidate) => candidate.version === version);
-  if (!entry) throw new PublicDiffError("unknown version", 404);
+  if (!entry) {
+    if (pkg.unreadableVersions.includes(version)) {
+      throw new PublicDiffError("version metadata is unreadable", 502);
+    }
+    throw new PublicDiffError("unknown version", 404);
+  }
   return entry;
 }

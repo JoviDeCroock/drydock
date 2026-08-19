@@ -223,6 +223,21 @@ describe("parseAtpmPackageRecord", () => {
       ],
     });
     expect(parsed?.versions.map((entry) => entry.version)).toEqual(["0.0.15", "0.0.14", "0.0.1"]);
+    expect(parsed?.unreadableVersions).toEqual([
+      "0.0.13",
+      "0.0.12",
+      "0.0.11",
+      "0.0.10",
+      "0.0.9",
+      "0.0.8",
+      "0.0.75",
+      "0.0.7",
+      "0.0.6",
+      "0.0.5",
+      "0.0.4",
+      "0.0.3",
+      "0.0.2",
+    ]);
   });
 
   test("rejects values that are not an atpm package record", () => {
@@ -324,6 +339,21 @@ describe("listAtpmVersions", () => {
 
     expect(listAtpmVersions(staleLatest).suggested).toEqual({ from: "1.9.1", to: "2.0.0" });
   });
+
+  test("fails closed when latest names a release with unreadable metadata", () => {
+    const unreadableLatest = parseAtpmPackageRecord({
+      ...RECORD,
+      tags: { latest: "2.0.0" },
+      versions: [
+        versionEntry("2.0.0", CID_A, { dist: { shasum: "not-a-sha1" } }),
+        versionEntry("1.9.1", CID_B),
+      ],
+    }) as AtpmPackage;
+
+    expect(() => listAtpmVersions(unreadableLatest)).toThrow(
+      "latest version metadata is unreadable",
+    );
+  });
 });
 
 describe("requireAtpmVersion", () => {
@@ -331,6 +361,23 @@ describe("requireAtpmVersion", () => {
     const pkg = parseAtpmPackageRecord(RECORD) as AtpmPackage;
     expect(requireAtpmVersion(pkg, "0.0.14").cid).toBe(CID_B);
     expect(() => requireAtpmVersion(pkg, "9.9.9")).toThrow(PublicDiffError);
+  });
+
+  test("fails closed when a requested release has unreadable metadata", () => {
+    const pkg = parseAtpmPackageRecord({
+      ...RECORD,
+      versions: [
+        versionEntry("1.0.0", CID_A, { dist: { shasum: "not-a-sha1" } }),
+        versionEntry("0.9.0", CID_B),
+      ],
+    }) as AtpmPackage;
+
+    try {
+      requireAtpmVersion(pkg, "1.0.0");
+      expect.unreachable("unreadable release should fail closed");
+    } catch (error) {
+      expect(error).toMatchObject({ message: "version metadata is unreadable", status: 502 });
+    }
   });
 });
 
