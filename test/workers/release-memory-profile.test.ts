@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, persistScan, recordScanDecision } from "../../server/db/scans";
+import { createScanJob, getScan, persistScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
@@ -154,6 +154,14 @@ describe("release-memory finding profile column", () => {
         { ruleId: "code.network-access", severity: "medium", file: "z.js" },
       ],
     });
+
+    // The profile is an internal lookup cache. Scan detail already returns the
+    // complete findings, so exposing this blob would duplicate up to 256 KiB on
+    // every workbench and decision response.
+    const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS, {
+      files: "list",
+    });
+    expect(detail?.scan).not.toHaveProperty("findingProfileJson");
   });
 
   test("the lookup reads the column and needs no artifact bucket at all", async () => {
