@@ -75,9 +75,41 @@ Checks specific to a candidate, on top of the npm rule set and the provenance fi
 
 Baseline selection prefers the published version behind the dist-tag the candidate would move (approving moves that tag, so it is the sharpest answer to "what changes for an installer?"), then the immediate semver predecessor, then the highest published version. A first release reviews with no baseline rather than failing.
 
-### Discovery
+### Connecting an account
 
-The discovery cron sweeps atpm publishers alongside npm connections. It has no credential to enumerate, so it reads the publishing accounts from release targets — configuring an atpm gate already names one. The cron deduplicates organization/publisher pairs and fans each lookup into Cloudflare Queues in batches of at most 100; local development without a Queue uses bounded concurrency. Candidate scans are deduplicated by the CID-bound stage id, and one lookup takes at most the 10 newest per publisher, so a repository with a backlog of abandoned candidates does not consume a scan quota on releases nobody is waiting for.
+Discovery needs to know whose releases to watch, and atpm gives no implicit answer. npm's does — the organization's stored token both names the account and unlocks it — but an atpm staged candidate is public, so there is no credential whose existence doubles as an enrolment.
+
+Settings → Integrations → **atpm publishing accounts** takes a handle or DID and runs an AT Protocol OAuth sign-in against the account's _own_ server: the authorization server is discovered from that account's PDS (`/.well-known/oauth-protected-resource`), and the flow uses PAR, PKCE, and DPoP as the atproto profile requires.
+
+Then the tokens are thrown away.
+
+That is worth stating plainly, because it is the opposite of what "connect your account" usually means. Drydock needs no delegated access to an atpm publisher: staged candidates, published releases, and trusted-publisher declarations are all public records, and approving a release is something it deliberately does not do. A live session would buy nothing and would cost the property that makes this ecosystem path unusual — that it holds no credentials at all. So the flow is run for its identity assertion and nothing else, and `atpm_publishers` records the DID with a `verified_at`. Re-establishing the proof means signing in again.
+
+The proof is therefore not a security control — reading public records needs no permission. It decides _ownership_: whose releases appear in which dashboard, and where notifications go. Two organizations may enrol the same account, and each gets its own scans.
+
+The only secret stored anywhere on this path is the ephemeral DPoP private key, held for the ten minutes an authorization request is in flight, sealed under its own HKDF domain, and deleted when the request is consumed.
+
+### Picking up a staged release
+
+Three triggers, in order of how quickly they see a candidate:
+
+1. **The firehose** (`server/lib/ecosystems/atpm/firehose.ts`). A Durable Object subscribes to Jetstream filtered server-side to `dev.atpm.alpha.stage`, so every atpm stage on the network arrives as a small JSON event seconds after it is written. Events for accounts nobody enrolled resolve to an empty indexed lookup and stop there.
+2. **The cron sweep** (\*/15). Backstop for anything a dropped connection missed, and the only trigger when the firehose is disabled. Sweeps enrolled publishers plus release targets that pin an atpm publisher, at most the 10 newest candidates per publisher per tick.
+3. **"Check now"**, per publisher, rate-limited per organization.
+
+All three converge on the same deduplicated queue, keyed by the staged reference — which folds in the record's CID, so a record rewritten under the same key is a new review rather than a silent skip.
+
+The firehose exists because polling alone cannot do this job. atpm deletes a staged record on approval, so a candidate staged and approved in one sitting is not something a fifteen-minute sweep reviews late — it is something the sweep never sees, with nothing afterwards recording the miss. The gated path was always immune because the deployment blocks; every other path was not.
+
+**What the firehose is trusted for: nothing.** It is a doorbell. An event supplies one thing — a DID that just wrote a staged record — and that decides only _when to look_. The record it carries is ignored; discovery resolves the publisher's identity and re-fetches from that publisher's own PDS, verifying every claim as it would on a sweep. Jetstream is operated by a third party, and this is the same distinction already drawn for the DNS-over-HTTPS resolver in `identity.ts`: a hostile or broken instance can make Drydock miss a candidate or waste a lookup, and cannot make it review the wrong bytes or attribute them to the wrong publisher.
+
+Operationally: `ATPM_FIREHOSE_URL` overrides the default Jetstream instance (point it at your own, or at a relay), and `ATPM_FIREHOSE_DISABLED=1` turns it off and leaves the cron in charge. A Durable Object holding an outbound socket stays resident, so this is one always-on object — a real, small, ongoing cost. The cron knocks on it every tick because a Durable Object does not start itself.
+
+### Approving
+
+Drydock does not approve. Approval is a write to the publisher's own repository, and nothing here holds a credential for it — which is the same reason enrolment discards its tokens.
+
+What the review does instead is name the exact candidate it read, in the spelling the approving tool takes. Recording a decision surfaces `npm stage approve <id>`, where the id is the uuid derived from the record's URI and CID, and the report's **Staged candidate** section repeats it alongside a link to atpm's dashboard. Rejecting prints `npm stage rm` — atpm has no `reject` verb; a candidate is withdrawn by deleting its record.
 
 ## Workflow gate
 
@@ -137,7 +169,7 @@ Shared plumbing for this lives behind one optional adapter method, `WorkflowGate
 
 ## Host and credential policy
 
-Unchanged from the public diff, and it applies to all of the above: `assertPublicHttpsUrl` gates every host, redirects are resolved manually and re-validated per hop, identity documents read under 256 KiB and records under 4 MiB, and nothing on this path holds a credential of any kind. See [`security-model.md`](./security-model.md).
+Unchanged from the public diff, and it applies to all of the above — including the OAuth flow, whose authorization server is a host the enrolling account chooses and therefore goes through the same policy as any other publisher-named host: `assertPublicHttpsUrl` gates every host, redirects are resolved manually and re-validated per hop, identity documents read under 256 KiB and records under 4 MiB, and nothing on this path holds a credential of any kind. The one secret that touches it is the ephemeral DPoP key described above, which is not a credential for anything: it authorizes a single token exchange whose result is discarded. See [`security-model.md`](./security-model.md).
 
 ## Upstream notes
 
