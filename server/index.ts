@@ -25,6 +25,8 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "./lib/platform/observability";
+import { recordProductEvent } from "./lib/platform/analytics";
+import { notifyScanCompletion } from "./lib/notify";
 import {
   classifyScanError,
   executeScanJob,
@@ -549,7 +551,7 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
  * Both are swept here, bounded per tick, and never allowed to abort the rest of
  * the cron.
  */
-async function reapStalledScans(env: Cloudflare.Env) {
+async function reapStalledScans(env: Cloudflare.Env, ctx: ExecutionContext) {
   let db: AppDb;
   try {
     db = createDb(env.DB);
@@ -577,6 +579,37 @@ async function reapStalledScans(env: Cloudflare.Env) {
         queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
       });
     }
+    const notifications: Promise<void>[] = [];
+    for (const scan of sweep.scans) {
+      if (!scan.organizationId) continue;
+      recordProductEvent(env, {
+        name: "scan.failed",
+        organizationId: scan.organizationId,
+        ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+        source: scan.source,
+        code: scan.error.code,
+        durationMs: Math.max(0, Date.now() - scan.createdAt.getTime()),
+      });
+      if (scan.source === "workflow_gate" || !scan.ownerUserId) continue;
+      notifications.push(
+        notifyScanCompletion({
+          env,
+          db,
+          scanId: scan.id,
+          organizationId: scan.organizationId,
+          ownerUserId: scan.ownerUserId,
+          outcome: "failed",
+          error: scan.error,
+        }).catch((err) => {
+          emitOperationalEvent("error", "scans.stalled_notification_failed", {
+            scanId: scan.id,
+            organizationId: scan.organizationId,
+            error: describeOperationalError(err),
+          });
+        }),
+      );
+    }
+    if (notifications.length > 0) ctx.waitUntil(Promise.all(notifications).then(() => undefined));
   } catch (err) {
     emitOperationalEvent("error", "scans.stalled_reap_failed", {
       error: describeOperationalError(err),
@@ -617,7 +650,7 @@ export default {
     // this invocation with scales with organization count — putting the reaper
     // last means a heavy sweep that runs out of budget starves the only thing
     // that closes stranded scans, tick after tick.
-    await reapStalledScans(env);
+    await reapStalledScans(env, ctx);
     try {
       await runStagedPublishesDiscoveryCron(env, ctx);
     } catch (err) {

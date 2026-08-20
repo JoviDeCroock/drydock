@@ -1,6 +1,6 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
@@ -18,6 +18,7 @@ import {
 } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { pendingAiReview } from "../../server/lib/ai-review/types";
+import worker from "../../server";
 
 interface SeededUser {
   userId: string;
@@ -74,7 +75,17 @@ describe("stalled scan reaper", () => {
     await ageScan(stalled, 45);
 
     const sweep = await failStalledScans(db, { runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS });
-    expect(sweep).toEqual({ running: 1, pending: 0 });
+    expect(sweep).toMatchObject({ running: 1, pending: 0 });
+    expect(sweep.scans).toEqual([
+      expect.objectContaining({
+        id: stalled,
+        organizationId: owner.organizationId,
+        ownerUserId: owner.userId,
+        source: "auto_discovery",
+        priorStatus: "running",
+        error: expect.objectContaining({ code: "scan_stalled" }),
+      }),
+    ]);
 
     const closed = await getScanStatus(db, stalled, owner.organizationId);
     expect(closed?.status).toBe("failed");
@@ -92,7 +103,7 @@ describe("stalled scan reaper", () => {
     await ageScan(stranded, 8 * 60);
 
     const sweep = await failStalledScans(db);
-    expect(sweep).toEqual({ running: 0, pending: 1 });
+    expect(sweep).toMatchObject({ running: 0, pending: 1 });
     const closed = await getScanStatus(db, stranded, owner.organizationId);
     expect(closed?.status).toBe("failed");
     expect(closed?.errorJson).toMatchObject({ code: "scan_never_started" });
@@ -106,7 +117,7 @@ describe("stalled scan reaper", () => {
     // tail of a backlog, and reaping it would be the wrong answer to load.
     await ageScan(queued, 90);
 
-    expect(await failStalledScans(db)).toEqual({ running: 0, pending: 0 });
+    expect(await failStalledScans(db)).toMatchObject({ running: 0, pending: 0 });
     expect((await getScanStatus(db, queued, owner.organizationId))?.status).toBe("pending");
     expect(STALLED_QUEUED_TIMEOUT_MS).toBeGreaterThan(STALLED_RUNNING_TIMEOUT_MS);
   });
@@ -135,9 +146,9 @@ describe("stalled scan reaper", () => {
     await ageScan(second, 8 * 60);
     await ageScan(done, 8 * 60);
 
-    expect(await failStalledScans(db, { limit: 1 })).toEqual({ running: 0, pending: 1 });
-    expect(await failStalledScans(db, { limit: 5 })).toEqual({ running: 0, pending: 1 });
-    expect(await failStalledScans(db, { limit: 5 })).toEqual({ running: 0, pending: 0 });
+    expect(await failStalledScans(db, { limit: 1 })).toMatchObject({ running: 0, pending: 1 });
+    expect(await failStalledScans(db, { limit: 5 })).toMatchObject({ running: 0, pending: 1 });
+    expect(await failStalledScans(db, { limit: 5 })).toMatchObject({ running: 0, pending: 0 });
     expect((await getScanStatus(db, done, owner.organizationId))?.status).toBe("complete");
   });
 
@@ -187,6 +198,48 @@ describe("stalled scan reaper", () => {
     const candidates = await listStalledAiReviewScans(db);
     expect(candidates.map((row) => row.id)).not.toContain(notComplete);
   });
+
+  test("the scheduled reaper notifies the owner and records a terminal failure", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const stranded = await newScan(owner, "scheduled-notification");
+    await ageScan(stranded, 8 * 60);
+
+    const send = vi.fn(async () => undefined);
+    const points: Array<{ blobs?: string[] }> = [];
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      {
+        scheduledTime: Date.now(),
+        cron: "*/15 * * * *",
+        noRetry() {},
+      } as unknown as ScheduledController,
+      {
+        ...env,
+        SEND_EMAIL: { send },
+        PRODUCT_ANALYTICS: { writeDataPoint: (point: { blobs?: string[] }) => points.push(point) },
+      } as unknown as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(send).toHaveBeenCalled();
+    const events = await db
+      .select({ type: schema.scanEvents.type, metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.scanId, stranded));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "scan.notification_sent",
+        metadata: expect.objectContaining({ outcome: "failed", channel: "email" }),
+      }),
+    );
+    expect(points).toContainEqual(
+      expect.objectContaining({
+        blobs: expect.arrayContaining(["scan.failed", "auto_discovery", "scan_never_started"]),
+      }),
+    );
+  });
 });
 
 describe("withdrawn stage tombstones", () => {
@@ -233,7 +286,7 @@ describe("withdrawn stage tombstones", () => {
     await discardScanAttempt(db, scanId, owner.organizationId);
     await ageScan(scanId, 120);
 
-    expect(await failStalledScans(db)).toEqual({ running: 0, pending: 0 });
+    expect(await failStalledScans(db)).toMatchObject({ running: 0, pending: 0 });
     expect((await getScanStatus(db, scanId, owner.organizationId))?.status).toBe("discarded");
   });
 });

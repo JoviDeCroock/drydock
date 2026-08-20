@@ -332,9 +332,13 @@ export async function writeAiReviewInput(
   organizationId: string,
   payload: AiReviewInputPayload,
 ): Promise<AiReviewInputDescriptor> {
-  const key = artifactKeys(organizationId, payload.scanId).aiInput;
   const body = stableJson(payload);
   const digest = await sha256Hex(body);
+  // Concurrent duplicate scan deliveries prepare their evidence before the D1
+  // completion claim decides which one won. A fixed key lets a losing attempt
+  // overwrite bytes the winner's descriptor already authenticated, so bind the
+  // object name to its contents just like deferred report revisions.
+  const key = artifactKeys(organizationId, payload.scanId).aiInput(digest);
   const descriptor = await putVerifiedJson(bucket, key, body, digest, {
     scanId: payload.scanId,
     artifactKind: "ai-input",
@@ -371,10 +375,14 @@ export async function deleteAiReviewInput(
   bucket: R2Bucket | undefined,
   organizationId: string,
   scanId: string,
+  descriptor?: AiReviewInputDescriptor | null,
 ): Promise<void> {
   if (!bucket) return;
   try {
-    await bucket.delete(artifactKeys(organizationId, scanId).aiInput);
+    // Use the exact descriptor when available: concurrent attempts can have
+    // distinct content-addressed evidence objects. The fixed key fallback keeps
+    // cleanup compatible with rows written before evidence keys were revised.
+    await bucket.delete(descriptor?.key ?? artifactKeys(organizationId, scanId).legacyAiInput);
   } catch (err) {
     // A leaked evidence object is recoverable by the per-scan prefix sweep; it
     // must never turn a finished review into a failed queue message.
@@ -777,7 +785,8 @@ function artifactKeys(organizationId: string, scanId: string) {
     manifest: `${base}/manifest.json`,
     // Deferred-review evidence. Same prefix so the existing per-scan and
     // per-organization delete sweeps reclaim it without knowing about it.
-    aiInput: `${base}/ai-input.json`,
+    legacyAiInput: `${base}/ai-input.json`,
+    aiInput: (digest: string) => `${base}/ai-input.${digest.slice(0, 16)}.json`,
     // Content-addressed republications, written when a deferred AI review is
     // patched in. The digest is in the key so a rewrite never overwrites bytes
     // D1 still points at, and so a duplicated follow-up is idempotent.

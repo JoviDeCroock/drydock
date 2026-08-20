@@ -97,6 +97,41 @@ describe("acquireBaselineNpm", () => {
     expect(result.baseline).toMatchObject({ version: "1.0.0", reason: expectedReason });
   });
 
+  test.each([
+    [
+      "local SandboxError",
+      () => new SandboxError(JSON.stringify({ error: "download failed", status: 404 })),
+    ],
+    [
+      "RPC-safe SandboxError",
+      () => {
+        const err = new Error(JSON.stringify({ error: "download failed", status: 404 }));
+        err.name = "SandboxError";
+        return err;
+      },
+    ],
+  ])("degrades a missing published baseline for %s", async (_name, makeError) => {
+    const broker = {
+      dispose() {},
+      fetchPackageMetadata: vi.fn(async () => metadata()),
+      fetchStagedDetails: vi.fn(async () => null),
+      downloadStaged: vi.fn(async () => {
+        throw new Error("unused");
+      }),
+      downloadPublished: vi.fn(async () => {
+        throw makeError();
+      }),
+    };
+
+    const result = await acquireBaselineNpm({}, {}, broker, stagedArtifact());
+
+    expect(result.artifact).toBeNull();
+    expect(result.baseline).toMatchObject({
+      version: "1.0.0",
+      reason: "dist-tag:latest:baseline-not-found",
+    });
+  });
+
   test("rethrows a non-safety-limit sandbox error instead of degrading", async () => {
     const broker = {
       dispose() {},

@@ -531,7 +531,7 @@ describe("scan pipeline baseline selection", () => {
       // The evidence descriptor rides along in the summary so the follow-up —
       // which carries identifiers only — can find and verify it.
       expect(persisted.summary.aiReviewInput).toMatchObject({
-        key: expect.stringContaining("/ai-input.json"),
+        key: expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
         digest: expect.any(String),
         size: expect.any(Number),
       });
@@ -556,7 +556,7 @@ describe("scan pipeline baseline selection", () => {
       // Only the evidence snapshot fails. The scan's own artifacts must still
       // fail closed if *they* cannot be written; that is a different rule.
       bucket.put = vi.fn(async (key, body) => {
-        if (key.endsWith("/ai-input.json")) throw new Error("r2 unavailable");
+        if (key.includes("/ai-input.")) throw new Error("r2 unavailable");
         return put(key, body);
       });
       const context = {
@@ -648,6 +648,21 @@ describe("scan pipeline baseline selection", () => {
         throw new Error("queue unavailable");
       });
       const bucket = artifactBucket();
+      dbMock.getScanStatus.mockImplementationOnce(async () => ({
+        id: "scan_ai_enqueue_fail",
+        status: "complete",
+        aiStatus: "pending",
+        organizationId: "org_1",
+        ownerUserId: "user_1",
+        source: "manual",
+        stageId: "stage-beta-123",
+        risk: "low",
+        riskSummaryJson: null,
+        summaryJson: {
+          aiReviewInput: dbMock.persistScan.mock.calls.at(-1)?.[1].summary.aiReviewInput,
+        },
+        findingCount: 1,
+      }));
       const context = {
         ...baseContext,
         env: {
@@ -677,13 +692,20 @@ describe("scan pipeline baseline selection", () => {
         }),
       );
       // ...and the evidence it would have reviewed is cleaned up.
-      expect(bucket.delete).toHaveBeenCalledWith(expect.stringContaining("/ai-input.json"));
+      expect(bucket.delete).toHaveBeenCalledWith(
+        expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
+      );
     });
 
-    test("does not enqueue a follow-up for a scan that was already terminal", async () => {
+    test("keeps evidence referenced by the winning concurrent scan", async () => {
       dbMock.persistScan.mockResolvedValueOnce({ persisted: false, reason: "already_terminal" });
       const sendAiReviewMessage = vi.fn(async () => undefined);
       const bucket = artifactBucket();
+      dbMock.getScanStatus.mockImplementationOnce(async () => ({
+        summaryJson: {
+          aiReviewInput: dbMock.persistScan.mock.calls.at(-1)?.[1].summary.aiReviewInput,
+        },
+      }));
       const context = {
         ...baseContext,
         env: {
@@ -701,8 +723,38 @@ describe("scan pipeline baseline selection", () => {
       );
 
       expect(sendAiReviewMessage).not.toHaveBeenCalled();
-      // ...and the evidence it would have reviewed is cleaned up.
-      expect(bucket.delete).toHaveBeenCalledWith(expect.stringContaining("/ai-input.json"));
+      // Both attempts produced byte-identical evidence and therefore share a
+      // content-addressed key. The loser must not delete the winner's live input.
+      expect(bucket.delete).not.toHaveBeenCalled();
+      expect([...bucket.objects.keys()]).toContainEqual(
+        expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
+      );
+    });
+
+    test("cleans evidence that no winning scan references", async () => {
+      dbMock.persistScan.mockResolvedValueOnce({ persisted: false, reason: "already_terminal" });
+      const sendAiReviewMessage = vi.fn(async () => undefined);
+      const bucket = artifactBucket();
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          ARTIFACTS: bucket,
+        },
+      };
+
+      await runScanPipeline(
+        context,
+        npmAdapter,
+        { scanId: "scan_ai_deferred_orphan", stageId: "stage-beta-123", organizationId: "org_1" },
+        { aiReview: "deferred", sendAiReviewMessage },
+      );
+
+      expect(sendAiReviewMessage).not.toHaveBeenCalled();
+      expect(bucket.delete).toHaveBeenCalledWith(
+        expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
+      );
     });
   });
 

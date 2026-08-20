@@ -1,4 +1,5 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
+import { getScanStatus } from "../../db/scans";
 import type { AiReview } from "../ai-review/types";
 import { pendingAiReview } from "../ai-review/types";
 import type {
@@ -354,10 +355,32 @@ interface DeferredAiReviewArgs {
 
 async function handleDeferredAiReview(args: DeferredAiReviewArgs): Promise<void> {
   const { env, identity, aiReviewInput } = args;
-  // The scan was already terminal (a duplicate run), so nothing is waiting on a
-  // review and the evidence we just wrote is dead weight.
-  if (!args.persisted || !aiReviewInput) {
-    await deleteAiReviewInput(env.ARTIFACTS, identity.organizationId, identity.scanId);
+  if (!aiReviewInput) return;
+  if (!args.persisted) {
+    // A concurrent duplicate may have lost the D1 completion claim after both
+    // attempts wrote evidence. Re-read the winner before cleanup: identical
+    // evidence has the same content-addressed key, and deleting the loser's
+    // object in that case would delete the winner's live input too.
+    const winner = await getScanStatus(args.db, identity.scanId, identity.organizationId);
+    const summary =
+      winner?.summaryJson &&
+      typeof winner.summaryJson === "object" &&
+      !Array.isArray(winner.summaryJson)
+        ? (winner.summaryJson as { aiReviewInput?: unknown })
+        : null;
+    const liveInput = summary?.aiReviewInput;
+    const liveKey =
+      liveInput && typeof liveInput === "object" && !Array.isArray(liveInput)
+        ? (liveInput as { key?: unknown }).key
+        : null;
+    if (liveKey !== aiReviewInput.key) {
+      await deleteAiReviewInput(
+        env.ARTIFACTS,
+        identity.organizationId,
+        identity.scanId,
+        aiReviewInput,
+      );
+    }
     return;
   }
 

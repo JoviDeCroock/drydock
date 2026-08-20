@@ -323,6 +323,18 @@ export interface StalledScanSweep {
   running: number;
   /** `pending` rows: the queue message never reached a consumer. */
   pending: number;
+  /** Rows this call actually closed, for terminal notifications and analytics. */
+  scans: ReapedStalledScan[];
+}
+
+export interface ReapedStalledScan {
+  id: string;
+  organizationId: string | null;
+  ownerUserId: string | null;
+  source: string;
+  createdAt: Date;
+  priorStatus: (typeof NON_TERMINAL_STATUSES)[number];
+  error: { code: string; message: string; retryable: false };
 }
 
 export interface StalledScanSweepOptions {
@@ -363,13 +375,13 @@ export async function failStalledScans(
     )
     .orderBy(asc(scans.createdAt))
     .limit(limit);
-  if (!stalled.length) return { running: 0, pending: 0 };
+  if (!stalled.length) return { running: 0, pending: 0, scans: [] };
 
-  const sweep: StalledScanSweep = { running: 0, pending: 0 };
+  const sweep: StalledScanSweep = { running: 0, pending: 0, scans: [] };
   for (const status of NON_TERMINAL_STATUSES) {
     const ids = stalled.filter((row) => row.status === status).map((row) => row.id);
     if (!ids.length) continue;
-    const error =
+    const error: ReapedStalledScan["error"] =
       status === "running"
         ? {
             code: "scan_stalled",
@@ -395,9 +407,22 @@ export async function failStalledScans(
           updatedAt: now,
         })
         .where(and(inArray(scans.id, chunk), eq(scans.status, status)))
-        .returning({ id: scans.id });
+        .returning({
+          id: scans.id,
+          organizationId: scans.organizationId,
+          ownerUserId: scans.ownerUserId,
+          source: scans.source,
+          createdAt: scans.createdAt,
+        });
       if (status === "running") sweep.running += closed.length;
       else sweep.pending += closed.length;
+      sweep.scans.push(
+        ...closed.map((row) => ({
+          ...row,
+          priorStatus: status,
+          error,
+        })),
+      );
     }
   }
   return sweep;

@@ -213,11 +213,11 @@ export async function acquireBaselineNpm(
     // (SANDBOX_MAX_STREAM_TAR_BYTES). The reason names the actual limit so
     // operators are not told "too large" when the baseline instead had too many
     // entries.
-    const limit = baselineSafetyLimit(err);
-    if (limit) {
+    const skip = baselineDownloadSkip(err);
+    if (skip) {
       return {
         artifact: null,
-        baseline: { ...baseline, reason: `${baseline.reason}:${limit}` },
+        baseline: { ...baseline, reason: `${baseline.reason}:${skip}` },
       };
     }
     throw err;
@@ -249,18 +249,20 @@ function hasMetadataMismatch(
 }
 
 /**
- * Classify a sandbox baseline-download failure into the specific safety limit it
- * hit, or null if it is an unrelated error that must still fail the scan. Only
- * whole-archive size limits (oversized tarball, decompression-bomb expansion,
- * too-many-files) degrade the baseline; the sandbox maps those to status 413, so
- * the status gates the branch and the error string names the cause. A malformed
- * baseline (truncated/invalid entry, status 400) still fails the scan.
+ * Classify a baseline-download failure that may safely degrade to a no-baseline
+ * scan. A published tarball can disappear after registry metadata names it; that
+ * 404 says nothing about the separate staged tarball and must not escape to the
+ * scan job's withdrawn-stage classifier. Whole-archive safety limits also
+ * degrade as before. Malformed baselines and transient registry failures still
+ * fail the scan so they can retry rather than hiding a broken comparison.
  */
-function baselineSafetyLimit(
+function baselineDownloadSkip(
   err: unknown,
-): "baseline-too-large" | "baseline-too-many-files" | null {
+): "baseline-not-found" | "baseline-too-large" | "baseline-too-many-files" | null {
   const detail = parseSandboxErrorDetail(err);
-  if (!detail || detail.status !== 413) return null;
+  if (!detail) return null;
+  if (detail.status === 404) return "baseline-not-found";
+  if (detail.status !== 413) return null;
   const error = detail.error ?? "";
   if (error.includes("too many files")) return "baseline-too-many-files";
   if (error.includes("too large") || error.includes("safety limit")) return "baseline-too-large";

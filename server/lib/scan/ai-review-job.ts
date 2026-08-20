@@ -338,7 +338,12 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     report,
   });
 
-  await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
+  await deleteAiReviewInput(
+    env.ARTIFACTS,
+    message.organizationId,
+    message.scanId,
+    readAiReviewInputDescriptor(scan.summaryJson),
+  );
 
   if (!patched) {
     // Another follow-up (or the reaper) claimed the scan first, so the report we
@@ -423,7 +428,12 @@ async function closeUnavailable(
     summary: patchedSummary(scan.summaryJson, riskSummary, null),
     report: null,
   });
-  await deleteAiReviewInput(env.ARTIFACTS, message.organizationId, message.scanId);
+  await deleteAiReviewInput(
+    env.ARTIFACTS,
+    message.organizationId,
+    message.scanId,
+    readAiReviewInputDescriptor(scan.summaryJson),
+  );
   if (patched) await notifyDeferredScanCompletion(env, db, scan);
   emitOperationalEvent(patched ? "warn" : "info", "scan.ai_review.closed_unavailable", {
     scanId: message.scanId,

@@ -119,7 +119,7 @@ low-volume one out of the dataset.
 | -------------------------- | ----------------------------- | ------------------------------------------- |
 | `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off                 |
 | `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts   |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                  |
+| `scan.failed`              | queue, gate, cron reaper      | failure rate by error code                  |
 | `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran   |
 | `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade  |
 | `ai_review.finished`       | inline + deferred reviewers   | reviewer health — the silent-failure rate   |
@@ -135,9 +135,10 @@ low-volume one out of the dataset.
 
 `scan.failed` fires only on a terminal failure, so a scan that succeeds on retry
 is not filed as a failure. Both the npm queue path and the workflow-gate runner
-emit it — counting completions from every ecosystem while counting failures from
-only one would bias the derived failure rate low for exactly the ecosystems that
-release solely through a gate.
+emit it, and the cron reaper emits it for stale queue rows that it closes. Counting
+completions from every ecosystem while counting failures from only one would bias
+the derived failure rate low for exactly the ecosystems that release solely
+through a gate.
 
 `public_diff.viewed` fires for the version-pair request only. `/file` funnels
 through the same loader and is called once per file the visitor opens, so

@@ -32,7 +32,7 @@ export interface WorkflowGateQueueMessage {
  * report is persisted and readable before this message is sent; the follow-up
  * only patches the review, the findings it contributed, and the risk breakdown
  * back in. Carries identifiers only — the evidence lives in the scan's
- * `ai-input.json` artifact.
+ * content-addressed AI-input artifact.
  */
 export interface AiReviewQueueMessage {
   kind: "ai_review";
