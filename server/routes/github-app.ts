@@ -7,8 +7,9 @@ import {
 } from "../db/organizations";
 import {
   type ReleaseAuthorityRecord,
-  getReleaseAuthorityForGate,
   markAuthoritySnapshotApproved,
+  refreshReleaseAuthorityDeltaForGate,
+  releaseAuthorityAcknowledgementToken,
 } from "../db/release-authority";
 import { getScan, recordGatePackageDecision } from "../db/scans";
 import { badgeLookupKey } from "../db/scan-share";
@@ -435,14 +436,14 @@ githubAppRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
       listGatePackageScans(db, organizationId, gate.id),
       organizationRequiresTwoFactorForReleaseDecisions(db, organizationId),
       organizationRequiresAuthorityChangeApproval(db, organizationId),
-      getReleaseAuthorityForGate(db, organizationId, gate.id),
+      refreshReleaseAuthorityDeltaForGate(db, organizationId, gate.id),
     ]);
   return c.json({
     gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor),
     // The delta the maintainer has to accept when the policy is on. Null means
     // the authority was never captured for this gate — deliberately distinct
     // from a captured delta that found no change.
-    releaseAuthority: authority ? publicReleaseAuthority(authority) : null,
+    releaseAuthority: authority ? await publicReleaseAuthority(authority) : null,
     organizationRequiresAuthorityApproval: orgRequiresAuthorityApproval,
   });
 });
@@ -468,6 +469,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     totpCode: string;
     scanId: string;
     acknowledgeAuthorityChange: boolean;
+    authorityAcknowledgementToken: string;
   }>;
   if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
@@ -549,9 +551,14 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // partial state behind, and it never applies to a rejection: blocking a
   // release must stay one click.
   if (decision === "approved") {
-    const authority = await getReleaseAuthorityForGate(db, organizationId, gateId);
+    const authority = await refreshReleaseAuthorityDeltaForGate(db, organizationId, gateId);
     const requiresAuthorityApproval = authority?.delta?.requiresApproval === true;
-    if (requiresAuthorityApproval && body.acknowledgeAuthorityChange !== true) {
+    const acknowledgementToken = await releaseAuthorityAcknowledgementToken(authority);
+    const acknowledgedCurrentDelta =
+      body.acknowledgeAuthorityChange === true &&
+      typeof body.authorityAcknowledgementToken === "string" &&
+      body.authorityAcknowledgementToken === acknowledgementToken;
+    if (requiresAuthorityApproval && !acknowledgedCurrentDelta) {
       const orgRequiresAuthorityApproval = await organizationRequiresAuthorityChangeApproval(
         db,
         organizationId,
@@ -974,7 +981,7 @@ function publicWorkflowGate(
  * context to say which workflow and commit produced the release. The full
  * snapshot travels in the report export instead.
  */
-function publicReleaseAuthority(record: ReleaseAuthorityRecord) {
+async function publicReleaseAuthority(record: ReleaseAuthorityRecord) {
   return {
     capturedAt: record.createdAt.toISOString(),
     runId: record.runId,
@@ -982,6 +989,7 @@ function publicReleaseAuthority(record: ReleaseAuthorityRecord) {
     headSha: record.headSha,
     artifactBindingDigest: record.artifactBindingDigest,
     approvedAt: record.approvedAt ? record.approvedAt.toISOString() : null,
+    acknowledgementToken: await releaseAuthorityAcknowledgementToken(record),
     delta: record.delta,
     workflows: record.snapshot?.workflows ?? [],
     run: record.snapshot?.run ?? null,

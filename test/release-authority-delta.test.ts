@@ -290,6 +290,24 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
   });
 
+  it("flags changed publish-action inputs instead of calling the edit cosmetic", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: https://upload.pypi.org/legacy/\n",
+    );
+    const current = prior.replace(
+      "https://upload.pypi.org/legacy/",
+      "https://packages.example.test/",
+    );
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+      significance: "high",
+      subject: "pypa/gh-action-pypi-publish",
+    });
+    expect(delta.status).toBe("changed");
+  });
+
   it("flags an action reference that stopped being pinned", async () => {
     const unpinned = BASE_WORKFLOW.replace(
       "actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -487,6 +505,31 @@ jobs:
       const current = await makeSnapshot({ workflows: graph(CALLER, REUSED) });
       const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
       expect(find(delta.changes, "secrets_inherit_added")).toMatchObject({ significance: "high" });
+    });
+
+    it("flags changed explicit inputs and secrets on a reusable call", async () => {
+      const explicit = CALLER.replace(
+        "    secrets: inherit\n",
+        "    with:\n      target: production\n    secrets:\n      token: ${{ secrets.PYPI_TOKEN }}\n",
+      );
+      const prior = await makeSnapshot({ workflows: graph(explicit, REUSED) });
+      const changedInput = await makeSnapshot({
+        workflows: graph(explicit.replace("target: production", "target: staging"), REUSED),
+      });
+      const changedSecret = await makeSnapshot({
+        workflows: graph(
+          explicit.replace("secrets.PYPI_TOKEN", "secrets.PYPI_ADMIN_TOKEN"),
+          REUSED,
+        ),
+      });
+
+      for (const current of [changedInput, changedSecret]) {
+        const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
+        expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+          significance: "high",
+          subject: "acme/shared/.github/workflows/publish.yml",
+        });
+      }
     });
 
     it("flags a reusable workflow dropping out of the graph", async () => {

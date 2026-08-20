@@ -47,6 +47,7 @@ const CHANGE_KINDS = new Set<AuthorityChangeKind>([
   "action_added",
   "action_removed",
   "action_ref_changed",
+  "action_configuration_changed",
   "action_unpinned",
   "action_pinned",
   "secrets_inherit_added",

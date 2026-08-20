@@ -105,7 +105,9 @@ A snapshot records:
   shorthands and the empty-block case;
 - GitHub Environment names per job;
 - every `uses:` reference with its ref, whether it is pinned to a 40-hex commit,
-  and whether the call inherits secrets;
+  and whether the call inherits secrets; publishing actions and reusable-workflow
+  calls also carry a digest of their `with:` inputs and explicit `secrets:` map,
+  so credential or target changes are detected without persisting those values;
 - detected publish steps (known publishing actions and publish commands);
 - detected release safeguards (attestation, signing, provenance — including
   `with: attestations`/`provenance` inputs);
@@ -202,10 +204,18 @@ delta is recorded and shown on every gated review either way; the policy only
 decides whether it blocks.
 
 When it is on and the delta status is `changed`, approving requires
-`acknowledgeAuthorityChange: true` in the decision request; without it the route
+`acknowledgeAuthorityChange: true` plus the `authorityAcknowledgementToken`
+returned by the gate lookup in the decision request; without both the route
 answers `409` with code `authority_change_acknowledgement_required` and the gate
 is left completely untouched. The check runs before the per-package decision is
 recorded, so a refused approval leaves no partial state.
+
+The acknowledgement is bound to an opaque digest of the exact delta shown in
+the workbench. Before accepting an approval the route recomputes a pending
+gate's delta against the baseline that is approved at that moment. If another
+overlapping release moved the baseline, a stale acknowledgement is rejected
+with the same `409`; the workbench reloads the delta and asks the maintainer to
+review the current comparison.
 
 Rejection is never gated on the acknowledgement. Blocking a release stays one
 click — a maintainer who is unsure should not have to tick a box to say no.

@@ -26,7 +26,7 @@ import {
 } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
-import { getReleaseAuthorityForGate } from "./release-authority";
+import { refreshReleaseAuthorityDeltaForGate } from "./release-authority";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
 export interface PersistedScanInput {
@@ -1024,7 +1024,7 @@ export async function getScan(
     // Null for staged-publish scans and for gates captured before this existed;
     // consumers must read that as "not assessed", not as "no change".
     releaseAuthority: scan.gateId
-      ? await getReleaseAuthorityForGate(db, organizationId, scan.gateId)
+      ? await refreshReleaseAuthorityDeltaForGate(db, organizationId, scan.gateId)
       : null,
     events: events.map(redactScanEventForClient),
   };

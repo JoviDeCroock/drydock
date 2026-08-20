@@ -706,6 +706,15 @@ describe("release-authority approval policy", () => {
     const stillPending = await getGateForOrganization(db, fixture.organizationId, second.gate.id);
     expect(stillPending?.status).toBe("pending");
 
+    const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${second.scanId}`, {
+      jar: fixture.jar,
+      env: gitEnv,
+    });
+    const acknowledgementToken = (
+      lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined
+    )?.acknowledgementToken;
+    expect(acknowledgementToken).toMatch(/^[0-9a-f]{64}$/);
+
     const approved = await call(
       "POST",
       `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
@@ -714,6 +723,7 @@ describe("release-authority approval policy", () => {
           decision: "approved",
           scanId: second.scanId,
           acknowledgeAuthorityChange: true,
+          authorityAcknowledgementToken: acknowledgementToken,
         },
         jar: fixture.jar,
         env: gitEnv,
@@ -727,6 +737,92 @@ describe("release-authority approval policy", () => {
     expect(record?.approvedAt).toBeInstanceOf(Date);
     expect(record?.approvedByUserId).toBe(fixture.userId);
     expect(record?.artifactBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("refreshes a stale delta and rejects an acknowledgement bound to the old baseline", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const gitEnv = await githubEnv();
+
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stale = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
+    const before = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${stale.scanId}`, {
+      jar: fixture.jar,
+      env: gitEnv,
+    });
+    const oldAuthority = before.json?.releaseAuthority as {
+      acknowledgementToken: string;
+      delta: { status: string };
+    };
+    expect(oldAuthority.delta.status).toBe("unchanged");
+
+    const moved = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "c".repeat(40),
+    });
+    await capture(fixture, moved.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: moved.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+    await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
+
+    const blocked = await call(
+      "POST",
+      `/api/v1/github-app/workflow-gates/${stale.gate.id}/decision`,
+      {
+        body: {
+          decision: "approved",
+          scanId: stale.scanId,
+          acknowledgeAuthorityChange: true,
+          authorityAcknowledgementToken: oldAuthority.acknowledgementToken,
+        },
+        jar: fixture.jar,
+        env: gitEnv,
+      },
+    );
+    expect(blocked.res.status).toBe(409);
+    expect(blocked.json?.code).toBe("authority_change_acknowledgement_required");
+
+    const refreshed = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
+    expect(refreshed?.delta?.status).toBe("changed");
+    expect(refreshed?.delta?.baseline?.gateId).toBe(moved.gate.id);
+    expect(refreshed?.delta?.changes.map((change) => change.kind)).toContain("permission_narrowed");
+    const scan = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, stale.scanId));
+    expect(scan[0]?.decision).toBeNull();
   });
 
   test("never blocks a rejection on an unacknowledged authority change", async () => {

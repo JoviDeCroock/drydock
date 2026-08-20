@@ -801,6 +801,9 @@ export const ScanDetailModel = createModel((id: string) => {
           comment,
           totpCode,
           acknowledgeAuthorityChange,
+          acknowledgeAuthorityChange
+            ? (this.gateAuthority.peek()?.acknowledgementToken ?? null)
+            : null,
         );
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
@@ -808,6 +811,9 @@ export const ScanDetailModel = createModel((id: string) => {
         // audit event server-side; refresh so the workbench reflects both.
         await this.load();
       } catch (err) {
+        if (err instanceof ApiError && err.code === "authority_change_acknowledgement_required") {
+          await Promise.all([this.loadGate(), this.load()]);
+        }
         this.gateDecisionError.value = errorMessage(err);
         this.gateDecisionStatus.value = "error";
       }

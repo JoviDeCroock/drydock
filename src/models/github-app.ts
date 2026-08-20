@@ -83,6 +83,7 @@ export interface GateReleaseAuthority {
   headSha: string | null;
   artifactBindingDigest: string | null;
   approvedAt: string | null;
+  acknowledgementToken: string | null;
   delta: ReleaseAuthorityDelta | null;
 }
 
@@ -124,6 +125,7 @@ export function decideWorkflowGate(
   comment: string | null,
   totpCode?: string | null,
   acknowledgeAuthorityChange?: boolean,
+  authorityAcknowledgementToken?: string | null,
 ): Promise<{ gate: PublicWorkflowGate }> {
   const payload: {
     scanId: string;
@@ -131,10 +133,16 @@ export function decideWorkflowGate(
     comment?: string;
     totpCode?: string;
     acknowledgeAuthorityChange?: boolean;
+    authorityAcknowledgementToken?: string;
   } = { scanId, decision };
   if (comment) payload.comment = comment;
   if (totpCode) payload.totpCode = totpCode;
-  if (acknowledgeAuthorityChange) payload.acknowledgeAuthorityChange = true;
+  if (acknowledgeAuthorityChange) {
+    payload.acknowledgeAuthorityChange = true;
+    if (authorityAcknowledgementToken) {
+      payload.authorityAcknowledgementToken = authorityAcknowledgementToken;
+    }
+  }
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
     payload,

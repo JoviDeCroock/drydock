@@ -140,6 +140,16 @@ matrix: { os: [ubuntu-latest, macos-latest], python: ["3.12"] }
     });
   });
 
+  it("parses unquoted URL values inside flow mappings", () => {
+    const doc = parseWorkflowYaml(`
+with: { attestations: true, repository-url: https://upload.pypi.org/legacy/ }
+`).value as Record<string, unknown>;
+    expect(doc.with).toEqual({
+      attestations: "true",
+      "repository-url": "https://upload.pypi.org/legacy/",
+    });
+  });
+
   it("unquotes single and double quoted scalars", () => {
     const doc = parseWorkflowYaml(`
 single: 'it''s fine'
@@ -234,6 +244,12 @@ jobs:
     expect(parsed.complete).toBe(false);
     const doc = parsed.value as Record<string, Record<string, Record<string, unknown>>>;
     expect(doc.jobs.build.steps).toEqual([{ uses: "a@v1" }]);
+  });
+
+  it("rejects a malformed flow collection instead of treating it as a complete scalar", () => {
+    expect(() => parseWorkflowYaml("permissions: { contents: read\n")).toThrow(
+      expect.objectContaining({ code: "unsupported_syntax" }),
+    );
   });
 
   it("reports complete for a document it fully consumed", () => {

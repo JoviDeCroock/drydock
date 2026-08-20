@@ -289,7 +289,7 @@ export function GateDecisionDialog({
       codeDraft.value = "";
       authorityAcknowledged.value = false;
     }
-  }, [open]);
+  }, [open, releaseAuthority?.acknowledgementToken]);
 
   const submit = (next: WorkflowGateDecision) => {
     if (saving || gateDecided || packageAlreadyDecided || mustEnroll) return;

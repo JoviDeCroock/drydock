@@ -70,6 +70,7 @@ export type AuthorityChangeKind =
   | "action_added"
   | "action_removed"
   | "action_ref_changed"
+  | "action_configuration_changed"
   | "action_unpinned"
   | "action_pinned"
   | "secrets_inherit_added"
@@ -682,6 +683,16 @@ function compareActions(
         subject: actionIdentity(item.uses),
         before: "explicit secrets",
         after: "inherit",
+      });
+    }
+    if (item.configurationDigest !== before.configurationDigest) {
+      changes.push({
+        kind: "action_configuration_changed",
+        significance: "high",
+        scope,
+        subject: actionIdentity(item.uses),
+        before: before.configurationDigest?.slice(0, 12) ?? "not captured",
+        after: item.configurationDigest?.slice(0, 12) ?? "none",
       });
     }
   }

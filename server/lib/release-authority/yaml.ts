@@ -394,6 +394,7 @@ function parseFlowScalar(text: string): YamlValue {
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const parsed = parseFlowCollection(trimmed);
     if (parsed !== undefined) return parsed;
+    throw new WorkflowYamlError("unsupported_syntax", "workflow flow collection is malformed");
   }
   return unquoteScalar(trimmed);
 }
@@ -477,7 +478,7 @@ function readFlowValue(cursor: FlowCursor): YamlValue | undefined {
   const char = cursor.text[cursor.index];
   if (char === "[") return readFlowSequence(cursor);
   if (char === "{") return readFlowMapping(cursor);
-  return readFlowToken(cursor);
+  return readFlowToken(cursor, false);
 }
 
 function readFlowSequence(cursor: FlowCursor): YamlValue | undefined {
@@ -514,7 +515,7 @@ function readFlowMapping(cursor: FlowCursor): YamlValue | undefined {
       return map;
     }
     const keyStartsQuoted = cursor.text[cursor.index] === '"' || cursor.text[cursor.index] === "'";
-    const key = readFlowToken(cursor);
+    const key = readFlowToken(cursor, true);
     if (key === undefined || key === null) return undefined;
     if (key === "<<" && !keyStartsQuoted) {
       throw new WorkflowYamlError("unsupported_syntax", "workflow merge keys are not supported");
@@ -531,7 +532,7 @@ function readFlowMapping(cursor: FlowCursor): YamlValue | undefined {
   }
 }
 
-function readFlowToken(cursor: FlowCursor): YamlValue | undefined {
+function readFlowToken(cursor: FlowCursor, stopAtColon: boolean): YamlValue | undefined {
   skipFlowSpace(cursor);
   const start = cursor.index;
   const quote = cursor.text[start];
@@ -551,7 +552,13 @@ function readFlowToken(cursor: FlowCursor): YamlValue | undefined {
     return unquoteScalar(cursor.text.slice(start, cursor.index));
   }
   let i = start;
-  while (i < cursor.text.length && !",[]{}:".includes(cursor.text[i])) i += 1;
+  while (
+    i < cursor.text.length &&
+    !",[]{}".includes(cursor.text[i]) &&
+    (!stopAtColon || cursor.text[i] !== ":")
+  ) {
+    i += 1;
+  }
   const token = cursor.text.slice(start, i).trim();
   cursor.index = i;
   if (token.length === 0) return undefined;

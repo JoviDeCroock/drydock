@@ -89,6 +89,13 @@ export interface AuthorityActionRef {
   pinned: boolean;
   /** `secrets: inherit` on a reusable-workflow call hands over the caller's secrets. */
   secretsInherit: boolean;
+  /**
+   * Digest of authority-sensitive call configuration. Present for publishing
+   * actions and reusable-workflow jobs, where `with:` inputs or an explicit
+   * `secrets:` mapping can change the release target or credentials without
+   * moving the action reference. The values themselves are never persisted.
+   */
+  configurationDigest: string | null;
 }
 
 export interface AuthorityPublishStep {
@@ -217,7 +224,7 @@ export async function buildReleaseAuthoritySnapshot(
   const artifactFlow: AuthorityArtifactFlow[] = [];
 
   for (const source of sources) {
-    const projection = projectWorkflow(source);
+    const projection = await projectWorkflow(source);
     // Hash the full authority projection before bounding display fields. If a
     // long command changes after the persisted prefix, the digest must still
     // move; otherwise the raw digest alone would misclassify it as cosmetic.
@@ -340,7 +347,7 @@ interface WorkflowProjection {
   artifactFlow: AuthorityArtifactFlow[];
 }
 
-function projectWorkflow(source: WorkflowSource): WorkflowProjection {
+async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjection> {
   const projection: WorkflowProjection = {
     triggers: [],
     permissions: [],
@@ -372,33 +379,44 @@ function projectWorkflow(source: WorkflowSource): WorkflowProjection {
     // secrets are authority, not implementation detail.
     const jobUses = asString(job.uses);
     if (jobUses) {
-      projection.actions.push(readActionRef(workflow, jobName, jobUses, job.secrets));
+      projection.actions.push(
+        await readActionRef(workflow, jobName, jobUses, job.secrets, job.with, true),
+      );
     }
 
     const steps = Array.isArray(job.steps) ? job.steps : [];
     for (const rawStep of steps) {
       const step = asRecord(rawStep);
       if (!step) continue;
-      readStep(projection, workflow, jobName, step);
+      await readStep(projection, workflow, jobName, step);
     }
   }
 
   return projection;
 }
 
-function readStep(
+async function readStep(
   projection: WorkflowProjection,
   workflow: string,
   job: string,
   step: { [key: string]: YamlValue },
-): void {
+): Promise<void> {
   const uses = asString(step.uses);
   const run = asString(step.run);
   const inputs = asRecord(step.with);
 
   if (uses) {
-    projection.actions.push(readActionRef(workflow, job, uses, step.secrets));
     const actionName = actionIdentity(uses);
+    projection.actions.push(
+      await readActionRef(
+        workflow,
+        job,
+        uses,
+        step.secrets,
+        step.with,
+        isPublishAction(actionName),
+      ),
+    );
     if (isPublishAction(actionName)) {
       projection.publishSteps.push({ workflow, job, kind: "action", detail: uses });
     }
@@ -523,16 +541,24 @@ function readEnvironmentName(value: YamlValue): string | null {
   return name?.trim() || null;
 }
 
-function readActionRef(
+async function readActionRef(
   workflow: string,
   job: string,
   uses: string,
   secrets: YamlValue,
-): AuthorityActionRef {
+  inputs: YamlValue,
+  trackConfiguration: boolean,
+): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
   const local = trimmed.startsWith("./") || trimmed.startsWith("../");
   const separator = trimmed.lastIndexOf("@");
   const ref = !local && separator > 0 ? trimmed.slice(separator + 1) : null;
+  const inputMap = asRecord(inputs);
+  const secretMap = asRecord(secrets);
+  const hasConfiguration =
+    trackConfiguration &&
+    ((inputMap && Object.keys(inputMap).length > 0) ||
+      (secretMap && Object.keys(secretMap).length > 0));
   return {
     workflow,
     job,
@@ -542,6 +568,9 @@ function readActionRef(
     // the caller's commit does. Everything else is pinned only by a full sha.
     pinned: local || isCommitSha(ref),
     secretsInherit: asString(secrets)?.trim().toLowerCase() === "inherit",
+    configurationDigest: hasConfiguration
+      ? await sha256Hex(stableJson({ inputs: inputMap ?? {}, secrets: secretMap ?? {} }))
+      : null,
   };
 }
 

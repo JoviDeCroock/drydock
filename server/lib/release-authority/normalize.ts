@@ -139,6 +139,7 @@ function normalizeActionRef(value: unknown): AuthorityActionRef | null {
     ref: str(record.ref),
     pinned: record.pinned === true,
     secretsInherit: record.secretsInherit === true,
+    configurationDigest: str(record.configurationDigest),
   };
 }
 

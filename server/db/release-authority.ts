@@ -1,10 +1,15 @@
 import { and, desc, eq, isNotNull, ne } from "drizzle-orm";
 import { type AppDb } from "./client";
-import { releaseAuthoritySnapshots } from "./schema";
-import type { AuthorityBaselineRef, ReleaseAuthorityDelta } from "../lib/release-authority/delta";
+import { githubWorkflowGates, releaseAuthoritySnapshots } from "./schema";
+import {
+  type AuthorityBaselineRef,
+  computeReleaseAuthorityDelta,
+  type ReleaseAuthorityDelta,
+} from "../lib/release-authority/delta";
 import { normalizeReleaseAuthorityDelta } from "../lib/release-authority/normalize-delta";
 import { normalizeReleaseAuthoritySnapshot } from "../lib/release-authority/normalize";
 import type { ReleaseAuthoritySnapshot } from "../lib/release-authority/snapshot";
+import { sha256Hex, stableJson } from "../lib/platform/stable-json";
 
 export interface ReleaseAuthorityRecord {
   id: string;
@@ -96,6 +101,69 @@ export async function getReleaseAuthorityForGate(
     )
     .limit(1);
   return row ? readRow(row) : null;
+}
+
+/**
+ * Recompute a pending gate's delta against the baseline that is approved now,
+ * not merely the one that existed when the review batch was captured. Pending
+ * releases can overlap; without this refresh an older `unchanged` delta could
+ * be approved after another gate moved the baseline.
+ */
+export async function refreshReleaseAuthorityDeltaForGate(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<ReleaseAuthorityRecord | null> {
+  const record = await getReleaseAuthorityForGate(db, organizationId, gateId);
+  if (!record?.snapshot) return record;
+  const [gate] = await db
+    .select({ status: githubWorkflowGates.status })
+    .from(githubWorkflowGates)
+    .where(
+      and(
+        eq(githubWorkflowGates.id, gateId),
+        eq(githubWorkflowGates.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  if (gate?.status !== "pending") return record;
+
+  const baseline = await findApprovedAuthorityBaseline(db, {
+    organizationId,
+    releaseTargetId: record.releaseTargetId,
+    workflowPath: record.snapshot.run.workflowPath,
+    excludeGateId: gateId,
+  });
+  const approvedReleasePaths = baseline
+    ? []
+    : await listApprovedReleasePaths(db, {
+        organizationId,
+        releaseTargetId: record.releaseTargetId,
+        excludeGateId: gateId,
+        excludeWorkflowPath: record.snapshot.run.workflowPath,
+      });
+  const delta = computeReleaseAuthorityDelta(record.snapshot, baseline, { approvedReleasePaths });
+  if (stableJson(delta) !== stableJson(record.delta)) {
+    await db
+      .update(releaseAuthoritySnapshots)
+      .set({ deltaJson: delta, updatedAt: new Date() })
+      .where(
+        and(
+          eq(releaseAuthoritySnapshots.id, record.id),
+          eq(releaseAuthoritySnapshots.organizationId, organizationId),
+          eq(releaseAuthoritySnapshots.gateId, gateId),
+        ),
+      );
+  }
+  return { ...record, delta };
+}
+
+/** Opaque binding between a UI acknowledgement and the exact delta it showed. */
+export async function releaseAuthorityAcknowledgementToken(
+  record: ReleaseAuthorityRecord | null,
+): Promise<string | null> {
+  if (!record?.delta) return null;
+  return sha256Hex(stableJson({ snapshotId: record.id, delta: record.delta }));
 }
 
 export interface BaselineLookupInput {
