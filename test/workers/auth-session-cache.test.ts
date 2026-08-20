@@ -297,9 +297,17 @@ describe("a session that outlives its user", () => {
       expect(await res.json()).toEqual({ error: "unauthorized" });
     }
 
+    const createOrganization = await call("POST", "/api/v1/organizations", {
+      body: { name: "Orphaned workspace" },
+      jar: deviceB,
+    });
+    expect(createOrganization.status).toBe(401);
+    expect(await createOrganization.json()).toEqual({ error: "unauthorized" });
+
     // And nothing was created on the way out.
     const orphans = await createDb(env.DB).select().from(schema.organizations);
     expect(orphans.some((row) => row.name === "Ghost")).toBe(false);
+    expect(orphans.some((row) => row.name === "Orphaned workspace")).toBe(false);
   });
 });
 

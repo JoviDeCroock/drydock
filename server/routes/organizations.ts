@@ -10,6 +10,7 @@ import {
   deleteNotificationRecipient,
   deleteOrganization,
   ensurePersonalOrganization,
+  getUserContact,
   isOrganizationOwner,
   listNotificationRecipients,
   listUserOrganizations,
@@ -51,6 +52,9 @@ organizationsRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
+    if (!(await getUserContact(db, session.userId))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
     await enforceRateLimit(c.env, {
       key: `organizations:create:${session.userId}`,
       limit: 10,
