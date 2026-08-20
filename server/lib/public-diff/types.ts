@@ -28,6 +28,54 @@ export interface PublicDiffProvenanceEntry {
 }
 
 /**
+ * One verified build, as a Sigstore bundle records it. Every field here came out
+ * of a signature check, not out of the package's own metadata.
+ */
+export interface PublicDiffAttestationBuild {
+  /** Source repository, e.g. `https://github.com/owner/repo`. */
+  repository: string;
+  /** Ref the build ran from, e.g. `refs/tags/v1.2.3`. */
+  ref: string | null;
+  commit: string | null;
+  /** Workflow file, e.g. `.github/workflows/publish.yml`. */
+  workflow: string | null;
+  /** CI run the signing certificate was issued to. */
+  runUrl: string | null;
+  /** `github-hosted` or `self-hosted`, as the certificate recorded it. */
+  runnerEnvironment: string | null;
+  /** When the signature was made, per the transparency log entry. */
+  signedAt: string | null;
+  /** Transparency-log index. Present for lookup; inclusion is not verified. */
+  logIndex: string | null;
+}
+
+/**
+ * Whether a release proves where it was built, and whether that agrees with what
+ * its publisher declared.
+ *
+ * Only atpm sets this today: its trusted-publishing records and Sigstore bundles
+ * both live in the publisher's own repository, so both are readable without
+ * credentials on the anonymous surface. npm's equivalents would need registry
+ * calls this path deliberately does not make.
+ */
+export interface PublicDiffAttestation {
+  status: "verified" | "invalid" | "absent" | "not-evaluated";
+  /** Set when `status` is `verified`. */
+  build?: PublicDiffAttestationBuild;
+  /** Set when `status` is `invalid`: why the bundle did not verify. */
+  reason?: string;
+  /** What the publisher declared as their trusted build pipeline, if anything. */
+  declared?: {
+    repository: string;
+    workflow: string;
+    /** CI may publish without a human approving the staged candidate. */
+    allowPublish: boolean;
+  };
+  /** How the verified build compares with `declared`. */
+  match?: "match" | "repository-mismatch" | "workflow-mismatch" | "unknown-provider";
+}
+
+/**
  * What an ecosystem hands back after fetching both sides. The orchestrator in
  * `public-diff/index.ts` owns diffing, redaction, risk, and caching so every
  * ecosystem shares one assembly path; the adapter only knows how to get the
@@ -43,6 +91,8 @@ export interface PublicDiffAcquiredSources {
   notices?: string[];
   /** How the bytes were located, when that is not simply "the registry". */
   provenance?: PublicDiffProvenanceEntry[];
+  /** Verified build provenance for the target version, when the ecosystem has it. */
+  attestation?: PublicDiffAttestation;
   /** Friendlier spelling of the package name; see PublicDiffVersionListing. */
   displayName?: string;
   /**

@@ -22,6 +22,14 @@ import {
   type AtpmPackage,
   type AtpmVersion,
 } from "./record";
+import { ATPM_PROVENANCE_RULES_VERSION } from "./provenance";
+import {
+  ATPM_TRUST_PUBLISHER_RULES_VERSION,
+  fetchAtpmTrustPublisher,
+  matchTrustedPublisher,
+  trustedPublisherRepositoryUri,
+  type AtpmTrustPublisher,
+} from "./trust-publisher";
 import { buildNpmFindings } from "../npm/findings";
 import {
   computeCompareMetadataCacheKey,
@@ -33,6 +41,7 @@ import { PublicDiffError } from "../../public-diff/error";
 import type {
   PublicDiffAcquiredSources,
   PublicDiffAdapter,
+  PublicDiffAttestation,
   PublicDiffProvenanceEntry,
 } from "../../public-diff/types";
 import { DETERMINISTIC_RULES_VERSION } from "../../review";
@@ -67,10 +76,11 @@ const DID_WEB_NOTICE =
 export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
-  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}+identity-${ATPM_IDENTITY_RULES_VERSION}`,
-  // v4 carries the metadata resolution's absolute expiry through every cache
-  // layer. Old v3 values could restart their five-minute TTL when re-warmed.
-  payloadVersion: "v4",
+  rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}+identity-${ATPM_IDENTITY_RULES_VERSION}+provenance-${ATPM_PROVENANCE_RULES_VERSION}+publisher-${ATPM_TRUST_PUBLISHER_RULES_VERSION}`,
+  // v5 adds the verified build attestation to the payload. v4 carried the
+  // metadata resolution's absolute expiry through every cache layer; old v3
+  // values could restart their five-minute TTL when re-warmed.
+  payloadVersion: "v5",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -95,9 +105,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     const from = requireAtpmVersion(pkg, input.fromVersion);
     const to = requireAtpmVersion(pkg, input.toVersion);
 
-    const [fromArchive, toArchive] = await Promise.all([
+    const [fromArchive, toArchive, publisher] = await Promise.all([
       downloadAtpmBlob(env, ctx, identity, from),
       downloadAtpmBlob(env, ctx, identity, to),
+      loadTrustPublisherCached(env, ctx, identity, ref),
     ]);
 
     assertAtpmBaselineMetadata({
@@ -112,9 +123,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity),
+      attestation: describeAttestation(to, publisher.value),
       ...(identity.did.startsWith("did:web:") ? { notices: [DID_WEB_NOTICE] } : {}),
       ...(displayName ? { displayName } : {}),
-      cacheExpiresAt,
+      cacheExpiresAt: earliestExpiry(cacheExpiresAt, publisher.expiresAt),
       buildFindings: (fileDiff, manifestDiff) => [
         // The artifact is an npm tarball, so it gets the npm rule set verbatim.
         // `details` stays null: those findings describe an npm stage record,
@@ -135,7 +147,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
           entry: to,
           manifest: toArchive.packageJson ?? null,
           archiveSha1: toArchive.archiveSha1 ?? null,
+          archiveSha512: toArchive.archiveSha512 ?? null,
           recordName: ref.name,
+          trustPublisher: publisher.value,
+          baseline: from,
         }),
       ],
     } satisfies PublicDiffAcquiredSources;
@@ -243,6 +258,87 @@ async function fetchRecordCached(
   const envelope = cacheEnvelope(pkg);
   await writeCompareMetadataCache(env, ctx, key, envelope);
   return envelope;
+}
+
+/**
+ * Read the package's trusted-publisher declaration, cached like the record it
+ * sits beside.
+ *
+ * A fetch failure is deliberately not degraded to "no declaration". The
+ * declaration is what a build-provenance mismatch is measured against, so a PDS
+ * that answers this one request with an error would otherwise be able to
+ * suppress exactly the finding it should produce. A record that exists but does
+ * not parse is a different case and is handled inside the fetch: nothing can be
+ * concluded from an unreadable declaration either way.
+ */
+async function loadTrustPublisherCached(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  identity: AtpmRepoIdentity,
+  ref: AtpmPackageRef,
+): Promise<AtpmCacheEnvelope<AtpmTrustPublisher | null>> {
+  const key = await computeCompareMetadataCacheKey({
+    registryUrl: ATPM_PROTOCOL,
+    packageName: `${identity.did}/${ref.name}`,
+    cacheScope: `${PUBLIC_CACHE_SCOPE}-publisher-${ATPM_TRUST_PUBLISHER_RULES_VERSION}-${ATPM_CACHE_ENVELOPE_VERSION}`,
+  });
+  const cached = await readCompareMetadataCache<AtpmCacheEnvelope<AtpmTrustPublisher | null>>(
+    env,
+    key,
+  );
+  if (isFreshEnvelope(cached)) return cached;
+
+  const envelope = cacheEnvelope(await fetchAtpmTrustPublisher(identity, ref.name));
+  await writeCompareMetadataCache(env, ctx, key, envelope);
+  return envelope;
+}
+
+/**
+ * Project one version's verified provenance, and the publisher's declaration
+ * about it, into the shape the page renders.
+ *
+ * The two are reported side by side on purpose. The build facts were proven
+ * against Sigstore's root and are true regardless of what the record says; the
+ * declaration is the publisher's own statement about which pipeline should have
+ * produced them. Showing both lets a reader see the agreement — or the absence
+ * of one — rather than being handed a single verdict to trust.
+ */
+function describeAttestation(
+  entry: AtpmVersion,
+  publisher: AtpmTrustPublisher | null,
+): PublicDiffAttestation {
+  const declared = publisher?.github
+    ? {
+        declared: {
+          repository: trustedPublisherRepositoryUri(publisher.github),
+          workflow: `.github/workflows/${publisher.github.workflow}`,
+          allowPublish: publisher.allowPublish,
+        },
+      }
+    : {};
+
+  const state = entry.provenance;
+  if (state.status === "invalid") {
+    return { status: "invalid", reason: state.reason, ...declared };
+  }
+  if (state.status !== "verified") return { status: state.status, ...declared };
+
+  const { provenance } = state;
+  return {
+    status: "verified",
+    build: {
+      repository: provenance.sourceRepository,
+      ref: provenance.sourceRef,
+      commit: provenance.sourceCommit,
+      workflow: provenance.workflowPath,
+      runUrl: provenance.runInvocation,
+      runnerEnvironment: provenance.runnerEnvironment,
+      signedAt: provenance.signedAt,
+      logIndex: provenance.logIndex,
+    },
+    ...declared,
+    ...(publisher ? { match: matchTrustedPublisher(provenance, publisher).status } : {}),
+  };
 }
 
 function cacheEnvelope<T>(value: T): AtpmCacheEnvelope<T> {

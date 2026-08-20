@@ -1,4 +1,6 @@
 import type { AtpmVersion } from "./record";
+import { atpmPurl, type AtpmProvenance, type AtpmProvenanceState } from "./provenance";
+import { matchTrustedPublisher, type AtpmTrustPublisher } from "./trust-publisher";
 import { evaluateStagedArtifactIntegrity } from "../artifact-integrity";
 import {
   DETERMINISTIC_RULE_IDS,
@@ -29,10 +31,20 @@ export function atpmRecordFindings(args: {
   manifest: PackageJsonSummary | null;
   /** SHA-1 the sandbox computed over the tarball's wire bytes, if it saw all of them. */
   archiveSha1: string | null;
+  /** SHA-512 over the same bytes, which is the digest a Sigstore subject binds. */
+  archiveSha512: string | null;
   /** The record key this version was resolved under — the unscoped package name. */
   recordName: string;
+  /** The publisher's trusted-publishing declaration for this package, if any. */
+  trustPublisher: AtpmTrustPublisher | null;
+  /** The version being compared against, so a lost attestation is visible. */
+  baseline: AtpmVersion | null;
 }): Finding[] {
-  return [...digestFindings(args.entry, args.archiveSha1), ...manifestFindings(args)];
+  return [
+    ...digestFindings(args.entry, args.archiveSha1),
+    ...manifestFindings(args),
+    ...provenanceFindings(args),
+  ];
 }
 
 /**
@@ -166,4 +178,158 @@ function metadataMismatchFinding(mismatches: string[]): Finding[] {
       ruleVersion: DETERMINISTIC_RULES_VERSION,
     },
   ];
+}
+
+/**
+ * Findings about how a release was built, rather than what is in it.
+ *
+ * Provenance is the one part of an atpm record that is not the publisher's word
+ * for something: a Sigstore bundle is signed by an ephemeral key that Fulcio
+ * issued to one GitHub Actions run, so it survives being copied into a record
+ * the publisher controls. `./provenance.ts` has already checked each bundle
+ * against the pinned Sigstore root; what is left is to bind that verified claim
+ * to the bytes under review, to the publisher's own declaration of who may build
+ * this package, and to what the previous release did.
+ */
+function provenanceFindings(args: {
+  entry: AtpmVersion;
+  archiveSha512: string | null;
+  trustPublisher: AtpmTrustPublisher | null;
+  baseline: AtpmVersion | null;
+}): Finding[] {
+  const { entry, trustPublisher, baseline } = args;
+  const state = entry.provenance;
+  const findings: Finding[] = [];
+
+  if (state.status === "invalid") {
+    findings.push({
+      severity: "high",
+      file: "package.json",
+      evidence: `attestation on version ${entry.version} did not verify: ${state.reason}`,
+      reason:
+        "this version carries a build attestation that does not verify against Sigstore's root, so it proves nothing about where the release came from: a release that ships an unverifiable attestation is claiming provenance it cannot support",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceInvalid,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  if (state.status === "verified") {
+    findings.push(...subjectBindingFindings(entry, state.provenance, args.archiveSha512));
+    findings.push(...publisherMatchFindings(entry, state.provenance, trustPublisher));
+  } else if (trustPublisher?.github && state.status === "absent") {
+    findings.push({
+      severity: "low",
+      file: "package.json",
+      evidence: `no attestation on version ${entry.version}; the package declares trusted publishing from ${trustPublisher.github.username}/${trustPublisher.github.repository}`,
+      reason:
+        "this package declares a trusted publishing workflow, but this version carries no build attestation, so it cannot be shown to have come from that workflow rather than from someone's machine",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceMissing,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  const lost = lostProvenanceEvidence(state, baseline);
+  if (lost) {
+    findings.push({
+      severity: "medium",
+      file: "package.json",
+      evidence: lost,
+      reason:
+        "the previous release proved which repository built it and this one does not prove the same thing, so a property this package's consumers could previously rely on is no longer available for this version",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmTrustedPublishingLost,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Bind a verified attestation to the artifact actually reviewed.
+ *
+ * A bundle is valid on its own terms no matter which record it is pasted into,
+ * so this is what stops one package's real attestation from being presented as
+ * another's. The digest half fails to silence rather than to "mismatch" when the
+ * sandbox did not see every byte, matching how `dist.shasum` is handled above.
+ */
+function subjectBindingFindings(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  archiveSha512: string | null,
+): Finding[] {
+  const mismatches: string[] = [];
+  if (entry.declaredName) {
+    const expected = atpmPurl(entry.declaredName, entry.version);
+    if (provenance.subjectName !== expected) {
+      mismatches.push(`attested subject ${provenance.subjectName} != ${expected}`);
+    }
+  }
+  if (archiveSha512 && provenance.subjectSha512 !== archiveSha512.toLowerCase()) {
+    mismatches.push(
+      `attested sha512 ${provenance.subjectSha512} != tarball sha512 ${archiveSha512.toLowerCase()}`,
+    );
+  }
+  if (!mismatches.length) return [];
+  return [
+    {
+      severity: "critical",
+      file: "package.json",
+      evidence: mismatches.join("; "),
+      reason:
+        "the build attestation on this version is valid but describes a different artifact, so it was copied here rather than produced for these bytes: the provenance shown for this release does not belong to it",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceSubjectMismatch,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    },
+  ];
+}
+
+function publisherMatchFindings(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  trustPublisher: AtpmTrustPublisher | null,
+): Finding[] {
+  if (!trustPublisher) return [];
+  const match = matchTrustedPublisher(provenance, trustPublisher);
+  // A declaration naming a provider this deployment cannot evaluate is not a
+  // disagreement; reporting one would be inventing evidence.
+  if (match.status === "match" || match.status === "unknown-provider") return [];
+  const subject = match.status === "repository-mismatch" ? "repository" : "workflow";
+  return [
+    {
+      severity: "high",
+      file: "package.json",
+      evidence: `version ${entry.version} was built by ${subject} ${match.actual}; the package's trusted publisher declares ${match.expected}`,
+      reason:
+        "this release was built somewhere other than the workflow its own publisher declared as trusted, so either the declaration is stale or the release did not come from the pipeline consumers were told to expect",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenancePublisherMismatch,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    },
+  ];
+}
+
+/**
+ * Describe provenance the baseline had and the target does not, or null when
+ * nothing was lost.
+ *
+ * `not-evaluated` on either side is silence, not a loss: it means the per-record
+ * verification budget was spent elsewhere, and reporting that as a regression
+ * would turn an internal limit into a finding about the package.
+ */
+function lostProvenanceEvidence(
+  state: AtpmProvenanceState,
+  baseline: AtpmVersion | null,
+): string | null {
+  const previous = baseline?.provenance;
+  if (previous?.status !== "verified") return null;
+  const from = previous.provenance.sourceRepository;
+  if (state.status === "absent") {
+    return `previous version was built by ${from}; this version carries no attestation`;
+  }
+  if (state.status === "invalid") {
+    return `previous version was built by ${from}; this version's attestation does not verify`;
+  }
+  if (state.status === "verified" && state.provenance.sourceRepository !== from) {
+    return `previous version was built by ${from}; this version was built by ${state.provenance.sourceRepository}`;
+  }
+  return null;
 }

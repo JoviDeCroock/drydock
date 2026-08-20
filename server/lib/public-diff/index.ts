@@ -4,7 +4,12 @@ import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import { writePublicDiffDisplayName } from "./display-metadata";
-import type { PublicDiffAdapter, PublicDiffInput, PublicDiffProvenanceEntry } from "./types";
+import type {
+  PublicDiffAdapter,
+  PublicDiffAttestation,
+  PublicDiffInput,
+  PublicDiffProvenanceEntry,
+} from "./types";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -69,6 +74,9 @@ export interface PublicPackageDiff {
   // How the reviewed bytes were located, for ecosystems where that is a chain
   // of independent authorities rather than a single registry (atpm).
   provenance?: PublicDiffProvenanceEntry[];
+  // Whether the target version proves where it was built, and whether that
+  // agrees with the publisher's own trusted-publishing declaration (atpm).
+  attestation?: PublicDiffAttestation;
   // Human-facing spelling of `packageName`, when the canonical one is an atpm
   // DID rather than the readable verified handle. See PublicDiffVersionListing.
   displayName?: string;
@@ -165,6 +173,7 @@ export async function loadPublicPackageDiff(
     risk,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
+    ...(sources.attestation ? { attestation: sources.attestation } : {}),
     ...(sources.displayName ? { displayName: sources.displayName } : {}),
     cachedAt,
     ...(cacheExpiresAt ? { cacheExpiresAt } : {}),

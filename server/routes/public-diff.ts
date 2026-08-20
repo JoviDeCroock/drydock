@@ -289,6 +289,7 @@ publicDiffRoutes.get("/", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
       provenance: payload.provenance ?? [],
+      attestation: payload.attestation ?? null,
       displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
     },

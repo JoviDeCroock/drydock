@@ -9,6 +9,7 @@ import {
   getPublicDiffVersions,
   PackageDiffModel,
   resolveSuggestedDiffPath,
+  type PublicDiffAttestation,
   type PublicDiffResponse,
 } from "../../models/package-diff";
 import { errorMessage } from "../../models/api";
@@ -421,6 +422,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           this public surface, so the same version pair always produces the same report.
         </Muted>
         {diff?.provenance?.length ? <ResolutionTrail steps={diff.provenance} /> : null}
+        {diff?.attestation ? <BuildProvenance attestation={diff.attestation} /> : null}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}
@@ -634,6 +636,113 @@ function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] })
       ))}
     </dl>
   );
+}
+
+// Where a release was built, and whether that matches what its publisher said
+// should build it.
+//
+// The two halves are deliberately not collapsed into one verdict. The build
+// facts came out of a signature check against Sigstore's root, so they hold
+// regardless of anything the package's own record claims; the declaration is the
+// publisher's statement of intent, which is only as good as their repository.
+// A reader deserves to see which is which, so the block labels the proven side
+// and the declared side separately and states plainly when they disagree.
+function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }) {
+  const build = attestation.build;
+  const declared = attestation.declared;
+  const mismatch =
+    attestation.match === "repository-mismatch" || attestation.match === "workflow-mismatch";
+
+  return (
+    <div class="flex flex-col gap-2 max-w-[680px]">
+      <div class="flex flex-wrap items-center gap-2">
+        <MonoLabel>Build provenance</MonoLabel>
+        <Badge tone={buildProvenanceTone(attestation)}>{buildProvenanceLabel(attestation)}</Badge>
+        {declared?.allowPublish ? <Badge tone="medium">CI publishes unattended</Badge> : null}
+      </div>
+      {build ? (
+        <dl class="flex flex-col gap-1 m-0">
+          <ProvenanceRow label="Repo" value={build.repository} />
+          {build.workflow ? <ProvenanceRow label="Workflow" value={build.workflow} /> : null}
+          {build.ref ? <ProvenanceRow label="Ref" value={build.ref} /> : null}
+          {build.commit ? <ProvenanceRow label="Commit" value={build.commit} /> : null}
+          {build.runUrl ? <ProvenanceRow label="Run" value={build.runUrl} /> : null}
+          {build.runnerEnvironment ? (
+            <ProvenanceRow label="Runner" value={build.runnerEnvironment} />
+          ) : null}
+          {build.logIndex ? <ProvenanceRow label="Rekor" value={build.logIndex} /> : null}
+        </dl>
+      ) : null}
+      {declared ? (
+        <dl class="flex flex-col gap-1 m-0">
+          <ProvenanceRow label="Declared" value={declared.repository} detail={declared.workflow} />
+        </dl>
+      ) : null}
+      <Muted class="m-0 text-[12px] leading-[1.6]">
+        {buildProvenanceExplanation(attestation, mismatch)}
+      </Muted>
+    </div>
+  );
+}
+
+function ProvenanceRow({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div class="flex flex-wrap items-baseline gap-x-2">
+      <MonoLabel as="dt" class="min-w-[64px]">
+        {label}
+      </MonoLabel>
+      <dd class="font-mono text-[12px] text-ink-muted m-0 break-all">
+        {value}
+        {detail ? <span class="text-ink-subtle"> · {detail}</span> : null}
+      </dd>
+    </div>
+  );
+}
+
+function buildProvenanceTone(attestation: PublicDiffAttestation) {
+  if (attestation.status === "invalid") return "high" as const;
+  if (attestation.status === "verified") {
+    return attestation.match === "repository-mismatch" || attestation.match === "workflow-mismatch"
+      ? ("high" as const)
+      : ("ok" as const);
+  }
+  return "medium" as const;
+}
+
+function buildProvenanceLabel(attestation: PublicDiffAttestation) {
+  if (attestation.status === "verified") return "verified";
+  if (attestation.status === "invalid") return "does not verify";
+  if (attestation.status === "absent") return "not attested";
+  return "not checked";
+}
+
+function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch: boolean) {
+  if (attestation.status === "invalid") {
+    return `This version carries a build attestation that does not verify: ${attestation.reason ?? "unreadable"}. Nothing about where it was built can be concluded from it.`;
+  }
+  if (attestation.status === "absent") {
+    return attestation.declared
+      ? "This package declares a trusted publishing workflow, but this version carries no attestation proving it came from one."
+      : "This version carries no build attestation, so where it was built is not recorded.";
+  }
+  if (attestation.status === "not-evaluated") {
+    return "This version's attestation was not checked on this page. Older releases of a package with many versions fall outside the per-record verification budget.";
+  }
+  if (mismatch) {
+    return "The signature proves where this release was built, and it is not the pipeline this package's own publisher declared as trusted.";
+  }
+  if (attestation.match === "match") {
+    return "Verified against Sigstore's root, and the repository and workflow match the trusted publisher this package declares. Transparency-log inclusion is not independently checked.";
+  }
+  return "Verified against Sigstore's root. The package declares no trusted publisher to compare it against, so this says where the release was built, not that it was supposed to be built there.";
 }
 
 function VersionPairPicker({
