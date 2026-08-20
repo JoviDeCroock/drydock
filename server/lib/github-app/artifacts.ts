@@ -57,7 +57,12 @@ export type WorkflowArtifactErrorCode =
   | "bundle_empty"
   | "artifact_path_unsafe"
   | "artifact_identity_missing"
-  | "artifact_identity_inconsistent";
+  | "artifact_identity_inconsistent"
+  // Target-sourced gates: the candidate lives in the publisher's own repository
+  // rather than in the workflow's uploads, so it can be absent, unbindable to
+  // this run, or unreachable because the target names no publisher.
+  | "candidate_not_bound_to_run"
+  | "release_target_misconfigured";
 
 export class WorkflowArtifactError extends Error {
   constructor(

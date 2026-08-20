@@ -1,5 +1,6 @@
 import type { AtpmVersion } from "./record";
 import { atpmPurl, type AtpmProvenance, type AtpmProvenanceState } from "./provenance";
+import type { AtpmStagedVersion } from "./stage-record";
 import { matchTrustedPublisher, type AtpmTrustPublisher } from "./trust-publisher";
 import { evaluateStagedArtifactIntegrity } from "../artifact-integrity";
 import {
@@ -332,4 +333,105 @@ function lostProvenanceEvidence(
     return `previous version was built by ${from}; this version was built by ${state.provenance.sourceRepository}`;
   }
   return null;
+}
+
+/**
+ * Findings for a staged candidate — a release that has been uploaded to the
+ * publisher's repository but not yet approved into the package record.
+ *
+ * The checks are the published ones asked one step earlier, which is the point
+ * of reviewing here at all: a candidate whose record and tarball already
+ * disagree would publish that disagreement unchanged, and a candidate whose
+ * attestation does not verify would carry the same unverifiable claim into the
+ * release. There is no baseline provenance comparison, because nothing has been
+ * replaced yet.
+ *
+ * One check exists only in this direction. atpm requires a candidate's scope to
+ * be the publishing account's *current* handle, so unlike a historical release
+ * the scope can and must be compared against the handle this resolution proved.
+ */
+export function atpmStagedFindings(args: {
+  staged: Pick<AtpmStagedVersion, "declaredName" | "version" | "declaredVersion" | "provenance"> & {
+    shasum?: string | null;
+  };
+  manifest: PackageJsonSummary | null;
+  archiveSha1: string | null;
+  archiveSha512: string | null;
+  trustPublisher: AtpmTrustPublisher | null;
+  /** The handle this resolution proved in both directions, or null. */
+  verifiedHandle: string | null;
+}): Finding[] {
+  const { staged } = args;
+  const entry: AtpmVersion = {
+    version: staged.version,
+    cid: "",
+    size: null,
+    mimeType: null,
+    createdAt: null,
+    declaredName: staged.declaredName,
+    declaredVersion: staged.declaredVersion,
+    declaredShasum: staged.shasum ?? null,
+    declaredTarball: null,
+    declaredIntegrity: null,
+    provenance: staged.provenance,
+  };
+
+  return [
+    ...digestFindings(entry, args.archiveSha1),
+    ...metadataMismatchFinding(stagedMismatches(args)),
+    ...provenanceFindings({
+      entry,
+      archiveSha512: args.archiveSha512,
+      trustPublisher: args.trustPublisher,
+      baseline: null,
+    }),
+  ];
+}
+
+function stagedMismatches(args: {
+  staged: Pick<AtpmStagedVersion, "declaredName" | "version" | "declaredVersion">;
+  manifest: PackageJsonSummary | null;
+  verifiedHandle: string | null;
+}): string[] {
+  const { staged, manifest } = args;
+  const mismatches: string[] = [];
+  if (!manifest) return ["tarball has no readable package.json"];
+
+  const rawManifest = manifest as Record<string, unknown>;
+  const manifestName =
+    typeof rawManifest.name === "string" && rawManifest.name ? rawManifest.name : null;
+  const manifestVersion =
+    typeof rawManifest.version === "string" && rawManifest.version ? rawManifest.version : null;
+  if (!manifestName) mismatches.push("tarball package.json has no readable name");
+  if (!manifestVersion) mismatches.push("tarball package.json has no readable version");
+
+  if (manifestName && staged.declaredName !== manifestName) {
+    mismatches.push(`staged name ${staged.declaredName} != package.json name ${manifestName}`);
+  }
+  for (const [label, declared] of [
+    ["version", staged.version],
+    ["meta.version", staged.declaredVersion],
+  ] as const) {
+    if (declared && manifestVersion && declared !== manifestVersion) {
+      mismatches.push(`staged ${label} ${declared} != package.json version ${manifestVersion}`);
+    }
+  }
+
+  const scope = scopeOf(staged.declaredName);
+  if (!scope) {
+    mismatches.push(`staged name ${staged.declaredName} is not a scoped atpm package name`);
+  } else if (args.verifiedHandle && scope !== args.verifiedHandle) {
+    // atpm's own stage endpoint rejects a scope that is not the publishing
+    // account's handle, so a candidate that carries someone else's scope could
+    // not have been staged through it.
+    mismatches.push(`staged scope @${scope} is not the publisher's handle @${args.verifiedHandle}`);
+  }
+  return mismatches;
+}
+
+function scopeOf(packageName: string): string | null {
+  if (!packageName.startsWith("@")) return null;
+  const slash = packageName.indexOf("/");
+  if (slash <= 1 || slash !== packageName.lastIndexOf("/")) return null;
+  return packageName.slice(1, slash);
 }

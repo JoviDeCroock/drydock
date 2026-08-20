@@ -81,30 +81,31 @@ export async function executeScanJob(
     return null;
   }
 
+  const ecosystem = message.ecosystem ?? "npm";
   try {
-    const npmConnection = await getNpmConnection(db, message.organizationId);
-    if (!npmConnection) {
-      throw new Error("Connect an organization npm token before scanning staged publishes.");
-    }
-    if (npmConnection.validationStatus !== "valid") {
-      throw new Error("Validate the organization npm token before scanning staged publishes.");
+    // The adapter declares whether this ecosystem's staged candidates are
+    // private registry state. npm's are, so a scan that reached the queue with
+    // a since-revoked token must fail here rather than in the sandbox; atpm's
+    // are public records and there is no credential to check.
+    const adapter = getStagedAdapter(ecosystem);
+    if (adapter.requiresConnection) {
+      const npmConnection = await getNpmConnection(db, message.organizationId);
+      if (!npmConnection) {
+        throw new Error("Connect an organization npm token before scanning staged publishes.");
+      }
+      if (npmConnection.validationStatus !== "valid") {
+        throw new Error("Validate the organization npm token before scanning staged publishes.");
+      }
+      await markNpmConnectionUsed(db, message.organizationId);
     }
 
-    await markNpmConnectionUsed(db, message.organizationId);
-
-    // Staged-publish scans are npm-only today; resolving through the registry
-    // keeps the capability declaration authoritative rather than decorative.
-    const result = await runScanPipeline(
-      { env, executionCtx, db, session },
-      getStagedAdapter("npm"),
-      {
-        scanId: message.scanId,
-        stageId: message.stageId,
-        maxFiles: message.maxFiles,
-        organizationId: message.organizationId,
-        source: message.source ?? "manual",
-      },
-    );
+    const result = await runScanPipeline({ env, executionCtx, db, session }, adapter, {
+      scanId: message.scanId,
+      stageId: message.stageId,
+      maxFiles: message.maxFiles,
+      organizationId: message.organizationId,
+      source: message.source ?? "manual",
+    });
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,
       organizationId: message.organizationId,
@@ -152,7 +153,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
-          ecosystem: "npm",
+          ecosystem,
           source: message.source ?? "auto_discovery",
           reason: "staged_tarball_unavailable",
           durationMs: durationMsSince(startedAtMs),
@@ -164,7 +165,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.failed",
           organizationId: message.organizationId,
-          ecosystem: "npm",
+          ecosystem,
           source: message.source ?? "manual",
           code: safe.code,
           durationMs: durationMsSince(startedAtMs),

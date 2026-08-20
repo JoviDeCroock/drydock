@@ -9,8 +9,25 @@ export interface GithubAppEnv {
   BETTER_AUTH_SECRET: string;
 }
 
-export const SUPPORTED_ECOSYSTEMS = ["pypi", "npm", "vscode"] as const;
+// Ecosystems a release target may pin. Mirrors the registry's `gate`
+// capability; kept as a literal here because this module is the request-shape
+// boundary and must not import the adapters it validates against.
+export const SUPPORTED_ECOSYSTEMS = ["pypi", "npm", "vscode", "atpm"] as const;
 export type SupportedEcosystem = (typeof SUPPORTED_ECOSYSTEMS)[number];
+
+/**
+ * Ecosystems whose gate reads its release candidate from a publishing account
+ * rather than from the workflow's uploads, and which therefore require
+ * `publisher_ref` on a release target. atpm is the case: `npm stage publish`
+ * writes the candidate into the publisher's own AT Protocol repository.
+ *
+ * A literal for the same reason `SUPPORTED_ECOSYSTEMS` is one — this module is
+ * the request-shape boundary and sits underneath the GitHub API client that the
+ * atpm gate adapter imports, so reading the registry from here would form a
+ * cycle. `test/workers/atpm-gate.test.ts` pins both lists against the registry
+ * so the two cannot drift apart silently.
+ */
+export const PUBLISHER_SOURCED_ECOSYSTEMS = ["atpm"] as const;
 
 const INSTALLATION_STATUSES = ["active", "suspended", "uninstalled"] as const;
 export type InstallationStatus = (typeof INSTALLATION_STATUSES)[number];

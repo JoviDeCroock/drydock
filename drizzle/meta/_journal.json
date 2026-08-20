@@ -190,6 +190,13 @@
       "when": 1785173461659,
       "tag": "0026_brave_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1787212486058,
+      "tag": "0027_flashy_puff_adder",
+      "breakpoints": true
     }
   ]
 }

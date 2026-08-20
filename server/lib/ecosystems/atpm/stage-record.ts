@@ -1,0 +1,285 @@
+import {
+  assertPublicHttpsUrl,
+  BLOB_CID_RE,
+  readBoundedJson,
+  reliablePublicHttpsFetch,
+  type AtpmRepoIdentity,
+} from "./identity";
+import { readAtpmAttestation, verifyAtpmProvenance, type AtpmProvenanceState } from "./provenance";
+import { isValidAtpmVersion } from "./record";
+import { UUID_NAMESPACE_URL, uuidV5 } from "../../platform/uuid";
+import { PublicDiffError } from "../../public-diff/error";
+
+/**
+ * The `dev.atpm.alpha.stage` record: a release candidate that has been uploaded
+ * but not published.
+ *
+ * atpm splits publishing in two. `npm stage publish` writes one of these
+ * records and uploads the tarball as a blob; `npm stage approve <id>` moves it
+ * into the `dev.atpm.alpha.package` record that installs resolve against. A
+ * trusted-publishing workflow with `allowPublish: false` can only do the first
+ * half, which makes the pause a property of the publisher's own configuration
+ * rather than something Drydock has to arrange.
+ *
+ * The consequence for review is the interesting one: a staged candidate is an
+ * ordinary public record in the publisher's repository, and its bytes are a
+ * CID-addressed blob. Reviewing one therefore needs no credential, no atpm.dev,
+ * and no cooperation from anybody — the same properties the published diff has.
+ * Only *approving* needs a token, and Drydock does not hold one; see
+ * `docs/atpm-staged-review.md`.
+ */
+export const ATPM_STAGE_COLLECTION = "dev.atpm.alpha.stage";
+
+/**
+ * Cache-identity and behavior version for reading staged records. Bump when the
+ * retained shape or its validation changes.
+ */
+export const ATPM_STAGE_RULES_VERSION = "1";
+
+const STAGE_TIMEOUT_MS = 10_000;
+
+// One staged record holds a full npm manifest and possibly a Sigstore bundle.
+const MAX_STAGE_RECORD_BYTES = 4 * 1024 * 1024;
+
+// A listing page of staged records, each with its manifest inline.
+const MAX_STAGE_PAGE_BYTES = 8 * 1024 * 1024;
+
+const STAGE_PAGE_SIZE = 100;
+
+/**
+ * How many listing pages of staged candidates are read per repository. A
+ * publisher with more than this many *unapproved* candidates is not a shape
+ * atpm produces; the cap stops one repository from turning a discovery pass
+ * into an unbounded crawl of its own PDS.
+ */
+const MAX_STAGE_PAGES = 5;
+
+/** atproto record keys for staged entries are TIDs, written by the CLI. */
+const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
+
+export function isValidAtpmStageRkey(rkey: string): boolean {
+  return TID_RE.test(rkey);
+}
+
+/** One staged release candidate, reduced to the fields review reads. */
+export interface AtpmStagedVersion {
+  /** Record key in the publisher's repository — a TID. */
+  rkey: string;
+  /** `at://<did>/dev.atpm.alpha.stage/<rkey>`. */
+  uri: string;
+  /** Content address of the record itself, which atpm's stage id folds in. */
+  recordCid: string;
+  /** The stage id `npm stage approve` takes, derived rather than fetched. */
+  stageId: string;
+  /** Scoped package name the candidate claims, e.g. `@ebey.dev/counter`. */
+  declaredName: string;
+  version: string;
+  /** Version the candidate's own npm manifest claims, which must agree. */
+  declaredVersion: string | null;
+  /** Dist-tag the candidate would take on approval. */
+  tag: string | null;
+  createdAt: string;
+  /** Blob CID of the candidate tarball. */
+  cid: string;
+  size: number | null;
+  declaredShasum: string | null;
+  declaredIntegrity: string | null;
+  declaredTarball: string | null;
+  provenance: AtpmProvenanceState;
+}
+
+interface RawStageRecord {
+  uri?: unknown;
+  cid?: unknown;
+  value?: unknown;
+}
+
+/**
+ * Every unapproved candidate in a publisher's repository, newest record key
+ * first. TIDs sort lexicographically by creation time, so that ordering is the
+ * publisher's own timeline rather than anything this reconstructs.
+ */
+export async function listAtpmStagedVersions(
+  identity: AtpmRepoIdentity,
+): Promise<AtpmStagedVersion[]> {
+  const staged: AtpmStagedVersion[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < MAX_STAGE_PAGES; page++) {
+    const url = new URL("/xrpc/com.atproto.repo.listRecords", identity.pds);
+    url.searchParams.set("repo", identity.did);
+    url.searchParams.set("collection", ATPM_STAGE_COLLECTION);
+    url.searchParams.set("limit", String(STAGE_PAGE_SIZE));
+    if (cursor) url.searchParams.set("cursor", cursor);
+    assertPublicHttpsUrl(url.toString(), "PDS endpoint");
+
+    let response: Response;
+    try {
+      response = await reliablePublicHttpsFetch(url.toString(), "PDS endpoint", {
+        headers: new Headers({ accept: "application/json" }),
+        timeoutMs: STAGE_TIMEOUT_MS,
+      });
+    } catch {
+      throw new PublicDiffError("staged record listing failed", 502);
+    }
+    const body = await readBoundedJson<{ records?: unknown; cursor?: unknown; error?: unknown }>(
+      response,
+      MAX_STAGE_PAGE_BYTES,
+    );
+    // An empty collection is not an error; a repository with nothing staged
+    // answers with an empty list, and some PDS builds answer 400 instead.
+    if (body?.error === "RecordNotFound") return staged;
+    if (!response.ok || !body) throw new PublicDiffError("staged record listing failed", 502);
+
+    const records = Array.isArray(body.records) ? body.records : [];
+    for (const record of records) {
+      const parsed = await parseStageRecord(identity, record as RawStageRecord);
+      // A malformed candidate is skipped rather than fatal: one unreadable
+      // record in a repository must not hide every other pending release.
+      if (parsed) staged.push(parsed);
+    }
+
+    cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : undefined;
+    if (!cursor || records.length === 0) break;
+  }
+
+  return staged.sort((a, b) => (a.rkey < b.rkey ? 1 : a.rkey > b.rkey ? -1 : 0));
+}
+
+/** Fetch one staged candidate by record key, or 404 the way a registry would. */
+export async function fetchAtpmStagedVersion(
+  identity: AtpmRepoIdentity,
+  rkey: string,
+): Promise<AtpmStagedVersion> {
+  if (!isValidAtpmStageRkey(rkey)) throw new PublicDiffError("invalid staged record key", 400);
+
+  const url = new URL("/xrpc/com.atproto.repo.getRecord", identity.pds);
+  url.searchParams.set("repo", identity.did);
+  url.searchParams.set("collection", ATPM_STAGE_COLLECTION);
+  url.searchParams.set("rkey", rkey);
+  assertPublicHttpsUrl(url.toString(), "PDS endpoint");
+
+  let response: Response;
+  try {
+    response = await reliablePublicHttpsFetch(url.toString(), "PDS endpoint", {
+      headers: new Headers({ accept: "application/json" }),
+      timeoutMs: STAGE_TIMEOUT_MS,
+    });
+  } catch {
+    throw new PublicDiffError("staged record fetch failed", 502);
+  }
+
+  const body = await readBoundedJson<RawStageRecord & { error?: unknown }>(
+    response,
+    MAX_STAGE_RECORD_BYTES,
+  );
+  if (body?.error === "RecordNotFound" || response.status === 404) {
+    // An approved or rejected candidate has had its record deleted, which is
+    // indistinguishable from one that never existed and reads the same way.
+    throw new PublicDiffError("staged release not found", 404);
+  }
+  if (!response.ok || !body) throw new PublicDiffError("staged record fetch failed", 502);
+
+  const parsed = await parseStageRecord(identity, body);
+  if (!parsed) throw new PublicDiffError("staged record is not a readable atpm candidate", 502);
+  return parsed;
+}
+
+/**
+ * Reduce one `listRecords`/`getRecord` entry.
+ *
+ * Validation mirrors `./record.ts` deliberately: a staged candidate becomes a
+ * published version unchanged, so anything this accepts here is something the
+ * published path must also be able to read. Returns null for a record that does
+ * not describe a reviewable candidate.
+ */
+export async function parseStageRecord(
+  identity: AtpmRepoIdentity,
+  record: RawStageRecord,
+): Promise<AtpmStagedVersion | null> {
+  const uri = typeof record.uri === "string" ? record.uri : null;
+  const recordCid = typeof record.cid === "string" ? record.cid : null;
+  if (!uri || !recordCid) return null;
+
+  const prefix = `at://${identity.did}/${ATPM_STAGE_COLLECTION}/`;
+  // The URI is echoed by the PDS. Requiring it to name the repository and
+  // collection we asked for stops a listing from smuggling in an entry
+  // attributed to a different DID.
+  if (!uri.startsWith(prefix)) return null;
+  const rkey = uri.slice(prefix.length);
+  if (!isValidAtpmStageRkey(rkey)) return null;
+
+  const value = asObject(record.value);
+  if (!value) return null;
+  if (value.$type !== undefined && value.$type !== ATPM_STAGE_COLLECTION) return null;
+  if (!isDatetime(value.createdAt)) return null;
+
+  const declaredName = typeof value.name === "string" ? value.name : null;
+  const version = typeof value.version === "string" ? value.version : null;
+  if (!declaredName || !version || !isValidAtpmVersion(version)) return null;
+
+  const blob = asObject(value.blob);
+  const ref = asObject(blob?.ref);
+  const cid = typeof ref?.$link === "string" ? ref.$link : null;
+  if (blob?.$type !== "blob" || !cid || !BLOB_CID_RE.test(cid)) return null;
+  if (!Number.isInteger(blob.size) || (blob.size as number) < 0) return null;
+  if (typeof blob.mimeType !== "string" || !blob.mimeType) return null;
+
+  const meta = asObject(value.meta);
+  if (!meta) return null;
+  const dist = asObject(meta.dist);
+  const declaredShasum = typeof dist?.shasum === "string" ? dist.shasum.trim() : null;
+  if (dist?.shasum !== undefined && (!declaredShasum || !/^[0-9a-f]{40}$/i.test(declaredShasum))) {
+    return null;
+  }
+  if (dist?.integrity !== undefined && typeof dist.integrity !== "string") return null;
+
+  return {
+    rkey,
+    uri,
+    recordCid,
+    // atpm computes this over the record URI and its CID, so it changes if the
+    // candidate is rewritten — which is what makes it safe to show next to a
+    // review of specific bytes.
+    stageId: await uuidV5(`${uri}/${recordCid}`, UUID_NAMESPACE_URL),
+    declaredName,
+    version,
+    declaredVersion: typeof meta.version === "string" ? meta.version : null,
+    tag: firstTag(value.tags),
+    createdAt: value.createdAt,
+    cid,
+    size: blob.size as number,
+    declaredShasum,
+    declaredIntegrity: typeof dist?.integrity === "string" ? dist.integrity : null,
+    declaredTarball: typeof dist?.tarball === "string" ? dist.tarball : null,
+    provenance: await verifyAtpmProvenance(readAtpmAttestation(meta)),
+  };
+}
+
+/**
+ * The dist-tag a candidate would take on approval. atpm stores npm's whole
+ * `dist-tags` object; the CLI sends exactly one, and taking the first matches
+ * what atpm's own staged listing reports.
+ */
+function firstTag(tags: unknown): string | null {
+  const record = asObject(tags);
+  if (!record) return null;
+  for (const [tag, target] of Object.entries(record)) {
+    if (typeof tag === "string" && tag && typeof target === "string") return tag;
+  }
+  return null;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function isDatetime(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
+}

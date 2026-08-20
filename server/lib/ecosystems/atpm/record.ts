@@ -332,12 +332,15 @@ export function assertAtpmBlobDigest(cid: string, archiveSha256: string | null):
  * Drydock reviews. Query ordering and percent-encoding may differ, but the
  * endpoint, DID, and CID must be exact and no extra parameters are accepted.
  */
-export function assertAtpmTarballUrl(entry: AtpmVersion, expectedUrl: string): void {
+export function assertAtpmTarballUrl(
+  entry: { declaredTarball: string | null },
+  expectedUrl: string,
+): void {
   let declared: URL;
   try {
     declared = new URL(entry.declaredTarball ?? "");
   } catch {
-    throw new PublicDiffError("package record has no readable dist.tarball URL", 502);
+    throw new PublicDiffError("record has no readable dist.tarball URL", 502);
   }
   const expected = new URL(expectedUrl);
   const parameters = [...declared.searchParams];

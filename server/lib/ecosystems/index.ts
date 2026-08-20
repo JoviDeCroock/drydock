@@ -1,4 +1,6 @@
+import { atpmAdapter } from "./atpm";
 import { atpmPublicDiff } from "./atpm/public-diff";
+import { atpmWorkflowGateAdapter } from "./atpm/workflow-gate";
 import { npmAdapter } from "./npm";
 import { npmPublicDiff } from "./npm/public-diff";
 import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
@@ -23,8 +25,10 @@ import type { PublicDiffAdapter } from "../public-diff/types";
  *    adapter; releases reach review through a workflow gate.
  *  - VS Code is gate-only today: the Marketplace has no staging concept and the
  *    public diff surface does not cover extensions.
- *  - atpm is public-diff-only: releases live in the publisher's own AT Protocol
- *    repository, which Drydock reads but has no gate on and no stage API for.
+ *  - atpm has all three, and reaches every one of them without a credential:
+ *    its staged candidates and published releases are both public records in
+ *    the publisher's own AT Protocol repository, and its gate holds the
+ *    *approval* job rather than the publish job.
  */
 const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
   npm: {
@@ -48,6 +52,8 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
   atpm: {
     id: "atpm",
     label: ECOSYSTEM_LABELS.atpm,
+    staged: atpmAdapter as unknown as PackageAdapter<never, AdapterBroker>,
+    gate: atpmWorkflowGateAdapter,
     publicDiff: atpmPublicDiff,
   },
 };
@@ -93,9 +99,10 @@ export function getPublicDiffAdapter(ecosystem: string): PublicDiffAdapter | und
 }
 
 /**
- * Resolve the registry-staging review adapter for an ecosystem. Only npm can
- * stage a release candidate in the registry today; every other ecosystem
- * reaches review through a workflow gate.
+ * Resolve the staged-review adapter for an ecosystem — the one that reviews a
+ * release candidate the registry is holding, before its publisher approves it.
+ * npm and atpm can both do that; PyPI and the Marketplace have no staging
+ * concept, so their releases reach review through a workflow gate.
  */
 export function getStagedAdapter(ecosystem: string): PackageAdapter<never, AdapterBroker> {
   const adapter = getEcosystem(ecosystem)?.staged;

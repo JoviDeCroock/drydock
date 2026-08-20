@@ -59,6 +59,10 @@ export interface NpmGateDetails {
 export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
   id: "npm",
 
+  // Candidates arrive as GitHub Actions artifacts; only the published npm
+  // baseline is fetched, and that needs no credential.
+  requiresConnection: false,
+
   parseInput(raw: unknown): NpmGateAdapterInput {
     if (!isRecord(raw)) throw new Error("npm gate adapter input must be an object");
     const manifest = parseNpmReleaseManifest(raw.manifest);

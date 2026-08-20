@@ -26,6 +26,10 @@ import type {
 
 export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
   id: "pypi",
+
+  // Gate-only: candidates arrive as GitHub Actions artifacts, and the PyPI
+  // baseline is downloaded credential-free from files.pythonhosted.org.
+  requiresConnection: false,
   codePatternSet: "python",
 
   parseInput(raw: unknown): PyPiAdapterInput {

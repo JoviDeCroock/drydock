@@ -123,6 +123,33 @@ export async function prepareReleaseCandidatesForGate(
   }
 
   const ecosystemLabel = releaseTarget.ecosystem ?? "auto";
+
+  // An ecosystem whose candidate is not something CI uploads never touches the
+  // bundle path: no artifact is fetched, downloaded, or parsed for it. atpm is
+  // the case — its candidate is a record in the publisher's own repository —
+  // and the adapter owes the run-binding the bundle download would otherwise
+  // have provided. See `WorkflowGateAdapter.prepareReleaseCandidatesFromTarget`.
+  const targetSourced = releaseTarget.ecosystem
+    ? getEcosystem(releaseTarget.ecosystem)?.gate?.prepareReleaseCandidatesFromTarget
+    : undefined;
+  if (targetSourced) {
+    try {
+      const candidates = await targetSourced({
+        env,
+        executionCtx: ctx,
+        organizationId: gate.organizationId,
+        repositoryFullName: gate.repositoryFullName,
+        runId: gate.runId,
+        environment: gate.environment,
+        publisherRef: releaseTarget.publisherRef,
+      });
+      return { gate, packages: candidates.map(toPreparedPackage) };
+    } catch (err) {
+      await markGateFailed(db, gate, ecosystemLabel, err);
+      throw err;
+    }
+  }
+
   const { classify, artifactName, artifactNamePrefix } = resolveBundleClassifier(
     db,
     gate,
@@ -154,24 +181,39 @@ export async function prepareReleaseCandidatesForGate(
     const packages = prepareBundlePackages(bundle.artifacts);
     return { gate, packages };
   } catch (err) {
-    const reason =
-      err instanceof WorkflowArtifactError
-        ? err.code
-        : err instanceof UnsupportedEcosystemError
-          ? "unsupported_ecosystem"
-          : "preparation_failed";
-    await markGateErroredSafe(db, gate.id, reason);
-    emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
-      gateId: gate.id,
-      organizationId: gate.organizationId,
-      repositoryFullName: gate.repositoryFullName,
-      runId: gate.runId,
-      ecosystem: ecosystemLabel,
-      reason,
-      error: describeOperationalError(err),
-    });
+    await markGateFailed(db, gate, ecosystemLabel, err);
     throw err;
   }
+}
+
+/**
+ * Record a preparation failure and leave the gate blocked. Shared by both
+ * sources of candidates so a target-sourced gate that cannot bind a candidate
+ * fails exactly the way an unreadable bundle does: errored, logged with its
+ * typed reason, and never auto-approved.
+ */
+async function markGateFailed(
+  db: AppDb,
+  gate: WorkflowGateRecord,
+  ecosystem: string,
+  err: unknown,
+): Promise<void> {
+  const reason =
+    err instanceof WorkflowArtifactError
+      ? err.code
+      : err instanceof UnsupportedEcosystemError
+        ? "unsupported_ecosystem"
+        : "preparation_failed";
+  await markGateErroredSafe(db, gate.id, reason);
+  emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
+    gateId: gate.id,
+    organizationId: gate.organizationId,
+    repositoryFullName: gate.repositoryFullName,
+    runId: gate.runId,
+    ecosystem,
+    reason,
+    error: describeOperationalError(err),
+  });
 }
 
 /**
@@ -255,6 +297,14 @@ function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePack
     }
   }
   return packages;
+}
+
+/** Pair a prepared candidate with the review adapter its ecosystem declares. */
+function toPreparedPackage(candidate: PreparedReleaseCandidate): PreparedGatePackage {
+  return {
+    candidate,
+    packageAdapter: getWorkflowGateAdapter(candidate.ecosystem).packageAdapter,
+  };
 }
 
 async function markGateErroredSafe(db: AppDb, gateId: string, reason: string): Promise<void> {

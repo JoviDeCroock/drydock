@@ -412,6 +412,12 @@ export const githubReleaseTargets = sqliteTable(
     // Optional override for the GitHub Actions artifact the release bundle is
     // downloaded from. Null falls back to the ecosystem default.
     artifactName: text("artifact_name"),
+    // Ecosystem-specific publisher identity this target releases as, for gates
+    // whose candidate lives somewhere other than the workflow's own uploads.
+    // atpm sets it to the publishing account (`@handle` or a DID), which is
+    // what names the AT Protocol repository holding the staged record. Null for
+    // every ecosystem whose candidate is an uploaded artifact.
+    publisherRef: text("publisher_ref"),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
     environment: text("environment").notNull(),
