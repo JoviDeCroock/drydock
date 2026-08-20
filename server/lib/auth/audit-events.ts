@@ -177,6 +177,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release target removed",
     severity: "notice",
   },
+  "atpm_publisher.connected": {
+    category: "integration",
+    label: "atpm publisher connected",
+    severity: "notice",
+    summarize: (m) => str(m.handle) ?? str(m.did),
+  },
+  "atpm_publisher.disconnected": {
+    category: "integration",
+    label: "atpm publisher disconnected",
+    severity: "notice",
+    summarize: (m) => str(m.handle) ?? str(m.did),
+  },
   "organization.slack_connected": {
     category: "integration",
     label: "Slack connected",

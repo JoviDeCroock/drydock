@@ -144,8 +144,18 @@ export async function discoverAtpmStagedCandidates(
       await env.SCAN_QUEUE.send(message);
       queued = true;
     } else {
+      // Local/dev fallback. `executeScanJob` records its own terminal state, so
+      // anything escaping it is unexpected and must still be attributable
+      // rather than becoming a bare unhandled rejection.
       executionCtx.waitUntil(
-        executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
+        executeScanJob(env, executionCtx, message, db, { finalAttempt: true }).catch((err) =>
+          emitOperationalEvent("error", "scan.job.unhandled", {
+            scanId,
+            organizationId,
+            stageId,
+            error: describeOperationalError(err),
+          }),
+        ),
       );
     }
   }

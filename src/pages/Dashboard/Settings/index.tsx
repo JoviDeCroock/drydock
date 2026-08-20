@@ -9,6 +9,7 @@ import {
 import { sessionModel } from "../../../models/auth";
 import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
+import { AtpmPublishersModel } from "../../../models/atpm-publishers";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { SlackConnectionModel } from "../../../models/slack-connection";
 import { OrganizationModel } from "../../../models/organization";
@@ -31,6 +32,7 @@ import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
+import { AtpmPublisherSection } from "./AtpmPublisherSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
 import { AuditLogSection } from "./AuditLogSection";
 import { SETTINGS_TABS, SettingsNav, isSettingsTab, type SettingsTab } from "./SettingsNav";
@@ -38,6 +40,7 @@ import { SETTINGS_TABS, SettingsNav, isSettingsTab, type SettingsTab } from "./S
 export default function SettingsPage() {
   const location = useLocation();
   const npm = useModel(NpmConnectionModel);
+  const atpm = useModel(AtpmPublishersModel);
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
   const members = useModel(MembersModel);
@@ -65,6 +68,16 @@ export default function SettingsPage() {
     slack.noteCallback(slackParam, location.query.slackError);
     location.route(buildQueryUrl({ slack: null, slackError: null }), true);
   }, [location.query.slack]);
+
+  // Same one-shot pattern for the AT Protocol sign-in: the callback is a
+  // redirect, so its outcome arrives as query params rather than a response.
+  useEffect(() => {
+    const connected = location.query.atpmConnected;
+    const failed = location.query.atpmError;
+    if (!connected && !failed) return;
+    atpm.noteCallback(connected, failed);
+    location.route(buildQueryUrl({ atpmConnected: null, atpmError: null }), true);
+  }, [location.query.atpmConnected, location.query.atpmError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +221,11 @@ export default function SettingsPage() {
             {tab === "integrations" ? (
               <>
                 <NpmConnectionSection npm={npm} defaultOpen />
+                <AtpmPublisherSection
+                  atpm={atpm}
+                  canManage={canManageIntegrations(organizations)}
+                  defaultOpen
+                />
                 <GithubAppSection githubApp={githubApp} defaultOpen />
               </>
             ) : null}

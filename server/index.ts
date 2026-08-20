@@ -5,6 +5,8 @@ import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { listReleaseTargetsForEcosystem } from "./lib/github-app/persistence";
+import { listActiveAtpmPublishers, pruneExpiredAtpmOauthRequests } from "./db/atpm-publishers";
+import { ensureAtpmFirehose } from "./lib/ecosystems/atpm/firehose";
 import {
   discoverAtpmStagedCandidates,
   sweepAtpmPublishers,
@@ -61,10 +63,13 @@ import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
+import { atpmOauthMetadataRoutes, atpmPublisherRoutes } from "./routes/atpm-publishers";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/ecosystems/npm";
+// Durable Object class, exported for the ATPM_FIREHOSE binding.
+export { AtpmFirehose } from "./lib/ecosystems/atpm/firehose";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
@@ -173,6 +178,13 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
+
+// The AT Protocol OAuth client metadata document. Every authorization server a
+// publisher's PDS delegates to fetches it, and none of them has a session, so
+// it mounts before the auth middleware. It is a static description of this
+// client — no secrets, no organization data, and nothing that varies per
+// caller.
+app.route("/api/v1/atpm/oauth", atpmOauthMetadataRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
@@ -333,6 +345,7 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
+app.route("/api/v1/atpm", atpmPublisherRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 
 app.notFound(async (c) => {
@@ -487,10 +500,20 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
 /**
  * The atpm half of the same tick.
  *
- * It sweeps release targets rather than stored credentials, because an atpm
- * staged candidate is a public record: there is no token to hold, so nothing
- * else records which publishing accounts an organization has an interest in.
- * Configuring an atpm gate already names one, and that is what this reads.
+ * It sweeps enrolled publishers rather than stored credentials, because an atpm
+ * staged candidate is a public record: there is no token whose existence
+ * doubles as an enrolment, so control of the account is proved once and
+ * recorded in `atpm_publishers`.
+ *
+ * A release target that pins an atpm publisher is included too. Configuring a
+ * gate is itself a statement of interest in that account, and a maintainer who
+ * has done that should not have to enrol the same account twice to get the
+ * releases their gate never sees — the ones staged from a laptop.
+ *
+ * This is the backstop, not the primary trigger. atpm deletes a staged record
+ * on approval, so a candidate can appear and vanish well inside one tick; the
+ * firehose consumer exists because a poll alone silently misses those. Both
+ * feed the same deduplicated queue.
  *
  * Failures are contained inside the sweep so a publisher's PDS being
  * unreachable cannot take down the npm discovery that already ran.
@@ -501,19 +524,47 @@ async function sweepAtpmStagedCandidates(
   db: ReturnType<typeof createDb>,
 ): Promise<{ publishers: number; created: number; dispatched: number }> {
   try {
-    const targets = await listReleaseTargetsForEcosystem(db, "atpm");
-    if (!targets.length) return { publishers: 0, created: 0, dispatched: 0 };
+    await pruneExpiredAtpmOauthRequests(db).catch(() => {});
+    // A Durable Object does not start itself. The cron is the thing that
+    // reliably runs, so it is what knocks; `ensureAtpmFirehose` is idempotent
+    // and a no-op when the binding is absent or the killswitch is set.
+    await ensureAtpmFirehose(env).catch((err) =>
+      emitOperationalEvent("warn", "atpm_firehose.ensure_failed", {
+        error: describeOperationalError(err),
+      }),
+    );
 
-    const resolved = await Promise.all(
-      targets.map(async (target) => ({
+    const [enrolled, targets] = await Promise.all([
+      listActiveAtpmPublishers(db),
+      listReleaseTargetsForEcosystem(db, "atpm"),
+    ]);
+    if (!enrolled.length && !targets.length) {
+      return { publishers: 0, created: 0, dispatched: 0 };
+    }
+
+    const candidates = [
+      ...enrolled.map((publisher) => ({
+        organizationId: publisher.organizationId,
+        publisherRef: publisher.did,
+        createdByUserId: publisher.createdByUserId,
+      })),
+      ...targets.map((target) => ({
         organizationId: target.organizationId,
         publisherRef: target.publisherRef,
-        // The target's creator may have left the organization; the owner is the
-        // stable fallback, and a target with neither has nobody to attribute a
-        // scan to and is skipped rather than attributed to no one.
+        createdByUserId: target.createdByUserId,
+      })),
+    ];
+
+    const resolved = await Promise.all(
+      candidates.map(async (candidate) => ({
+        organizationId: candidate.organizationId,
+        publisherRef: candidate.publisherRef,
+        // Whoever enrolled or mapped it may have left the organization; the
+        // owner is the stable fallback, and one with neither has nobody to
+        // attribute a scan to and is skipped rather than attributed to no one.
         actorUserId:
-          target.createdByUserId ??
-          (await getOrganizationOwnerUserId(db, target.organizationId).catch(() => null)),
+          candidate.createdByUserId ??
+          (await getOrganizationOwnerUserId(db, candidate.organizationId).catch(() => null)),
       })),
     );
     return await sweepAtpmPublishers({

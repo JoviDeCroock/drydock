@@ -44,6 +44,22 @@
 			"binding": "LOADER"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "ATPM_FIREHOSE",
+				"class_name": "AtpmFirehose"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"AtpmFirehose"
+			]
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",

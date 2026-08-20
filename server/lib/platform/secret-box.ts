@@ -53,7 +53,16 @@ function splitCiphertext(value: string): string {
   return value;
 }
 
-async function encryptionKey(env: Cloudflare.Env) {
+function encryptionKey(env: Cloudflare.Env) {
+  return deriveAesKey(env, "drydock:slack-bot-token:salt:v1");
+}
+
+/**
+ * Derive an AES-GCM key from the shared secret under a caller-chosen HKDF salt.
+ * The salt is the domain separator: two callers using different salts cannot
+ * open each other's values even though the underlying secret is the same.
+ */
+async function deriveAesKey(env: Cloudflare.Env, salt: string) {
   const secret = env.NPM_CONNECTIONS_ENCRYPTION_KEY;
   if (!secret) throw new Error("NPM_CONNECTIONS_ENCRYPTION_KEY is required");
   if (secret.length < 32) {
@@ -70,7 +79,7 @@ async function encryptionKey(env: Cloudflare.Env) {
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: new TextEncoder().encode("drydock:slack-bot-token:salt:v1"),
+      salt: new TextEncoder().encode(salt),
       info: new TextEncoder().encode("aes-gcm-256"),
     },
     keyMaterial,
@@ -78,4 +87,49 @@ async function encryptionKey(env: Cloudflare.Env) {
     false,
     ["encrypt", "decrypt"],
   );
+}
+
+/**
+ * Symmetric encryption for a short-lived, non-token secret.
+ *
+ * Same construction and key material as the token boxes above, with its own
+ * HKDF domain so a value sealed here can never be opened as a Slack or npm
+ * credential. It exists for things that are key material but not credentials —
+ * the ephemeral DPoP private key held for the few minutes an AT Protocol
+ * authorization request is in flight. "It expires shortly" is a reason to bound
+ * exposure, not a reason to store it in the clear.
+ */
+export async function encryptSecretValue(
+  env: Cloudflare.Env,
+  plaintext: string,
+): Promise<{ ciphertext: string; nonce: string }> {
+  if (!plaintext) throw new Error("secret value is empty");
+  const key = await ephemeralSecretKey(env);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  return {
+    ciphertext: CIPHERTEXT_VERSION_V1 + base64UrlEncode(new Uint8Array(ciphertext)),
+    nonce: base64UrlEncode(nonce),
+  };
+}
+
+export async function decryptSecretValue(
+  env: Cloudflare.Env,
+  encrypted: { ciphertext: string; nonce: string },
+): Promise<string> {
+  const key = await ephemeralSecretKey(env);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64UrlDecode(encrypted.nonce) },
+    key,
+    base64UrlDecode(splitCiphertext(encrypted.ciphertext)),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
+async function ephemeralSecretKey(env: Cloudflare.Env) {
+  return deriveAesKey(env, "drydock:ephemeral-secret:salt:v1");
 }

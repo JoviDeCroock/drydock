@@ -3,6 +3,7 @@ import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../ser
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
 import { Badge } from "../../../components/Badge";
+import { LinkButton } from "../../../components/Button";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, MonoLabel, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
@@ -217,7 +218,7 @@ function readAtpmStagedDetails(
  */
 function AtpmStagedView({ staged }: { staged: AtpmStagedDetails }) {
   return (
-    <div class="flex flex-col gap-2">
+    <div class="flex flex-col gap-3">
       <dl class="flex flex-col gap-1 m-0">
         <DetailRow label="Approve" value={`npm stage approve ${staged.approveId}`} />
         <DetailRow label="Record" value={staged.uri} />
@@ -232,9 +233,22 @@ function AtpmStagedView({ staged }: { staged: AtpmStagedDetails }) {
           }
         />
       </dl>
+      <div class="flex flex-wrap items-center gap-2">
+        <LinkButton
+          href="https://atpm.dev/dash/stage"
+          target="_blank"
+          rel="noreferrer"
+          variant="secondary"
+          size="sm"
+        >
+          Approve on atpm
+        </LinkButton>
+      </div>
       <EmptyLine>
         Approving publishes these exact bytes: the candidate is pinned by content address, so
-        nothing is rebuilt or re-uploaded between this review and the release.
+        nothing is rebuilt or re-uploaded between this review and the release. Drydock does not
+        approve on your behalf — it holds no credential for your repository, so the last step stays
+        yours.
       </EmptyLine>
     </div>
   );
