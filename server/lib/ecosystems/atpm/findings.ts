@@ -342,10 +342,20 @@ function lostProvenanceEvidence(
   if (state.status === "invalid") {
     return `previous version was built by ${from}; this version's attestation does not verify`;
   }
-  if (state.status === "verified" && state.provenance.sourceRepository !== from) {
+  if (
+    state.status === "verified" &&
+    normalizeSourceRepository(state.provenance.sourceRepository) !== normalizeSourceRepository(from)
+  ) {
     return `previous version was built by ${from}; this version was built by ${state.provenance.sourceRepository}`;
   }
   return null;
+}
+
+function normalizeSourceRepository(value: string): string {
+  return value
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
 }
 
 /**

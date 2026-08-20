@@ -209,6 +209,24 @@ describe("atpm staged discovery", () => {
     expect(result.created).toBe(10);
   });
 
+  test("enforces the organization's shared scan quota across discovery sweeps", async () => {
+    const digits = "234567";
+    const records = Array.from({ length: 10 }, (_, index) =>
+      stageRecord(
+        `3lmaaaaaaaa${digits[Math.floor(index / 6)]}${digits[index % 6]}`,
+        `0.0.${index}`,
+      ),
+    );
+    expect(await sweep(records)).toMatchObject({ found: 10, created: 10, skipped: 0 });
+
+    expect(await sweep([stageRecord("3lmzzzzzzzzzz", "0.1.0")])).toMatchObject({
+      found: 1,
+      created: 0,
+      skipped: 1,
+    });
+    expect(queued).toHaveLength(10);
+  });
+
   test("skips a publisher reference that is not addressable", async () => {
     const result = await sweep([stageRecord("3lmaaaaaaaaaa", "0.0.16")], "not a handle");
     expect(result).toEqual({ found: 0, created: 0, skipped: 0, queued: false });

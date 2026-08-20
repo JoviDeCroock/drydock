@@ -40,6 +40,9 @@ export interface RateLimitInput {
   windowMs: number;
 }
 
+export const ORGANIZATION_SCAN_LIMIT = 10;
+export const ORGANIZATION_SCAN_WINDOW_MS = 60 * 60 * 1000;
+
 export class RateLimitError extends Error {
   constructor(public retryAfterSeconds: number) {
     super("rate limit exceeded");

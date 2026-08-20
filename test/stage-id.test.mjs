@@ -64,6 +64,16 @@ describe("parseScanInput", () => {
     });
   });
 
+  test("accepts a valid did:web reference longer than npm's opaque id limit", () => {
+    const host = `${Array.from({ length: 20 }, () => "aaaaaaa").join(".")}.com`;
+    const stageId = `atpm:did:web:${host}:3lmabcdefghij:e852a96a-83f5-5c21-97c4-dce5b2f116ad`;
+    expect(stageId.length).toBeGreaterThan(161);
+    expect(parseScanInput({ stageId })).toEqual({
+      ok: true,
+      input: { stageId, ecosystem: "atpm" },
+    });
+  });
+
   test("rejects a prefixed reference the ecosystem cannot read", () => {
     for (const stageId of [
       "atpm:did:plc:twegdcgytckr5cxm57gyruxa:NOTATID",

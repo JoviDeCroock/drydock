@@ -505,6 +505,25 @@ describe("provenance findings", () => {
     expect(finding.evidence).toContain("https://github.com/sigstore/sigstore-js");
   });
 
+  test("treats equivalent GitHub repository URI spellings as the same publisher", async () => {
+    const state = await verifiedFixture();
+    if (state.status !== "verified") throw new Error("fixture must verify");
+    expect(
+      findings({
+        provenance: {
+          status: "verified",
+          provenance: {
+            ...state.provenance,
+            sourceRepository: "https://github.com/Sigstore/Sigstore-JS.git/",
+          },
+        },
+        archiveSha512: SUBJECT_SHA512,
+        declaredName: "sigstore",
+        baseline: version({ provenance: state }),
+      }).map((finding) => finding.ruleId),
+    ).not.toContain("atpm.trusted-publishing-lost");
+  });
+
   test("does not read an unevaluated version as a regression", async () => {
     const state = await verifiedFixture();
     expect(

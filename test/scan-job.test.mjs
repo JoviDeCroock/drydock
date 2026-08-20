@@ -129,6 +129,14 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry an atpm candidate that disappeared before the scan started", () => {
+    expect(classifyScanError(new Error("staged release not found"))).toEqual({
+      code: "staged_tarball_unavailable",
+      message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    });
+  });
+
   test("does not retry archive file-count limit failures", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),

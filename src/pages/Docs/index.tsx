@@ -37,6 +37,14 @@ const TOC: Array<{ id: string; label: string; children: Array<{ id: string; labe
     ],
   },
   {
+    id: "atpm-publishing",
+    label: "atpm trusted publishing",
+    children: [
+      { id: "atpm-setup", label: "Configure the publisher" },
+      { id: "atpm-review", label: "Stage or gate a release" },
+    ],
+  },
+  {
     id: "workflow-gating",
     label: "GitHub workflow gates",
     children: [
@@ -106,7 +114,7 @@ export default function DocsPage() {
           gives a human the final decision.
         </p>
         <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-          About 5 minutes · No security background required · npm, PyPI, and VS Code
+          About 5 minutes · No security background required · npm, PyPI, VS Code, and atpm
         </p>
         <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
           <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -116,7 +124,7 @@ export default function DocsPage() {
             Learn what Drydock inspects and how a maintainer makes the call.
           </JourneyCard>
           <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-            Pick npm stage publish or a GitHub workflow gate for your release.
+            Pick npm staging, atpm trusted publishing, or a GitHub workflow gate.
           </JourneyCard>
         </nav>
       </header>
@@ -218,7 +226,7 @@ export default function DocsPage() {
                 </div>
                 <ol class="m-0 p-0 list-none grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
                   <ReviewStep number="01" label="Hold">
-                    npm or GitHub pauses a built release candidate.
+                    npm, atpm, or GitHub pauses a built release candidate.
                   </ReviewStep>
                   <ReviewStep number="02" label="Review">
                     Drydock compares the artifact, explains findings, and records provenance.
@@ -315,13 +323,13 @@ export default function DocsPage() {
                 Put the checkpoint where your release already pauses.
               </h2>
               <Prose>
-                Both paths create the same kind of Drydock report. The difference is who holds the
-                candidate while you review it.
+                Every path creates the same kind of Drydock report. The difference is who holds the
+                candidate while you review it and where the final decision happens.
               </Prose>
             </div>
 
             <Subsection id="path-comparison" title="Compare the paths">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <PathCard
                   title="npm stage publish"
                   badge="npm only"
@@ -332,19 +340,28 @@ export default function DocsPage() {
                   decision="You finish or decline the publish in npm with 2FA."
                 />
                 <PathCard
+                  title="atpm trusted publishing"
+                  badge="atpm"
+                  href="#atpm-publishing"
+                  command="npm stage publish --provenance"
+                  bestFor="atpm packages using OIDC trusted publishing."
+                  heldBy="The publisher's AT Protocol repository holds the candidate."
+                  decision="You approve the staged record locally or from a gated job."
+                />
+                <PathCard
                   title="GitHub workflow gate"
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
-                  heldBy="A GitHub Environment holds the publish job."
+                  bestFor="PyPI, npm, VS Code, atpm, monorepos, and CI-first releases."
+                  heldBy="A GitHub Environment holds the publish or atpm approval job."
                   decision="You approve or reject the job from Drydock."
                 />
               </div>
               <Callout label="Quick decision">
-                If your release uses <Code>npm stage publish</Code>, start there. If CI builds the
-                artifact—or you publish to PyPI or the VS Code Marketplace—use a GitHub workflow
-                gate.
+                Use npm staging for npm's private candidate store. For atpm, use its credential-free
+                staged review and add a workflow gate when the approval should stay in CI. For PyPI,
+                the VS Code Marketplace, or other CI-first releases, use a GitHub workflow gate.
               </Callout>
             </Subsection>
           </section>
@@ -430,24 +447,102 @@ export default function DocsPage() {
             </Subsection>
           </section>
 
+          <section id="atpm-publishing" class="flex flex-col gap-8 scroll-mt-6">
+            <div class="flex flex-col gap-3">
+              <SectionLabel as="p">Path 2 · atpm trusted publishing</SectionLabel>
+              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
+                The publisher holds a public, content-addressed candidate.
+              </h2>
+              <Prose>
+                atpm uses GitHub OIDC for trusted publishing, so CI needs no long-lived token. A
+                staged release is a public record in the publisher's AT Protocol repository, and
+                Drydock verifies its provenance and reviews its content-addressed blob directly.
+              </Prose>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Requirement label="Publisher policy">Stage allowed, publish denied</Requirement>
+              <Requirement label="Drydock connection">None</Requirement>
+              <Requirement label="Final approval">npm stage approve</Requirement>
+            </div>
+
+            <Subsection id="atpm-setup" title="Configure the publisher">
+              <Steps
+                items={[
+                  <>Create a Drydock organization for the team that reviews the package.</>,
+                  <>
+                    In the publisher's AT Protocol repository, configure the package's{" "}
+                    <Code>dev.atpm.alpha.trustPublisher</Code> record with the GitHub owner,
+                    repository, and workflow allowed to stage it.
+                  </>,
+                  <>
+                    Set <Code>allowStage: true</Code> and <Code>allowPublish: false</Code>. The
+                    workflow may upload a candidate, but it cannot make that candidate public.
+                  </>,
+                  <>
+                    For automatic discovery or a workflow gate, open{" "}
+                    <Code>Organization settings → GitHub App</Code>, map the repository and
+                    environment, and set the release target's atpm publisher to its{" "}
+                    <Code>@handle</Code>, <Code>did:plc</Code>, or public <Code>did:web</Code>.
+                  </>,
+                ]}
+              />
+              <div class="flex flex-wrap gap-2 pt-1">
+                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
+                  Open Organization settings
+                </LinkButton>
+              </div>
+            </Subsection>
+
+            <Subsection id="atpm-review" title="Stage or gate a release">
+              <Steps
+                items={[
+                  <>
+                    From the package directory, run <Code>npm stage publish --provenance</Code>.
+                    atpm stores the candidate without publishing it.
+                  </>,
+                  <>
+                    Drydock discovers candidates for configured publishers. You can also start a
+                    scan with the candidate's <Code>atpm:&lt;did&gt;:&lt;rkey&gt;</Code> reference.
+                  </>,
+                  <>
+                    Review the report's artifact diff, verified build repository and workflow,
+                    package identity, and SHA-512 binding.
+                  </>,
+                  <>
+                    Approve with <Code>npm stage approve &lt;id&gt;</Code>. To keep approval in CI,
+                    use the gated two-job workflow below: one job stages, and the protected job
+                    approves the same candidate after Drydock releases it.
+                  </>,
+                ]}
+              />
+              <Callout label="Credential boundary">
+                Drydock reads public AT Protocol records and content-addressed blobs. It receives no
+                atpm credential and cannot stage, approve, reject, or publish a package.
+              </Callout>
+            </Subsection>
+          </section>
+
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">
-                Path 2 · GitHub workflow gates <Badge tone="info">Preview</Badge>
+                Path 3 · GitHub workflow gates <Badge tone="info">Preview</Badge>
               </SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 When the registry can't pause, the workflow can.
               </h2>
               <Prose>
-                CI builds the files, uploads them as a workflow artifact, and reaches a protected
-                publish job. GitHub asks Drydock for a decision; Drydock reviews the upload; a
-                maintainer approves or rejects; then the same workflow either publishes those exact
-                files or stops.
+                For npm, PyPI, and VS Code, CI uploads built files and reaches a protected publish
+                job. For atpm, the stage job writes the candidate to the publisher's repository and
+                the protected job holds its approval. GitHub asks Drydock for a decision before the
+                held job continues.
               </Prose>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Supported artifacts">whl, tar.gz, tgz, vsix</Requirement>
+              <Requirement label="Supported evidence">
+                whl, tar.gz, tgz, vsix, atpm stage
+              </Requirement>
               <Requirement label="Release hold">GitHub Environment</Requirement>
               <Requirement label="Publish credential">Stays in GitHub Actions</Requirement>
             </div>
@@ -466,7 +561,8 @@ export default function DocsPage() {
                   </>,
                   <>
                     Back in Drydock settings, map that repository and environment to the
-                    organization. You can optionally narrow the gate to one workflow artifact name.
+                    organization. You can optionally narrow an uploaded-artifact gate to one
+                    artifact name. For atpm, set the release target's atpm publisher instead.
                   </>,
                   <>
                     Add a build job that uploads release candidates and a publish job that uses the
@@ -483,10 +579,10 @@ export default function DocsPage() {
 
             <Subsection id="gate-bundle" title="Prepare the release artifacts">
               <Prose>
-                There is no Drydock manifest to maintain. Upload built <Code>.whl</Code>,{" "}
-                <Code>.tar.gz</Code>, <Code>.tgz</Code>, or <Code>.vsix</Code> files before the
-                protected job starts. Drydock derives the ecosystem, package name, and version from
-                metadata inside each archive.
+                For npm, PyPI, and VS Code, there is no Drydock manifest to maintain. Upload built{" "}
+                <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, or <Code>.vsix</Code>{" "}
+                files before the protected job starts. Drydock derives the ecosystem, package name,
+                and version from metadata inside each archive.
               </Prose>
               <Prose>
                 Generate <Code>SHA256SUMS</Code> beside the artifacts during the build, upload it
@@ -500,6 +596,12 @@ export default function DocsPage() {
                 ecosystem to PyPI; Drydock then processes them one at a time while keeping every
                 distribution in the review and provenance. A target left on auto-detect has no name
                 to match, so it keeps the smaller single-upload limits.
+              </Prose>
+              <Prose>
+                atpm is the exception: upload no workflow artifact for Drydock. The stage job writes
+                the candidate and its provenance to the publisher's repository; Drydock finds the
+                candidate whose verified certificate names the package, repository, and workflow
+                run, then holds the approval job.
               </Prose>
               <Callout label="Monorepos work as one gate">
                 Drydock groups uploaded files by package and opens a separate report for each one.
@@ -600,6 +702,31 @@ export default function DocsPage() {
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
               </WorkflowExample>
+              <WorkflowExample title="atpm staged approval">
+                {`jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm stage publish --provenance
+      - id: staged
+        run: echo "id=$(npm stage list --json | jq -r '.items[0].id')" >> "$GITHUB_OUTPUT"
+    outputs:
+      stageId: \${{ steps.staged.outputs.id }}
+
+  approve:
+    needs: stage
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - run: npm stage approve \${{ needs.stage.outputs.stageId }}`}
+              </WorkflowExample>
               <Callout label="Authentication stays in the publish job">
                 Add the registry authentication your release already uses—for example PyPI Trusted
                 Publishing, npm trusted publishing or a scoped token, or a VS Code Marketplace
@@ -615,17 +742,17 @@ export default function DocsPage() {
                     and sends Drydock a signed protection-rule request.
                   </>,
                   <>
-                    Drydock fetches the uploaded artifacts, recomputes their digests, derives
-                    package identities, and creates one report per package.
+                    Drydock fetches the uploaded artifacts—or the run-bound atpm staged record—then
+                    verifies identity and digests and creates one report per package.
                   </>,
                   <>
                     Review every report in the release set. Approve intended changes or reject the
                     gate when evidence is unsafe, unexpected, or incomplete.
                   </>,
                   <>
-                    After every package is approved, Drydock releases the GitHub job. The job
-                    verifies <Code>SHA256SUMS</Code> and publishes the downloaded files with its own
-                    registry credential. Any rejection stops the whole release.
+                    After every package is approved, Drydock releases the GitHub job. The job either
+                    verifies <Code>SHA256SUMS</Code> and publishes the downloaded files, or approves
+                    the bound atpm candidate. Any rejection stops the whole release.
                   </>,
                 ]}
               />

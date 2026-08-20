@@ -1,4 +1,10 @@
 import { type AppDb } from "../../../db/client";
+import {
+  ORGANIZATION_SCAN_LIMIT,
+  ORGANIZATION_SCAN_WINDOW_MS,
+  RateLimitError,
+  enforceRateLimit,
+} from "../../platform/rate-limit";
 import { type ScanSource, createScanJob, listExistingScanStageIds } from "../../../db/scans";
 import { resolveAtpmRepoIdentity } from "./identity";
 import { listAtpmStagedVersions } from "./stage-record";
@@ -95,6 +101,18 @@ export async function discoverAtpmStagedCandidates(
     if (existing.has(stageId)) {
       skipped++;
       continue;
+    }
+
+    try {
+      await enforceRateLimit(env, {
+        key: `scan:${organizationId}`,
+        limit: ORGANIZATION_SCAN_LIMIT,
+        windowMs: ORGANIZATION_SCAN_WINDOW_MS,
+      });
+    } catch (err) {
+      if (!(err instanceof RateLimitError)) throw err;
+      skipped += staged.length - index;
+      break;
     }
 
     const scanId = crypto.randomUUID();

@@ -3,7 +3,12 @@ import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
 import { getNpmConnection } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
+import {
+  ORGANIZATION_SCAN_LIMIT,
+  ORGANIZATION_SCAN_WINDOW_MS,
+  RateLimitError,
+  enforceRateLimit,
+} from "../lib/platform/rate-limit";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
@@ -71,8 +76,8 @@ scansRoutes.post("/", async (c) => {
     const organizationId = await requireActiveOrganization(c, db);
     await enforceRateLimit(c.env, {
       key: `scan:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
+      limit: ORGANIZATION_SCAN_LIMIT,
+      windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     });
 
     // Which adapter runs this review is decided by the staged reference itself,

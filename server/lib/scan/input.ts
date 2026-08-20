@@ -42,11 +42,13 @@ export function parseScanInput(
   }
 
   const stageId = String(body.stageId || "");
-  // The shared grammar bounds what may reach the column and every consumer of
-  // it; the adapter then decides whether the value is a reference it can read.
-  if (!isValidStageId(stageId)) return { ok: false, error: "invalid stageId", status: 400 };
-
   const ecosystem = ecosystemForStageId(stageId);
+  // npm references use the registry's bounded opaque-id grammar. Prefixed
+  // ecosystems own their bounds because a valid address (notably did:web) may
+  // be longer than npm's identifier limit.
+  if (ecosystem === "npm" && !isValidStageId(stageId)) {
+    return { ok: false, error: "invalid stageId", status: 400 };
+  }
   if (!isKnownStageReference(ecosystem, stageId)) {
     return { ok: false, error: `invalid ${ecosystem} stageId`, status: 400 };
   }

@@ -5,7 +5,7 @@ Source of truth for visual decisions in this repo. Read this before changing fon
 ## Product Context
 
 - **What this is:** A second pair of eyes before a release is published. A candidate artifact is scanned, deterministic rules flag risky content, AI advisory review reads changed files, and a human approves or rejects the release. Drydock never publishes — approval always happens in the registry or in GitHub.
-- **How releases reach it:** two paths, one review surface. **npm registry staging** reviews a staged `npm stage publish` tarball; **workflow gates** hold a GitHub Actions publish job behind a deployment-protection rule while npm, PyPI, and VS Code artifacts are reviewed. Both render the same report — ecosystem and release path change the evidence, never the layout.
+- **How releases reach it:** three paths, one review surface. **npm registry staging** reviews a private staged tarball; **atpm staging** reviews a public, content-addressed candidate with verified build provenance; **workflow gates** hold a GitHub Actions publish job, or an atpm approval job, behind a deployment-protection rule. All render the same report — ecosystem and release path change the evidence, never the layout.
 - **Surfaces:** the authenticated scan workbench (dashboard, scan detail, settings), the public docs learning path, the marketing landing, and `/diff` — an anonymous, credential-free diff of two published npm, PyPI, or atpm versions that reuses the same review UI without an account.
 - **Who it's for:** Package authors, security-conscious maintainers, and reviewers at companies that publish to public registries.
 - **Space/industry:** Supply-chain security / developer tooling. Adjacent products: Socket, Snyk Advisor, Aikido, GitHub Advisory Database, vlt.sh.
@@ -212,7 +212,7 @@ The public docs are a learning path first and a configuration reference second. 
 - **Wayfinding:** keep the sticky `200px` desktop rail and native mobile `<details>` jump list. The hero may add a three-card numbered learning path, but it links into the same page instead of creating parallel navigation.
 - **Conceptual flow:** show `Hold → Review → Decide` inside one document-shaped Card with internal dividers. Follow it with compact label/question/evidence rows in the same shell; do not turn each step or answer into its own Card.
 - **Report anatomy:** teach with a compact document-shaped Card using label/value/evidence rows. Severity tones only communicate the example's actual risk state.
-- **Setup comparison:** present release paths as two equal Cards with the same labeled fields (`Best for`, `Held by`, `Decision`) so readers compare contracts rather than marketing claims.
+- **Setup comparison:** present release paths as three equal Cards with the same labeled fields (`Best for`, `Held by`, `Decision`) so readers compare contracts rather than marketing claims.
 - **Long code:** workflow examples use native `<details>` disclosures. Keep one representative example open by default; secondary ecosystems stay collapsed so code does not dominate the reading path.
 - **Callouts:** a `2px` accent left rule with `--accent-soft` fill is reserved for a key question, decision rule, trust boundary, or fail-closed note. It is not a generic highlight box.
 - **Copy:** define product terms in plain language on first use. Keep conceptual paragraphs under `680px`; operational steps use numbered lists and one action per step.
