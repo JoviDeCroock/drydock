@@ -5,7 +5,13 @@ import {
   reliablePublicHttpsFetch,
   type AtpmRepoIdentity,
 } from "./identity";
-import { readAtpmAttestation, verifyAtpmProvenance, type AtpmProvenanceState } from "./provenance";
+import {
+  ATPM_PROVENANCE_ABSENT,
+  ATPM_PROVENANCE_NOT_EVALUATED,
+  readAtpmAttestation,
+  verifyAtpmProvenance,
+  type AtpmProvenanceState,
+} from "./provenance";
 import { isValidAtpmVersion } from "./record";
 import { UUID_NAMESPACE_URL, uuidV5 } from "../../platform/uuid";
 import { PublicDiffError } from "../../public-diff/error";
@@ -34,7 +40,7 @@ export const ATPM_STAGE_COLLECTION = "dev.atpm.alpha.stage";
  * Cache-identity and behavior version for reading staged records. Bump when the
  * retained shape or its validation changes.
  */
-export const ATPM_STAGE_RULES_VERSION = "1";
+export const ATPM_STAGE_RULES_VERSION = "2";
 
 const STAGE_TIMEOUT_MS = 10_000;
 
@@ -45,6 +51,9 @@ const MAX_STAGE_RECORD_BYTES = 4 * 1024 * 1024;
 const MAX_STAGE_PAGE_BYTES = 8 * 1024 * 1024;
 
 const STAGE_PAGE_SIZE = 100;
+
+/** Sigstore verification is intentionally bounded across an entire listing. */
+const MAX_VERIFIED_STAGE_RECORDS = 64;
 
 /**
  * How many listing pages of staged candidates are read per repository. A
@@ -74,8 +83,10 @@ export interface AtpmStagedVersion {
   /** Scoped package name the candidate claims, e.g. `@ebey.dev/counter`. */
   declaredName: string;
   version: string;
-  /** Version the candidate's own npm manifest claims, which must agree. */
-  declaredVersion: string | null;
+  /** Name the candidate's embedded npm manifest claims, which must agree. */
+  declaredManifestName: string;
+  /** Version the candidate's embedded npm manifest claims, which must agree. */
+  declaredVersion: string;
   /** Dist-tag the candidate would take on approval. */
   tag: string | null;
   createdAt: string;
@@ -102,7 +113,7 @@ interface RawStageRecord {
 export async function listAtpmStagedVersions(
   identity: AtpmRepoIdentity,
 ): Promise<AtpmStagedVersion[]> {
-  const staged: AtpmStagedVersion[] = [];
+  const staged: Array<{ candidate: AtpmStagedVersion; attestation: unknown }> = [];
   let cursor: string | undefined;
 
   for (let page = 0; page < MAX_STAGE_PAGES; page++) {
@@ -128,22 +139,41 @@ export async function listAtpmStagedVersions(
     );
     // An empty collection is not an error; a repository with nothing staged
     // answers with an empty list, and some PDS builds answer 400 instead.
-    if (body?.error === "RecordNotFound") return staged;
+    if (body?.error === "RecordNotFound") break;
     if (!response.ok || !body) throw new PublicDiffError("staged record listing failed", 502);
 
     const records = Array.isArray(body.records) ? body.records : [];
+    // `limit=100` is part of the XRPC response contract. Enforcing it locally
+    // keeps a malicious PDS from multiplying parsing or signature work inside
+    // one otherwise byte-bounded response.
+    if (records.length > STAGE_PAGE_SIZE) {
+      throw new PublicDiffError("staged record listing exceeded page limit", 502);
+    }
     for (const record of records) {
-      const parsed = await parseStageRecord(identity, record as RawStageRecord);
+      const rawRecord = record as RawStageRecord;
+      const parsed = await parseStageRecord(identity, rawRecord, false);
       // A malformed candidate is skipped rather than fatal: one unreadable
       // record in a repository must not hide every other pending release.
-      if (parsed) staged.push(parsed);
+      if (parsed) {
+        const meta = asObject(asObject(rawRecord.value)?.meta);
+        staged.push({ candidate: parsed, attestation: readAtpmAttestation(meta) });
+      }
     }
 
     cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : undefined;
     if (!cursor || records.length === 0) break;
   }
 
-  return staged.sort((a, b) => (a.rkey < b.rkey ? 1 : a.rkey > b.rkey ? -1 : 0));
+  staged.sort((a, b) =>
+    a.candidate.rkey < b.candidate.rkey ? 1 : a.candidate.rkey > b.candidate.rkey ? -1 : 0,
+  );
+  // TIDs carry creation order. Verify only the newest bounded slice after
+  // sorting rather than trusting the PDS to return records in that order.
+  for (const { candidate, attestation } of staged.slice(0, MAX_VERIFIED_STAGE_RECORDS)) {
+    if (candidate.provenance.status !== "not-evaluated") continue;
+    candidate.provenance = await verifyAtpmProvenance(attestation);
+  }
+  return staged.map(({ candidate }) => candidate);
 }
 
 /** Fetch one staged candidate by record key, or 404 the way a registry would. */
@@ -182,6 +212,9 @@ export async function fetchAtpmStagedVersion(
 
   const parsed = await parseStageRecord(identity, body);
   if (!parsed) throw new PublicDiffError("staged record is not a readable atpm candidate", 502);
+  if (parsed.rkey !== rkey) {
+    throw new PublicDiffError("staged record response did not match the requested key", 502);
+  }
   return parsed;
 }
 
@@ -196,6 +229,7 @@ export async function fetchAtpmStagedVersion(
 export async function parseStageRecord(
   identity: AtpmRepoIdentity,
   record: RawStageRecord,
+  verifyProvenance = true,
 ): Promise<AtpmStagedVersion | null> {
   const uri = typeof record.uri === "string" ? record.uri : null;
   const recordCid = typeof record.cid === "string" ? record.cid : null;
@@ -227,6 +261,9 @@ export async function parseStageRecord(
 
   const meta = asObject(value.meta);
   if (!meta) return null;
+  const declaredManifestName = typeof meta.name === "string" ? meta.name : null;
+  const declaredVersion = typeof meta.version === "string" ? meta.version : null;
+  if (!declaredManifestName || !declaredVersion) return null;
   const dist = asObject(meta.dist);
   const declaredShasum = typeof dist?.shasum === "string" ? dist.shasum.trim() : null;
   if (dist?.shasum !== undefined && (!declaredShasum || !/^[0-9a-f]{40}$/i.test(declaredShasum))) {
@@ -244,7 +281,8 @@ export async function parseStageRecord(
     stageId: await uuidV5(`${uri}/${recordCid}`, UUID_NAMESPACE_URL),
     declaredName,
     version,
-    declaredVersion: typeof meta.version === "string" ? meta.version : null,
+    declaredManifestName,
+    declaredVersion,
     tag: firstTag(value.tags),
     createdAt: value.createdAt,
     cid,
@@ -252,7 +290,11 @@ export async function parseStageRecord(
     declaredShasum,
     declaredIntegrity: typeof dist?.integrity === "string" ? dist.integrity : null,
     declaredTarball: typeof dist?.tarball === "string" ? dist.tarball : null,
-    provenance: await verifyAtpmProvenance(readAtpmAttestation(meta)),
+    provenance: verifyProvenance
+      ? await verifyAtpmProvenance(readAtpmAttestation(meta))
+      : readAtpmAttestation(meta) === null
+        ? ATPM_PROVENANCE_ABSENT
+        : ATPM_PROVENANCE_NOT_EVALUATED,
   };
 }
 

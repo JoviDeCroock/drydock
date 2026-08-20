@@ -123,6 +123,7 @@ describe("parseStageRecord", () => {
     expect(parsed).toMatchObject({
       rkey: RKEY,
       declaredName: "@ebey.dev/counter",
+      declaredManifestName: "@ebey.dev/counter",
       version: "0.0.16",
       declaredVersion: "0.0.16",
       tag: "latest",
@@ -151,6 +152,8 @@ describe("parseStageRecord", () => {
       { blob: { $type: "blob", ref: { $link: "../../etc/passwd" }, size: 1, mimeType: "x" } },
       { blob: { $type: "blob", ref: { $link: CID }, size: -1, mimeType: "x" } },
       { meta: undefined },
+      { meta: { version: "0.0.16", dist: {} } },
+      { meta: { name: "@ebey.dev/counter", dist: {} } },
       { name: undefined },
       { version: "bad/version" },
       { createdAt: "yesterday" },
@@ -204,6 +207,40 @@ describe("listAtpmStagedVersions", () => {
     stubFetch(() => new Response("nope", { status: 500 }));
     await expect(listAtpmStagedVersions(identity)).rejects.toThrow(PublicDiffError);
   });
+
+  test("rejects a PDS page larger than the requested record limit", async () => {
+    stubFetch(() => Response.json({ records: Array.from({ length: 101 }, () => stageRecord()) }));
+    await expect(listAtpmStagedVersions(identity)).rejects.toMatchObject({ status: 502 });
+  });
+
+  test("verifies provenance only for the newest 64 staged records", async () => {
+    const alphabet = "234567abcdefghijklmnopqrstuvwxyz";
+    const tid = (index: number) => {
+      let encoded = "";
+      let value = index;
+      for (let i = 0; i < 10; i++) {
+        encoded = alphabet[value % alphabet.length] + encoded;
+        value = Math.floor(value / alphabet.length);
+      }
+      return `3lm${encoded}`;
+    };
+    const records = Array.from({ length: 65 }, (_, index) => {
+      const record = stageRecord({}, tid(index));
+      (record.value.meta.dist as Record<string, unknown>).attestations = {
+        provenance: { mediaType: "invalid" },
+      };
+      return record;
+    });
+    stubFetch(() => Response.json({ records }));
+
+    const staged = await listAtpmStagedVersions(identity);
+    expect(staged.filter((candidate) => candidate.provenance.status === "invalid")).toHaveLength(
+      64,
+    );
+    expect(
+      staged.filter((candidate) => candidate.provenance.status === "not-evaluated"),
+    ).toHaveLength(1);
+  });
 });
 
 describe("fetchAtpmStagedVersion", () => {
@@ -212,6 +249,11 @@ describe("fetchAtpmStagedVersion", () => {
   test("reads one candidate by record key", async () => {
     stubFetch(() => Response.json(stageRecord()));
     expect((await fetchAtpmStagedVersion(identity, RKEY)).version).toBe("0.0.16");
+  });
+
+  test("rejects a response for a different staged record key", async () => {
+    stubFetch(() => Response.json(stageRecord({}, "3lmzzzzzzzzzz")));
+    await expect(fetchAtpmStagedVersion(identity, RKEY)).rejects.toMatchObject({ status: 502 });
   });
 
   test("reports an approved or withdrawn candidate as gone", async () => {
@@ -232,6 +274,7 @@ describe("atpmStagedFindings", () => {
   function staged(overrides: Partial<AtpmStagedVersion> = {}) {
     return {
       declaredName: "@ebey.dev/counter",
+      declaredManifestName: "@ebey.dev/counter",
       version: "0.0.16",
       declaredVersion: "0.0.16",
       provenance: { status: "absent" } as const,
@@ -270,7 +313,10 @@ describe("atpmStagedFindings", () => {
     // atpm's own stage endpoint rejects this, so a candidate carrying it could
     // not have been staged through atpm at all.
     const findings = atpmStagedFindings({
-      staged: staged({ declaredName: "@someone.else/counter" }),
+      staged: staged({
+        declaredName: "@someone.else/counter",
+        declaredManifestName: "@someone.else/counter",
+      }),
       manifest: { name: "@someone.else/counter", version: "0.0.16" } as never,
       archiveSha1: null,
       archiveSha512: null,
@@ -284,7 +330,10 @@ describe("atpmStagedFindings", () => {
   test("does not invent a scope disagreement when no handle was proven", () => {
     expect(
       atpmStagedFindings({
-        staged: staged({ declaredName: "@someone.else/counter" }),
+        staged: staged({
+          declaredName: "@someone.else/counter",
+          declaredManifestName: "@someone.else/counter",
+        }),
         manifest: { name: "@someone.else/counter", version: "0.0.16" } as never,
         archiveSha1: null,
         archiveSha512: null,
@@ -304,5 +353,17 @@ describe("atpmStagedFindings", () => {
       verifiedHandle: "ebey.dev",
     });
     expect(findings[0].evidence).toContain("staged meta.version 9.9.9");
+  });
+
+  test("flags an embedded manifest name that disagrees with the tarball", () => {
+    const findings = atpmStagedFindings({
+      staged: staged({ declaredManifestName: "@ebey.dev/copied" }),
+      manifest,
+      archiveSha1: null,
+      archiveSha512: null,
+      trustPublisher: null,
+      verifiedHandle: "ebey.dev",
+    });
+    expect(findings[0].evidence).toContain("staged meta.name @ebey.dev/copied");
   });
 });

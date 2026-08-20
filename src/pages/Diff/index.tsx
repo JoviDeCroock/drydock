@@ -708,7 +708,9 @@ function ProvenanceRow({
 }
 
 function buildProvenanceTone(attestation: PublicDiffAttestation) {
-  if (attestation.status === "invalid") return "high" as const;
+  if (attestation.status === "invalid" || attestation.status === "mismatch") {
+    return "high" as const;
+  }
   if (attestation.status === "verified") {
     return attestation.match === "repository-mismatch" || attestation.match === "workflow-mismatch"
       ? ("high" as const)
@@ -719,6 +721,7 @@ function buildProvenanceTone(attestation: PublicDiffAttestation) {
 
 function buildProvenanceLabel(attestation: PublicDiffAttestation) {
   if (attestation.status === "verified") return "verified";
+  if (attestation.status === "mismatch") return "different artifact";
   if (attestation.status === "invalid") return "does not verify";
   if (attestation.status === "absent") return "not attested";
   return "not checked";
@@ -727,6 +730,9 @@ function buildProvenanceLabel(attestation: PublicDiffAttestation) {
 function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch: boolean) {
   if (attestation.status === "invalid") {
     return `This version carries a build attestation that does not verify: ${attestation.reason ?? "unreadable"}. Nothing about where it was built can be concluded from it.`;
+  }
+  if (attestation.status === "mismatch") {
+    return `The signature is valid, but it does not describe this release: ${attestation.reason ?? "the package or digest differs"}. The build details below belong to another artifact.`;
   }
   if (attestation.status === "absent") {
     return attestation.declared

@@ -351,7 +351,10 @@ function lostProvenanceEvidence(
  * the scope can and must be compared against the handle this resolution proved.
  */
 export function atpmStagedFindings(args: {
-  staged: Pick<AtpmStagedVersion, "declaredName" | "version" | "declaredVersion" | "provenance"> & {
+  staged: Pick<
+    AtpmStagedVersion,
+    "declaredName" | "declaredManifestName" | "version" | "declaredVersion" | "provenance"
+  > & {
     shasum?: string | null;
   };
   manifest: PackageJsonSummary | null;
@@ -389,7 +392,10 @@ export function atpmStagedFindings(args: {
 }
 
 function stagedMismatches(args: {
-  staged: Pick<AtpmStagedVersion, "declaredName" | "version" | "declaredVersion">;
+  staged: Pick<
+    AtpmStagedVersion,
+    "declaredName" | "declaredManifestName" | "version" | "declaredVersion"
+  >;
   manifest: PackageJsonSummary | null;
   verifiedHandle: string | null;
 }): string[] {
@@ -407,6 +413,11 @@ function stagedMismatches(args: {
 
   if (manifestName && staged.declaredName !== manifestName) {
     mismatches.push(`staged name ${staged.declaredName} != package.json name ${manifestName}`);
+  }
+  if (manifestName && staged.declaredManifestName !== manifestName) {
+    mismatches.push(
+      `staged meta.name ${staged.declaredManifestName} != package.json name ${manifestName}`,
+    );
   }
   for (const [label, declared] of [
     ["version", staged.version],

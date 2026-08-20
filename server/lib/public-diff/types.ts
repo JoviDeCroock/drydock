@@ -59,10 +59,10 @@ export interface PublicDiffAttestationBuild {
  * calls this path deliberately does not make.
  */
 export interface PublicDiffAttestation {
-  status: "verified" | "invalid" | "absent" | "not-evaluated";
-  /** Set when `status` is `verified`. */
+  status: "verified" | "mismatch" | "invalid" | "absent" | "not-evaluated";
+  /** Set when a bundle verified intrinsically, including an artifact mismatch. */
   build?: PublicDiffAttestationBuild;
-  /** Set when `status` is `invalid`: why the bundle did not verify. */
+  /** Why the bundle did not verify or did not describe this artifact. */
   reason?: string;
   /** What the publisher declared as their trusted build pipeline, if anything. */
   declared?: {

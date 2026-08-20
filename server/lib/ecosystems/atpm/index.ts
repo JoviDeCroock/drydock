@@ -10,6 +10,7 @@ import {
 import { fetchAtpmStagedVersion, type AtpmStagedVersion } from "./stage-record";
 import { parseAtpmStageId, type AtpmStageRef } from "./stage-ref";
 import { fetchAtpmTrustPublisher, type AtpmTrustPublisher } from "./trust-publisher";
+import { atpmPurl } from "./provenance";
 import { buildNpmFindings } from "../npm/findings";
 import { compareSemver } from "../npm/registry";
 import type { AdapterBroker, BaselineInfo, PackageAdapter } from "../package-adapter";
@@ -42,6 +43,14 @@ import { PublicDiffError } from "../../public-diff/error";
 export interface AtpmAdapterInput {
   ref: AtpmStageRef;
   maxFiles?: number;
+  /** Immutable evidence selected by an atpm workflow gate before this scan starts. */
+  gateBinding?: AtpmGateBinding;
+}
+
+export interface AtpmGateBinding {
+  recordCid: string;
+  subjectName: string;
+  subjectSha512: string;
 }
 
 /**
@@ -63,8 +72,9 @@ export interface AtpmStagedDetails {
   /** Unscoped record key the candidate would publish under. */
   recordName: string;
   version: string;
-  /** Version the candidate's own manifest claims, which must agree with above. */
-  declaredVersion: string | null;
+  /** Name and version the candidate's own manifest claims; both must agree. */
+  declaredManifestName: string;
+  declaredVersion: string;
   tag: string | null;
   createdAt: string;
   cid: string;
@@ -101,7 +111,12 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
     const ref = parseAtpmStageId(typeof value.stageId === "string" ? value.stageId.trim() : "");
     if (!ref) throw new Error("invalid atpm stageId");
     const maxFiles = typeof value.maxFiles === "number" ? value.maxFiles : undefined;
-    return { ref, ...(maxFiles === undefined ? {} : { maxFiles }) };
+    const gateBinding = parseGateBinding(value.gateBinding);
+    return {
+      ref,
+      ...(maxFiles === undefined ? {} : { maxFiles }),
+      ...(gateBinding ? { gateBinding } : {}),
+    };
   },
 
   createBroker() {
@@ -117,6 +132,9 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
       resolved.staged,
       input.maxFiles === undefined ? {} : { maxFiles: input.maxFiles },
     );
+    if (input.gateBinding) {
+      assertAtpmGateArtifactBinding(input.gateBinding, archive.archiveSha512 ?? null);
+    }
     return {
       artifact: {
         files: archive.files,
@@ -195,6 +213,7 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
         ? atpmStagedFindings({
             staged: {
               declaredName: details.packageName,
+              declaredManifestName: details.declaredManifestName,
               version: details.version,
               declaredVersion: details.declaredVersion,
               provenance: details.provenance,
@@ -267,6 +286,7 @@ function resolveIdentity(ref: AtpmStageRef): Promise<AtpmRepoIdentity> {
 async function resolveStaged(input: AtpmAdapterInput): Promise<ResolvedStaged> {
   const identity = await resolveIdentity(input.ref);
   const staged = await fetchAtpmStagedVersion(identity, input.ref.rkey);
+  if (input.gateBinding) assertAtpmGateRecordBinding(staged, input.gateBinding);
   const recordName = recordNameFor(staged.declaredName);
   if (!recordName) {
     throw new PublicDiffError("staged candidate does not name a publishable package", 502);
@@ -286,6 +306,7 @@ async function resolveStaged(input: AtpmAdapterInput): Promise<ResolvedStaged> {
       packageName: staged.declaredName,
       recordName,
       version: staged.version,
+      declaredManifestName: staged.declaredManifestName,
       declaredVersion: staged.declaredVersion,
       tag: staged.tag,
       createdAt: staged.createdAt,
@@ -295,6 +316,53 @@ async function resolveStaged(input: AtpmAdapterInput): Promise<ResolvedStaged> {
       trustPublisher,
     },
   };
+}
+
+function parseGateBinding(value: unknown): AtpmGateBinding | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid atpm gate binding");
+  }
+  const binding = value as Record<string, unknown>;
+  const recordCid = typeof binding.recordCid === "string" ? binding.recordCid : "";
+  const subjectName = typeof binding.subjectName === "string" ? binding.subjectName : "";
+  const subjectSha512 =
+    typeof binding.subjectSha512 === "string" ? binding.subjectSha512.toLowerCase() : "";
+  if (
+    !recordCid ||
+    recordCid.length > 256 ||
+    !subjectName ||
+    subjectName.length > 512 ||
+    !/^[0-9a-f]{128}$/.test(subjectSha512)
+  ) {
+    throw new Error("invalid atpm gate binding");
+  }
+  return { recordCid, subjectName, subjectSha512 };
+}
+
+export function assertAtpmGateRecordBinding(
+  staged: AtpmStagedVersion,
+  binding: AtpmGateBinding,
+): void {
+  const provenance = staged.provenance;
+  if (
+    staged.recordCid !== binding.recordCid ||
+    provenance.status !== "verified" ||
+    provenance.provenance.subjectName !== binding.subjectName ||
+    provenance.provenance.subjectSha512 !== binding.subjectSha512 ||
+    atpmPurl(staged.declaredName, staged.version) !== binding.subjectName
+  ) {
+    throw new PublicDiffError("staged candidate changed after workflow-gate binding", 502);
+  }
+}
+
+export function assertAtpmGateArtifactBinding(
+  binding: AtpmGateBinding,
+  archiveSha512: string | null,
+): void {
+  if (!archiveSha512 || archiveSha512.toLowerCase() !== binding.subjectSha512) {
+    throw new PublicDiffError("staged artifact does not match workflow-gate provenance", 502);
+  }
 }
 
 /**

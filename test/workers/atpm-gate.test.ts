@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { atpmAdapter, selectAtpmBaseline } from "../../server/lib/ecosystems/atpm";
+import {
+  assertAtpmGateArtifactBinding,
+  assertAtpmGateRecordBinding,
+  atpmAdapter,
+  selectAtpmBaseline,
+} from "../../server/lib/ecosystems/atpm";
 import {
   atpmWorkflowGateAdapter,
   isBuiltByRun,
@@ -7,6 +12,7 @@ import {
 import { verifyAtpmProvenance } from "../../server/lib/ecosystems/atpm/provenance";
 import type { AtpmStagedVersion } from "../../server/lib/ecosystems/atpm/stage-record";
 import type { AtpmPackage } from "../../server/lib/ecosystems/atpm/record";
+import { describeAttestation } from "../../server/lib/ecosystems/atpm/public-diff";
 import { WorkflowArtifactError } from "../../server/lib/github-app/artifacts";
 import {
   PUBLISHER_SOURCED_ECOSYSTEMS,
@@ -37,6 +43,7 @@ function stagedVersion(overrides: Partial<AtpmStagedVersion> = {}): AtpmStagedVe
     recordCid: "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi",
     stageId: "e852a96a-83f5-5c21-97c4-dce5b2f116ad",
     declaredName: "@ebey.dev/counter",
+    declaredManifestName: "@ebey.dev/counter",
     version: "0.0.16",
     declaredVersion: "0.0.16",
     tag: "latest",
@@ -68,6 +75,20 @@ async function verifiedProvenance() {
   const state = await verifyAtpmProvenance(BUNDLE);
   if (state.status !== "verified") throw new Error("fixture must verify");
   return state;
+}
+
+function fixtureCandidate(
+  provenance: Awaited<ReturnType<typeof verifiedProvenance>>,
+  overrides: Partial<AtpmStagedVersion> = {},
+): AtpmStagedVersion {
+  return stagedVersion({
+    declaredName: "sigstore",
+    declaredManifestName: "sigstore",
+    version: "3.0.0",
+    declaredVersion: "3.0.0",
+    provenance,
+    ...overrides,
+  });
 }
 
 describe("atpm gate configuration", () => {
@@ -105,23 +126,28 @@ describe("atpm gate configuration", () => {
 describe("isBuiltByRun", () => {
   test("binds a candidate whose certificate names this repository and run", async () => {
     const provenance = await verifiedProvenance();
-    expect(isBuiltByRun(stagedVersion({ provenance }), REPOSITORY, RUN_ID)).toBe(true);
+    expect(isBuiltByRun(fixtureCandidate(provenance), REPOSITORY, RUN_ID)).toBe(true);
   });
 
   test("accepts a re-run attempt of the same run", async () => {
     const provenance = await verifiedProvenance();
     expect(provenance.provenance.runInvocation).toContain("/attempts/1");
-    expect(isBuiltByRun(stagedVersion({ provenance }), REPOSITORY, RUN_ID)).toBe(true);
+    expect(isBuiltByRun(fixtureCandidate(provenance), REPOSITORY, RUN_ID)).toBe(true);
+  });
+
+  test("refuses a valid attestation copied onto a different candidate", async () => {
+    const provenance = await verifiedProvenance();
+    expect(isBuiltByRun(stagedVersion({ provenance }), REPOSITORY, RUN_ID)).toBe(false);
   });
 
   test("refuses a candidate built by a different run of the same repository", async () => {
     const provenance = await verifiedProvenance();
-    expect(isBuiltByRun(stagedVersion({ provenance }), REPOSITORY, RUN_ID + 1)).toBe(false);
+    expect(isBuiltByRun(fixtureCandidate(provenance), REPOSITORY, RUN_ID + 1)).toBe(false);
   });
 
   test("refuses a candidate built by a different repository", async () => {
     const provenance = await verifiedProvenance();
-    expect(isBuiltByRun(stagedVersion({ provenance }), "attacker/fork", RUN_ID)).toBe(false);
+    expect(isBuiltByRun(fixtureCandidate(provenance), "attacker/fork", RUN_ID)).toBe(false);
   });
 
   test("refuses a candidate with no verified provenance at all", () => {
@@ -138,13 +164,11 @@ describe("isBuiltByRun", () => {
     const { provenance } = await verifiedProvenance();
     expect(
       isBuiltByRun(
-        stagedVersion({
+        fixtureCandidate({
+          status: "verified",
           provenance: {
-            status: "verified",
-            provenance: {
-              ...provenance,
-              runInvocation: `https://evil.example/${REPOSITORY}/actions/runs/${RUN_ID}`,
-            },
+            ...provenance,
+            runInvocation: `https://evil.example/${REPOSITORY}/actions/runs/${RUN_ID}`,
           },
         }),
         REPOSITORY,
@@ -157,19 +181,86 @@ describe("isBuiltByRun", () => {
     const { provenance } = await verifiedProvenance();
     expect(
       isBuiltByRun(
-        stagedVersion({
+        fixtureCandidate({
+          status: "verified",
           provenance: {
-            status: "verified",
-            provenance: {
-              ...provenance,
-              runInvocation: `https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}9`,
-            },
+            ...provenance,
+            runInvocation: `https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}9`,
           },
         }),
         REPOSITORY,
         RUN_ID,
       ),
     ).toBe(false);
+  });
+});
+
+describe("atpm gate artifact binding", () => {
+  test("requires the downloaded tarball to match the attested SHA-512", async () => {
+    const provenance = await verifiedProvenance();
+    if (provenance.status !== "verified") throw new Error("fixture must verify");
+    const binding = {
+      recordCid: "bafyrecord",
+      subjectName: provenance.provenance.subjectName,
+      subjectSha512: provenance.provenance.subjectSha512,
+    };
+    expect(() => assertAtpmGateArtifactBinding(binding, binding.subjectSha512)).not.toThrow();
+    expect(() => assertAtpmGateArtifactBinding(binding, "ab".repeat(64))).toThrow(
+      /does not match workflow-gate provenance/,
+    );
+    expect(() => assertAtpmGateArtifactBinding(binding, null)).toThrow(
+      /does not match workflow-gate provenance/,
+    );
+  });
+
+  test("requires the fetched record to remain the candidate selected by the gate", async () => {
+    const provenance = await verifiedProvenance();
+    const candidate = fixtureCandidate(provenance);
+    const binding = {
+      recordCid: candidate.recordCid,
+      subjectName: provenance.provenance.subjectName,
+      subjectSha512: provenance.provenance.subjectSha512,
+    };
+    expect(() => assertAtpmGateRecordBinding(candidate, binding)).not.toThrow();
+    expect(() =>
+      assertAtpmGateRecordBinding({ ...candidate, recordCid: "bafyreirewritten" }, binding),
+    ).toThrow(/changed after workflow-gate binding/);
+  });
+});
+
+describe("public diff provenance projection", () => {
+  test("marks a verified bundle as bound only when its subject and digest match", async () => {
+    const provenance = await verifiedProvenance();
+    const candidate = fixtureCandidate(provenance);
+    const entry = {
+      version: candidate.version,
+      cid: candidate.cid,
+      size: candidate.size,
+      mimeType: "application/gzip",
+      createdAt: candidate.createdAt,
+      declaredName: candidate.declaredName,
+      declaredVersion: candidate.declaredVersion,
+      declaredShasum: null,
+      declaredTarball: null,
+      declaredIntegrity: null,
+      provenance,
+    };
+
+    expect(describeAttestation(entry, null, provenance.provenance.subjectSha512)).toMatchObject({
+      status: "verified",
+      build: { repository: "https://github.com/sigstore/sigstore-js" },
+    });
+    expect(describeAttestation(entry, null, "ab".repeat(64))).toMatchObject({
+      status: "mismatch",
+      reason: expect.stringContaining("digest"),
+    });
+    expect(
+      describeAttestation(
+        { ...entry, declaredName: "@ebey.dev/counter" },
+        null,
+        provenance.provenance.subjectSha512,
+      ),
+    ).toMatchObject({ status: "mismatch", reason: expect.stringContaining("package") });
   });
 });
 

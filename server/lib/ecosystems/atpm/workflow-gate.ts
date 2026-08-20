@@ -2,6 +2,7 @@ import { atpmAdapter } from ".";
 import { resolveAtpmRepoIdentity } from "./identity";
 import { listAtpmStagedVersions, type AtpmStagedVersion } from "./stage-record";
 import { formatAtpmStageId, parseAtpmPublisherRef } from "./stage-ref";
+import { atpmPurl } from "./provenance";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import type {
@@ -87,11 +88,26 @@ export const atpmWorkflowGateAdapter: WorkflowGateAdapter = {
       );
     }
 
-    return bound.map((candidate) => ({
-      ecosystem: "atpm",
-      pipelineInput: { stageId: formatAtpmStageId(identity.did, candidate.rkey) },
-      package: { name: candidate.declaredName, version: candidate.version },
-    }));
+    return bound.map((candidate) => {
+      if (candidate.provenance.status !== "verified") {
+        throw new WorkflowArtifactError(
+          "candidate_not_bound_to_run",
+          "atpm candidate lost verified provenance during gate preparation",
+        );
+      }
+      return {
+        ecosystem: "atpm",
+        pipelineInput: {
+          stageId: formatAtpmStageId(identity.did, candidate.rkey),
+          gateBinding: {
+            recordCid: candidate.recordCid,
+            subjectName: candidate.provenance.provenance.subjectName,
+            subjectSha512: candidate.provenance.provenance.subjectSha512,
+          },
+        },
+        package: { name: candidate.declaredName, version: candidate.version },
+      };
+    });
   },
 };
 
@@ -153,7 +169,8 @@ export function isBuiltByRun(
   runId: number,
 ): boolean {
   if (candidate.provenance.status !== "verified") return false;
-  const { sourceRepository, runInvocation } = candidate.provenance.provenance;
+  const { sourceRepository, runInvocation, subjectName } = candidate.provenance.provenance;
+  if (subjectName !== atpmPurl(candidate.declaredName, candidate.version)) return false;
   if (sourceRepository.toLowerCase() !== `https://github.com/${repositoryFullName}`.toLowerCase()) {
     return false;
   }

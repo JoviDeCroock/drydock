@@ -36,7 +36,7 @@ Verification is _intrinsic_ to the bundle — it does not depend on the reviewed
 Two limits, stated because they bound what a page may claim:
 
 - **The chain is pinned, not built.** A Fulcio intermediate rotation is a code change (`FULCIO_INTERMEDIATE_PEMS`), and until it lands, bundles issued under the new intermediate read as unverifiable rather than as verified.
-- **Rekor inclusion is not verified.** The transparency-log entry supplies only the signing timestamp used to evaluate the short-lived leaf's validity window, and that timestamp comes from the record. It cannot manufacture a signature — a Fulcio leaf is issued to one repository and its private key is ephemeral — so a forged timestamp buys nothing beyond skipping an expiry check. Verification is capped at the newest 64 versions per record so a fabricated version list cannot turn one anonymous request into unbounded work.
+- **Rekor inclusion is not verified.** The transparency-log entry supplies only the signing timestamp used to evaluate the short-lived leaf's validity window, and that timestamp comes from the record. It cannot manufacture a signature — a Fulcio leaf is issued to one repository and its private key is ephemeral — so a forged timestamp buys nothing beyond skipping an expiry check. Verification is capped at the newest 64 published versions per package record and the newest 64 staged records per listing so fabricated records cannot turn one anonymous request into unbounded cryptographic work. A staged PDS page is also rejected if it exceeds the requested 100-record limit.
 
 ### Findings
 
@@ -52,7 +52,7 @@ Two limits, stated because they bound what a page may claim:
 
 ### On `/diff`
 
-The anonymous diff page renders a **Build provenance** block beside the resolution trail. The proven side (repository, workflow, ref, commit, run, runner, Rekor index) and the declared side (the `trustPublisher` record) are shown separately and labelled as such, because they are different kinds of claim: one came out of a signature check against Sigstore's root, the other is the publisher's statement of intent. `allowPublish: true` is surfaced too — it means CI can publish with no human in the loop, which is a fact about the package's release posture rather than about any one release.
+The anonymous diff page renders a **Build provenance** block beside the resolution trail. A bundle is labelled **verified** only when its subject names this package and its SHA-512 matches the tarball Drydock downloaded; an intrinsically valid bundle copied from another artifact is labelled **different artifact**. The proven side (repository, workflow, ref, commit, run, runner, Rekor index) and the declared side (the `trustPublisher` record) are shown separately and labelled as such, because they are different kinds of claim: one came out of a signature check against Sigstore's root, the other is the publisher's statement of intent. `allowPublish: true` is surfaced too — it means CI can publish with no human in the loop, which is a fact about the package's release posture rather than about any one release.
 
 ## Staged review
 
@@ -71,7 +71,7 @@ Nothing scopes _which_ publisher an organization may review this way: an atpm ca
 Checks specific to a candidate, on top of the npm rule set and the provenance findings above:
 
 - `stage.tarball-digest-mismatch` — the blob does not hash to the record's `dist.shasum`.
-- `stage.metadata-mismatch` — the record and the tarball's `package.json` disagree, or the candidate's scope is not the publisher's verified handle. atpm's own stage endpoint rejects a foreign scope, so a candidate carrying one could not have been staged through it.
+- `stage.metadata-mismatch` — the record's top-level name/version, its embedded `meta.name`/`meta.version`, and the tarball's `package.json` disagree, or the candidate's scope is not the publisher's verified handle. Candidates missing either embedded manifest identity field are unreadable. atpm's own stage endpoint rejects a foreign scope, so a candidate carrying one could not have been staged through it.
 
 Baseline selection prefers the published version behind the dist-tag the candidate would move (approving moves that tag, so it is the sharpest answer to "what changes for an installer?"), then the immediate semver predecessor, then the highest published version. A first release reviews with no baseline rather than failing.
 
@@ -125,7 +125,7 @@ Setup: install the Drydock GitHub App, add Drydock as a deployment-protection ru
 
 Other gates get their run-binding for free: the runner downloads the bundle from that run through the installation token, so the bytes came from the run by construction. An atpm candidate did not come from the run at all, so the adapter must establish the binding itself — and it uses the Sigstore certificate to do it.
 
-A staged candidate is gated only when its **verified** provenance names both this repository and this run. Both values are read out of the Fulcio certificate, so neither is something the publisher's record can restate. The attempt number is ignored, since a re-run legitimately stages the candidate the gate is holding.
+A staged candidate is gated only when its **verified** provenance names this package, this repository, and this run. The package subject comes from the signed statement; repository and run come from the Fulcio certificate, so none is something the publisher's record can restate. The gate carries the selected record CID, subject, and SHA-512 into the scan, then requires the fetched record and downloaded tarball to match them. A candidate rewritten after selection or a valid bundle copied onto different bytes therefore fails the scan instead of becoming an advisory finding a reviewer could approve. The attempt number is ignored, since a re-run legitimately stages the candidate the gate is holding.
 
 Consequences worth being explicit about:
 

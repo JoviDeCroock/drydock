@@ -22,7 +22,7 @@ import {
   type AtpmPackage,
   type AtpmVersion,
 } from "./record";
-import { ATPM_PROVENANCE_RULES_VERSION } from "./provenance";
+import { ATPM_PROVENANCE_RULES_VERSION, atpmPurl } from "./provenance";
 import {
   ATPM_TRUST_PUBLISHER_RULES_VERSION,
   fetchAtpmTrustPublisher,
@@ -77,10 +77,11 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   ecosystem: "atpm",
   registryUrl: ATPM_PROTOCOL,
   rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+atpm-${ATPM_RULES_VERSION}+identity-${ATPM_IDENTITY_RULES_VERSION}+provenance-${ATPM_PROVENANCE_RULES_VERSION}+publisher-${ATPM_TRUST_PUBLISHER_RULES_VERSION}`,
-  // v5 adds the verified build attestation to the payload. v4 carried the
+  // v6 distinguishes a valid bundle that describes another artifact from one
+  // that is bound to the release. v5 added the verified build attestation. v4 carried the
   // metadata resolution's absolute expiry through every cache layer; old v3
   // values could restart their five-minute TTL when re-warmed.
-  payloadVersion: "v5",
+  payloadVersion: "v6",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -123,7 +124,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity),
-      attestation: describeAttestation(to, publisher.value),
+      attestation: describeAttestation(to, publisher.value, toArchive.archiveSha512 ?? null),
       ...(identity.did.startsWith("did:web:") ? { notices: [DID_WEB_NOTICE] } : {}),
       ...(displayName ? { displayName } : {}),
       cacheExpiresAt: earliestExpiry(cacheExpiresAt, publisher.expiresAt),
@@ -303,9 +304,10 @@ async function loadTrustPublisherCached(
  * produced them. Showing both lets a reader see the agreement — or the absence
  * of one — rather than being handed a single verdict to trust.
  */
-function describeAttestation(
+export function describeAttestation(
   entry: AtpmVersion,
   publisher: AtpmTrustPublisher | null,
+  archiveSha512: string | null,
 ): PublicDiffAttestation {
   const declared = publisher?.github
     ? {
@@ -324,17 +326,37 @@ function describeAttestation(
   if (state.status !== "verified") return { status: state.status, ...declared };
 
   const { provenance } = state;
+  const build = {
+    repository: provenance.sourceRepository,
+    ref: provenance.sourceRef,
+    commit: provenance.sourceCommit,
+    workflow: provenance.workflowPath,
+    runUrl: provenance.runInvocation,
+    runnerEnvironment: provenance.runnerEnvironment,
+    signedAt: provenance.signedAt,
+    logIndex: provenance.logIndex,
+  };
+  const expectedSubject = entry.declaredName ? atpmPurl(entry.declaredName, entry.version) : null;
+  const mismatches: string[] = [];
+  if (!expectedSubject || provenance.subjectName !== expectedSubject) {
+    mismatches.push("the attested package does not match this release");
+  }
+  if (!archiveSha512 || provenance.subjectSha512 !== archiveSha512.toLowerCase()) {
+    mismatches.push("the attested digest does not match the downloaded tarball");
+  }
+  if (mismatches.length) {
+    return {
+      status: "mismatch",
+      reason: mismatches.join("; "),
+      build,
+      ...declared,
+      ...(publisher ? { match: matchTrustedPublisher(provenance, publisher).status } : {}),
+    };
+  }
   return {
     status: "verified",
     build: {
-      repository: provenance.sourceRepository,
-      ref: provenance.sourceRef,
-      commit: provenance.sourceCommit,
-      workflow: provenance.workflowPath,
-      runUrl: provenance.runInvocation,
-      runnerEnvironment: provenance.runnerEnvironment,
-      signedAt: provenance.signedAt,
-      logIndex: provenance.logIndex,
+      ...build,
     },
     ...declared,
     ...(publisher ? { match: matchTrustedPublisher(provenance, publisher).status } : {}),

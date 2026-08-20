@@ -22,7 +22,7 @@ export interface PublicDiffVersionsResponse {
 }
 
 export interface PublicDiffAttestation {
-  status: "verified" | "invalid" | "absent" | "not-evaluated";
+  status: "verified" | "mismatch" | "invalid" | "absent" | "not-evaluated";
   build?: {
     repository: string;
     ref: string | null;
