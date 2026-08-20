@@ -454,7 +454,19 @@ async function reviewGatePackages(
   return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
     const { candidate, packageAdapter } = pkg;
     const scanId = crypto.randomUUID();
-    const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
+    // An ecosystem whose candidate is not a workflow upload addresses it
+    // directly (atpm's `atpm:<did>:<rkey>`), and that address is the better row
+    // identity: it is what stops the discovery sweep from reviewing the same
+    // staged candidate a second time. Ecosystems whose candidate arrives as an
+    // uploaded artifact have no such address and keep the synthetic one.
+    //
+    // Read explicitly rather than left to spread order below, because the
+    // pipeline and the row must agree on which id this scan is filed under.
+    const candidateStageId = (candidate.pipelineInput as { stageId?: unknown }).stageId;
+    const stageId =
+      typeof candidateStageId === "string" && candidateStageId
+        ? candidateStageId
+        : `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
     await createScanJob(db, {
       id: scanId,
       stageId,
@@ -481,7 +493,6 @@ async function reviewGatePackages(
         packageAdapter,
         {
           scanId,
-          stageId,
           organizationId,
           // `source` matches the `workflow_gate` value the D1 row already
           // carries; without it the product counter files every gated scan as
@@ -496,6 +507,9 @@ async function reviewGatePackages(
             environment: gate.environment,
           },
           ...candidate.pipelineInput,
+          // After the spread so the row and the pipeline file this scan under
+          // the same id whichever branch chose it above.
+          stageId,
         },
       );
       return {

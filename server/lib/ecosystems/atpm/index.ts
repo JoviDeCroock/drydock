@@ -12,13 +12,7 @@ import { parseAtpmStageId, type AtpmStageRef } from "./stage-ref";
 import { fetchAtpmTrustPublisher, type AtpmTrustPublisher } from "./trust-publisher";
 import { buildNpmFindings } from "../npm/findings";
 import { compareSemver } from "../npm/registry";
-import type {
-  AcquiredArtifact,
-  AdapterBroker,
-  AdapterContext,
-  BaselineInfo,
-  PackageAdapter,
-} from "../package-adapter";
+import type { AdapterBroker, BaselineInfo, PackageAdapter } from "../package-adapter";
 import { PublicDiffError } from "../../public-diff/error";
 
 /**
@@ -141,7 +135,16 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
 
   async acquireBaseline(ctx, input, _broker, staged) {
     const details = staged.details as AtpmStagedDetails;
-    const identity = await resolveIdentity(input.ref);
+    // Reuse the identity `acquireStaged` already proved rather than resolving
+    // it again: a second pass would repeat the DNS, directory, and reverse
+    // handle lookups within one scan, and the answer cannot have changed
+    // between two steps of the same review.
+    const identity: AtpmRepoIdentity = {
+      did: details.did,
+      pds: details.pds,
+      handle: details.handle,
+      handleMethod: null,
+    };
 
     let published: AtpmPackage;
     try {
@@ -252,7 +255,7 @@ interface StagedDigests {
   archiveSha512: string | null;
 }
 
-/** Resolve the publisher's identity, once per acquisition step. */
+/** Resolve the publisher's identity from a staged reference. */
 function resolveIdentity(ref: AtpmStageRef): Promise<AtpmRepoIdentity> {
   return resolveAtpmRepoIdentity({
     authority: { kind: "did", did: ref.did },
@@ -375,7 +378,3 @@ export function selectAtpmBaseline(
 }
 
 export type { AtpmBroker };
-
-/** Staged artifact plus the digests findings bind to it. */
-export type AtpmStagedArtifact = AcquiredArtifact;
-export type { AdapterContext };

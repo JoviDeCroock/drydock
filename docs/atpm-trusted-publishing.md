@@ -64,7 +64,9 @@ What differs from every other staged or gated review:
 - **No byte-continuity gap.** The candidate is pinned by CID and approving it rebuilds and re-uploads nothing, so the artifact scanned is the artifact that installs. The npm and PyPI gates close that gap with a `SHA256SUMS` file the publish job re-checks; here there is no gap.
 - **Drydock never approves.** Approval is a write to the publisher's repository and nothing here can perform it. The report instead names the candidate in the spelling the approving tool takes: `npm stage approve <id>`, where the id is derived locally as `uuidv5(<record uri>/<record cid>)` in the URL namespace — the same value atpm computes.
 
-Staged references are addressed as `atpm:<did>:<rkey>`, which fits the shared `stage_id` column and its grammar. `POST /api/v1/scans` routes on that prefix; an unprefixed value is still npm's registry-issued id.
+Staged references are addressed as `atpm:<did>:<rkey>`, which fits the shared `stage_id` column and its grammar. `POST /api/v1/scans` routes on that prefix; an unprefixed value is still npm's registry-issued id. Gate-driven reviews file their scan under the same address rather than the synthetic `workflow-gate:` id every other ecosystem uses, which is what stops the discovery sweep from reviewing a candidate the gate already covered.
+
+Nothing scopes _which_ publisher an organization may review this way: an atpm candidate is public data, so a staged review is no more privileged than the `/diff` page for the same bytes. The scan row is organization-scoped as usual, and the per-organization scan rate limit is the bound on abuse.
 
 Checks specific to a candidate, on top of the npm rule set and the provenance findings above:
 
