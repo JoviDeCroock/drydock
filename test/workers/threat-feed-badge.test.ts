@@ -667,7 +667,8 @@ describe("shields badge endpoint", () => {
     let throttled: BadgeBody | null = null;
     // Distinct package names so every request misses the colo cache and pays
     // the D1 lookup the limiter protects. The limiter counts inside fixed
-    // wall-clock windows (floor(now / windowMs), see server/db/rate-limit.ts),
+    // wall-clock windows (floor(now / windowMs), see
+    // server/lib/platform/rate-limit.ts),
     // so a run that starts near the end of a minute straddles the boundary and
     // loses its progress — under CI load, 125 consecutive requests are not
     // guaranteed to land in one window. The cap leaves room to fill a fresh

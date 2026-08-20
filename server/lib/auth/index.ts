@@ -116,7 +116,7 @@ const SESSION_COOKIE_CACHE_SECONDS = 5 * 60;
  * The guard is fail-safe rather than fail-closed by luck: `storeSessionInDatabase`
  * and `verification.storeInDatabase` keep D1 authoritative for both record kinds,
  * so a suppressed write only costs a cache miss. Verified against better-auth
- * 1.6.23 `dist/db/internal-adapter.mjs`: `findVerificationValue` falls through to
+ * 1.6.29 `dist/db/internal-adapter.mjs`: `findVerificationValue` falls through to
  * the database on a KV miss, `consumeVerificationValue` takes the transactional
  * database branch, and the post-consume `secondaryStorage.delete` of a key that
  * was never written is a no-op.
@@ -165,11 +165,14 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
         .where(and(eq(schema.session.userId, userId), gt(schema.session.expiresAt, now))),
     ]);
 
-    // Better Auth deletes the user and its D1 sessions before asking secondary
-    // storage to delete the user's sessions. Preserve the cached index for that
-    // cleanup call; for a live user, D1 is the authority so a newly bound,
-    // cleared, or eventually-consistent KV namespace cannot hide sessions from
-    // list-sessions or revoke-other-sessions.
+    // `deleteUser` and `deleteUserSessions` clear secondary storage *before*
+    // deleting the D1 rows, so an ordinary teardown still sees a live user here
+    // and gets the authoritative token list to evict. Falling back to the cached
+    // index covers the case where the user row is already gone — a retried or
+    // partially failed teardown — where D1 can no longer name the tokens. For a
+    // live user D1 is the authority, so a newly bound, cleared, or
+    // eventually-consistent KV namespace cannot hide sessions from list-sessions
+    // or revoke-other-sessions.
     const [user] = owner;
     if (!user) return cached;
 

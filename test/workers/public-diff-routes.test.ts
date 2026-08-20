@@ -59,7 +59,7 @@ async function publicDiffFetchWithEnv(
   return res;
 }
 
-// server/db/rate-limit.ts counts into fixed wall-clock buckets (`Math.floor(now
+// server/lib/platform/rate-limit.ts counts into fixed wall-clock buckets (`Math.floor(now
 // / windowMs)`), so a request sequence that straddles a bucket boundary gets a
 // fresh budget partway through and the request that should have been rejected is
 // allowed instead. 31 requests against a 60s window cross a boundary roughly once
