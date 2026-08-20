@@ -654,6 +654,48 @@ describe("registry version status resolution", () => {
     expect(seenVersions).toEqual(new Set(["2.1.0", "2.1.1"]));
   });
 
+  test("does not let new scans permanently preempt an older due recheck", async () => {
+    const org = await seedOrg();
+    const now = new Date();
+    const due = await seedCompletedScan(org, {
+      version: "2.2.0",
+      createdAt: new Date(now.getTime() - 4 * 60 * 60 * 1000),
+    });
+    await recordRegistryVersionStatus(createDb(env.DB), {
+      scanId: due.scanId,
+      organizationId: org.organizationId,
+      status: "staged",
+      checkedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
+    });
+    await seedCompletedScan(org, {
+      version: "2.2.1",
+      createdAt: new Date(now.getTime() - 2 * 60 * 1000),
+    });
+    await seedCompletedScan(org, {
+      version: "2.2.2",
+      createdAt: new Date(now.getTime() - 60 * 1000),
+    });
+    const seenVersions = new Set<string>();
+    stubRegistry((url) => {
+      const match = /\/version\/([^/]+)\/status$/.exec(new URL(url).pathname);
+      if (match?.[1]) seenVersions.add(decodeURIComponent(match[1]));
+      return new Response(null, { status: 404 });
+    });
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      lookupLimit: 2,
+      now,
+    });
+
+    expect(result.checked).toBe(2);
+    expect(seenVersions).toEqual(new Set(["2.2.0", "2.2.1"]));
+  });
+
   test("nudges once when we approved a release npm is still holding", async () => {
     const org = await seedOrg();
     const { scanId } = await seedCompletedScan(org);
