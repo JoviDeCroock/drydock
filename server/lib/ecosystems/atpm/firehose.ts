@@ -69,6 +69,14 @@ const DID_DEBOUNCE_MS = 20_000;
  */
 const CURSOR_WRITE_INTERVAL_MS = 10_000;
 
+/**
+ * Cloudflare Queues accepts at most 100 messages per batch. One event fans out
+ * to every organization watching that account, which is normally one or two —
+ * but the bound belongs here rather than in an assumption about how many
+ * organizations might share an interest in a popular publisher.
+ */
+const MAX_DISPATCH_BATCH = 100;
+
 /** A Jetstream cursor is microseconds since the epoch. */
 const CURSOR_KEY = "jetstream-cursor";
 
@@ -286,9 +294,18 @@ export class AtpmFirehose extends DurableObject<Cloudflare.Env> {
     }
     if (!messages.length) return;
 
-    if (this.env.SCAN_QUEUE) {
+    // Without a queue there is nothing to hand the work to, and the firehose
+    // must not run scans itself: it is a long-lived object holding a socket,
+    // and the pipeline is exactly the kind of work that would tie it up.
+    if (!this.env.SCAN_QUEUE) {
+      emitOperationalEvent("warn", "atpm_firehose.no_queue", { did, dropped: messages.length });
+      return;
+    }
+    for (let start = 0; start < messages.length; start += MAX_DISPATCH_BATCH) {
       await this.env.SCAN_QUEUE.sendBatch(
-        messages.map((body) => ({ body, contentType: "json" as const })),
+        messages
+          .slice(start, start + MAX_DISPATCH_BATCH)
+          .map((body) => ({ body, contentType: "json" as const })),
       );
     }
     this.dispatched += messages.length;

@@ -182,6 +182,12 @@ atpmPublisherRoutes.get("/oauth/callback", async (c) => {
     return c.redirect(settings.toString());
   }
 
+  // This is a GET, so it is exempt from the origin check that guards
+  // state-changing methods — yet it creates a row. What stands in for that
+  // check is the `state` itself: 192 unguessable bits, single-use, and bound
+  // below to the session and organization that minted it. An attacker cannot
+  // produce one, so there is nothing to forge a request with.
+  //
   // Consumed unconditionally: an authorization code is single-use, so the state
   // that would permit a second attempt must not survive the first.
   const request = await consumeAtpmOauthRequest(db, state);
