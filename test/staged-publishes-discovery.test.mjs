@@ -22,6 +22,7 @@ const stagedPublishesMock = vi.hoisted(() => ({
   StagedPublishesFetchError: class StagedPublishesFetchError extends Error {},
 }));
 const scanJobMock = vi.hoisted(() => ({ executeScanJob: vi.fn() }));
+const releaseOutcomeMock = vi.hoisted(() => ({ resolveNpmReleaseOutcomes: vi.fn() }));
 
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
@@ -29,6 +30,7 @@ vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
+vi.mock("../server/lib/ecosystems/npm/release-outcome.ts", () => releaseOutcomeMock);
 
 const {
   createStageStartCoordinator,
@@ -55,6 +57,12 @@ beforeEach(() => {
     status: "valid",
     capabilities: { registryAuth: true, stagedListAccess: true, registryUrl: "" },
   });
+  releaseOutcomeMock.resolveNpmReleaseOutcomes.mockResolvedValue({
+    checked: 0,
+    resolved: 0,
+    statuses: {},
+    reminded: 0,
+  });
 });
 
 afterEach(() => {
@@ -63,6 +71,7 @@ afterEach(() => {
     ...Object.values(npmConnectionMock),
     ...Object.values(stagedPublishesMock),
     ...Object.values(scanJobMock),
+    ...Object.values(releaseOutcomeMock),
   ]) {
     if (typeof fn?.mockReset === "function") fn.mockReset();
   }
@@ -238,6 +247,48 @@ describe("ensureUsableNpmConnection token state branching", () => {
 });
 
 describe("discoverAndQueueStagedPublishes", () => {
+  test("awaits a bounded release-outcome slice during cron discovery", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({ items: [] });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    let finishOutcome;
+    releaseOutcomeMock.resolveNpmReleaseOutcomes.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOutcome = resolve;
+        }),
+    );
+
+    let settled = false;
+    const discovery = discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        awaitReleaseOutcomes: true,
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+    await flushPromises();
+
+    expect(settled).toBe(false);
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
+    expect(releaseOutcomeMock.resolveNpmReleaseOutcomes).toHaveBeenCalledWith(
+      expect.objectContaining({ lookupLimit: 8, lookupConcurrency: 1 }),
+    );
+
+    finishOutcome({ checked: 0, resolved: 0, statuses: {}, reminded: 0 });
+    await expect(discovery).resolves.toEqual(
+      expect.objectContaining({ found: 0, created: 0, skipped: 0 }),
+    );
+  });
+
   test("queues new stages with the auto_discovery source and skips already-known ones", async () => {
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: [

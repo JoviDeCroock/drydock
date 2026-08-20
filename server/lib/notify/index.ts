@@ -244,6 +244,7 @@ export interface NotifyStagedReleaseAwaitingApprovalInput {
   packageName: string;
   version: string;
   decidedAt: Date | string | number | null;
+  registryUrl: string;
 }
 
 /**
@@ -300,7 +301,7 @@ export async function notifyStagedReleaseAwaitingApproval(
     `${release} was approved in Drydock${decidedLabel ? ` on ${decidedLabel}` : ""}, but npm still reports it as staged — so it has not been published yet.`,
     "",
     organizationName ? `Organization: ${organizationName}` : null,
-    ...approvalInstructions(stageId),
+    ...approvalInstructions(stageId, input.registryUrl),
     "",
     link ? `Review: ${link}` : null,
     "",
@@ -737,15 +738,32 @@ function formatPackageLabel(
  * meant to be pasted into a shell, so registry-supplied text must never reach
  * one with shell metacharacters intact.
  */
-function approvalInstructions(stageId: string): string[] {
-  if (!isValidStageId(stageId)) return [];
+function approvalInstructions(stageId: string, registryUrl: string): string[] {
+  if (!isValidStageId(stageId) || !isSafeRegistryUrl(registryUrl)) return [];
   return [
     `Stage: ${stageId}`,
     "",
     "Drydock never publishes on your behalf. To finish the release, run npm's own approval:",
     "",
-    `  npm stage approve ${stageId}`,
+    `  npm stage approve ${stageId} --registry ${shellSingleQuote(registryUrl)}`,
   ];
+}
+
+function isSafeRegistryUrl(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) return false;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /**

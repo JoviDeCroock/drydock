@@ -9,6 +9,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -132,6 +133,37 @@ describe("npm version status lookup", () => {
     await fetchNpmVersionStatus("https://registry.npmjs.org", "t", "pkg", "1.0.0");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("bounds a response body that starts but never finishes", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"packageName":"pkg"'));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    const lookup = fetchNpmVersionStatus("https://registry.npmjs.org", "t", "pkg", "1.0.0", {
+      timeoutMs: 25,
+    });
+    await vi.advanceTimersByTimeAsync(26);
+
+    await expect(lookup).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+      httpStatus: 200,
+    });
+    expect(cancelled).toBe(true);
   });
 
   test.each([

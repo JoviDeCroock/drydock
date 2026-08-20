@@ -389,15 +389,10 @@ describe("staged publishes discovery cron", () => {
       { ...env, SEND_EMAIL: { send } } as unknown as Cloudflare.Env,
       ctx,
     );
-    // Draining the context also settles the inline scan's waitUntil, which
-    // rejects with the expected sandbox-LOADER error (no LOADER binding in
-    // tests). The failure-notification email is dispatched before that
-    // rejection, so swallow it and assert the email below.
-    try {
-      await waitOnExecutionContext(ctx);
-    } catch {
-      // expected: inline scan job rejects because the sandbox is unavailable.
-    }
+    // Draining the context also settles the inline scan. The sandbox LOADER is
+    // intentionally absent, so the scan records a contained terminal failure
+    // and dispatches its failure notification.
+    await waitOnExecutionContext(ctx);
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledTimes(1);
