@@ -41,8 +41,16 @@ export interface WorkflowGateQueueMessage {
 
 export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
 
-export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
-  return "kind" in message && message.kind === "workflow_gate";
+export function isWorkflowGateMessage(message: unknown): message is WorkflowGateQueueMessage {
+  if (typeof message !== "object" || message === null) return false;
+  const candidate = message as Partial<WorkflowGateQueueMessage>;
+  return (
+    candidate.kind === "workflow_gate" &&
+    typeof candidate.organizationId === "string" &&
+    candidate.organizationId.length > 0 &&
+    typeof candidate.gateId === "string" &&
+    candidate.gateId.length > 0
+  );
 }
 
 /**

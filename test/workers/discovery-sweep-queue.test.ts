@@ -579,6 +579,34 @@ describe("queue message routing guard", () => {
     ).toBeUndefined();
   });
 
+  test.each([
+    ["null", null, null],
+    ["a primitive", "orphaned-message", null],
+    [
+      "an incomplete workflow gate",
+      { kind: "workflow_gate", organizationId: "org_x" },
+      "workflow_gate",
+    ],
+  ])("drops %s body without invoking a typed handler", async (_label, body, kind) => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ctx = createExecutionContext();
+    await worker.queue(batchOn("staged-publish-review-scans", body), env as Cloudflare.Env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    const dropped = errorSpy.mock.calls.find((call) => call[0] === "queue.message.unknown_kind");
+    expect(dropped![1]).toMatchObject({
+      queue: "staged-publish-review-scans",
+      kind,
+      reason: "unrecognized_body",
+    });
+    expect(
+      errorSpy.mock.calls.find((call) => call[0] === "workflow_gate.queue.message_failed"),
+    ).toBeUndefined();
+  });
+
   test("refuses a discovery sweep that arrives on the scan queue", async () => {
     const org = await seedOrg({ index: 0, validationStatus: "valid" });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
