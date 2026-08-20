@@ -73,9 +73,10 @@ export interface ExpiredScanCursor {
  *   deleted, which already swept its artifacts), so there is no prefix to sweep
  *   and no org to scope the delete to. Such a row can never be processed by this
  *   sweep, so it must not occupy a slot on every tick.
- * - **Attached to a still-pending workflow gate.** Deleting it would null a live
- *   gate's `scan_id` and leave a held GitHub job pointing at nothing. Once the
- *   gate is decided the scan becomes eligible again.
+ * - **Attached to a still-pending workflow gate.** Every package scan carries
+ *   `scans.gate_id`, while the gate's `scan_id` points only at the representative
+ *   package. Deleting either would make the pending gate's package aggregate
+ *   incomplete. Once the gate is decided the scans become eligible again.
  *
  * `cursor` pages past rows the caller deferred for a transient reason (an R2
  * sweep that failed), so one stuck scan cannot block the rest of the backlog.
@@ -113,8 +114,11 @@ export async function listScansOlderThan(
             .from(githubWorkflowGates)
             .where(
               and(
-                eq(githubWorkflowGates.scanId, scans.id),
                 eq(githubWorkflowGates.status, "pending"),
+                or(
+                  eq(githubWorkflowGates.id, scans.gateId),
+                  eq(githubWorkflowGates.scanId, scans.id),
+                ),
               ),
             ),
         ),

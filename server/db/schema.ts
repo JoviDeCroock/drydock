@@ -170,8 +170,8 @@ export const scans = sqliteTable(
     // (ruleId, severity, file) — recorded at completion so release memory can read
     // a prior approved release's profile from this row instead of downloading and
     // digest-verifying its whole R2 report/files/diff bundle to project three
-    // fields. Null for rows written before the column and for profiles above
-    // FINDING_PROFILE_MAX_ENTRIES; both fall back to the artifact projection.
+    // fields. Null for rows written before the column and for profiles above the
+    // entry or byte budget; both fall back to the artifact projection.
     findingProfileJson: text("finding_profile_json", { mode: "json" }),
     reportVersion: integer("report_version"),
     reportDigest: text("report_digest"),
