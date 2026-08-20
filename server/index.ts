@@ -450,6 +450,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
             eventSource: "staged_publishes.cron",
             allowInsecureLocalhost,
             stageStartCoordinator,
+            awaitReleaseOutcomes: true,
           },
           usable,
         );

@@ -56,6 +56,11 @@ export type NpmVersionStatusLookup =
 // single attempt is right: `reliableFetch` would turn one throttled lookup into
 // three. Everything a lookup tells us is re-derivable on the next sweep.
 const LOOKUP_TIMEOUT_MS = 5_000;
+const MAX_LOOKUP_RESPONSE_BYTES = 16 * 1024;
+
+export interface NpmVersionStatusLookupOptions extends NormalizeRegistryUrlOptions {
+  timeoutMs?: number;
+}
 
 // Mirrors npm's own package-name grammar closely enough to keep anything that
 // could alter the request path out of the URL. Rejecting here rather than
@@ -79,7 +84,7 @@ export async function fetchNpmVersionStatus(
   token: string,
   packageName: string | null | undefined,
   version: string | null | undefined,
-  options: NormalizeRegistryUrlOptions = {},
+  options: NpmVersionStatusLookupOptions = {},
 ): Promise<NpmVersionStatusLookup> {
   if (!packageName || !version) return unavailable("incomplete_input");
   if (packageName.length > 214 || !PACKAGE_NAME_RE.test(packageName) || !VERSION_RE.test(version)) {
@@ -97,6 +102,8 @@ export async function fetchNpmVersionStatus(
     return unavailable("rejected");
   }
 
+  const timeoutMs = options.timeoutMs ?? LOOKUP_TIMEOUT_MS;
+  const deadlineMs = Date.now() + timeoutMs;
   let response: Response;
   try {
     response = await reliableFetch(url, {
@@ -105,7 +112,7 @@ export async function fetchNpmVersionStatus(
         authorization: `Bearer ${token}`,
         "user-agent": "staged-publish-review/version-status",
       },
-      timeoutMs: LOOKUP_TIMEOUT_MS,
+      timeoutMs,
       attempts: 1,
     });
   } catch {
@@ -120,10 +127,57 @@ export async function fetchNpmVersionStatus(
     return unavailable(reasonForStatus(response.status), response.status);
   }
 
-  const data = (await response.json().catch(() => null)) as unknown;
+  const data = await readBoundedJson(response, deadlineMs);
   const status = readStatus(data, packageName, version);
   if (!status) return unavailable("unavailable", response.status);
   return { ok: true, status };
+}
+
+async function readBoundedJson(response: Response, deadlineMs: number): Promise<unknown> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), remainingMs);
+  });
+
+  try {
+    while (true) {
+      const read = await Promise.race([reader.read(), timeout]);
+      if (read === null) {
+        void reader.cancel().catch(() => undefined);
+        return null;
+      }
+      if (read.done) break;
+      byteLength += read.value.byteLength;
+      if (byteLength > MAX_LOOKUP_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(read.value);
+    }
+  } catch {
+    void reader.cancel().catch(() => undefined);
+    return null;
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(body)) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function readStatus(

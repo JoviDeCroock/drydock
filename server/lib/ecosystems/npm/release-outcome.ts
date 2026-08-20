@@ -76,6 +76,10 @@ export interface ResolveReleaseOutcomesInput {
   }[];
   allowInsecureLocalhost?: boolean;
   now?: Date;
+  /** Override the per-invocation lookup slice for a shared scheduled sweep. */
+  lookupLimit?: number;
+  /** Override lookup fan-out when several organizations share one invocation. */
+  lookupConcurrency?: number;
 }
 
 export interface ResolveReleaseOutcomesResult {
@@ -132,7 +136,7 @@ export async function resolveNpmReleaseOutcomes(
   }
 
   const due = await listScansAwaitingRegistryStatus(db, organizationId, {
-    limit: LOOKUPS_PER_SWEEP,
+    limit: input.lookupLimit ?? LOOKUPS_PER_SWEEP,
     registryUrl: connection.registryUrl,
     createdAfter: new Date(now.getTime() - MAX_RELEASE_AGE_MS),
     rules: [
@@ -155,67 +159,72 @@ export async function resolveNpmReleaseOutcomes(
   if (!eligible.length) return result;
   result.checked = eligible.length;
 
-  await runWithConcurrency(eligible, LOOKUP_CONCURRENCY, async (candidate) => {
-    const lookup = await fetchNpmVersionStatus(
-      connection.registryUrl,
-      connection.token,
-      candidate.packageName,
-      candidate.stagedVersion,
-      { allowInsecureLocalhost },
-    );
-    const status = lookup.ok ? lookup.status : null;
+  await runWithConcurrency(
+    eligible,
+    input.lookupConcurrency ?? LOOKUP_CONCURRENCY,
+    async (candidate) => {
+      const lookup = await fetchNpmVersionStatus(
+        connection.registryUrl,
+        connection.token,
+        candidate.packageName,
+        candidate.stagedVersion,
+        { allowInsecureLocalhost },
+      );
+      const status = lookup.ok ? lookup.status : null;
 
-    try {
-      const persisted = await recordRegistryVersionStatus(db, {
+      try {
+        const persisted = await recordRegistryVersionStatus(db, {
+          scanId: candidate.id,
+          organizationId,
+          status,
+          // The sweep's own clock, not each lookup's: one coherent stamp per
+          // batch keeps an injected clock meaningful and the recheck floors exact.
+          checkedAt: now,
+        });
+        if (!persisted) return;
+      } catch (err) {
+        // A write failure just means this scan is retried next sweep. The rest of
+        // the batch is unaffected and must not be abandoned for it.
+        emitOperationalEvent("warn", "npm.release_outcome.persist_failed", {
+          organizationId,
+          scanId: candidate.id,
+          error: err instanceof Error ? err.name : "unknown",
+        });
+        return;
+      }
+
+      if (!status) return;
+      result.resolved += 1;
+      result.statuses[status] = (result.statuses[status] ?? 0) + 1;
+
+      if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
+      if (!candidate.decidedAt) return;
+      // Claim the send before sending, so two overlapping sweeps cannot both
+      // email about the same release. A failed send costs the reminder rather
+      // than risking a duplicate — the release is still visible in the workbench.
+      const claimed = await markRegistryPublishReminderSent(db, {
         scanId: candidate.id,
         organizationId,
-        status,
-        // The sweep's own clock, not each lookup's: one coherent stamp per
-        // batch keeps an injected clock meaningful and the recheck floors exact.
-        checkedAt: now,
+        expectedDecidedAt: candidate.decidedAt,
+        expectedRegistryStatusAt: now,
+        sentAt: now,
       });
-      if (!persisted) return;
-    } catch (err) {
-      // A write failure just means this scan is retried next sweep. The rest of
-      // the batch is unaffected and must not be abandoned for it.
-      emitOperationalEvent("warn", "npm.release_outcome.persist_failed", {
+      if (!claimed) return;
+      result.reminded += 1;
+      await notifyStagedReleaseAwaitingApproval({
+        env,
+        db,
         organizationId,
+        ownerUserId,
         scanId: candidate.id,
-        error: err instanceof Error ? err.name : "unknown",
+        stageId: candidate.stageId,
+        packageName: candidate.packageName,
+        version: candidate.stagedVersion,
+        decidedAt: candidate.decidedAt,
+        registryUrl: connection.registryUrl,
       });
-      return;
-    }
-
-    if (!status) return;
-    result.resolved += 1;
-    result.statuses[status] = (result.statuses[status] ?? 0) + 1;
-
-    if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
-    if (!candidate.decidedAt) return;
-    // Claim the send before sending, so two overlapping sweeps cannot both
-    // email about the same release. A failed send costs the reminder rather
-    // than risking a duplicate — the release is still visible in the workbench.
-    const claimed = await markRegistryPublishReminderSent(db, {
-      scanId: candidate.id,
-      organizationId,
-      expectedDecidedAt: candidate.decidedAt,
-      expectedRegistryStatusAt: now,
-      sentAt: now,
-    });
-    if (!claimed) return;
-    result.reminded += 1;
-    await notifyStagedReleaseAwaitingApproval({
-      env,
-      db,
-      organizationId,
-      ownerUserId,
-      scanId: candidate.id,
-      stageId: candidate.stageId,
-      packageName: candidate.packageName,
-      version: candidate.stagedVersion,
-      decidedAt: candidate.decidedAt,
-    });
-  });
+    },
+  );
 
   return result;
 }

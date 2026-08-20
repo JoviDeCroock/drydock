@@ -50,14 +50,16 @@ therefore collapses to "we do not know":
 
 ## Where it runs
 
-| Path                                      | Trigger                                                                              | What it does                                                                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button), via `waitUntil` | Resolves status for completed reviews and sends the forgotten-approval nudge. Never blocks or fails discovery. |
-| `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                                     | Asks npm what happened before deciding the message.                                                            |
+| Path                                      | Trigger                                                             | What it does                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button) | Resolves status for completed reviews and sends the forgotten-approval nudge. On-demand checks use `waitUntil`; cron awaits a smaller, serial-per-org slice so its five-organization cap also bounds status traffic. Failures never fail discovery. |
+| `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                    | Asks npm what happened before deciding the message.                                                                                                                                                                                                 |
 
-Lookups are bounded per organization per invocation (16, concurrency 4), so
-four worst-case five-second waves leave headroom inside Workers' 30-second
-`waitUntil` lifetime for persistence and notification delivery. They use
+On-demand lookups are bounded per organization per invocation (16, concurrency
+4), so four worst-case five-second waves leave headroom inside Workers'
+30-second `waitUntil` lifetime for persistence and notification delivery. Cron
+uses eight lookups at concurrency 1 per organization and awaits them, so its
+five-organization sweep cap bounds status traffic across the invocation. They use
 recheck floors by last known status: 5 minutes for never-asked and `validating`,
 1 hour for `staged`, and 24 hours for `published`, which can later become
 `deleted`. The terminal `blocked` and `deleted` states are never rechecked.
@@ -116,7 +118,7 @@ forgetting), the decision is at least 6 hours old, and
 sending only if the approval and `staged` observation it acted on are still
 current, so overlapping sweeps cannot double-send and an in-flight decision or
 registry-status change cannot produce a stale reminder. The email carries release
-identity, the stage id, the `npm stage approve` command, and a dashboard link —
+identity, the stage id, an `npm stage approve --registry <captured-registry>` command, and a dashboard link —
 no token, header, or package bytes.
 
 The workbench shows the same state immediately, without the 6-hour delay: the
