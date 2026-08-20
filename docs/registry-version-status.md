@@ -78,9 +78,12 @@ retarget the credentialed lookup. Within one registry, only
 the newest scan for a package/version is eligible: duplicate manual reviews get
 one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on
-the older rows, so deleting a failed newer scan cannot revive historical stage
-IDs. Discovery creates the new scan row before scheduling status resolution
-and also passes the current stage IDs as a fail-closed race guard.
+the older rows and clears their displayable registry status, so historical
+reviews cannot keep presenting a live-looking verdict or command for an obsolete
+stage ID. The reminder marker remains as send-once history. Deleting a failed
+newer scan therefore cannot revive historical stage IDs. Discovery creates the
+new scan row before scheduling status resolution and also passes the current
+stage IDs as a fail-closed race guard.
 
 The dashboard refreshes immediately for newly queued scans, then performs a
 bounded set of follow-up refreshes while the `waitUntil` status lookups finish.

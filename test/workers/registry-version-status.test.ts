@@ -246,6 +246,11 @@ describe("registry version status resolution", () => {
       stageId: "stage-original",
       createdAt: new Date(newerCreatedAt.getTime() - 60 * 1000),
     });
+    await recordRegistryVersionStatus(createDb(env.DB), {
+      scanId: older.scanId,
+      organizationId: org.organizationId,
+      status: "staged",
+    });
     const newer = await seedCompletedScan(org, {
       stageId: "stage-restaged",
       createdAt: newerCreatedAt,
@@ -262,7 +267,10 @@ describe("registry version status resolution", () => {
 
     expect(result).toMatchObject({ checked: 1, resolved: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((await readScan(older.scanId)).registryVersionStatus).toBeNull();
+    const olderScan = await readScan(older.scanId);
+    expect(olderScan.registryStatusSupersededAt).toBeTruthy();
+    expect(olderScan.registryVersionStatus).toBeNull();
+    expect(olderScan.registryVersionStatusAt).toBeNull();
     expect((await readScan(newer.scanId)).registryVersionStatus).toBe("published");
   });
 
@@ -334,6 +342,11 @@ describe("registry version status resolution", () => {
   test("does not annotate history when discovery sees a different live stage id", async () => {
     const org = await seedOrg();
     const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    await recordRegistryVersionStatus(createDb(env.DB), {
+      scanId,
+      organizationId: org.organizationId,
+      status: "staged",
+    });
     const fetchMock = stubRegistry(() => statusResponse("staged"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -347,7 +360,10 @@ describe("registry version status resolution", () => {
 
     expect(result.checked).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect((await readScan(scanId)).registryVersionStatus).toBeNull();
+    const superseded = await readScan(scanId);
+    expect(superseded.registryStatusSupersededAt).toBeTruthy();
+    expect(superseded.registryVersionStatus).toBeNull();
+    expect(superseded.registryVersionStatusAt).toBeNull();
   });
 
   test("retires live replacements before the lookup limit so they cannot starve the backlog", async () => {
@@ -596,6 +612,46 @@ describe("registry version status resolution", () => {
     expect(first.checked).toBe(16);
     expect(second.checked).toBe(16);
     expect(seenVersions).toEqual(new Set(versions));
+  });
+
+  test("asks about the oldest never-attempted rows before continuous new arrivals", async () => {
+    const org = await seedOrg();
+    const now = new Date();
+    await seedCompletedScan(org, {
+      version: "2.1.0",
+      createdAt: new Date(now.getTime() - 4 * 60 * 1000),
+    });
+    await seedCompletedScan(org, {
+      version: "2.1.1",
+      createdAt: new Date(now.getTime() - 3 * 60 * 1000),
+    });
+    await seedCompletedScan(org, {
+      version: "2.1.2",
+      createdAt: new Date(now.getTime() - 2 * 60 * 1000),
+    });
+    await seedCompletedScan(org, {
+      version: "2.1.3",
+      createdAt: new Date(now.getTime() - 60 * 1000),
+    });
+    const seenVersions = new Set<string>();
+    stubRegistry((url) => {
+      const match = /\/version\/([^/]+)\/status$/.exec(new URL(url).pathname);
+      if (match?.[1]) seenVersions.add(decodeURIComponent(match[1]));
+      return new Response(null, { status: 404 });
+    });
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      lookupLimit: 2,
+      now,
+    });
+
+    expect(result.checked).toBe(2);
+    expect(seenVersions).toEqual(new Set(["2.1.0", "2.1.1"]));
   });
 
   test("nudges once when we approved a release npm is still holding", async () => {
