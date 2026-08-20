@@ -617,19 +617,31 @@ async function reapStalledScans(env: Cloudflare.Env, ctx: ExecutionContext) {
   }
 
   try {
+    const aiSweepNow = new Date();
     const abandoned = await listStalledAiReviewScans(db, {
-      timeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+      now: aiSweepNow,
+      queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+      runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
       limit: ABANDONED_AI_REVIEW_SWEEP_LIMIT,
     });
     let closed = 0;
     for (const scan of abandoned) {
-      if (await closeAbandonedAiReview(env, db, scan.id, scan.organizationId)) closed += 1;
+      if (
+        await closeAbandonedAiReview(env, db, scan.id, scan.organizationId, {
+          now: aiSweepNow,
+          queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+          runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
+        })
+      ) {
+        closed += 1;
+      }
     }
     if (closed > 0) {
       emitOperationalEvent("warn", "scans.abandoned_ai_reviews_closed", {
         closed,
         candidates: abandoned.length,
-        timeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+        queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+        runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
       });
     }
   } catch (err) {

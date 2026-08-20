@@ -1,5 +1,11 @@
 import { type AppDb, createDb } from "../../db/client";
-import { applyAiReviewPatch, getScanStatus } from "../../db/scans";
+import {
+  applyAiReviewPatch,
+  getScanStatus,
+  markAiReviewStarted,
+  STALLED_QUEUED_TIMEOUT_MS,
+  STALLED_RUNNING_TIMEOUT_MS,
+} from "../../db/scans";
 import { AI_REVIEWER_VERSION } from "../ai-review/contract";
 import { AI_MODEL } from "../ai-review/models";
 import type { AiReview } from "../ai-review/types";
@@ -72,6 +78,12 @@ export async function executeAiReviewJob(
     return skip(message, "scan_not_complete");
   }
   if (scan.status !== "complete" || scan.aiStatus !== "pending") {
+    return skip(message, "not_pending");
+  }
+  // Refresh the advisory lifecycle clock before evidence I/O or model work. A
+  // scan may have waited near the queued timeout before this delivery began;
+  // without a distinct start time the cron reaper can close the live review.
+  if (!(await markAiReviewStarted(db, message.scanId, message.organizationId))) {
     return skip(message, "not_pending");
   }
 
@@ -326,7 +338,7 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     return null;
   });
 
-  const { patched } = await applyAiReviewPatch(db, {
+  const { patched, decision } = await applyAiReviewPatch(db, {
     scanId: message.scanId,
     organizationId: message.organizationId,
     ai: review,
@@ -352,6 +364,13 @@ export async function applyAiReviewToScan(args: ApplyAiReviewArgs): Promise<AiRe
     await deleteSupersededReportRevision(env.ARTIFACTS, db, report, message);
     return skip(message, "not_pending");
   }
+  recordDeferredAiReviewDecision(
+    env,
+    message.organizationId,
+    evidence.ecosystem || message.ecosystem,
+    decision,
+    review,
+  );
   await notifyDeferredScanCompletion(env, db, scan);
   emitOperationalEvent("info", "scan.ai_review.patched", {
     scanId: message.scanId,
@@ -383,6 +402,7 @@ async function closeUnavailable(
   message: AiReviewQueueMessage,
   reason: string,
   startedAtMs: number,
+  abandonedBefore?: { queued: Date; running: Date },
 ): Promise<AiReviewJobOutcome> {
   // Named model, deliberately: `computeScanRisk` reads a non-null model on a
   // non-complete review as "attempted and did not finish" and floors the scan at
@@ -417,7 +437,7 @@ async function closeUnavailable(
     priorApprovedContextFindingCount: persisted?.priorApprovedContextFindingCount ?? 0,
   };
 
-  const { patched } = await applyAiReviewPatch(db, {
+  const { patched, decision } = await applyAiReviewPatch(db, {
     scanId: message.scanId,
     organizationId: message.organizationId,
     ai: review,
@@ -427,14 +447,24 @@ async function closeUnavailable(
     findingCount: scan.findingCount ?? 0,
     summary: patchedSummary(scan.summaryJson, riskSummary, null),
     report: null,
+    ...(abandonedBefore ? { abandonedBefore } : {}),
   });
-  await deleteAiReviewInput(
-    env.ARTIFACTS,
-    message.organizationId,
-    message.scanId,
-    readAiReviewInputDescriptor(scan.summaryJson),
-  );
-  if (patched) await notifyDeferredScanCompletion(env, db, scan);
+  if (patched) {
+    await deleteAiReviewInput(
+      env.ARTIFACTS,
+      message.organizationId,
+      message.scanId,
+      readAiReviewInputDescriptor(scan.summaryJson),
+    );
+    recordDeferredAiReviewDecision(
+      env,
+      message.organizationId,
+      message.ecosystem,
+      decision,
+      review,
+    );
+    await notifyDeferredScanCompletion(env, db, scan);
+  }
   emitOperationalEvent(patched ? "warn" : "info", "scan.ai_review.closed_unavailable", {
     scanId: message.scanId,
     organizationId: message.organizationId,
@@ -582,18 +612,60 @@ export async function closeAbandonedAiReview(
   db: AppDb,
   scanId: string,
   organizationId: string,
+  options: {
+    now?: Date;
+    queuedTimeoutMs?: number;
+    runningTimeoutMs?: number;
+  } = {},
 ): Promise<boolean> {
   const scan = await getScanStatus(db, scanId, organizationId);
   if (!scan || scan.status !== "complete" || scan.aiStatus !== "pending") return false;
+  const now = options.now ?? new Date();
+  const abandonedBefore =
+    options.queuedTimeoutMs === undefined && options.runningTimeoutMs === undefined
+      ? undefined
+      : {
+          queued: new Date(now.getTime() - (options.queuedTimeoutMs ?? STALLED_QUEUED_TIMEOUT_MS)),
+          running: new Date(
+            now.getTime() - (options.runningTimeoutMs ?? STALLED_RUNNING_TIMEOUT_MS),
+          ),
+        };
   const result = await closeUnavailable(
     env,
     db,
     scan,
-    { kind: "ai_review", scanId, stageId: scan.stageId, organizationId, ecosystem: "unknown" },
+    { kind: "ai_review", scanId, stageId: scan.stageId, organizationId, ecosystem: "npm" },
     "abandoned",
     Date.now(),
+    abandonedBefore,
   );
   return result.outcome === "patched";
+}
+
+function recordDeferredAiReviewDecision(
+  env: Cloudflare.Env,
+  organizationId: string,
+  ecosystem: string,
+  decision: string | null,
+  review: AiReview,
+): void {
+  if (
+    !decision ||
+    review.status === "pending" ||
+    (review.model === null && review.reviewerVersion === null)
+  ) {
+    return;
+  }
+  recordProductEvent(env, {
+    name: "ai_review.decided",
+    organizationId,
+    ecosystem,
+    decision,
+    status: review.status,
+    releaseAssessment: review.releaseAssessment,
+    model: review.model ?? "none",
+    reviewerVersion: review.reviewerVersion ?? "legacy",
+  });
 }
 
 function readCodePatternSet(value: string | undefined): CodePatternSet | undefined {

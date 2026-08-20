@@ -218,7 +218,7 @@ describe("public report sharing", () => {
     expect(pub.status).toBe(200);
     const text = await pub.text();
     const body = JSON.parse(text) as Record<string, unknown>;
-    expect(body.schema).toBe("drydock.report.v2");
+    expect(body.schema).toBe("drydock.report.v3");
     expect((body.package as { name: string }).name).toBe("@org/pkg");
     // The export is the sharing boundary: no org/user identifiers, no events,
     // no file samples anywhere in the payload.
@@ -576,7 +576,7 @@ describe("public report attestations", () => {
     expect(statement._type).toBe("https://in-toto.io/Statement/v1");
     expect(statement.subject[0].name).toBe("@org/pkg@1.1.0");
     expect(statement.predicate.scanId).toBe(scanId);
-    expect(statement.predicate.reportSchema).toBe("drydock.report.v2");
+    expect(statement.predicate.reportSchema).toBe("drydock.report.v3");
     // Archived envelopes must be orderable without an out-of-band timestamp.
     expect(Number.isNaN(Date.parse(statement.predicate.issuedAt))).toBe(false);
     const digest = new Uint8Array(

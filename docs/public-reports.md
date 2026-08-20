@@ -32,7 +32,7 @@ The unguessable 256-bit share token is the capability; all endpoints are
 rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 
 - `GET /public/reports/:token` — the canonical report export
-  (`drydock.report.v2`, same bytes as the authenticated
+  (`drydock.report.v3`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
   or organization/user identifiers.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1

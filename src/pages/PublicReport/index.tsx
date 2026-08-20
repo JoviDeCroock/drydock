@@ -17,7 +17,7 @@ import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
 // The canonical report export served at /public/reports/:token — the same
-// document `serializeReportExport` produces (schema drydock.report.v2).
+// document `serializeReportExport` produces (schema drydock.report.v3).
 interface PublicReport {
   schema: string;
   scan: {

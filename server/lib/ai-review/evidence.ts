@@ -20,6 +20,8 @@ import type { DiffEntry, FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import type { SelectiveAiReviewOptions } from "./types";
 
+const SAMPLE_OMITTED_FLAG = "sample-omitted";
+
 interface EvidenceIndex {
   stagedByPath: Map<string, FileRecord>;
   previousByPath: Map<string, FileRecord>;
@@ -162,7 +164,9 @@ export function createAiReviewTools(
         staged: staged ? fileMetadata(staged) : null,
         content: null,
         truncated: false,
-        note: "No text sample is available, usually because the file is binary or unsupported.",
+        note: file.flags.includes(SAMPLE_OMITTED_FLAG)
+          ? "The text sample was omitted from the deferred-review evidence budget; use the file metadata and deterministic findings."
+          : "No text sample is available, usually because the file is binary or unsupported.",
       };
     }
 

@@ -19,12 +19,16 @@ interface ReportExportFilenameInput {
 // Schema tag for the exported report document. Bump the suffix when the export
 // shape changes in a way consumers must branch on.
 //
+// v3 adds the deferred review's `aiReview.status = "pending"` snapshot. A v2
+// consumer only knew terminal AI states and must branch before treating that
+// snapshot as a completed assessment.
+//
 // v2 drops `releaseConsistency.priorScanId` and `releaseConsistency.decidedAt`
 // (see `exportReleaseConsistency`). Those are removals from the authenticated
 // `report.json` contract as much as from the public one, so they take the bump
 // with them: the export is the signing boundary, and a consumer that pinned v1
 // must not silently receive a document missing a field it read.
-export const REPORT_EXPORT_SCHEMA = "drydock.report.v2";
+export const REPORT_EXPORT_SCHEMA = "drydock.report.v3";
 
 // Build a self-contained, archivable view of a completed review from the data
 // already persisted for it: provenance metadata, package/baseline identity, the
@@ -77,7 +81,7 @@ export function buildReportExport(detail: ScanDetail) {
     // Deterministic findings only. A completed AI review's findings are carried
     // by `aiReview.findings` above; including the persisted `source: "ai"` rows
     // here too would double-count them in this array and break the invariant
-    // that every entry has a ruleId/ruleVersion. Keeps `drydock.report.v2`'s
+    // that every entry has a ruleId/ruleVersion. Keeps the report contract's
     // findings[] meaning stable across the persistence change.
     findings: detail.findings
       .filter((finding) => finding.source !== "ai")

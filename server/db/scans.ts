@@ -397,6 +397,13 @@ export async function failStalledScans(
           };
     // One bound parameter per id, plus the status/error/timestamp values.
     for (const chunk of chunkForD1(ids, 1, 8)) {
+      // Re-check the clock as well as the status. A retry can reclaim a stale
+      // `running` row without changing its status, resetting `started_at`
+      // between the SELECT above and this UPDATE.
+      const stillStalled =
+        status === "running"
+          ? sql`coalesce(${scans.startedAt}, ${scans.createdAt}) < ${runningCutoffMs}`
+          : lt(scans.createdAt, new Date(queuedCutoffMs));
       const closed = await db
         .update(scans)
         .set({
@@ -406,7 +413,7 @@ export async function failStalledScans(
           completedAt: now,
           updatedAt: now,
         })
-        .where(and(inArray(scans.id, chunk), eq(scans.status, status)))
+        .where(and(inArray(scans.id, chunk), eq(scans.status, status), stillStalled))
         .returning({
           id: scans.id,
           organizationId: scans.organizationId,
@@ -438,14 +445,21 @@ export async function failStalledScans(
  * this clock measures backlog too. The scan itself is complete and readable
  * throughout — only the advisory overlay is outstanding, and the UI says so.
  */
+export interface StalledAiReviewSweepOptions {
+  now?: Date;
+  queuedTimeoutMs?: number;
+  runningTimeoutMs?: number;
+  limit?: number;
+}
+
 export async function listStalledAiReviewScans(
   db: AppDb,
-  options: { now?: Date; timeoutMs?: number; limit?: number } = {},
+  options: StalledAiReviewSweepOptions = {},
 ): Promise<Array<{ id: string; organizationId: string }>> {
   const now = options.now ?? new Date();
-  const timeoutMs = options.timeoutMs ?? STALLED_QUEUED_TIMEOUT_MS;
   const limit = Math.max(1, Math.floor(options.limit ?? STALLED_SCAN_SWEEP_LIMIT));
-  const cutoffMs = now.getTime() - timeoutMs;
+  const queuedCutoffMs = now.getTime() - (options.queuedTimeoutMs ?? STALLED_QUEUED_TIMEOUT_MS);
+  const runningCutoffMs = now.getTime() - (options.runningTimeoutMs ?? STALLED_RUNNING_TIMEOUT_MS);
   const rows = await db
     .select({ id: scans.id, organizationId: scans.organizationId })
     .from(scans)
@@ -458,14 +472,46 @@ export async function listStalledAiReviewScans(
         // queued behind them.
         eq(scans.status, "complete"),
         isNotNull(scans.organizationId),
-        sql`coalesce(${scans.completedAt}, ${scans.updatedAt}) < ${cutoffMs}`,
+        aiReviewIsAbandoned(queuedCutoffMs, runningCutoffMs),
       ),
     )
-    .orderBy(asc(scans.completedAt))
+    .orderBy(asc(sql`coalesce(${scans.aiStartedAt}, ${scans.completedAt})`))
     .limit(limit);
   return rows.flatMap((row) =>
     row.organizationId ? [{ id: row.id, organizationId: row.organizationId }] : [],
   );
+}
+
+/** Mark the lifecycle clock before an AI delivery reads or runs evidence. */
+export async function markAiReviewStarted(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const now = new Date();
+  const started = await db
+    .update(scans)
+    .set({ aiStartedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "complete"),
+        eq(scans.aiStatus, "pending"),
+      ),
+    )
+    .returning({ id: scans.id });
+  return started.length > 0;
+}
+
+function aiReviewIsAbandoned(queuedCutoffMs: number, runningCutoffMs: number) {
+  return or(
+    and(
+      isNull(scans.aiStartedAt),
+      sql`coalesce(${scans.completedAt}, ${scans.updatedAt}) < ${queuedCutoffMs}`,
+    ),
+    and(isNotNull(scans.aiStartedAt), lt(scans.aiStartedAt, new Date(runningCutoffMs))),
+  )!;
 }
 
 export interface AiReviewPatchInput {
@@ -492,6 +538,8 @@ export interface AiReviewPatchInput {
     artifactManifestDigest: string;
     artifactManifestSize: number;
   } | null;
+  /** Optional atomic guard used only by the abandoned-review reaper. */
+  abandonedBefore?: { queued: Date; running: Date };
 }
 
 /**
@@ -509,8 +557,22 @@ export interface AiReviewPatchInput {
 export async function applyAiReviewPatch(
   db: AppDb,
   input: AiReviewPatchInput,
-): Promise<{ patched: boolean }> {
+): Promise<{ patched: boolean; decision: string | null }> {
   const now = new Date();
+  const conditions = [
+    eq(scans.id, input.scanId),
+    eq(scans.organizationId, input.organizationId),
+    eq(scans.status, "complete"),
+    eq(scans.aiStatus, "pending"),
+  ];
+  if (input.abandonedBefore) {
+    conditions.push(
+      aiReviewIsAbandoned(
+        input.abandonedBefore.queued.getTime(),
+        input.abandonedBefore.running.getTime(),
+      ),
+    );
+  }
   const claimed = await db
     .update(scans)
     .set({
@@ -531,16 +593,9 @@ export async function applyAiReviewPatch(
         : {}),
       updatedAt: now,
     })
-    .where(
-      and(
-        eq(scans.id, input.scanId),
-        eq(scans.organizationId, input.organizationId),
-        eq(scans.status, "complete"),
-        eq(scans.aiStatus, "pending"),
-      ),
-    )
-    .returning({ id: scans.id });
-  return { patched: claimed.length > 0 };
+    .where(and(...conditions))
+    .returning({ id: scans.id, decision: scans.decision });
+  return { patched: claimed.length > 0, decision: claimed[0]?.decision ?? null };
 }
 
 /**
@@ -1282,10 +1337,16 @@ function recordDecisionEvent(
   });
 
   const aiReview = parsePersistedAiReview(row.aiJson);
-  // The disabled-review placeholder is persisted so report consumers can
-  // explain why no advisory result exists, but it is not a reviewer attempt
-  // and must not enter the reviewer feedback dataset as a "legacy" review.
-  if (!aiReview || (aiReview.model === null && aiReview.reviewerVersion === null)) return;
+  // Pending decisions are joined when the deferred patch lands. The disabled
+  // placeholder is terminal but is not a reviewer attempt, so it stays out of
+  // the feedback dataset entirely.
+  if (
+    !aiReview ||
+    aiReview.status === "pending" ||
+    (aiReview.model === null && aiReview.reviewerVersion === null)
+  ) {
+    return;
+  }
   recordProductEvent(env, {
     name: "ai_review.decided",
     organizationId: input.organizationId,

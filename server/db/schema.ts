@@ -157,6 +157,10 @@ export const scans = sqliteTable(
     // split out of the scan's critical path. Denormalized so the list view and
     // the status poll can show "AI review pending" without reading `ai_json`.
     aiStatus: text("ai_status"),
+    // Set when a deferred-review queue delivery starts consuming evidence. The
+    // abandoned-review sweep uses this clock instead of the scan completion
+    // time, so queue backlog cannot make an active model run look abandoned.
+    aiStartedAt: integer("ai_started_at", { mode: "timestamp_ms" }),
     errorJson: text("error_json", { mode: "json" }),
     changedFileCount: integer("changed_file_count"),
     findingCount: integer("finding_count"),
@@ -240,7 +244,11 @@ export const scans = sqliteTable(
     statusStartedIdx: index("scans_status_started_idx").on(table.status, table.startedAt),
     // Same sweep, for scans whose deterministic report landed but whose deferred
     // AI review never came back.
-    aiStatusIdx: index("scans_ai_status_idx").on(table.aiStatus, table.completedAt),
+    aiStatusIdx: index("scans_ai_status_idx").on(
+      table.aiStatus,
+      table.aiStartedAt,
+      table.completedAt,
+    ),
   }),
 );
 

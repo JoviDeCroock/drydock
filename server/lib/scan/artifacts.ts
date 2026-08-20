@@ -27,6 +27,14 @@ const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 // is applied.
 export { SCAN_FILE_SAMPLE_LIMIT };
 
+// The deferred review only ever returns 48k characters of file evidence to the
+// model. Keep a larger search window than that, but do not serialize both full
+// archive retention budgets into one R2 object: stable JSON, hashing, upload
+// verification, and the later read would each materialize another copy inside
+// a 128 MB Worker isolate.
+export const AI_REVIEW_INPUT_SAMPLE_CHARACTER_LIMIT = 2 * 1024 * 1024;
+export const AI_REVIEW_SAMPLE_OMITTED_FLAG = "sample-omitted";
+
 export interface ScanArtifactMetadata {
   artifactStorageVersion: number;
   artifactManifestKey: string;
@@ -332,7 +340,7 @@ export async function writeAiReviewInput(
   organizationId: string,
   payload: AiReviewInputPayload,
 ): Promise<AiReviewInputDescriptor> {
-  const body = stableJson(payload);
+  const body = stableJson(compactAiReviewInputPayload(payload));
   const digest = await sha256Hex(body);
   // Concurrent duplicate scan deliveries prepare their evidence before the D1
   // completion claim decides which one won. A fixed key lets a losing attempt
@@ -344,6 +352,97 @@ export async function writeAiReviewInput(
     artifactKind: "ai-input",
   });
   return { key: descriptor.key, digest: descriptor.digest, size: descriptor.size };
+}
+
+/**
+ * Retain a deterministic, bounded subset of the redacted text samples for the
+ * deferred reviewer. File metadata, hashes, flags, the diff, and deterministic
+ * findings are never dropped. Finding paths and manifests come first, followed
+ * by changed paths and then unchanged package context; cheaper path pairs win
+ * inside a tier so a single generated bundle cannot consume the whole budget.
+ *
+ * Both sides of a path are retained or omitted together. This keeps a modified
+ * file from turning into a misleading one-sided diff in the evidence tools.
+ */
+export function compactAiReviewInputPayload(payload: AiReviewInputPayload): AiReviewInputPayload {
+  const changedPaths = new Set(
+    payload.diff.filter((entry) => entry.status !== "unchanged").map((entry) => entry.path),
+  );
+  const findingPaths = new Set([
+    ...payload.releaseRuleFindings.map((finding) => finding.file),
+    ...payload.annotatedFindings.map((finding) => finding.file),
+  ]);
+  const samplesByPath = new Map<string, number>();
+  for (const file of [...payload.files, ...payload.previousFiles]) {
+    if (!file.textSample) continue;
+    const retainedCharacters = Math.min(file.textSample.length, SCAN_FILE_SAMPLE_LIMIT);
+    samplesByPath.set(file.path, (samplesByPath.get(file.path) ?? 0) + retainedCharacters);
+  }
+
+  const retainedPaths = new Set<string>();
+  let remaining = AI_REVIEW_INPUT_SAMPLE_CHARACTER_LIMIT;
+  const candidates = [...samplesByPath].map(([path, characters]) => ({
+    path,
+    characters,
+    priority: findingPaths.has(path)
+      ? 0
+      : isPackageManifestPath(path)
+        ? 1
+        : changedPaths.has(path)
+          ? 2
+          : 3,
+  }));
+  candidates.sort(
+    (a, b) =>
+      a.priority - b.priority || a.characters - b.characters || a.path.localeCompare(b.path),
+  );
+  for (const candidate of candidates) {
+    if (candidate.characters > remaining) continue;
+    retainedPaths.add(candidate.path);
+    remaining -= candidate.characters;
+  }
+
+  return {
+    ...payload,
+    files: compactAiReviewFiles(payload.files, retainedPaths),
+    previousFiles: compactAiReviewFiles(payload.previousFiles, retainedPaths),
+  };
+}
+
+function compactAiReviewFiles(files: FileRecord[], retainedPaths: Set<string>): FileRecord[] {
+  return files.map((file) => {
+    if (!file.textSample) return file;
+    if (!retainedPaths.has(file.path)) {
+      const { textSample: _omitted, ...metadata } = file;
+      return {
+        ...metadata,
+        flags: withFlag(metadata.flags, AI_REVIEW_SAMPLE_OMITTED_FLAG),
+      };
+    }
+    if (file.textSample.length <= SCAN_FILE_SAMPLE_LIMIT) return file;
+    return {
+      ...file,
+      textSample: file.textSample.slice(0, SCAN_FILE_SAMPLE_LIMIT),
+      flags: withFlag(file.flags, "truncated"),
+    };
+  });
+}
+
+function withFlag(flags: string[], flag: string): string[] {
+  return flags.includes(flag) ? flags : [...flags, flag];
+}
+
+function isPackageManifestPath(path: string): boolean {
+  const name = path.split("/").at(-1)?.toLowerCase();
+  return (
+    name === "package.json" ||
+    name === "pyproject.toml" ||
+    name === "setup.py" ||
+    name === "pkg-info" ||
+    name === "metadata" ||
+    name === "wheel" ||
+    name === "record"
+  );
 }
 
 export async function loadAiReviewInput(

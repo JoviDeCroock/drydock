@@ -3,7 +3,13 @@ import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, getScan, getScanStatus, persistScan } from "../../server/db/scans";
+import {
+  createScanJob,
+  getScan,
+  getScanStatus,
+  persistScan,
+  recordScanDecision,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { pendingAiReview } from "../../server/lib/ai-review/types";
 import {
@@ -13,7 +19,11 @@ import {
 } from "../../server/lib/scan/ai-review-job";
 import {
   AI_REVIEW_INPUT_VERSION,
+  AI_REVIEW_INPUT_SAMPLE_CHARACTER_LIMIT,
+  AI_REVIEW_SAMPLE_OMITTED_FLAG,
+  compactAiReviewInputPayload,
   loadAiReviewInput,
+  SCAN_FILE_SAMPLE_LIMIT,
   writeAiReviewInput,
   writeScanArtifacts,
   type AiReviewInputPayload,
@@ -93,6 +103,7 @@ const criticalReview = {
   ],
   requiresManualReview: true,
   model: "test-model",
+  reviewerVersion: "test-reviewer-v1",
 };
 
 const lowReview = {
@@ -103,6 +114,7 @@ const lowReview = {
   findings: [],
   requiresManualReview: false,
   model: "test-model",
+  reviewerVersion: "test-reviewer-v1",
 };
 
 function evidenceFor(scanId: string): AiReviewInputPayload {
@@ -243,9 +255,10 @@ function applyArgs(
   owner: SeededUser,
   scan: NonNullable<Awaited<ReturnType<typeof getScanStatus>>>,
   review: ApplyAiReviewArgs["review"],
+  reviewEnv: Cloudflare.Env = env,
 ): ApplyAiReviewArgs {
   return {
-    env,
+    env: reviewEnv,
     db: createDb(env.DB),
     scan,
     message: messageFor(scan.id, owner),
@@ -455,6 +468,98 @@ describe("deferred AI review", () => {
     expect(summary.aiReviewInput).toBeUndefined();
   });
 
+  test("bounds deferred text samples while retaining both sides of selected paths", async () => {
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const largeText = "x".repeat(SCAN_FILE_SAMPLE_LIMIT + 1);
+    const paths = ["index.js", ...Array.from({ length: 15 }, (_, index) => `lib/${index}.js`)];
+    const original = evidenceFor(scanId);
+    original.files = paths.map((path, index) => ({
+      path,
+      size: largeText.length,
+      sha256: `staged-${index}`,
+      flags: [],
+      textSample: largeText,
+    }));
+    original.previousFiles = paths.map((path, index) => ({
+      path,
+      size: largeText.length,
+      sha256: `previous-${index}`,
+      flags: [],
+      textSample: largeText,
+    }));
+    original.diff = paths.map((path) => ({ path, status: "modified", flags: [] }));
+
+    const compacted = compactAiReviewInputPayload(original);
+    const retainedCharacters = [...compacted.files, ...compacted.previousFiles].reduce(
+      (total, file) => total + (file.textSample?.length ?? 0),
+      0,
+    );
+    expect(retainedCharacters).toBeLessThanOrEqual(AI_REVIEW_INPUT_SAMPLE_CHARACTER_LIMIT);
+    expect(compacted.files.find((file) => file.path === "index.js")?.textSample).toHaveLength(
+      SCAN_FILE_SAMPLE_LIMIT,
+    );
+    expect(compacted.previousFiles.find((file) => file.path === "index.js")?.flags).toContain(
+      "truncated",
+    );
+
+    const omittedPath = paths.find(
+      (path) => !compacted.files.find((file) => file.path === path)?.textSample,
+    );
+    expect(omittedPath).toBeDefined();
+    for (const side of [compacted.files, compacted.previousFiles]) {
+      const omitted = side.find((file) => file.path === omittedPath);
+      expect(omitted).toMatchObject({
+        path: omittedPath,
+        flags: expect.arrayContaining([AI_REVIEW_SAMPLE_OMITTED_FLAG]),
+      });
+      expect(omitted).not.toHaveProperty("textSample");
+    }
+  });
+
+  test("emits reviewer feedback when the maintainer decided while AI was pending", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    const points: AnalyticsEngineDataPoint[] = [];
+    const analyticsEnv = {
+      ...env,
+      PRODUCT_ANALYTICS: {
+        writeDataPoint: (point: AnalyticsEngineDataPoint) => points.push(point),
+      },
+    } as Cloudflare.Env;
+
+    await recordScanDecision(
+      db,
+      {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        decision: "publish",
+      },
+      env.ARTIFACTS,
+      analyticsEnv,
+    );
+    expect(points.map((point) => point.indexes?.[0])).toEqual(["scan.decided"]);
+
+    const pending = await getScanStatus(db, scanId, owner.organizationId);
+    await applyAiReviewToScan(applyArgs(owner, pending!, criticalReview, analyticsEnv));
+
+    expect(points.map((point) => point.indexes?.[0])).toEqual([
+      "scan.decided",
+      "ai_review.decided",
+    ]);
+    expect(points[1]?.blobs).toEqual([
+      "1",
+      "ai_review.decided",
+      owner.organizationId,
+      "npm",
+      "publish",
+      "complete",
+      "suspicious",
+      "test-model",
+      "test-reviewer-v1",
+    ]);
+  });
+
   test("executeAiReviewJob honors the ai-review killswitch without running a review", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner, { artifactBacked: true });
@@ -471,6 +576,7 @@ describe("deferred AI review", () => {
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
     expect(detail?.scan.aiStatus).toBe("unavailable");
     expect((detail!.scan.aiJson as { model: string | null }).model).toBeNull();
+    expect(detail?.scan.aiStartedAt).not.toBeNull();
     // A disabled reviewer is neutral: no findings, and no medium floor — the
     // grade stays the deterministic one.
     expect(detail?.scan.risk).toBe("medium");

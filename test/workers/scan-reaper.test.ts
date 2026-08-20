@@ -12,12 +12,14 @@ import {
   listExistingScanStageIds,
   listScans,
   listStalledAiReviewScans,
+  markAiReviewStarted,
   persistScan,
   STALLED_QUEUED_TIMEOUT_MS,
   STALLED_RUNNING_TIMEOUT_MS,
 } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { pendingAiReview } from "../../server/lib/ai-review/types";
+import { closeAbandonedAiReview } from "../../server/lib/scan/ai-review-job";
 import worker from "../../server";
 
 interface SeededUser {
@@ -48,6 +50,14 @@ async function ageScan(scanId: string, minutes: number) {
   await db
     .update(schema.scans)
     .set({ createdAt: when, updatedAt: when, startedAt: when, completedAt: when })
+    .where(eq(schema.scans.id, scanId));
+}
+
+async function ageAiReviewStart(scanId: string, minutes: number) {
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({ aiStartedAt: new Date(Date.now() - minutes * 60_000) })
     .where(eq(schema.scans.id, scanId));
 }
 
@@ -179,6 +189,47 @@ describe("stalled scan reaper", () => {
     expect(abandoned.map((row) => row.id)).toEqual([scanId]);
     // A completed scan whose review is still in flight is not a candidate.
     expect((await getScanStatus(db, fresh, owner.organizationId))?.aiStatus).toBe("pending");
+  });
+
+  test("ages an active AI review from its own start and revalidates before closing it", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = await newScan(owner, "ai-started");
+    await claimScanForRun(db, scanId, owner.organizationId);
+    await persistScan(db, {
+      id: scanId,
+      stageId: `stage-ai-${scanId.slice(-8)}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      risk: "medium",
+      status: "complete",
+      summary: {},
+      ai: pendingAiReview(),
+      files: [],
+      diff: [],
+      findings: [],
+    });
+    await ageScan(scanId, 8 * 60);
+    const sweepNow = new Date();
+    const candidates = await listStalledAiReviewScans(db, { now: sweepNow });
+    expect(candidates.map((row) => row.id)).toContain(scanId);
+
+    // The queue delivery starts after the SELECT but before the closer's patch.
+    // Its fresh start timestamp must make the atomic age guard refuse the stale
+    // candidate, and refusal must leave the live evidence lifecycle pending.
+    expect(await markAiReviewStarted(db, scanId, owner.organizationId)).toBe(true);
+    expect(
+      await closeAbandonedAiReview(env, db, scanId, owner.organizationId, {
+        now: sweepNow,
+        queuedTimeoutMs: STALLED_QUEUED_TIMEOUT_MS,
+        runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
+      }),
+    ).toBe(false);
+    expect((await getScanStatus(db, scanId, owner.organizationId))?.aiStatus).toBe("pending");
+    expect((await listStalledAiReviewScans(db)).map((row) => row.id)).not.toContain(scanId);
+
+    await ageAiReviewStart(scanId, 45);
+    expect((await listStalledAiReviewScans(db)).map((row) => row.id)).toContain(scanId);
   });
 
   test("does not return candidates the closer would refuse", async () => {

@@ -23,7 +23,7 @@ const dbMock = vi.hoisted(() => ({
     summaryJson: {},
     findingCount: 1,
   })),
-  applyAiReviewPatch: vi.fn(async () => ({ patched: true })),
+  applyAiReviewPatch: vi.fn(async () => ({ patched: true, decision: null })),
 }));
 const registryMock = vi.hoisted(() => ({
   fetchPackageMetadata: vi.fn(),

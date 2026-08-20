@@ -14,7 +14,7 @@ boundary — so the extraction runs inside that boundary and arrives as
 `ArtifactFacts.declaredRepository` as a bounded canonical URL, never as the raw
 package-controlled value. The envelope is persisted inside the scan's `summaryJson`
 blob (`summary.intentEnvelope`, no dedicated column), returned on
-`ScanResult`, exported in the `drydock.report.v2` report as the optional
+`ScanResult`, exported in the `drydock.report.v3` report as the optional
 `intentEnvelope` field, and rendered as the "Source binding" row on the scan
 detail page.
 
