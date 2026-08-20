@@ -60,6 +60,8 @@ move it into `src/features/` instead.
 - **Assistant findings** — captioned `assistant · line N` (they have no ruleId), tinted by severity like any other finding. Their line is resolved server-side from an anchor the reviewer copied out of the evidence; see [`release-safety.md`](release-safety.md).
 - **Assistant comments** — advisory notes carrying no severity, badged `assistant note` and rendered in the neutral info tone rather than a severity colour, because a note is not a signal. They are inline-only: they never appear in Risk signals, the file-tree counts, or the risk summary.
 
+Assistant annotations fail closed to the unpinned banner when the display cannot preserve their evidence coordinate: when reformatting splits one anchored source line into several rows, or when an alternate comparison replaces the original baseline text for a removed file. Deterministic findings retain their existing source-line mapping because their rules report a line rather than an exact anchor.
+
 ## Large diffs
 
 `DiffView` must stay responsive on megabyte-scale bundled artifacts (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`):

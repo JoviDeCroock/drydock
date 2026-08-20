@@ -6,6 +6,7 @@ import {
   type FindingDiffAnnotation,
 } from "../../../../server/lib/review";
 import type { FindingWithDiffStatus } from "../../../features/review/types";
+import type { DiffFinding } from "../../../components/DiffView";
 import type { PersistedScanDetail } from "../../../models/scan";
 import type { PersistedFinding } from "./types";
 
@@ -151,4 +152,20 @@ export function annotatePersistedFindings(
       releaseDelta: finding.releaseDelta,
     };
   });
+}
+
+// AI annotations on a removed file are resolved against the scan's original
+// baseline because there is no staged text. When the workbench compares against
+// another version, that baseline text changes while the persisted coordinate
+// does not. Keep the note, but move it to the unpinned banner rather than point
+// at a line in a different artifact.
+export function unpinAssistantAnnotationsForComparison<T extends DiffFinding>(
+  annotations: T[],
+  status: DiffEntry["status"] | null | undefined,
+  isDefaultComparison: boolean,
+): T[] {
+  if (isDefaultComparison || status !== "removed") return annotations;
+  return annotations.map((annotation) =>
+    annotation.source === "ai" ? { ...annotation, line: null, sourceLine: null } : annotation,
+  );
 }

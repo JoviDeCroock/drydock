@@ -4,6 +4,7 @@ import {
   hasNoLoadableBodyFlags,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
+  unpinAssistantAnnotationsForComparison,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers";
 
 describe("scanFilesToFileRecords", () => {
@@ -50,6 +51,39 @@ describe("hasNoLoadableBodyFlags", () => {
     expect(hasNoLoadableBodyFlags(["content-skipped"])).toBe(true);
     expect(hasNoLoadableBodyFlags(["truncated"])).toBe(false);
     expect(hasNoLoadableBodyFlags([])).toBe(false);
+  });
+});
+
+describe("unpinAssistantAnnotationsForComparison", () => {
+  const annotations = [
+    { id: "rule", severity: "high", line: 2, reason: "rule", source: "rule" },
+    { id: "ai", severity: "high", line: 4, reason: "assistant", source: "ai" },
+    {
+      id: "comment",
+      severity: "info",
+      line: 6,
+      reason: "comment",
+      source: "ai",
+      kind: "comment",
+    },
+  ];
+
+  test("keeps original coordinates for the scan's default comparison", () => {
+    expect(unpinAssistantAnnotationsForComparison(annotations, "removed", true)).toBe(annotations);
+  });
+
+  test("keeps coordinates when the staged file still exists", () => {
+    expect(unpinAssistantAnnotationsForComparison(annotations, "modified", false)).toBe(
+      annotations,
+    );
+  });
+
+  test("unpins only assistant annotations for a removed file on another baseline", () => {
+    expect(unpinAssistantAnnotationsForComparison(annotations, "removed", false)).toEqual([
+      annotations[0],
+      { ...annotations[1], line: null, sourceLine: null },
+      { ...annotations[2], line: null, sourceLine: null },
+    ]);
   });
 });
 

@@ -48,7 +48,7 @@ import { ReviewerSummary } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
 import { ShareDialog } from "./ShareDialog";
 import { filterDiffEntries, findingCountsByPath } from "../../../features/review/diff-entries";
-import { scanFilesToFileRecords } from "./diff-helpers";
+import { scanFilesToFileRecords, unpinAssistantAnnotationsForComparison } from "./diff-helpers";
 import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
 import { useScanFileContent } from "./hooks/useScanFileContent";
 import { useScanVersions } from "./hooks/useScanVersions";
@@ -213,10 +213,12 @@ export default function ScanDetailPage() {
 
   // Findings first, comments after, so a line carrying both leads with the
   // signal and follows with the commentary.
-  const selectedAnnotations = useComputed(() => [
-    ...selectedFindings.value,
-    ...selectedComments.value,
-  ]);
+  const selectedAnnotations = useComputed(() => {
+    const annotations = [...selectedFindings.value, ...selectedComments.value];
+    const entry = selectedEntry.value;
+    const isDefaultComparison = model.isDefaultComparison.value;
+    return unpinAssistantAnnotationsForComparison(annotations, entry?.status, isDefaultComparison);
+  });
 
   // Per-file finding counts for the tree, built once from the same finding set
   // that feeds the inline annotations and the risk-signals index.
