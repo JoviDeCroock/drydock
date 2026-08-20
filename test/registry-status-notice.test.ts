@@ -1,8 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  registryStatusBadge,
-  registryStatusVariant,
-} from "../src/pages/Dashboard/ScanDetail/RegistryStatusNotice";
+import { registryStatusBadge, registryStatusVariant } from "../src/features/registry-status";
 
 describe("registry status variant", () => {
   test("npm blocking a version is its own signal, whatever we decided", () => {

@@ -67,6 +67,12 @@ export interface ResolveReleaseOutcomesInput {
   /** Owner used for notification routing and event attribution. */
   ownerUserId: string;
   connection: { token: string; registryUrl: string };
+  /** Current stage incarnations from the discovery response, when available. */
+  stagedItems?: readonly {
+    id: string;
+    packageName: string | null;
+    version: string | null;
+  }[];
   allowInsecureLocalhost?: boolean;
   now?: Date;
 }
@@ -106,6 +112,7 @@ export async function resolveNpmReleaseOutcomes(
 
   const due = await listScansAwaitingRegistryStatus(db, organizationId, {
     limit: LOOKUPS_PER_SWEEP,
+    registryUrl: connection.registryUrl,
     createdAfter: new Date(now.getTime() - MAX_RELEASE_AGE_MS),
     rules: [
       // Never asked, and mid-validation, are both "in flight": ask often.
@@ -115,10 +122,26 @@ export async function resolveNpmReleaseOutcomes(
       { status: "published", recheckBefore: new Date(now.getTime() - PUBLISHED_RECHECK_MS) },
     ],
   });
-  if (!due.length) return result;
-  result.checked = due.length;
+  const currentStages = new Map(
+    input.stagedItems?.flatMap((item) =>
+      item.packageName && item.version
+        ? [[releaseCoordinateKey(item.packageName, item.version), item.id] as const]
+        : [],
+    ),
+  );
+  // npm permits a rejected version to be staged again under a new id. The
+  // current listing is an extra fail-closed guard for the brief window before
+  // a newly discovered incarnation has a scan row of its own.
+  const eligible = due.filter((candidate) => {
+    const currentStageId = currentStages.get(
+      releaseCoordinateKey(candidate.packageName, candidate.stagedVersion),
+    );
+    return !currentStageId || currentStageId === candidate.stageId;
+  });
+  if (!eligible.length) return result;
+  result.checked = eligible.length;
 
-  await runWithConcurrency(due, LOOKUP_CONCURRENCY, async (candidate) => {
+  await runWithConcurrency(eligible, LOOKUP_CONCURRENCY, async (candidate) => {
     const lookup = await fetchNpmVersionStatus(
       connection.registryUrl,
       connection.token,
@@ -238,9 +261,9 @@ export async function lookupStagedReleaseFate(
 ): Promise<StagedReleaseFate | null> {
   try {
     const identity = await getScanReleaseIdentity(db, scanId, organizationId);
-    if (!identity?.packageName || !identity.stagedVersion) return null;
+    if (!identity?.packageName || !identity.stagedVersion || !identity.registryUrl) return null;
     const connection = await getNpmConnection(db, organizationId);
-    if (!connection) return null;
+    if (!connection || connection.registryUrl !== identity.registryUrl) return null;
     const token = await decryptNpmToken(env, connection);
     const lookup = await fetchNpmVersionStatus(
       connection.registryUrl,
@@ -256,6 +279,10 @@ export async function lookupStagedReleaseFate(
     // wrong with the scan, and the caller is mid-failure-handling.
     return null;
   }
+}
+
+function releaseCoordinateKey(packageName: string, version: string): string {
+  return JSON.stringify([packageName, version]);
 }
 
 /**

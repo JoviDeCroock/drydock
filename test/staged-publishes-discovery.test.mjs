@@ -288,7 +288,11 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(dbMock.createScanJob).toHaveBeenCalledTimes(1);
     expect(dbMock.createScanJob).toHaveBeenCalledWith(
       db,
-      expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
+      expect.objectContaining({
+        source: "auto_discovery",
+        stageId: "stage-new-1",
+        registryUrl: "https://registry.npmjs.org",
+      }),
     );
 
     expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);

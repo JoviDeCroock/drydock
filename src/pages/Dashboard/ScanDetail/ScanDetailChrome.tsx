@@ -6,7 +6,7 @@ import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan"
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
-import { registryStatusBadge } from "./RegistryStatusNotice";
+import { registryStatusBadge } from "../../../features/registry-status";
 import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 /**
