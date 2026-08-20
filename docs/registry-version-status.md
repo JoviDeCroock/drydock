@@ -68,9 +68,11 @@ so a backlog drains instead of repeatedly selecting the newest rows. Status
 writes are fenced by that attempt timestamp, so an older overlapping sweep
 cannot replace a newer answer.
 
-The scan captures the registry URL that supplied its package coordinates. A
-connection edit therefore cannot make an old review ask a different registry
-about a coincidentally identical name and version. Within one registry, only
+The scan captures the registry URL and immutable registry-supplied package
+coordinates separately from the inspected tarball manifest. A connection edit
+therefore cannot make an old review ask a different registry about a
+coincidentally identical name and version, and hostile package bytes cannot
+retarget the credentialed lookup. Within one registry, only
 the newest scan for a package/version is eligible: duplicate manual reviews get
 one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on
@@ -133,10 +135,12 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Six columns on `scans` (migrations `0027`–`0030`):
+Eight columns on `scans` (migrations `0027`–`0031`):
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.
+- `registry_package_name` / `registry_version` — immutable registry-control-plane
+  coordinates; legacy null rows fail closed and are not polled.
 
 - `registry_version_status` — last known npm status, or null.
 - `registry_version_status_at` — when npm last returned that status.

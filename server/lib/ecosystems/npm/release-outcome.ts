@@ -5,6 +5,7 @@ import {
   listScansAwaitingRegistryStatus,
   markRegistryPublishReminderSent,
   recordRegistryVersionStatus,
+  supersedeRegistryReleaseIncarnations,
   type RegistryStatusCandidate,
 } from "../../../db/scans";
 import { notifyStagedReleaseAwaitingApproval } from "../../notify";
@@ -110,6 +111,26 @@ export async function resolveNpmReleaseOutcomes(
     reminded: 0,
   };
 
+  const currentStages = new Map(
+    input.stagedItems?.flatMap((item) =>
+      item.packageName && item.version
+        ? [[releaseCoordinateKey(item.packageName, item.version), item] as const]
+        : [],
+    ),
+  );
+  if (currentStages.size) {
+    await supersedeRegistryReleaseIncarnations(db, {
+      organizationId,
+      registryUrl: connection.registryUrl,
+      releases: [...currentStages.values()].map((item) => ({
+        stageId: item.id,
+        packageName: item.packageName!,
+        version: item.version!,
+      })),
+      supersededAt: now,
+    });
+  }
+
   const due = await listScansAwaitingRegistryStatus(db, organizationId, {
     limit: LOOKUPS_PER_SWEEP,
     registryUrl: connection.registryUrl,
@@ -122,13 +143,6 @@ export async function resolveNpmReleaseOutcomes(
       { status: "published", recheckBefore: new Date(now.getTime() - PUBLISHED_RECHECK_MS) },
     ],
   });
-  const currentStages = new Map(
-    input.stagedItems?.flatMap((item) =>
-      item.packageName && item.version
-        ? [[releaseCoordinateKey(item.packageName, item.version), item.id] as const]
-        : [],
-    ),
-  );
   // npm permits a rejected version to be staged again under a new id. The
   // current listing is an extra fail-closed guard for the brief window before
   // a newly discovered incarnation has a scan row of its own.
@@ -136,7 +150,7 @@ export async function resolveNpmReleaseOutcomes(
     const currentStageId = currentStages.get(
       releaseCoordinateKey(candidate.packageName, candidate.stagedVersion),
     );
-    return !currentStageId || currentStageId === candidate.stageId;
+    return !currentStageId || currentStageId.id === candidate.stageId;
   });
   if (!eligible.length) return result;
   result.checked = eligible.length;
