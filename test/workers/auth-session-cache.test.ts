@@ -66,10 +66,10 @@ async function signUp(requestEnv: Cloudflare.Env = env): Promise<Jar> {
   return jar;
 }
 
-/** An env whose session KV throws on every read, to prove a path skips it. */
+/** An env whose session KV throws on every operation. */
 function envWithFailingSessionStore(): Cloudflare.Env {
   const forbidden = () => {
-    throw new Error("the session store must not be read on this path");
+    throw new Error("the session store is unavailable");
   };
   return {
     ...env,
@@ -122,6 +122,18 @@ describe("session cookie cache", () => {
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
   });
+
+  test("falls back to D1 when the session KV read fails", async () => {
+    const jar = await signUp();
+    jar.delete(SESSION_DATA_COOKIE);
+
+    const res = await call("GET", "/api/health", {
+      jar,
+      requestEnv: envWithFailingSessionStore(),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+  });
 });
 
 describe("session secondary storage", () => {
@@ -145,6 +157,15 @@ describe("session secondary storage", () => {
 
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
+  });
+
+  test("a KV write failure does not fail session creation after the D1 write", async () => {
+    const jar = await signUp(envWithFailingSessionStore());
+    const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
+    expect(token).toBeTruthy();
+
+    const rows = await createDb(env.DB).select().from(schema.session);
+    expect(rows.some((row) => row.token === token)).toBe(true);
   });
 
   test("lists and revokes sessions created before KV was enabled", async () => {

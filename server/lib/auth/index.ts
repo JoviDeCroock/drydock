@@ -7,6 +7,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../platform/analytics";
+import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import * as schema from "../../db/schema";
 import { sendAccountVerificationEmail } from "../notify/account-email";
 
@@ -139,25 +140,54 @@ interface ActiveSessionCacheEntry {
   expiresAt: number;
 }
 
+type SessionCacheOperation = "read" | "write" | "delete";
+const warnedSessionCacheOperations = new Set<SessionCacheOperation>();
+
+function reportSessionCacheFailure(operation: SessionCacheOperation, err: unknown): void {
+  if (warnedSessionCacheOperations.has(operation)) return;
+  warnedSessionCacheOperations.add(operation);
+  emitOperationalEvent("warn", "auth.session_cache_unavailable", {
+    operation,
+    error: describeOperationalError(err),
+  });
+}
+
 function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undefined) {
   if (!namespace) return null;
   const store = namespace;
 
+  async function readCacheValue(
+    key: string,
+  ): Promise<{ value: string | null; error: unknown | null }> {
+    try {
+      return { value: await store.get(key), error: null };
+    } catch (err) {
+      reportSessionCacheFailure("read", err);
+      return { value: null, error: err };
+    }
+  }
+
   async function setWithSafeTtl(key: string, value: string, ttl?: number): Promise<void> {
     // KV rejects a TTL under 60 seconds. Clamp rather than dropping the TTL: an
     // entry with no expiration would outlive the session it caches.
-    await store.put(
-      key,
-      value,
-      ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) },
-    );
+    try {
+      await store.put(
+        key,
+        value,
+        ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) },
+      );
+    } catch (err) {
+      // D1 is the durable session store, so a failed cache fill must not fail a
+      // sign-in after Better Auth has already created the D1 session row.
+      reportSessionCacheFailure("write", err);
+    }
   }
 
   async function getAuthoritativeActiveSessions(key: string): Promise<string | null> {
     const userId = key.slice("active-sessions-".length);
     const now = new Date();
     const [cached, owner, sessions] = await Promise.all([
-      store.get(key),
+      readCacheValue(key),
       db.select().from(schema.user).where(eq(schema.user.id, userId)).limit(1),
       db
         .select()
@@ -174,25 +204,40 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
     // eventually-consistent KV namespace cannot hide sessions from list-sessions
     // or revoke-other-sessions.
     const [user] = owner;
-    if (!user) return cached;
+    if (!user && sessions.length === 0) {
+      // A retried teardown may need the cached index after the user and D1
+      // sessions are already gone. If that index could not be read, fail closed:
+      // returning an empty list would let Better Auth report revocation complete
+      // while token entries may still be live in KV.
+      if (cached.error) throw cached.error;
+      return cached.value;
+    }
 
     const nowMs = now.getTime();
     const active: ActiveSessionCacheEntry[] = sessions.map((session) => ({
       token: session.token,
       expiresAt: session.expiresAt.getTime(),
     }));
-    await Promise.all(
-      sessions.map((session) =>
-        setWithSafeTtl(
-          session.token,
-          JSON.stringify({ session, user }),
-          Math.ceil((session.expiresAt.getTime() - nowMs) / 1000),
+    if (user) {
+      await Promise.all(
+        sessions.map((session) =>
+          setWithSafeTtl(
+            session.token,
+            JSON.stringify({ session, user }),
+            Math.ceil((session.expiresAt.getTime() - nowMs) / 1000),
+          ),
         ),
-      ),
-    );
+      );
+    }
 
     if (active.length === 0) {
-      await store.delete(key);
+      try {
+        await store.delete(key);
+      } catch (err) {
+        // This is only cleanup for an index D1 already proved empty. Better
+        // Auth's explicit delete path below still propagates eviction failures.
+        reportSessionCacheFailure("delete", err);
+      }
     } else {
       const furthestExpiry = Math.max(...active.map((session) => session.expiresAt));
       await setWithSafeTtl(key, JSON.stringify(active), Math.ceil((furthestExpiry - nowMs) / 1000));
@@ -206,7 +251,7 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
       if (key.startsWith("active-sessions-") && key.length > "active-sessions-".length) {
         return getAuthoritativeActiveSessions(key);
       }
-      return store.get(key);
+      return readCacheValue(key).then(({ value }) => value);
     },
     set: async (key: string, value: string, ttl?: number) => {
       if (!isSessionStoreKeyAllowed(key)) return;
