@@ -144,6 +144,12 @@ export const scans = sqliteTable(
     // never make an old scan query a different registry for the same name and
     // version.
     registryUrl: text("registry_url"),
+    // Immutable registry-control-plane coordinates captured alongside
+    // `registryUrl`. `packageName` / `stagedVersion` are intentionally replaced
+    // with the inspected tarball manifest after a successful scan, and hostile
+    // bytes must never be allowed to retarget a credentialed registry lookup.
+    registryPackageName: text("registry_package_name"),
+    registryVersion: text("registry_version"),
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
     status: text("status").notNull().default("pending"),
@@ -266,8 +272,8 @@ export const scans = sqliteTable(
     orgRegistryReleaseIdx: index("scans_org_registry_release_idx").on(
       table.organizationId,
       table.registryUrl,
-      table.packageName,
-      table.stagedVersion,
+      table.registryPackageName,
+      table.registryVersion,
       table.createdAt,
       table.id,
     ),

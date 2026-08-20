@@ -218,6 +218,13 @@
       "when": 1787208303876,
       "tag": "0030_warm_maddog",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1787212740847,
+      "tag": "0031_pink_kingpin",
+      "breakpoints": true
     }
   ]
 }

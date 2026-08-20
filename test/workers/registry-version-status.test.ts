@@ -125,8 +125,8 @@ function stubRegistry(handler: (url: string) => Response | Promise<Response>) {
   return fetchMock;
 }
 
-function statusResponse(status: string) {
-  return new Response(JSON.stringify({ packageName: PACKAGE, version: VERSION, status }), {
+function statusResponse(status: string, packageName: string = PACKAGE, version: string = VERSION) {
+  return new Response(JSON.stringify({ packageName, version, status }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
@@ -162,6 +162,61 @@ describe("registry version status resolution", () => {
     expect(scan.registryVersionStatus).toBe("blocked");
     expect(scan.registryVersionStatusAt).toBeTruthy();
     expect(scan.registryVersionStatusAttemptedAt).toBeTruthy();
+  });
+
+  test("binds the lookup to registry coordinates when hostile tarball metadata disagrees", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    const stageId = `stage-${scanId.slice(0, 8)}`;
+    const registryPackageName = "@drydock/registry-owned";
+    const registryVersion = "3.2.1";
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: registryPackageName,
+      stagedVersion: registryVersion,
+      registryUrl: REGISTRY_URL,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageJson: { name: "hostile-retarget", version: "99.0.0" },
+      risk: "high",
+      status: "complete",
+      summary: { diff: [] },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+    });
+    const fetchMock = stubRegistry((url) => {
+      expect(new URL(url).pathname).toContain(
+        `/${encodeURIComponent(registryPackageName)}/version/${registryVersion}/status`,
+      );
+      return statusResponse("published", registryPackageName, registryVersion);
+    });
+
+    const result = await resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result).toMatchObject({ checked: 1, resolved: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const scan = await readScan(scanId);
+    expect(scan.packageName).toBe("hostile-retarget");
+    expect(scan.stagedVersion).toBe("99.0.0");
+    expect(scan.registryPackageName).toBe(registryPackageName);
+    expect(scan.registryVersion).toBe(registryVersion);
+    expect(scan.registryVersionStatus).toBe("published");
   });
 
   test("does not query an old scan through a replacement registry connection", async () => {
@@ -209,6 +264,38 @@ describe("registry version status resolution", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((await readScan(older.scanId)).registryVersionStatus).toBeNull();
     expect((await readScan(newer.scanId)).registryVersionStatus).toBe("published");
+  });
+
+  test("the later scan owns a release even when creation timestamps tie and its id sorts lower", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T10:00:00.000Z"));
+    try {
+      await createScanJob(db, {
+        id: "scan-z",
+        stageId: "stage-original",
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        packageName: PACKAGE,
+        stagedVersion: VERSION,
+        registryUrl: REGISTRY_URL,
+      });
+      await createScanJob(db, {
+        id: "scan-a",
+        stageId: "stage-restaged",
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        packageName: PACKAGE,
+        stagedVersion: VERSION,
+        registryUrl: REGISTRY_URL,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect((await readScan("scan-z")).registryStatusSupersededAt).toBeTruthy();
+    expect((await readScan("scan-a")).registryStatusSupersededAt).toBeNull();
   });
 
   test("does not revive a superseded stage after a newer failed scan is deleted", async () => {
@@ -261,6 +348,39 @@ describe("registry version status resolution", () => {
     expect(result.checked).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
     expect((await readScan(scanId)).registryVersionStatus).toBeNull();
+  });
+
+  test("retires live replacements before the lookup limit so they cannot starve the backlog", async () => {
+    const org = await seedOrg();
+    const scans = [];
+    for (let index = 0; index < 17; index++) {
+      scans.push(await seedCompletedScan(org, { version: `2.0.${index}` }));
+    }
+    const fetchMock = stubRegistry((url) => {
+      const version = decodeURIComponent(new URL(url).pathname.split("/").at(-2)!);
+      return statusResponse("published", PACKAGE, version);
+    });
+    const stagedItems = scans.slice(1).map(({ stageId }, index) => ({
+      id: `${stageId}-replacement`,
+      packageName: PACKAGE,
+      version: `2.0.${index + 1}`,
+    }));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      stagedItems,
+    });
+
+    expect(result).toMatchObject({ checked: 1, resolved: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await readScan(scans[0]!.scanId)).registryVersionStatus).toBe("published");
+    for (const scan of scans.slice(1)) {
+      expect((await readScan(scan.scanId)).registryStatusSupersededAt).toBeTruthy();
+    }
   });
 
   test("a 404 leaves the status unset but still stamps the attempt", async () => {
@@ -607,6 +727,53 @@ describe("registry version status resolution", () => {
 
     await expect(resolving).resolves.toMatchObject({ reminded: 0 });
     expect((await readScan(scanId)).registryPublishReminderAt).toBeNull();
+  });
+
+  test("does not persist or remind after a replacement scan supersedes an in-flight lookup", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    const db = createDb(env.DB);
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    await db
+      .update(schema.scans)
+      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .where(eq(schema.scans.id, scanId));
+
+    let finishLookup: ((response: Response) => void) | undefined;
+    const lookupResponse = new Promise<Response>((resolve) => {
+      finishLookup = resolve;
+    });
+    const fetchMock = stubRegistry(() => lookupResponse);
+    const resolving = resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await createScanJob(db, {
+      id: crypto.randomUUID(),
+      stageId: "stage-restaged",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+      registryUrl: REGISTRY_URL,
+    });
+    finishLookup?.(statusResponse("staged"));
+
+    await expect(resolving).resolves.toMatchObject({ checked: 1, resolved: 0, reminded: 0 });
+    const oldScan = await readScan(scanId);
+    expect(oldScan.registryStatusSupersededAt).toBeTruthy();
+    expect(oldScan.registryVersionStatus).toBeNull();
+    expect(oldScan.registryPublishReminderAt).toBeNull();
   });
 
   test("does not claim a reminder after a newer registry observation wins", async () => {
