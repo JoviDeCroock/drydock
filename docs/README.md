@@ -34,7 +34,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 - [`security-detection-corpus.md`](./security-detection-corpus.md) — rule/eval fixture layout and expected findings.
 - [`detection-eval.md`](./detection-eval.md) — eval harness, metrics, and gates.
-- [`ai-review-eval.md`](./ai-review-eval.md) — versioned AI reviewer contract, recorded-output evals, traces, and feedback loop.
+- [`ai-review-eval.md`](./ai-review-eval.md) — versioned AI reviewer contract, recorded-output evals, live model comparison, traces, and feedback loop.
 - [`release-memory.md`](./release-memory.md) — advisory prior-release finding-profile consistency; discounts already-approved package context from the artifact-risk headline, and never moves release risk or a gate decision.
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.

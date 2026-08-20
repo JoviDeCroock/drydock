@@ -86,13 +86,72 @@ threat class, then compare the new version by category. Keep model failover's
 runtime behavior covered by the mocked orchestration tests in
 `test/ai-review.test.mjs` as well.
 
+## Live model comparison
+
+The offline eval cannot rank hosted models, so model routing has its own
+harness. Run:
+
+```sh
+CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm run eval:ai:live
+```
+
+It drives the real `analyzeWithAi` agent loop against real Workers AI models
+over the npm security corpus, one model at a time (no failover, or the
+comparison would measure the wrong model). It is paid and network-bound, so it
+is gated behind `AI_REVIEW_LIVE_EVAL` and never runs in `pnpm test` or
+`pnpm run verify`. Reports land in `.context/eval/ai-review-model-compare.json`
+and `.context/eval/ai-review-model-compare.md`.
+
+Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
+routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating; the report
+states how many were dropped), `AI_REVIEW_LIVE_GATEWAY`.
+
+It reports three things, in priority order:
+
+1. **Completion rate.** How often the model lands a valid `submit_review`
+   before the step budget ends. Every candidate on the Workers AI catalog is a
+   reasoning model, and reasoning tokens bill against `MAX_REVIEW_OUTPUT_TOKENS`
+   — a model can spend the whole budget thinking and never submit. That returns
+   `invalid`, which floors the scan at medium and escalates the release to a
+   human. A model that scores well on the cases it finishes but often fails to
+   finish is worse for the product than a duller model that always submits.
+2. **Detection quality.** Catch rate on malicious fixtures and false-positive
+   rate on benign hard-negatives, scored with the same predicates the recorded
+   eval uses so the two reports mean the same thing.
+3. **Cost.** Measured tokens priced per model, with cached input billed
+   separately. The loop re-sends a prefix that grows to the evidence cap, up to
+   `MAX_AGENT_STEPS` times, so cached-input share dominates the bill: a model
+   with no published cache tier re-bills the whole prefix every step and can
+   cost more than one with double its list price. `MODEL_PRICING` in
+   `test/eval/ai-review-live-harness.mjs` carries the list prices and the date
+   they were checked — refresh it with any routing change, because a stale table
+   silently reorders the comparison.
+
+Two things the harness deliberately does not do. It asserts no winner: picking a
+model is a judgement call across all three axes. And it covers npm-shaped
+fixtures only: today that is 46 fixtures (33 malicious, 13 benign). The 14 PyPI
+fixtures carry adapter-shaped inputs and appear in the report's `skipped` list
+rather than being dropped silently; VS Code fixtures are not loaded by the
+detection corpus loader at all, so covering VSIX means extending `loadCorpus`
+first.
+
+Context window is not a selection criterion. Evidence is capped at
+`MAX_TOTAL_TOOL_RESPONSE_CHARS`, so any window past that is spend on capacity
+the reviewer refuses to use; treat it as a floor to clear, not a feature to buy.
+
 ## Promotion checklist
 
-1. Bump `AI_REVIEWER_VERSION` for behavioral changes.
+1. Bump `AI_REVIEWER_VERSION` for behavioral changes. Model routing is part of
+   that contract: changing `AI_MODEL` or `AI_FALLBACK_MODEL` is a version bump,
+   and the recorded eval records must be reissued at the new version in the
+   same change.
 2. Run the normal reviewer tests and `pnpm run eval:ai`.
-3. Compare completion rate, latency, steps, tokens, and decision distribution
+3. For a routing change, run `pnpm run eval:ai:live` over the candidate set and
+   read completion rate before detection quality before cost. Refresh
+   `MODEL_PRICING` first.
+4. Compare completion rate, latency, steps, tokens, and decision distribution
    by reviewer version; do not treat maintainer action as ground truth.
-4. Refresh and adjudicate recorded outputs for risky categories, including
+5. Refresh and adjudicate recorded outputs for risky categories, including
    prompt injection, missing evidence, and model failover.
-5. Preserve deterministic findings as authoritative and keep human release
+6. Preserve deterministic findings as authoritative and keep human release
    approval mandatory.
