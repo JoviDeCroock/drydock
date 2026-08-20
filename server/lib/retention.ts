@@ -187,11 +187,11 @@ async function sweepAuthRows(env: Cloudflare.Env, now: Date): Promise<PrunedAuth
  * Time-based scan retention. Destructive and therefore opt-in, and it holds to
  * the deletion-lifecycle rules in docs/artifact-storage.md:
  *
- * - Per scan: clear the artifact metadata, sweep the R2 prefix, then delete the
- *   row. If the prefix cannot be drained the row stays (counted as `deferred`)
- *   and the next tick retries; the sweep never deletes a row while objects it
- *   points at may still exist, and never leaves a row claiming artifacts it no
- *   longer has.
+ * - Per scan: sweep the R2 prefix, clear the artifact metadata, then delete the
+ *   row. If the prefix cannot be drained the row stays completely untouched
+ *   (counted as `deferred`) and the next tick retries. A later D1 failure can
+ *   leave a transient row that the next tick finishes; `deleteOneExpiredScan`
+ *   and `clearScanArtifactMetadata` document those residual states.
  * - It requires the `ARTIFACTS` binding. Without it there is no way to reach a
  *   scan's objects, so deleting rows would strand them; the sweep is skipped.
  */
