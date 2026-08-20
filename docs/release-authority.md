@@ -137,7 +137,8 @@ environment changed or removed; publish step added; release safeguard removed;
 an action reference that stopped being pinned; a reusable call that started
 inheriting secrets; a dangerous trigger added (`workflow_dispatch`,
 `pull_request_target`, `workflow_run`, `issue_comment`, `repository_dispatch`,
-`schedule`); a trigger that lost every filter; the entry workflow path changed.
+`schedule`); a trigger that lost every filter; a release arriving on an entry
+workflow path this target has no approved history for.
 
 **Medium** — an ordinary trigger added; a trigger filter changed; a permission
 added inside an existing block; a workflow added to or removed from the graph; an
@@ -178,8 +179,21 @@ exactly the "same repository / environment / release path" comparison: two
 different release workflows publishing from one environment keep separate
 baselines instead of flapping against each other.
 
-The first gate on a boundary, and every scan predating this feature, reports
-`no_baseline` — a neutral state, not a warning.
+Separate baselines per path must not become a quiet spot, so the absence of one
+is split in two. A target with no approved history at all reports `no_baseline`
+— a neutral state, not a warning, and what the first gate on a boundary and
+every scan predating this feature gets. A target that _does_ have approved
+history, on some other release path, instead reports `changed` with a single
+high-significance `release_path_changed` naming the paths that were approved
+before. Adding a second publish workflow leaves the package diff clean while
+changing who is allowed to publish; reporting that as "first release here" would
+hide the exact shape this feature exists to catch.
+
+Nothing is diffed in that case — there is no comparable baseline — so `baseline`
+stays null and the change carries the evidence. One exception: when the run
+reported no entry workflow path at all, the release stays `no_baseline`.
+That is a coverage problem, already reported as one under `unresolved`, and
+calling it a moved release path would claim more than the evidence supports.
 
 ## Policy: holding a release
 

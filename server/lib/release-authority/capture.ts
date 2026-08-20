@@ -12,6 +12,7 @@ import type { AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import {
   findApprovedAuthorityBaseline,
+  listApprovedReleasePaths,
   recordReleaseAuthoritySnapshot,
 } from "../../db/release-authority";
 import { fetchReleaseAuthoritySources } from "../github-app/workflow-source";
@@ -77,7 +78,19 @@ export async function captureReleaseAuthority(
       excludeGateId: gate.id,
     });
 
-    const delta = computeReleaseAuthorityDelta(snapshot, baseline);
+    // Only asked when this release path has no baseline of its own: the answer
+    // separates a target's genuine first release from a target with approved
+    // history that just gained another way to publish.
+    const approvedReleasePaths = baseline
+      ? []
+      : await listApprovedReleasePaths(db, {
+          organizationId: gate.organizationId,
+          releaseTargetId: gate.releaseTargetId,
+          excludeGateId: gate.id,
+          excludeWorkflowPath: snapshot.run.workflowPath,
+        });
+
+    const delta = computeReleaseAuthorityDelta(snapshot, baseline, { approvedReleasePaths });
 
     await recordReleaseAuthoritySnapshot(db, {
       organizationId: gate.organizationId,

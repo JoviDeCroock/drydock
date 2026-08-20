@@ -270,6 +270,8 @@ async function seedFixture(): Promise<Fixture> {
 function mockGithub(options: {
   workflow: string;
   headSha?: string;
+  /** Entry workflow path the run reports; `null` reports none at all. */
+  workflowPath?: string | null;
   referenced?: Array<{ path: string; sha: string; ref: string; content?: string }>;
   decisionCalls?: { state: string }[];
 }) {
@@ -285,9 +287,11 @@ function mockGithub(options: {
       return new Response(null, { status: 204 });
     }
     if (/\/actions\/runs\/\d+$/.test(url.pathname)) {
+      const workflowPath =
+        options.workflowPath === undefined ? ".github/workflows/release.yml" : options.workflowPath;
       return Response.json({
         head_sha: options.headSha ?? "a".repeat(40),
-        path: ".github/workflows/release.yml",
+        ...(workflowPath === null ? {} : { path: workflowPath }),
         run_attempt: 1,
         event: "push",
         head_branch: "refs/tags/v1.0.0",
@@ -543,6 +547,104 @@ describe("release-authority baseline", () => {
       excludeGateId: "none",
     });
     expect(other).toBeNull();
+  });
+
+  // Separate baselines per release path must not turn into a quiet spot. A
+  // second publish workflow appearing on a target with approved history leaves
+  // the package diff clean while changing who may publish — reporting that as
+  // `no_baseline` would say "first release here" and ask for nothing.
+  test("flags a release arriving on a workflow path with no approved history", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const first = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, first.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: first.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const second = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW,
+      workflowPath: ".github/workflows/publish-extra.yml",
+      headSha: "b".repeat(40),
+    });
+    const delta = await capture(fixture, second.gate);
+
+    expect(delta?.status).toBe("changed");
+    expect(delta?.requiresApproval).toBe(true);
+    // Nothing was diffed — the change names the approved paths instead.
+    expect(delta?.baseline).toBeNull();
+    expect(delta?.changes).toHaveLength(1);
+    expect(delta?.changes[0]).toMatchObject({
+      kind: "release_path_changed",
+      significance: "high",
+      before: ".github/workflows/release.yml",
+      after: ".github/workflows/publish-extra.yml",
+    });
+  });
+
+  test("a target's genuine first release still reports no_baseline", async () => {
+    const fixture = await seedFixture();
+    const { gate } = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, workflowPath: ".github/workflows/only-ever.yml" });
+    const delta = await capture(fixture, gate);
+    expect(delta?.status).toBe("no_baseline");
+    expect(delta?.requiresApproval).toBe(false);
+  });
+
+  // An unreadable entry path is a coverage problem, not evidence that the
+  // release path moved. Coverage reports it; the delta must not overclaim.
+  test("does not call an unreadable entry path a new release path", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const first = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, first.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: first.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const second = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, workflowPath: null, headSha: "b".repeat(40) });
+    const delta = await capture(fixture, second.gate);
+
+    expect(delta?.status).toBe("no_baseline");
+    expect(delta?.standing.coverageComplete).toBe(false);
   });
 });
 

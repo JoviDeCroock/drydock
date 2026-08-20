@@ -497,7 +497,10 @@ export const githubWorkflowGates = sqliteTable(
 // A release target is already (installation, repository, environment), so this
 // is exactly the "same repository / environment / release path" comparison —
 // two different release workflows publishing from one environment keep
-// separate baselines instead of flapping against each other.
+// separate baselines instead of flapping against each other. A release
+// arriving on a path with no baseline is not automatically quiet, though:
+// see `listApprovedReleasePaths`, which separates a target's genuine first
+// release from one that just gained a second way to publish.
 export const releaseAuthoritySnapshots = sqliteTable(
   "release_authority_snapshots",
   {

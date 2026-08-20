@@ -57,7 +57,8 @@ interface SnapshotOptions {
   workflows?: Array<{ path: string; content: string; role?: "entry" | "referenced"; sha?: string }>;
   artifacts?: AuthorityArtifact[];
   unresolved?: AuthorityUnresolved[];
-  workflowPath?: string;
+  /** `null` models a run GitHub reported no entry workflow path for. */
+  workflowPath?: string | null;
 }
 
 function makeSnapshot(options: SnapshotOptions = {}): Promise<ReleaseAuthoritySnapshot> {
@@ -68,7 +69,7 @@ function makeSnapshot(options: SnapshotOptions = {}): Promise<ReleaseAuthoritySn
       environment: "pypi",
       runId: 1234,
       runAttempt: 1,
-      workflowPath: options.workflowPath ?? ENTRY,
+      workflowPath: options.workflowPath === undefined ? ENTRY : options.workflowPath,
       headSha: "b".repeat(40),
       ref: "refs/tags/v1.0.0",
       event: "push",
@@ -365,11 +366,57 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
   });
 
-  it("flags a changed release path", async () => {
-    const prior = await makeSnapshot();
-    const current = await makeSnapshot({ workflowPath: ".github/workflows/publish.yml" });
-    const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
-    expect(find(delta.changes, "release_path_changed")).toMatchObject({ significance: "high" });
+  // A baseline is looked up *by* release path, so a delta against one can never
+  // see the path move. The reachable case is the opposite: no baseline for this
+  // path, but the target has approved history on others.
+  describe("release path", () => {
+    it("flags a release path with no approved history on a target that has some", async () => {
+      const current = await makeSnapshot({ workflowPath: ".github/workflows/publish.yml" });
+      const delta = computeReleaseAuthorityDelta(current, null, {
+        approvedReleasePaths: [".github/workflows/release.yml"],
+      });
+      expect(delta.status).toBe("changed");
+      expect(delta.requiresApproval).toBe(true);
+      expect(delta.baseline).toBeNull();
+      expect(find(delta.changes, "release_path_changed")).toMatchObject({
+        significance: "high",
+        before: ".github/workflows/release.yml",
+        after: ".github/workflows/publish.yml",
+      });
+    });
+
+    it("names every approved path, summarizing past the display cap", async () => {
+      const current = await makeSnapshot({ workflowPath: ".github/workflows/publish.yml" });
+      const paths = Array.from({ length: 10 }, (_, i) => `.github/workflows/r${i}.yml`);
+      const delta = computeReleaseAuthorityDelta(current, null, { approvedReleasePaths: paths });
+      const change = find(delta.changes, "release_path_changed");
+      expect(change?.before).toContain(".github/workflows/r0.yml");
+      expect(change?.before).toContain("+2 more");
+    });
+
+    it("stays neutral when the target has no approved history at all", async () => {
+      const current = await makeSnapshot({ workflowPath: ".github/workflows/publish.yml" });
+      const delta = computeReleaseAuthorityDelta(current, null, { approvedReleasePaths: [] });
+      expect(delta.status).toBe("no_baseline");
+      expect(delta.requiresApproval).toBe(false);
+    });
+
+    it("ignores the release's own path in the approved set", async () => {
+      const current = await makeSnapshot({ workflowPath: ".github/workflows/publish.yml" });
+      const delta = computeReleaseAuthorityDelta(current, null, {
+        approvedReleasePaths: [".github/workflows/publish.yml"],
+      });
+      expect(delta.status).toBe("no_baseline");
+    });
+
+    it("does not overclaim when the entry path could not be read", async () => {
+      const current = await makeSnapshot({ workflowPath: null });
+      const delta = computeReleaseAuthorityDelta(current, null, {
+        approvedReleasePaths: [".github/workflows/release.yml"],
+      });
+      expect(delta.status).toBe("no_baseline");
+      expect(delta.requiresApproval).toBe(false);
+    });
   });
 
   describe("reusable workflows", () => {

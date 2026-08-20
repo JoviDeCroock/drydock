@@ -152,32 +152,49 @@ const PERMISSION_RANK: Record<PermissionLevel, number> = {
 const SIGNIFICANCE_RANK: Record<AuthoritySignificance, number> = { low: 0, medium: 1, high: 2 };
 
 /**
+ * Context a delta needs that the two snapshots cannot supply on their own.
+ */
+export interface DeltaContext {
+  /**
+   * Entry-workflow paths this release target has already published through
+   * under an approved authority, other than the one this release used. Only
+   * consulted when there is no baseline for the current path — see
+   * `newReleasePathChange`.
+   */
+  approvedReleasePaths?: string[];
+}
+
+/**
  * Compare a release's authority snapshot against the last approved baseline for
  * the same release boundary. A null baseline is the neutral `no_baseline`
  * state — the first gate for a target, and every scan that predates this
- * feature, legitimately has nothing to compare against.
+ * feature, legitimately has nothing to compare against — *unless* the target has
+ * approved history on some other release path, which is a change in itself.
  */
 export function computeReleaseAuthorityDelta(
   current: ReleaseAuthoritySnapshot,
   baseline: { snapshot: ReleaseAuthoritySnapshot; ref: AuthorityBaselineRef } | null,
+  context: DeltaContext = {},
 ): ReleaseAuthorityDelta {
   const standing = readStanding(current);
   if (!baseline) {
+    const newPath = newReleasePathChange(current, context.approvedReleasePaths ?? []);
     return {
       schema: RELEASE_AUTHORITY_DELTA_SCHEMA,
-      status: "no_baseline",
+      status: newPath ? "changed" : "no_baseline",
+      // There is no comparable baseline either way: the target's other release
+      // paths are named in the change itself, not offered as a diff basis.
       baseline: null,
-      changes: [],
-      changeCount: 0,
-      highestSignificance: "none",
+      changes: newPath ? [newPath] : [],
+      changeCount: newPath ? 1 : 0,
+      highestSignificance: newPath ? newPath.significance : "none",
       standing,
-      requiresApproval: false,
+      requiresApproval: newPath !== null,
     };
   }
 
   const prior = baseline.snapshot;
   const changes: AuthorityChange[] = [
-    ...compareReleasePath(prior, current),
     ...compareWorkflows(prior.workflows, current.workflows),
     ...compareTriggers(prior.triggers, current.triggers),
     ...comparePermissions(prior.permissions, current.permissions),
@@ -215,6 +232,48 @@ export function computeReleaseAuthorityDelta(
   };
 }
 
+// How many other release paths to name before summarizing the rest.
+const MAX_NAMED_RELEASE_PATHS = 8;
+
+/**
+ * A release arriving on an entry workflow this target has never published
+ * through, while it *has* approved history on other paths.
+ *
+ * Baselines are deliberately per release path, so there is nothing to diff —
+ * but reporting that as `no_baseline` would say "first reviewed release here",
+ * and this is close to the opposite: an additional way to publish appeared on
+ * an established release target. Adding a second publish workflow leaves the
+ * package diff clean while changing who is allowed to publish, which is the
+ * exact shape this feature exists to catch, so it is a change in its own right
+ * rather than a quiet first run.
+ */
+function newReleasePathChange(
+  current: ReleaseAuthoritySnapshot,
+  approvedReleasePaths: string[],
+): AuthorityChange | null {
+  const after = current.run.workflowPath;
+  // An unreadable entry path is a coverage problem and is already reported as
+  // one. Claiming the release path changed *from* something would be a stronger
+  // statement than the evidence supports.
+  if (!after) return null;
+  const others = [...new Set(approvedReleasePaths)].filter((path) => path && path !== after).sort();
+  if (others.length === 0) return null;
+  return {
+    kind: "release_path_changed",
+    significance: "high",
+    scope: current.run.environment,
+    subject: "entry workflow",
+    before: describeReleasePaths(others),
+    after,
+  };
+}
+
+function describeReleasePaths(paths: string[]): string {
+  if (paths.length <= MAX_NAMED_RELEASE_PATHS) return paths.join(", ");
+  const named = paths.slice(0, MAX_NAMED_RELEASE_PATHS);
+  return `${named.join(", ")} +${paths.length - MAX_NAMED_RELEASE_PATHS} more`;
+}
+
 // ── Standing properties ──────────────────────────────────────────────────────
 
 function readStanding(snapshot: ReleaseAuthoritySnapshot): AuthorityStanding {
@@ -230,25 +289,6 @@ function readStanding(snapshot: ReleaseAuthoritySnapshot): AuthorityStanding {
 }
 
 // ── Category comparisons ─────────────────────────────────────────────────────
-
-function compareReleasePath(
-  prior: ReleaseAuthoritySnapshot,
-  current: ReleaseAuthoritySnapshot,
-): AuthorityChange[] {
-  const before = prior.run.workflowPath;
-  const after = current.run.workflowPath;
-  if (!before || !after || before === after) return [];
-  return [
-    {
-      kind: "release_path_changed",
-      significance: "high",
-      scope: current.run.environment,
-      subject: "entry workflow",
-      before,
-      after,
-    },
-  ];
-}
 
 function compareWorkflows(
   prior: AuthorityWorkflowRef[],

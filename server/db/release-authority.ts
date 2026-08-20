@@ -148,6 +148,54 @@ export async function findApprovedAuthorityBaseline(
 }
 
 /**
+ * How many distinct approved release paths are worth carrying into a delta. A
+ * target with more publish workflows than this has already made the point.
+ */
+const MAX_APPROVED_RELEASE_PATHS = 16;
+
+/**
+ * The distinct entry-workflow paths this release target has already published
+ * through under an approved authority, excluding the gate being reviewed and
+ * the path it arrived on.
+ *
+ * Baselines are per release path, so a release arriving on a path with no
+ * history finds nothing to compare against. That is genuinely neutral on a
+ * target's first release and a real signal on a target with history — someone
+ * added a second way to publish. This is the lookup that tells the two apart;
+ * without it both collapse into `no_baseline`, which reads as "first release
+ * here" and asks for no acknowledgement.
+ */
+export async function listApprovedReleasePaths(
+  db: AppDb,
+  input: {
+    organizationId: string;
+    releaseTargetId: string;
+    excludeGateId: string;
+    excludeWorkflowPath: string | null;
+  },
+): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ workflowPath: releaseAuthoritySnapshots.workflowPath })
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.releaseTargetId, input.releaseTargetId),
+        ne(releaseAuthoritySnapshots.gateId, input.excludeGateId),
+        ne(releaseAuthoritySnapshots.workflowPath, input.excludeWorkflowPath ?? ""),
+        isNotNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    )
+    .limit(MAX_APPROVED_RELEASE_PATHS);
+  // The empty path is "the run reported no entry workflow", not a release path
+  // anyone approved travelling through.
+  return rows
+    .map((row) => row.workflowPath)
+    .filter((path) => path.length > 0)
+    .sort();
+}
+
+/**
  * Record that a maintainer accepted this release's authority. Called when the
  * gate as a whole is approved, which is the point the held deployment is
  * released — so the accepted snapshot is exactly the authority that published.

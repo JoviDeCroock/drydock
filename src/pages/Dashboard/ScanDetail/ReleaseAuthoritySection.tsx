@@ -30,7 +30,7 @@ const SIGNIFICANCE_TONE: Record<AuthoritySignificance, BadgeTone> = {
 // Plain-language subject for each change kind. The `subject`/`before`/`after`
 // fields carry the specifics; this is the sentence that frames them.
 const CHANGE_LABEL: Record<AuthorityChangeKind, string> = {
-  release_path_changed: "Release workflow changed",
+  release_path_changed: "Release workflow has no approved history",
   workflow_added: "Workflow added to the release graph",
   workflow_removed: "Workflow dropped from the release graph",
   workflow_authority_changed: "Workflow authority changed",
@@ -115,7 +115,13 @@ function summaryLine(delta: ReleaseAuthorityDelta | null): string {
     case "cosmetic":
       return "The release workflow was edited, but nothing about its publishing authority changed — no triggers, permissions, environments, publish steps, or action references moved.";
     case "changed":
-      return "The authority to publish this release differs from the last release you approved. Each change below is deterministic evidence, not an assessment of intent.";
+      // A changed status with no baseline is the new-release-path case: there
+      // was nothing to diff, and the change itself names what was approved
+      // before. Reusing the ordinary copy would promise a comparison the delta
+      // did not make.
+      return delta.baseline
+        ? "The authority to publish this release differs from the last release you approved. Each change below is deterministic evidence, not an assessment of intent."
+        : "This release published through a workflow that has no approved history on this repository and environment. There is no baseline to compare against; the change below names the release paths that were approved before this one.";
   }
 }
 
