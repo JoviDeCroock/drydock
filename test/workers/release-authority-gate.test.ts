@@ -796,6 +796,60 @@ describe("release-authority surfaces", () => {
     expect(exported.artifactBindingDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  // The report export has exactly one serialization: the authenticated
+  // download, the shared `/public/reports/:token` body, and the attestation
+  // subject digest are all the same bytes. `docs/security-model.md` states that
+  // surface carries no org/user identifiers, so the authority record must not
+  // smuggle the approver's user id or the run's GitHub logins into it.
+  test("the exported authority record carries no user identifiers", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const gitEnv = await githubEnv();
+    const { gate, scanId } = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const report = await call("GET", `/api/v1/scans/${scanId}/report.json`, {
+      jar: fixture.jar,
+      env: gitEnv,
+    });
+    expect(report.res.status).toBe(200);
+    const exported = report.json?.releaseAuthority as {
+      approvedAt: string | null;
+      snapshot: { run: { actor: string | null; triggeringActor: string | null } };
+    };
+    // The approval itself still exports — it is what binds the record to a
+    // reviewed release; only who performed it is withheld.
+    expect(exported.approvedAt).not.toBeNull();
+    expect(exported.snapshot.run.actor).toBeNull();
+    expect(exported.snapshot.run.triggeringActor).toBeNull();
+
+    const serialized = JSON.stringify(report.json);
+    expect(serialized).not.toContain(fixture.userId);
+    expect(serialized).not.toContain("maintainer");
+
+    // The authenticated, org-scoped gate lookup is a different surface and
+    // keeps the run context the workbench shows.
+    const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${scanId}`, {
+      jar: fixture.jar,
+      env: gitEnv,
+    });
+    expect(lookup.res.status).toBe(200);
+    const live = lookup.json?.releaseAuthority as { run: { actor: string | null } };
+    expect(live.run.actor).toBe("maintainer");
+  });
+
   test("exports null for a scan with no authority record", async () => {
     const fixture = await seedFixture();
     const gitEnv = await githubEnv();

@@ -209,9 +209,15 @@ authorized, and the delta never modifies risk levels or deterministic findings.
   acknowledgement checkbox.
 - **`GET /api/v1/github-app/workflow-gates/by-scan/:scanId`** — `releaseAuthority`
   and `organizationRequiresAuthorityApproval`.
-- **`drydock.report.v1`** — a `releaseAuthority` block carrying the full
-  snapshot, the delta, the binding digest, and the approval context. Null for
+- **`drydock.report.v2`** — a `releaseAuthority` block carrying the full
+  snapshot, the delta, the binding digest, and the approval time. Null for
   staged-publish scans and for gates with no record; null means _not assessed_.
+  Identity is scrubbed on the way out: the export has one serialization, shared
+  by the authenticated download, the `/public/reports/:token` body, and the
+  attestation subject digest, and that surface carries no org/user identifiers
+  (see [`security-model.md`](./security-model.md)). So the approver's user id is
+  omitted and the run's `actor`/`triggeringActor` export as null — the
+  authenticated gate lookup above is where a member sees who acted.
 - **Settings → Release security** — the owner-only policy toggle.
 - **Events** — `github_workflow_gate.authority_captured`, and
   `authorityChangeAcknowledged` on the gate decision event.

@@ -4,6 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
+import type { ReleaseAuthoritySnapshot } from "../release-authority/snapshot";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -211,6 +212,14 @@ function extractArtifactIntegrity(stagedPublish: unknown) {
 // delta is only meaningful next to the authority it was computed from. Both
 // halves are re-validated by the tolerant readers on the way in, so a
 // pre-feature or malformed row exports as null rather than partial data.
+//
+// Identity is stripped on the way out. This document has exactly one
+// serialization — the authenticated download, the shared `/public/reports/:token`
+// body, and the attestation subject digest are all the same bytes — so anything
+// in it is public the moment an owner mints a share token, and
+// `docs/security-model.md` states that surface carries no org/user identifiers.
+// Who approved the release and who triggered the run are answers the dashboard
+// gives to an authenticated member; they are not part of the release's evidence.
 function extractReleaseAuthority(record: ScanDetail["releaseAuthority"]) {
   if (!record) return null;
   return {
@@ -221,10 +230,19 @@ function extractReleaseAuthority(record: ScanDetail["releaseAuthority"]) {
     // The link between this approval and the exact bytes it accepted.
     artifactBindingDigest: record.artifactBindingDigest,
     approvedAt: toIso(record.approvedAt),
-    approvedByUserId: record.approvedByUserId,
-    snapshot: record.snapshot,
+    snapshot: withoutRunIdentity(record.snapshot),
     delta: record.delta,
   };
+}
+
+// Drop the GitHub logins from the exported run context. Everything else in the
+// snapshot describes the release path itself; `actor` and `triggeringActor`
+// name people.
+function withoutRunIdentity(
+  snapshot: ReleaseAuthoritySnapshot | null,
+): ReleaseAuthoritySnapshot | null {
+  if (!snapshot) return null;
+  return { ...snapshot, run: { ...snapshot.run, actor: null, triggeringActor: null } };
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not
