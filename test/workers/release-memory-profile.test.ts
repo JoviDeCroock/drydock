@@ -4,7 +4,14 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, getScan, persistScan, recordScanDecision } from "../../server/db/scans";
+import {
+  createScanJob,
+  getScan,
+  getScanCompareData,
+  getScanStatus,
+  persistScan,
+  recordScanDecision,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
@@ -162,6 +169,10 @@ describe("release-memory finding profile column", () => {
       files: "list",
     });
     expect(detail?.scan).not.toHaveProperty("findingProfileJson");
+    const status = await getScanStatus(db, scanId, owner.organizationId);
+    expect(status).not.toHaveProperty("findingProfileJson");
+    const compare = await getScanCompareData(db, scanId, owner.organizationId, env.ARTIFACTS);
+    expect(compare?.scan).not.toHaveProperty("findingProfileJson");
   });
 
   test("the lookup reads the column and needs no artifact bucket at all", async () => {
