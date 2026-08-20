@@ -3,7 +3,8 @@ import { getPublicDiffAdapter } from "../ecosystems";
 import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
-import type { PublicDiffAdapter, PublicDiffInput } from "./types";
+import { writePublicDiffDisplayName } from "./display-metadata";
+import type { PublicDiffAdapter, PublicDiffInput, PublicDiffProvenanceEntry } from "./types";
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
@@ -34,8 +35,8 @@ function requirePublicDiffAdapter(ecosystem: string): PublicDiffAdapter {
   return adapter;
 }
 
-// Anonymous, credential-free diff of two published versions of an npm package
-// or PyPI project — or, on npm, of a pkg.pr.new preview tarball against a
+// Anonymous, credential-free diff of two published versions of an npm, PyPI,
+// or atpm package — or, on npm, of a pkg.pr.new preview tarball against a
 // published version (fromVersion / toVersion may each be a validated
 // pkg.pr.new URL). Reuses the scan pipeline's pure phases (package diff,
 // deterministic rules, diff-status annotation, risk breakdown) over published
@@ -65,7 +66,16 @@ export interface PublicPackageDiff {
   // Coverage caveats from acquisition (e.g. a PyPI artifact kind omitted from
   // both sides because it exceeded a sandbox cap). Rendered as a banner.
   notices?: string[];
+  // How the reviewed bytes were located, for ecosystems where that is a chain
+  // of independent authorities rather than a single registry (atpm).
+  provenance?: PublicDiffProvenanceEntry[];
+  // Human-facing spelling of `packageName`, when the canonical one is an atpm
+  // DID rather than the readable verified handle. See PublicDiffVersionListing.
+  displayName?: string;
   cachedAt: string;
+  // Absolute freshness bound for mutable acquisition metadata. Cache rewarms
+  // use the remaining lifetime rather than restarting the adapter's TTL.
+  cacheExpiresAt?: string;
 }
 
 // Bump this when risk aggregation changes without a deterministic-rules bump.
@@ -137,6 +147,9 @@ export async function loadPublicPackageDiff(
   });
   const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
 
+  const cachedAtMs = Date.now();
+  const cachedAt = new Date(cachedAtMs).toISOString();
+  const cacheExpiresAt = mutablePayloadExpiry(adapter, sources.cacheExpiresAt, cachedAtMs);
   const payload: PublicPackageDiff = {
     ecosystem: input.ecosystem,
     packageName: input.packageName,
@@ -151,11 +164,21 @@ export async function loadPublicPackageDiff(
     findings,
     risk,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
-    cachedAt: new Date().toISOString(),
+    ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
+    ...(sources.displayName ? { displayName: sources.displayName } : {}),
+    cachedAt,
+    ...(cacheExpiresAt ? { cacheExpiresAt } : {}),
   };
-  await writePublicDiffCache(env, cacheKey, payload, {
-    ttlSeconds: payloadCacheTtlSeconds(payload),
-  });
+  const ttlSeconds = payloadCacheTtlSeconds(payload);
+  writePublicDiffDisplayName(
+    env,
+    ctx,
+    cacheKey,
+    payload.displayName,
+    ttlSeconds,
+    payload.cacheExpiresAt,
+  );
+  await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
   return payload;
 }
 
@@ -183,7 +206,7 @@ export async function readPublicDiffCache(
   key: string,
 ): Promise<PublicPackageDiff | null> {
   const coloCached = await readPublicDiffColoCache(key);
-  if (coloCached) return coloCached;
+  if (coloCached && payloadCacheTtlSeconds(coloCached) > 0) return coloCached;
   if (!env.COMPARE_CACHE) return null;
   try {
     const cached = await env.COMPARE_CACHE.get<PublicPackageDiff>(key, {
@@ -191,7 +214,9 @@ export async function readPublicDiffCache(
       cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
     });
     if (cached) {
-      await writePublicDiffColoCache(key, JSON.stringify(cached), payloadCacheTtlSeconds(cached));
+      const ttlSeconds = payloadCacheTtlSeconds(cached);
+      if (ttlSeconds <= 0) return null;
+      await writePublicDiffColoCache(key, JSON.stringify(cached), ttlSeconds);
     }
     return cached;
   } catch {
@@ -206,9 +231,14 @@ export async function writePublicDiffCache(
   options: { ttlSeconds?: number } = {},
 ): Promise<void> {
   const ttlSeconds = options.ttlSeconds ?? CACHE_TTL_SECONDS;
+  if (ttlSeconds <= 0) return;
   const serialized = serializePublicDiffCachePayload(payload);
   const writes: Promise<unknown>[] = [writePublicDiffColoCache(key, serialized, ttlSeconds)];
-  if (env.COMPARE_CACHE && utf8ByteLength(serialized) <= CACHE_MAX_PAYLOAD_BYTES) {
+  if (
+    env.COMPARE_CACHE &&
+    ttlSeconds >= 60 &&
+    utf8ByteLength(serialized) <= CACHE_MAX_PAYLOAD_BYTES
+  ) {
     writes.push(
       env.COMPARE_CACHE.put(key, serialized, {
         expirationTtl: ttlSeconds,
@@ -361,6 +391,7 @@ async function writePublicDiffColoCache(
   serialized: string,
   ttlSeconds: number = CACHE_TTL_SECONDS,
 ): Promise<void> {
+  if (ttlSeconds <= 0) return;
   await coloCache().put(
     publicDiffColoCacheRequest(key),
     new Response(serialized, {
@@ -373,11 +404,54 @@ async function writePublicDiffColoCache(
 }
 
 // Re-warms of the colo cache must not outlive the KV entry's own bound for
-// mutable preview pairs.
-function payloadCacheTtlSeconds(payload: PublicPackageDiff): number {
-  return parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
-    ? PREVIEW_CACHE_TTL_SECONDS
-    : CACHE_TTL_SECONDS;
+// mutable preview pairs or an adapter's mutable resolution metadata.
+export function payloadCacheTtlSeconds(
+  payload: PublicPackageDiff,
+  nowMs: number = Date.now(),
+): number {
+  const adapterTtl = getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds ?? CACHE_TTL_SECONDS;
+  const pairTtl =
+    parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
+      ? PREVIEW_CACHE_TTL_SECONDS
+      : CACHE_TTL_SECONDS;
+  const maximum = Math.min(adapterTtl, pairTtl);
+  // Mutable adapters must carry the original acquisition deadline. Failing
+  // closed here also prevents an old payload shape from regaining a fresh TTL.
+  if (getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds !== undefined) {
+    if (!payload.cacheExpiresAt) return 0;
+    return remainingCacheTtlSeconds(payload.cacheExpiresAt, maximum, nowMs);
+  }
+  return maximum;
+}
+
+/** Bound an absolute deadline by a cache layer's own maximum lifetime. */
+export function remainingCacheTtlSeconds(
+  expiresAt: string | undefined,
+  maximumSeconds: number,
+  nowMs: number = Date.now(),
+): number {
+  if (!expiresAt) return maximumSeconds;
+  const expiresAtMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtMs)) return 0;
+  return Math.max(0, Math.min(maximumSeconds, Math.floor((expiresAtMs - nowMs) / 1000)));
+}
+
+function mutablePayloadExpiry(
+  adapter: PublicDiffAdapter,
+  sourceExpiresAt: string | undefined,
+  nowMs: number,
+): string | undefined {
+  if (adapter.cacheTtlSeconds === undefined) return undefined;
+  const adapterExpiresAtMs = nowMs + adapter.cacheTtlSeconds * 1000;
+  const sourceExpiresAtMs = sourceExpiresAt ? Date.parse(sourceExpiresAt) : Number.NaN;
+  if (sourceExpiresAt !== undefined && !Number.isFinite(sourceExpiresAtMs)) {
+    return new Date(nowMs).toISOString();
+  }
+  return new Date(
+    Number.isFinite(sourceExpiresAtMs)
+      ? Math.min(adapterExpiresAtMs, sourceExpiresAtMs)
+      : adapterExpiresAtMs,
+  ).toISOString();
 }
 
 // Counted rather than encoded: the strings measured here are the whole cache

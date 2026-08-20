@@ -33,6 +33,17 @@ describe("packageDiffPath", () => {
     // encodeURIComponent leaves "!" untouched; it is path-safe as-is.
     expect(packageDiffPath("pypi", "pkg", "1!1.0", "1!1.1")).toBe("/diff/pypi/pkg/1!1.0/1!1.1");
   });
+
+  test("keeps atpm handles and DIDs readable", () => {
+    expect(packageDiffPath("atpm", "@ebey.dev/counter", "0.0.14", "0.0.15")).toBe(
+      "/diff/atpm/@ebey.dev/counter/0.0.14/0.0.15",
+    );
+    // A DID's colons are legal unencoded path characters, and atpm.dev spells
+    // its own package URLs this way.
+    expect(
+      packageDiffPath("atpm", "did:plc:twegdcgytckr5cxm57gyruxa/counter", "0.0.14", "0.0.15"),
+    ).toBe("/diff/atpm/did:plc:twegdcgytckr5cxm57gyruxa/counter/0.0.14/0.0.15");
+  });
 });
 
 describe("share-card paths", () => {
@@ -61,6 +72,8 @@ describe("share-card paths", () => {
       ["npm", "pkg", "1.0.0+build.1", "1.0.1"],
       ["pypi", "requests", "2.31.0", "2.32.0"],
       ["npm", "pkg", "https://pkg.pr.new/preact/preact@1234abc", "10.0.0"],
+      ["atpm", "@ebey.dev/counter", "0.0.14", "0.0.15"],
+      ["atpm", "did:plc:twegdcgytckr5cxm57gyruxa/counter", "0.0.14", "0.0.15"],
     ];
     for (const [ecosystem, name, from, to] of specs) {
       const parsed = parsePackageDiffCardPath(packageDiffCardPath(ecosystem, name, from, to));
@@ -95,6 +108,18 @@ describe("parseDiffSpec", () => {
       { ecosystem: "npm", packageName: "pkg", fromVersion: "1.0.0+build.1", toVersion: "1.0.1" },
       { ecosystem: "pypi", packageName: "requests", fromVersion: "2.31.0", toVersion: "2.32.0" },
       { ecosystem: "pypi", packageName: "pkg", fromVersion: "1!1.0", toVersion: "1!1.1" },
+      {
+        ecosystem: "atpm",
+        packageName: "@ebey.dev/counter",
+        fromVersion: "0.0.14",
+        toVersion: "0.0.15",
+      },
+      {
+        ecosystem: "atpm",
+        packageName: "did:plc:twegdcgytckr5cxm57gyruxa/counter",
+        fromVersion: "0.0.14",
+        toVersion: "0.0.15",
+      },
     ]) {
       expect(
         parseDiffSpec(
@@ -104,7 +129,7 @@ describe("parseDiffSpec", () => {
     }
   });
 
-  test("an npm package literally named pypi keeps the un-prefixed form", () => {
+  test("an npm package literally named after an ecosystem keeps the un-prefixed form", () => {
     expect(parseDiffSpec("/diff/pypi/1.0.0/2.0.0")).toEqual({
       ecosystem: "npm",
       packageName: "pypi",
@@ -114,6 +139,22 @@ describe("parseDiffSpec", () => {
     expect(parseDiffSpec("/diff/pypi/pypi/1.0.0/2.0.0")).toEqual({
       ecosystem: "pypi",
       packageName: "pypi",
+      fromVersion: "1.0.0",
+      toVersion: "2.0.0",
+    });
+    // atpm names span two segments, so the prefixed atpm form is one segment
+    // longer than the npm form that starts with the same word.
+    expect(parseDiffSpec("/diff/atpm/1.0.0/2.0.0")).toEqual({
+      ecosystem: "npm",
+      packageName: "atpm",
+      fromVersion: "1.0.0",
+      toVersion: "2.0.0",
+    });
+    // A scoped npm package under an @atpm scope is unambiguous: it leads with
+    // "@", which the prefixed form never does.
+    expect(parseDiffSpec("/diff/@atpm/cli/1.0.0/2.0.0")).toEqual({
+      ecosystem: "npm",
+      packageName: "@atpm/cli",
       fromVersion: "1.0.0",
       toVersion: "2.0.0",
     });
@@ -127,6 +168,10 @@ describe("parseDiffSpec", () => {
     expect(parseDiffSpec("/diff/@scope/pkg/1.0.0")).toBeNull();
     expect(parseDiffSpec("/diff/react/1.0.0/1.0.1/extra")).toBeNull();
     expect(parseDiffSpec("/diff/pypi/requests/1.0.0/1.0.1/extra")).toBeNull();
+    // An atpm path missing its name half has an npm-shaped length, so it must
+    // not silently parse as an npm package called "@ebey.dev".
+    expect(parseDiffSpec("/diff/atpm/@ebey.dev/0.0.14/0.0.15")).toBeNull();
+    expect(parseDiffSpec("/diff/atpm/@ebey.dev/counter/0.0.14")).toBeNull();
   });
 
   test("returns null for other routes", () => {

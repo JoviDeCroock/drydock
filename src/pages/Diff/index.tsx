@@ -30,6 +30,7 @@ import {
   Eyebrow,
   LoadingLine,
   MonoDetail,
+  MonoLabel,
   Muted,
   SectionLabel,
 } from "../../components/Typography";
@@ -53,6 +54,9 @@ export default function DiffPage() {
   const location = useLocation();
   const spec = parseDiffSpec(location.path);
   if (spec) {
+    if (spec.ecosystem === "atpm" && spec.packageName.startsWith("@")) {
+      return <AtpmDiffCanonicalizer key={spec.packageName} spec={spec} />;
+    }
     return (
       <PackageDiffView
         key={`${spec.ecosystem}:${spec.packageName}@${spec.fromVersion}..${spec.toVersion}`}
@@ -67,6 +71,65 @@ export default function DiffPage() {
   const packageName = parseDiffPackage(location.path);
   if (packageName) return <DiffPackageResolver key={packageName} packageName={packageName} />;
   return <DiffLanding />;
+}
+
+function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
+  const authed = useAuthedSession();
+  const location = useLocation();
+  const error = useSignal<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPublicDiffVersions("atpm", spec.packageName).then(
+      (versions) => {
+        if (cancelled) return;
+        if (versions.packageName === spec.packageName) {
+          error.value = "This package did not resolve to a canonical publisher DID.";
+          return;
+        }
+        location.route(
+          packageDiffPath("atpm", versions.packageName, spec.fromVersion, spec.toVersion),
+          true,
+        );
+      },
+      (err) => {
+        if (!cancelled) error.value = errorMessage(err);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [spec.packageName, spec.fromVersion, spec.toVersion]);
+
+  return (
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
+      <PageSeo
+        metadata={packageDiffSeo(
+          spec.packageName,
+          spec.fromVersion,
+          spec.toVersion,
+          spec.ecosystem,
+        )}
+      />
+      <section class="flex flex-col gap-4 border-t border-border pt-6">
+        <Eyebrow tone="accent">Public package diff</Eyebrow>
+        <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
+          {spec.packageName}
+        </h1>
+        <Show
+          when={error}
+          fallback={
+            <LoadingState
+              title="Pinning publisher identity"
+              detail="resolving the package handle to its canonical DID"
+            />
+          }
+        >
+          {(message) => <Alert tone="critical">{message}</Alert>}
+        </Show>
+      </section>
+    </PageShell>
+  );
 }
 
 function DiffPackageResolver({ packageName }: { packageName: string }) {
@@ -110,6 +173,24 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
   );
 }
 
+// What the one name field asks for, per ecosystem. Kept as data rather than a
+// chain of ternaries so a fourth ecosystem is a row, not another branch.
+const NAME_FIELD: Record<DiffEcosystem, { label: string; placeholder: string }> = {
+  npm: {
+    label: "npm package name or pkg.pr.new URL",
+    placeholder: "package name or pkg.pr.new URL, e.g. react",
+  },
+  pypi: { label: "PyPI project name", placeholder: "project name, e.g. requests" },
+  atpm: {
+    label: "atpm package name or publisher DID",
+    placeholder: "@handle/name, e.g. @ebey.dev/counter",
+  },
+};
+
+function isDiffEcosystem(value: string): value is DiffEcosystem {
+  return value in NAME_FIELD;
+}
+
 function DiffLanding() {
   const authed = useAuthedSession();
   const location = useLocation();
@@ -117,14 +198,8 @@ function DiffLanding() {
   const packageName = useSignal("");
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
-  const namePlaceholder = useComputed(() =>
-    ecosystem.value === "pypi"
-      ? "project name, e.g. requests"
-      : "package name or pkg.pr.new URL, e.g. react",
-  );
-  const nameLabel = useComputed(() =>
-    ecosystem.value === "pypi" ? "PyPI project name" : "npm package name or pkg.pr.new URL",
-  );
+  const namePlaceholder = useComputed(() => NAME_FIELD[ecosystem.value].placeholder);
+  const nameLabel = useComputed(() => NAME_FIELD[ecosystem.value].label);
 
   const open = async (input: string) => {
     if (!input || busy.peek()) return;
@@ -164,7 +239,7 @@ function DiffLanding() {
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Diff any npm or PyPI package.
+          Diff any npm, PyPI, or atpm package.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           See exactly what changed between two published versions — every file, line by line, with
@@ -183,10 +258,13 @@ function DiffLanding() {
             <Select
               aria-label="Package ecosystem"
               value={ecosystem}
-              onChange={(value) => (ecosystem.value = value === "pypi" ? "pypi" : "npm")}
+              onChange={(value) => (ecosystem.value = isDiffEcosystem(value) ? value : "npm")}
             >
-              <option value="npm">npm</option>
-              <option value="pypi">PyPI</option>
+              {Object.keys(NAME_FIELD).map((id) => (
+                <option key={id} value={id}>
+                  {ecosystemLabel(id)}
+                </option>
+              ))}
             </Select>
           </div>
           <Input
@@ -281,6 +359,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const loading = model.loading.value;
   const error = model.error.value;
   const versions = model.versions.value;
+  // The URL carries the canonical name, which for atpm uses the publisher DID.
+  // Show the readable spelling once the response supplies one; until then the
+  // URL's own name is the only name there is.
+  const shownName = diff?.displayName ?? versions?.displayName ?? packageName;
   const changedCount = diff ? diff.diff.filter((entry) => entry.status !== "unchanged").length : 0;
   const hasFindings = Boolean(diff?.findings.length);
   // Preview sides (pkg.pr.new URLs) get short labels; registry versions pass
@@ -299,11 +381,13 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
-      <PageSeo metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem)} />
+      <PageSeo
+        metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
+      />
       <section class="flex flex-col gap-3 border-t border-border pt-6">
         <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
-          {packageName}
+          {shownName}
         </h1>
         <MonoDetail
           parts={[
@@ -336,6 +420,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
+        {diff?.provenance?.length ? <ResolutionTrail steps={diff.provenance} /> : null}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}
@@ -418,8 +503,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           {hasManifestChanges(diff.packageJsonDiff) ? (
             <section class="flex flex-col gap-3">
               <SectionLabel as="h2">Manifest changes</SectionLabel>
-              {/* PyPI requirement rows are not npm packages, so they get no
-                  npm diff links. */}
+              {/* npm only. PyPI requirement rows are not npm packages at all,
+                  and an atpm dependency spelled `@handle/name` would resolve on
+                  npm to a same-named scope someone else owns — a confidently
+                  wrong link is worse than none. */}
               <PackageJsonDiffView
                 diff={diff.packageJsonDiff}
                 linkDependencyDiffs={diff.ecosystem === "npm"}
@@ -521,6 +608,32 @@ interface VersionOption {
   distTags: string[];
   /** Display override for preview entries whose value is a pkg.pr.new URL. */
   label?: string;
+}
+
+// How the reviewed bytes were located, for ecosystems that resolve a release
+// through a chain of independent authorities instead of one registry. On an
+// atpm diff this is the substance of the page's claim — a handle proved through
+// DNS, a DID through a directory, bytes from the publisher's own server — so it
+// sits in the header next to the version pair rather than in a footnote.
+//
+// Rendered as text, never as links: every value here comes from data the
+// publisher under review controls.
+function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] }) {
+  return (
+    <dl class="flex flex-col gap-1 m-0 max-w-[680px]">
+      {steps.map((step) => (
+        <div key={`${step.label}:${step.value}`} class="flex flex-wrap items-baseline gap-x-2">
+          <MonoLabel as="dt" class="min-w-[64px]">
+            {step.label}
+          </MonoLabel>
+          <dd class="font-mono text-[12px] text-ink-muted m-0 break-all">
+            {step.value}
+            {step.detail ? <span class="text-ink-subtle"> via {step.detail}</span> : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function VersionPairPicker({

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   ECOSYSTEMS,
   getEcosystem,
@@ -11,11 +11,13 @@ import {
   supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
 } from "../../server/lib/ecosystems";
+import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a
 // capability is a deliberate, visible change rather than a silent one.
 describe("ecosystem capability registry", () => {
+  afterEach(() => vi.useRealTimers());
   test("declares the expected capability matrix", () => {
     const matrix = Object.fromEntries(
       ECOSYSTEMS.map((eco) => [
@@ -33,6 +35,9 @@ describe("ecosystem capability registry", () => {
       pypi: { staged: false, gate: true, publicDiff: true },
       // VS Code is gate-only: no Marketplace staging, not on /diff.
       vscode: { staged: false, gate: true, publicDiff: false },
+      // atpm is public-diff-only: releases live in the publisher's own AT
+      // Protocol repository, which Drydock reads but cannot stage or gate.
+      atpm: { staged: false, gate: false, publicDiff: true },
     });
   });
 
@@ -48,7 +53,7 @@ describe("ecosystem capability registry", () => {
 
   test("capability listings match the declared modules", () => {
     expect(supportedWorkflowGateEcosystems().sort()).toEqual(["npm", "pypi", "vscode"]);
-    expect(supportedPublicDiffEcosystems().sort()).toEqual(["npm", "pypi"]);
+    expect(supportedPublicDiffEcosystems().sort()).toEqual(["atpm", "npm", "pypi"]);
     expect(supportedStagedEcosystems()).toEqual(["npm"]);
   });
 
@@ -56,6 +61,22 @@ describe("ecosystem capability registry", () => {
     expect(getWorkflowGateAdapter("vscode")).toBe(getEcosystem("vscode")?.gate);
     expect(getPublicDiffAdapter("pypi")).toBe(getEcosystem("pypi")?.publicDiff);
     expect(getStagedAdapter("npm")).toBe(getEcosystem("npm")?.staged);
+  });
+
+  test("bounds atpm computed pairs to its mutable resolution lifetime", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
+    const adapter = getPublicDiffAdapter("atpm");
+    expect(adapter?.payloadVersion).toBe("v4");
+    expect(adapter?.rulesVersionSegment).toContain("atpm-10+identity-3");
+    expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
+    expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
+    expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(
+      "public, max-age=120",
+    );
+    expect(publicDiffVersionCacheControl(getPublicDiffAdapter("npm")!)).toBe(
+      "public, max-age=300, stale-while-revalidate=600",
+    );
   });
 
   test("a missing capability fails closed rather than falling back", () => {

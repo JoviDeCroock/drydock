@@ -64,12 +64,16 @@ export function packageDiffSeo(
   fromVersion?: string,
   toVersion?: string,
   ecosystem: DiffEcosystem = "npm",
+  // Readable spelling, when an atpm package's canonical DID form differs from
+  // its recognizable verified handle. The canonical name still builds the path
+  // — only the human-facing strings use this.
+  displayName?: string,
 ): PageSeoMetadata {
   if (!packageName || !fromVersion || !toVersion) {
     return {
-      title: "Diff any npm or PyPI package | Drydock",
+      title: "Diff any npm, PyPI, or atpm package | Drydock",
       description:
-        "Compare two published versions of any npm package or PyPI project file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
+        "Compare two published versions of any npm package, PyPI project, or atpm package file by file, with deterministic supply-chain findings pinned to the diff. No account required.",
       path: "/diff",
     };
   }
@@ -77,9 +81,10 @@ export function packageDiffSeo(
   // keeps the raw spec values.
   const fromLabel = diffRefLabel(fromVersion);
   const toLabel = diffRefLabel(toVersion);
+  const shownName = displayName || packageName;
   return {
-    title: `${packageName} ${fromLabel} → ${toLabel} | Drydock package diff`,
-    description: `File-by-file diff of ${packageName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
+    title: `${shownName} ${fromLabel} → ${toLabel} | Drydock package diff`,
+    description: `File-by-file diff of ${shownName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
     path: packageDiffPath(ecosystem, packageName, fromVersion, toVersion),
   };
 }

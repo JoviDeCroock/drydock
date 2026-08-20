@@ -1,6 +1,7 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import {
+  downloadInSandbox,
   downloadInSandboxInline,
   downloadInSandboxStream,
   SandboxError,
@@ -11,6 +12,7 @@ interface LoaderRecord {
   subRequestsLimit: number | undefined;
   receivedHeaders: Headers | null;
   receivedBody: Uint8Array | null;
+  loaderEnv?: Record<string, unknown>;
 }
 
 function buildLoader(record: LoaderRecord) {
@@ -27,8 +29,9 @@ function buildLoader(record: LoaderRecord) {
     );
   });
   return {
-    load: vi.fn((options: { limits?: { subRequests?: number } }) => {
+    load: vi.fn((options: { limits?: { subRequests?: number }; env?: Record<string, unknown> }) => {
       record.subRequestsLimit = options.limits?.subRequests;
+      record.loaderEnv = options.env;
       return {
         getEntrypoint: () => ({
           fetch: (request: Request) => handler(request),
@@ -76,6 +79,7 @@ describe("downloadInSandboxInline", () => {
     expect(record.subRequestsLimit).toBe(0);
     expect(record.receivedHeaders?.get("x-archive-format")).toBe("zip");
     expect(record.receivedBody).toEqual(archive);
+    expect(record.loaderEnv?.ARCHIVE_DIGEST_ALGORITHMS).toBe("SHA-1");
   });
 
   test("rejects an empty inline body", async () => {
@@ -115,6 +119,29 @@ describe("downloadInSandboxInline", () => {
 
     expect(result.files).toHaveLength(1);
     expect(loader.load).toHaveBeenCalled();
+  });
+});
+
+describe("downloadInSandbox", () => {
+  test("requests additional archive digests only when an adapter opts in", async () => {
+    const record: LoaderRecord = {
+      globalOutboundProps: undefined,
+      subRequestsLimit: undefined,
+      receivedHeaders: null,
+      receivedBody: null,
+    };
+    const loader = buildLoader(record);
+    const ctx = buildCtxWithGateway(record);
+    const sandboxEnv = { ...env, LOADER: loader as unknown as WorkerLoader } as Cloudflare.Env;
+    const tarballUrl = "https://artifacts.example.com/package.tgz";
+
+    await downloadInSandbox(sandboxEnv, ctx, {
+      tarballUrl,
+      publicArtifactUrls: [tarballUrl],
+      archiveDigestAlgorithms: ["SHA-1", "SHA-256", "SHA-512"],
+    });
+
+    expect(record.loaderEnv?.ARCHIVE_DIGEST_ALGORITHMS).toBe("SHA-1,SHA-256,SHA-512");
   });
 });
 

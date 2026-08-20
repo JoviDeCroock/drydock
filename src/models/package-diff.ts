@@ -14,6 +14,9 @@ import { apiFetch, errorMessage } from "./api";
 export interface PublicDiffVersionsResponse {
   ecosystem: DiffEcosystem;
   packageName: string;
+  // Set when an atpm package's canonical DID spelling differs from its readable
+  // verified `@handle/name`. Null elsewhere.
+  displayName: string | null;
   versions: Array<{ version: string; distTags: string[]; publishedAt?: string }>;
   suggested: { from: string; to: string } | null;
 }
@@ -33,6 +36,11 @@ export interface PublicDiffResponse {
   // Coverage caveats (e.g. an artifact kind omitted because it exceeded a
   // sandbox cap); rendered as a banner above the diff.
   notices: string[];
+  // How the reviewed bytes were located, when that is a chain of independent
+  // authorities rather than a single registry (atpm). Empty elsewhere.
+  provenance: Array<{ label: string; value: string; detail?: string }>;
+  // Readable spelling of `packageName`; see PublicDiffVersionsResponse.
+  displayName: string | null;
   cachedAt: string;
 }
 
@@ -76,7 +84,15 @@ export function getPublicDiffVersions(
     if (versionsCache.get(cacheKey) === entry) versionsCache.delete(cacheKey);
   };
   value.then((result) => {
-    if (!result.suggested) evictIfCurrent();
+    if (!result.suggested) return evictIfCurrent();
+    // Also file the answer under the canonical name the response came back
+    // with. The landing form asks by whatever was typed and then routes to the
+    // canonical spelling — an atpm handle resolves to its DID form — so
+    // without this the page it lands on always re-fetches what was just loaded.
+    const canonicalKey = `${ecosystem}:${result.packageName}`;
+    if (canonicalKey !== cacheKey && !versionsCache.has(canonicalKey)) {
+      versionsCache.set(canonicalKey, { at: entry.at, value });
+    }
   }, evictIfCurrent);
   return value;
 }
@@ -140,9 +156,9 @@ function diffQuery(
 }
 
 // npm requests keep their historical parameter-free URLs so long-lived colo
-// cache entries stay valid; only PyPI adds the ecosystem parameter.
+// cache entries stay valid; every other ecosystem names itself.
 function ecosystemQuery(ecosystem: DiffEcosystem): string {
-  return ecosystem === "pypi" ? "&ecosystem=pypi" : "";
+  return ecosystem === "npm" ? "" : `&ecosystem=${ecosystem}`;
 }
 
 // One model instance per (package, from, to) page view; the page remounts the

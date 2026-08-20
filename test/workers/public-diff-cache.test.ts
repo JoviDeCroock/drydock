@@ -1,8 +1,11 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { computeCompareMetadataCacheKey } from "../../server/lib/compare-cache";
+import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import {
   computePublicDiffCacheKey,
   jsonStringByteLength,
+  payloadCacheTtlSeconds,
   readPublicDiffCache,
   SAMPLE_OMITTED_FLAG,
   serializePublicDiffCachePayload,
@@ -11,6 +14,10 @@ import {
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
 import { PYPI_RULES_VERSION } from "../../server/lib/ecosystems/pypi/types";
+import {
+  readPublicDiffDisplayName,
+  writePublicDiffDisplayName,
+} from "../../server/lib/public-diff/display-metadata";
 import { DETERMINISTIC_RULES_VERSION } from "../../server/lib/review";
 
 function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
@@ -95,6 +102,71 @@ describe("public diff cache", () => {
 
     expect(cached?.packageName).toBe("cache-test-package");
     expect(cached?.toFiles[0]?.textSample).toContain("export const value");
+  });
+
+  test("stores display metadata separately with the pair's cache lifetime", async () => {
+    let pending: Promise<unknown> | undefined;
+    let write: { key: string; value: string; options: { expirationTtl?: number } } | undefined;
+    const cacheEnv = {
+      ...env,
+      COMPARE_CACHE: {
+        put: async (key: string, value: string, options: { expirationTtl?: number }) => {
+          write = { key, value, options };
+        },
+      },
+    } as unknown as Cloudflare.Env;
+    const ctx = {
+      waitUntil(value: Promise<unknown>) {
+        pending = value;
+      },
+    } as ExecutionContext;
+
+    writePublicDiffDisplayName(
+      cacheEnv,
+      ctx,
+      "pair-key",
+      "@ebey.dev/counter",
+      300,
+      "2026-08-19T12:05:00.000Z",
+    );
+    await pending;
+
+    expect(write).toEqual({
+      key: "pair-key:display-metadata",
+      value: JSON.stringify({
+        displayName: "@ebey.dev/counter",
+        expiresAt: "2026-08-19T12:05:00.000Z",
+      }),
+      options: { expirationTtl: 300 },
+    });
+  });
+
+  test("never restarts a mutable pair's absolute freshness lifetime", () => {
+    const now = Date.parse("2026-08-19T12:00:00.000Z");
+    const mutable = {
+      ...payload(),
+      ecosystem: "atpm",
+      cacheExpiresAt: "2026-08-19T12:02:00.000Z",
+    };
+
+    expect(payloadCacheTtlSeconds(mutable, now)).toBe(120);
+    expect(payloadCacheTtlSeconds(mutable, now + 119_000)).toBe(1);
+    expect(payloadCacheTtlSeconds(mutable, now + 120_000)).toBe(0);
+    expect(payloadCacheTtlSeconds({ ...mutable, cacheExpiresAt: undefined }, now)).toBe(0);
+  });
+
+  test("rejects display metadata after its inherited absolute expiry", async () => {
+    const cacheEnv = {
+      ...env,
+      COMPARE_CACHE: {
+        get: async () => ({
+          displayName: "@stale.example/counter",
+          expiresAt: "2000-01-01T00:00:00.000Z",
+        }),
+      },
+    } as unknown as Cloudflare.Env;
+
+    await expect(readPublicDiffDisplayName(cacheEnv, "pair-key")).resolves.toBeUndefined();
   });
 
   test("uses UTF-8 bytes when deciding whether to omit samples", () => {
@@ -198,6 +270,114 @@ describe("public diff cache", () => {
     expect(new TextEncoder().encode(JSON.stringify(cached)).byteLength).toBeLessThan(
       4 * 1024 * 1024,
     );
+  });
+});
+
+describe("atpm identity cache", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("does not reuse identities accepted under the previous validation rules", async () => {
+    const did = "did:plc:twegdcgytckr5cxm57gyruxa";
+    const pds = "https://shiitake.us-east.host.bsky.network";
+    const cid = "bafkreibrz4xmz6sbraw6h2mtchh5xq7jqghrjhr3yyyub3wbyrvmyjg2bm";
+    const oldKey = await computeCompareMetadataCacheKey({
+      registryUrl: "at://",
+      packageName: "@ebey.dev",
+      cacheScope: "atpm-public-identity-2-absolute-expiry-v1",
+    });
+    const currentKey = await computeCompareMetadataCacheKey({
+      registryUrl: "at://",
+      packageName: "@ebey.dev",
+      cacheScope: "atpm-public-identity-3-absolute-expiry-v1",
+    });
+    const identityExpiresAt = new Date(Date.now() + 120_000).toISOString();
+    const reads: string[] = [];
+    const pending: Promise<unknown>[] = [];
+    const compareCache = {
+      async get(key: string) {
+        reads.push(key);
+        if (key === oldKey) {
+          return { did, pds: "https://stale.example", handle: "ebey.dev", handleMethod: "dns" };
+        }
+        if (key === currentKey) {
+          return {
+            value: { did, pds, handle: "ebey.dev", handleMethod: "dns" },
+            expiresAt: identityExpiresAt,
+          };
+        }
+        return null;
+      },
+      async put() {},
+    } as unknown as KVNamespace;
+    const executionCtx = {
+      waitUntil(promise: Promise<unknown>) {
+        pending.push(promise);
+      },
+    } as ExecutionContext;
+
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("https://cloudflare-dns.com/dns-query")) {
+        return Promise.resolve(Response.json({ Answer: [{ type: 16, data: `"did=${did}"` }] }));
+      }
+      if (url.startsWith("https://plc.directory/")) {
+        return Promise.resolve(
+          Response.json({
+            id: did,
+            alsoKnownAs: ["at://ebey.dev"],
+            service: [
+              { id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: pds },
+            ],
+          }),
+        );
+      }
+      if (url.startsWith(`${pds}/xrpc/com.atproto.repo.getRecord`)) {
+        return Promise.resolve(
+          Response.json({
+            value: {
+              $type: "dev.atpm.alpha.package",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              tags: { latest: "1.0.0" },
+              versions: [
+                {
+                  $type: "dev.atpm.alpha.package#package",
+                  version: "1.0.0",
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  blob: {
+                    $type: "blob",
+                    ref: { $link: cid },
+                    size: 604,
+                    mimeType: "application/gzip",
+                  },
+                  meta: {
+                    name: "@ebey.dev/counter",
+                    version: "1.0.0",
+                    dist: {
+                      tarball: `${pds}/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${cid}`,
+                    },
+                  },
+                },
+              ],
+            },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    });
+
+    const listing = await atpmPublicDiff.listVersions(
+      { ...env, COMPARE_CACHE: compareCache } as Cloudflare.Env,
+      executionCtx,
+      "@ebey.dev/counter",
+    );
+    await Promise.all(pending);
+
+    expect(reads).toContain(currentKey);
+    expect(reads).not.toContain(oldKey);
+    expect(listing.packageName).toBe(`${did}/counter`);
+    expect(listing.cacheExpiresAt).toBe(identityExpiresAt);
   });
 });
 

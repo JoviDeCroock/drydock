@@ -1,4 +1,7 @@
 import { parseDiffPackage, parseDiffSpec } from "../../../src/lib/package-diff-path";
+import { getPublicDiffAdapter } from "../ecosystems";
+import { computePublicDiffCacheKey } from ".";
+import { readPublicDiffDisplayName } from "./display-metadata";
 import {
   OG_CARD_IMAGE_HEIGHT,
   OG_CARD_IMAGE_WIDTH,
@@ -15,15 +18,22 @@ export function isPackageDiffDetailPath(pathname: string): boolean {
   return parseDiffSpec(pathname) !== null || parseDiffPackage(pathname) !== null;
 }
 
-export function rewritePackageDiffMetadata(response: Response, pathname: string): Response {
+export async function rewritePackageDiffMetadata(
+  response: Response,
+  pathname: string,
+  env: Cloudflare.Env,
+): Promise<Response> {
   const spec = parseDiffSpec(pathname);
   if (!spec || !response.headers.get("content-type")?.includes("text/html")) return response;
+
+  const displayName = await readCachedDisplayName(env, spec);
 
   const metadata = packageDiffSeo(
     spec.packageName,
     spec.fromVersion,
     spec.toVersion,
     spec.ecosystem,
+    displayName,
   );
   const canonicalUrl = `${SITE_URL}${metadata.path}`;
   const cardUrl = packageDiffOgImageUrl(
@@ -32,7 +42,11 @@ export function rewritePackageDiffMetadata(response: Response, pathname: string)
     spec.toVersion,
     spec.ecosystem,
   );
-  const cardAlt = packageDiffOgImageAlt(spec.packageName, spec.fromVersion, spec.toVersion);
+  const cardAlt = packageDiffOgImageAlt(
+    displayName ?? spec.packageName,
+    spec.fromVersion,
+    spec.toVersion,
+  );
 
   return (
     new HTMLRewriter()
@@ -60,6 +74,31 @@ export function rewritePackageDiffMetadata(response: Response, pathname: string)
       .on('link[rel="canonical"]', attributeHandler("href", canonicalUrl))
       .transform(response)
   );
+}
+
+async function readCachedDisplayName(
+  env: Cloudflare.Env,
+  spec: NonNullable<ReturnType<typeof parseDiffSpec>>,
+): Promise<string | undefined> {
+  // npm and PyPI canonical names are already human-facing. Only atpm has a
+  // separate verified handle, so no other detail page should touch KV here.
+  if (spec.ecosystem !== "atpm") return undefined;
+  const adapter = getPublicDiffAdapter(spec.ecosystem);
+  if (!adapter) return undefined;
+  try {
+    const key = await computePublicDiffCacheKey({
+      ecosystem: spec.ecosystem,
+      packageName: spec.packageName,
+      fromVersion: spec.fromVersion,
+      toVersion: spec.toVersion,
+      registryUrl: adapter.registryUrl,
+    });
+    return await readPublicDiffDisplayName(env, key);
+  } catch {
+    // HTML metadata must remain available on a cold or unavailable cache; the
+    // canonical DID spelling from the path is the safe fallback.
+    return undefined;
+  }
 }
 
 function contentHandler(content: string): HTMLRewriterElementContentHandlers {

@@ -9,11 +9,16 @@ interface CapturedRequest {
   userAgent: string | null;
 }
 
-function setupGateway(props: {
-  npmToken?: string;
-  npmRegistry?: string;
-  publicArtifactUrls?: string[];
-}) {
+function setupGateway(
+  props: {
+    npmToken?: string;
+    npmRegistry?: string;
+    publicArtifactUrls?: string[];
+  },
+  // Scripted upstream, for the redirect tests. Defaults to a plain 200 so every
+  // existing case reads as before.
+  respond: (request: Request) => Response = () => new Response("upstream-ok", { status: 200 }),
+) {
   const captured: CapturedRequest[] = [];
   const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -23,7 +28,7 @@ function setupGateway(props: {
       authorization: request.headers.get("authorization"),
       userAgent: request.headers.get("user-agent"),
     });
-    return new Response("upstream-ok", { status: 200 });
+    return respond(request);
   });
   vi.stubGlobal("fetch", fetchSpy);
 
@@ -157,5 +162,108 @@ describe("NpmStageGateway runtime credential injection", () => {
     );
     expect(blocked.status).toBe(403);
     expect(captured).toHaveLength(1);
+  });
+});
+
+// `publicArtifactUrls` pins one exact URL, so a redirect off it is a way to
+// reach a host no policy ever saw. That matters most for atpm, where the
+// artifact host is a PDS named by the DID document of the party under review:
+// the parent Worker vets that host before pinning it, and an unchecked redirect
+// would route straight around the check.
+describe("NpmStageGateway pinned-artifact redirects", () => {
+  const PDS = "https://pds.example.com";
+  const BLOB = `${PDS}/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aabc&cid=bafkreiabc`;
+
+  function redirectOnce(target: string) {
+    let redirected = false;
+    return () => {
+      if (redirected) return new Response("upstream-ok", { status: 200 });
+      redirected = true;
+      return new Response(null, { status: 302, headers: { location: target } });
+    };
+  }
+
+  test("blocks a redirect that leaves the pinned origin", async () => {
+    const { gateway, captured } = setupGateway(
+      { publicArtifactUrls: [BLOB] },
+      redirectOnce("https://attacker.example/internal"),
+    );
+
+    const res = await gateway.fetch(new Request(BLOB));
+
+    expect(res.status).toBe(403);
+    // The off-origin hop is never issued.
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toBe(BLOB);
+  });
+
+  test("blocks a protocol-relative redirect to another host", async () => {
+    const { gateway, captured } = setupGateway(
+      { publicArtifactUrls: [BLOB] },
+      redirectOnce("//attacker.example/internal"),
+    );
+    expect((await gateway.fetch(new Request(BLOB))).status).toBe(403);
+    expect(captured).toHaveLength(1);
+  });
+
+  test("follows a same-origin redirect, which is the vetted host", async () => {
+    const { gateway, captured } = setupGateway(
+      { publicArtifactUrls: [BLOB] },
+      redirectOnce(`${PDS}/blobs/bafkreiabc`),
+    );
+
+    const res = await gateway.fetch(new Request(BLOB));
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("upstream-ok");
+    expect(captured.map((entry) => entry.url)).toEqual([BLOB, `${PDS}/blobs/bafkreiabc`]);
+    // Still credential-free on every hop.
+    expect(captured.every((entry) => entry.authorization === null)).toBe(true);
+    expect(captured.every((entry) => entry.userAgent === "staged-publish-review/0.3")).toBe(true);
+  });
+
+  test("refuses an endless same-origin redirect chain", async () => {
+    let hops = 0;
+    const { gateway } = setupGateway({ publicArtifactUrls: [BLOB] }, () => {
+      hops += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: `${PDS}/hop/${hops}` },
+      });
+    });
+
+    const res = await gateway.fetch(new Request(BLOB));
+
+    expect(res.status).toBe(403);
+    // Bounded: the original plus the redirect budget, never an unbounded loop.
+    expect(hops).toBe(4);
+  });
+
+  test("a 3xx with no Location is refused rather than served as the artifact", async () => {
+    const { gateway } = setupGateway(
+      { publicArtifactUrls: [BLOB] },
+      () => new Response(null, { status: 302 }),
+    );
+    expect((await gateway.fetch(new Request(BLOB))).status).toBe(403);
+  });
+
+  test("credentialed registry requests keep the runtime's own redirect handling", async () => {
+    // Unchanged on purpose: a registry that moves a staged tarball to a CDN must
+    // keep working, and that path is same-origin-pinned by the registry policy
+    // rather than by an artifact URL.
+    const { gateway, captured } = setupGateway(
+      { npmToken: "npm_token" },
+      redirectOnce("https://cdn.npmjs.example/stage.tgz"),
+    );
+
+    const res = await gateway.fetch(
+      new Request("https://registry.npmjs.org/-/stage/stage-abc123/tarball"),
+    );
+
+    // The gateway forwards once and lets the runtime resolve the 302, so the
+    // spy sees exactly one request and the 302 comes straight back through.
+    expect(res.status).toBe(302);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].authorization).toBe("Bearer npm_token");
   });
 });

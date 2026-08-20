@@ -156,7 +156,7 @@ app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
 app.route("/webhooks", githubWebhookRoutes);
 
 // The public package-diff endpoints are anonymous by design: they serve only
-// data derived from public registry artifacts and public pkg.pr.new preview
+// data derived from public release artifacts and public pkg.pr.new preview
 // tarballs, touch no organization resources, and are abuse-controlled by
 // per-IP rate limits plus the KV cache for version pairs. They must stay
 // mounted before the auth middleware below; every other /api/* endpoint keeps
@@ -294,7 +294,7 @@ app.get("/api", (c) =>
         "GET /api/v1/github-app/config; POST /api/v1/github-app/install; POST /api/v1/github-app/install/callback; GET /api/v1/github-app/installations; GET/POST /api/v1/github-app/release-targets; DELETE /api/v1/github-app/release-targets/:id; GET /api/v1/github-app/workflow-gates/by-scan/:scanId; POST /api/v1/github-app/workflow-gates/:gateId/decision",
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
-        "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public registry data only; on npm, from/to also accept pkg.pr.new preview URLs)",
+        "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi|atpm]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public release data only; on npm, from/to also accept pkg.pr.new preview URLs)",
       publicReports:
         "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
       publicFeed:
@@ -303,7 +303,7 @@ app.get("/api", (c) =>
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public registry data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );
@@ -327,7 +327,7 @@ app.route("/api/v1/audit-events", auditRoutes);
 app.notFound(async (c) => {
   if (!isServerOwnedPath(c.req.path) && c.env.ASSETS) {
     const response = await c.env.ASSETS.fetch(assetFallbackRequest(c.req.raw));
-    return rewritePackageDiffMetadata(response, c.req.path);
+    return rewritePackageDiffMetadata(response, c.req.path, c.env);
   }
   return c.json({ error: "not found" }, 404);
 });

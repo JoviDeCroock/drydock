@@ -307,7 +307,7 @@ export default function PublicReportPage() {
               ? "read this report, and stopped it from shipping."
               : "and is reading this report before deciding whether it ships."}{" "}
           Drydock runs the same review on every version you publish; the maintainer keeps the final
-          decision. You can also diff any published npm or PyPI package without an account.
+          decision. You can also diff any published npm, PyPI, or atpm package without an account.
         </Muted>
         <div class="flex flex-wrap gap-3 mt-1">
           <Show

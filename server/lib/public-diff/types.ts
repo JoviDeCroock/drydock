@@ -8,6 +8,26 @@ export interface PublicDiffAcquiredSide {
 }
 
 /**
+ * One step in how the reviewed bytes were located, rendered on the page as a
+ * plain label/value list.
+ *
+ * Optional and empty for the ecosystems that do not need it: on npm or PyPI the
+ * answer is "the registry", which is already the page's premise. It exists for
+ * ecosystems where locating a release is itself a chain of independent
+ * authorities a reader may want to check — atpm resolves a handle through DNS,
+ * a DID through a directory, and the bytes from the publisher's own server.
+ *
+ * Values are rendered as text, never as links: every one of them is derived from
+ * data the party under review controls.
+ */
+export interface PublicDiffProvenanceEntry {
+  label: string;
+  value: string;
+  /** Which mechanism produced this step, e.g. `DNS TXT`. */
+  detail?: string;
+}
+
+/**
  * What an ecosystem hands back after fetching both sides. The orchestrator in
  * `public-diff/index.ts` owns diffing, redaction, risk, and caching so every
  * ecosystem shares one assembly path; the adapter only knows how to get the
@@ -21,6 +41,16 @@ export interface PublicDiffAcquiredSources {
   codePatternSet?: CodePatternSet;
   /** Coverage caveats to render as a banner (e.g. an omitted artifact kind). */
   notices?: string[];
+  /** How the bytes were located, when that is not simply "the registry". */
+  provenance?: PublicDiffProvenanceEntry[];
+  /** Friendlier spelling of the package name; see PublicDiffVersionListing. */
+  displayName?: string;
+  /**
+   * Absolute freshness bound inherited from mutable resolution metadata.
+   * Downstream caches must use only the remaining lifetime so moving a value
+   * between layers cannot restart its TTL.
+   */
+  cacheExpiresAt?: string;
 }
 
 export interface PublicDiffInput {
@@ -40,8 +70,23 @@ interface PublicDiffVersion {
 }
 
 export interface PublicDiffVersionListing {
-  /** Canonical package name as the registry spells it. */
+  /**
+   * Canonical package name, and the one `/diff` links and redirects to. An
+   * ecosystem that has more than one spelling picks the canonical one here,
+   * even if it is not the prettiest: this is what ends up in shared URLs.
+   */
   packageName: string;
+  /**
+   * How to render `packageName` for a reader, when the canonical spelling is not
+   * the one a human would recognize. atpm sets this: the canonical name pins the
+   * publisher's DID so ordinary handle reassignment cannot redirect it, while
+   * the display name is the `@handle/name` form the package is actually known
+   * by. Only ever a name this resolution verified — never a claim taken at face
+   * value. `did:web` is still domain-bound and is disclosed separately.
+   */
+  displayName?: string;
+  /** Internal freshness bound for the HTTP response cache; not serialized. */
+  cacheExpiresAt?: string;
   versions: PublicDiffVersion[];
   suggested: { from: string; to: string } | null;
 }
@@ -56,12 +101,12 @@ export interface PublicDiffVersionListing {
  * those was a place a third ecosystem would have had to be threaded through by
  * hand.
  *
- * Implementations must stay credential-free: they may only read public registry
+ * Implementations must stay credential-free: they may only read public release
  * data, and nothing they return is persisted to D1.
  */
 export interface PublicDiffAdapter {
   readonly ecosystem: string;
-  /** Canonical public registry base URL for this ecosystem. */
+  /** Canonical public source or protocol identifier for this ecosystem. */
   readonly registryUrl: string;
 
   /**
@@ -73,6 +118,11 @@ export interface PublicDiffAdapter {
   readonly rulesVersionSegment: string;
   /** Payload-shape version; bump when the cached payload shape changes. */
   readonly payloadVersion: string;
+  /**
+   * Maximum computed-pair cache lifetime when release identity is mutable.
+   * Omit for registry versions whose artifact mapping is immutable.
+   */
+  readonly cacheTtlSeconds?: number;
 
   isValidPackageName(name: string): boolean;
   /**

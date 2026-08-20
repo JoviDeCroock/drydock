@@ -11,6 +11,7 @@ export const ECOSYSTEM_LABELS = {
   npm: "npm",
   pypi: "PyPI",
   vscode: "VS Code",
+  atpm: "atpm",
 } as const;
 
 export type EcosystemId = keyof typeof ECOSYSTEM_LABELS;

@@ -11,15 +11,16 @@ import {
   loadPublicPackageDiff,
   PublicDiffError,
   readPublicDiffCache,
+  remainingCacheTtlSeconds,
   type PublicPackageDiff,
 } from "../lib/public-diff";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
 import type { Bindings, Variables } from "../types";
 
 // Anonymous by design: these endpoints serve only data derived from public
-// registry artifacts and public pkg.pr.new preview tarballs (no organization
+// release artifacts and public pkg.pr.new preview tarballs (no organization
 // resources, no credentials, no D1 persistence) and are the marketing-facing
-// "diff any npm or PyPI package" surface. Abuse control is per-IP rate limiting
+// "diff any npm, PyPI, or atpm package" surface. Abuse control is per-IP rate limiting
 // plus the KV cache for immutable version pairs; the sandbox's archive caps
 // bound the work a request can ask for. Everything else under /api/* keeps
 // requiring a Better Auth session.
@@ -27,9 +28,29 @@ export const publicDiffRoutes = new Hono<{ Bindings: Bindings; Variables: Variab
 
 type PublicDiffContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
+const VERSION_LIST_CACHE_TTL_SECONDS = 5 * 60;
+const VERSION_LIST_STALE_TTL_SECONDS = 10 * 60;
+
+export function publicDiffVersionCacheControl(
+  adapter: PublicDiffAdapter,
+  cacheExpiresAt?: string,
+): string {
+  const maximum = Math.min(
+    VERSION_LIST_CACHE_TTL_SECONDS,
+    adapter.cacheTtlSeconds ?? VERSION_LIST_CACHE_TTL_SECONDS,
+  );
+  const maxAge = remainingCacheTtlSeconds(cacheExpiresAt, maximum);
+  // Mutable identity metadata must stop being served when its adapter-defined
+  // lifetime ends. Registry listings keep the existing stale revalidation
+  // window because their package identity does not move between publishers.
+  return adapter.cacheTtlSeconds !== undefined
+    ? `public, max-age=${maxAge}`
+    : `public, max-age=${maxAge}, stale-while-revalidate=${VERSION_LIST_STALE_TTL_SECONDS}`;
+}
+
 // A custom NPM_REGISTRY signals a private/self-hosted deployment, so the whole
-// anonymous surface stays off there — including PyPI, which would otherwise
-// still reach out to the public internet from a private install.
+// anonymous surface stays off there — including PyPI and atpm, which would
+// otherwise still reach out to the public internet from a private install.
 publicDiffRoutes.use("*", async (c, next) => {
   const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
   if (configuredRegistry !== PUBLIC_NPM_REGISTRY) {
@@ -214,12 +235,13 @@ publicDiffRoutes.get("/versions", async (c) => {
     {
       ecosystem: adapter.ecosystem,
       packageName: listing.packageName,
+      displayName: listing.displayName ?? null,
       versions: listing.versions,
       suggested: listing.suggested,
     },
     200,
     {
-      "cache-control": "public, max-age=300, stale-while-revalidate=600",
+      "cache-control": publicDiffVersionCacheControl(adapter, listing.cacheExpiresAt),
       "cache-tag": adapter.cacheTag(packageName),
     },
   );
@@ -267,6 +289,8 @@ publicDiffRoutes.get("/", async (c) => {
       risk: payload.risk,
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
+      provenance: payload.provenance ?? [],
+      displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
     },
     200,

@@ -74,7 +74,7 @@ export default function LandingPage() {
         </p>
         <IncidentDiffCards />
         <LinkButton href="/diff" variant="ghost" size="sm" class="self-start">
-          Diff any npm or PyPI package →
+          Diff any npm, PyPI, or atpm package →
         </LinkButton>
       </section>
 
