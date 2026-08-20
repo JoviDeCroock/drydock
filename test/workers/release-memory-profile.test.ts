@@ -254,6 +254,23 @@ describe("release-memory finding profile column", () => {
     expect(prior?.findings).toHaveLength(2001);
   });
 
+  test("a byte-heavy profile falls back before it can exceed the D1 row budget", async () => {
+    const owner = await seedUser();
+    // Well below the entry cap, but multibyte paths make the serialized profile
+    // larger than its safe share of D1's 2 MB row limit.
+    const many = Array.from({ length: 200 }, (_unused, index) =>
+      finding("file.native-artifact", `${"界".repeat(500)}-${index}`, "high"),
+    );
+    const { db, scanId } = await seedApprovedScan(owner, { findings: many });
+
+    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    expect(row.findingProfileJson).toBeNull();
+
+    const prior = await lookup(db, owner, env.ARTIFACTS);
+    expect(prior?.scanId).toBe(scanId);
+    expect(prior?.findings).toHaveLength(many.length);
+  });
+
   test("a malformed stored profile falls back rather than reporting an empty one", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedApprovedScan(owner, {

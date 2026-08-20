@@ -535,19 +535,25 @@ describe("scan retention", () => {
     expect(remaining.map((row) => row.id)).toEqual([orphan]);
   });
 
-  test("leaves a scan attached to a still-pending workflow gate alone", async () => {
+  test("leaves every package scan attached to a still-pending workflow gate alone", async () => {
     const owner = await seedUser();
-    const gated = await seedAgedScan(owner, 400);
-    const gateId = await seedPendingGate(owner, gated);
+    const representative = await seedAgedScan(owner, 400);
+    const sibling = await seedAgedScan(owner, 400);
+    const gateId = await seedPendingGate(owner, representative);
+    // A monorepo gate points `github_workflow_gates.scan_id` at only one
+    // representative package. Leave that row on the representative fallback;
+    // the sibling exercises the authoritative `scans.gate_id` membership link.
+    await owner.db.update(schema.scans).set({ gateId }).where(eq(schema.scans.id, sibling));
 
     const pending = await runRetentionSweep({
       ...env,
       SCAN_RETENTION_DAYS: "365",
     } as unknown as Cloudflare.Env);
     expect(pending.scans).toMatchObject({ candidates: 0, deleted: 0 });
-    expect(await scanKeys(owner.organizationId, gated)).toHaveLength(4);
+    expect(await scanKeys(owner.organizationId, representative)).toHaveLength(4);
+    expect(await scanKeys(owner.organizationId, sibling)).toHaveLength(4);
 
-    // Once the gate is decided the scan is eligible again.
+    // Once the gate is decided every package scan is eligible again.
     await owner.db
       .update(schema.githubWorkflowGates)
       .set({ status: "approved" })
@@ -556,7 +562,7 @@ describe("scan retention", () => {
       ...env,
       SCAN_RETENTION_DAYS: "365",
     } as unknown as Cloudflare.Env);
-    expect(decided.scans).toMatchObject({ candidates: 1, deleted: 1 });
+    expect(decided.scans).toMatchObject({ candidates: 2, deleted: 2 });
   });
 
   test("a misconfigured window is reported once, not on every tick", async () => {

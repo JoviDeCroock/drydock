@@ -12,6 +12,8 @@
 // adjustment, so `releaseRisk` (and the workflow gate reading it) cannot move.
 // See docs/release-memory.md.
 
+import { utf8ByteLength } from "../platform/json-size";
+
 type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
 
 export interface FindingProfileEntry {
@@ -75,6 +77,15 @@ const FINDING_PROFILE_VERSION = 1;
  */
 const FINDING_PROFILE_MAX_ENTRIES = 2000;
 
+/**
+ * Byte budget for the JSON column. D1 caps an entire row at 2 MB, and this
+ * profile shares the row with the compacted diff, risk summary, AI result, and
+ * lifecycle metadata. The profile is only a lookup optimization, so keep a
+ * conservative slice of that limit and fall back to the artifact projection
+ * rather than letting multibyte package paths make scan persistence fail.
+ */
+const FINDING_PROFILE_MAX_BYTES = 256 * 1024;
+
 export interface PersistedFindingProfile {
   version: number;
   findings: FindingProfileEntry[];
@@ -96,7 +107,9 @@ export function buildPersistedFindingProfile(
   findings: ProfileFindingInput[],
 ): PersistedFindingProfile | null {
   if (findings.length > FINDING_PROFILE_MAX_ENTRIES) return null;
-  return { version: FINDING_PROFILE_VERSION, findings: buildFindingProfile(findings) };
+  const profile = { version: FINDING_PROFILE_VERSION, findings: buildFindingProfile(findings) };
+  if (utf8ByteLength(JSON.stringify(profile)) > FINDING_PROFILE_MAX_BYTES) return null;
+  return profile;
 }
 
 /**

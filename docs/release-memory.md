@@ -117,10 +117,13 @@ persisted at completion instead:
 file }] }` in canonical profile order — the multiset itself, duplicates
   included. It is built from the same redacted **rule** findings the scan
   persists, so the advisory reviewer's output can never enter it. Profiles above
-  `FINDING_PROFILE_MAX_ENTRIES` are not stored at all rather than stored
-  truncated: a truncated profile is indistinguishable from a smaller one, so it
-  would report findings the prior release actually had as new — a fabricated
-  `diverged`.
+  `FINDING_PROFILE_MAX_ENTRIES` or `FINDING_PROFILE_MAX_BYTES` are not stored at
+  all rather than stored truncated: a truncated profile is indistinguishable
+  from a smaller one, so it would report findings the prior release actually had
+  as new — a fabricated `diverged`. The byte budget also leaves headroom inside
+  D1's 2 MB row limit for the compacted diff, risk summary, and other scan
+  metadata; multibyte package paths therefore fall back instead of breaking scan
+  persistence.
 - Rows written before the column (and oversized profiles) fall back to
   projecting the profile out of the prior scan's artifacts: the digest-verified
   R2 `report.json` for artifact-backed scans (their findings are no longer
