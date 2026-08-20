@@ -187,7 +187,8 @@ describe("discovery sweep producer", () => {
   test("pages the enumeration and keeps each send under the 100-message batch cap", async () => {
     // 101 eligible orgs: the cursor has to advance past the first full page, and
     // no single sendBatch may exceed the Queues limit of 100 messages.
-    const expected: string[] = [];
+    const validExpected: string[] = [];
+    const unvalidatedExpected: string[] = [];
     for (let index = 0; index < 101; index++) {
       // Deterministic connection ids so the keyset order is known, which is what
       // makes a skipped or repeated page visible.
@@ -196,7 +197,7 @@ describe("discovery sweep producer", () => {
         validationStatus: index % 2 === 0 ? "valid" : "unvalidated",
         connectionId: `npmconn_${String(index).padStart(4, "0")}`,
       });
-      expected.push(seeded.organizationId);
+      (index % 2 === 0 ? validExpected : unvalidatedExpected).push(seeded.organizationId);
     }
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -215,7 +216,10 @@ describe("discovery sweep producer", () => {
     const enqueued = enqueuedOrganizationIds(sendBatch);
     expect(enqueued).toHaveLength(101);
     expect(new Set(enqueued).size).toBe(101);
-    expect(new Set(enqueued)).toEqual(new Set(expected));
+    // The exact order matches the `(validation_status, id)` index. Besides
+    // preventing a temporary sort, this exercises a cursor page that crosses
+    // from unvalidated rows into valid rows without skipping the last item.
+    expect(enqueued).toEqual([...unvalidatedExpected, ...validExpected]);
   });
 
   test("flags truncation only when the page budget actually leaves orgs behind", async () => {
@@ -631,5 +635,33 @@ describe("queue message routing guard", () => {
     expect([...errorSpy.mock.calls].some((call) => String(call[0]).startsWith("scan."))).toBe(
       false,
     );
+  });
+
+  test("drops a malformed discovery sweep instead of treating it as completed", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response("unexpected", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = createExecutionContext();
+    await worker.queue(
+      batchOn("staged-publish-review-discovery", { kind: "discovery_sweep" }),
+      env as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    const dropped = errorSpy.mock.calls.find((call) => call[0] === "queue.message.unknown_kind");
+    expect(dropped![1]).toMatchObject({
+      queue: "staged-publish-review-discovery",
+      kind: "discovery_sweep",
+      reason: "non_sweep_on_discovery_queue",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      logSpy.mock.calls.find(
+        (call) => call[0] === "staged_publishes.sweep.queue.message.completed",
+      ),
+    ).toBeUndefined();
   });
 });

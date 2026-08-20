@@ -80,13 +80,20 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
 export interface AutoDiscoveryNpmConnectionRef {
   id: string;
   organizationId: string;
+  validationStatus: string;
 }
 
+export type AutoDiscoveryNpmConnectionCursor = Pick<
+  AutoDiscoveryNpmConnectionRef,
+  "validationStatus" | "id"
+>;
+
 /**
- * One page of sweep-eligible connections, ordered by `id` so the caller can
- * resume from the last id it saw. Keyset pagination (rather than OFFSET) keeps
- * each page a bounded index range no matter how many organizations exist, and
- * `npm_connections_validation_status_idx` covers both the filter and the order.
+ * One page of sweep-eligible connections, ordered by `(validation_status, id)`
+ * so the caller can resume from the last composite key it saw. Matching the
+ * keyset cursor and ordering to `npm_connections_validation_status_idx` lets
+ * SQLite walk the covering index directly instead of sorting every remaining
+ * eligible row into a temporary B-tree for each page.
  *
  * There is no separate auto-discovery flag: a connection is eligible while its
  * validation status is `valid` or `unvalidated`. `invalid` (expired/revoked
@@ -94,14 +101,28 @@ export interface AutoDiscoveryNpmConnectionRef {
  */
 export async function listAutoDiscoveryNpmConnectionRefs(
   db: AppDb,
-  options: { limit: number; afterId?: string | null },
+  options: { limit: number; after?: AutoDiscoveryNpmConnectionCursor | null },
 ): Promise<AutoDiscoveryNpmConnectionRef[]> {
   const eligible = inArray(npmConnections.validationStatus, ["valid", "unvalidated"]);
+  const after = options.after;
+  const afterCursor = after
+    ? or(
+        gt(npmConnections.validationStatus, after.validationStatus),
+        and(
+          eq(npmConnections.validationStatus, after.validationStatus),
+          gt(npmConnections.id, after.id),
+        ),
+      )
+    : undefined;
   return db
-    .select({ id: npmConnections.id, organizationId: npmConnections.organizationId })
+    .select({
+      id: npmConnections.id,
+      organizationId: npmConnections.organizationId,
+      validationStatus: npmConnections.validationStatus,
+    })
     .from(npmConnections)
-    .where(options.afterId ? and(eligible, gt(npmConnections.id, options.afterId)) : eligible)
-    .orderBy(npmConnections.id)
+    .where(afterCursor ? and(eligible, afterCursor) : eligible)
+    .orderBy(npmConnections.validationStatus, npmConnections.id)
     .limit(options.limit);
 }
 
