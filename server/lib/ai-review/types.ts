@@ -135,5 +135,8 @@ export function pendingAiReview(): AiReview {
     findings: [],
     requiresManualReview: false,
     model: null,
+    // Null for the same reason `model` is: no reviewer contract has been
+    // exercised yet, so recording one would claim a run that has not happened.
+    reviewerVersion: null,
   };
 }

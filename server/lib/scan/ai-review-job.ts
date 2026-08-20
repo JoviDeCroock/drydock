@@ -1,5 +1,6 @@
 import { type AppDb, createDb } from "../../db/client";
 import { applyAiReviewPatch, getScanStatus } from "../../db/scans";
+import { AI_REVIEWER_VERSION } from "../ai-review/contract";
 import { AI_MODEL } from "../ai-review/models";
 import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
@@ -115,6 +116,7 @@ export async function executeAiReviewJob(
       findings: [],
       requiresManualReview: false,
       model: null,
+      reviewerVersion: null,
     };
     return applyAiReviewToScan({ env, db, scan, message, review, evidence, startedAtMs });
   }
@@ -154,8 +156,14 @@ async function runReview(
       ecosystem: evidence.ecosystem || message.ecosystem,
       status: review.status,
       model: review.model ?? "unknown",
+      reviewerVersion: review.reviewerVersion ?? "legacy",
       durationMs: durationMsSince(startedAtMs),
       findingCount: review.findings.length,
+      steps: usage?.steps ?? 0,
+      inputTokens: usage?.inputTokens ?? 0,
+      cachedInputTokens: usage?.cachedInputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+      totalTokens: usage?.totalTokens ?? 0,
     });
     emitOperationalEvent("info", "scan.ai_review.completed", {
       scanId: message.scanId,
@@ -184,8 +192,14 @@ async function runReview(
       ecosystem: evidence.ecosystem || message.ecosystem,
       status: "errored",
       model: AI_MODEL,
+      reviewerVersion: AI_REVIEWER_VERSION,
       durationMs: durationMsSince(startedAtMs),
       findingCount: 0,
+      steps: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
     });
     emitOperationalEvent("error", "scan.ai_review.failed", {
       scanId: message.scanId,
@@ -206,6 +220,7 @@ async function runReview(
       findings: [],
       requiresManualReview: false,
       model: AI_MODEL,
+      reviewerVersion: AI_REVIEWER_VERSION,
     };
   }
 }
@@ -379,6 +394,7 @@ async function closeUnavailable(
     findings: [],
     requiresManualReview: false,
     model: AI_MODEL,
+    reviewerVersion: AI_REVIEWER_VERSION,
   };
   const persisted = normalizeScanRiskBreakdown(scan.riskSummaryJson);
   const floor = aiRiskFloor(review);
