@@ -33,6 +33,15 @@ describe("npm stage commands", () => {
     ).toBeNull();
   });
 
+  test("refuses credential-bearing registry urls from legacy scans", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "https://user:password@registry.example.test",
+      }),
+    ).toBeNull();
+  });
+
   test("has no command for workflow-gate scans", () => {
     expect(npmStageCommandFor("publish", { source: "workflow_gate", stageId })).toBeNull();
   });

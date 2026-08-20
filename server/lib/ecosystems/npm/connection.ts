@@ -90,6 +90,9 @@ export function normalizeRegistryUrl(
   const raw = typeof value === "string" && value.trim() ? value.trim() : DEFAULT_REGISTRY;
   const url = new URL(raw);
   if (!registryProtocolAllowed(url, options)) throw new Error("registry URL must use https");
+  if (url.username || url.password) {
+    throw new Error("registry URL must not include credentials");
+  }
   url.pathname = url.pathname.replace(/\/+$/, "");
   url.search = "";
   url.hash = "";

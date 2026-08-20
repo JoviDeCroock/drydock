@@ -305,6 +305,16 @@ describe("notifyStagedReleaseAwaitingApproval", () => {
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.text).toContain("--registry 'https://registry.example.test/team'\\''s'");
   });
+
+  test("does not put legacy registry credentials into reminder email", async () => {
+    await notifyStagedReleaseAwaitingApproval(
+      awaitingApprovalInput({ registryUrl: "https://user:password@registry.example.test" }),
+    );
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).not.toContain("user:password");
+    expect(message.text).not.toContain("npm stage approve");
+  });
 });
 
 describe("notifyScanCompletion", () => {

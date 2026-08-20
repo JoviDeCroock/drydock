@@ -346,6 +346,32 @@ describe("registry version status resolution", () => {
 
     expect((await readScan("scan-z")).registryStatusSupersededAt).toBeTruthy();
     expect((await readScan("scan-a")).registryStatusSupersededAt).toBeNull();
+    await persistScan(db, {
+      id: "scan-a",
+      stageId: "stage-restaged",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageJson: { name: PACKAGE, version: VERSION },
+      risk: "low",
+      status: "complete",
+      summary: { diff: [] },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+    });
+    stubRegistry(() => statusResponse("published"));
+
+    await expect(
+      resolveNpmReleaseOutcomes({
+        db,
+        env,
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      }),
+    ).resolves.toMatchObject({ checked: 1, resolved: 1 });
+    expect((await readScan("scan-a")).registryVersionStatus).toBe("published");
   });
 
   test("does not revive a superseded stage after a newer failed scan is deleted", async () => {
