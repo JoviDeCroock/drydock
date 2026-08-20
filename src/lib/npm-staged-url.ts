@@ -1,8 +1,11 @@
 const NPM_WEB_ORIGIN = "https://www.npmjs.com";
+const PUBLIC_NPM_REGISTRY_URL = "https://registry.npmjs.org";
 
 export type NpmStagedScan = {
   source?: string | null;
   packageName?: string | null;
+  registryUrl?: string | null;
+  registryStatusSupersededAt?: string | number | Date | null;
 };
 
 export function buildNpmStagedPackagesUrl(packageName: string | null | undefined): string | null {
@@ -17,6 +20,28 @@ export function buildNpmStagedPackagesUrl(packageName: string | null | undefined
 }
 
 export function npmStagedPackagesUrlFor(scan: NpmStagedScan): string | null {
-  if (scan.source === "workflow_gate" || !scan.packageName) return null;
+  if (
+    scan.source === "workflow_gate" ||
+    !scan.packageName ||
+    scan.registryStatusSupersededAt != null ||
+    !usesPublicNpmRegistry(scan.registryUrl)
+  ) {
+    return null;
+  }
   return buildNpmStagedPackagesUrl(scan.packageName);
+}
+
+function usesPublicNpmRegistry(value: string | null | undefined): boolean {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === PUBLIC_NPM_REGISTRY_URL &&
+      (url.pathname === "/" || url.pathname === "") &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
 }

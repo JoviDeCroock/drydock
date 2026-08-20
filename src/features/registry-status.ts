@@ -15,6 +15,7 @@ export interface RegistryStatusScan {
   source?: string | null;
   stageId?: string | null;
   registryUrl?: string | null;
+  registryStatusSupersededAt?: string | number | Date | null;
 }
 
 /**
@@ -22,6 +23,7 @@ export interface RegistryStatusScan {
  * release under review. It becomes actionable only after approval here.
  */
 export function registryStatusVariant(scan: RegistryStatusScan): RegistryStatusVariant | null {
+  if (scan.registryStatusSupersededAt != null) return null;
   switch (scan.registryVersionStatus) {
     case "blocked":
       return "blocked";

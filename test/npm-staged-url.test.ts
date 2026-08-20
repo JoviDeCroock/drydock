@@ -28,4 +28,37 @@ describe("npm staged packages urls", () => {
       npmStagedPackagesUrlFor({ source: "workflow_gate", packageName: "left-pad" }),
     ).toBeNull();
   });
+
+  test("keeps the npm web shortcut for the captured public registry", () => {
+    expect(
+      npmStagedPackagesUrlFor({
+        source: "manual",
+        packageName: "left-pad",
+        registryUrl: "https://registry.npmjs.org/",
+      }),
+    ).toBe(
+      "https://www.npmjs.com/settings/~/staged-packages/?page=0&perPage=10&filterPackage=left-pad",
+    );
+  });
+
+  test("does not redirect custom-registry reviews to npmjs.com", () => {
+    expect(
+      npmStagedPackagesUrlFor({
+        source: "manual",
+        packageName: "left-pad",
+        registryUrl: "https://registry.example.test/team",
+      }),
+    ).toBeNull();
+  });
+
+  test("does not link a superseded stage", () => {
+    expect(
+      npmStagedPackagesUrlFor({
+        source: "manual",
+        packageName: "left-pad",
+        registryUrl: "https://registry.npmjs.org",
+        registryStatusSupersededAt: "2026-08-20T10:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
 });

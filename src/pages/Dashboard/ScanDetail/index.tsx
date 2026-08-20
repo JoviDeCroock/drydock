@@ -263,7 +263,7 @@ export default function ScanDetailPage() {
     ? gate?.status === "pending" && (gateReviewComplete || gateReviewFailed)
       ? () => (gateDialogOpen.value = true)
       : undefined
-    : detail?.scan.status === "complete"
+    : detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
       ? () => (decisionDialogOpen.value = true)
       : undefined;
 
@@ -445,7 +445,10 @@ export default function ScanDetailPage() {
         ) : null
       ) : null}
 
-      {detail && detail.scan.status === "complete" && !isWorkflowGate ? (
+      {detail &&
+      detail.scan.status === "complete" &&
+      !isWorkflowGate &&
+      detail.scan.registryStatusSupersededAt == null ? (
         <DecisionDialogHost
           openSignal={decisionDialogOpen}
           onClose={() => (decisionDialogOpen.value = false)}
