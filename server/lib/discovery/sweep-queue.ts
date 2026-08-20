@@ -32,9 +32,10 @@ export interface DiscoverySweepQueueMessage {
  * this one), so a message published to the wrong queue is logged and dropped
  * instead of fanning out scan work from the wrong consumer.
  *
- * Keep this in sync with `queues.consumers[].queue` in `wrangler.jsonc` /
- * `wrangler.template.jsonc`. Renaming the queue without renaming this constant
- * shows up as error-level `queue.message.unknown_kind` logs naming both.
+ * Keep this in sync with `queues.consumers[].queue` in `wrangler.jsonc` and in
+ * `docs/examples/wrangler.self-host.jsonc`. Renaming the queue without renaming
+ * this constant shows up as error-level `queue.message.unknown_kind` logs
+ * naming both.
  */
 export const DISCOVERY_SWEEP_QUEUE_NAME = "staged-publish-review-discovery";
 
@@ -91,7 +92,7 @@ export async function enqueueDiscoverySweeps(
   const db = createDb(env.DB);
   const queue = env.DISCOVERY_QUEUE;
   if (!queue) {
-    await runInlineDiscoverySweeps(env, executionCtx, db, startedAtMs);
+    await runInlineDiscoverySweeps(env, executionCtx, db, startedAtMs, maxPages);
     return;
   }
 
@@ -144,10 +145,11 @@ async function runInlineDiscoverySweeps(
   executionCtx: ExecutionContext,
   db: AppDb,
   startedAtMs: number,
+  maxPages: number,
 ): Promise<void> {
   const organizationIds: string[] = [];
   let cursor: string | null = null;
-  for (let page = 0; page < DISCOVERY_SWEEP_MAX_PAGES; page++) {
+  for (let page = 0; page < maxPages; page++) {
     const refs = await listAutoDiscoveryNpmConnectionRefs(db, {
       limit: DISCOVERY_SWEEP_BATCH_SIZE,
       afterId: cursor,
