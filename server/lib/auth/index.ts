@@ -48,7 +48,10 @@ export function scryptKeyHex(password: string, salt: string): Promise<string> {
       salt,
       SCRYPT_DKLEN,
       { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM },
-      (err, key) => (err ? reject(err) : resolve(key.toString("hex"))),
+      // `toHex` rather than `key.toString("hex")`: @cloudflare/workers-types
+      // declares a global `Buffer: any`, which clobbers the @types/node `Buffer`
+      // interface merge and leaves only the `Uint8Array` members visible.
+      (err, key) => (err ? reject(err) : resolve(toHex(key))),
     );
   });
 }
