@@ -56,6 +56,7 @@ New functionality needs tests at the narrowest useful layer; add broader coverag
 - `pnpm run test` — Vitest logic + Worker-runtime suites.
 - `pnpm run test:e2e` — Playwright fake-registry e2e.
 - `pnpm run eval` — detection eval harness.
+- `pnpm run eval:ai:live` — paid live AI-reviewer model comparison; needs Cloudflare credentials and never runs in `verify`. See `docs/ai-review-eval.md`.
 - `pnpm db:generate` — generate Drizzle migrations; never hand-write SQL migrations.
 
 ## Documentation expectations

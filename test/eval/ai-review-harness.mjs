@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_PATH = join(__dirname, "..", "fixtures", "ai-review-eval", "cases.json");
 const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 
-function isMaliciousCaught(review) {
+export function isMaliciousCaught(review) {
   return (
     review.status === "complete" &&
     (RISK_RANK[review.risk] >= RISK_RANK.high ||
@@ -22,7 +22,7 @@ function isMaliciousCaught(review) {
   );
 }
 
-function isBenignClean(review) {
+export function isBenignClean(review) {
   return (
     review.status === "complete" &&
     review.risk === "low" &&
@@ -34,7 +34,7 @@ function isBenignClean(review) {
   );
 }
 
-function isUncertaintyEscalated(review) {
+export function isUncertaintyEscalated(review) {
   return (
     review.status !== "complete" ||
     review.requiresManualReview ||

@@ -27,8 +27,21 @@ export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
 // Reviewer model order: prefer the strongest affordable model, then fail over.
+//
+// Both candidates must survive this loop's shape, not just answer a prompt: up
+// to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
+// makes the cached-input price, not the headline input price, the cost driver,
+// and it makes the context window a floor rather than a feature — evidence is
+// capped at MAX_TOTAL_TOOL_RESPONSE_CHARS, so anything past ~64k is unusable
+// spend. The fallback is deliberately an agentic model with a deep cache
+// discount rather than the cheapest listing: a failover that cannot finish the
+// loop returns `invalid`, which floors the scan at medium and escalates to
+// manual review, so a "cheap" model that misses the submission costs more than
+// it saves. Re-check both against docs/ai-review-eval.md's live comparison
+// before changing either; changing them is a routing change, so bump
+// AI_REVIEWER_VERSION with it.
 export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const AI_FALLBACK_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+export const AI_FALLBACK_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
@@ -137,10 +150,7 @@ export async function analyzeWithAi(
             binding: traceIsolatedAiBinding(env.AI),
             gateway: { id: "drydock-gateway" },
           })(candidateModel, {
-            extraHeaders: {
-              "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
-              "cf-aig-metadata": aiGatewayMetadataHeader(options, candidateModel, attempt),
-            },
+            extraHeaders: aiReviewRequestHeaders(env, options, candidateModel, attempt),
           });
         const tools = createAiReviewTools(
           options,
@@ -302,6 +312,23 @@ function isRetryableAiError(err: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// The per-request headers that decide cache affinity and Gateway attribution.
+// Exported because the offline model comparison in
+// `test/eval/ai-review-live-harness.mjs` builds its own Workers AI model over
+// REST credentials: measuring cached-token share against different headers than
+// production sends would compare the wrong thing.
+export function aiReviewRequestHeaders(
+  env: Cloudflare.Env,
+  options: SelectiveAiReviewOptions,
+  model: string,
+  attempt: number,
+): Record<string, string> {
+  return {
+    "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
+    "cf-aig-metadata": aiGatewayMetadataHeader(options, model, attempt),
+  };
 }
 
 export function aiGatewayMetadataHeader(

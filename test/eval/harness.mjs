@@ -81,7 +81,7 @@ function normalize(fx, kind, ecosystem) {
   };
 }
 
-function loadCorpus() {
+export function loadCorpus() {
   const regression = [
     ...readCases(join(CORPUS_DIR, "cases")).map((fx) => normalize(fx, "regression", "npm")),
     ...readCases(join(CORPUS_DIR, "cases-pypi")).map((fx) => normalize(fx, "regression", "pypi")),
