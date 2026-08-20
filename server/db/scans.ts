@@ -327,7 +327,7 @@ export interface StalledScanSweep {
   scans: ReapedStalledScan[];
 }
 
-export interface ReapedStalledScan {
+interface ReapedStalledScan {
   id: string;
   organizationId: string | null;
   ownerUserId: string | null;
