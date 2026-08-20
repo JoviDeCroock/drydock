@@ -23,13 +23,15 @@ const MIN_ANCHOR_SIGNAL_CHARS = 4;
  * Resolve `anchor` to a 1-based line number in `text`, or null when it cannot
  * be pinned unambiguously.
  *
- * Two passes over the whole file, each requiring a unique match: line equality
- * first (what a correctly copied anchor hits), then line-contains-anchor (what
- * an anchor clipped by the length bound hits). Comparison is on trimmed lines,
- * because the reviewer reads text that has already been through diff rendering
- * and per-call truncation, so leading indentation is not reliably preserved.
+ * For each candidate, two passes over the whole file require a unique match:
+ * line equality first (what a correctly copied anchor hits), then
+ * line-contains-anchor (what an anchor clipped by the length bound hits).
+ * Ambiguity is terminal before a weaker candidate is tried. Comparison is on
+ * trimmed lines, because the reviewer reads text that has already been through
+ * diff rendering and per-call truncation, so leading indentation is not
+ * reliably preserved.
  *
- * Each pass tries the anchor as given and, when it starts with a unified-diff
+ * Candidates try the anchor as given and, when it starts with a unified-diff
  * marker, the marker-stripped form: `read` serves changed files as `+`/`-`/space
  * prefixed diff text, so a faithfully copied anchor can carry a prefix that
  * appears nowhere in the file — while a line of source that genuinely begins
@@ -46,12 +48,17 @@ export function resolveAnchorLine(
 
   const lines = text.split("\n").map((line) => line.trim());
   for (const candidate of candidates) {
-    const exact = matchUniqueLine(lines, (line) => line === candidate);
-    if (exact !== null) return exact;
-  }
-  for (const candidate of candidates) {
-    const partial = matchUniqueLine(lines, (line) => line.includes(candidate));
-    if (partial !== null) return partial;
+    // Keep the most literal interpretation authoritative. If it is ambiguous,
+    // trying a weaker marker-stripped or containment match can only manufacture
+    // confidence: two `- value` lines plus one `value` line must not pin the
+    // former anchor to the latter.
+    const exact = matchLine(lines, (line) => line === candidate);
+    if (exact.kind === "unique") return exact.line;
+    if (exact.kind === "ambiguous") return null;
+
+    const partial = matchLine(lines, (line) => line.includes(candidate));
+    if (partial.kind === "unique") return partial.line;
+    if (partial.kind === "ambiguous") return null;
   }
   return null;
 }
@@ -71,14 +78,16 @@ export function anchorCandidates(anchor: string | null | undefined): string[] {
   );
 }
 
-// A match is usable only when exactly one line satisfies the predicate.
-// Multiple matches mean the anchor identifies a shape, not a place.
-function matchUniqueLine(lines: string[], predicate: (line: string) => boolean): number | null {
+type LineMatch = { kind: "none" } | { kind: "unique"; line: number } | { kind: "ambiguous" };
+
+// Preserve ambiguity separately from a miss. Callers must not fall through to
+// a weaker interpretation after the anchor already matched multiple lines.
+function matchLine(lines: string[], predicate: (line: string) => boolean): LineMatch {
   let found: number | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     if (!predicate(lines[index])) continue;
-    if (found !== null) return null;
+    if (found !== null) return { kind: "ambiguous" };
     found = index + 1;
   }
-  return found;
+  return found === null ? { kind: "none" } : { kind: "unique", line: found };
 }

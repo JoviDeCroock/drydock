@@ -16,7 +16,7 @@ import {
   listFilesInputSchema,
   type AiReviewSubmission,
 } from "./contract";
-import { resolveAnchorLine } from "./anchors";
+import { anchorCandidates, resolveAnchorLine } from "./anchors";
 import type { DiffEntry, FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import type { SelectiveAiReviewOptions } from "./types";
@@ -32,6 +32,15 @@ interface EvidenceIndex {
   entrypointPaths: Set<string>;
   scriptReferencedPaths: Set<string>;
   ruleFindings: SelectiveAiReviewOptions["ruleFindings"];
+}
+
+/** Source text actually returned to one model attempt, keyed by canonical path. */
+export interface EvidenceAccessLog {
+  observedTextByPath: Map<string, string[]>;
+}
+
+export function createEvidenceAccessLog(): EvidenceAccessLog {
+  return { observedTextByPath: new Map() };
 }
 
 export function buildAiReviewPayload(
@@ -91,6 +100,7 @@ export function createAiReviewTools(
   options: SelectiveAiReviewOptions,
   submitReview: (review: AiReviewSubmission) => void,
   index: EvidenceIndex = buildEvidenceIndex(options),
+  evidenceAccess: EvidenceAccessLog = createEvidenceAccessLog(),
 ) {
   let remainingEvidenceChars = MAX_TOTAL_TOOL_RESPONSE_CHARS;
 
@@ -128,6 +138,13 @@ export function createAiReviewTools(
       const rendered = renderDiffText(previous, staged);
       if (rendered.text !== null) {
         const taken = takeText(rendered.text, maxChars, callBudget);
+        recordObservedDiffText(
+          evidenceAccess,
+          resolved.path,
+          taken.text,
+          Boolean(staged?.textSample),
+          Boolean(previous?.textSample),
+        );
         return {
           ok: true as const,
           path: resolved.path,
@@ -168,6 +185,7 @@ export function createAiReviewTools(
     }
 
     const taken = takeText(file.textSample, maxChars, callBudget);
+    recordObservedText(evidenceAccess, resolved.path, taken.text);
     return {
       ok: true as const,
       path: resolved.path,
@@ -215,6 +233,7 @@ export function createAiReviewTools(
           matchIndex + needle.length + SEARCH_SNIPPET_RADIUS,
         );
         const snippet = takeText(file.textSample.slice(start, end), end - start, callBudget);
+        recordObservedText(evidenceAccess, path, snippet.text);
         matches.push({ path, matchIndex, snippet: snippet.text });
         matchIndex = haystack.indexOf(needle, matchIndex + needle.length);
       }
@@ -305,27 +324,29 @@ export interface ResolvedAnchor {
 
 /**
  * Resolve a submitted `(file, anchor)` pair against the exact evidence the model
- * was served, so a note can be pinned to a diff line.
+ * was served in this attempt, so a note can be pinned to a diff line.
  *
- * Returns null when the path is not one this review could see at all — that is a
- * fabricated citation, not a near miss. A real path with an unusable anchor
- * still resolves, with `line: null`, because the note itself is worth keeping.
+ * Returns null when the path is not in the reviewer's evidence allowlist — that
+ * is a fabricated citation, not a near miss. A readable path with an anchor
+ * absent from the text actually returned by `read`/`search_files` still
+ * resolves, with `line: null`, because the note itself is worth keeping while
+ * the unverified coordinate is not.
  *
  * Staged text wins over previous text: the workbench numbers lines on the staged
  * side, so a line resolved against the baseline would pin to the wrong row on
  * every modified file.
  */
-export function createAnchorResolver(index: EvidenceIndex) {
+export function createAnchorResolver(index: EvidenceIndex, evidenceAccess: EvidenceAccessLog) {
   return (rawFile: string, anchor?: string | null): ResolvedAnchor | null => {
-    const file = resolveKnownPath(
-      rawFile,
-      index.stagedByPath,
-      index.previousByPath,
-      index.diffByPath,
-    );
-    if (!file) return null;
+    const resolvedPath = resolveToolPath(rawFile, index);
+    if (!resolvedPath.ok) return null;
+    const file = resolvedPath.path;
     const record = index.stagedByPath.get(file) ?? index.previousByPath.get(file);
-    return { file, line: resolveAnchorLine(record?.textSample, anchor) };
+    const observedAnchor = firstObservedAnchor(evidenceAccess, file, anchor);
+    return {
+      file,
+      line: observedAnchor ? resolveAnchorLine(record?.textSample, observedAnchor) : null,
+    };
   };
 }
 
@@ -411,6 +432,46 @@ function resolveToolPath(
     error:
       "Path is not available to the AI reviewer. It can only inspect changed files, recognized manifest-referenced script/entrypoint files, deterministic-finding files, and package manifests.",
   };
+}
+
+function recordObservedText(access: EvidenceAccessLog, path: string, text: string): void {
+  if (!text) return;
+  const observed = access.observedTextByPath.get(path);
+  if (observed) observed.push(text);
+  else access.observedTextByPath.set(path, [text]);
+}
+
+// Unified-diff output contains baseline-only `-` lines that cannot map to a
+// staged coordinate. Record only the side the workbench will render: staged
+// additions/context for added or modified files, previous removals for a file
+// absent from the staged artifact. Elision markers are metadata, not source.
+function recordObservedDiffText(
+  access: EvidenceAccessLog,
+  path: string,
+  text: string,
+  hasStagedText: boolean,
+  hasPreviousText: boolean,
+): void {
+  const acceptedMarkers = hasStagedText ? new Set(["+", " "]) : new Set(["-"]);
+  if (!hasStagedText && !hasPreviousText) return;
+
+  for (const part of text.split(/(?<=\n)/)) {
+    const marker = part[0];
+    if (!acceptedMarkers.has(marker)) continue;
+    recordObservedText(access, path, part.slice(1));
+  }
+}
+
+function firstObservedAnchor(
+  access: EvidenceAccessLog,
+  path: string,
+  anchor: string | null | undefined,
+): string | null {
+  const observed = access.observedTextByPath.get(path) ?? [];
+  for (const candidate of anchorCandidates(anchor)) {
+    if (observed.some((text) => text.includes(candidate))) return candidate;
+  }
+  return null;
 }
 
 function resolveKnownPath(

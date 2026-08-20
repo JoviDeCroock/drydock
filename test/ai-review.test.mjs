@@ -93,6 +93,39 @@ function submittingModel(review) {
   );
 }
 
+// A model that reads one evidence path before submitting its review. Anchors
+// are intentionally valid only against text returned in the same attempt.
+function readingThenSubmittingModel(review, { path = "index.js", maxChars = 16_000 } = {}) {
+  let step = 0;
+  return mockModel(async () => {
+    step += 1;
+    if (step === 1) {
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "read-1",
+            toolName: "read",
+            input: JSON.stringify({ paths: [path], maxChars }),
+          },
+        ],
+        "tool-calls",
+      );
+    }
+    return generateResult(
+      [
+        {
+          type: "tool-call",
+          toolCallId: "submit-1",
+          toolName: "submit_review",
+          input: JSON.stringify(review),
+        },
+      ],
+      "tool-calls",
+    );
+  });
+}
+
 // A model that answers in plain text without calling any tool.
 function textOnlyModel(text) {
   return mockModel(async () => generateResult([{ type: "text", text }], "stop"));
@@ -813,12 +846,12 @@ describe("anchored findings and inline comments", () => {
     diff: [{ path: "index.js", status: "modified", flags: [] }],
   };
 
-  async function reviewWith(submission) {
+  async function reviewWith(submission, modelOptions) {
     const { review } = await analyzeWithAi(
       {},
       "mock-reviewer",
       ANCHOR_OPTIONS,
-      submittingModel({ ...VALID_REVIEW, ...submission }),
+      readingThenSubmittingModel({ ...VALID_REVIEW, ...submission }, modelOptions),
     );
     return review;
   }
@@ -860,6 +893,76 @@ describe("anchored findings and inline comments", () => {
     expect(ai.findings[0].line).toBeNull();
   });
 
+  test("does not pin an anchor from a line omitted by the evidence budget", async () => {
+    const ai = await reviewWith(
+      {
+        risk: "high",
+        releaseAssessment: "suspicious",
+        findings: [
+          {
+            ...aiFinding("high", "index.js"),
+            anchor: "module.exports = { collect };",
+          },
+        ],
+        requiresManualReview: true,
+      },
+      { maxChars: 36 },
+    );
+
+    expect(ai.findings[0].line).toBeNull();
+  });
+
+  test("does not carry observed evidence into a retried model attempt", async () => {
+    skipRetryDelay();
+    let call = 0;
+    const review = {
+      ...VALID_REVIEW,
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "index.js"),
+          anchor: "const https = require('https');",
+        },
+      ],
+      requiresManualReview: true,
+    };
+    const retryingModel = mockModel(async () => {
+      call += 1;
+      if (call === 1) {
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "read-first-attempt",
+              toolName: "read",
+              input: JSON.stringify({ paths: ["index.js"], maxChars: 16_000 }),
+            },
+          ],
+          "tool-calls",
+        );
+      }
+      if (call === 2) {
+        throw new Error("3040: Capacity temporarily exceeded, please try again.");
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-retry",
+            toolName: "submit_review",
+            input: JSON.stringify(review),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", ANCHOR_OPTIONS, retryingModel);
+
+    expect(ai.findings[0].line).toBeNull();
+  });
+
   test("pins comments to their line and leaves risk untouched", async () => {
     const ai = await reviewWith({
       comments: [
@@ -886,6 +989,41 @@ describe("anchored findings and inline comments", () => {
         { file: "vendor/ghost.js", anchor: "const https = require('https');", note: "Invented." },
       ],
     });
+
+    expect(ai.comments).toEqual([]);
+  });
+
+  test("drops a comment on an indexed file outside the evidence allowlist", async () => {
+    const hiddenText = "export const hidden = true;\n";
+    const options = {
+      ...ANCHOR_OPTIONS,
+      files: [
+        ...ANCHOR_OPTIONS.files,
+        {
+          path: "hidden.js",
+          size: hiddenText.length,
+          sha256: "hidden",
+          textSample: hiddenText,
+          flags: [],
+        },
+      ],
+      diff: [...ANCHOR_OPTIONS.diff, { path: "hidden.js", status: "unchanged", flags: [] }],
+    };
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      options,
+      readingThenSubmittingModel({
+        ...VALID_REVIEW,
+        comments: [
+          {
+            file: "hidden.js",
+            anchor: "export const hidden = true;",
+            note: "This file was not available to the reviewer.",
+          },
+        ],
+      }),
+    );
 
     expect(ai.comments).toEqual([]);
   });

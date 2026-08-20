@@ -39,6 +39,16 @@ describe("resolveAnchorLine", () => {
     expect(resolveAnchorLine(text, "value = 1;")).toBeNull();
   });
 
+  test("does not weaken an ambiguous literal anchor by stripping a source marker", () => {
+    const text = ["- value", "- value", "value"].join("\n");
+    expect(resolveAnchorLine(text, "- value")).toBeNull();
+  });
+
+  test("prefers a literal partial match over a marker-stripped exact match", () => {
+    const text = ['args.push("- value");', "value"].join("\n");
+    expect(resolveAnchorLine(text, "- value")).toBe(1);
+  });
+
   test("refuses an anchor with no identity of its own", () => {
     expect(resolveAnchorLine(SOURCE, "}")).toBeNull();
     expect(resolveAnchorLine(SOURCE, "   ")).toBeNull();

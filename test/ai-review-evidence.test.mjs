@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { buildAiReviewPayload, createAiReviewTools } from "../server/lib/ai-review/evidence";
+import {
+  buildAiReviewPayload,
+  buildEvidenceIndex,
+  createAiReviewTools,
+  createAnchorResolver,
+  createEvidenceAccessLog,
+} from "../server/lib/ai-review/evidence";
 
 const EMPTY_PACKAGE_JSON_DIFF = {
   name: "fixture",
@@ -142,6 +148,50 @@ describe("AI review evidence tools", () => {
     const tokenHit = response.results[0];
     expect(tokenHit.ok).toBe(true);
     expect(tokenHit.matches.some((match) => match.path === "scripts/install.js")).toBe(true);
+  });
+
+  test("pins only anchors present in evidence returned during this attempt", async () => {
+    const options = reviewOptions();
+    const index = buildEvidenceIndex(options);
+    const access = createEvidenceAccessLog();
+    const tools = createAiReviewTools(options, () => {}, index, access);
+    const resolveAnchor = createAnchorResolver(index, access);
+
+    // The path is tool-readable, but its source has not been returned yet.
+    expect(resolveAnchor("scripts/install.js", "process.env.NPM_TOKEN")).toEqual({
+      file: "scripts/install.js",
+      line: null,
+    });
+
+    await tools.search_files.execute({ queries: ["NPM_TOKEN"], maxResults: 1 });
+    expect(resolveAnchor("scripts/install.js", "process.env.NPM_TOKEN")).toEqual({
+      file: "scripts/install.js",
+      line: 1,
+    });
+
+    // README exists in the package index but is not in the evidence allowlist.
+    expect(resolveAnchor("README.md", "# fixture")).toBeNull();
+  });
+
+  test("does not authenticate a modified file's baseline-only diff lines", async () => {
+    const options = {
+      ecosystem: "npm",
+      files: [file("index.js", "export const safe = true;\n")],
+      previousFiles: [file("index.js", "export const secret = true;\n")],
+      diff: [{ path: "index.js", status: "modified", flags: [] }],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const index = buildEvidenceIndex(options);
+    const access = createEvidenceAccessLog();
+    const tools = createAiReviewTools(options, () => {}, index, access);
+    const resolveAnchor = createAnchorResolver(index, access);
+
+    await tools.read.execute({ paths: ["index.js"], maxChars: 1_000 });
+
+    expect(resolveAnchor("index.js", "export const safe = true;")?.line).toBe(1);
+    expect(resolveAnchor("index.js", "export const secret = true;")?.line).toBeNull();
   });
 
   test("divides the read budget fairly so later batched paths are not starved", async () => {

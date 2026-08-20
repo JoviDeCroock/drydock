@@ -18,6 +18,7 @@ import {
   buildEvidenceIndex,
   createAiReviewTools,
   createAnchorResolver,
+  createEvidenceAccessLog,
   type AnchorResolver,
 } from "./evidence";
 import type {
@@ -137,9 +138,6 @@ export async function analyzeWithAi(
   const models = typeof model === "string" ? [model] : [...model];
   const index = buildEvidenceIndex(options);
   const payload = buildAiReviewPayload(options, index);
-  // Built from the same index the tools read, so an anchor is matched against
-  // exactly the bytes the model was shown.
-  const anchors = createAnchorResolver(index);
   const transientFailures: string[] = [];
   // Trace correlation is intentionally local to this invocation. Do not reuse
   // scan/stage/organization ids: the trace should remain useful without
@@ -153,6 +151,11 @@ export async function analyzeWithAi(
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
+      // Evidence access is attempt-scoped for the same reason. A retry or
+      // fallback model must not earn a line pin from text only an earlier model
+      // saw before it failed.
+      const evidenceAccess = createEvidenceAccessLog();
+      const anchors = createAnchorResolver(index, evidenceAccess);
       try {
         const languageModel =
           resolveLanguageModelOverride(languageModelOverride, candidateModel) ??
@@ -168,6 +171,7 @@ export async function analyzeWithAi(
             submittedReview = review;
           },
           index,
+          evidenceAccess,
         );
 
         const result = await tracedAi.generateText({
