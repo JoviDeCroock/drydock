@@ -5,7 +5,10 @@ import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { listReleaseTargetsForEcosystem } from "./lib/github-app/persistence";
-import { sweepAtpmPublishers } from "./lib/ecosystems/atpm/staged-discovery";
+import {
+  discoverAtpmStagedCandidates,
+  sweepAtpmPublishers,
+} from "./lib/ecosystems/atpm/staged-discovery";
 import {
   RateLimitError,
   enforceRateLimit,
@@ -30,6 +33,7 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isAtpmDiscoveryMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
@@ -474,6 +478,7 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
     orgsProcessed,
     atpmPublishers: atpm.publishers,
     atpmScansCreated: atpm.created,
+    atpmPublishersDispatched: atpm.dispatched,
     durationMs: durationMsSince(startedAtMs),
     concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
   });
@@ -494,10 +499,10 @@ async function sweepAtpmStagedCandidates(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   db: ReturnType<typeof createDb>,
-): Promise<{ publishers: number; created: number }> {
+): Promise<{ publishers: number; created: number; dispatched: number }> {
   try {
     const targets = await listReleaseTargetsForEcosystem(db, "atpm");
-    if (!targets.length) return { publishers: 0, created: 0 };
+    if (!targets.length) return { publishers: 0, created: 0, dispatched: 0 };
 
     const resolved = await Promise.all(
       targets.map(async (target) => ({
@@ -525,7 +530,7 @@ async function sweepAtpmStagedCandidates(
     emitOperationalEvent("error", "atpm_staged.cron.failed", {
       error: describeOperationalError(err),
     });
-    return { publishers: 0, created: 0 };
+    return { publishers: 0, created: 0, dispatched: 0 };
   }
 }
 
@@ -602,6 +607,51 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isAtpmDiscoveryMessage(message.body)) {
+        const discovery = message.body;
+        try {
+          const result = await discoverAtpmStagedCandidates({
+            db: createDb(env.DB),
+            env,
+            executionCtx: ctx,
+            organizationId: discovery.organizationId,
+            actorUserId: discovery.actorUserId,
+            publisherRef: discovery.publisherRef,
+            source: discovery.source,
+          });
+          emitOperationalEvent("info", "atpm_discovery.queue.message.completed", {
+            organizationId: discovery.organizationId,
+            publisherRef: discovery.publisherRef,
+            found: result.found,
+            created: result.created,
+            skipped: result.skipped,
+            attempt: message.attempts,
+            durationMs: durationMsSince(messageStartedAtMs),
+          });
+        } catch (err) {
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent("warn", "atpm_discovery.queue.retry_scheduled", {
+              organizationId: discovery.organizationId,
+              publisherRef: discovery.publisherRef,
+              attempt: message.attempts,
+              nextDelaySeconds: retryDelaySeconds(message.attempts),
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+          } else {
+            emitOperationalEvent("error", "atpm_discovery.queue.message_failed", {
+              organizationId: discovery.organizationId,
+              publisherRef: discovery.publisherRef,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+            throw err;
+          }
+        }
+        continue;
+      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {

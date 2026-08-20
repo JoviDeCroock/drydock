@@ -6,6 +6,7 @@ import {
   SUPPORTED_ECOSYSTEMS,
 } from "./config";
 import type { CreateReleaseTargetInput } from "./persistence";
+import { parseAtpmPublisherRef } from "../ecosystems/atpm/stage-ref";
 
 // A DID is the longest legitimate spelling and atproto bounds those well below
 // this; the value is a name, not a document.
@@ -77,6 +78,12 @@ function validatePublisherRef(input: CreateReleaseTargetInput) {
   }
   if (hasControlCharacter(publisherRef)) {
     throw new GithubAppValidationError("invalid_input", "publisher has invalid characters");
+  }
+  if (input.ecosystem === "atpm" && !parseAtpmPublisherRef(publisherRef)) {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "atpm publisher must be an addressable @handle, did:plc, or did:web",
+    );
   }
 }
 

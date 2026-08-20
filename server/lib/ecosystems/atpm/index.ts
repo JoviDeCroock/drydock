@@ -59,7 +59,7 @@ export interface AtpmGateBinding {
  * everything a reviewer needs to act — including the id that approves it.
  */
 export interface AtpmStagedDetails {
-  /** Drydock's address for the candidate: `atpm:<did>:<rkey>`. */
+  /** Drydock's mutable or approval-bound address for the candidate. */
   id: string;
   /** The id `npm stage approve` takes, derived from the record URI and CID. */
   approveId: string;
@@ -286,6 +286,9 @@ function resolveIdentity(ref: AtpmStageRef): Promise<AtpmRepoIdentity> {
 async function resolveStaged(input: AtpmAdapterInput): Promise<ResolvedStaged> {
   const identity = await resolveIdentity(input.ref);
   const staged = await fetchAtpmStagedVersion(identity, input.ref.rkey);
+  if (input.ref.approveId && staged.stageId !== input.ref.approveId) {
+    throw new PublicDiffError("staged candidate changed after scan selection", 502);
+  }
   if (input.gateBinding) assertAtpmGateRecordBinding(staged, input.gateBinding);
   const recordName = recordNameFor(staged.declaredName);
   if (!recordName) {

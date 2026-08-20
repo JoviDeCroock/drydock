@@ -50,7 +50,7 @@ import {
  * accepted by an older deployment would be rejected now, so a cached verdict
  * cannot outlive the rules that produced it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "1";
+export const ATPM_PROVENANCE_RULES_VERSION = "2";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -321,7 +321,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       sourceRepository,
       sourceRef: extensionString(leaf, OID_SOURCE_REPO_REF),
       sourceCommit: extensionString(leaf, OID_SOURCE_REPO_DIGEST),
-      workflowPath: workflowPath(leaf, sourceRepository, statement.predicate),
+      workflowPath: workflowPath(leaf, sourceRepository),
       runInvocation: extensionString(leaf, OID_RUN_INVOCATION_URI),
       runnerEnvironment: extensionString(leaf, OID_RUNNER_ENVIRONMENT),
       repositoryVisibility: extensionString(leaf, OID_SOURCE_REPO_VISIBILITY),
@@ -368,7 +368,6 @@ function firstChainCertificate(chain: unknown): unknown {
 interface ParsedStatement {
   subjectName: string;
   subjectSha512: string;
-  predicate: Record<string, unknown> | null;
 }
 
 function parseStatement(payload: Uint8Array): ParsedStatement | null {
@@ -393,33 +392,24 @@ function parseStatement(payload: Uint8Array): ParsedStatement | null {
   const digest = asObject(subject?.digest);
   const sha512 = typeof digest?.sha512 === "string" ? digest.sha512.toLowerCase() : null;
   if (!subjectName || !sha512 || !/^[0-9a-f]{128}$/.test(sha512)) return null;
-  return { subjectName, subjectSha512: sha512, predicate: asObject(statement.predicate) };
+  return { subjectName, subjectSha512: sha512 };
 }
 
 /**
- * The workflow file the build ran. Fulcio's build-config URI is preferred — it
- * is inside the signed certificate — with the SLSA predicate as a fallback for
- * bundles issued before that extension existed. The predicate is signed too,
- * but by the same key, so neither is more trustworthy than the other; the
- * certificate is simply the more constrained shape.
+ * The workflow file the build ran, authenticated by Fulcio's build-config
+ * certificate extension. The signed SLSA predicate is intentionally not a
+ * fallback: the ephemeral signing key controls that payload, while the
+ * certificate is the identity assertion Fulcio made after checking GitHub's
+ * OIDC token.
  */
-function workflowPath(
-  leaf: X509Certificate,
-  sourceRepository: string,
-  predicate: Record<string, unknown> | null,
-): string | null {
+function workflowPath(leaf: X509Certificate, sourceRepository: string): string | null {
   const buildConfig = extensionString(leaf, OID_BUILD_CONFIG_URI);
   if (buildConfig?.startsWith(`${sourceRepository}/`)) {
     const rest = buildConfig.slice(sourceRepository.length + 1);
     const path = rest.split("@")[0];
     if (path.startsWith(".github/workflows/")) return path;
   }
-  const external = asObject(asObject(predicate?.buildDefinition)?.externalParameters);
-  const workflow = asObject(external?.workflow);
-  if (typeof workflow?.path === "string" && workflow.path) return workflow.path;
-  const entryPoint = asObject(predicate?.invocation)?.configSource;
-  const legacy = asObject(entryPoint)?.entryPoint;
-  return typeof legacy === "string" && legacy ? legacy : null;
+  return null;
 }
 
 function extensionString(certificate: X509Certificate, oid: string): string | null {

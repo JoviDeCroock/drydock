@@ -363,6 +363,17 @@ describe("matchTrustedPublisher", () => {
     ).toBe("workflow-mismatch");
   });
 
+  test("does not treat a missing certificate workflow identity as a match", async () => {
+    const state = await verifiedFixture();
+    if (state.status !== "verified") throw new Error("fixture must verify");
+    expect(matchTrustedPublisher({ ...state.provenance, workflowPath: null }, publisher())).toEqual(
+      {
+        status: "workflow-unverified",
+        expected: ".github/workflows/release.yml",
+      },
+    );
+  });
+
   test("does not claim a disagreement with a provider it cannot read", async () => {
     const state = await verifiedFixture();
     if (state.status !== "verified") throw new Error("fixture must verify");
@@ -457,6 +468,20 @@ describe("provenance findings", () => {
     const mismatch = found.find((f) => f.ruleId === "atpm.provenance-publisher-mismatch");
     expect(mismatch?.severity).toBe("high");
     expect(mismatch?.evidence).toContain("https://github.com/attacker/fork");
+  });
+
+  test("flags a build whose certificate does not authenticate the declared workflow", async () => {
+    const state = await verifiedFixture();
+    if (state.status !== "verified") throw new Error("fixture must verify");
+    const found = findings({
+      provenance: { status: "verified", provenance: { ...state.provenance, workflowPath: null } },
+      archiveSha512: SUBJECT_SHA512,
+      declaredName: "sigstore",
+      trustPublisher: publisher(),
+    });
+    const mismatch = found.find((f) => f.ruleId === "atpm.provenance-publisher-mismatch");
+    expect(mismatch?.severity).toBe("high");
+    expect(mismatch?.evidence).toContain("no certificate-authenticated workflow identity");
   });
 
   test("notes a declared trusted publisher with no attestation on the release", () => {

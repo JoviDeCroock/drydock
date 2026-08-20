@@ -294,6 +294,19 @@ function publisherMatchFindings(
   // A declaration naming a provider this deployment cannot evaluate is not a
   // disagreement; reporting one would be inventing evidence.
   if (match.status === "match" || match.status === "unknown-provider") return [];
+  if (match.status === "workflow-unverified") {
+    return [
+      {
+        severity: "high",
+        file: "package.json",
+        evidence: `version ${entry.version} has no certificate-authenticated workflow identity; the package's trusted publisher declares ${match.expected}`,
+        reason:
+          "the signing certificate proves the source repository but not which workflow produced this release, so the release cannot be shown to come from the workflow its publisher declared as trusted",
+        ruleId: DETERMINISTIC_RULE_IDS.atpmProvenancePublisherMismatch,
+        ruleVersion: DETERMINISTIC_RULES_VERSION,
+      },
+    ];
+  }
   const subject = match.status === "repository-mismatch" ? "repository" : "workflow";
   return [
     {

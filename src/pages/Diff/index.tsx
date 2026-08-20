@@ -650,8 +650,7 @@ function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] })
 function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }) {
   const build = attestation.build;
   const declared = attestation.declared;
-  const mismatch =
-    attestation.match === "repository-mismatch" || attestation.match === "workflow-mismatch";
+  const mismatch = isTrustedPublisherMismatch(attestation);
 
   return (
     <div class="flex flex-col gap-2 max-w-[680px]">
@@ -712,9 +711,7 @@ function buildProvenanceTone(attestation: PublicDiffAttestation) {
     return "high" as const;
   }
   if (attestation.status === "verified") {
-    return attestation.match === "repository-mismatch" || attestation.match === "workflow-mismatch"
-      ? ("high" as const)
-      : ("ok" as const);
+    return isTrustedPublisherMismatch(attestation) ? ("high" as const) : ("ok" as const);
   }
   return "medium" as const;
 }
@@ -743,12 +740,23 @@ function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch
     return "This version's attestation was not checked on this page. Older releases of a package with many versions fall outside the per-record verification budget.";
   }
   if (mismatch) {
+    if (attestation.match === "workflow-unverified") {
+      return "The signature proves the source repository, but the certificate does not identify the workflow that produced this release, so it cannot be matched to the package's trusted-publisher declaration.";
+    }
     return "The signature proves where this release was built, and it is not the pipeline this package's own publisher declared as trusted.";
   }
   if (attestation.match === "match") {
     return "Verified against Sigstore's root, and the repository and workflow match the trusted publisher this package declares. Transparency-log inclusion is not independently checked.";
   }
   return "Verified against Sigstore's root. The package declares no trusted publisher to compare it against, so this says where the release was built, not that it was supposed to be built there.";
+}
+
+function isTrustedPublisherMismatch(attestation: PublicDiffAttestation): boolean {
+  return (
+    attestation.match === "repository-mismatch" ||
+    attestation.match === "workflow-mismatch" ||
+    attestation.match === "workflow-unverified"
+  );
 }
 
 function VersionPairPicker({

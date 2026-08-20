@@ -38,10 +38,25 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+/** One publisher-resolution job fanned out from the discovery cron. */
+export interface AtpmDiscoveryQueueMessage {
+  kind: "atpm_discovery";
+  organizationId: string;
+  actorUserId: string;
+  publisherRef: string;
+  source: ScanSource;
+}
+
+export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage | AtpmDiscoveryQueueMessage;
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";
+}
+
+export function isAtpmDiscoveryMessage(
+  message: QueueMessage,
+): message is AtpmDiscoveryQueueMessage {
+  return "kind" in message && message.kind === "atpm_discovery";
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -231,6 +246,13 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "npm_connection_unvalidated",
       message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    };
+  }
+  if (message.includes("staged candidate changed after scan selection")) {
+    return {
+      code: "staged_candidate_changed",
+      message: "The staged candidate changed before its review started.",
       retryable: false,
     };
   }

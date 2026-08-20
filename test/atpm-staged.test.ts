@@ -86,7 +86,14 @@ describe("atpm stage references", () => {
     const stageId = formatAtpmStageId(DID, RKEY);
     expect(stageId).toBe(`atpm:${DID}:${RKEY}`);
     expect(isAtpmStageId(stageId)).toBe(true);
-    expect(parseAtpmStageId(stageId)).toEqual({ did: DID, rkey: RKEY, stageId });
+    expect(parseAtpmStageId(stageId)).toEqual({ did: DID, rkey: RKEY, approveId: null, stageId });
+  });
+
+  test("round-trips an approval-bound discovery reference", () => {
+    const approveId = "e852a96a-83f5-5c21-97c4-dce5b2f116ad";
+    const stageId = formatAtpmStageId(DID, RKEY, approveId.toUpperCase());
+    expect(stageId).toBe(`atpm:${DID}:${RKEY}:${approveId}`);
+    expect(parseAtpmStageId(stageId)).toEqual({ did: DID, rkey: RKEY, approveId, stageId });
   });
 
   test("accepts the did:web form", () => {

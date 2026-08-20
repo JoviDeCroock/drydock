@@ -72,7 +72,12 @@ export interface PublicDiffAttestation {
     allowPublish: boolean;
   };
   /** How the verified build compares with `declared`. */
-  match?: "match" | "repository-mismatch" | "workflow-mismatch" | "unknown-provider";
+  match?:
+    | "match"
+    | "repository-mismatch"
+    | "workflow-mismatch"
+    | "workflow-unverified"
+    | "unknown-provider";
 }
 
 /**

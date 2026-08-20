@@ -98,7 +98,7 @@ export const atpmWorkflowGateAdapter: WorkflowGateAdapter = {
       return {
         ecosystem: "atpm",
         pipelineInput: {
-          stageId: formatAtpmStageId(identity.did, candidate.rkey),
+          stageId: formatAtpmStageId(identity.did, candidate.rkey, candidate.stageId),
           gateBinding: {
             recordCid: candidate.recordCid,
             subjectName: candidate.provenance.provenance.subjectName,

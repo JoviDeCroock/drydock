@@ -4,7 +4,12 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { discoverAtpmStagedCandidates } from "../../server/lib/ecosystems/atpm/staged-discovery";
+import {
+  discoverAtpmStagedCandidates,
+  sweepAtpmPublishers,
+} from "../../server/lib/ecosystems/atpm/staged-discovery";
+import { UUID_NAMESPACE_URL, uuidV5 } from "../../server/lib/platform/uuid";
+import worker from "../../server";
 
 const DID = "did:plc:twegdcgytckr5cxm57gyruxa";
 const PDS = "https://shiitake.us-east.host.bsky.network";
@@ -42,10 +47,14 @@ function stubPublisher(records: unknown[]) {
   });
 }
 
-function stageRecord(rkey: string, version: string) {
+function stageRecord(
+  rkey: string,
+  version: string,
+  recordCid = "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi",
+) {
   return {
     uri: `at://${DID}/dev.atpm.alpha.stage/${rkey}`,
-    cid: "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi",
+    cid: recordCid,
     value: {
       $type: "dev.atpm.alpha.stage",
       createdAt: "2026-08-13T06:28:24.000Z",
@@ -60,6 +69,10 @@ function stageRecord(rkey: string, version: string) {
       },
     },
   };
+}
+
+function approveId(rkey: string, recordCid: string): Promise<string> {
+  return uuidV5(`at://${DID}/dev.atpm.alpha.stage/${rkey}/${recordCid}`, UUID_NAMESPACE_URL);
 }
 
 async function seedOrganization(): Promise<{ organizationId: string; userId: string }> {
@@ -109,7 +122,8 @@ describe("atpm staged discovery", () => {
     });
   }
 
-  test("creates one scan per pending candidate, addressed by its record key", async () => {
+  test("creates one scan per pending candidate, bound to its record CID", async () => {
+    const recordCid = "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi";
     const result = await sweep([
       stageRecord("3lmaaaaaaaaaa", "0.0.16"),
       stageRecord("3lmbbbbbbbbbb", "0.0.17"),
@@ -118,9 +132,11 @@ describe("atpm staged discovery", () => {
 
     const db = createDb(env.DB);
     const { scans } = await listScans(db, organizationId, { limit: 10 });
+    const firstApproveId = await approveId("3lmaaaaaaaaaa", recordCid);
+    const secondApproveId = await approveId("3lmbbbbbbbbbb", recordCid);
     expect(scans.map((scan) => scan.stageId).sort()).toEqual([
-      `atpm:${DID}:3lmaaaaaaaaaa`,
-      `atpm:${DID}:3lmbbbbbbbbbb`,
+      `atpm:${DID}:3lmaaaaaaaaaa:${firstApproveId}`,
+      `atpm:${DID}:3lmbbbbbbbbbb:${secondApproveId}`,
     ]);
     expect(scans[0].packageName).toBe("@ebey.dev/counter");
     // The queue message carries the ecosystem, so the job resolves the atpm
@@ -133,6 +149,49 @@ describe("atpm staged discovery", () => {
     await sweep([stageRecord("3lmaaaaaaaaaa", "0.0.16")]);
     const second = await sweep([stageRecord("3lmaaaaaaaaaa", "0.0.16")]);
     expect(second).toMatchObject({ found: 1, created: 0, skipped: 1 });
+  });
+
+  test("processes a fanned-out publisher lookup through the queue consumer", async () => {
+    stubPublisher([stageRecord("3lmaaaaaaaaaa", "0.0.16")]);
+    const retry = vi.fn();
+    const batch = {
+      messages: [
+        {
+          body: {
+            kind: "atpm_discovery",
+            organizationId,
+            actorUserId: userId,
+            publisherRef: "@ebey.dev",
+            source: "auto_discovery",
+          },
+          attempts: 1,
+          retry,
+        },
+      ],
+    } as unknown as MessageBatch<import("../../server/lib/scan/job").QueueMessage>;
+
+    await worker.queue(batch, queueEnv as unknown as Cloudflare.Env, createExecutionContext());
+    expect(retry).not.toHaveBeenCalled();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({ ecosystem: "atpm" });
+  });
+
+  test("reviews a record rewritten under the same key as a new candidate", async () => {
+    const rkey = "3lmaaaaaaaaaa";
+    const firstCid = "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi";
+    const secondCid = "bafyreig7wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqa";
+    await sweep([stageRecord(rkey, "0.0.16", firstCid)]);
+    const second = await sweep([stageRecord(rkey, "0.0.17", secondCid)]);
+    expect(second).toMatchObject({ found: 1, created: 1, skipped: 0 });
+
+    const db = createDb(env.DB);
+    const { scans } = await listScans(db, organizationId, { limit: 10 });
+    expect(new Set(scans.map((scan) => scan.stageId))).toEqual(
+      new Set([
+        `atpm:${DID}:${rkey}:${await approveId(rkey, firstCid)}`,
+        `atpm:${DID}:${rkey}:${await approveId(rkey, secondCid)}`,
+      ]),
+    );
   });
 
   test("bounds how much of a repository one sweep can pull in", async () => {
@@ -157,5 +216,36 @@ describe("atpm staged discovery", () => {
 
   test("reviews nothing when the repository has no pending candidates", async () => {
     expect(await sweep([])).toEqual({ found: 0, created: 0, skipped: 0, queued: false });
+  });
+
+  test("fans publisher discovery out in bounded queue batches and deduplicates targets", async () => {
+    const batches: unknown[][] = [];
+    const targets = Array.from({ length: 205 }, (_, index) => ({
+      organizationId: `org_${index}`,
+      actorUserId: `user_${index}`,
+      publisherRef: index === 0 ? " @ebey.dev " : "@ebey.dev",
+    }));
+    targets.push({ organizationId: "org_0", actorUserId: "other", publisherRef: "@ebey.dev" });
+    const result = await sweepAtpmPublishers({
+      db: createDb(env.DB),
+      env: {
+        ...env,
+        SCAN_QUEUE: { sendBatch: async (messages: unknown[]) => void batches.push(messages) },
+      } as unknown as Cloudflare.Env,
+      executionCtx: createExecutionContext(),
+      targets,
+      source: "auto_discovery",
+    });
+
+    expect(result).toEqual({ publishers: 205, created: 0, dispatched: 205 });
+    expect(batches.map((batch) => batch.length)).toEqual([100, 100, 5]);
+    expect(batches.flat()[0]).toMatchObject({
+      body: {
+        kind: "atpm_discovery",
+        organizationId: "org_0",
+        publisherRef: "@ebey.dev",
+      },
+      contentType: "json",
+    });
   });
 });

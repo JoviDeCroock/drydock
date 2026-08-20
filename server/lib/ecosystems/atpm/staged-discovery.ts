@@ -3,7 +3,11 @@ import { type ScanSource, createScanJob, listExistingScanStageIds } from "../../
 import { resolveAtpmRepoIdentity } from "./identity";
 import { listAtpmStagedVersions } from "./stage-record";
 import { formatAtpmStageId, parseAtpmPublisherRef } from "./stage-ref";
-import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
+import {
+  executeScanJob,
+  type AtpmDiscoveryQueueMessage,
+  type ScanQueueMessage,
+} from "../../scan/job";
 import { recordProductEvent } from "../../platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 
@@ -54,6 +58,12 @@ export interface DiscoverAtpmStagedResult {
  */
 const MAX_DISCOVERED_CANDIDATES_PER_SWEEP = 10;
 
+/** Local/dev fallback when no Queue binding is configured. */
+const ATPM_DISCOVERY_CONCURRENCY = 5;
+
+/** Cloudflare Queues accepts at most 100 messages in one sendBatch call. */
+const QUEUE_SEND_BATCH_SIZE = 100;
+
 export async function discoverAtpmStagedCandidates(
   input: DiscoverAtpmStagedInput,
 ): Promise<DiscoverAtpmStagedResult> {
@@ -69,9 +79,12 @@ export async function discoverAtpmStagedCandidates(
   );
   if (!staged.length) return { found: 0, created: 0, skipped: 0, queued: false };
 
-  const stageIds = staged.map((candidate) => formatAtpmStageId(identity.did, candidate.rkey));
-  // A staged record's key never changes, so a candidate already reviewed for
-  // this organization is skipped for as long as it stays staged.
+  // The approval id folds in the record CID. A record rewritten under the same
+  // TID therefore becomes a new review identity, while the workflow gate and
+  // discovery still deduplicate when they selected the same immutable record.
+  const stageIds = staged.map((candidate) =>
+    formatAtpmStageId(identity.did, candidate.rkey, candidate.stageId),
+  );
   const existing = await listExistingScanStageIds(db, organizationId, stageIds);
 
   let created = 0;
@@ -135,11 +148,30 @@ export async function sweepAtpmPublishers(input: {
   executionCtx: ExecutionContext;
   targets: Array<{ organizationId: string; publisherRef: string | null; actorUserId: string }>;
   source: ScanSource;
-}): Promise<{ publishers: number; created: number }> {
+}): Promise<{ publishers: number; created: number; dispatched: number }> {
+  const targets = uniquePublisherTargets(input.targets);
+  if (input.env.SCAN_QUEUE) {
+    const messages: AtpmDiscoveryQueueMessage[] = targets.map((target) => ({
+      kind: "atpm_discovery",
+      organizationId: target.organizationId,
+      actorUserId: target.actorUserId,
+      publisherRef: target.publisherRef,
+      source: input.source,
+    }));
+    for (let start = 0; start < messages.length; start += QUEUE_SEND_BATCH_SIZE) {
+      await input.env.SCAN_QUEUE.sendBatch(
+        messages.slice(start, start + QUEUE_SEND_BATCH_SIZE).map((body) => ({
+          body,
+          contentType: "json" as const,
+        })),
+      );
+    }
+    return { publishers: targets.length, created: 0, dispatched: messages.length };
+  }
+
   let created = 0;
   let publishers = 0;
-  for (const target of input.targets) {
-    if (!target.publisherRef) continue;
+  await runWithConcurrency(targets, ATPM_DISCOVERY_CONCURRENCY, async (target) => {
     publishers++;
     try {
       const result = await discoverAtpmStagedCandidates({
@@ -162,6 +194,40 @@ export async function sweepAtpmPublishers(input: {
         error: describeOperationalError(err),
       });
     }
+  });
+  return { publishers, created, dispatched: 0 };
+}
+
+function uniquePublisherTargets(
+  targets: Array<{ organizationId: string; publisherRef: string | null; actorUserId: string }>,
+): Array<{ organizationId: string; publisherRef: string; actorUserId: string }> {
+  const unique = new Map<
+    string,
+    { organizationId: string; publisherRef: string; actorUserId: string }
+  >();
+  for (const target of targets) {
+    if (!target.publisherRef) continue;
+    const ref = parseAtpmPublisherRef(target.publisherRef);
+    if (!ref) continue;
+    const publisherRef =
+      ref.authority.kind === "handle" ? `@${ref.authority.handle}` : ref.authority.did;
+    const key = `${target.organizationId}\u0000${publisherRef}`;
+    if (!unique.has(key)) unique.set(key, { ...target, publisherRef });
   }
-  return { publishers, created };
+  return [...unique.values()];
+}
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      if (item !== undefined) await worker(item);
+    }
+  });
+  await Promise.all(runners);
 }

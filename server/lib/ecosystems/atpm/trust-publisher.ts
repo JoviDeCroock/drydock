@@ -153,16 +153,16 @@ export type TrustedPublisherMatch =
   /** The declaration names a provider this deployment cannot check. */
   | { status: "unknown-provider" }
   | { status: "repository-mismatch"; expected: string; actual: string }
+  | { status: "workflow-unverified"; expected: string }
   | { status: "workflow-mismatch"; expected: string; actual: string };
 
 /**
  * Compare verified build provenance against what the publisher declared.
  *
  * The repository comparison is exact and case-insensitive, matching how GitHub
- * treats owner and repository names. The workflow is only compared when the
- * bundle names one: older certificates predate the build-config extension, and
- * treating a missing value as a mismatch would report a disagreement that was
- * never observed.
+ * treats owner and repository names. A trusted-publisher match requires the
+ * certificate-authenticated workflow identity too; a missing build-config
+ * extension is reported separately from an observed mismatch.
  */
 export function matchTrustedPublisher(
   provenance: AtpmProvenance,
@@ -179,7 +179,10 @@ export function matchTrustedPublisher(
     };
   }
   const expectedWorkflow = `.github/workflows/${publisher.github.workflow}`;
-  if (provenance.workflowPath && provenance.workflowPath !== expectedWorkflow) {
+  if (!provenance.workflowPath) {
+    return { status: "workflow-unverified", expected: expectedWorkflow };
+  }
+  if (provenance.workflowPath !== expectedWorkflow) {
     return {
       status: "workflow-mismatch",
       expected: expectedWorkflow,

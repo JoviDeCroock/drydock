@@ -29,7 +29,7 @@ The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystem
 - the Fulcio certificate chain, using a bounded DER reader (`server/lib/platform/x509.ts`) rather than a general X.509 library — nothing here builds chains or consults a certificate store, because the accepted issuers are pinned constants;
 - the DSSE signature over the in-toto statement;
 - the statement's shape: exactly one subject, a readable npm purl, a SHA-512 digest;
-- the Fulcio OIDs: issuer, source repository, ref, commit, run invocation, runner environment, repository visibility.
+- the Fulcio OIDs: issuer, source repository, ref, commit, build-config workflow, run invocation, runner environment, repository visibility. The workflow is trusted only when Fulcio authenticated it into the certificate; publisher-controlled fields in the signed predicate are not an identity fallback.
 
 Verification is _intrinsic_ to the bundle — it does not depend on the reviewed bytes or the request — which is what makes caching a small verdict per version sound instead of caching ~10 KB of bundle. Binding to the artifact happens afterwards, in `findings.ts`.
 
@@ -40,19 +40,19 @@ Two limits, stated because they bound what a page may claim:
 
 ### Findings
 
-| Rule                                 | Severity | Fires when                                                                                                         |
-| ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| `atpm.provenance-subject-mismatch`   | critical | the bundle verifies but attests a different package or different bytes — it was copied here                        |
-| `atpm.provenance-invalid`            | high     | an attestation is present and does not verify                                                                      |
-| `atpm.provenance-publisher-mismatch` | high     | the verified build came from a repository or workflow the publisher's own `trustPublisher` record does not declare |
-| `atpm.trusted-publishing-lost`       | medium   | the previous release proved where it was built and this one does not, or names a different repository              |
-| `atpm.provenance-missing`            | low      | the package declares a trusted publisher and this version carries no attestation                                   |
+| Rule                                 | Severity | Fires when                                                                                                                                                                         |
+| ------------------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `atpm.provenance-subject-mismatch`   | critical | the bundle verifies but attests a different package or different bytes — it was copied here                                                                                        |
+| `atpm.provenance-invalid`            | high     | an attestation is present and does not verify                                                                                                                                      |
+| `atpm.provenance-publisher-mismatch` | high     | the verified build came from a repository or workflow the publisher's own `trustPublisher` record does not declare, or the certificate does not authenticate a workflow to compare |
+| `atpm.trusted-publishing-lost`       | medium   | the previous release proved where it was built and this one does not, or names a different repository                                                                              |
+| `atpm.provenance-missing`            | low      | the package declares a trusted publisher and this version carries no attestation                                                                                                   |
 
 `not-evaluated` is silence, never a finding: it means the per-record verification budget was spent elsewhere, and reporting an internal limit as a fact about the package would be inventing evidence.
 
 ### On `/diff`
 
-The anonymous diff page renders a **Build provenance** block beside the resolution trail. A bundle is labelled **verified** only when its subject names this package and its SHA-512 matches the tarball Drydock downloaded; an intrinsically valid bundle copied from another artifact is labelled **different artifact**. The proven side (repository, workflow, ref, commit, run, runner, Rekor index) and the declared side (the `trustPublisher` record) are shown separately and labelled as such, because they are different kinds of claim: one came out of a signature check against Sigstore's root, the other is the publisher's statement of intent. `allowPublish: true` is surfaced too — it means CI can publish with no human in the loop, which is a fact about the package's release posture rather than about any one release.
+The anonymous diff page renders a **Build provenance** block beside the resolution trail. A bundle is labelled **verified** only when its subject names this package and its SHA-512 matches the tarball Drydock downloaded; an intrinsically valid bundle copied from another artifact is labelled **different artifact**. The proven side (repository, certificate-authenticated workflow when present, ref, commit, run, runner, Rekor index) and the declared side (the `trustPublisher` record) are shown separately and labelled as such, because they are different kinds of claim: one came out of a signature check against Sigstore's root, the other is the publisher's statement of intent. A certificate with no authenticated workflow is explicitly shown as unable to match a trusted-publisher declaration. `allowPublish: true` is surfaced too — it means CI can publish with no human in the loop, which is a fact about the package's release posture rather than about any one release.
 
 ## Staged review
 
@@ -64,7 +64,7 @@ What differs from every other staged or gated review:
 - **No byte-continuity gap.** The candidate is pinned by CID and approving it rebuilds and re-uploads nothing, so the artifact scanned is the artifact that installs. The npm and PyPI gates close that gap with a `SHA256SUMS` file the publish job re-checks; here there is no gap.
 - **Drydock never approves.** Approval is a write to the publisher's repository and nothing here can perform it. The report instead names the candidate in the spelling the approving tool takes: `npm stage approve <id>`, where the id is derived locally as `uuidv5(<record uri>/<record cid>)` in the URL namespace — the same value atpm computes.
 
-Staged references are addressed as `atpm:<did>:<rkey>`, which fits the shared `stage_id` column and its grammar. `POST /api/v1/scans` routes on that prefix; an unprefixed value is still npm's registry-issued id. Gate-driven reviews file their scan under the same address rather than the synthetic `workflow-gate:` id every other ecosystem uses, which is what stops the discovery sweep from reviewing a candidate the gate already covered.
+Maintainer-entered staged references use the mutable address `atpm:<did>:<rkey>`. Discovery and workflow gates use `atpm:<did>:<rkey>:<approveId>`, binding the scan identity to the selected record CID because the approval UUID is derived from that CID. Both fit the shared `stage_id` grammar, and `POST /api/v1/scans` routes on the prefix; an unprefixed value is still npm's registry-issued id. Gate and discovery scans for the same immutable candidate deduplicate, while rewriting a record under the same key creates a new review identity and makes the old queued scan fail closed if it has not started yet.
 
 Nothing scopes _which_ publisher an organization may review this way: an atpm candidate is public data, so a staged review is no more privileged than the `/diff` page for the same bytes. The scan row is organization-scoped as usual, and the per-organization scan rate limit is the bound on abuse.
 
@@ -77,7 +77,7 @@ Baseline selection prefers the published version behind the dist-tag the candida
 
 ### Discovery
 
-The discovery cron sweeps atpm publishers alongside npm connections. It has no credential to enumerate, so it reads the publishing accounts from release targets — configuring an atpm gate already names one. Candidates are deduplicated by stage id, and one sweep takes at most the 10 newest per publisher, so a repository with a backlog of abandoned candidates does not consume a scan quota on releases nobody is waiting for.
+The discovery cron sweeps atpm publishers alongside npm connections. It has no credential to enumerate, so it reads the publishing accounts from release targets — configuring an atpm gate already names one. The cron deduplicates organization/publisher pairs and fans each lookup into Cloudflare Queues in batches of at most 100; local development without a Queue uses bounded concurrency. Candidate scans are deduplicated by the CID-bound stage id, and one lookup takes at most the 10 newest per publisher, so a repository with a backlog of abandoned candidates does not consume a scan quota on releases nobody is waiting for.
 
 ## Workflow gate
 
@@ -119,7 +119,7 @@ jobs:
       - run: npm stage approve ${{ needs.stage.outputs.stageId }}
 ```
 
-Setup: install the Drydock GitHub App, add Drydock as a deployment-protection rule on the environment, and map a release target for the repository with the **atpm publisher** field set to the publishing account (`@handle` or a DID). That field is what pins the target's ecosystem to atpm; leaving it empty keeps the target on auto-detect, which is the right default for every ecosystem that uploads its release artifacts.
+Setup: install the Drydock GitHub App, add Drydock as a deployment-protection rule on the environment, and map a release target for the repository with the **atpm publisher** field set to an addressable publishing account (`@handle`, `did:plc`, or public `did:web`). Invalid or locally routed references are rejected when the target is saved. That field is what pins the target's ecosystem to atpm; leaving it empty keeps the target on auto-detect, which is the right default for every ecosystem that uploads its release artifacts.
 
 ### How a candidate is bound to a run
 

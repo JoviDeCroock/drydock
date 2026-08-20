@@ -35,7 +35,12 @@ export interface PublicDiffAttestation {
   };
   reason?: string;
   declared?: { repository: string; workflow: string; allowPublish: boolean };
-  match?: "match" | "repository-mismatch" | "workflow-mismatch" | "unknown-provider";
+  match?:
+    | "match"
+    | "repository-mismatch"
+    | "workflow-mismatch"
+    | "workflow-unverified"
+    | "unknown-provider";
 }
 
 export interface PublicDiffResponse {
