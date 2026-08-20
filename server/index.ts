@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createDb } from "./db/client";
+import { type AppDb, createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
@@ -550,7 +550,19 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
  * the cron.
  */
 async function reapStalledScans(env: Cloudflare.Env) {
-  const db = createDb(env.DB);
+  let db: AppDb;
+  try {
+    db = createDb(env.DB);
+  } catch (err) {
+    // This is the first statement of the first thing the cron does, and it is
+    // not wrapped by the caller. An unhandled throw here would take the
+    // discovery sweep and both auth/audit prunes down with it — the opposite of
+    // why the reaper was moved to the front.
+    emitOperationalEvent("error", "scans.stalled_reap_failed", {
+      error: describeOperationalError(err),
+    });
+    return;
+  }
   try {
     const sweep = await failStalledScans(db, {
       runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,

@@ -453,7 +453,7 @@ export interface AiReviewPatchInput {
   risk: string;
   riskSummary: ScanRiskBreakdown;
   findingCount: number;
-  /** Updated `summary_json` (risk breakdown, and finding annotations for D1-backed scans). */
+  /** Updated `summary_json`: the patched risk breakdown, minus the consumed evidence descriptor. */
   summary: unknown;
   /**
    * New artifact references when the report was rewritten with the AI overlay.
