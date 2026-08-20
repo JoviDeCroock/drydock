@@ -10,6 +10,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createScanJob,
   deleteFailedScan,
+  listScans,
   markRegistryPublishReminderSent,
   markScanFailed,
   persistScan,
@@ -142,6 +143,18 @@ describe("registry version status resolution", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  test("includes the captured registry in scan list summaries", async () => {
+    const org = await seedOrg();
+    const registryUrl = "https://registry.example.test";
+    const { scanId } = await seedCompletedScan(org, { registryUrl });
+
+    const result = await listScans(createDb(env.DB), org.organizationId, {
+      decisionFilter: "all",
+    });
+
+    expect(result.scans).toContainEqual(expect.objectContaining({ id: scanId, registryUrl }));
   });
 
   test("records npm's status against the reviewed release", async () => {

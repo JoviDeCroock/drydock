@@ -33,7 +33,7 @@ export function DecisionDialog({
   error: string | null;
   npmStagedPackagesUrl?: string | null;
   /** Identifies the stage for the follow-up CLI command. */
-  scan: Pick<ScanListItem, "stageId" | "packageName" | "stagedVersion" | "source">;
+  scan: Pick<ScanListItem, "stageId" | "packageName" | "stagedVersion" | "source" | "registryUrl">;
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
