@@ -21,6 +21,17 @@ export interface PersistedSummary {
   stagedPublish?: {
     provenance?: ReleaseProvenance;
     artifactIntegrity?: unknown;
+    // Ecosystem this staged review belongs to, when the adapter records one.
+    // Gate scans carry it inside `provenance` instead; both are absent on
+    // scans persisted before either existed.
+    ecosystem?: unknown;
+    // atpm staged reviews: the id `npm stage approve` takes for the exact
+    // candidate this report describes, the record it addresses, and whether the
+    // candidate's build attestation verified. All from
+    // `atpmAdapter.summarizeDetails`, and re-validated before rendering.
+    approveId?: unknown;
+    uri?: unknown;
+    buildProvenance?: unknown;
   };
   // Advisory release-memory blob. Old scans lack it and its shape is only
   // trusted after normalizeReleaseConsistency, so it stays unknown here.

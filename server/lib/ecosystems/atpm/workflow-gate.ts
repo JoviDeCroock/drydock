@@ -1,7 +1,7 @@
 import { atpmAdapter } from ".";
-import { parseAtpmPackageName, resolveAtpmRepoIdentity } from "./identity";
+import { resolveAtpmRepoIdentity } from "./identity";
 import { listAtpmStagedVersions, type AtpmStagedVersion } from "./stage-record";
-import { formatAtpmStageId } from "./stage-ref";
+import { formatAtpmStageId, parseAtpmPublisherRef } from "./stage-ref";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import type {
@@ -104,7 +104,7 @@ export const atpmWorkflowGateAdapter: WorkflowGateAdapter = {
  * releases.
  */
 async function resolveTargetPublisher(publisherRef: string | null) {
-  const ref = publisherRef?.trim() ? parseAtpmPackageName(`${publisherRef.trim()}/x`) : null;
+  const ref = publisherRef ? parseAtpmPublisherRef(publisherRef) : null;
   if (!ref) {
     throw new WorkflowArtifactError(
       "release_target_misconfigured",

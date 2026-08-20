@@ -38,6 +38,9 @@ export interface ReleaseTargetRecord {
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
+  // Who mapped the target. Null once that user leaves the organization, which
+  // is why the discovery sweep falls back to the organization owner.
+  createdByUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -256,6 +259,7 @@ export async function createReleaseTarget(
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     environment,
+    createdByUserId: input.createdByUserId,
     createdAt: now,
     updatedAt: now,
   };
@@ -275,6 +279,23 @@ export async function listReleaseTargetsForOrganization(
     .select()
     .from(githubReleaseTargets)
     .where(eq(githubReleaseTargets.organizationId, organizationId));
+  return rows.map(readReleaseTargetRow);
+}
+
+/**
+ * Every release target across all organizations that pins one ecosystem. Used
+ * by the discovery cron, which has to sweep publishers rather than
+ * organizations: an atpm publishing account is named by the release target, not
+ * by a stored credential the way an npm connection is.
+ */
+export async function listReleaseTargetsForEcosystem(
+  db: AppDb,
+  ecosystem: string,
+): Promise<ReleaseTargetRecord[]> {
+  const rows = await db
+    .select()
+    .from(githubReleaseTargets)
+    .where(eq(githubReleaseTargets.ecosystem, ecosystem));
   return rows.map(readReleaseTargetRow);
 }
 
@@ -374,6 +395,7 @@ function readReleaseTargetRow(row: {
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
+  createdByUserId: string | null;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }): ReleaseTargetRecord {
@@ -387,6 +409,7 @@ function readReleaseTargetRow(row: {
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
     environment: row.environment,
+    createdByUserId: row.createdByUserId,
     createdAt: new Date(row.createdAt),
     updatedAt: new Date(row.updatedAt),
   };

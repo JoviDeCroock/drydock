@@ -1,4 +1,4 @@
-import { parseAtpmPackageName } from "./identity";
+import { parseAtpmPackageName, type AtpmPackageRef } from "./identity";
 import { isValidAtpmStageRkey } from "./stage-record";
 
 /**
@@ -51,4 +51,19 @@ export function parseAtpmStageId(value: string): AtpmStageRef | null {
   const did = parseAtpmPackageName(`${body.slice(0, separator)}/x`)?.authority;
   if (did?.kind !== "did") return null;
   return { did: did.did, rkey, stageId: formatAtpmStageId(did.did, rkey) };
+}
+
+/**
+ * Parse a publishing account as a release target spells it — `@handle` or a
+ * DID — into the reference the identity resolver takes.
+ *
+ * The resolver is package-shaped because every other caller has a package in
+ * hand; a publisher does not, so a placeholder record key stands in. Doing it
+ * here rather than at each call site keeps DID syntax and host policy decided
+ * in exactly one place.
+ */
+export function parseAtpmPublisherRef(publisherRef: string): AtpmPackageRef | null {
+  const trimmed = publisherRef.trim();
+  if (!trimmed) return null;
+  return parseAtpmPackageName(`${trimmed}/x`);
 }

@@ -178,6 +178,9 @@ function ReleaseTargetList({
                   target.artifactName ? (
                     <span key="artifact">artifact {target.artifactName}</span>
                   ) : null,
+                  target.publisherRef ? (
+                    <span key="publisher">publisher {target.publisherRef}</span>
+                  ) : null,
                   <span key="install">
                     via {installation?.accountLogin ?? "unknown"} ·{" "}
                     {installation?.installationId ?? target.installationRowId}

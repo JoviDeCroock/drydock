@@ -1,6 +1,6 @@
 # Architecture
 
-Drydock reviews release artifacts before a maintainer approves publication. The same scan pipeline handles npm registry-staged tarballs and GitHub workflow-gated artifacts by delegating ecosystem details to package adapters.
+Drydock reviews release artifacts before a maintainer approves publication. The same scan pipeline handles npm registry-staged tarballs, atpm staged records, and GitHub workflow-gated artifacts by delegating ecosystem details to package adapters.
 
 ## Runtime components
 

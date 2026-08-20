@@ -4,6 +4,8 @@ import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-
 import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
+import { listReleaseTargetsForEcosystem } from "./lib/github-app/persistence";
+import { sweepAtpmPublishers } from "./lib/ecosystems/atpm/staged-discovery";
 import {
   RateLimitError,
   enforceRateLimit,
@@ -466,12 +468,65 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   };
 
   await runWithConcurrency(connections, DISCOVERY_CRON_CONCURRENCY, sweepConnection);
+  const atpm = await sweepAtpmStagedCandidates(env, ctx, db);
 
   emitOperationalEvent("info", "staged_publishes.cron.swept", {
     orgsProcessed,
+    atpmPublishers: atpm.publishers,
+    atpmScansCreated: atpm.created,
     durationMs: durationMsSince(startedAtMs),
     concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
   });
+}
+
+/**
+ * The atpm half of the same tick.
+ *
+ * It sweeps release targets rather than stored credentials, because an atpm
+ * staged candidate is a public record: there is no token to hold, so nothing
+ * else records which publishing accounts an organization has an interest in.
+ * Configuring an atpm gate already names one, and that is what this reads.
+ *
+ * Failures are contained inside the sweep so a publisher's PDS being
+ * unreachable cannot take down the npm discovery that already ran.
+ */
+async function sweepAtpmStagedCandidates(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  db: ReturnType<typeof createDb>,
+): Promise<{ publishers: number; created: number }> {
+  try {
+    const targets = await listReleaseTargetsForEcosystem(db, "atpm");
+    if (!targets.length) return { publishers: 0, created: 0 };
+
+    const resolved = await Promise.all(
+      targets.map(async (target) => ({
+        organizationId: target.organizationId,
+        publisherRef: target.publisherRef,
+        // The target's creator may have left the organization; the owner is the
+        // stable fallback, and a target with neither has nobody to attribute a
+        // scan to and is skipped rather than attributed to no one.
+        actorUserId:
+          target.createdByUserId ??
+          (await getOrganizationOwnerUserId(db, target.organizationId).catch(() => null)),
+      })),
+    );
+    return await sweepAtpmPublishers({
+      db,
+      env,
+      executionCtx: ctx,
+      targets: resolved.filter(
+        (target): target is { organizationId: string; publisherRef: string; actorUserId: string } =>
+          Boolean(target.publisherRef && target.actorUserId),
+      ),
+      source: "auto_discovery",
+    });
+  } catch (err) {
+    emitOperationalEvent("error", "atpm_staged.cron.failed", {
+      error: describeOperationalError(err),
+    });
+    return { publishers: 0, created: 0 };
+  }
 }
 
 // Flat-window retention for the organization audit log. Runs each tick; a

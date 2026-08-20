@@ -80,11 +80,15 @@ Redirects cannot route around that policy. Parent-Worker identity and record fet
 
 Computed atpm pairs have a five-minute lifetime rather than the registry-backed 30-day default. Blob bytes are immutable once CID-pinned, but the repository record that maps a version to a CID, the DID document's PDS location, and the reverse-verified display handle are mutable. Identity and record cache entries therefore carry an absolute expiry, and the computed pair inherits the earlier one. KV writes, colo rewarms, version responses, share cards, and the separate display-name value all use only the remaining lifetime; moving a value between layers can never restart its five-minute clock. Server-rendered HTML reads the verified display name from that small KV value, so it never fetches and parses the full cached diff merely to build a title.
 
+## Build provenance
+
+A version's Sigstore bundle and its package's trusted-publisher record are both read here, and both are re-verified rather than taken from the record. The page renders what was proven (repository, workflow, commit, run) separately from what the publisher declared, and the deltas between two releases produce their own findings. That is a surface of its own; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
+
 ## What is not built
 
-- **No workflow gate and no staged review.** atpm has its own staging flow (`npm stage publish` / `list` / `approve`) and a trusted-publisher system; wiring Drydock into it would need atpm-side support, not just an adapter.
 - **No dependency diff links.** An atpm dependency spelled `@handle/name` resolves on npm to a scope someone else owns, so the manifest diff links nothing rather than something confidently wrong.
 - **No package-only `/diff/atpm/<name>` form.** Nothing links it.
+- **No approval.** Drydock reviews staged candidates and gates the approval job, but approving is a write to the publisher's own repository and nothing here holds a credential for it.
 
 ## Records for reference
 
@@ -119,4 +123,4 @@ at://did:plc:twegdcgytckr5cxm57gyruxa/dev.atpm.alpha.package/counter    (@ebey.d
 }
 ```
 
-Everything outside the validated shape and retained fields above — the readme, the Sigstore attestation bundle, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read.
+Everything outside the validated shape and retained fields above — the readme, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read. The Sigstore attestation bundle is the one exception, and only briefly: it is pulled out to one side during parsing, exchanged for a small verified verdict before anything is returned or cached, and never reaches `AtpmVersion` at all.

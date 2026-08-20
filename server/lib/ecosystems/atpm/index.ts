@@ -221,6 +221,12 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
     if (!details) return null;
     const value = details as AtpmStagedDetails;
     return {
+      // Named so the report renderer can tell an atpm staged review from a
+      // workflow-gate one without inspecting the rest of the blob. The `pypi`
+      // and `npm` gate adapters put a `ReleaseProvenance` under `provenance`;
+      // this adapter's build attestation is a different thing and must not
+      // land under the same key.
+      ecosystem: "atpm",
       id: value.id,
       // The one field a maintainer acts on: this is what `npm stage approve`
       // takes for the candidate this report describes.
@@ -235,7 +241,7 @@ export const atpmAdapter: PackageAdapter<AtpmAdapterInput, AtpmBroker> = {
       createdAt: value.createdAt,
       cid: value.cid,
       shasum: value.shasum,
-      provenance: value.provenance,
+      buildProvenance: value.provenance,
       trustPublisher: value.trustPublisher,
     };
   },

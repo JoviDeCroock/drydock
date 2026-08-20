@@ -5,6 +5,7 @@ import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { SettingsCardForm } from "../../../components/Card";
 import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { Muted } from "../../../components/Typography";
 
@@ -43,6 +44,7 @@ export function ReleaseTargetForm({
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
       </div>
+      <PublisherField githubApp={githubApp} />
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
 
@@ -174,6 +176,40 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
           , then refresh.
         </Muted>
       ) : null}
+    </Field>
+  );
+}
+
+/**
+ * The publishing account, for the one gate whose candidate is not a workflow
+ * upload.
+ *
+ * Every other ecosystem's release artifacts arrive with the run, so the gate
+ * finds them without being told anything. atpm's do not: `npm stage publish`
+ * writes the candidate into the publishing account's own AT Protocol
+ * repository, and Drydock has no way to guess which account that is. Left
+ * empty, the target stays on auto-detect and behaves exactly as before.
+ */
+function PublisherField({ githubApp }: { githubApp: GithubApp }) {
+  const publisherRef = githubApp.formPublisherRef.value;
+  const submitting = githubApp.formSubmitting.value;
+
+  return (
+    <Field label="atpm publisher (optional)" for="releaseTargetPublisher">
+      <Input
+        id="releaseTargetPublisher"
+        value={publisherRef}
+        placeholder="@handle.example"
+        disabled={submitting}
+        onInput={(event) => {
+          githubApp.formPublisherRef.value = (event.currentTarget as HTMLInputElement).value;
+        }}
+      />
+      <Muted class="text-[12px] mt-1.5">
+        Only for atpm. Name the account this workflow publishes as and the gate reviews the staged
+        record in that account&rsquo;s repository instead of a workflow artifact — matched to this
+        run by the release&rsquo;s own build attestation. Leave empty for npm, PyPI, and VS Code.
+      </Muted>
     </Field>
   );
 }

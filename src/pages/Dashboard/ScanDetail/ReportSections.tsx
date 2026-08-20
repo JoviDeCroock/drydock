@@ -4,11 +4,12 @@ import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
-import { EmptyLine, SectionLabel } from "../../../components/Typography";
+import { EmptyLine, MonoLabel, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
+  const staged = readAtpmStagedDetails(summary.stagedPublish);
   return (
     <section class="flex flex-col gap-6">
       <ReportSection title="Manifest changes">
@@ -17,9 +18,11 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
             diff={summary.packageJsonDiff}
             // PyPI dependencies are not npm packages, so the public npm diff
             // view cannot show them; npm and VS Code manifests both resolve
-            // their dependencies from the npm registry. Scans persisted before
-            // provenance carried an ecosystem are npm.
-            linkDependencyDiffs={summary.stagedPublish?.provenance?.ecosystem !== "pypi"}
+            // their dependencies from the npm registry. An atpm dependency
+            // spelled `@handle/name` resolves on npm to a scope someone else
+            // owns, so it links nothing rather than something confidently
+            // wrong. Scans persisted before either field existed are npm.
+            linkDependencyDiffs={!["pypi", "atpm"].includes(stagedEcosystem(summary))}
           />
         ) : (
           <EmptyLine>No manifest changes were saved for this review.</EmptyLine>
@@ -29,6 +32,12 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
       {summary.stagedPublish?.provenance?.artifacts?.length ? (
         <ReportSection title="Provenance">
           <ProvenanceView provenance={summary.stagedPublish.provenance} />
+        </ReportSection>
+      ) : null}
+
+      {staged ? (
+        <ReportSection title="Staged candidate">
+          <AtpmStagedView staged={staged} />
         </ReportSection>
       ) : null}
 
@@ -142,6 +151,102 @@ function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The ecosystem a persisted staged review belongs to. Gate scans record it
+ * inside their provenance block and staged reviews alongside it, so read both
+ * rather than making the renderer care which kind of scan this was.
+ */
+function stagedEcosystem(summary: PersistedSummary): string {
+  const staged = summary.stagedPublish;
+  if (typeof staged?.ecosystem === "string") return staged.ecosystem;
+  return staged?.provenance?.ecosystem ?? "npm";
+}
+
+interface AtpmStagedDetails {
+  approveId: string;
+  uri: string;
+  provenance: { status: string; repository?: string; reason?: string };
+}
+
+/**
+ * Read the atpm staged block out of a persisted summary.
+ *
+ * Persisted blobs are `unknown` by contract — they were written by an older
+ * deployment, or by a different adapter — so every field is narrowed before it
+ * reaches the DOM rather than trusted because a TypeScript type said so.
+ */
+function readAtpmStagedDetails(
+  staged: PersistedSummary["stagedPublish"],
+): AtpmStagedDetails | null {
+  if (!staged || staged.ecosystem !== "atpm") return null;
+  const approveId = typeof staged.approveId === "string" ? staged.approveId : null;
+  const uri = typeof staged.uri === "string" ? staged.uri : null;
+  if (!approveId || !uri) return null;
+
+  const raw = staged.buildProvenance;
+  const state = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const status = typeof state.status === "string" ? state.status : "not-evaluated";
+  const build =
+    state.provenance && typeof state.provenance === "object"
+      ? (state.provenance as Record<string, unknown>)
+      : null;
+  return {
+    approveId,
+    uri,
+    provenance: {
+      status,
+      ...(typeof build?.sourceRepository === "string"
+        ? { repository: build.sourceRepository }
+        : {}),
+      ...(typeof state.reason === "string" ? { reason: state.reason } : {}),
+    },
+  };
+}
+
+/**
+ * What a reviewer needs to act on an atpm candidate.
+ *
+ * Drydock never approves an atpm release — approval is a write to the
+ * publisher's own repository, and nothing here holds a credential for it. So
+ * the useful thing this section can do is name the exact candidate that was
+ * reviewed, in the spelling the tool that approves it takes.
+ */
+function AtpmStagedView({ staged }: { staged: AtpmStagedDetails }) {
+  return (
+    <div class="flex flex-col gap-2">
+      <dl class="flex flex-col gap-1 m-0">
+        <DetailRow label="Approve" value={`npm stage approve ${staged.approveId}`} />
+        <DetailRow label="Record" value={staged.uri} />
+        <DetailRow
+          label="Built by"
+          value={
+            staged.provenance.status === "verified"
+              ? (staged.provenance.repository ?? "verified build")
+              : staged.provenance.status === "invalid"
+                ? `attestation does not verify: ${staged.provenance.reason ?? "unreadable"}`
+                : "no verified build attestation"
+          }
+        />
+      </dl>
+      <EmptyLine>
+        Approving publishes these exact bytes: the candidate is pinned by content address, so
+        nothing is rebuilt or re-uploaded between this review and the release.
+      </EmptyLine>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="flex flex-wrap items-baseline gap-x-2">
+      <MonoLabel as="dt" class="min-w-[72px]">
+        {label}
+      </MonoLabel>
+      <dd class="font-mono text-[12px] text-ink-muted m-0 break-all">{value}</dd>
     </div>
   );
 }
