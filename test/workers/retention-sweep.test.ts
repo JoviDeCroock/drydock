@@ -17,7 +17,7 @@ import {
 } from "../../server/lib/retention";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
-import type { DiffEntry, FileRecord } from "../../server/lib/review";
+import type { DiffEntry, FileRecord, Finding } from "../../server/lib/review";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRACE_MS = AUTH_ROW_RETENTION_GRACE_MS;
@@ -53,21 +53,31 @@ async function seedUser() {
 async function seedAgedScan(
   owner: { db: ReturnType<typeof createDb>; userId: string; organizationId: string },
   ageDays: number,
+  options: { artifactBacked?: boolean; findings?: Finding[] } = {},
 ) {
   const { db } = owner;
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${scanId.slice(-12)}`;
-  const reportJson = stableJson({ version: 1, diff, ruleFindings: [], findingAnnotations: [] });
-  const reportDigest = await sha256Hex(reportJson);
-  const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
-    organizationId: owner.organizationId,
-    scanId,
-    reportJson,
-    reportDigest,
-    files,
+  const findings = options.findings ?? [];
+  const reportJson = stableJson({
+    version: 1,
     diff,
-    generatedAt: "2026-01-01T00:00:00.000Z",
+    ruleFindings: findings,
+    findingAnnotations: [],
   });
+  const reportDigest = await sha256Hex(reportJson);
+  const artifacts =
+    options.artifactBacked === false
+      ? null
+      : await writeScanArtifacts(env.ARTIFACTS, {
+          organizationId: owner.organizationId,
+          scanId,
+          reportJson,
+          reportDigest,
+          files,
+          diff,
+          generatedAt: "2026-01-01T00:00:00.000Z",
+        });
   await createScanJob(db, {
     id: scanId,
     stageId,
@@ -86,9 +96,9 @@ async function seedAgedScan(
     ai: null,
     files,
     diff,
-    findings: [],
+    findings,
     report: { version: 1, digest: reportDigest },
-    artifacts,
+    ...(artifacts ? { artifacts } : {}),
   });
   await db.insert(schema.scanEvents).values({
     id: `evt_${crypto.randomUUID()}`,
@@ -451,6 +461,63 @@ describe("scan retention", () => {
     expect(row?.artifactStorageVersion).toBeNull();
     expect(row?.reportArtifactKey).toBeNull();
     expect(row?.diffArtifactKey).toBeNull();
+  });
+
+  test("rolls back D1 detail and audit mutations when the parent delete fails", async () => {
+    const owner = await seedUser();
+    const retainedFinding: Finding = {
+      severity: "medium",
+      file: "index.js",
+      evidence: "fetch('https://example.com')",
+      reason: "network access",
+      line: 1,
+      ruleId: "code.network-access",
+      ruleVersion: "1.8.0",
+    };
+    const scanId = await seedAgedScan(owner, 400, {
+      artifactBacked: false,
+      findings: [retainedFinding],
+    });
+    // Fail the final statement from inside a real D1 batch. The trigger makes the
+    // parent DELETE abort after the preceding child/event statements have run, so
+    // this only preserves them when D1 rolls the whole batch back atomically.
+    const triggerName = `fail_retention_delete_${crypto.randomUUID().replaceAll("-", "_")}`;
+    await env.DB.prepare(
+      `create trigger ${triggerName}
+       before delete on scans
+       when old.id = '${scanId}'
+       begin
+         select raise(abort, 'simulated retention delete failure');
+       end`,
+    ).run();
+    let result: Awaited<ReturnType<typeof runRetentionSweep>>;
+    try {
+      result = await runRetentionSweep({
+        ...env,
+        SCAN_RETENTION_DAYS: "365",
+      } as unknown as Cloudflare.Env);
+    } finally {
+      await env.DB.exec(`drop trigger if exists ${triggerName}`);
+    }
+
+    expect(result.scans).toMatchObject({ deleted: 0, deferred: 1 });
+    expect(
+      await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId)),
+    ).toHaveLength(1);
+    expect(
+      await owner.db.select().from(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId)),
+    ).toHaveLength(1);
+    expect(
+      await owner.db
+        .select()
+        .from(schema.scanFindings)
+        .where(eq(schema.scanFindings.scanId, scanId)),
+    ).toHaveLength(1);
+    const events = await owner.db
+      .select()
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.organizationId, owner.organizationId));
+    expect(events.some((event) => event.scanId === scanId)).toBe(true);
   });
 
   test("a failed R2 sweep leaves the scan row completely intact", async () => {

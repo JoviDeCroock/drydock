@@ -198,10 +198,12 @@ export async function clearScanArtifactMetadata(
  * `scan_files` / `scan_findings` / `scan_events` all cascade from `scans.id`, but
  * they are deleted explicitly and BEFORE the parent so the ordering is the
  * documented one rather than an implicit database behaviour: redacted evidence
- * must never outlive the metadata that describes it. The parent delete is
- * organization-scoped and returns the row, so a caller can tell a real deletion
- * from a row that moved underneath it — which nothing does today, since no code
- * path reassigns `scans.organization_id`.
+ * must never outlive the metadata that describes it. Every D1 mutation is in one
+ * atomic batch, so a failed parent delete cannot leave a still-readable degraded
+ * scan after its only file/finding rows have already committed their deletion.
+ * The parent delete is organization-scoped and returns the row, so a caller can
+ * tell a real deletion from a row that moved underneath it — which nothing does
+ * today, since no code path reassigns `scans.organization_id`.
  *
  * `auditEventCutoff` keeps the two retention windows from fighting. `scan_events`
  * is also the organization audit log, on its own flat 90-day window, and the two
@@ -223,17 +225,19 @@ export async function deleteScanWithChildren(
     eq(scanEvents.scanId, scanId),
     eq(scanEvents.organizationId, organizationId),
   );
-  await db.delete(scanEvents).where(and(scopedToScan, lt(scanEvents.createdAt, auditEventCutoff)));
-  await db
-    .update(scanEvents)
-    .set({ scanId: null })
-    .where(and(scopedToScan, gte(scanEvents.createdAt, auditEventCutoff)));
-  await db.delete(scanFindings).where(eq(scanFindings.scanId, scanId));
-  await db.delete(scanFiles).where(eq(scanFiles.scanId, scanId));
-  const deleted = await db
-    .delete(scans)
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
-    .returning({ id: scans.id });
+  const [, , , , deleted] = await db.batch([
+    db.delete(scanEvents).where(and(scopedToScan, lt(scanEvents.createdAt, auditEventCutoff))),
+    db
+      .update(scanEvents)
+      .set({ scanId: null })
+      .where(and(scopedToScan, gte(scanEvents.createdAt, auditEventCutoff))),
+    db.delete(scanFindings).where(eq(scanFindings.scanId, scanId)),
+    db.delete(scanFiles).where(eq(scanFiles.scanId, scanId)),
+    db
+      .delete(scans)
+      .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+      .returning({ id: scans.id }),
+  ]);
   return deleted.length > 0;
 }
 

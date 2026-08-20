@@ -106,11 +106,13 @@ When enabled, each tick deletes at most `SCAN_RETENTION_MAX_PER_TICK` scans (old
 
 1. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left completely untouched** (counted as `deferred`) and the next tick retries.
 2. Clears the artifact-metadata columns, so the row stops claiming objects that are now gone.
-3. Preserves audit events still inside their retention window, then deletes the organization-scoped `scans` row.
+3. Atomically detaches or deletes the scan's audit events according to their
+   own window, then deletes the
+   organization-scoped `scans` row. A failure rolls the whole D1 batch back.
 
 Step 2 sits between the other two because the state to design against is a live row that still claims to be artifact-backed after its evidence is gone. Clearing before the sweep would make a sweep failure strand a live row with its manifest key and digest already gone, so its still-present objects could no longer be re-linked if retention were switched off before the retry. Sweeping first leaves the row intact on the most likely external failure. The sweep does not need the columns it clears: the prefix is derived from the organization and scan ids.
 
-The residual states that remain are transient and self-healing, because a deferred scan is still past the cutoff: a failed clear leaves a row pointing at swept objects until the next tick re-sweeps (a no-op) and clears; a failed delete leaves a metadata-only row whose evidence really is gone and that no reader will chase R2 for, until the next tick deletes it.
+The residual states that remain are transient and self-healing, because a deferred scan is still past the cutoff: a failed clear leaves a row pointing at swept objects until the next tick re-sweeps (a no-op) and clears; a failed atomic D1 teardown leaves its audit links and scan row untouched. The scan is metadata-only after its R2 sweep and metadata clear until the next tick retries the complete batch.
 
 Each candidate is wrapped individually, so one failure cannot abort the rest of the backlog. Two kinds of row are excluded from the candidate query rather than deferred, because a permanently-deferred row at the head of a fixed-size oldest-first page would starve every deletable row behind it: scans with no `organization_id` (the org was deleted, so there is no prefix to sweep and no scope for the delete) and scans attached to a **still-pending** workflow gate (deleting one would null a live gate's `scan_id`). Transiently deferred rows are paged past within the same tick for the same reason.
 
