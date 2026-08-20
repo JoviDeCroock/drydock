@@ -248,7 +248,17 @@ describe("summary_json diff compaction", () => {
       { path: "index.js", status: "modified", previousSize: 20, stagedSize: 40, flags: [] },
     ]);
     // And the export falls back to the same embed rather than exporting nothing.
-    expect(buildReportExport(detail!).diff).toEqual(summary.diff);
+    const exported = buildReportExport(detail!);
+    expect(exported.diff).toEqual(summary.diff);
+    // The export is the attested subject, so the fallback has to disclose that
+    // the diff it carries is not the release's complete file list.
+    expect(exported.diffStats).toEqual({
+      complete: false,
+      entryCount: 1,
+      totalCount: fileDiff.length,
+      changedCount: 1,
+      counts: { added: 0, removed: 0, modified: 1, unchanged: 2 },
+    });
   });
 
   test("the export prefers the complete artifact diff over the compacted embed", async () => {
@@ -256,7 +266,15 @@ describe("summary_json diff compaction", () => {
     const { db, scanId } = await seedCompactedScan(owner);
 
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
-    expect(buildReportExport(detail!).diff).toEqual(fileDiff);
+    const exported = buildReportExport(detail!);
+    expect(exported.diff).toEqual(fileDiff);
+    // The embed is compacted, but the diff being exported is R2's complete one.
+    expect(exported.diffStats).toMatchObject({
+      complete: true,
+      entryCount: fileDiff.length,
+      totalCount: fileDiff.length,
+      changedCount: 1,
+    });
   });
 
   test("old-shape rows keep parsing: the full embed is read, annotated, and exported", async () => {
@@ -267,7 +285,17 @@ describe("summary_json diff compaction", () => {
     // Legacy rows are not artifact-backed, so there is no artifact diff...
     expect(detail!.diff).toBeNull();
     // ...and their untouched full embed is what every reader still sees.
-    expect(buildReportExport(detail!).diff).toEqual(fileDiff);
+    const exported = buildReportExport(detail!);
+    expect(exported.diff).toEqual(fileDiff);
+    // No persisted stats on a legacy row: the embed is the whole diff, so the
+    // counts come off the exported entries and the export is still complete.
+    expect(exported.diffStats).toEqual({
+      complete: true,
+      entryCount: fileDiff.length,
+      totalCount: fileDiff.length,
+      changedCount: 1,
+      counts: { added: 0, removed: 0, modified: 1, unchanged: 2 },
+    });
     expect(detail!.findings[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
     expect(detail!.files.map((file) => file.path).sort()).toEqual([
       "LICENSE",

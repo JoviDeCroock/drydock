@@ -39,7 +39,15 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
-  or organization/user identifiers.
+  or organization/user identifiers. Its `diff` is the scan's complete file diff
+  except on the degraded path where an artifact read failed and the export fell
+  back to the [compacted summary embed](./artifact-storage.md#summary-diff-compaction);
+  the additive `diffStats` object says which (`complete`) and carries the
+  `totalCount` / `changedCount` / per-status `counts` of the complete diff, so a
+  truncated list cannot be read as the whole release. Additive fields do not take
+  a schema bump — a consumer pinned to `v2` reads exactly what it read before —
+  but they do change the attested bytes, which are always computed from the
+  document served alongside them.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1
   Statement about the report (see below).
 - `GET /public/attestation-key` — the Ed25519 public key (JWK) and its RFC 7638
