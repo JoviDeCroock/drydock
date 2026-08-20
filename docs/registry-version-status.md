@@ -81,16 +81,21 @@ one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on
 the older rows and clears their displayable registry status, so historical
 reviews cannot keep presenting a live-looking verdict or command for an obsolete
-stage ID. The reminder marker remains as send-once history. Deleting a failed
-newer scan therefore cannot revive historical stage IDs. Discovery creates the
-new scan row before scheduling status resolution and also passes the current
-stage IDs as a fail-closed race guard.
+stage ID. Superseded reviews cannot accept or update decisions, and failure
+refinement rechecks ownership after its registry request so a concurrent restage
+cannot attribute the replacement stage's outcome to the older scan. The reminder
+marker remains as send-once history. Deleting a failed newer scan therefore
+cannot revive historical stage IDs. Discovery creates the new scan row before
+scheduling status resolution and also passes the current stage IDs as a
+fail-closed race guard.
 
 The dashboard refreshes immediately for newly queued scans, then performs a
 bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
 This keeps the **Check npm** request responsive without requiring a second
 manual refresh to see registry outcomes. Approval commands are pinned to the
-registry URL captured with the scan, including for custom registries.
+registry URL captured with the scan, including for custom registries. The
+npmjs.com staged-packages shortcut is only offered for scans captured from the
+public npm registry; custom registries keep the registry-pinned CLI command.
 
 ## Failure codes
 
@@ -142,7 +147,7 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Eight columns on `scans` (migrations `0027`–`0031`):
+Eight columns on `scans` (migration `0027`):
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.

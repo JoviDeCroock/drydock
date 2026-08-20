@@ -547,7 +547,11 @@ function ScanTable({
 }
 
 function canQuickDecide(scan: ScanListItem): boolean {
-  return scan.status === "complete" && scan.source !== "workflow_gate";
+  return (
+    scan.status === "complete" &&
+    scan.source !== "workflow_gate" &&
+    scan.registryStatusSupersededAt == null
+  );
 }
 
 function ScanRiskCell({ scan }: { scan: ScanListItem }) {

@@ -34,6 +34,15 @@ describe("registry status variant", () => {
     expect(registryStatusVariant({ registryVersionStatus: "quarantined" })).toBe(null);
   });
 
+  test("a superseded review never presents its last registry status as current", () => {
+    expect(
+      registryStatusVariant({
+        registryVersionStatus: "blocked",
+        registryStatusSupersededAt: "2026-08-20T10:00:00.000Z",
+      }),
+    ).toBe(null);
+  });
+
   test("maps the remaining lifecycle states", () => {
     expect(registryStatusVariant({ registryVersionStatus: "validating" })).toBe("validating");
     expect(registryStatusVariant({ registryVersionStatus: "published" })).toBe("published");

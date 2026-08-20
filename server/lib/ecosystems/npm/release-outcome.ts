@@ -284,7 +284,14 @@ export async function lookupStagedReleaseFate(
 ): Promise<StagedReleaseFate | null> {
   try {
     const identity = await getScanReleaseIdentity(db, scanId, organizationId);
-    if (!identity?.packageName || !identity.stagedVersion || !identity.registryUrl) return null;
+    if (
+      !identity?.packageName ||
+      !identity.stagedVersion ||
+      !identity.registryUrl ||
+      identity.registryStatusSupersededAt
+    ) {
+      return null;
+    }
     const connection = await getNpmConnection(db, organizationId);
     if (!connection || connection.registryUrl !== identity.registryUrl) return null;
     const token = await decryptNpmToken(env, connection);
@@ -296,6 +303,16 @@ export async function lookupStagedReleaseFate(
       { allowInsecureLocalhost: allowInsecureLocalRegistry(env) },
     );
     if (!lookup.ok) return null;
+    const currentIdentity = await getScanReleaseIdentity(db, scanId, organizationId);
+    if (
+      !currentIdentity ||
+      currentIdentity.registryStatusSupersededAt ||
+      currentIdentity.packageName !== identity.packageName ||
+      currentIdentity.stagedVersion !== identity.stagedVersion ||
+      currentIdentity.registryUrl !== identity.registryUrl
+    ) {
+      return null;
+    }
     return { status: lookup.status, failure: RELEASE_OUTCOME_FAILURES[lookup.status] ?? null };
   } catch {
     // Decryption, D1, or the registry — none of it changes what already went

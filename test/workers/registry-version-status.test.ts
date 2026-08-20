@@ -287,6 +287,35 @@ describe("registry version status resolution", () => {
     expect((await readScan(newer.scanId)).registryVersionStatus).toBe("published");
   });
 
+  test("exposes supersession in scan lists and refuses decisions on the obsolete stage", async () => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, { stageId: "stage-original" });
+    const db = createDb(env.DB);
+    await createScanJob(db, {
+      id: crypto.randomUUID(),
+      stageId: "stage-restaged",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+      registryUrl: REGISTRY_URL,
+    });
+
+    const listed = await listScans(db, org.organizationId, { decisionFilter: "all" });
+    expect(
+      listed.scans.find((scan) => scan.id === older.scanId)?.registryStatusSupersededAt,
+    ).toBeTruthy();
+    await expect(
+      recordScanDecision(db, {
+        scanId: older.scanId,
+        organizationId: org.organizationId,
+        decision: "publish",
+        actorUserId: org.userId,
+      }),
+    ).resolves.toBeNull();
+    expect((await readScan(older.scanId)).decision).toBeNull();
+  });
+
   test("the later scan owns a release even when creation timestamps tie and its id sorts lower", async () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
@@ -1025,6 +1054,31 @@ describe("staged failure refinement", () => {
 
     expect(refined.error).toEqual(unavailable);
     expect(refined.registryStatus).toBeNull();
+  });
+
+  test("does not attribute a replacement stage outcome to an older in-flight failure", async () => {
+    const org = await seedOrg();
+    const { scanId, stageId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    let finishLookup: ((response: Response) => void) | undefined;
+    const lookupResponse = new Promise<Response>((resolve) => {
+      finishLookup = resolve;
+    });
+    const fetchMock = stubRegistry(() => lookupResponse);
+    const refining = refine(org, scanId, stageId);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    await createScanJob(createDb(env.DB), {
+      id: crypto.randomUUID(),
+      stageId: "stage-restaged",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+      registryUrl: REGISTRY_URL,
+    });
+    finishLookup?.(statusResponse("published"));
+
+    await expect(refining).resolves.toEqual({ error: unavailable, registryStatus: null });
   });
 
   test("does not refine a failed scan through a replacement registry connection", async () => {

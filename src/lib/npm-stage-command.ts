@@ -5,6 +5,7 @@ export type NpmStagedCommandScan = {
   source?: string | null;
   stageId?: string | null;
   registryUrl?: string | null;
+  registryStatusSupersededAt?: string | number | Date | null;
 };
 
 /**
@@ -21,7 +22,7 @@ export function npmStageCommandFor(
   decision: ScanDecision,
   scan: NpmStagedCommandScan,
 ): string | null {
-  if (scan.source === "workflow_gate") return null;
+  if (scan.source === "workflow_gate" || scan.registryStatusSupersededAt != null) return null;
   const stageId = scan.stageId?.trim();
   if (!isValidStageId(stageId)) return null;
   const command = `npm stage ${decision === "publish" ? "approve" : "reject"} ${stageId}`;

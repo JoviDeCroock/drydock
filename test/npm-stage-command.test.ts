@@ -37,6 +37,15 @@ describe("npm stage commands", () => {
     expect(npmStageCommandFor("publish", { source: "workflow_gate", stageId })).toBeNull();
   });
 
+  test("has no command for a superseded stage", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryStatusSupersededAt: "2026-08-20T10:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
+
   test("has no command without a stage id", () => {
     expect(npmStageCommandFor("publish", {})).toBeNull();
     expect(npmStageCommandFor("publish", { stageId: null })).toBeNull();
