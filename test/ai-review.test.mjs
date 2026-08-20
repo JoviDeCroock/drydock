@@ -304,12 +304,22 @@ describe("ai review orchestration", () => {
     );
 
     expect(telemetry).toEqual({
-      functionId: "drydock-release-reviewer",
-      metadata: {
+      runtimeContext: {
         agentId: "drydock-release-reviewer",
         agentVersion: AI_REVIEWER_VERSION,
         conversationId: "trace_random",
         ecosystem: "npm",
+      },
+      telemetry: {
+        functionId: "drydock-release-reviewer",
+        includeRuntimeContext: {
+          agentId: true,
+          agentVersion: true,
+          conversationId: true,
+          ecosystem: true,
+        },
+        recordInputs: false,
+        recordOutputs: false,
       },
     });
     expect(JSON.stringify(telemetry)).not.toMatch(/scan_private|stage_private|org_private/);

@@ -34,9 +34,17 @@ relying on the clamp.
 
 The AI SDK is wrapped with Cloudflare's Agent Traces integration. Production
 and the self-host template enable persisted traces at a 10% head sample. The
-wrapper explicitly sets `storeMessages: false` and `storeTools: false`, because
-prompts and tool results can contain private pre-release source, secrets, or
-hostile instructions.
+wrapper explicitly sets `storeMessages: false` and `storeTools: false`, and the
+call sets `recordInputs: false` and `recordOutputs: false`, because prompts and
+tool results can contain private pre-release source, secrets, or hostile
+instructions.
+
+Trace identity follows the AI SDK v7 shape: `telemetry.functionId` names the
+agent, and `agentId`, `agentVersion`, `conversationId`, and `ecosystem` travel
+in the call's `runtimeContext`, each opted onto the span through
+`telemetry.includeRuntimeContext`. v7 removed `telemetry.metadata`; runtime
+context is an application-data channel, so anything not named there stays off
+the span.
 
 Recorded trace data is limited to operation names and timing, model and token
 usage, tool names, the reviewer version, ecosystem capability label, and a

@@ -159,7 +159,7 @@ export async function analyzeWithAi(
           // call: an invalid one (rejected by validation, so `execute` never fires)
           // must let the model see the tool error and retry instead of ending the loop.
           stopWhen: [() => submittedReview !== null, ai.stepCountIs(MAX_AGENT_STEPS)],
-          experimental_telemetry: aiReviewTraceTelemetry(options, traceConversationId),
+          ...aiReviewTraceTelemetry(options, traceConversationId),
           // The last step the budget allows offers only submit_review and forces
           // the call: a run that spends every step gathering evidence would
           // otherwise end unrecorded, discarding the whole token spend and
@@ -253,19 +253,37 @@ export async function analyzeWithAi(
   };
 }
 
+// AI SDK v7 dropped `telemetry.metadata`, so trace identity and labels travel in
+// `runtimeContext` and reach the span only via `includeRuntimeContext`. Spread
+// onto the call: `runtimeContext` is a top-level option, not a telemetry field.
 export function aiReviewTraceTelemetry(
   options: Pick<SelectiveAiReviewOptions, "ecosystem">,
   conversationId: string,
 ) {
   return {
-    functionId: AI_REVIEW_AGENT_NAME,
-    metadata: {
+    runtimeContext: {
       agentId: AI_REVIEW_AGENT_NAME,
       agentVersion: AI_REVIEWER_VERSION,
       conversationId,
       // Ecosystem is a closed product capability label, not package or tenant
       // data. Organization, stage, package, file, and evidence fields stay out.
       ecosystem: options.ecosystem,
+    },
+    telemetry: {
+      functionId: AI_REVIEW_AGENT_NAME,
+      // Runtime context is an application-data channel, not a telemetry bag:
+      // nothing reaches a span without being named here.
+      includeRuntimeContext: {
+        agentId: true,
+        agentVersion: true,
+        conversationId: true,
+        ecosystem: true,
+      },
+      // Belt-and-braces against the wrapper's `storeMessages`/`storeTools`:
+      // prompts and tool results carry pre-release source and hostile input, so
+      // no payload recorder may turn them into retained trace evidence.
+      recordInputs: false,
+      recordOutputs: false,
     },
   };
 }
