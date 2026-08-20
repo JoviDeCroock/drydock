@@ -15,6 +15,24 @@ describe("npm stage commands", () => {
     );
   });
 
+  test("pins commands to the registry captured for the scan", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "https://registry.example.test/team's",
+      }),
+    ).toBe(`npm stage approve ${stageId} --registry 'https://registry.example.test/team'\\''s'`);
+  });
+
+  test("refuses an unsafe captured registry instead of falling back to the default", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "file:///tmp/registry",
+      }),
+    ).toBeNull();
+  });
+
   test("has no command for workflow-gate scans", () => {
     expect(npmStageCommandFor("publish", { source: "workflow_gate", stageId })).toBeNull();
   });

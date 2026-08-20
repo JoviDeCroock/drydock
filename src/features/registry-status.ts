@@ -14,6 +14,7 @@ export interface RegistryStatusScan {
   decision?: string | null;
   source?: string | null;
   stageId?: string | null;
+  registryUrl?: string | null;
 }
 
 /**

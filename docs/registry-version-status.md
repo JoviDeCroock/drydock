@@ -65,10 +65,11 @@ recheck floors by last known status: 5 minutes for never-asked and `validating`,
 `deleted`. The terminal `blocked` and `deleted` states are never rechecked.
 Reviews older than 30 days stop being asked about at all. Only npm staged-publish scans are eligible;
 workflow-gate scans are excluded because their package coordinates may describe
-PyPI or VS Code releases. Due rows are ordered by their oldest lookup timestamp
-so a backlog drains instead of repeatedly selecting the newest rows. Status
-writes are fenced by that attempt timestamp, so an older overlapping sweep
-cannot replace a newer answer.
+PyPI or VS Code releases. Due rows share one oldest-work timeline: creation time
+until the first lookup, then the last-attempt time. This drains new work without
+letting continuous arrivals starve validating, staged, or published rechecks.
+Status writes are fenced by that attempt timestamp, so an older overlapping
+sweep cannot replace a newer answer.
 
 The scan captures the registry URL and immutable registry-supplied package
 coordinates separately from the inspected tarball manifest. A connection edit
@@ -88,7 +89,8 @@ stage IDs as a fail-closed race guard.
 The dashboard refreshes immediately for newly queued scans, then performs a
 bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
 This keeps the **Check npm** request responsive without requiring a second
-manual refresh to see registry outcomes.
+manual refresh to see registry outcomes. Approval commands are pinned to the
+registry URL captured with the scan, including for custom registries.
 
 ## Failure codes
 
