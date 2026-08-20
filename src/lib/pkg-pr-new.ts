@@ -1,3 +1,7 @@
+import {
+  ATPM_NO_BASELINE_VERSION,
+  isAtpmStagedVersion,
+} from "../../server/lib/ecosystems/atpm/stage-ref";
 // pkg.pr.new (StackBlitz continuous releases) publishes npm-compatible preview
 // tarballs for a commit or pull request. The public diff surface accepts these
 // URLs as a version side so a preview build can be reviewed against a
@@ -104,7 +108,19 @@ export function isPkgPrNewUrl(input: string): boolean {
  * Short human-readable label for a diff side: preview URLs render as
  * `pkg.pr.new@<ref>`, anything else (a registry version) is returned as-is.
  */
+/**
+ * How a version slot reads when it does not hold a version.
+ *
+ * Three things can sit there: a published version (shown as itself), a
+ * pkg.pr.new preview URL, and — on atpm — a staged candidate or the sentinel a
+ * first release uses on the left. The picker already synthesizes an option for
+ * anything whose label differs from its raw value, so labelling these here is
+ * all it takes for them to appear in it.
+ */
 export function diffRefLabel(value: string): string {
   const spec = parsePkgPrNewUrl(value);
-  return spec ? `${PKG_PR_NEW_HOST}@${spec.ref}` : value;
+  if (spec) return `${PKG_PR_NEW_HOST}@${spec.ref}`;
+  if (value === ATPM_NO_BASELINE_VERSION) return "no published release";
+  if (isAtpmStagedVersion(value)) return "staged candidate";
+  return value;
 }

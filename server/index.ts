@@ -64,6 +64,7 @@ import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import { atpmOauthMetadataRoutes, atpmPublisherRoutes } from "./routes/atpm-publishers";
+import { atpmStageLinkRoutes } from "./routes/atpm-stage-link";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
@@ -74,7 +75,7 @@ export { AtpmFirehose } from "./lib/ecosystems/atpm/firehose";
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
-const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public"];
+const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public", "/stage"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",
   "/dashboard/",
@@ -195,6 +196,12 @@ app.route("/og", ogRoutes);
 // token (opted into by an org owner/admin) is the trust boundary, so these
 // mount before the auth middleware too. Rate-limited per IP inside the routes.
 app.route("/public", publicReportsRoutes);
+
+// The link atpm's staged dashboard puts beside a candidate. Anonymous for the
+// same reason the diff it redirects to is: a staged record is public data in the
+// publisher's own repository, and a login between a maintainer and their own
+// pre-publish review would defeat the purpose of having one.
+app.route("/stage", atpmStageLinkRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
@@ -318,6 +325,8 @@ app.get("/api", (c) =>
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi|atpm]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public release data only; on npm, from/to also accept pkg.pr.new preview URLs)",
+      atpmStagedReview:
+        "GET /stage/atpm/:publisher/:rkey (redirects to the review); GET /api/public/v1/package-diff/atpm-stage?publisher&rkey (same resolution as JSON) — anonymous, IP rate-limited, public AT Protocol records only. The link atpm's staged dashboard uses before a release is published.",
       publicReports:
         "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
       publicFeed:
@@ -326,7 +335,7 @@ app.get("/api", (c) =>
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
       health: "GET /api/health",
     },
-    auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
+    auth: "Better Auth is required for every non-auth API endpoint except three anonymous surfaces: the /api/public/* package-diff endpoints and the atpm staged-review link (public release data only, no session read or created), and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",
     note: "Cloudflare Workers cannot spawn the npm CLI. This service performs the npm stage download equivalent inside a Dynamic Worker by fetching the staged tarball through a locked-down gateway.",
   }),
 );

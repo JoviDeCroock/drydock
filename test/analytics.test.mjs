@@ -122,6 +122,14 @@ describe("recordProductEvent", () => {
       },
       { name: "npm_connection.validated", organizationId: "org_1", outcome: "ok" },
       {
+        // The pre-publish link is anonymous by construction, so this event is
+        // the only measurement it has — and must stay free of anything that
+        // could identify the visitor who followed it.
+        name: "atpm_stage_link.resolved",
+        ecosystem: "atpm",
+        packageName: "did:plc:twegdcgytckr5cxm57gyruxa/counter",
+      },
+      {
         name: "public_diff.viewed",
         ecosystem: "npm",
         packageName: "left-pad",
@@ -220,11 +228,16 @@ describe("recordProductEvent", () => {
         expect(blob).not.toMatch(/Bearer\s/i);
       }
     }
-    // The model id legitimately contains a slash and an @; assert it is the
-    // only such value and that it is a model, not a path.
-    expect(points.flatMap((p) => p.blobs).filter((b) => b.includes("/"))).toEqual([
+    // A slash is legitimate in exactly two kinds of value here: a model id, and
+    // a package name that is already public in the request URL (npm scopes and
+    // atpm's `<did>/<name>` both contain one). The check is that nothing else
+    // does — a leaked filesystem path or request path would fail it.
+    const allowedSlashValues = new Set([
       "@cf/meta/llama",
-      "@cf/meta/llama",
+      "did:plc:twegdcgytckr5cxm57gyruxa/counter",
     ]);
+    for (const blob of points.flatMap((point) => point.blobs)) {
+      if (blob.includes("/")) expect(allowedSlashValues).toContain(blob);
+    }
   });
 });

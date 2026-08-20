@@ -62,28 +62,51 @@ What differs from every other staged or gated review:
 
 - **No credential.** The adapter's broker holds nothing. `requiresConnection` is `false`, so the scan route and queue job never look for a stored token.
 - **No byte-continuity gap.** The candidate is pinned by CID and approving it rebuilds and re-uploads nothing, so the artifact scanned is the artifact that installs. The npm and PyPI gates close that gap with a `SHA256SUMS` file the publish job re-checks; here there is no gap.
-- **Drydock never approves.** Approval is a write to the publisher's repository and nothing here can perform it. The report instead names the candidate in the spelling the approving tool takes: `npm stage approve <id>`, where the id is derived locally as `uuidv5(<record uri>/<record cid>)` in the URL namespace — the same value atpm computes.
-
-Maintainer-entered staged references use the mutable address `atpm:<did>:<rkey>`. Discovery and workflow gates use `atpm:<did>:<rkey>:<approveId>`, binding the scan identity to the selected record CID because the approval UUID is derived from that CID. `POST /api/v1/scans` routes on the prefix and validates atpm references with the atpm parser and its DID bounds, so a valid long `did:web` is not constrained by npm's shorter opaque-id grammar; an unprefixed value is still npm's registry-issued id. Gate and discovery scans for the same immutable candidate deduplicate, while rewriting a record under the same key creates a new review identity and makes the old queued scan fail closed if it has not started yet.
-
-Nothing scopes _which_ publisher an organization may review this way: an atpm candidate is public data, so a staged review is no more privileged than the `/diff` page for the same bytes. The scan row is organization-scoped as usual, and the per-organization scan rate limit is the bound on abuse.
+- **Drydock never approves.** Approval is a write to the publisher's repository and nothing here can perform it.
 
 Checks specific to a candidate, on top of the npm rule set and the provenance findings above:
 
 - `stage.tarball-digest-mismatch` — the blob does not hash to the record's `dist.shasum`.
-- `stage.metadata-mismatch` — the record's top-level name/version, its embedded `meta.name`/`meta.version`, and the tarball's `package.json` disagree, or the candidate's scope is not the publisher's verified handle. Candidates missing either embedded manifest identity field are unreadable. atpm's own stage endpoint rejects a foreign scope, so a candidate carrying one could not have been staged through it.
+- `stage.metadata-mismatch` — the record and the tarball's `package.json` disagree, or the candidate's scope is not the publisher's verified handle. atpm's own stage endpoint rejects a foreign scope, so a candidate carrying one could not have been staged through it.
 
 Baseline selection prefers the published version behind the dist-tag the candidate would move (approving moves that tag, so it is the sharpest answer to "what changes for an installer?"), then the immediate semver predecessor, then the highest published version. A first release reviews with no baseline rather than failing.
 
-### Connecting an account
+### The public link
 
-Discovery needs to know whose releases to watch, and atpm gives no implicit answer. npm's does — the organization's stored token both names the account and unlocks it — but an atpm staged candidate is public, so there is no credential whose existence doubles as an enrolment.
+**A staged review needs no account, and the link is the product.**
+
+```
+https://drydock.org/stage/atpm/@handle.example/<rkey>
+```
+
+That is what atpm's staged dashboard puts beside a candidate, before anyone clicks publish. The contract is deliberately one-directional: atpm can write the URL from what it already has — the publishing account and the record key of the record it just created — with no API call, no id exchange, and no registration. Everything that needs resolving happens on Drydock's side, and the visitor lands on the ordinary `/diff` page for the result.
+
+Anonymous is the design, not a relaxation. A staged candidate is a public record in the publisher's own repository, and the review is a deterministic diff of public bytes. A sign-in there would ask a maintainer to open an account with a third party in order to read something they could already fetch themselves — at exactly the moment the review is worth anything, which is the moment before they publish. It is the third anonymous surface alongside `/api/public/v1/package-diff` and `/public/reports/*`: credential-free, IP rate-limited, nothing persisted, no session read or created.
+
+The redirect lands on a normal diff URL:
+
+```
+/diff/atpm/<did>/<name>/<baseline>/staged.<rkey>.<record-cid>
+```
+
+Which is the second half of the idea: a staged candidate is just another thing a version pair can point at, so the review reuses `/diff` end to end — caching, redaction, risk scoring, per-file fetches, share cards — instead of being a second review surface that would drift from the first. Two reserved spellings make that work, both inside the existing version grammar so nothing downstream needed widening:
+
+- `staged.<rkey>.<record-cid>` in the `to` slot. The record CID is in the token because a staged record is mutable: without it, a rewritten candidate would be served from the cache entry of the bytes it replaced, which on a page whose whole claim is "these are the bytes" is the one kind of staleness that must not be possible. A rewritten candidate gets a different URL and the old one 404s.
+- `staged.none` in the `from` slot, for a first release with nothing published to compare against. Every file reads as added and a notice says why.
+
+`GET /api/public/v1/package-diff/atpm-stage?publisher=&rkey=` is the same resolution as JSON, for a caller that wants the review URL, the resolved baseline, and the approval id without following a redirect.
+
+A link stops resolving once the candidate is approved — atpm deletes the record — so that 404 is the expected end state of every one of these links rather than a broken one, and it says so.
+
+### Watching an account (optional)
+
+Everything above needs no Drydock account. Enrolling one exists for a different job: a persistent dashboard, notifications, and an audit trail across releases, for a team that wants Drydock to notice a staged candidate rather than being linked to it.
 
 Settings → Integrations → **atpm publishing accounts** takes a handle or DID and runs an AT Protocol OAuth sign-in against the account's _own_ server: the authorization server is discovered from that account's PDS (`/.well-known/oauth-protected-resource`), and the flow uses PAR, PKCE, and DPoP as the atproto profile requires.
 
 Then the tokens are thrown away.
 
-That is worth stating plainly, because it is the opposite of what "connect your account" usually means. Drydock needs no delegated access to an atpm publisher: staged candidates, published releases, and trusted-publisher declarations are all public records, and approving a release is something it deliberately does not do. A live session would buy nothing and would cost the property that makes this ecosystem path unusual — that it holds no credentials at all. So the flow is run for its identity assertion and nothing else, and `atpm_publishers` records the DID with a `verified_at`. Re-establishing the proof means signing in again.
+That is worth stating plainly, because it is the opposite of what "connect your account" usually means. Drydock needs no delegated access to an atpm publisher: staged candidates, published releases, and trusted-publisher declarations are all public records, and approving a release is something it deliberately does not do. A live session would buy nothing and would cost the property that makes this ecosystem path unusual — that it holds no credentials at all. So the flow is run for its identity assertion and nothing else, and `atpm_publishers` records the DID with a `verified_at`.
 
 The proof is therefore not a security control — reading public records needs no permission. It decides _ownership_: whose releases appear in which dashboard, and where notifications go. Two organizations may enrol the same account, and each gets its own scans.
 
@@ -91,15 +114,13 @@ The only secret stored anywhere on this path is the ephemeral DPoP private key, 
 
 ### Picking up a staged release
 
-Three triggers, in order of how quickly they see a candidate:
+For an enrolled account, three triggers converge on one deduplicated queue, keyed by the staged reference — which folds in the record's CID, so a record rewritten under the same key is a new review rather than a silent skip:
 
 1. **The firehose** (`server/lib/ecosystems/atpm/firehose.ts`). A Durable Object subscribes to Jetstream filtered server-side to `dev.atpm.alpha.stage`, so every atpm stage on the network arrives as a small JSON event seconds after it is written. Events for accounts nobody enrolled resolve to an empty indexed lookup and stop there.
-2. **The cron sweep** (\*/15). Backstop for anything a dropped connection missed, and the only trigger when the firehose is disabled. Sweeps enrolled publishers plus release targets that pin an atpm publisher, at most the 10 newest candidates per publisher per tick.
+2. **The cron sweep** (\*/15). Backstop for anything a dropped connection missed. Sweeps enrolled publishers plus release targets that pin an atpm publisher, at most the 10 newest candidates per publisher per tick.
 3. **"Check now"**, per publisher, rate-limited per organization.
 
-All three converge on the same deduplicated queue, keyed by the staged reference — which folds in the record's CID, so a record rewritten under the same key is a new review rather than a silent skip.
-
-The firehose exists because polling alone cannot do this job. atpm deletes a staged record on approval, so a candidate staged and approved in one sitting is not something a fifteen-minute sweep reviews late — it is something the sweep never sees, with nothing afterwards recording the miss. The gated path was always immune because the deployment blocks; every other path was not.
+The firehose exists because polling alone cannot do this job. atpm deletes a staged record on approval, so a candidate staged and approved in one sitting is not something a fifteen-minute sweep reviews late — it is something the sweep never sees, with nothing afterwards recording the miss.
 
 **What the firehose is trusted for: nothing.** It is a doorbell. An event supplies one thing — a DID that just wrote a staged record — and that decides only _when to look_. The record it carries is ignored; discovery resolves the publisher's identity and re-fetches from that publisher's own PDS, verifying every claim as it would on a sweep. Jetstream is operated by a third party, and this is the same distinction already drawn for the DNS-over-HTTPS resolver in `identity.ts`: a hostile or broken instance can make Drydock miss a candidate or waste a lookup, and cannot make it review the wrong bytes or attribute them to the wrong publisher.
 
@@ -109,7 +130,7 @@ Operationally: `ATPM_FIREHOSE_URL` overrides the default Jetstream instance (poi
 
 Drydock does not approve. Approval is a write to the publisher's own repository, and nothing here holds a credential for it — which is the same reason enrolment discards its tokens.
 
-What the review does instead is name the exact candidate it read, in the spelling the approving tool takes. Recording a decision surfaces `npm stage approve <id>`, where the id is the uuid derived from the record's URI and CID, and the report's **Staged candidate** section repeats it alongside a link to atpm's dashboard. Rejecting prints `npm stage rm` — atpm has no `reject` verb; a candidate is withdrawn by deleting its record.
+What a review does instead is name the exact candidate it read, in the spelling the approving tool takes: `npm stage approve <id>`, where the id is the uuid derived from the record's URI and CID. The public JSON resolution returns it as `approveId` so atpm's own dashboard can show the command next to its link. In the dashboard, recording a decision surfaces the same command, and rejecting prints `npm stage rm` — atpm has no `reject` verb; a candidate is withdrawn by deleting its record.
 
 ## Workflow gate
 

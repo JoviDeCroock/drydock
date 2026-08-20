@@ -23,6 +23,13 @@ import {
   type AtpmVersion,
 } from "./record";
 import { ATPM_PROVENANCE_RULES_VERSION, atpmPurl } from "./provenance";
+import { fetchAtpmStagedVersion, type AtpmStagedVersion } from "./stage-record";
+import {
+  ATPM_NO_BASELINE_VERSION,
+  isAtpmStagedVersion,
+  parseAtpmStagedVersion,
+  type AtpmStagedVersionRef,
+} from "./stage-ref";
 import {
   ATPM_TRUST_PUBLISHER_RULES_VERSION,
   fetchAtpmTrustPublisher,
@@ -81,14 +88,21 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // that is bound to the release. v5 added the verified build attestation. v4 carried the
   // metadata resolution's absolute expiry through every cache layer; old v3
   // values could restart their five-minute TTL when re-warmed.
-  payloadVersion: "v6",
+  // v7 lets a staged candidate stand in the `to` slot, which is how the
+  // anonymous staged review reuses this whole surface.
+  payloadVersion: "v7",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
   normalizePackageName: normalizeAtpmPackageName,
-  // Versions come from the record's own strings and use npm's grammar; the
-  // shared predicate also filters the version listing before it reaches the UI.
-  isValidVersion: isValidAtpmVersion,
+  // A version slot holds a published version, a staged candidate, or the
+  // no-baseline sentinel a first release uses on the left. All three share one
+  // grammar so nothing downstream — routes, cache keys, share cards — has to
+  // learn that a staged review is a different kind of thing.
+  isValidVersion: (version) =>
+    isValidAtpmVersion(version) ||
+    isAtpmStagedVersion(version) ||
+    version === ATPM_NO_BASELINE_VERSION,
   cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
@@ -103,29 +117,48 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       ctx,
       input.packageName,
     );
-    const from = requireAtpmVersion(pkg, input.fromVersion);
-    const to = requireAtpmVersion(pkg, input.toVersion);
+    const staged = parseAtpmStagedVersion(input.toVersion);
+    const to = staged
+      ? await resolveStagedEntry(identity, ref, staged)
+      : requireAtpmVersion(pkg, input.toVersion);
+    // A first release has nothing published to compare against. That is a real
+    // state of the world rather than an error, so it renders as an empty left
+    // side — every file added — with a notice saying why.
+    const from =
+      input.fromVersion === ATPM_NO_BASELINE_VERSION
+        ? null
+        : requireAtpmVersion(pkg, input.fromVersion);
 
     const [fromArchive, toArchive, publisher] = await Promise.all([
-      downloadAtpmBlob(env, ctx, identity, from),
+      from ? downloadAtpmBlob(env, ctx, identity, from) : Promise.resolve(null),
       downloadAtpmBlob(env, ctx, identity, to),
       loadTrustPublisherCached(env, ctx, identity, ref),
     ]);
 
-    assertAtpmBaselineMetadata({
-      entry: from,
-      manifest: fromArchive.packageJson ?? null,
-      archiveSha1: fromArchive.archiveSha1 ?? null,
-      recordName: ref.name,
-    });
+    if (from && fromArchive) {
+      assertAtpmBaselineMetadata({
+        entry: from,
+        manifest: fromArchive.packageJson ?? null,
+        archiveSha1: fromArchive.archiveSha1 ?? null,
+        recordName: ref.name,
+      });
+    }
 
     const { displayName } = canonicalNames(ref, identity);
+    const pageNotices = reviewNotices({
+      identity,
+      staged: staged !== null,
+      withoutBaseline: from === null,
+    });
     return {
-      from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
+      from: {
+        files: fromArchive?.files ?? [],
+        packageJson: fromArchive?.packageJson ?? null,
+      },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity),
       attestation: describeAttestation(to, publisher.value, toArchive.archiveSha512 ?? null),
-      ...(identity.did.startsWith("did:web:") ? { notices: [DID_WEB_NOTICE] } : {}),
+      ...(pageNotices.length ? { notices: pageNotices } : {}),
       ...(displayName ? { displayName } : {}),
       cacheExpiresAt: earliestExpiry(cacheExpiresAt, publisher.expiresAt),
       buildFindings: (fileDiff, manifestDiff) => [
@@ -157,6 +190,81 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     } satisfies PublicDiffAcquiredSources;
   },
 };
+
+/**
+ * Resolve a staged candidate into the same shape a published version has.
+ *
+ * The record's own CID is required to match the one in the URL. A staged record
+ * is mutable, so without that check a link would silently start describing
+ * whatever the publisher wrote most recently — on a page whose entire claim is
+ * "these are the bytes", that is the one kind of staleness that must not be
+ * possible. A rewritten candidate gets a different URL, and this one 404s.
+ */
+async function resolveStagedEntry(
+  identity: AtpmRepoIdentity,
+  ref: AtpmPackageRef,
+  staged: AtpmStagedVersionRef,
+): Promise<AtpmVersion> {
+  const candidate = await fetchAtpmStagedVersion(identity, staged.rkey);
+  if (candidate.recordCid !== staged.recordCid) {
+    throw new PublicDiffError("this staged release has been replaced", 404);
+  }
+  // The candidate's own name has to be the package this URL addresses, or the
+  // page would render one package's review under another's identity.
+  if (recordNameOf(candidate.declaredName) !== ref.name) {
+    throw new PublicDiffError("staged release is for a different package", 404);
+  }
+  return stagedAsVersion(candidate);
+}
+
+function recordNameOf(packageName: string): string | null {
+  const slash = packageName.indexOf("/");
+  return packageName.startsWith("@") && slash > 1 && slash === packageName.lastIndexOf("/")
+    ? packageName.slice(slash + 1)
+    : null;
+}
+
+/**
+ * Project a staged record onto `AtpmVersion` so every downstream check — digest,
+ * metadata, provenance, blob download — runs against a candidate exactly as it
+ * runs against a release. A candidate that passes here is one that will still
+ * pass after approval, because approval copies these same fields across.
+ */
+function stagedAsVersion(candidate: AtpmStagedVersion): AtpmVersion {
+  return {
+    version: candidate.version,
+    cid: candidate.cid,
+    size: candidate.size,
+    mimeType: null,
+    createdAt: candidate.createdAt,
+    declaredName: candidate.declaredName,
+    declaredVersion: candidate.declaredVersion,
+    declaredShasum: candidate.declaredShasum,
+    declaredTarball: candidate.declaredTarball,
+    declaredIntegrity: candidate.declaredIntegrity,
+    provenance: candidate.provenance,
+  };
+}
+
+function reviewNotices(args: {
+  identity: AtpmRepoIdentity;
+  staged: boolean;
+  withoutBaseline: boolean;
+}): string[] {
+  const notices: string[] = [];
+  if (args.staged) {
+    notices.push(
+      "This release is staged and not yet published. Approving it publishes exactly these bytes — the candidate is pinned by content address, so nothing is rebuilt in between.",
+    );
+  }
+  if (args.withoutBaseline) {
+    notices.push(
+      "This is the first release of this package, so there is nothing published to compare against and every file reads as added.",
+    );
+  }
+  if (args.identity.did.startsWith("did:web:")) notices.push(DID_WEB_NOTICE);
+  return notices;
+}
 
 interface LoadedAtpmPackage {
   ref: AtpmPackageRef;

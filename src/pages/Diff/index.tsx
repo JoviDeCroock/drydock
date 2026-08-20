@@ -43,6 +43,7 @@ import {
   type DiffSpec,
 } from "../../lib/package-diff-path";
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
+import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-ref";
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
@@ -371,6 +372,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   const fromLabel = diffRefLabel(fromVersion);
   const toLabel = diffRefLabel(toVersion);
   const hasPreview = fromLabel !== fromVersion || toLabel !== toVersion;
+  // A staged candidate stands in the `to` slot. The page is otherwise the same
+  // review, which is the point — a maintainer deciding whether to publish and a
+  // consumer auditing what was published are looking at the same evidence.
+  const isStagedReview = isAtpmStagedVersion(toVersion);
   const pickerVersions = versions
     ? [
         ...[fromVersion, toVersion]
@@ -386,7 +391,9 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
       />
       <section class="flex flex-col gap-3 border-t border-border pt-6">
-        <Eyebrow tone="accent">Public package diff</Eyebrow>
+        <Eyebrow tone="accent">
+          {isStagedReview ? "Staged release review" : "Public package diff"}
+        </Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {shownName}
         </h1>
@@ -406,6 +413,9 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         />
         {diff ? (
           <div class="flex flex-wrap items-center gap-2">
+            {/* Leads the badges: whether this is already published changes what
+                the reader is being asked to do with the rest of the page. */}
+            {isStagedReview ? <Badge tone="medium">not yet published</Badge> : null}
             <Badge tone={severityTone(diff.risk.releaseRisk)}>
               release risk {diff.risk.releaseRisk}
             </Badge>

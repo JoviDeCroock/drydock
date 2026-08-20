@@ -10,6 +10,11 @@ import {
   isBuiltByRun,
 } from "../../server/lib/ecosystems/atpm/workflow-gate";
 import { verifyAtpmProvenance } from "../../server/lib/ecosystems/atpm/provenance";
+import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
+import {
+  ATPM_NO_BASELINE_VERSION,
+  formatAtpmStagedVersion,
+} from "../../server/lib/ecosystems/atpm/stage-ref";
 import type { AtpmStagedVersion } from "../../server/lib/ecosystems/atpm/stage-record";
 import type { AtpmPackage } from "../../server/lib/ecosystems/atpm/record";
 import { describeAttestation } from "../../server/lib/ecosystems/atpm/public-diff";
@@ -340,6 +345,26 @@ describe("selectAtpmBaseline", () => {
     const selected = selectAtpmBaseline(published([]), { version: "0.0.1", tag: "latest" });
     expect(selected.entry).toBeNull();
     expect(selected.info.source).toBe("none");
+  });
+});
+
+describe("public staged review", () => {
+  test("a staged candidate fits the version grammar the public surface uses", () => {
+    // This is what lets the anonymous staged review reuse /diff end to end
+    // rather than being a second review surface that would drift from it.
+    expect(
+      atpmPublicDiff.isValidVersion(
+        formatAtpmStagedVersion("3lmabcdefghij", "bafyrei" + "a".repeat(52)),
+      ),
+    ).toBe(true);
+    expect(atpmPublicDiff.isValidVersion(ATPM_NO_BASELINE_VERSION)).toBe(true);
+    expect(atpmPublicDiff.isValidVersion("0.0.15")).toBe(true);
+    expect(atpmPublicDiff.isValidVersion("../../etc/passwd")).toBe(false);
+    // A malformed staged-looking string is not rejected here — it is a
+    // syntactically valid version name, so it is simply looked up as one and
+    // 404s as an unknown version. The grammar's job is to keep unsafe shapes
+    // out of the path; deciding what a token means is `acquire`'s.
+    expect(atpmPublicDiff.isValidVersion("staged.NOTATID.x")).toBe(true);
   });
 });
 

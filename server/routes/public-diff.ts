@@ -4,6 +4,7 @@ import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
+import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
 import { recordProductEvent } from "../lib/platform/analytics";
 import {
   computePublicDiffCacheKey,
@@ -210,6 +211,47 @@ function recordPublicDiffView(
     durationMs: Math.max(0, Date.now() - startedAtMs),
   });
 }
+
+/**
+ * Resolve a staged atpm candidate to its review URL.
+ *
+ * This is the link atpm's own staged dashboard points at, and the contract is
+ * that atpm can build it from what it already has in hand — the publishing
+ * account and the record key — without asking Drydock anything first. Everything
+ * that needs a lookup happens here: which package the candidate belongs to,
+ * which published release it should be read against, and which revision of the
+ * record is current.
+ *
+ * Anonymous, like the diff it redirects to. A staged candidate is a public
+ * record in the publisher's own repository, so requiring an account to look at a
+ * review of it would be asking people to sign in to read something they can
+ * already `curl` — and it would put a login between a maintainer and the
+ * decision this page exists to inform.
+ *
+ * A redirect rather than a page: the destination is the ordinary diff URL, so a
+ * reviewer who shares what they are looking at shares something stable and
+ * self-describing, and the review itself stays one surface rather than two.
+ */
+publicDiffRoutes.get("/atpm-stage", async (c) => {
+  const limited = await enforcePublicRateLimit(c, "versions", 30);
+  if (limited) return limited;
+
+  const publisher = c.req.query("publisher")?.trim() ?? "";
+  const rkey = c.req.query("rkey")?.trim() ?? "";
+  if (!publisher || !rkey) {
+    return c.json({ error: "publisher and rkey are required" }, 400);
+  }
+
+  try {
+    const resolved = await resolveAtpmStagedReview(c.env, workerExecutionContext(c.executionCtx), {
+      publisher,
+      rkey,
+    });
+    return c.json(resolved);
+  } catch (err) {
+    return publicDiffErrorResponse(c, err);
+  }
+});
 
 publicDiffRoutes.get("/versions", async (c) => {
   const limited = await enforcePublicRateLimit(c, "versions", 30);
