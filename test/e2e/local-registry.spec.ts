@@ -123,13 +123,19 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await page.getByRole("button", { name: "Decide" }).click();
     const decisionDialog = page.getByRole("dialog").filter({ hasText: "Publish decision" });
     await expect(decisionDialog).toBeVisible();
-    const openNpmToggle = decisionDialog.getByRole("checkbox");
-    if (await openNpmToggle.isChecked()) await openNpmToggle.uncheck();
+    // The fake registry is custom, so npmjs.com cannot complete this release.
+    // The web hand-off is omitted and the follow-up command stays pinned to the
+    // registry that supplied the stage.
+    await expect(decisionDialog.getByRole("checkbox")).toHaveCount(0);
     await decisionDialog.getByRole("button", { name: "Approve publish" }).click();
 
     const commandDialog = page.getByRole("dialog").filter({ hasText: "Finish the publish on npm" });
     await expect(commandDialog).toBeVisible({ timeout: 30_000 });
-    await expect(commandDialog.getByText(`npm stage approve ${uiStageId}`)).toBeVisible();
+    await expect(
+      commandDialog.getByText(`npm stage approve ${uiStageId} --registry '${registryUrl}'`, {
+        exact: true,
+      }),
+    ).toBeVisible();
     await page.screenshot({ path: path.join(artifactsDir, "stage-command-dialog.png") });
     await commandDialog.getByRole("button", { name: "Done" }).click();
     await expect(commandDialog).toBeHidden();
