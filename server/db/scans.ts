@@ -1060,9 +1060,15 @@ export async function getScanFile(
  * on the row (`summary_json`, `ai_json`, `error_json`) carry the whole file diff
  * and the AI review envelope, so a completed scan's row is large — and the poll
  * that observes the terminal transition would otherwise ship all of it, only
- * for the client to immediately fetch the full detail anyway. Every field the
- * status response and the versions route read is below; whatever needs the
- * blobs uses `getScan`.
+ * for the client to immediately fetch the full detail anyway.
+ *
+ * The projection is an allowlist, so it also drops the R2 artifact keys and the
+ * public-share columns. That is safe for today's callers — the poll only holds
+ * this row while the scan is `pending`/`running`, and the client re-fetches the
+ * full detail on the terminal transition — but it means adding a column to
+ * `scans` does NOT make it visible here. Anything needing a dropped column must
+ * be added below or use `getScan`; reading it off this row yields `undefined`
+ * without a type error, because the client types those fields optional.
  */
 export async function getScanStatus(db: AppDb, id: string, organizationId: string) {
   const [scan] = await db
