@@ -264,7 +264,41 @@ describe("summarizeResolvedArtifacts", () => {
       },
     );
 
-    expect(facts.declaredRepository).toBe("git+https://github.com/acme/pkg.git");
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
+  });
+
+  test("does not retain an oversized raw repository object in artifact facts", () => {
+    const oversizedRepository = {
+      url: "git+https://github.com/acme/pkg.git",
+      padding: "x".repeat(2 * 1024 * 1024),
+    };
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: {
+          ...resolved.staged,
+          artifact: {
+            ...stagedArtifact,
+            files: [
+              {
+                ...stagedArtifact.files[0],
+                textSample: JSON.stringify({
+                  name: "pkg",
+                  version: "1.0.1",
+                  repository: oversizedRepository,
+                }),
+              },
+              ...stagedArtifact.files.slice(1),
+            ],
+          },
+        },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
+    expect(JSON.stringify(facts).length).toBeLessThan(1_000);
   });
 
   test("falls back to PyPI core metadata when there is no package.json", () => {
@@ -397,7 +431,7 @@ describe("analyzeRelease", () => {
     // from the caller is what silently blanks every intent envelope.
     expect(out.diff.stagedManifestText).toBeNull();
     expect(acquired.staged.artifact.files).toEqual([]);
-    expect(out.facts.declaredRepository).toBe("git+https://github.com/acme/pkg.git");
+    expect(out.facts.declaredRepository).toBe("https://github.com/acme/pkg");
   });
 
   test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {

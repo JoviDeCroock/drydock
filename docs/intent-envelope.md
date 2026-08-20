@@ -11,7 +11,8 @@ Computed in `server/lib/scan/pipeline.ts` via the pure module
 extracted there: `extractDeclaredRepository` needs the raw staged manifest text
 and, on PyPI, the core-metadata body, and both die at the `analyzeRelease`
 boundary — so the extraction runs inside that boundary and arrives as
-`ArtifactFacts.declaredRepository`. The envelope is persisted inside the scan's `summaryJson`
+`ArtifactFacts.declaredRepository` as a bounded canonical URL, never as the raw
+package-controlled value. The envelope is persisted inside the scan's `summaryJson`
 blob (`summary.intentEnvelope`, no dedicated column), returned on
 `ScanResult`, exported in the `drydock.report.v2` report as the optional
 `intentEnvelope` field, and rendered as the "Source binding" row on the scan

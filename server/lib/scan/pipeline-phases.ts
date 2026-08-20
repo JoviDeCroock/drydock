@@ -11,7 +11,11 @@ import type {
   PackageAdapter,
   StagedDetails,
 } from "../ecosystems/package-adapter";
-import { extractDeclaredRepository, type IntentEnvelope } from "../intent-envelope";
+import {
+  extractDeclaredRepository,
+  normalizeRepositoryUrl,
+  type IntentEnvelope,
+} from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -86,12 +90,14 @@ export interface ArtifactFacts {
   previousVersionAvailable: boolean;
   baselineComparisonSkipped: boolean;
   /**
-   * Raw repository declaration read off the staged evidence, for the advisory
-   * intent envelope. A fact rather than something `runScanPipeline` derives:
-   * both of its inputs — the staged manifest text and the PyPI core-metadata
-   * body — are gone once `analyzeRelease` returns.
+   * Bounded canonical repository URL read off the staged evidence, for the
+   * advisory intent envelope. Normalize it before it crosses this boundary:
+   * the raw manifest value is package-controlled and may itself be a
+   * multi-megabyte string or object. Both extraction inputs — the staged
+   * manifest text and the PyPI core-metadata body — are gone once
+   * `analyzeRelease` returns.
    */
-  declaredRepository: unknown;
+  declaredRepository: string | null;
 }
 
 export interface DeterministicFindings {
@@ -210,10 +216,12 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
     baseline: baseline.baseline,
     previousVersionAvailable: baseline.artifact !== null,
     baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
-    declaredRepository: extractDeclaredRepository({
-      manifestText: readStagedManifestText(staged.artifact),
-      files: staged.artifact.files,
-    }),
+    declaredRepository: normalizeRepositoryUrl(
+      extractDeclaredRepository({
+        manifestText: readStagedManifestText(staged.artifact),
+        files: staged.artifact.files,
+      }),
+    ),
   };
 }
 
