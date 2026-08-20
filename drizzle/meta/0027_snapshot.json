@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b5be24f9-8af5-4e00-85f0-cfadc3da78bf",
+  "id": "c3ab2188-066c-42bb-9059-44fafae59376",
   "prevId": "3e6e53aa-9934-48a5-b804-47b2723d0387",
   "tables": {
     "account": {
@@ -1813,6 +1813,27 @@
           "notNull": false,
           "autoincrement": false
         },
+        "registry_url": {
+          "name": "registry_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "registry_package_name": {
+          "name": "registry_package_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "registry_version": {
+          "name": "registry_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "previous_version": {
           "name": "previous_version",
           "type": "text",
@@ -2026,6 +2047,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "registry_version_status_attempted_at": {
+          "name": "registry_version_status_attempted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "registry_status_superseded_at": {
+          "name": "registry_status_superseded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "registry_publish_reminder_at": {
           "name": "registry_publish_reminder_at",
           "type": "integer",
@@ -2139,8 +2174,22 @@
           "name": "scans_org_registry_status_idx",
           "columns": [
             "organization_id",
+            "registry_url",
+            "registry_status_superseded_at",
             "registry_version_status",
-            "registry_version_status_at"
+            "registry_version_status_attempted_at"
+          ],
+          "isUnique": false
+        },
+        "scans_org_registry_release_idx": {
+          "name": "scans_org_registry_release_idx",
+          "columns": [
+            "organization_id",
+            "registry_url",
+            "registry_package_name",
+            "registry_version",
+            "created_at",
+            "id"
           ],
           "isUnique": false
         },
