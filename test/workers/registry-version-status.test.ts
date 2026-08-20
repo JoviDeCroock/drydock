@@ -9,7 +9,9 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createScanJob,
+  deleteFailedScan,
   markRegistryPublishReminderSent,
+  markScanFailed,
   persistScan,
   recordRegistryVersionStatus,
   recordScanDecision,
@@ -62,7 +64,13 @@ async function seedOrg(): Promise<Seeded> {
 /** A completed review, which is the only kind the sweep asks npm about. */
 async function seedCompletedScan(
   org: Seeded,
-  overrides: { stageId?: string; version?: string; createdAt?: Date; source?: ScanSource } = {},
+  overrides: {
+    stageId?: string;
+    version?: string;
+    createdAt?: Date;
+    source?: ScanSource;
+    registryUrl?: string | null;
+  } = {},
 ) {
   const db = createDb(env.DB);
   const scanId = crypto.randomUUID();
@@ -75,6 +83,7 @@ async function seedCompletedScan(
     source: overrides.source,
     packageName: PACKAGE,
     stagedVersion: overrides.version ?? VERSION,
+    registryUrl: overrides.registryUrl === undefined ? REGISTRY_URL : overrides.registryUrl,
   });
   await persistScan(db, {
     id: scanId,
@@ -153,6 +162,105 @@ describe("registry version status resolution", () => {
     expect(scan.registryVersionStatus).toBe("blocked");
     expect(scan.registryVersionStatusAt).toBeTruthy();
     expect(scan.registryVersionStatusAttemptedAt).toBeTruthy();
+  });
+
+  test("does not query an old scan through a replacement registry connection", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org, {
+      registryUrl: "https://registry.example.test",
+    });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result.checked).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await readScan(scanId)).registryVersionStatus).toBeNull();
+  });
+
+  test("records lifecycle status only on the newest scan for a restaged version", async () => {
+    const org = await seedOrg();
+    const newerCreatedAt = new Date(Date.now() - 60 * 1000);
+    const older = await seedCompletedScan(org, {
+      stageId: "stage-original",
+      createdAt: new Date(newerCreatedAt.getTime() - 60 * 1000),
+    });
+    const newer = await seedCompletedScan(org, {
+      stageId: "stage-restaged",
+      createdAt: newerCreatedAt,
+    });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result).toMatchObject({ checked: 1, resolved: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await readScan(older.scanId)).registryVersionStatus).toBeNull();
+    expect((await readScan(newer.scanId)).registryVersionStatus).toBe("published");
+  });
+
+  test("does not revive a superseded stage after a newer failed scan is deleted", async () => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, { stageId: "stage-original" });
+    const db = createDb(env.DB);
+    const newerScanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: newerScanId,
+      stageId: "stage-restaged",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+      registryUrl: REGISTRY_URL,
+    });
+    await markScanFailed(db, newerScanId, org.organizationId, { message: "unavailable" });
+    await expect(deleteFailedScan(db, newerScanId, org.organizationId)).resolves.toMatchObject({
+      outcome: "deleted",
+    });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result.checked).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+  });
+
+  test("does not annotate history when discovery sees a different live stage id", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    const fetchMock = stubRegistry(() => statusResponse("staged"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      stagedItems: [{ id: "stage-restaged", packageName: PACKAGE, version: VERSION }],
+    });
+
+    expect(result.checked).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await readScan(scanId)).registryVersionStatus).toBeNull();
   });
 
   test("a 404 leaves the status unset but still stamps the attempt", async () => {
@@ -409,6 +517,57 @@ describe("registry version status resolution", () => {
     expect(second.reminded).toBe(0);
   });
 
+  test("sends one reminder across duplicate reviews of the same release", async () => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, {
+      stageId: "stage-duplicate",
+      createdAt: new Date(Date.now() - 2 * 60 * 1000),
+    });
+    const db = createDb(env.DB);
+    await recordScanDecision(db, {
+      scanId: older.scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    await db
+      .update(schema.scans)
+      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .where(eq(schema.scans.id, older.scanId));
+    stubRegistry(() => statusResponse("staged"));
+    const args = {
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    const first = await resolveNpmReleaseOutcomes(args);
+    expect(first.reminded).toBe(1);
+
+    const newer = await seedCompletedScan(org, {
+      stageId: "stage-duplicate",
+      createdAt: new Date(Date.now() - 60 * 1000),
+    });
+    await recordScanDecision(db, {
+      scanId: newer.scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    await db
+      .update(schema.scans)
+      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .where(eq(schema.scans.id, newer.scanId));
+
+    const second = await resolveNpmReleaseOutcomes(args);
+
+    expect(second).toMatchObject({ checked: 1, resolved: 1, reminded: 0 });
+    expect((await readScan(older.scanId)).registryPublishReminderAt).toBeTruthy();
+    expect((await readScan(newer.scanId)).registryPublishReminderAt).toBeNull();
+  });
+
   test("does not send a stale reminder after the approval changes in flight", async () => {
     const org = await seedOrg();
     const { scanId } = await seedCompletedScan(org);
@@ -588,6 +747,20 @@ describe("staged failure refinement", () => {
 
     expect(refined.error).toEqual(unavailable);
     expect(refined.registryStatus).toBeNull();
+  });
+
+  test("does not refine a failed scan through a replacement registry connection", async () => {
+    const org = await seedOrg();
+    const { scanId, stageId } = await seedCompletedScan(org, {
+      registryUrl: "https://registry.example.test",
+    });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const refined = await refine(org, scanId, stageId);
+
+    expect(refined.error).toEqual(unavailable);
+    expect(refined.registryStatus).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("a registry outage cannot turn into a different failure", async () => {

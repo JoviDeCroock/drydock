@@ -68,6 +68,16 @@ so a backlog drains instead of repeatedly selecting the newest rows. Status
 writes are fenced by that attempt timestamp, so an older overlapping sweep
 cannot replace a newer answer.
 
+The scan captures the registry URL that supplied its package coordinates. A
+connection edit therefore cannot make an old review ask a different registry
+about a coincidentally identical name and version. Within one registry, only
+the newest scan for a package/version is eligible: duplicate manual reviews get
+one status owner and one reminder, and a rejected version staged again under a
+new stage ID supersedes the previous incarnation. Supersession is stamped on
+the older rows, so deleting a failed newer scan cannot revive historical stage
+IDs. Discovery creates the new scan row before scheduling status resolution
+and also passes the current stage IDs as a fail-closed race guard.
+
 The dashboard refreshes immediately for newly queued scans, then performs a
 bounded set of follow-up refreshes while the `waitUntil` status lookups finish.
 This keeps the **Check npm** request responsive without requiring a second
@@ -97,7 +107,7 @@ later become stale.
 
 ## Forgotten-approval reminder
 
-Sent once per release, when all four hold: the organization decided `publish`,
+Sent once per registry release, when all four hold: the organization decided `publish`,
 npm still reports `staged` (not `validating` — that is npm working, not a human
 forgetting), the decision is at least 6 hours old, and
 `registry_publish_reminder_at` is unset. The sweep claims that column before
@@ -123,12 +133,17 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Four columns on `scans` (migrations `0027`–`0028`):
+Six columns on `scans` (migrations `0027`–`0030`):
+
+- `registry_url` — registry base URL captured when the scan is created; legacy
+  null rows fail closed and are not polled.
 
 - `registry_version_status` — last known npm status, or null.
 - `registry_version_status_at` — when npm last returned that status.
 - `registry_version_status_attempted_at` — when the lookup last ran, set even on
   failure; this is the throttle and overlapping-sweep fence.
+- `registry_status_superseded_at` — durable marker that a newer scan owns this
+  registry/package/version lifecycle.
 - `registry_publish_reminder_at` — send-once marker for the nudge.
 
 Exported additively as `registryStatus: { status, observedAt } | null` on

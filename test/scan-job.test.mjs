@@ -303,6 +303,7 @@ describe("executeScanJob idempotency", () => {
       dbMock.getScanReleaseIdentity.mockResolvedValue({
         packageName: "pkg",
         stagedVersion: "1.0.0",
+        registryUrl: "https://registry.npmjs.org",
       });
       pipelineMock.runScanPipeline.mockRejectedValue(
         new SandboxError(JSON.stringify({ error: "denied", status: 403 })),

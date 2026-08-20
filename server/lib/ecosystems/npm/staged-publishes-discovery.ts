@@ -233,33 +233,6 @@ export async function discoverAndQueueStagedPublishes(
   });
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
-  // Resolving npm's own state for already-reviewed releases is background
-  // annotation, not part of discovery's answer: it must never add latency to
-  // the "Check npm" button or fail a sweep. Scheduled here because this is the
-  // only per-organization loop that already holds a usable token.
-  executionCtx.waitUntil(
-    resolveNpmReleaseOutcomes({
-      db,
-      env,
-      organizationId,
-      ownerUserId: actorUserId,
-      connection,
-      allowInsecureLocalhost,
-    })
-      .then((outcome) => {
-        if (!outcome.checked) return;
-        emitOperationalEvent("info", "npm.release_outcome.resolved", {
-          organizationId,
-          ...outcome,
-        });
-      })
-      .catch((err) => {
-        emitOperationalEvent("warn", "npm.release_outcome.failed", {
-          organizationId,
-          error: describeOperationalError(err),
-        });
-      }),
-  );
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
   const scanStarts = await mapWithConcurrency(
@@ -286,6 +259,7 @@ export async function discoverAndQueueStagedPublishes(
           source,
           packageName: item.packageName,
           stagedVersion: item.version,
+          registryUrl: connection.registryUrl,
         });
         if (!detail) return null;
         recordProductEvent(env, {
@@ -326,6 +300,35 @@ export async function discoverAndQueueStagedPublishes(
       }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+
+  // Resolving npm's own state for already-reviewed releases is background
+  // annotation, not part of discovery's answer. Schedule it only after newly
+  // discovered scan rows exist, so a restaged version's new incarnation can
+  // supersede its historical review before any status is written.
+  executionCtx.waitUntil(
+    resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId,
+      ownerUserId: actorUserId,
+      connection,
+      stagedItems,
+      allowInsecureLocalhost,
+    })
+      .then((outcome) => {
+        if (!outcome.checked) return;
+        emitOperationalEvent("info", "npm.release_outcome.resolved", {
+          organizationId,
+          ...outcome,
+        });
+      })
+      .catch((err) => {
+        emitOperationalEvent("warn", "npm.release_outcome.failed", {
+          organizationId,
+          error: describeOperationalError(err),
+        });
+      }),
+  );
 
   return {
     found: stageIds.length,

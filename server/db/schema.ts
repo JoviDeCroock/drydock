@@ -139,6 +139,11 @@ export const scans = sqliteTable(
     }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
+    // Registry base URL captured when this staged release was discovered. npm
+    // package coordinates are registry-local, so later connection edits must
+    // never make an old scan query a different registry for the same name and
+    // version.
+    registryUrl: text("registry_url"),
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
     status: text("status").notNull().default("pending"),
@@ -200,6 +205,12 @@ export const scans = sqliteTable(
     registryVersionStatusAttemptedAt: integer("registry_version_status_attempted_at", {
       mode: "timestamp_ms",
     }),
+    // Durable release-target tombstone. Creating a newer review for the same
+    // registry/package/version stamps every older scan, so deleting a failed
+    // newer scan can never make historical stage ids eligible again.
+    registryStatusSupersededAt: integer("registry_status_superseded_at", {
+      mode: "timestamp_ms",
+    }),
     // Send-once stamp for the "you approved this, npm is still waiting" nudge.
     // A separate column rather than an event lookup because the sweep decides
     // whether to send while holding only this row.
@@ -244,8 +255,21 @@ export const scans = sqliteTable(
     // run, every 15 minutes.
     orgRegistryStatusIdx: index("scans_org_registry_status_idx").on(
       table.organizationId,
+      table.registryUrl,
+      table.registryStatusSupersededAt,
       table.registryVersionStatus,
       table.registryVersionStatusAttemptedAt,
+    ),
+    // Supports the correlated newest-incarnation guard in the registry-status
+    // sweep. A package version can be rejected and staged again under a new
+    // stage id, and duplicate manual reviews can also exist for one stage.
+    orgRegistryReleaseIdx: index("scans_org_registry_release_idx").on(
+      table.organizationId,
+      table.registryUrl,
+      table.packageName,
+      table.stagedVersion,
+      table.createdAt,
+      table.id,
     ),
     // Account deletion nulls decided_by_user_id by user id, and D1 enforces the
     // user FK on delete; without this index both walk the whole table.

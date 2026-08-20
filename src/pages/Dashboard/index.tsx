@@ -18,7 +18,7 @@ import {
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
-import { registryStatusBadge } from "./ScanDetail/RegistryStatusNotice";
+import { registryStatusBadge } from "../../features/registry-status";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";

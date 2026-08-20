@@ -115,6 +115,10 @@ describe("scans route background fallback", () => {
       scan: { id: "scan_route", stageId: "stage-route-bg-000001" },
       queued: false,
     });
+    expect(dbMock.createScanJob).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ registryUrl: "https://registry.npmjs.org" }),
+    );
 
     expect(backgrounded).toHaveLength(1);
     await Promise.all(backgrounded);
