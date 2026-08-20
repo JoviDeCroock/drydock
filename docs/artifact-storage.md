@@ -64,6 +64,8 @@ Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.art
 
 When the artifact read succeeds, the scan-detail response also carries the R2-sourced diff as its own `diff` field. That is the complete file diff (from `report.json` / `diff.json`); readers prefer it and fall back to the summary embed, which is the whole diff on legacy/degraded rows and the compacted release delta on artifact-backed ones.
 
+The [report export](./public-reports.md) follows the same preference and discloses which copy it got: its additive `diffStats` object carries `complete` (false only when an artifact-backed scan fell back to the compacted embed) alongside `entryCount` and the `totalCount` / `changedCount` / per-status `counts` of the **complete** diff. The export is the attested subject, so a truncated diff has to say so inside the signed bytes rather than read as the release's whole file list.
+
 ## Summary Diff Compaction
 
 `scans.summary_json` used to embed the whole file diff — one entry per file including every unchanged one, up to the parser's file cap, each carrying two sha256 hex digests. For an artifact-backed scan that is duplication of large immutable data in the metadata store, but it is not dead: it is the last-resort copy behind the fallback read above. So it is compacted rather than dropped (`server/lib/scan/summary-diff.ts`):
@@ -134,11 +136,13 @@ Unset, unparseable, non-positive, or below the floor all mean "delete nothing" a
 
 When enabled, each tick deletes at most `SCAN_RETENTION_MAX_PER_TICK` scans (oldest first, via the `scans_created_idx` index); a backlog drains across ticks. Per scan the sweep:
 
-1. Clears the artifact-metadata columns, so the row stops claiming objects that are about to be deleted.
-2. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left in place** (counted as `deferred`) and the next tick retries.
+1. Sweeps the per-scan R2 prefix. **If the sweep fails, the D1 row is left completely untouched** (counted as `deferred`) and the next tick retries.
+2. Clears the artifact-metadata columns, so the row stops claiming objects that are now gone.
 3. Deletes `scan_findings` and `scan_files`, then the organization-scoped `scans` row.
 
-Step 1 is what makes step 3 survivable. Sweeping R2 first and then failing the row delete would leave a row that still claims to be artifact-backed while its evidence is gone — and because a compacted row has no `scan_files` / `scan_findings` either, and `SCAN_ARTIFACT_READS_DISABLED` is not a recovery path for those rows, it would render as a completed scan with zero files and zero findings. An orphaned R2 object is recoverable by re-running a prefix sweep; a scan that reads clean because its evidence was deleted is not. With this ordering the worst residual state is a metadata-only row that is honest about having no detail and that the next tick finishes.
+Step 2 sits between the other two because the state to design against is a live row that still claims to be artifact-backed after its evidence is gone: an artifact-backed row has no `scan_files` / `scan_findings` either, and `SCAN_ARTIFACT_READS_DISABLED` is not a recovery path for those rows, so it renders as a completed scan with zero files and zero findings while its `risk` and `finding_count` still advertise them. Clearing before the sweep (the previous order) traded that for an equally bad one: a sweep failure — the likeliest of the three, since it is the only step that leaves D1 — stranded a live, expired row that reads just as emptily, with its manifest key and digest already gone, so its still-present objects could no longer be re-linked if retention were switched off before the retry. Sweeping first means that failure leaves the row intact and correct. The sweep does not need the columns it clears: the prefix is derived from the organization and scan ids.
+
+The residual states that remain are transient and self-healing, because a deferred scan is still past the cutoff: a failed clear leaves a row pointing at swept objects until the next tick re-sweeps (a no-op) and clears; a failed delete leaves a metadata-only row whose evidence really is gone and that no reader will chase R2 for, until the next tick deletes it.
 
 Each candidate is wrapped individually, so one failure cannot abort the rest of the backlog. Two kinds of row are excluded from the candidate query rather than deferred, because a permanently-deferred row at the head of a fixed-size oldest-first page would starve every deletable row behind it: scans with no `organization_id` (the org was deleted, so there is no prefix to sweep and no scope for the delete) and scans attached to a **still-pending** workflow gate (deleting one would null a live gate's `scan_id`). Transiently deferred rows are paged past within the same tick for the same reason.
 

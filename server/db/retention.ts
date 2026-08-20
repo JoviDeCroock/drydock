@@ -134,22 +134,37 @@ export function expiredScanCursor(row: ExpiredScanRow): ExpiredScanCursor {
 }
 
 /**
- * Clear a scan's artifact-metadata columns, immediately before its R2 objects are
- * swept. Ordering matters here and the reverse is not survivable:
+ * Clear a scan's artifact-metadata columns: step two of a three-step teardown
+ * (sweep R2 -> clear metadata -> delete the row). Every step can fail on its own,
+ * and this position is the one that leaves the least damage behind.
  *
- * Sweeping R2 first and then failing the D1 delete leaves a row that still claims
- * to be artifact-backed while its evidence is gone. Every detail read then
- * fetches nothing, logs `scan.artifacts.fallback_read`, and — because a compacted
+ * The failure to design around is a live row that still claims to be
+ * artifact-backed after its evidence is gone. Every detail read then fetches
+ * nothing, logs `scan.artifacts.fallback_read`, and — because an artifact-backed
  * row has no `scan_files` / `scan_findings` either, and
  * `SCAN_ARTIFACT_READS_DISABLED` is explicitly not a recovery path for those rows
- * — renders a completed scan with zero files and zero findings. An orphaned R2
- * object is recoverable by re-running the prefix sweep; a scan that reads clean
- * because its evidence was deleted is not.
+ * — renders a completed scan with zero files and zero findings while `risk` and
+ * `finding_count` still advertise the findings it no longer shows. That is what
+ * running this *after* the sweep prevents.
  *
- * Doing it in this order means the worst residual state is a metadata-only row
- * that is honest about having no detail, that no reader will chase R2 for, and
- * that the next tick picks up again (it is still past the cutoff) to finish the
- * delete.
+ * Running it *before* the sweep was the previous order and traded one bad state
+ * for another: a sweep failure (the likeliest of the three, since it is the only
+ * step that leaves D1) then stranded a live, expired row that renders exactly as
+ * emptily, with its manifest key and digest already gone, so its still-present R2
+ * objects could no longer be re-linked if retention were switched off before the
+ * retry. Sweeping first means that same failure leaves the row completely
+ * untouched — it reads correctly, its evidence is intact, and the next tick
+ * retries it.
+ *
+ * The residual states that remain are both transient and self-healing, because a
+ * deferred scan is still past the cutoff and is picked up again next tick:
+ * - clear fails: the row still points at swept objects (the bad state above),
+ *   until the next tick re-sweeps (a no-op) and clears.
+ * - delete fails: a metadata-only row whose evidence really is gone and which no
+ *   reader will chase R2 for, until the next tick deletes it.
+ *
+ * The sweep does not need these columns: `deleteScanArtifacts` derives its prefix
+ * from the organization and scan ids, so the retry works after they are nulled.
  */
 export async function clearScanArtifactMetadata(
   db: AppDb,

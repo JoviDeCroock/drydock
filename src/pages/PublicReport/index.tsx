@@ -41,6 +41,14 @@ interface PublicReport {
     contextFindingCount: number;
   } | null;
   diff: Array<{ path: string; status: string }> | null;
+  // Describes `diff` above. Absent on reports exported before the field existed
+  // (schema drydock.report.v2 gained it additively), so every read is optional.
+  diffStats?: {
+    complete: boolean;
+    entryCount: number;
+    totalCount: number;
+    changedCount: number;
+  } | null;
   findings: Array<{
     severity: string;
     file: string;
@@ -152,6 +160,10 @@ export default function PublicReportPage() {
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
   const findings = sortedFindings.value;
   const changes = changedFiles.value;
+  // The report's own count of changed files in the release, which survives an
+  // export whose `diff` was truncated to the compacted summary embed.
+  const totalChanged = data.diffStats?.changedCount ?? changes.length;
+  const diffTruncated = data.diffStats ? !data.diffStats.complete : false;
 
   return (
     <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
@@ -249,9 +261,14 @@ export default function PublicReportPage() {
               </li>
             ))}
           </ul>
-          {changes.length > MAX_LISTED_CHANGES ? (
+          {diffTruncated ? (
             <EmptyLine>
-              And {changes.length - MAX_LISTED_CHANGES} more changed files in the full report.
+              This report carries a partial file list — {changes.length} of {totalChanged} changed
+              files in the release. The findings and risk verdict above cover the whole release.
+            </EmptyLine>
+          ) : totalChanged > MAX_LISTED_CHANGES ? (
+            <EmptyLine>
+              And {totalChanged - MAX_LISTED_CHANGES} more changed files in the full report.
             </EmptyLine>
           ) : null}
         </section>

@@ -284,11 +284,11 @@ async function deleteOneExpiredScan(
   auditEvents: Date,
 ): Promise<number | null> {
   // Order is load-bearing; see clearScanArtifactMetadata.
+  const swept = await deleteScanArtifacts(bucket, candidate.organizationId, candidate.id);
+  if (!swept.ok) return null;
   if (candidate.artifactStorageVersion !== null) {
     await clearScanArtifactMetadata(db, candidate.id, candidate.organizationId);
   }
-  const swept = await deleteScanArtifacts(bucket, candidate.organizationId, candidate.id);
-  if (!swept.ok) return null;
   const deleted = await deleteScanWithChildren(
     db,
     candidate.id,

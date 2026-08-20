@@ -418,12 +418,12 @@ describe("scan retention", () => {
     expect(events.every((row) => row.scanId === null)).toBe(true);
   });
 
-  test("clears artifact metadata before the R2 sweep, so a failed row delete stays honest", async () => {
+  test("clears artifact metadata after the R2 sweep, so a failed row delete stays honest", async () => {
     const owner = await seedUser();
     const scanId = await seedAgedScan(owner, 400);
-    // Let the metadata update and the R2 sweep through, then fail the row delete.
-    // This is the ordering that used to leave an artifact-backed row whose
-    // evidence was already gone, rendering as a clean, finding-free scan.
+    // Let the R2 sweep and the metadata update through, then fail the row delete.
+    // Without the metadata clear this leaves an artifact-backed row whose
+    // evidence is already gone, rendering as a clean, finding-free scan.
     const prepare = env.DB.prepare.bind(env.DB);
     const failingDb = {
       prepare(query: string) {
@@ -451,6 +451,38 @@ describe("scan retention", () => {
     expect(row?.artifactStorageVersion).toBeNull();
     expect(row?.reportArtifactKey).toBeNull();
     expect(row?.diffArtifactKey).toBeNull();
+  });
+
+  test("a failed R2 sweep leaves the scan row completely intact", async () => {
+    const owner = await seedUser();
+    const scanId = await seedAgedScan(owner, 400);
+    // The sweep is the only teardown step that leaves D1, so it is the likeliest
+    // to fail. Clearing the artifact columns first would strand a live, expired
+    // scan that renders with zero files and zero findings while its `risk` and
+    // `finding_count` still advertise them — and with its manifest key gone, its
+    // still-present R2 objects could not be re-linked.
+    const failingBucket = {
+      list: async () => {
+        throw new Error("R2 unavailable");
+      },
+      delete: async () => {},
+    } as unknown as R2Bucket;
+
+    const result = await runRetentionSweep({
+      ...env,
+      ARTIFACTS: failingBucket,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    expect(result.scans).toMatchObject({ deleted: 0, deferred: 1 });
+    const [row] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    expect(row?.artifactStorageVersion).not.toBeNull();
+    expect(row?.artifactManifestKey).not.toBeNull();
+    expect(row?.artifactManifestDigest).not.toBeNull();
+    expect(row?.reportArtifactKey).not.toBeNull();
+    expect(row?.diffArtifactKey).not.toBeNull();
+    // Nothing was deleted, so the next tick can still read and finish it.
+    expect(await scanKeys(owner.organizationId, scanId)).not.toEqual([]);
   });
 
   test("a deferred scan does not starve the deletable ones behind it", async () => {
