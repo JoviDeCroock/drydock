@@ -1,0 +1,20 @@
+{
+  "id": "atpm-provenance-invalid",
+  "title": "Published provenance bundle does not verify",
+  "category": "provenance-validation",
+  "intent": "Pins the high-severity finding emitted when a publisher-written atpm record carries an unverifiable Sigstore bundle.",
+  "target": {
+    "provenance": {
+      "status": "invalid",
+      "reason": "transparency-log inclusion promise does not verify"
+    }
+  },
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "atpm.provenance-invalid",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ]
+}

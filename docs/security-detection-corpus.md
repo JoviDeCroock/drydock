@@ -30,7 +30,8 @@ Corpus fixtures must follow the same artifact-retention posture as production sc
 
 ## Fixture format
 
-Fixtures live under `test/fixtures/security-corpus/cases/*.json` and are evaluated by `test/security-corpus.test.mjs`.
+npm fixtures live under `test/fixtures/security-corpus/cases/*.json` and are evaluated by
+`test/security-corpus.test.mjs`. Ecosystem-specific schemas and harnesses are documented below.
 
 Required fields:
 
@@ -70,6 +71,7 @@ The first corpus slice covers:
 - malformed `package.json` parse failure;
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
+- atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
 ## Known coverage gaps
 
@@ -343,6 +345,13 @@ never seen before in 180 days) is indistinguishable from a monorepo release trai
 `release.source-drift` is unchanged. See [`release-fingerprint.md`](./release-fingerprint.md) for the
 conditions any revived burst rule would have to meet.
 
+`1.28.0` adds the atpm provenance rule family: `atpm.provenance-invalid`,
+`atpm.provenance-subject-mismatch`, `atpm.provenance-publisher-mismatch`,
+`atpm.provenance-missing`, and `atpm.trusted-publishing-lost`. The golden cases under
+`test/fixtures/security-corpus/cases-atpm/` pin each rule's severity and risk, plus a matching verified
+build that must stay quiet; the detection eval consumes the same cases through the production
+`atpmRecordFindings` path.
+
 ### Fixture format
 
 Required fields:
@@ -416,3 +425,23 @@ The corpus records these intentional blind spots rather than hiding them:
 - PyPI corpus only: `pnpm run test:node -- security-corpus-pypi.test.mjs`
 - Regression net after a rules-version bump: `pnpm run test:node -- security-corpus.test.mjs pypi.test.mjs`
 - Full pre-commit parity: `pnpm run verify`
+
+## atpm corpus
+
+The atpm provenance rules have a golden corpus under
+`test/fixtures/security-corpus/cases-atpm/`, evaluated by
+`test/security-corpus-atpm.test.mjs`. The fixtures are record projections rather than package files
+because the signals compare verified provenance, downloaded archive digests, and the publisher's
+trusted-publishing declaration. `test/helpers/atpm-security-corpus.mjs` feeds those projections through
+the production `atpmRecordFindings` path and rolls their findings up with `computeRisk()`.
+
+Required fields are `id`, `title`, `category`, `intent`, `expectedRisk`, and exact
+`expectedFindings[{ ruleId, severity, file }]`. Optional inputs mirror the finding function:
+`target`, `manifest`, `archiveSha1`, `archiveSha512`, `recordName`, `trustPublisher`, `baseline`, and
+`baselineArchiveSha512`. Keep all identities, repositories, digests, and timestamps synthetic.
+
+Run the atpm corpus alone with:
+
+```sh
+pnpm test -- test/security-corpus-atpm.test.mjs --project node
+```

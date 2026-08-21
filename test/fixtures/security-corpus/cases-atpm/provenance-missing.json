@@ -1,0 +1,24 @@
+{
+  "id": "atpm-provenance-missing",
+  "title": "Trusted publisher release carries no attestation",
+  "category": "provenance-absence",
+  "intent": "Pins the low-severity signal for a release that declares trusted publishing but carries no build attestation.",
+  "trustPublisher": {
+    "createdAt": "2026-08-21T11:00:00.000Z",
+    "allowStage": true,
+    "allowPublish": false,
+    "github": {
+      "username": "publisher",
+      "repository": "package",
+      "workflow": "publish.yml"
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "atpm.provenance-missing",
+      "severity": "low",
+      "file": "package.json"
+    }
+  ]
+}

@@ -5,7 +5,8 @@ be _measured_, not assumed. This harness measures detection quality and turns th
 regex/sampling blind spots into numbers we can move.
 
 It is deliberately separate from the golden corpus tests
-(`test/security-corpus.test.mjs`, `test/security-corpus-pypi.test.mjs`), which
+(`test/security-corpus.test.mjs`, `test/security-corpus-pypi.test.mjs`,
+`test/security-corpus-atpm.test.mjs`), which
 assert exact rule output and exist to catch regressions. Two different jobs:
 
 |            | Golden regression (existing)              | Eval harness (this)                                        |
@@ -16,8 +17,8 @@ assert exact rule output and exist to catch regressions. Two different jobs:
 | Value      | Don't break a known case                  | Know our false-negative / false-positive / evasion profile |
 
 The harness reuses the real detection code (`deterministicFindings` + risk for
-npm, `createPyPiReleaseCandidateReview` for PyPI), so it can never drift from
-what production runs.
+npm, `createPyPiReleaseCandidateReview` for PyPI, and `atpmRecordFindings` for
+atpm), so it can never drift from what production runs.
 
 ## Running it
 
@@ -43,11 +44,12 @@ false positives, and evasion robustness without digging through logs.
 test/fixtures/security-corpus/
   cases/          npm golden cases     (regression set, also consumed by the eval)
   cases-pypi/     PyPI golden cases    (regression set)
+  cases-atpm/     atpm provenance golden cases (regression set)
   cases-frontier/ truth-labeled hard cases the rules may MISS  (reported, not gated)
   cases-benign/   benign hard-negatives that the rules may flag (reported, not gated)
 ```
 
-`cases/` and `cases-pypi/` keep their existing golden schema; the eval infers
+`cases/`, `cases-pypi/`, and `cases-atpm/` keep their existing golden schema; the eval infers
 their labels. `cases-frontier/` and `cases-benign/` use the v2 schema below and
 are eval-only (the golden tests never read them, so a frontier miss or a benign
 false positive does not break the regression suite).
@@ -60,7 +62,7 @@ Additive over the golden schema — all golden fields still work.
 {
   "id": "npm-assembled-require-exfil",
   "title": "…",
-  "ecosystem": "npm",                  // npm | pypi (default npm)
+  "ecosystem": "npm",                  // npm | pypi | atpm (default npm)
   "verdict": "malicious",              // malicious | benign | suspicious
   "threatClass": "obfuscated-dropper", // taxonomy, see below
   "source": "synthetic-adversarial",   // synthetic | synthetic-adversarial | real-sanitized | benign-popular
@@ -72,6 +74,7 @@ Additive over the golden schema — all golden fields still work.
   "previousPackageJson": { … }, "stagedPackageJson": { … },
   "previousFiles": [ … ], "stagedFiles": [ … ]
   // pypi payload: "manifest", "artifacts", "previousArtifacts" (as in cases-pypi/)
+  // atpm payload: target/baseline record projections, archive digests, trustPublisher
 }
 ```
 
@@ -89,10 +92,13 @@ Recall is measured per class so blind spots are visible. Malicious:
 `wheel-integrity` (PyPI), `pth-injection` (PyPI). Benign hard-negatives:
 `legit-build-infrastructure`, `legit-childprocess`, `legit-documentation`,
 `legit-dynamic-require`, `legit-entrypoint-declaration`, `legit-test-suite`.
+atpm golden cases add release-provenance classes for invalid, missing, mismatched,
+or regressed attestations plus a matching-provenance control.
 
 ## Metrics
 
-- **Regression recall (gated).** Malicious recall over `cases/` + `cases-pypi/`.
+- **Regression recall (gated).** Malicious recall over `cases/` + `cases-pypi/` +
+  `cases-atpm/`.
   This set is golden-tuned, so it is ~100% by construction — its job is
   regression protection, not quality measurement.
 - **Frontier recall (reported).** Recall over `cases-frontier/`, which are
