@@ -12,8 +12,8 @@
 //   - `authorityDigest` covers only the projected authority, so a cosmetic edit
 //     leaves it untouched.
 // A third, narrower `executionDigest` lets the delta attribute changes to
-// conditions, dependencies, environment mappings, commands, and execution
-// controls without persisting their values.
+// conditions, dependencies, environment mappings, commands, action ordering,
+// and execution controls without persisting their values.
 // A release where raw digests moved but authority digests did not is exactly
 // the "cosmetic change" case that must never raise a high-signal warning.
 //
@@ -62,7 +62,7 @@ export interface AuthorityWorkflowRef {
   rawDigest: string | null;
   /** sha256 of this workflow's authority projection; stable across cosmetic edits. */
   authorityDigest: string | null;
-  /** sha256 of conditions, dependencies, env mappings, commands, and execution controls. */
+  /** sha256 of conditions, dependencies, env mappings, commands, action ordering, and controls. */
   executionDigest: string | null;
 }
 
@@ -94,7 +94,7 @@ export interface AuthorityActionRef {
   uses: string;
   /** The part after `@`, or null for a local path reference. */
   ref: string | null;
-  /** True when the reference cannot move: a 40-hex commit sha, or a local path. */
+  /** True when the reference cannot move: a 40-hex sha or a commit-bound local path. */
   pinned: boolean;
   /** `secrets: inherit` on a reusable-workflow call hands over the caller's secrets. */
   secretsInherit: boolean;
@@ -193,7 +193,7 @@ export interface WorkflowSource {
   documentComplete: boolean;
   /**
    * Bounded digests of local-action directories referenced by this workflow,
-   * keyed by the trimmed `uses: ./...` value. The control-plane fetcher builds
+   * keyed by the trimmed `uses: $/...` value. The control-plane fetcher builds
    * these from Git blob/tree identities at the workflow's resolved commit.
    */
   localActionDigests?: Readonly<Record<string, string>>;
@@ -444,7 +444,15 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     const jobUses = asString(job.uses);
     if (jobUses) {
       projection.actions.push(
-        await readActionRef(workflow, jobName, jobUses, job.secrets, job.with),
+        await readActionRef(
+          workflow,
+          jobName,
+          jobUses,
+          job.secrets,
+          job.with,
+          null,
+          "workflow_commit",
+        ),
       );
     }
 
@@ -452,6 +460,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     for (const [stepIndex, rawStep] of steps.entries()) {
       const step = asRecord(rawStep);
       if (!step) continue;
+      const stepUses = asString(step.uses);
       const stepExecutionContext = await readExecutionContext(
         workflow,
         jobName,
@@ -460,6 +469,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         null,
         step.env,
         {
+          action: stepUses ? actionIdentity(stepUses) : undefined,
           continueOnError: step["continue-on-error"],
           run: step.run,
           shell: step.shell,
@@ -491,6 +501,7 @@ async function readExecutionContext(
   needsValue: YamlValue,
   envValue: YamlValue,
   controlValues: {
+    action?: YamlValue;
     strategy?: YamlValue;
     continueOnError?: YamlValue;
     runsOn?: YamlValue;
@@ -508,6 +519,7 @@ async function readExecutionContext(
   const env = asRecord(envValue);
   const envDigest = env && Object.keys(env).length > 0 ? await sha256Hex(stableJson(env)) : null;
   const controls: { [key: string]: YamlValue } = {};
+  if (controlValues.action != null) controls.action = controlValues.action;
   if (controlValues.strategy != null) controls.strategy = controlValues.strategy;
   if (controlValues.continueOnError != null) {
     controls.continueOnError = controlValues.continueOnError;
@@ -640,6 +652,7 @@ async function readStep(
         step.secrets,
         step.with,
         source.localActionDigests?.[uses.trim()] ?? null,
+        uses.trim().startsWith("$/") ? "workflow_commit" : "workspace",
       ),
     );
     if (isPublishAction(actionName)) {
@@ -838,6 +851,7 @@ async function readActionRef(
   secrets: YamlValue,
   inputs: YamlValue,
   localActionDigest: string | null = null,
+  localResolution: "workflow_commit" | "workspace" = "workspace",
 ): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
   const local = trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("$/");
@@ -854,9 +868,13 @@ async function readActionRef(
     job,
     uses: trimmed,
     ref,
-    // A local path rides the same commit as the caller, so it moves only when
-    // the caller's commit does. Everything else is pinned only by a full sha.
-    pinned: local || isCommitSha(ref),
+    // A reusable workflow's local path and a step action using `$/` resolve at
+    // the caller's commit. A step action using `./` resolves from
+    // `github.workspace`, whose checkout may point at another repository/ref.
+    pinned:
+      (localResolution === "workflow_commit" &&
+        (trimmed.startsWith("./") || trimmed.startsWith("$/"))) ||
+      isCommitSha(ref),
     secretsInherit: asString(secrets)?.trim().toLowerCase() === "inherit",
     configurationDigest: hasConfiguration
       ? await sha256Hex(

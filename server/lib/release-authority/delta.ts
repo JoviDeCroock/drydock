@@ -401,13 +401,15 @@ function unexplainedAuthorityChanges(
     // Execution controls are deliberately not persisted as values, but their
     // dedicated digest lets us keep this signal even when another categorized
     // change in the same workflow would otherwise make the aggregate authority
-    // digest look fully explained.
+    // digest look fully explained. Action identities are included by step
+    // position so an action reorder remains reviewable too.
     if (before.executionDigest !== item.executionDigest) {
       changes.push({
         kind: "workflow_authority_changed",
         significance: "medium",
         scope: item.path,
-        subject: "conditions, dependencies, environment mappings, commands, or execution controls",
+        subject:
+          "conditions, dependencies, environment mappings, commands, action ordering, or execution controls",
         before: before.executionDigest?.slice(0, 12) ?? "not captured",
         after: item.executionDigest?.slice(0, 12) ?? "not captured",
       });

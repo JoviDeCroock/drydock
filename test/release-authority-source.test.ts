@@ -177,10 +177,7 @@ describe("fetchReleaseAuthoritySources", () => {
     expect(seen.some((entry) => entry.url.includes("/repos/octo/shared/contents/"))).toBe(false);
   });
 
-  it.each([
-    ["./actions/publish", "actions/publish"],
-    ["$/.github/actions/publish", ".github/actions/publish"],
-  ])(
+  it.each([["$/.github/actions/publish", ".github/actions/publish"]])(
     "binds local action %s to its complete directory tree at the run commit",
     async (uses, actionPath) => {
       const actionSegments = actionPath.split("/");
@@ -231,13 +228,41 @@ jobs:
     },
   );
 
+  it("does not bind a workspace-relative action to the workflow commit", async () => {
+    const workflow = `on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/publish
+`;
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+      if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+        return new Response(workflow);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.unresolved).toEqual([
+      {
+        path: ".github/workflows/release.yml -> ./actions/publish",
+        reason: "not_accessible",
+      },
+    ]);
+    expect(sources.workflows[0].localActionDigests).toEqual({});
+    expect(seen.some((entry) => entry.url.includes("/git/commits/"))).toBe(false);
+  });
+
   it("changes a local-action digest when Git's directory identity changes", async () => {
     const workflow = `on: push
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: ./action
+      - uses: $/action
 `;
     const digestForTree = async (actionTreeSha: string) => {
       mockGithub((url) => {
@@ -270,7 +295,7 @@ jobs:
         throw new Error(`unexpected ${url}`);
       });
       const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
-      return sources.workflows[0].localActionDigests?.["./action"];
+      return sources.workflows[0].localActionDigests?.["$/action"];
     };
 
     // Git computes a different directory tree SHA when an immediate child's
@@ -289,8 +314,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: ./actions/one
-      - uses: ./actions/two
+      - uses: $/actions/one
+      - uses: $/actions/two
 `;
     const rootTree = "b".repeat(40);
     const actionsTree = "c".repeat(40);
@@ -332,8 +357,8 @@ jobs:
 
     expect(sources.unresolved).toEqual([]);
     expect(Object.keys(sources.workflows[0].localActionDigests ?? {})).toEqual([
-      "./actions/one",
-      "./actions/two",
+      "$/actions/one",
+      "$/actions/two",
     ]);
     expect(seen.filter((entry) => entry.url.endsWith(`/git/trees/${rootTree}`))).toHaveLength(1);
     expect(seen.filter((entry) => entry.url.endsWith(`/git/trees/${actionsTree}`))).toHaveLength(1);
@@ -345,7 +370,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: ./actions/publish
+      - uses: $/actions/publish
 `;
     mockGithub((url) => {
       if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
@@ -359,7 +384,7 @@ jobs:
 
     expect(sources.unresolved).toEqual([
       {
-        path: ".github/workflows/release.yml -> ./actions/publish",
+        path: ".github/workflows/release.yml -> $/actions/publish",
         reason: "not_accessible",
       },
     ]);

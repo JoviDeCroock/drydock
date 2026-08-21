@@ -531,7 +531,8 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
     expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
       scope: ENTRY,
-      subject: "conditions, dependencies, environment mappings, commands, or execution controls",
+      subject:
+        "conditions, dependencies, environment mappings, commands, action ordering, or execution controls",
     });
   });
 
@@ -928,6 +929,30 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).not.toContain("workflow_authority_changed");
   });
 
+  it("reports action reordering beside another categorized change", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      "      - uses: actions/setup-python@v5\n" +
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+    );
+    const current = prior
+      .replace('      - "v*"', '      - "release-*"')
+      .replace(
+        "      - uses: actions/setup-python@v5\n" +
+          "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n" +
+          "      - uses: actions/setup-python@v5\n",
+      );
+
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "trigger_filter_changed")).toBeDefined();
+    expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
+      significance: "medium",
+      subject: expect.stringContaining("action ordering"),
+    });
+  });
+
   it("flags a changed artifact producer/consumer path", async () => {
     const delta = await deltaBetween(
       BASE_WORKFLOW,
@@ -1109,18 +1134,18 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: ./actions/publish
+      - uses: $/actions/publish
 `;
 
     it("flags a changed local-action directory with unchanged workflow YAML", async () => {
       const prior = await makeSnapshot({
         workflows: [
-          { path: ENTRY, content: workflow, localActionDigests: { "./actions/publish": "a" } },
+          { path: ENTRY, content: workflow, localActionDigests: { "$/actions/publish": "a" } },
         ],
       });
       const current = await makeSnapshot({
         workflows: [
-          { path: ENTRY, content: workflow, localActionDigests: { "./actions/publish": "b" } },
+          { path: ENTRY, content: workflow, localActionDigests: { "$/actions/publish": "b" } },
         ],
       });
 
@@ -1133,16 +1158,10 @@ jobs:
       expect(delta.status).toBe("changed");
     });
 
-    it("treats GitHub's same-repository local-action path forms as pinned equivalents", async () => {
-      const priorWorkflow = workflow.replace("./actions/publish", "./.github/actions/publish");
+    it("distinguishes workspace-relative actions from commit-bound actions", async () => {
+      const priorWorkflow = workflow.replace("$/actions/publish", "./.github/actions/publish");
       const prior = await makeSnapshot({
-        workflows: [
-          {
-            path: ENTRY,
-            content: priorWorkflow,
-            localActionDigests: { "./.github/actions/publish": "a" },
-          },
-        ],
+        workflows: [{ path: ENTRY, content: priorWorkflow }],
       });
       const currentWorkflow = priorWorkflow.replace("./.github", "$/.github");
       const current = await makeSnapshot({
@@ -1160,21 +1179,28 @@ jobs:
       expect(current.actions).toEqual([
         expect.objectContaining({ uses: "$/.github/actions/publish", ref: null, pinned: true }),
       ]);
+      expect(prior.actions).toEqual([
+        expect.objectContaining({ uses: "./.github/actions/publish", ref: null, pinned: false }),
+      ]);
       expect(delta.standing.mutableRefs).toEqual([]);
-      expect(delta.status).toBe("cosmetic");
-      expect(delta.requiresApproval).toBe(false);
+      expect(find(delta.changes, "action_pinned")).toMatchObject({
+        significance: "low",
+        subject: "./.github/actions/publish",
+      });
+      expect(delta.status).toBe("changed");
+      expect(delta.requiresApproval).toBe(true);
     });
 
     it("flags changed local-action inputs with an unchanged directory", async () => {
       const priorWorkflow = workflow.replace(
-        "      - uses: ./actions/publish\n",
-        "      - uses: ./actions/publish\n        with:\n          registry: https://registry.npmjs.org\n",
+        "      - uses: $/actions/publish\n",
+        "      - uses: $/actions/publish\n        with:\n          registry: https://registry.npmjs.org\n",
       );
       const currentWorkflow = priorWorkflow.replace(
         "https://registry.npmjs.org",
         "https://packages.example.test",
       );
-      const localActionDigests = { "./actions/publish": "unchanged" };
+      const localActionDigests = { "$/actions/publish": "unchanged" };
       const prior = await makeSnapshot({
         workflows: [{ path: ENTRY, content: priorWorkflow, localActionDigests }],
       });

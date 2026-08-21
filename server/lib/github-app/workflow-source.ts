@@ -236,7 +236,11 @@ export async function fetchReleaseAuthoritySourcesWithToken(
     const localActionDigests = Object.create(null) as Record<string, string>;
     for (const uses of collectLocalActionUses(document)) {
       const actionPath = normalizeLocalActionPath(uses);
-      if (!actionPath || !request.ref) {
+      // `$/` is explicitly bound to the running workflow's repository and
+      // commit. `./` resolves from github.workspace, which an earlier checkout
+      // step may have populated from another repository or moving ref, so do
+      // not attest it with bytes fetched from the workflow commit.
+      if (!uses.startsWith("$/") || !actionPath || !request.ref) {
         unresolved.push({ path: `${qualifiedPath} -> ${uses}`, reason: "not_accessible" });
         continue;
       }

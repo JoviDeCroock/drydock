@@ -57,8 +57,8 @@ Two distinctions carry most of the signal quality.
 digests: a `rawDigest` over its bytes, which moves on any edit at all, and an
 `authorityDigest` over its projected authority, which does not move for
 comments, key reordering, or formatting. A narrower `executionDigest` attributes
-otherwise opaque condition, dependency, environment-mapping, command, runner,
-container, service, output, matrix, and `continue-on-error` changes without
+otherwise opaque condition, dependency, environment-mapping, command, action-order,
+runner, container, service, output, matrix, and `continue-on-error` changes without
 persisting those values. A release where raw digests moved but authority digests did not reports
 `cosmetic` and never raises a high-signal warning. The authority digest covers
 the full bounded workflow projection before long values are shortened for
@@ -124,11 +124,13 @@ A snapshot records:
 - GitHub Environment names per job;
 - every `uses:` reference with its ref, whether it is pinned to a 40-hex commit,
   and whether the call inherits secrets; every action call carries a digest of
-  its `with:` inputs and explicit `secrets:` map, while local actions also carry
-  a bounded digest of their complete directory tree at the workflow's resolved
-  commit. Both GitHub same-repository forms (`./path` and `$/path`) are
-  normalized and hashed, so source, credential, target, or protected-subject
-  changes are detected without persisting those values;
+  its `with:` inputs and explicit `secrets:` map. Step-local `$/path` actions are
+  bound to and hashed at the workflow's resolved commit. By contrast, `./path`
+  resolves from `github.workspace`, which a checkout step may populate from
+  another repository or moving ref; those calls stay mutable and their source
+  coverage is reported as unresolved rather than being falsely attested with
+  workflow-repository bytes. Job-level reusable-workflow calls keep GitHub's
+  separate semantics: both local path forms resolve at the caller's commit;
 - detected publish steps (known publishing actions and publish commands); shell
   commands are stored as a safe category plus a digest, never as raw text that
   could contain a literal credential;
