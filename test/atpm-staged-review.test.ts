@@ -252,6 +252,7 @@ describe("staged candidate findings", () => {
           subjectName: atpmPurl("@ebey.dev/counter", "0.0.15"),
           subjectSha512: baselineArchiveSha512,
           logIndex: "1",
+          logBaseUrl: "https://rekor.sigstore.dev",
           signedAt: "2026-08-12T06:28:24.000Z",
         },
       },

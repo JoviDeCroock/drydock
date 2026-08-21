@@ -974,12 +974,33 @@ export function attestationLinks(build: NonNullable<PublicDiffAttestation["build
     ref: repo && refName ? `${repo}/tree/${encodePath(refName)}` : null,
     commit: repo && commit ? `${repo}/commit/${commit}` : null,
     run: githubUrl(build.runUrl),
-    // Rekor's public viewer; the index is the entry's address in the log.
-    rekor:
-      build.logIndex && /^\d+$/.test(build.logIndex)
-        ? `https://search.sigstore.dev/?logIndex=${build.logIndex}`
-        : null,
+    // Rekor indices are local to one log. Link the exact instance whose pinned
+    // key authenticated this entry. Rekor v2 exposes immutable entry bundles
+    // through the tiled-log read API rather than Rekor v1's lookup endpoint.
+    rekor: rekorEvidenceUrl(build.logBaseUrl, build.logIndex),
   };
+}
+
+function rekorEvidenceUrl(baseUrl: string, logIndex: string | null): string | null {
+  if (!logIndex || !/^\d{1,20}$/.test(logIndex)) return null;
+  const index = BigInt(logIndex);
+  if (index > 0xffff_ffff_ffff_ffffn) return null;
+  if (baseUrl === "https://rekor.sigstore.dev") {
+    return `${baseUrl}/api/v1/log/entries?logIndex=${logIndex}`;
+  }
+  if (baseUrl !== "https://log2025-1.rekor.sigstore.dev") return null;
+
+  if (index > 0x7fff_ffff_ffff_ffffn) return null;
+  let tileIndex = index / 256n;
+  const elements: string[] = [];
+  do {
+    elements.unshift((tileIndex % 1000n).toString().padStart(3, "0"));
+    tileIndex /= 1000n;
+  } while (tileIndex > 0n);
+  const tilePath = elements
+    .map((element, position) => (position < elements.length - 1 ? `x${element}` : element))
+    .join("/");
+  return `${baseUrl}/tile/entries/${tilePath}`;
 }
 
 /** `https://github.com/<owner>/<repo>`, rebuilt from the parsed URL, or null. */

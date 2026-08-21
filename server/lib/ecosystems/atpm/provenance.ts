@@ -46,10 +46,10 @@ import {
 
 /**
  * Cache-identity segment for provenance verification. Bump whenever a bundle's
- * verdict can change, so a cached result cannot outlive the rules that produced
- * it.
+ * verified output or verdict can change, so a cached result cannot outlive the
+ * rules that produced it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "8";
+export const ATPM_PROVENANCE_RULES_VERSION = "9";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -96,12 +96,14 @@ mygUY7Ii2zbdCdliiow=
 const REKOR_LOG_KEYS = [
   {
     keyId: "wNI9atQGlz+VWfO6LRygH4QUfY/8W4RFwiT5i5WRgB0=",
+    baseUrl: "https://rekor.sigstore.dev",
     spki: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwrkBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==",
     validFrom: Date.parse("2021-01-12T11:53:27Z"),
     algorithm: { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" } as const,
   },
   {
     keyId: "zxGZFVvd0FEmjR8WrFwMdcAJ9vtaY/QXf44Y1wUeP6A=",
+    baseUrl: "https://log2025-1.rekor.sigstore.dev",
     spki: "MCowBQYDK2VwAyEAt8rlp1knGwjfbcXAYPYAkn0XiLz1x8O4t0YkEhie244=",
     validFrom: Date.parse("2025-09-23T00:00:00Z"),
     algorithm: { name: "Ed25519" } as const,
@@ -181,6 +183,8 @@ export interface AtpmProvenance {
   subjectSha512: string;
   /** Rekor log index authenticated by the log's signed-entry timestamp. */
   logIndex: string | null;
+  /** Rekor instance whose pinned key authenticated `logIndex`. */
+  logBaseUrl: string;
   /** Signing time authenticated by the log's signed-entry timestamp. */
   signedAt: string | null;
 }
@@ -392,6 +396,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       subjectName: statement.subjectName,
       subjectSha512: statement.subjectSha512,
       logIndex: transparencyLog.entry.logIndex,
+      logBaseUrl: transparencyLog.entry.logBaseUrl,
       signedAt: signedAt.toISOString(),
     },
   };
@@ -524,6 +529,7 @@ function transparencyLogTime(entry: Record<string, unknown>): Date | null {
 interface VerifiedTransparencyLogEntry {
   signedAt: Date;
   logIndex: string;
+  logBaseUrl: string;
 }
 
 type TransparencyLogSelection =
@@ -638,7 +644,9 @@ async function verifyTransparencyLogEntry(
     }),
   );
   const verified = await verifyWithSpkiKey(spki, signature, payload, trustedKey.algorithm);
-  return verified ? { signedAt, logIndex: String(logIndex) } : false;
+  return verified
+    ? { signedAt, logIndex: String(logIndex), logBaseUrl: trustedKey.baseUrl }
+    : false;
 }
 
 function bytesToHex(bytes: Uint8Array): string {

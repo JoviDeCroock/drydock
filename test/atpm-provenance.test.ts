@@ -224,6 +224,7 @@ describe("verifyAtpmProvenance", () => {
     expect(state.provenance.subjectName).toBe("pkg:npm/sigstore@3.0.0");
     expect(state.provenance.subjectSha512).toBe(SUBJECT_SHA512);
     expect(state.provenance.logIndex).toBe("139985224");
+    expect(state.provenance.logBaseUrl).toBe("https://rekor.sigstore.dev");
     // Fulcio leaves expire in minutes, so the window has to be evaluated at the
     // recorded signing time or every historical release would read as invalid.
     expect(state.provenance.signedAt).toBe("2024-10-14T16:13:45.000Z");

@@ -99,8 +99,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // candidate's record CID and applies the staged-only metadata invariants;
   // cached v7 reviews may have accepted an echoed CID or historical scope.
   // v9 binds baseline provenance to its tarball and fails closed when a staged
-  // candidate's publisher has no currently verified handle.
-  payloadVersion: "v9",
+  // candidate's publisher has no currently verified handle. v10 carries the
+  // authenticated Rekor instance alongside its log-local index.
+  payloadVersion: "v10",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -431,6 +432,7 @@ function describeAttestation(
     runnerEnvironment: provenance.runnerEnvironment,
     signedAt: provenance.signedAt,
     logIndex: provenance.logIndex,
+    logBaseUrl: provenance.logBaseUrl,
   };
   const expectedSubject = entry.declaredName ? atpmPurl(entry.declaredName, entry.version) : null;
   const mismatches: string[] = [];

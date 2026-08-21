@@ -47,6 +47,8 @@ interface PublicDiffAttestationBuild {
   signedAt: string | null;
   /** Transparency-log index authenticated by the log's signed promise. */
   logIndex: string | null;
+  /** Transparency-log instance whose pinned key authenticated `logIndex`. */
+  logBaseUrl: string;
 }
 
 /**

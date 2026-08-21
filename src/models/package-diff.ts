@@ -32,6 +32,7 @@ export interface PublicDiffAttestation {
     runnerEnvironment: string | null;
     signedAt: string | null;
     logIndex: string | null;
+    logBaseUrl: string;
   };
   reason?: string;
   declared?: { repository: string; workflow: string; allowPublish: boolean };

@@ -20,6 +20,7 @@
         "subjectName": "pkg:npm/%40publisher.example/package@1.0.0",
         "subjectSha512": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "logIndex": "1",
+        "logBaseUrl": "https://rekor.sigstore.dev",
         "signedAt": "2026-08-20T12:00:00.000Z"
       }
     }

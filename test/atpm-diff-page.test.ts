@@ -17,6 +17,7 @@ describe("atpm build provenance copy", () => {
             runnerEnvironment: "github-hosted",
             signedAt: "2026-08-21T00:00:00.000Z",
             logIndex: "1",
+            logBaseUrl: "https://rekor.sigstore.dev",
           },
         },
         false,

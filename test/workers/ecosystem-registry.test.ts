@@ -70,12 +70,12 @@ describe("ecosystem capability registry", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
     const adapter = getPublicDiffAdapter("atpm");
-    expect(adapter?.payloadVersion).toBe("v9");
+    expect(adapter?.payloadVersion).toBe("v10");
     expect(adapter?.rulesVersionSegment).toContain("atpm-14+identity-3");
     // Provenance verification and the trusted-publisher record are part of the
     // trust boundary, so a change to either must invalidate cached pairs too.
-    expect(adapter?.rulesVersionSegment).toContain("provenance-8+publisher-1");
-    expect(ATPM_RECORD_CACHE_SCOPE).toBe("atpm-public-record-14-provenance-8-absolute-expiry-v1");
+    expect(adapter?.rulesVersionSegment).toContain("provenance-9+publisher-1");
+    expect(ATPM_RECORD_CACHE_SCOPE).toBe("atpm-public-record-14-provenance-9-absolute-expiry-v1");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
     expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(

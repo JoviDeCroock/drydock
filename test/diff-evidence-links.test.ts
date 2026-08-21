@@ -133,6 +133,7 @@ describe("attestationLinks", () => {
     runnerEnvironment: "github-hosted",
     signedAt: null,
     logIndex: "2544306340",
+    logBaseUrl: "https://rekor.sigstore.dev",
   };
 
   test("points every proven field at what proved it", () => {
@@ -146,7 +147,7 @@ describe("attestationLinks", () => {
     expect(links.ref).toBe("https://github.com/owner/repo/tree/v1.2.3");
     expect(links.commit).toBe(`https://github.com/owner/repo/commit/${build.commit}`);
     expect(links.run).toBe(build.runUrl);
-    expect(links.rekor).toBe("https://search.sigstore.dev/?logIndex=2544306340");
+    expect(links.rekor).toBe("https://rekor.sigstore.dev/api/v1/log/entries?logIndex=2544306340");
   });
 
   test("falls back to the ref when no commit was certified", () => {
@@ -183,5 +184,18 @@ describe("attestationLinks", () => {
 
   test("refuses a non-numeric transparency log index", () => {
     expect(attestationLinks({ ...build, logIndex: "1 OR 1=1" }).rekor).toBeNull();
+  });
+
+  test("preserves the authenticated transparency-log instance", () => {
+    expect(
+      attestationLinks({
+        ...build,
+        logBaseUrl: "https://log2025-1.rekor.sigstore.dev",
+      }).rekor,
+    ).toBe("https://log2025-1.rekor.sigstore.dev/tile/entries/x009/x938/696");
+  });
+
+  test("refuses an unrecognized transparency-log instance", () => {
+    expect(attestationLinks({ ...build, logBaseUrl: "https://evil.com" }).rekor).toBeNull();
   });
 });
