@@ -255,6 +255,60 @@ describe("registry version status resolution", () => {
     expect(scan.registryVersion).toBe(VERSION);
   });
 
+  test("rejects a concurrent recovery that loses the conditional identity write", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-concurrent-recovery-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+    });
+
+    let arrivals = 0;
+    let releaseBatches!: () => void;
+    const bothBatchesReady = new Promise<void>((resolve) => {
+      releaseBatches = resolve;
+    });
+    const originalBatch = db.batch.bind(db);
+    const racingDb = new Proxy(db, {
+      get(target, property) {
+        if (property === "batch") {
+          return async (batch: Parameters<typeof db.batch>[0]) => {
+            arrivals += 1;
+            if (arrivals === 2) releaseBatches();
+            await bothBatchesReady;
+            return originalBatch(batch);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    const recover = (packageName: string, version: string) =>
+      backfillScanRegistryReleaseIdentity(racingDb, {
+        scanId,
+        organizationId: org.organizationId,
+        registryUrl: REGISTRY_URL,
+        packageName,
+        version,
+      });
+    const outcomes = await Promise.all([
+      recover(PACKAGE, VERSION),
+      recover("@drydock/conflicting-package", "9.9.9"),
+    ]);
+
+    expect(outcomes.sort()).toEqual(["mismatch", "reconciled"]);
+    const scan = await readScan(scanId);
+    expect([
+      [PACKAGE, VERSION],
+      ["@drydock/conflicting-package", "9.9.9"],
+    ]).toContainEqual([scan.registryPackageName, scan.registryVersion]);
+  });
+
   test("uses insertion order when recovered owners share a creation timestamp", async () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
