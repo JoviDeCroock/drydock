@@ -443,6 +443,24 @@ describe("deferred AI review", () => {
     expect(revisions).toEqual([after.reportArtifactKey]);
   });
 
+  test("a lost patch deletes its revision when the scan row was removed", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+
+    // Model the organization-delete race after the worker captured a pending
+    // row but before it republishes and claims the terminal review.
+    await db.delete(schema.scans).where(eq(schema.scans.id, scanId));
+    const outcome = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+    expect(outcome).toEqual({ outcome: "skipped", reason: "not_pending" });
+
+    const listed = await env.ARTIFACTS.list({ prefix: keyPrefix(owner, scanId) });
+    const orphanRevisions = listed.objects
+      .map((object) => object.key)
+      .filter((key) => /\/(?:report|manifest)\.[0-9a-f]{16}\.json$/.test(key));
+    expect(orphanRevisions).toEqual([]);
+  });
+
   test("the evidence snapshot round-trips and is deleted once the review lands", async () => {
     const owner = await seedUser();
     const { db, scanId, aiReviewInput } = await seedPendingScan(owner);
@@ -618,7 +636,9 @@ describe("deferred AI review", () => {
 
   test("a lost evidence snapshot closes the review at the manual-review floor", async () => {
     const owner = await seedUser();
-    const { db, scanId, aiReviewInput } = await seedPendingScan(owner, { artifactBacked: true });
+    const { db, scanId, aiReviewInput, reportDigest } = await seedPendingScan(owner, {
+      artifactBacked: true,
+    });
     await env.ARTIFACTS.delete(aiReviewInput.key);
 
     const outcome = await executeAiReviewJob(env, messageFor(scanId, owner), db, {
@@ -633,6 +653,14 @@ describe("deferred AI review", () => {
     expect(detail?.scan.risk).toBe("medium");
     expect(detail?.riskSummary?.releaseRisk).toBe("medium");
     expect(detail?.scan.findingCount).toBe(1);
+    expect(detail?.scan.reportDigest).not.toBe(reportDigest);
+    expect(detail?.scan.reportArtifactKey).toMatch(/\/report\.[0-9a-f]{16}\.json$/);
+    const republished = await env.ARTIFACTS.get(detail!.scan.reportArtifactKey!);
+    const report = JSON.parse(await republished!.text()) as Record<string, unknown>;
+    expect((report.aiFindings as { status: string }).status).toBe("unavailable");
+    expect((report.risk as { artifactRisk: string }).artifactRisk).toBe("medium");
+    const summary = detail!.scan.summaryJson as { report?: { digest?: string } };
+    expect(summary.report?.digest).toBe(detail!.scan.reportDigest);
   });
 });
 

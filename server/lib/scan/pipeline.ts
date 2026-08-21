@@ -224,6 +224,19 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       releaseConsistency,
       intentEnvelope,
       aiReviewInput,
+    }).catch(async (err) => {
+      // The evidence precedes the scan row by design. If the authoritative
+      // persistence step fails, no later lifecycle owns that object and no
+      // scan/organization deletion can be relied on to reclaim it.
+      if (plan === "deferred" && aiReviewInput) {
+        await deleteAiReviewInput(
+          env.ARTIFACTS,
+          identity.organizationId,
+          identity.scanId,
+          aiReviewInput,
+        );
+      }
+      throw err;
     });
 
     // Before `recordCompletion`, which only emits telemetry: the follow-up is

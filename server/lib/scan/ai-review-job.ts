@@ -437,6 +437,25 @@ async function closeUnavailable(
     priorApprovedContextFindingCount: persisted?.priorApprovedContextFindingCount ?? 0,
   };
 
+  const artifactBacked = scan.artifactStorageVersion !== null && scan.reportArtifactKey !== null;
+  const report =
+    artifactBacked && env.ARTIFACTS
+      ? await rewriteReportWithAiReview(env.ARTIFACTS, scan, (current) => ({
+          ...current,
+          aiFindings: review,
+          risk: riskSummary,
+        })).catch((err) => {
+          // Keep the existing report readable if republication fails. D1 remains
+          // authoritative for the terminal status and fail-safe risk floor.
+          emitOperationalEvent("warn", "scan.ai_review.report_rewrite_failed", {
+            scanId: message.scanId,
+            organizationId: message.organizationId,
+            error: describeOperationalError(err),
+          });
+          return null;
+        })
+      : null;
+
   const { patched, decision } = await applyAiReviewPatch(db, {
     scanId: message.scanId,
     organizationId: message.organizationId,
@@ -445,10 +464,13 @@ async function closeUnavailable(
     risk: riskSummary.artifactRisk,
     riskSummary,
     findingCount: scan.findingCount ?? 0,
-    summary: patchedSummary(scan.summaryJson, riskSummary, null),
-    report: null,
+    summary: patchedSummary(scan.summaryJson, riskSummary, report),
+    report,
     ...(abandonedBefore ? { abandonedBefore } : {}),
   });
+  if (!patched) {
+    await deleteSupersededReportRevision(env.ARTIFACTS, db, report, message);
+  }
   if (patched) {
     await deleteAiReviewInput(
       env.ARTIFACTS,
@@ -533,14 +555,17 @@ async function deleteSupersededReportRevision(
   try {
     const current = await getScanStatus(db, message.scanId, message.organizationId);
     if (
-      !current ||
-      current.reportArtifactKey === report.reportArtifactKey ||
-      current.artifactManifestKey === report.artifactManifestKey
+      current &&
+      (current.reportArtifactKey === report.reportArtifactKey ||
+        current.artifactManifestKey === report.artifactManifestKey)
     ) {
-      // The winner wrote byte-identical bytes to the same keys (or the row is
-      // gone and there is nothing to reason about). These objects are live.
+      // The winner wrote byte-identical bytes to the same keys. These objects
+      // are live and a compacted scan has no D1 copy to fall back to.
       return;
     }
+    // A missing row proves the revision cannot be live. This also closes the
+    // race where an organization delete sweeps the prefix just before a stale
+    // follow-up finishes writing its content-addressed revision.
     await bucket.delete([report.reportArtifactKey, report.artifactManifestKey]);
   } catch (err) {
     // Recoverable by the per-scan prefix sweep; never worth failing a message

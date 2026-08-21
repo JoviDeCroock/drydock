@@ -537,6 +537,39 @@ describe("scan pipeline baseline selection", () => {
       });
     });
 
+    test("deletes prepared evidence when scan persistence fails", async () => {
+      dbMock.persistScan.mockRejectedValueOnce(new Error("d1 unavailable"));
+      const bucket = artifactBucket();
+      const context = {
+        ...baseContext,
+        env: {
+          ...baseContext.env,
+          FLAGS: { getBooleanValue: vi.fn(async (_flag, fallback) => fallback) },
+          ARTIFACTS: bucket,
+        },
+      };
+
+      await expect(
+        runScanPipeline(
+          context,
+          npmAdapter,
+          {
+            scanId: "scan_ai_persist_fail",
+            stageId: "stage-beta-123",
+            organizationId: "org_1",
+          },
+          { aiReview: "deferred", sendAiReviewMessage: vi.fn(async () => undefined) },
+        ),
+      ).rejects.toThrow("d1 unavailable");
+
+      expect([...bucket.objects.keys()]).not.toContainEqual(
+        expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
+      );
+      expect(bucket.delete).toHaveBeenCalledWith(
+        expect.stringMatching(/\/ai-input\.[0-9a-f]{16}\.json$/),
+      );
+    });
+
     test("falls back to an inline review when the evidence snapshot cannot be written", async () => {
       aiReviewMock.runSelectiveAiReview.mockResolvedValue({
         review: {
