@@ -139,6 +139,36 @@ skill for the full set of eager-unwrap anti-patterns and fixes. Fixture and test
 
 The rule ships as `error`; all existing call sites satisfy it, so every infraction fails lint.
 
+### Local rule: `boundaries-local/no-cross-page-import`
+
+A second local oxlint plugin, `tooling/oxlint/boundaries-local/`, machine-enforces the
+AGENTS.md page-isolation rule: a file inside one page's directory
+(`src/pages/<X>/…`) must never import from another page's directory — code shared by
+two or more pages belongs in `src/features/`. The rule resolves relative static
+imports, re-exports, and literal `import("…")` expressions; the router and pages-root
+shared files (`src/pages/*.tsx`) are outside every page directory and stay
+unconstrained. A dynamic import built from a variable cannot be resolved without
+executing code, so it is not checked. Fixture and test:
+`test/fixtures/oxlint-boundaries/` and `test/oxlint-cross-page-import.test.mjs`.
+
+The rule ships as `error` with no existing violations, so every infraction fails lint.
+
+### Prose invariants with static checks
+
+Two AGENTS.md boundaries that lint rules cannot express are pinned by node-project
+invariant tests that statically scan source text (comments, strings, and detection
+regexes are blanked via the non-executing JS lexer first — see
+`test/helpers/sanitized-source.mjs`):
+
+- `test/ecosystem-branching-invariants.test.mjs` — routes and orchestrators
+  (`server/routes/`, `server/lib/scan/`, `server/lib/public-diff/`,
+  `server/lib/workflow-gates/`) must not branch on ecosystem-name literals; new
+  ecosystems arrive through the `server/lib/ecosystems/` registry. Pre-existing
+  justified branches live in the test's explicit allowlist.
+- `test/sandbox-boundary-invariants.test.mjs` — the rendered sandbox worker reads
+  only allowlisted config env keys and contains no credential lexemes, and the
+  archive-parsing/deterministic-review layers contain no execution primitives.
+
 ## Client API helpers
 
 Use `apiFetch` from `src/models/api.ts` for same-origin JSON requests so active organization headers and `ApiError` handling stay consistent. Use `apiJson` for JSON request bodies instead of repeating `content-type` and `JSON.stringify` at call sites. Use `errorMessage(err)` when model actions need to surface caught errors into a signal.

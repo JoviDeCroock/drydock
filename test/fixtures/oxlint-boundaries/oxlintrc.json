@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "off" },
+  "jsPlugins": [
+    {
+      "name": "boundaries-local",
+      "specifier": "../../../tooling/oxlint/boundaries-local/index.mjs"
+    }
+  ],
+  "rules": {
+    "boundaries-local/no-cross-page-import": "error"
+  }
+}

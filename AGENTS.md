@@ -10,13 +10,13 @@
   - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/scan/` — scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.
   - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract. The atpm ecosystem resolves releases over AT Protocol rather than through a registry; see `docs/atpm-public-diff.md`.
-  - `lib/ecosystems/` — one directory per ecosystem (npm, PyPI, VS Code, atpm) plus `index.ts`, the single registry declaring which release paths each supports (`staged` / `gate` / `publicDiff`). Add an ecosystem by adding a directory and a registry entry — never by branching on the ecosystem name in a route or orchestrator.
+  - `lib/ecosystems/` — one directory per ecosystem (npm, PyPI, VS Code, atpm) plus `index.ts`, the single registry declaring which release paths each supports (`staged` / `gate` / `publicDiff`). Add an ecosystem by adding a directory and a registry entry — never by branching on the ecosystem name in a route or orchestrator (machine-checked by `test/ecosystem-branching-invariants.test.mjs`).
   - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
   - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability.
   - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
-- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory).
+- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory — machine-checked by the `boundaries-local/no-cross-page-import` lint rule).
 - `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
 - `docs/` — reference docs. Start with `docs/README.md` and read only the relevant layer.
 - `test/` — Vitest logic/Worker suites plus Playwright fake-registry e2e fixtures.
@@ -42,7 +42,7 @@
 New functionality needs tests at the narrowest useful layer; add broader coverage when behavior crosses a trust boundary:
 
 - Routes, auth, org scoping, rate limits, D1 persistence, queues, scan lifecycle → `test/workers/`.
-- Sandbox/archive parsing/npm credential forwarding/redaction/deterministic rules → invariant or regression tests; the sandbox must never receive token material.
+- Sandbox/archive parsing/npm credential forwarding/redaction/deterministic rules → invariant or regression tests; the sandbox must never receive token material (statically pinned by `test/sandbox-boundary-invariants.test.mjs`).
 - Registry behavior, staged-publish discovery, workflow gates, browser-visible scan flows → fake-registry e2e in `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
 - Detection changes → security corpus fixtures with explicit rule IDs/severity/risk, plus eval coverage when relevant. See `docs/security-detection-corpus.md` and `docs/detection-eval.md`.
 
