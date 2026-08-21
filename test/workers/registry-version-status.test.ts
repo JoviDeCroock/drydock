@@ -8,6 +8,7 @@ import {
 } from "../../server/db/npm-connections";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
+  backfillScanRegistryReleaseIdentity,
   createScanJob,
   deleteFailedScan,
   listScans,
@@ -155,6 +156,69 @@ describe("registry version status resolution", () => {
     });
 
     expect(result.scans).toContainEqual(expect.objectContaining({ id: scanId, registryUrl }));
+  });
+
+  test("recovers missing registry coordinates and supersedes the prior owner", async () => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, {
+      createdAt: new Date("2026-08-20T10:00:00.000Z"),
+    });
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-recovered-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+    });
+
+    await backfillScanRegistryReleaseIdentity(db, {
+      scanId,
+      organizationId: org.organizationId,
+      registryUrl: REGISTRY_URL,
+      packageName: PACKAGE,
+      version: VERSION,
+      observedAt: new Date("2026-08-21T10:00:00.000Z"),
+    });
+
+    const recovered = await readScan(scanId);
+    expect(recovered.registryPackageName).toBe(PACKAGE);
+    expect(recovered.registryVersion).toBe(VERSION);
+    expect(recovered.registryStatusSupersededAt).toBeNull();
+    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+  });
+
+  test("does not let a late identity recovery displace a newer owner", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const olderId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: olderId,
+      stageId: "stage-older-recovered-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+    });
+    await db
+      .update(schema.scans)
+      .set({ createdAt: new Date("2026-08-20T10:00:00.000Z") })
+      .where(eq(schema.scans.id, olderId));
+    const newer = await seedCompletedScan(org, {
+      createdAt: new Date("2026-08-21T10:00:00.000Z"),
+    });
+
+    await backfillScanRegistryReleaseIdentity(db, {
+      scanId: olderId,
+      organizationId: org.organizationId,
+      registryUrl: REGISTRY_URL,
+      packageName: PACKAGE,
+      version: VERSION,
+      observedAt: new Date("2026-08-21T11:00:00.000Z"),
+    });
+
+    expect((await readScan(olderId)).registryStatusSupersededAt).toBeTruthy();
+    expect((await readScan(newer.scanId)).registryStatusSupersededAt).toBeNull();
   });
 
   test("records npm's status against the reviewed release", async () => {

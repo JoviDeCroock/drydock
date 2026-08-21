@@ -216,11 +216,43 @@ describe("executeScanJob idempotency", () => {
 
   test("runs the pipeline exactly once after a successful claim", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
 
     await executeScanJob(env, ctx, message, {}, { attempt: 1 });
 
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
+    expect(pipelineMock.runScanPipeline.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ registryUrl: "https://registry.npmjs.org" }),
+    );
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith({}, message.organizationId);
+  });
+
+  test("fails closed when the queued scan belongs to a previous registry connection", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.example.test",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("npm registry changed after this scan was queued");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_connection_changed",
+      message:
+        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
+      retryable: false,
+    });
   });
 
   test("emits a structured completion log without token material", async () => {
