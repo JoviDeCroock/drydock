@@ -140,9 +140,6 @@ describe("resolveAtpmStagedReview", () => {
     expect(resolved.version).toBe("0.0.16");
     expect(resolved.baselineVersion).toBe("0.0.15");
     expect(resolved.displayName).toBe("@ebey.dev/counter");
-    // The id that approves this exact candidate, so the linking side can show
-    // it without deriving it again.
-    expect(resolved.approveId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   test("accepts the DID form as readily as the handle", async () => {

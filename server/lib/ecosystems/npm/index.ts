@@ -3,18 +3,11 @@ import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
-import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
-import { checkStagedPublishAccess, fetchStagedPublishDetails } from "./staged-publishes";
-import { getNpmConnection } from "../../../db/npm-connections";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   id: "npm",
-
-  // A staged npm candidate is private registry state; only the publishing
-  // organization's token can see it, let alone download it.
-  requiresConnection: true,
 
   parseInput(raw: unknown): NpmAdapterInput {
     if (!raw || typeof raw !== "object") {
@@ -31,53 +24,6 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
 
   createBroker(ctx, ref) {
     return createNpmBroker(ctx, ref);
-  },
-
-  /**
-   * Refuse early, and for the actual reason. A missing or unvalidated token, or
-   * a token that cannot see this particular staged publish, are three different
-   * problems for the maintainer and only one of them is about the release.
-   * Doing this before the scan row exists keeps them out of the scan history.
-   */
-  async preflightStaged(ctx, input, ref) {
-    const connection = await getNpmConnection(ctx.db, ref.organizationId);
-    if (!connection) {
-      return {
-        ok: false,
-        error: "Connect an organization npm token before scanning staged publishes.",
-      };
-    }
-    if (connection.validationStatus !== "valid") {
-      return {
-        ok: false,
-        error: "Validate the organization npm token before scanning staged publishes.",
-      };
-    }
-    const token = await decryptNpmToken(ctx.env, connection);
-    const options = { allowInsecureLocalhost: allowInsecureLocalRegistry(ctx.env) };
-    const access = await checkStagedPublishAccess(
-      connection.registryUrl,
-      token,
-      input.stageId,
-      options,
-    );
-    if (!access.allowed) {
-      return {
-        ok: false,
-        error: "This organization's npm token cannot access that staged publish.",
-        ...(typeof access.status === "number" ? { status: access.status } : {}),
-      };
-    }
-    const staged = await fetchStagedPublishDetails(
-      connection.registryUrl,
-      token,
-      input.stageId,
-      options,
-    ).catch(() => null);
-    return {
-      ok: true,
-      label: { packageName: staged?.packageName ?? null, version: staged?.version ?? null },
-    };
   },
 
   acquireStaged(ctx, input, broker) {

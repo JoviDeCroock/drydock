@@ -4,13 +4,6 @@ import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-
 import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
-import { listReleaseTargetsForEcosystem } from "./lib/github-app/persistence";
-import { listActiveAtpmPublishers, pruneExpiredAtpmOauthRequests } from "./db/atpm-publishers";
-import { ensureAtpmFirehose } from "./lib/ecosystems/atpm/firehose";
-import {
-  discoverAtpmStagedCandidates,
-  sweepAtpmPublishers,
-} from "./lib/ecosystems/atpm/staged-discovery";
 import {
   RateLimitError,
   enforceRateLimit,
@@ -35,7 +28,6 @@ import {
 import {
   classifyScanError,
   executeScanJob,
-  isAtpmDiscoveryMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
@@ -63,14 +55,11 @@ import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
-import { atpmOauthMetadataRoutes, atpmPublisherRoutes } from "./routes/atpm-publishers";
 import { atpmStageLinkRoutes } from "./routes/atpm-stage-link";
 import type { Bindings, Variables } from "./types";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/ecosystems/npm";
-// Durable Object class, exported for the ATPM_FIREHOSE binding.
-export { AtpmFirehose } from "./lib/ecosystems/atpm/firehose";
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
@@ -179,13 +168,6 @@ app.route("/webhooks", githubWebhookRoutes);
 // mounted before the auth middleware below; every other /api/* endpoint keeps
 // requiring a session.
 app.route("/api/public/v1/package-diff", publicDiffRoutes);
-
-// The AT Protocol OAuth client metadata document. Every authorization server a
-// publisher's PDS delegates to fetches it, and none of them has a session, so
-// it mounts before the auth middleware. It is a static description of this
-// client — no secrets, no organization data, and nothing that varies per
-// caller.
-app.route("/api/v1/atpm/oauth", atpmOauthMetadataRoutes);
 
 // Share cards for the same anonymous surface. Mounted outside /api so social
 // crawlers fetch a plain image URL, and before the auth middleware for the same
@@ -354,7 +336,6 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
-app.route("/api/v1/atpm", atpmPublisherRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 
 app.notFound(async (c) => {
@@ -494,104 +475,12 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   };
 
   await runWithConcurrency(connections, DISCOVERY_CRON_CONCURRENCY, sweepConnection);
-  const atpm = await sweepAtpmStagedCandidates(env, ctx, db);
 
   emitOperationalEvent("info", "staged_publishes.cron.swept", {
     orgsProcessed,
-    atpmPublishers: atpm.publishers,
-    atpmScansCreated: atpm.created,
-    atpmPublishersDispatched: atpm.dispatched,
     durationMs: durationMsSince(startedAtMs),
     concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
   });
-}
-
-/**
- * The atpm half of the same tick.
- *
- * It sweeps enrolled publishers rather than stored credentials, because an atpm
- * staged candidate is a public record: there is no token whose existence
- * doubles as an enrolment, so control of the account is proved once and
- * recorded in `atpm_publishers`.
- *
- * A release target that pins an atpm publisher is included too. Configuring a
- * gate is itself a statement of interest in that account, and a maintainer who
- * has done that should not have to enrol the same account twice to get the
- * releases their gate never sees — the ones staged from a laptop.
- *
- * This is the backstop, not the primary trigger. atpm deletes a staged record
- * on approval, so a candidate can appear and vanish well inside one tick; the
- * firehose consumer exists because a poll alone silently misses those. Both
- * feed the same deduplicated queue.
- *
- * Failures are contained inside the sweep so a publisher's PDS being
- * unreachable cannot take down the npm discovery that already ran.
- */
-async function sweepAtpmStagedCandidates(
-  env: Cloudflare.Env,
-  ctx: ExecutionContext,
-  db: ReturnType<typeof createDb>,
-): Promise<{ publishers: number; created: number; dispatched: number }> {
-  try {
-    await pruneExpiredAtpmOauthRequests(db).catch(() => {});
-    // A Durable Object does not start itself. The cron is the thing that
-    // reliably runs, so it is what knocks; `ensureAtpmFirehose` is idempotent
-    // and a no-op when the binding is absent or the killswitch is set.
-    await ensureAtpmFirehose(env).catch((err) =>
-      emitOperationalEvent("warn", "atpm_firehose.ensure_failed", {
-        error: describeOperationalError(err),
-      }),
-    );
-
-    const [enrolled, targets] = await Promise.all([
-      listActiveAtpmPublishers(db),
-      listReleaseTargetsForEcosystem(db, "atpm"),
-    ]);
-    if (!enrolled.length && !targets.length) {
-      return { publishers: 0, created: 0, dispatched: 0 };
-    }
-
-    const candidates = [
-      ...enrolled.map((publisher) => ({
-        organizationId: publisher.organizationId,
-        publisherRef: publisher.did,
-        createdByUserId: publisher.createdByUserId,
-      })),
-      ...targets.map((target) => ({
-        organizationId: target.organizationId,
-        publisherRef: target.publisherRef,
-        createdByUserId: target.createdByUserId,
-      })),
-    ];
-
-    const resolved = await Promise.all(
-      candidates.map(async (candidate) => ({
-        organizationId: candidate.organizationId,
-        publisherRef: candidate.publisherRef,
-        // Whoever enrolled or mapped it may have left the organization; the
-        // owner is the stable fallback, and one with neither has nobody to
-        // attribute a scan to and is skipped rather than attributed to no one.
-        actorUserId:
-          candidate.createdByUserId ??
-          (await getOrganizationOwnerUserId(db, candidate.organizationId).catch(() => null)),
-      })),
-    );
-    return await sweepAtpmPublishers({
-      db,
-      env,
-      executionCtx: ctx,
-      targets: resolved.filter(
-        (target): target is { organizationId: string; publisherRef: string; actorUserId: string } =>
-          Boolean(target.publisherRef && target.actorUserId),
-      ),
-      source: "auto_discovery",
-    });
-  } catch (err) {
-    emitOperationalEvent("error", "atpm_staged.cron.failed", {
-      error: describeOperationalError(err),
-    });
-    return { publishers: 0, created: 0, dispatched: 0 };
-  }
 }
 
 // Flat-window retention for the organization audit log. Runs each tick; a
@@ -667,51 +556,6 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
-      if (isAtpmDiscoveryMessage(message.body)) {
-        const discovery = message.body;
-        try {
-          const result = await discoverAtpmStagedCandidates({
-            db: createDb(env.DB),
-            env,
-            executionCtx: ctx,
-            organizationId: discovery.organizationId,
-            actorUserId: discovery.actorUserId,
-            publisherRef: discovery.publisherRef,
-            source: discovery.source,
-          });
-          emitOperationalEvent("info", "atpm_discovery.queue.message.completed", {
-            organizationId: discovery.organizationId,
-            publisherRef: discovery.publisherRef,
-            found: result.found,
-            created: result.created,
-            skipped: result.skipped,
-            attempt: message.attempts,
-            durationMs: durationMsSince(messageStartedAtMs),
-          });
-        } catch (err) {
-          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
-            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
-            emitOperationalEvent("warn", "atpm_discovery.queue.retry_scheduled", {
-              organizationId: discovery.organizationId,
-              publisherRef: discovery.publisherRef,
-              attempt: message.attempts,
-              nextDelaySeconds: retryDelaySeconds(message.attempts),
-              durationMs: durationMsSince(messageStartedAtMs),
-              error: describeOperationalError(err),
-            });
-          } else {
-            emitOperationalEvent("error", "atpm_discovery.queue.message_failed", {
-              organizationId: discovery.organizationId,
-              publisherRef: discovery.publisherRef,
-              attempt: message.attempts,
-              durationMs: durationMsSince(messageStartedAtMs),
-              error: describeOperationalError(err),
-            });
-            throw err;
-          }
-        }
-        continue;
-      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {

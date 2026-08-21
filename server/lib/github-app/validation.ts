@@ -1,16 +1,10 @@
 import {
   ENVIRONMENT_MAX,
   GithubAppValidationError,
-  PUBLISHER_SOURCED_ECOSYSTEMS,
   REPO_FULL_NAME_MAX,
   SUPPORTED_ECOSYSTEMS,
 } from "./config";
 import type { CreateReleaseTargetInput } from "./persistence";
-import { parseAtpmPublisherRef } from "../ecosystems/atpm/stage-ref";
-
-// A DID is the longest legitimate spelling and atproto bounds those well below
-// this; the value is a name, not a document.
-const PUBLISHER_REF_MAX = 512;
 
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -46,44 +40,6 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   }
   if (hasControlCharacter(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
-  }
-  validatePublisherRef(input);
-}
-
-/**
- * A release target names a publishing account only for ecosystems whose gate
- * candidate is not a workflow upload. Requiring it up front turns "atpm gate
- * configured without a publisher" into a validation error at configuration
- * time rather than a gate that errors on its first real release.
- */
-function validatePublisherRef(input: CreateReleaseTargetInput) {
-  const publisherRef = input.publisherRef?.trim() ?? "";
-  const needsPublisher =
-    input.ecosystem !== null &&
-    (PUBLISHER_SOURCED_ECOSYSTEMS as readonly string[]).includes(input.ecosystem);
-  if (!needsPublisher) {
-    if (publisherRef) {
-      throw new GithubAppValidationError(
-        "invalid_input",
-        `${input.ecosystem ?? "auto"} release targets review uploaded artifacts and take no publisher`,
-      );
-    }
-    return;
-  }
-  if (!publisherRef || publisherRef.length > PUBLISHER_REF_MAX) {
-    throw new GithubAppValidationError(
-      "invalid_input",
-      `${input.ecosystem} release targets must name the publishing account`,
-    );
-  }
-  if (hasControlCharacter(publisherRef)) {
-    throw new GithubAppValidationError("invalid_input", "publisher has invalid characters");
-  }
-  if (input.ecosystem === "atpm" && !parseAtpmPublisherRef(publisherRef)) {
-    throw new GithubAppValidationError(
-      "invalid_input",
-      "atpm publisher must be an addressable @handle, did:plc, or did:web",
-    );
   }
 }
 

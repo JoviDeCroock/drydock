@@ -1,8 +1,8 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
+import { getNpmConnection } from "../db/npm-connections";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
-import { getNpmConnection } from "../db/npm-connections";
 import {
   ORGANIZATION_SCAN_LIMIT,
   ORGANIZATION_SCAN_WINDOW_MS,
@@ -47,9 +47,13 @@ import {
 } from "../db/scan-share";
 import {
   allowInsecureLocalRegistry,
+  decryptNpmToken,
   getOrganizationNpmToken,
 } from "../lib/ecosystems/npm/connection";
-import { getStagedAdapter } from "../lib/ecosystems";
+import {
+  checkStagedPublishAccess,
+  fetchStagedPublishDetails,
+} from "../lib/ecosystems/npm/staged-publishes";
 import { isPublishedTarballUrlAllowed } from "../lib/ecosystems/npm/published-tarball";
 import { compareSemver, pickPreviousVersion } from "../lib/ecosystems/npm/registry";
 import { fetchPackageMetadataCached } from "../lib/ecosystems/npm/registry-cache";
@@ -80,33 +84,41 @@ scansRoutes.post("/", async (c) => {
       windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     });
 
-    // Which adapter runs this review is decided by the staged reference itself,
-    // so the route never names an ecosystem. Whether the organization needs a
-    // stored credential — and whether it can reach this particular candidate —
-    // is the adapter's to answer: npm's staged publishes are private registry
-    // state, atpm's are public records in the publisher's own repository.
-    const ecosystem = input.ecosystem ?? "npm";
-    const adapter = getStagedAdapter(ecosystem);
-    const adapterCtx = {
-      env: c.env,
-      executionCtx: workerExecutionContext(c.executionCtx),
-      db,
-      session,
-    };
-    const preflight = await adapter.preflightStaged?.(
-      adapterCtx,
-      adapter.parseInput(input as never),
-      { organizationId },
-    );
-    if (preflight && !preflight.ok) {
+    const npmConnection = await getNpmConnection(db, organizationId);
+    if (!npmConnection) {
       return c.json(
-        {
-          error: preflight.error ?? "this staged release is not reviewable",
-          ...(preflight.status === undefined ? {} : { status: preflight.status }),
-        },
-        preflight.status === undefined ? 400 : 403,
+        { error: "Connect an organization npm token before scanning staged publishes." },
+        400,
       );
     }
+    if (npmConnection.validationStatus !== "valid") {
+      return c.json(
+        { error: "Validate the organization npm token before scanning staged publishes." },
+        400,
+      );
+    }
+    const token = await decryptNpmToken(c.env, npmConnection);
+    const access = await checkStagedPublishAccess(npmConnection.registryUrl, token, input.stageId, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+    });
+    if (!access.allowed) {
+      return c.json(
+        {
+          error: "This organization's npm token cannot access that staged publish.",
+          status: access.status,
+        },
+        403,
+      );
+    }
+
+    // Best-effort: staged metadata gives the scan a package label up front, so
+    // a scan whose tarball never parses still shows which package it was for.
+    const staged = await fetchStagedPublishDetails(
+      npmConnection.registryUrl,
+      token,
+      input.stageId,
+      { allowInsecureLocalhost: allowInsecureLocalRegistry(c.env) },
+    ).catch(() => null);
 
     const scanId = crypto.randomUUID();
     const detail = await createScanJob(db, {
@@ -114,10 +126,8 @@ scansRoutes.post("/", async (c) => {
       stageId: input.stageId,
       organizationId,
       ownerUserId: session.userId,
-      // Best effort: knowing the package up front means a scan whose artifact
-      // never parses still shows which release it was for.
-      packageName: preflight?.label?.packageName ?? null,
-      stagedVersion: preflight?.label?.version ?? null,
+      packageName: staged?.packageName ?? null,
+      stagedVersion: staged?.version ?? null,
     });
     if (!detail) return c.json({ error: "failed to create scan" }, 500);
     const message: ScanQueueMessage = {
@@ -133,7 +143,7 @@ scansRoutes.post("/", async (c) => {
     recordProductEvent(c.env, {
       name: "scan.queued",
       organizationId,
-      ecosystem,
+      ecosystem: "npm",
       source: message.source ?? "manual",
     });
 

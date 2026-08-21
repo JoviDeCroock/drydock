@@ -2,9 +2,9 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI**, **npm**, **VS Code extensions**, and **atpm**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
-atpm is the exception to almost everything below: its release candidate is not something CI uploads, so its gate holds the _approval_ job rather than the publish job and never touches the artifact-bundle path. It is summarized under "atpm workflow-gate notes" and documented in full in [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
+atpm has no gate. Its releases are reviewed through an anonymous link from atpm's own staged dashboard, and approving stays entirely on atpm's side; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
 ## Core contract
 
@@ -155,14 +155,6 @@ jobs:
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
 
-## atpm workflow-gate notes
-
-atpm needs no gate to pause a release — a trusted publisher with `allowPublish: false` already leaves CI unable to publish — so the gate holds the job that _approves_ a staged candidate. The reviewed candidate is a `dev.atpm.alpha.stage` record in the publishing account's own AT Protocol repository, addressed by content, so nothing is uploaded to the run and no credential is involved on either side.
-
-Because there is no downloaded bundle, the adapter owes the run-binding that a download would have supplied, and pays for it with the release's own Sigstore certificate: a candidate is gated only when its verified build provenance names both this repository and this run. An unattested candidate therefore cannot be gated at all, and an unbindable one leaves the deployment blocked (`candidate_not_bound_to_run`).
-
-Configuration differs in one field: an atpm release target must name the publishing account in `publisher_ref` (`@handle` or a DID). That is what pins the target's ecosystem; every other ecosystem leaves it null and stays on artifact auto-detect.
-
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -179,7 +171,7 @@ The gate review workbench shows the release target, package identity/version, ar
 ## Adding a new ecosystem
 
 1. Add or extend a package adapter under `server/lib/ecosystems/<ecosystem>/`.
-2. Implement release-set derivation from uploaded artifact bytes — or, when the ecosystem's candidate is not a workflow upload, implement `prepareReleaseCandidatesFromTarget` instead. Declaring it replaces the bundle path entirely, and the adapter then owes its own run-binding: without one, a gate could review a candidate some other run produced. See the atpm adapter for the shape.
+2. Implement release-set derivation from uploaded artifact bytes.
 3. Define baseline acquisition and artifact namespace matching.
 4. Add deterministic findings for ecosystem-specific risky behavior.
 5. Register the adapter with workflow-gate resolution.
@@ -200,4 +192,4 @@ byte-continuity loop without trusting any single step.
 ## Remaining work
 
 - Expand gate-specific e2e coverage as more ecosystems are added.
-- Keep GitHub/PyPI/npm/VS Code/atpm validation failures user-actionable without leaking credentials or private package bytes.
+- Keep GitHub/PyPI/npm/VS Code validation failures user-actionable without leaking credentials or private package bytes.

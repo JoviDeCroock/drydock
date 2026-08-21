@@ -28,9 +28,6 @@ export interface PublicReleaseTarget {
   // null = inspect every non-expired workflow artifact; non-null narrows to one
   // GitHub Actions artifact name.
   artifactName: string | null;
-  // Publishing account for gates whose candidate is not a workflow upload
-  // (atpm). Null for every ecosystem that uploads its release artifacts.
-  publisherRef: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -223,10 +220,6 @@ export const GithubAppModel = createModel(() => {
   const formInstallationRowId = signal<string>("");
   const formRepositoryFullName = signal<string>("");
   const formEnvironment = signal<string>("");
-  // Publishing account for ecosystems whose gate candidate is not a workflow
-  // upload. Empty leaves the target on auto-detect, which is the default and
-  // covers every ecosystem that uploads its release artifacts.
-  const formPublisherRef = signal<string>("");
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
@@ -318,7 +311,6 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId.value = "";
     formRepositoryFullName.value = "";
     formEnvironment.value = "";
-    formPublisherRef.value = "";
     formError.value = null;
   }
 
@@ -346,7 +338,6 @@ export const GithubAppModel = createModel(() => {
     formError,
     formSubmitting,
     formValid,
-    formPublisherRef,
 
     activeRepositories,
     activeRepositoryStatus,
@@ -478,21 +469,14 @@ export const GithubAppModel = createModel(() => {
       formStatus.value = "submitting";
       formError.value = null;
       try {
-        // Ecosystem and artifact name are otherwise omitted: the server treats
-        // both as auto-detect (null), deriving each package's ecosystem from
-        // the uploaded artifacts and scanning every artifact the held run
-        // uploads — the monorepo-friendly default.
-        //
-        // An atpm publisher is the one case auto-detect cannot cover, because
-        // the release candidate is never uploaded to the run at all: it is a
-        // record in that account's own AT Protocol repository. Naming the
-        // account therefore also pins the ecosystem.
-        const publisherRef = formPublisherRef.value.trim();
+        // Ecosystem and artifact name are intentionally omitted: the server
+        // treats both as auto-detect (null), deriving each package's ecosystem
+        // from the uploaded artifacts and scanning every artifact the held run
+        // uploads — the monorepo-friendly default, now the only behavior.
         const payload: Record<string, string> = {
           installationRowId: formInstallationRowId.value.trim(),
           repositoryFullName: formRepositoryFullName.value.trim(),
           environment: formEnvironment.value.trim(),
-          ...(publisherRef ? { ecosystem: "atpm", publisherRef } : {}),
         };
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",

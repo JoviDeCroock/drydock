@@ -124,32 +124,6 @@ export async function prepareReleaseCandidatesForGate(
 
   const ecosystemLabel = releaseTarget.ecosystem ?? "auto";
 
-  // An ecosystem whose candidate is not something CI uploads never touches the
-  // bundle path: no artifact is fetched, downloaded, or parsed for it. atpm is
-  // the case — its candidate is a record in the publisher's own repository —
-  // and the adapter owes the run-binding the bundle download would otherwise
-  // have provided. See `WorkflowGateAdapter.prepareReleaseCandidatesFromTarget`.
-  const targetSourced = releaseTarget.ecosystem
-    ? getEcosystem(releaseTarget.ecosystem)?.gate?.prepareReleaseCandidatesFromTarget
-    : undefined;
-  if (targetSourced) {
-    try {
-      const candidates = await targetSourced({
-        env,
-        executionCtx: ctx,
-        organizationId: gate.organizationId,
-        repositoryFullName: gate.repositoryFullName,
-        runId: gate.runId,
-        environment: gate.environment,
-        publisherRef: releaseTarget.publisherRef,
-      });
-      return { gate, packages: candidates.map(toPreparedPackage) };
-    } catch (err) {
-      await markGateFailed(db, gate, ecosystemLabel, err);
-      throw err;
-    }
-  }
-
   const { classify, artifactName, artifactNamePrefix } = resolveBundleClassifier(
     db,
     gate,
@@ -297,14 +271,6 @@ function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePack
     }
   }
   return packages;
-}
-
-/** Pair a prepared candidate with the review adapter its ecosystem declares. */
-function toPreparedPackage(candidate: PreparedReleaseCandidate): PreparedGatePackage {
-  return {
-    candidate,
-    packageAdapter: getWorkflowGateAdapter(candidate.ecosystem).packageAdapter,
-  };
 }
 
 async function markGateErroredSafe(db: AppDb, gateId: string, reason: string): Promise<void> {

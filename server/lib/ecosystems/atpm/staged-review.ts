@@ -24,6 +24,11 @@ import { PublicDiffError } from "../../public-diff/error";
  * sign-in in front of that would be asking a maintainer to create an account
  * with a third party in order to read something already public — at exactly the
  * moment they are deciding whether to publish.
+ *
+ * Nothing here takes part in the decision that follows. Drydock shows what
+ * changed; approving or withdrawing the candidate happens in atpm, where it
+ * belongs, and this module deliberately has no opinion about — and no ability
+ * to affect — which way that goes.
  */
 
 export interface AtpmStagedReview {
@@ -37,8 +42,6 @@ export interface AtpmStagedReview {
   version: string;
   /** Published version the candidate is read against, or null for a first release. */
   baselineVersion: string | null;
-  /** The id `npm stage approve` takes for this exact candidate. */
-  approveId: string;
 }
 
 /**
@@ -76,7 +79,6 @@ export async function resolveAtpmStagedReview(
     displayName: identity.handle ? `@${identity.handle}/${recordName}` : null,
     version: candidate.version,
     baselineVersion,
-    approveId: candidate.stageId,
   };
 }
 

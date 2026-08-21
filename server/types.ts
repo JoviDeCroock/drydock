@@ -26,14 +26,7 @@ export type Variables = {
 };
 
 export interface ScanInput {
-  /**
-   * Staged reference. npm's is the registry's opaque staged-publish id; other
-   * ecosystems prefix their own addressing (`atpm:<did>:<rkey>`). Which
-   * ecosystem a value belongs to is decided once, in `lib/scan/input.ts`.
-   */
   stageId: string;
-  /** Resolved from `stageId`; never taken from the request body. */
-  ecosystem?: string;
   maxFiles?: number;
 }
 

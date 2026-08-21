@@ -88,7 +88,7 @@ A version's Sigstore bundle and its package's trusted-publisher record are both 
 
 - **No dependency diff links.** An atpm dependency spelled `@handle/name` resolves on npm to a scope someone else owns, so the manifest diff links nothing rather than something confidently wrong.
 - **No package-only `/diff/atpm/<name>` form.** Nothing links it.
-- **No approval.** Drydock reviews staged candidates and gates the approval job, but approving is a write to the publisher's own repository and nothing here holds a credential for it.
+- **No approval, and no gate.** Drydock reviews staged candidates and stops there; approving is a write to the publisher's own repository, done in atpm.
 
 Staged candidates are diffed on this same surface: `/stage/atpm/<publisher>/<rkey>` redirects to an ordinary `/diff` URL whose `to` version names the staged record, so a pre-publish review is anonymous, shareable, and identical to a published one. See [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 

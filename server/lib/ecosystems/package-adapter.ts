@@ -119,47 +119,9 @@ export interface AdapterBroker {
   dispose(): void | Promise<void>;
 }
 
-/**
- * Whether an organization can start a staged review, decided before a scan row
- * exists so a refusal is an actionable error rather than a failed scan.
- *
- * `label` is best effort: knowing the package and version up front means a scan
- * whose artifact never parses still shows which release it was for.
- */
-export interface StagedPreflight {
-  ok: boolean;
-  /** Message shown to the caller when `ok` is false. */
-  error?: string;
-  /** Upstream status that explains the refusal, when there is one. */
-  status?: number;
-  label?: { packageName: string | null; version: string | null };
-}
-
 export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker = AdapterBroker> {
   /** Stable id used in persistence + logs. */
   readonly id: string;
-
-  /**
-   * Whether this ecosystem's staged review needs the organization's stored
-   * credential. npm does — a staged candidate is private registry state that
-   * only the publisher's token can read. atpm does not: its candidates are
-   * public records in the publisher's own repository.
-   *
-   * Declared rather than inferred so the scan route and the queue job can ask
-   * the adapter instead of naming an ecosystem.
-   */
-  readonly requiresConnection: boolean;
-
-  /**
-   * Check that a staged candidate is reachable for this organization before a
-   * scan is created. Adapters that need no credential and can validate nothing
-   * cheaply omit it, and the caller proceeds.
-   */
-  preflightStaged?(
-    ctx: AdapterContext,
-    input: TInput,
-    ref: AdapterConnectionRef,
-  ): Promise<StagedPreflight>;
 
   /** Code-pattern family used when classifying changed-line findings. */
   readonly codePatternSet?: CodePatternSet;

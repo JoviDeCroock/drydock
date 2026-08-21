@@ -291,22 +291,6 @@ describe("release target validation", () => {
     }
   });
 
-  test("accepts addressable atpm publisher references", () => {
-    for (const publisherRef of [
-      "@ebey.dev",
-      "did:plc:twegdcgytckr5cxm57gyruxa",
-      "did:web:packages.example.com",
-    ]) {
-      expect(() =>
-        validateReleaseTargetShape({
-          ...VALID_RELEASE_TARGET,
-          ecosystem: "atpm",
-          publisherRef,
-        }),
-      ).not.toThrow();
-    }
-  });
-
   test("rejects atpm publisher references that discovery cannot resolve", () => {
     for (const publisherRef of [
       "alice",

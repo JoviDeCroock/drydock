@@ -38,25 +38,10 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-/** One publisher-resolution job fanned out from the discovery cron. */
-export interface AtpmDiscoveryQueueMessage {
-  kind: "atpm_discovery";
-  organizationId: string;
-  actorUserId: string;
-  publisherRef: string;
-  source: ScanSource;
-}
-
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage | AtpmDiscoveryQueueMessage;
+export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";
-}
-
-export function isAtpmDiscoveryMessage(
-  message: QueueMessage,
-): message is AtpmDiscoveryQueueMessage {
-  return "kind" in message && message.kind === "atpm_discovery";
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -96,31 +81,30 @@ export async function executeScanJob(
     return null;
   }
 
-  const ecosystem = message.ecosystem ?? "npm";
   try {
-    // The adapter declares whether this ecosystem's staged candidates are
-    // private registry state. npm's are, so a scan that reached the queue with
-    // a since-revoked token must fail here rather than in the sandbox; atpm's
-    // are public records and there is no credential to check.
-    const adapter = getStagedAdapter(ecosystem);
-    if (adapter.requiresConnection) {
-      const npmConnection = await getNpmConnection(db, message.organizationId);
-      if (!npmConnection) {
-        throw new Error("Connect an organization npm token before scanning staged publishes.");
-      }
-      if (npmConnection.validationStatus !== "valid") {
-        throw new Error("Validate the organization npm token before scanning staged publishes.");
-      }
-      await markNpmConnectionUsed(db, message.organizationId);
+    const npmConnection = await getNpmConnection(db, message.organizationId);
+    if (!npmConnection) {
+      throw new Error("Connect an organization npm token before scanning staged publishes.");
+    }
+    if (npmConnection.validationStatus !== "valid") {
+      throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
 
-    const result = await runScanPipeline({ env, executionCtx, db, session }, adapter, {
-      scanId: message.scanId,
-      stageId: message.stageId,
-      maxFiles: message.maxFiles,
-      organizationId: message.organizationId,
-      source: message.source ?? "manual",
-    });
+    await markNpmConnectionUsed(db, message.organizationId);
+
+    // Staged-publish scans are npm-only; resolving through the registry keeps
+    // the capability declaration authoritative rather than decorative.
+    const result = await runScanPipeline(
+      { env, executionCtx, db, session },
+      getStagedAdapter("npm"),
+      {
+        scanId: message.scanId,
+        stageId: message.stageId,
+        maxFiles: message.maxFiles,
+        organizationId: message.organizationId,
+        source: message.source ?? "manual",
+      },
+    );
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,
       organizationId: message.organizationId,
@@ -168,7 +152,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
-          ecosystem,
+          ecosystem: "npm",
           source: message.source ?? "auto_discovery",
           reason: "staged_tarball_unavailable",
           durationMs: durationMsSince(startedAtMs),
@@ -180,7 +164,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.failed",
           organizationId: message.organizationId,
-          ecosystem,
+          ecosystem: "npm",
           source: message.source ?? "manual",
           code: safe.code,
           durationMs: durationMsSince(startedAtMs),

@@ -49,43 +49,7 @@ describe("isValidStageId", () => {
 describe("parseScanInput", () => {
   test("returns ok with valid stageId", () => {
     const result = parseScanInput({ stageId: "valid-stage-id-123" });
-    // An unprefixed reference is npm's registry-issued staged-publish id.
-    expect(result).toEqual({
-      ok: true,
-      input: { stageId: "valid-stage-id-123", ecosystem: "npm" },
-    });
-  });
-
-  test("routes a prefixed reference to the ecosystem that spells it that way", () => {
-    const stageId = "atpm:did:plc:twegdcgytckr5cxm57gyruxa:3lmabcdefghij";
-    expect(parseScanInput({ stageId })).toEqual({
-      ok: true,
-      input: { stageId, ecosystem: "atpm" },
-    });
-  });
-
-  test("accepts a valid did:web reference longer than npm's opaque id limit", () => {
-    const host = `${Array.from({ length: 20 }, () => "aaaaaaa").join(".")}.com`;
-    const stageId = `atpm:did:web:${host}:3lmabcdefghij:e852a96a-83f5-5c21-97c4-dce5b2f116ad`;
-    expect(stageId.length).toBeGreaterThan(161);
-    expect(parseScanInput({ stageId })).toEqual({
-      ok: true,
-      input: { stageId, ecosystem: "atpm" },
-    });
-  });
-
-  test("rejects a prefixed reference the ecosystem cannot read", () => {
-    for (const stageId of [
-      "atpm:did:plc:twegdcgytckr5cxm57gyruxa:NOTATID",
-      "atpm:did:example:abc:3lmabcdefghij",
-      "atpm:3lmabcdefghij",
-    ]) {
-      expect(parseScanInput({ stageId }), stageId).toEqual({
-        ok: false,
-        error: "invalid atpm stageId",
-        status: 400,
-      });
-    }
+    expect(result).toEqual({ ok: true, input: { stageId: "valid-stage-id-123" } });
   });
 
   test("rejects missing stageId", () => {

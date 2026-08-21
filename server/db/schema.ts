@@ -394,99 +394,6 @@ export const githubAppInstallations = sqliteTable(
   }),
 );
 
-/**
- * An organization's verified atpm publishing accounts.
- *
- * This is the answer to "whose staged releases should Drydock watch?", and it
- * exists because atpm gives no other answer. npm's equivalent is implicit — the
- * organization's stored token both names the account and unlocks it — but an
- * atpm staged candidate is a public record, so there is no credential whose
- * existence doubles as an enrolment.
- *
- * A row is proof of *control*, not a grant of access: nothing here can be used
- * to read or write anything, because reading a publisher's records needs no
- * permission and Drydock never writes. What it establishes is that the person
- * who enrolled this DID could sign in as it, which is what makes it honest to
- * put that account's releases in this organization's dashboard and send its
- * notifications to this organization's members. See
- * `server/lib/ecosystems/atpm/oauth.ts` for why no token survives that proof.
- */
-export const atpmPublishers = sqliteTable(
-  "atpm_publishers",
-  {
-    id: text("id").primaryKey(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    did: text("did").notNull(),
-    // Handle proven at enrolment, for display only. A handle can move to
-    // another account, so the DID is what everything else keys on.
-    handle: text("handle"),
-    // PDS resolved at enrolment. Re-resolved on every sweep rather than trusted
-    // from here; kept so the UI can show where the account lives.
-    pds: text("pds").notNull(),
-    // How control was proven. One value today; named so a future DNS or
-    // signed-record challenge is a new value rather than a new column.
-    verificationMethod: text("verification_method").notNull(),
-    verifiedAt: integer("verified_at", { mode: "timestamp_ms" }).notNull(),
-    // Set when the account asked Drydock to stop watching it, which must
-    // survive independently of whether the organization also removed the row.
-    disabledAt: integer("disabled_at", { mode: "timestamp_ms" }),
-    lastSweptAt: integer("last_swept_at", { mode: "timestamp_ms" }),
-    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (table) => ({
-    orgDidUniqueIdx: uniqueIndex("atpm_publishers_org_did_unique_idx").on(
-      table.organizationId,
-      table.did,
-    ),
-    // The firehose consumer resolves an event's DID to the organizations
-    // watching it, so this index is on the hot path of every atpm stage
-    // written anywhere on the network.
-    didIdx: index("atpm_publishers_did_idx").on(table.did),
-  }),
-);
-
-/**
- * One in-flight AT Protocol OAuth authorization request.
- *
- * Everything here is single-use and short-lived: the PKCE verifier and the
- * ephemeral DPoP key exist only to finish one token exchange, and the row is
- * deleted the moment it is consumed. The DPoP private key is stored encrypted
- * even so — it is key material, and "it expires in five minutes" is a reason to
- * bound exposure, not a reason to store it in the clear.
- */
-export const atpmOauthRequests = sqliteTable(
-  "atpm_oauth_requests",
-  {
-    // The OAuth `state` parameter, which is also this row's lookup key.
-    state: text("state").primaryKey(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
-    // The DID this request expects to come back. The token response's `sub`
-    // must equal it, or a different account authorized the request.
-    did: text("did").notNull(),
-    handle: text("handle"),
-    pds: text("pds").notNull(),
-    // Authorization server that issued the request, checked against the `iss`
-    // the callback carries.
-    issuer: text("issuer").notNull(),
-    tokenEndpoint: text("token_endpoint").notNull(),
-    pkceVerifier: text("pkce_verifier").notNull(),
-    dpopKeyCiphertext: text("dpop_key_ciphertext").notNull(),
-    dpopKeyNonce: text("dpop_key_nonce").notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (table) => ({
-    expiryIdx: index("atpm_oauth_requests_expiry_idx").on(table.expiresAt),
-  }),
-);
-
 export const githubReleaseTargets = sqliteTable(
   "github_release_targets",
   {
@@ -505,12 +412,6 @@ export const githubReleaseTargets = sqliteTable(
     // Optional override for the GitHub Actions artifact the release bundle is
     // downloaded from. Null falls back to the ecosystem default.
     artifactName: text("artifact_name"),
-    // Ecosystem-specific publisher identity this target releases as, for gates
-    // whose candidate lives somewhere other than the workflow's own uploads.
-    // atpm sets it to the publishing account (`@handle` or a DID), which is
-    // what names the AT Protocol repository holding the staged record. Null for
-    // every ecosystem whose candidate is an uploaded artifact.
-    publisherRef: text("publisher_ref"),
     repositoryId: integer("repository_id").notNull(),
     repositoryFullName: text("repository_full_name").notNull(),
     environment: text("environment").notNull(),

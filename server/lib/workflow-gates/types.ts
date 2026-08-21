@@ -80,26 +80,6 @@ export interface PreparedReleaseCandidate {
  *    shared pipeline runs (see `server/lib/ecosystems/package-adapter.ts`); risk-to-decision
  *    mapping stays shared in `recommendationForReleaseRisk`.
  */
-/**
- * What a target-sourced gate adapter is told about the deployment it is holding.
- *
- * Deliberately small: it is the signed webhook's own facts — which repository,
- * which run, which environment — plus the release target's publisher reference.
- * An adapter that derives candidates from somewhere other than the workflow's
- * uploads has to bind them back to *this run*, and these are the values that
- * make that binding checkable.
- */
-export interface TargetGateContext {
-  env: Cloudflare.Env;
-  executionCtx: ExecutionContext;
-  organizationId: string;
-  repositoryFullName: string;
-  runId: number;
-  environment: string;
-  /** `github_release_targets.publisher_ref`, as the maintainer configured it. */
-  publisherRef: string | null;
-}
-
 export interface WorkflowGateAdapter {
   /** Stable ecosystem id; matches `github_release_targets.ecosystem`. */
   readonly ecosystem: string;
@@ -172,27 +152,4 @@ export interface WorkflowGateAdapter {
     artifact: ParsedGateArtifact,
     retainedSamples: Map<string, string>,
   ): ParsedGateArtifact;
-
-  /**
-   * Derive candidates from the release target instead of from an uploaded
-   * artifact bundle. Declaring this replaces the bundle path entirely: the
-   * shared runner does not fetch, download, or parse any GitHub Actions
-   * artifact for this gate.
-   *
-   * It exists for atpm, whose release candidate is not something CI uploads.
-   * `npm stage publish` writes the candidate into the publisher's own AT
-   * Protocol repository with the tarball attached as a content-addressed blob,
-   * and the workflow's protected job is the *approval*, not the publish. There
-   * is no bundle to review, and inventing one would mean reviewing a copy of
-   * bytes that are already immutably addressed.
-   *
-   * The binding obligation moves with it. A bundle is bound to the run because
-   * the runner downloaded it from that run through the installation token; an
-   * adapter using this hook must establish the equivalent itself and throw
-   * `WorkflowArtifactError` when it cannot, so an unbindable gate fails closed
-   * rather than reviewing a candidate some other run staged.
-   */
-  prepareReleaseCandidatesFromTarget?(
-    context: TargetGateContext,
-  ): Promise<PreparedReleaseCandidate[]>;
 }

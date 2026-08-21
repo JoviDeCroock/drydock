@@ -32,9 +32,6 @@ const UNKNOWN_BASELINE_SHA256 = "00".repeat(32);
 export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
   id: "vscode",
 
-  // Gate-only: the VSIX arrives from the workflow run and the Marketplace
-  // baseline is a public asset.
-  requiresConnection: false,
   codePatternSet: "javascript",
 
   parseInput(raw: unknown): VscodeAdapterInput {

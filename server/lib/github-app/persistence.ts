@@ -32,9 +32,6 @@ export interface ReleaseTargetRecord {
   // Null inspects every non-expired workflow artifact; non-null narrows to one
   // GitHub Actions artifact name.
   artifactName: string | null;
-  // Ecosystem-specific publishing account, for gates whose candidate is not a
-  // workflow upload. atpm requires it; every other ecosystem leaves it null.
-  publisherRef: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -189,8 +186,6 @@ export interface CreateReleaseTargetInput {
   ecosystem: SupportedEcosystem | null;
   /** Optional narrowing override for the GitHub Actions artifact name. */
   artifactName?: string | null;
-  /** Publishing account for ecosystems whose candidate is not an upload. */
-  publisherRef?: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -224,7 +219,6 @@ export async function createReleaseTarget(
   const id = crypto.randomUUID();
   const now = new Date();
   const artifactName = normalizeArtifactName(input.artifactName);
-  const publisherRef = input.publisherRef?.trim() || null;
   try {
     await db.insert(githubReleaseTargets).values({
       id,
@@ -232,7 +226,6 @@ export async function createReleaseTarget(
       installationRowId: input.installationRowId,
       ecosystem: input.ecosystem,
       artifactName,
-      publisherRef,
       repositoryId: input.repositoryId,
       repositoryFullName: input.repositoryFullName,
       environment,
@@ -255,7 +248,6 @@ export async function createReleaseTarget(
     installationRowId: input.installationRowId,
     ecosystem: input.ecosystem,
     artifactName,
-    publisherRef,
     repositoryId: input.repositoryId,
     repositoryFullName: input.repositoryFullName,
     environment,
@@ -279,23 +271,6 @@ export async function listReleaseTargetsForOrganization(
     .select()
     .from(githubReleaseTargets)
     .where(eq(githubReleaseTargets.organizationId, organizationId));
-  return rows.map(readReleaseTargetRow);
-}
-
-/**
- * Every release target across all organizations that pins one ecosystem. Used
- * by the discovery cron, which has to sweep publishers rather than
- * organizations: an atpm publishing account is named by the release target, not
- * by a stored credential the way an npm connection is.
- */
-export async function listReleaseTargetsForEcosystem(
-  db: AppDb,
-  ecosystem: string,
-): Promise<ReleaseTargetRecord[]> {
-  const rows = await db
-    .select()
-    .from(githubReleaseTargets)
-    .where(eq(githubReleaseTargets.ecosystem, ecosystem));
   return rows.map(readReleaseTargetRow);
 }
 
@@ -391,7 +366,6 @@ function readReleaseTargetRow(row: {
   installationRowId: string;
   ecosystem: string | null;
   artifactName: string | null;
-  publisherRef: string | null;
   repositoryId: number;
   repositoryFullName: string;
   environment: string;
@@ -405,7 +379,6 @@ function readReleaseTargetRow(row: {
     installationRowId: row.installationRowId,
     ecosystem: row.ecosystem === null ? null : (row.ecosystem as SupportedEcosystem),
     artifactName: row.artifactName,
-    publisherRef: row.publisherRef,
     repositoryId: row.repositoryId,
     repositoryFullName: row.repositoryFullName,
     environment: row.environment,

@@ -312,7 +312,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
     installationRowId?: unknown;
     ecosystem?: unknown;
     artifactName?: unknown;
-    publisherRef?: unknown;
     repositoryFullName?: unknown;
     environment?: unknown;
   };
@@ -328,12 +327,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const artifactName =
     typeof body.artifactName === "string" && body.artifactName.trim()
       ? body.artifactName.trim()
-      : null;
-  // Only ecosystems whose gate candidate is not a workflow upload take this;
-  // `validateReleaseTargetShape` is where that rule lives.
-  const publisherRef =
-    typeof body.publisherRef === "string" && body.publisherRef.trim()
-      ? body.publisherRef.trim()
       : null;
   const repositoryFullName =
     typeof body.repositoryFullName === "string" ? body.repositoryFullName.trim() : "";
@@ -378,7 +371,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
       installationRowId: installation.id,
       ecosystem,
       artifactName,
-      publisherRef,
       repositoryId: repo.id,
       repositoryFullName: repo.fullName,
       environment,
@@ -391,7 +383,6 @@ githubAppRoutes.post("/release-targets", async (c) => {
       metadata: {
         ecosystem: record.ecosystem ?? "auto",
         artifactName: record.artifactName,
-        publisherRef: record.publisherRef,
         repositoryFullName: record.repositoryFullName,
         repositoryId: record.repositoryId,
         environment: record.environment,
@@ -855,8 +846,6 @@ function publicReleaseTarget(record: ReleaseTargetRecord) {
     // Null = auto-detect the ecosystem from the uploaded artifacts.
     ecosystem: record.ecosystem,
     artifactName: record.artifactName,
-    // Publishing account, for gates whose candidate is not a workflow upload.
-    publisherRef: record.publisherRef,
     repositoryId: record.repositoryId,
     repositoryFullName: record.repositoryFullName,
     environment: record.environment,

@@ -145,8 +145,8 @@ describe("/stage/atpm/:publisher/:rkey", () => {
       version: "0.0.16",
       baselineVersion: "0.0.15",
     });
-    // The approval id travels with it so the linking side can show the exact
-    // command without deriving it again.
-    expect(body.approveId).toMatch(/^[0-9a-f-]{36}$/);
+    // Nothing about approving travels with it: Drydock shows what changed and
+    // stops there.
+    expect(body).not.toHaveProperty("approveId");
   });
 });

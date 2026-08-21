@@ -223,12 +223,3 @@ compaction behavior.
   and scan-workflow changes.
 - Review [`security-model.md`](security-model.md) before changing trust
   boundaries.
-
-## atpm publisher discovery (optional)
-
-Two things are optional and independent:
-
-- **`ATPM_FIREHOSE`** — a Durable Object binding (class `AtpmFirehose`) that subscribes to atpm staging live. Without it, staged atpm releases are still found by the \*/15 cron sweep and the per-publisher "Check now" button, but a candidate approved inside one tick is missed entirely, because atpm deletes a staged record when it is approved. `ATPM_FIREHOSE_URL` points at a different Jetstream instance or relay; `ATPM_FIREHOSE_DISABLED=1` turns it off while leaving the binding in place. The object holds an outbound WebSocket and therefore stays resident, which is a small always-on cost.
-- **AT Protocol OAuth enrolment** — needs no configuration beyond the Worker's own public origin, since the client id _is_ the URL its metadata is served from (`/api/v1/atpm/oauth/client-metadata.json`). It is a public client with no secret. `NPM_CONNECTIONS_ENCRYPTION_KEY` must be set, because the ephemeral DPoP key for an in-flight request is sealed with it.
-
-Neither grants Drydock any access to a publisher's repository; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).

@@ -1,1 +1,0 @@
-ALTER TABLE `github_release_targets` ADD `publisher_ref` text;

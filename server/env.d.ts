@@ -52,14 +52,6 @@ declare global {
       GITHUB_APP_WEBHOOK_SECRET?: string;
       GITHUB_APP_STATE_SECRET?: string;
       WORKFLOW_GATE_CALLBACK_WINDOW_MS?: string;
-      // Live subscription to atpm staging. Absent (or "1" in the disable flag)
-      // leaves discovery on the cron sweep alone, which silently misses any
-      // candidate approved inside one tick — see lib/ecosystems/atpm/firehose.ts.
-      ATPM_FIREHOSE?: DurableObjectNamespace<
-        import("./lib/ecosystems/atpm/firehose").AtpmFirehose
-      >;
-      ATPM_FIREHOSE_URL?: string;
-      ATPM_FIREHOSE_DISABLED?: string;
       SLACK_CLIENT_ID?: string;
       SLACK_CLIENT_SECRET?: string;
     }
