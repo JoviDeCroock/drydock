@@ -189,7 +189,14 @@ Use `rateLimitResponse` from `server/lib/platform/http.ts` for 429 JSON response
 
 ## Related skills
 
-The `.claude/skills/` directory ships the canonical signals/models reference set used by Claude Code during this migration. The same skills are exposed to agents through the `.agents/skills` symlink:
+The `.claude/skills/` directory ships the canonical reference set used by Claude Code in this repo. The same skills are exposed to agents through the `.agents/skills` symlink:
+
+Codebase-shape skills:
+
+- [`shared-primitives`](../.claude/skills/shared-primitives/SKILL.md) — where a small helper belongs (`server/lib/platform/`, `src/features/`, an ecosystem directory), why a name has to state the context it is safe for (`escapeHtmlText` vs `escapeHtmlAttribute` vs `escapeXml`), and why hoisting obliges you to pin the primitive with direct tests.
+- [`split-large-module`](../.claude/skills/split-large-module/SKILL.md) — choosing a seam, keeping a barrel, verifying a split with a declaration census rather than a green suite, and which files stay whole.
+
+Signals and models:
 
 - `preact-signals-core` — core reactivity primitives and the runtime tracking model.
 - `preact-signals-preact-integration` — `useSignal`, JSX rendering choices, `Show`/`For`, `useLiveSignal`.

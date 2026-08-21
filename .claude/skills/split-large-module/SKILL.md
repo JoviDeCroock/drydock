@@ -31,17 +31,22 @@ If a candidate seam forces you to export internals that are only meaningful toge
 
 For any split you would not want to be wrong about, run one of these before committing:
 
-**Declaration census** — every top-level declaration in the original appears in exactly one new module:
+**Declaration census** — nothing was lost, and nothing was copied instead of moved. Two directions matter and they are not the same check:
 
 ```sh
-git show HEAD:server/db/scans.ts \
-  | grep -oE '^(export )?(async )?(function|const|class|type|interface) [A-Za-z0-9_]+' \
-  | awk '{print $NF}' | sort > /tmp/before.txt
-cat server/db/scan-*.ts \
-  | grep -oE '^(export )?(async )?(function|const|class|type|interface) [A-Za-z0-9_]+' \
-  | awk '{print $NF}' | sort > /tmp/after.txt
-diff /tmp/before.txt /tmp/after.txt     # must be empty; duplicates in after = copied, not moved
+DECL='^(export )?(declare )?(async )?(function|const|class|type|interface|enum) [A-Za-z0-9_]+'
+git show <pre-split-ref>:server/db/scans.ts \
+  | grep -oE "$DECL" | awk '{print $NF}' | sort -u > /tmp/before.txt
+cat server/db/scan-jobs.ts server/db/scan-persist.ts server/db/scan-list.ts \
+    server/db/scan-detail.ts server/db/scan-decisions.ts server/db/scan-risk.ts \
+    server/db/d1-chunk.ts \
+  | grep -oE "$DECL" | awk '{print $NF}' | sort > /tmp/after.txt
+
+comm -23 /tmp/before.txt <(sort -u /tmp/after.txt)   # dropped on the floor — must be empty
+uniq -d /tmp/after.txt                               # same name in two modules — must be empty
 ```
+
+Check *containment*, not equality: extra names in `after` are normal, because a split usually absorbs a neighbor or two. Missing names are the defect. List every destination file explicitly rather than globbing — a `scan-*.ts` glob silently misses the `d1-chunk.ts` the split also produced, and a census with a hole in it is worse than none.
 
 **Surface diff** — for routes, print the route table before and after and diff it to zero. All 12 GitHub App paths were checked this way. Hono exposes the mounted routes; a `console.log` of the router's route list in a throwaway script is enough.
 
