@@ -62,7 +62,7 @@ function runTool(binary, args) {
   return result;
 }
 
-const NOISE_LINE = /^(Checking formatting|Finished in |Found \d+ warning|.*npm advisory)/;
+const NOISE_LINE = /^(Checking formatting|Finished in |Found \d+ warning)/;
 
 function trimmedOutput(result) {
   const lines = `${result.stdout}${result.stderr}`
@@ -85,7 +85,7 @@ for (const file of files) {
   if (format !== null && format.status !== 0) {
     problems.push(
       `${label}: oxfmt --check failed — not formatted (or unparseable). ` +
-        "Fix the formatting in your next edit, or run `pnpm exec oxfmt <file>` and re-read the file.",
+        `Fix the formatting in your next edit, or run \`pnpm exec oxfmt "${label}"\` and re-read the file.`,
     );
   }
 
