@@ -98,9 +98,19 @@ describe("fetchReleaseAuthoritySources", () => {
   });
 
   it("reads a repository-qualified entry workflow from its owning repository", async () => {
+    const resolvedSha = "b".repeat(40);
     const seen = mockGithub((url) => {
       if (url.pathname.endsWith("/actions/runs/4242")) {
-        return runResponse([], "octo/shared/.github/workflows/release.yml@refs/heads/main");
+        return runResponse(
+          [
+            {
+              path: "octo/shared/.github/workflows/release.yml",
+              sha: resolvedSha,
+              ref: "refs/heads/main",
+            },
+          ],
+          "octo/shared/.github/workflows/release.yml@refs/heads/main",
+        );
       }
       if (url.pathname === "/repos/octo/shared/contents/.github/workflows/release.yml") {
         return new Response(WORKFLOW);
@@ -117,12 +127,36 @@ describe("fetchReleaseAuthoritySources", () => {
         path: "octo/shared/.github/workflows/release.yml",
         repositoryFullName: "octo/shared",
         role: "entry",
-        sha: "a".repeat(40),
+        ref: resolvedSha,
+        sha: resolvedSha,
       }),
     ]);
     const contents = seen.find((entry) => entry.url.includes("/contents/"));
     expect(contents?.url).toContain("/repos/octo/shared/contents/.github/workflows/release.yml");
-    expect(contents?.url).toContain(`ref=${"a".repeat(40)}`);
+    expect(contents?.url).toContain(`ref=${resolvedSha}`);
+    expect(contents?.url).not.toContain(`ref=${"a".repeat(40)}`);
+  });
+
+  it("falls back to a repository-qualified entry workflow's own ref", async () => {
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) {
+        return runResponse([], "octo/shared/.github/workflows/release.yml@refs/heads/main");
+      }
+      if (url.pathname === "/repos/octo/shared/contents/.github/workflows/release.yml") {
+        return new Response(WORKFLOW);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.workflows[0]).toMatchObject({
+      ref: "refs/heads/main",
+      sha: null,
+    });
+    const contents = seen.find((entry) => entry.url.includes("/contents/"));
+    expect(contents?.url).toContain("ref=refs%2Fheads%2Fmain");
+    expect(contents?.url).not.toContain(`ref=${"a".repeat(40)}`);
   });
 
   it.each([

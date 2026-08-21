@@ -26,6 +26,7 @@ import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import type { WorkflowGateRecord } from "../../server/lib/github-app/webhook-gates";
 import {
+  claimGateReviewStart,
   getGateForOrganization,
   markGateDecidedForPackageAggregate,
 } from "../../server/lib/github-app/webhook-gates";
@@ -482,6 +483,37 @@ describe("release-authority capture", () => {
     );
     // No row at all: "not assessed", which must stay distinct from "unchanged".
     expect(record).toBeNull();
+  });
+
+  test("clears a previous attempt's authority before a retry can fail capture", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const { gate } = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, gate);
+    expect(await getReleaseAuthorityForGate(db, fixture.organizationId, gate.id)).not.toBeNull();
+
+    // A failed package batch releases the claim and detaches its representative
+    // scan. The next winning claim must invalidate that attempt's evidence
+    // before any network request for the replacement capture can fail.
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ scanId: null, reviewStartedAt: null })
+      .where(eq(schema.githubWorkflowGates.id, gate.id));
+    await expect(claimGateReviewStart(db, gate.id)).resolves.toBe(true);
+    expect(await getReleaseAuthorityForGate(db, fixture.organizationId, gate.id)).toBeNull();
+
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("network down on retry");
+    });
+    await expect(capture(fixture, gate)).resolves.toBeNull();
+    expect(await getReleaseAuthorityForGate(db, fixture.organizationId, gate.id)).toBeNull();
   });
 });
 

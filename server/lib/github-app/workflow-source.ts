@@ -125,25 +125,44 @@ export async function fetchReleaseAuthoritySourcesWithToken(
     role: "entry" | "referenced";
   }> = [];
 
-  if (runContext.entryWorkflow) {
+  const entryWorkflow = runContext.entryWorkflow;
+  let resolvedEntry: ReferencedWorkflowRef | undefined;
+  if (entryWorkflow) {
+    const entryInRunRepository = entryWorkflow.repositoryFullName === input.repositoryFullName;
+    resolvedEntry = entryInRunRepository
+      ? undefined
+      : runContext.referencedWorkflows.find(
+          (workflow) =>
+            workflow.repositoryFullName === entryWorkflow.repositoryFullName &&
+            workflow.filePath === entryWorkflow.path &&
+            workflowRevisionMatches(entryWorkflow.ref, workflow),
+        );
+    const entryRef = entryInRunRepository
+      ? runContext.headSha
+      : (resolvedEntry?.sha ?? entryWorkflow.ref);
     requests.push({
-      path: runContext.entryWorkflow.path,
-      repositoryFullName: runContext.entryWorkflow.repositoryFullName,
+      path: entryWorkflow.path,
+      repositoryFullName: entryWorkflow.repositoryFullName,
       // The entry workflow is read at the commit the run used, not at the tip
       // of the default branch: a later edit must not rewrite the history of
-      // what this release was authorized by.
-      ref: runContext.headSha,
-      sha: runContext.headSha,
+      // what this release was authorized by. A repository-qualified entry has
+      // its own revision; the run repository's head sha does not name content
+      // in that other repository.
+      ref: entryRef,
+      sha: entryInRunRepository ? runContext.headSha : (resolvedEntry?.sha ?? commitSha(entryRef)),
       role: "entry",
     });
   } else {
     unresolved.push({ path: `run/${input.runId}`, reason: "unparseable" });
   }
 
-  const referenced = runContext.referencedWorkflows.slice(0, MAX_REFERENCED_WORKFLOWS);
-  if (runContext.referencedWorkflows.length > referenced.length) {
+  const referencedGraph = runContext.referencedWorkflows.filter(
+    (workflow) => workflow !== resolvedEntry,
+  );
+  const referenced = referencedGraph.slice(0, MAX_REFERENCED_WORKFLOWS);
+  if (referencedGraph.length > referenced.length) {
     unresolved.push({
-      path: `+${runContext.referencedWorkflows.length - referenced.length} referenced workflows`,
+      path: `+${referencedGraph.length - referenced.length} referenced workflows`,
       reason: "limit_reached",
     });
   }
@@ -275,6 +294,7 @@ interface WorkflowRunContext {
   entryWorkflow: {
     path: string;
     repositoryFullName: string;
+    ref: string | null;
   } | null;
   runAttempt: number | null;
   event: string | null;
@@ -333,15 +353,18 @@ async function fetchWorkflowRun(
 function parseEntryWorkflow(
   path: string | null,
   runRepositoryFullName: string,
-): { path: string; repositoryFullName: string; qualifiedPath: string } | null {
+): { path: string; repositoryFullName: string; qualifiedPath: string; ref: string | null } | null {
   if (!path) return null;
-  const withoutRef = path.includes("@") ? path.slice(0, path.lastIndexOf("@")) : path;
+  const separator = path.lastIndexOf("@");
+  const withoutRef = separator > 0 ? path.slice(0, separator) : path;
+  const ref = separator > 0 ? path.slice(separator + 1) || null : null;
   if (!withoutRef) return null;
   if (withoutRef.startsWith(".github/workflows/")) {
     return {
       path: withoutRef,
       repositoryFullName: runRepositoryFullName,
       qualifiedPath: withoutRef,
+      ref: null,
     };
   }
   const segments = withoutRef.split("/");
@@ -350,7 +373,23 @@ function parseEntryWorkflow(
     path: segments.slice(2).join("/"),
     repositoryFullName: segments.slice(0, 2).join("/"),
     qualifiedPath: withoutRef,
+    ref,
   };
+}
+
+function commitSha(ref: string | null): string | null {
+  return ref && /^[0-9a-f]{40}$/i.test(ref) ? ref : null;
+}
+
+function workflowRevisionMatches(
+  entryRef: string | null,
+  workflow: ReferencedWorkflowRef,
+): boolean {
+  if (!entryRef) return false;
+  if (workflow.sha === entryRef || workflow.ref === entryRef) return true;
+  const shortEntryRef = entryRef.replace(/^refs\/(?:heads|tags)\//, "");
+  const shortWorkflowRef = workflow.ref?.replace(/^refs\/(?:heads|tags)\//, "") ?? null;
+  return shortWorkflowRef === shortEntryRef;
 }
 
 /**

@@ -20,7 +20,7 @@
 // Workflow definitions are repository content and are treated as hostile
 // evidence: read and projected, never evaluated.
 
-import { sha256Hex, stableJson } from "../platform/stable-json";
+import { sha256Hex, stableJson, utf8Size } from "../platform/stable-json";
 import { type YamlValue, asRecord, asString, asStringList } from "./yaml";
 
 export const RELEASE_AUTHORITY_SCHEMA = "drydock.release-authority.v1";
@@ -30,7 +30,11 @@ export const RELEASE_AUTHORITY_SCHEMA = "drydock.release-authority.v1";
 const MAX_WORKFLOWS = 32;
 const MAX_ENTRIES_PER_LIST = 256;
 const MAX_DETAIL_LENGTH = 300;
+const MAX_IDENTITY_LENGTH = 4_096;
 const MAX_UNRESOLVED = 32;
+// D1 caps a text value at 2 MB. Keep the snapshot much smaller so the delta,
+// indexes, and other row fields retain ample headroom in the same record.
+export const MAX_PERSISTED_SNAPSHOT_BYTES = 256 * 1024;
 
 export type PermissionLevel = "read" | "write" | "none" | "unknown";
 
@@ -258,10 +262,12 @@ export async function buildReleaseAuthoritySnapshot(
     });
   }
 
-  return {
+  const snapshot: ReleaseAuthoritySnapshot = {
     schema: RELEASE_AUTHORITY_SCHEMA,
-    run: input.run,
-    workflows: workflows.sort(byKey((item) => `${item.role}\u0000${item.path}`)),
+    run: boundRun(input.run),
+    workflows: workflows
+      .map(boundWorkflowRef)
+      .sort(byKey((item) => `${item.role}\u0000${item.path}`)),
     triggers: cappedWithCoverage(
       triggers.sort(byKey((item) => `${item.workflow}\u0000${item.event}`)),
       "triggers",
@@ -316,9 +322,10 @@ export async function buildReleaseAuthoritySnapshot(
     ),
     coverage: {
       complete: unresolved.length === 0,
-      unresolved: unresolved.slice(0, MAX_UNRESOLVED),
+      unresolved: unresolved.slice(0, MAX_UNRESOLVED).map(boundUnresolved),
     },
   };
+  return boundSnapshotBytes(snapshot);
 }
 
 /**
@@ -1057,8 +1064,105 @@ function boundProjectionDetails(projection: WorkflowProjection): WorkflowProject
   };
 }
 
+function boundRun(run: ReleaseAuthorityRun): ReleaseAuthorityRun {
+  return {
+    ...run,
+    repositoryFullName: truncate(run.repositoryFullName),
+    environment: truncate(run.environment),
+    workflowPath: nullableIdentity(run.workflowPath),
+    headSha: nullableTruncate(run.headSha),
+    ref: nullableTruncate(run.ref),
+    event: nullableTruncate(run.event),
+    actor: nullableTruncate(run.actor),
+    triggeringActor: nullableTruncate(run.triggeringActor),
+  };
+}
+
+function boundWorkflowRef(workflow: AuthorityWorkflowRef): AuthorityWorkflowRef {
+  return {
+    ...workflow,
+    path: truncateIdentity(workflow.path),
+    repositoryFullName: truncate(workflow.repositoryFullName),
+    sha: nullableTruncate(workflow.sha),
+    ref: nullableTruncate(workflow.ref),
+  };
+}
+
+function boundUnresolved(unresolved: AuthorityUnresolved): AuthorityUnresolved {
+  return { ...unresolved, path: truncate(unresolved.path) };
+}
+
+/**
+ * Apply a final UTF-8 budget after every full-value digest has been computed.
+ * Evidence that does not fit is omitted only alongside explicit incomplete
+ * coverage, so persistence can never fail open or imply a complete graph.
+ */
+function boundSnapshotBytes(snapshot: ReleaseAuthoritySnapshot): ReleaseAuthoritySnapshot {
+  if (utf8Size(stableJson(snapshot)) <= MAX_PERSISTED_SNAPSHOT_BYTES) return snapshot;
+
+  const marker: AuthorityUnresolved = {
+    path: "release authority snapshot byte budget",
+    reason: "limit_reached",
+  };
+  const unresolved = snapshot.coverage.unresolved.filter(
+    (item) => item.path !== marker.path || item.reason !== marker.reason,
+  );
+  if (unresolved.length >= MAX_UNRESOLVED) unresolved[MAX_UNRESOLVED - 1] = marker;
+  else unresolved.push(marker);
+
+  const bounded: ReleaseAuthoritySnapshot = {
+    ...snapshot,
+    workflows: [],
+    triggers: [],
+    permissions: [],
+    environments: [],
+    actions: [],
+    publishSteps: [],
+    safeguards: [],
+    artifactFlow: [],
+    artifacts: [],
+    coverage: { complete: false, unresolved },
+  };
+  const remaining = {
+    bytes: Math.max(0, MAX_PERSISTED_SNAPSHOT_BYTES - utf8Size(stableJson(bounded))),
+  };
+  bounded.workflows = fitWithinByteBudget(snapshot.workflows, remaining);
+  bounded.artifacts = fitWithinByteBudget(snapshot.artifacts, remaining);
+  bounded.triggers = fitWithinByteBudget(snapshot.triggers, remaining);
+  bounded.permissions = fitWithinByteBudget(snapshot.permissions, remaining);
+  bounded.environments = fitWithinByteBudget(snapshot.environments, remaining);
+  bounded.actions = fitWithinByteBudget(snapshot.actions, remaining);
+  bounded.publishSteps = fitWithinByteBudget(snapshot.publishSteps, remaining);
+  bounded.safeguards = fitWithinByteBudget(snapshot.safeguards, remaining);
+  bounded.artifactFlow = fitWithinByteBudget(snapshot.artifactFlow, remaining);
+  return bounded;
+}
+
+function fitWithinByteBudget<T>(items: T[], remaining: { bytes: number }): T[] {
+  const kept: T[] = [];
+  for (const item of items) {
+    const cost = utf8Size(stableJson(item)) + (kept.length > 0 ? 1 : 0);
+    if (cost > remaining.bytes) continue;
+    kept.push(item);
+    remaining.bytes -= cost;
+  }
+  return kept;
+}
+
 function truncate(value: string): string {
   return value.length > MAX_DETAIL_LENGTH ? value.slice(0, MAX_DETAIL_LENGTH) : value;
+}
+
+function truncateIdentity(value: string): string {
+  return value.length > MAX_IDENTITY_LENGTH ? value.slice(0, MAX_IDENTITY_LENGTH) : value;
+}
+
+function nullableTruncate(value: string | null): string | null {
+  return value === null ? null : truncate(value);
+}
+
+function nullableIdentity(value: string | null): string | null {
+  return value === null ? null : truncateIdentity(value);
 }
 
 function cappedWithCoverage<T>(

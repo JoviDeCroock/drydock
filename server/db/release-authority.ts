@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { type AppDb } from "./client";
 import { githubWorkflowGates, releaseAuthoritySnapshots } from "./schema";
 import {
@@ -83,6 +83,22 @@ export async function recordReleaseAuthoritySnapshot(
         updatedAt: now,
       },
     });
+}
+
+/** Remove one gate's unapproved capture before a retry replaces its evidence. */
+export async function deleteReleaseAuthorityForGate(
+  db: AppDb,
+  input: { organizationId: string; gateId: string },
+): Promise<void> {
+  await db
+    .delete(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        isNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    );
 }
 
 export async function getReleaseAuthorityForGate(

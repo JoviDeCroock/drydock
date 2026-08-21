@@ -11,6 +11,7 @@
 import type { AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import {
+  deleteReleaseAuthorityForGate,
   findApprovedAuthorityBaseline,
   listApprovedReleasePaths,
   recordReleaseAuthoritySnapshot,
@@ -49,6 +50,10 @@ export async function captureReleaseAuthority(
 ): Promise<ReleaseAuthorityDelta | null> {
   const { gate } = input;
   const startedAtMs = Date.now();
+  let captured: {
+    delta: ReleaseAuthorityDelta;
+    workflowCount: number;
+  };
 
   try {
     const sources = await fetchReleaseAuthoritySources(input.config, {
@@ -74,7 +79,7 @@ export async function captureReleaseAuthority(
     const baseline = await findApprovedAuthorityBaseline(db, {
       organizationId: gate.organizationId,
       releaseTargetId: gate.releaseTargetId,
-      workflowPath: snapshot.run.workflowPath,
+      workflowPath: sources.run.workflowPath,
       excludeGateId: gate.id,
     });
     const readableBaseline = baseline?.snapshot
@@ -90,7 +95,7 @@ export async function captureReleaseAuthority(
           organizationId: gate.organizationId,
           releaseTargetId: gate.releaseTargetId,
           excludeGateId: gate.id,
-          excludeWorkflowPath: snapshot.run.workflowPath,
+          excludeWorkflowPath: sources.run.workflowPath,
         });
 
     const delta = computeReleaseAuthorityDelta(snapshot, readableBaseline, {
@@ -103,40 +108,31 @@ export async function captureReleaseAuthority(
       releaseTargetId: gate.releaseTargetId,
       gateId: gate.id,
       runId: gate.runId,
-      workflowPath: snapshot.run.workflowPath,
-      headSha: snapshot.run.headSha,
+      workflowPath: sources.run.workflowPath,
+      headSha: sources.run.headSha,
       snapshot,
       delta,
       artifactBindingDigest: await computeArtifactBindingDigest(artifacts),
     });
-
-    await recordScanEvent(db, {
-      organizationId: gate.organizationId,
-      type: "github_workflow_gate.authority_captured",
-      metadata: {
-        gateId: gate.id,
-        status: delta.status,
-        changeCount: delta.changeCount,
-        highestSignificance: delta.highestSignificance,
-        coverageComplete: delta.standing.coverageComplete,
-        workflowCount: snapshot.workflows.length,
-      },
-    });
-
-    emitOperationalEvent("info", "github_workflow_gate.authority_captured", {
-      organizationId: gate.organizationId,
-      gateId: gate.id,
-      status: delta.status,
-      changeCount: delta.changeCount,
-      highestSignificance: delta.highestSignificance,
-      coverageComplete: delta.standing.coverageComplete,
-      durationMs: durationMsSince(startedAtMs),
-    });
-    return delta;
+    captured = { delta, workflowCount: snapshot.workflows.length };
   } catch (err) {
     // Never block or fail the review on a capture problem. The absent record is
     // itself the signal: the workbench shows the authority as not captured
-    // rather than implying it was checked and found unchanged.
+    // rather than implying it was checked and found unchanged. The review-claim
+    // CAS clears a predecessor atomically; this cleanup also preserves the
+    // contract for direct callers and failures after a partial write.
+    try {
+      await deleteReleaseAuthorityForGate(db, {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+      });
+    } catch (cleanupError) {
+      emitOperationalEvent("warn", "github_workflow_gate.authority_cleanup_failed", {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+        error: describeOperationalError(cleanupError),
+      });
+    }
     emitOperationalEvent("warn", "github_workflow_gate.authority_capture_failed", {
       organizationId: gate.organizationId,
       gateId: gate.id,
@@ -145,4 +141,39 @@ export async function captureReleaseAuthority(
     });
     return null;
   }
+
+  // Audit bookkeeping is downstream of durable capture. If it fails, retain
+  // and return the current evidence rather than misclassifying a successful
+  // capture as "not assessed" or deleting the row that was just written.
+  try {
+    await recordScanEvent(db, {
+      organizationId: gate.organizationId,
+      type: "github_workflow_gate.authority_captured",
+      metadata: {
+        gateId: gate.id,
+        status: captured.delta.status,
+        changeCount: captured.delta.changeCount,
+        highestSignificance: captured.delta.highestSignificance,
+        coverageComplete: captured.delta.standing.coverageComplete,
+        workflowCount: captured.workflowCount,
+      },
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.authority_audit_failed", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      error: describeOperationalError(err),
+    });
+  }
+
+  emitOperationalEvent("info", "github_workflow_gate.authority_captured", {
+    organizationId: gate.organizationId,
+    gateId: gate.id,
+    status: captured.delta.status,
+    changeCount: captured.delta.changeCount,
+    highestSignificance: captured.delta.highestSignificance,
+    coverageComplete: captured.delta.standing.coverageComplete,
+    durationMs: durationMsSince(startedAtMs),
+  });
+  return captured.delta;
 }

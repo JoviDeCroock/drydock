@@ -211,7 +211,7 @@ organizationsRoutes.put("/:id/authority-change-approval", async (c) => {
   if (!owner) return c.json({ error: "not found" }, 404);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `organizations:authority-change-approval:${session.userId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,

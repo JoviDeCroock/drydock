@@ -105,7 +105,10 @@ A snapshot records:
   head commit, ref, event, actor and triggering actor;
 - every workflow definition in the graph — the entry workflow plus every
   reusable workflow GitHub reports the run referenced, each with the sha GitHub
-  already resolved it to, and the raw, authority, and execution digests;
+  already resolved it to, and the raw, authority, and execution digests. A
+  repository-qualified entry workflow is read at its own resolved sha (or its
+  reported `@ref` when GitHub supplies no resolved sha), never at the caller
+  repository's head commit;
 - triggers with their normalized branch/tag/path/type filters,
   `workflow_run` workflow selectors, schedule expressions, and digests of
   authority-sensitive `workflow_dispatch` / `workflow_call` input configuration
@@ -144,9 +147,15 @@ snapshot is never presented as "no authority change".
 
 If the capture fails entirely, no record is written at all and the review shows
 **not assessed** — which is deliberately a different thing from **unchanged**.
+The winning review claim atomically removes an unapproved record from a prior
+attempt before recapture starts, so a failed retry cannot expose stale evidence.
 Per-category snapshot limits follow the same rule: excess entries are omitted
 only after a `limit_reached` coverage record is added, so a bounded snapshot can
-never claim that its authority graph is complete.
+never claim that its authority graph is complete. A final 256 KiB UTF-8 budget
+applies after full-value authority digests are computed; if the persisted
+projection would exceed it, lower-priority list entries are omitted with the
+same `limit_reached` coverage marker. This leaves D1 headroom for the derived
+delta without letting database limits turn the capture into `not assessed`.
 
 ## What counts as a change
 
@@ -307,6 +316,8 @@ problem corroboration — not as GitHub or PyPI endorsement.
   edits, reusable workflows, mutable refs, artifact continuity, and coverage.
 - `test/release-authority-source.test.ts` — graph ingestion, path safety, and
   that the installation token never leaves `api.github.com`.
+- `test/release-authority-snapshot.test.ts` — the final persisted UTF-8 budget
+  and its incomplete-coverage contract.
 - `test/release-authority-normalize.test.ts` — persisted-blob readers.
 - `test/release-authority-incident-replay.test.ts` — the incident-shaped replay.
 - `test/workers/release-authority-gate.test.ts` — capture, baseline eligibility,

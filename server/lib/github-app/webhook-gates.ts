@@ -211,7 +211,7 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
  */
 export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<boolean> {
   const now = new Date();
-  const updated = await db
+  const claim = db
     .update(githubWorkflowGates)
     .set({ reviewStartedAt: now, updatedAt: now })
     .where(
@@ -222,6 +222,19 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
       ),
     )
     .returning({ id: githubWorkflowGates.id });
+  // A retry must never expose the snapshot from its failed predecessor. Keep
+  // invalidation in the same batch as the winning claim so a concurrent loser
+  // cannot clear evidence captured by the winner.
+  const clearPriorAuthority = db
+    .delete(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.gateId, gateId),
+        isNull(releaseAuthoritySnapshots.approvedAt),
+        sql`changes() = 1`,
+      ),
+    );
+  const [updated] = await db.batch([claim, clearPriorAuthority]);
   return updated.length > 0;
 }
 
