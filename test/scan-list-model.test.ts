@@ -4,6 +4,7 @@ import {
   scanMatchesDecisionFilter,
   type PersistedScanDetail,
 } from "../src/models/scan";
+import { ACTIVE_ORG_HEADER, setActiveOrganizationId } from "../src/models/active-organization";
 
 type ScanListModelInstance = InstanceType<typeof ScanListModel>;
 
@@ -14,6 +15,14 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function scanDetail(decision: "publish" | "no_publish" | null): PersistedScanDetail {
@@ -284,8 +293,62 @@ describe("ScanListModel registry status refreshes", () => {
   afterEach(() => {
     model?.[Symbol.dispose]();
     model = null;
+    setActiveOrganizationId(null);
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  test("ignores a refresh response from the previously active organization", async () => {
+    const organizationA = deferred<Response>();
+    const organizationB = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(organizationA.promise)
+      .mockReturnValueOnce(organizationB.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    setActiveOrganizationId("org-a");
+    const refreshA = model.refresh();
+    setActiveOrganizationId("org-b");
+    const refreshB = model.refresh();
+
+    organizationB.resolve(
+      jsonResponse({ scans: [{ ...scanDetail(null).scan, id: "scan-b" }], nextCursor: null }),
+    );
+    await refreshB;
+    organizationA.resolve(
+      jsonResponse({ scans: [{ ...scanDetail(null).scan, id: "scan-a" }], nextCursor: null }),
+    );
+    await refreshA;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-b"]);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-a" }),
+      }),
+    );
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-b" }),
+      }),
+    );
+  });
+
+  test("cancels pending registry refreshes after the active organization changes", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    setActiveOrganizationId("org-a");
+    model.scheduleRegistryStatusRefreshes();
+    setActiveOrganizationId("org-b");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("refreshes while the Check npm background work can still be completing", async () => {
