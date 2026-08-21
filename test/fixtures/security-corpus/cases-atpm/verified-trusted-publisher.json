@@ -1,0 +1,38 @@
+{
+  "id": "atpm-verified-trusted-publisher",
+  "title": "Verified build matches its artifact and trusted publisher",
+  "category": "benign-provenance",
+  "intent": "A valid matching build is a hard negative that keeps the atpm provenance rules quiet.",
+  "archiveSha512": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target": {
+    "provenance": {
+      "status": "verified",
+      "provenance": {
+        "sourceRepository": "https://github.com/publisher/package",
+        "sourceRef": "refs/tags/v1.1.0",
+        "sourceCommit": "1111111111111111111111111111111111111111",
+        "workflowPath": ".github/workflows/publish.yml",
+        "runInvocation": "https://github.com/publisher/package/actions/runs/1/attempts/1",
+        "runnerEnvironment": "github-hosted",
+        "repositoryVisibility": "public",
+        "subjectName": "pkg:npm/%40publisher.example/package@1.1.0",
+        "subjectSha512": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "logIndex": "1",
+        "logBaseUrl": "https://rekor.sigstore.dev",
+        "signedAt": "2026-08-21T12:00:00.000Z"
+      }
+    }
+  },
+  "trustPublisher": {
+    "createdAt": "2026-08-21T11:00:00.000Z",
+    "allowStage": true,
+    "allowPublish": false,
+    "github": {
+      "username": "publisher",
+      "repository": "package",
+      "workflow": "publish.yml"
+    }
+  },
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

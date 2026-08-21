@@ -1,0 +1,34 @@
+{
+  "id": "atpm-provenance-subject-mismatch",
+  "title": "Valid provenance describes different tarball bytes",
+  "category": "artifact-binding",
+  "intent": "Pins the critical finding that prevents a valid attestation from being copied onto a different artifact.",
+  "archiveSha512": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target": {
+    "provenance": {
+      "status": "verified",
+      "provenance": {
+        "sourceRepository": "https://github.com/publisher/package",
+        "sourceRef": "refs/tags/v1.1.0",
+        "sourceCommit": "1111111111111111111111111111111111111111",
+        "workflowPath": ".github/workflows/publish.yml",
+        "runInvocation": "https://github.com/publisher/package/actions/runs/1/attempts/1",
+        "runnerEnvironment": "github-hosted",
+        "repositoryVisibility": "public",
+        "subjectName": "pkg:npm/%40publisher.example/package@1.1.0",
+        "subjectSha512": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "logIndex": "1",
+        "logBaseUrl": "https://rekor.sigstore.dev",
+        "signedAt": "2026-08-21T12:00:00.000Z"
+      }
+    }
+  },
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "atpm.provenance-subject-mismatch",
+      "severity": "critical",
+      "file": "package.json"
+    }
+  ]
+}

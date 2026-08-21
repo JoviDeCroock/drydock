@@ -2,8 +2,9 @@ import { Hono, type Context } from "hono";
 import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
+import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
 import { recordProductEvent } from "../lib/platform/analytics";
 import {
   computePublicDiffCacheKey,
@@ -166,6 +167,7 @@ async function loadRequestedDiff(
       const cacheKey = await computePublicDiffCacheKey(input);
       const cached = await readPublicDiffCache(c.env, cacheKey);
       if (cached) {
+        await adapter.validateCachedPair?.(c.env, workerExecutionContext(c.executionCtx), input);
         if (options.countView) recordPublicDiffView(c, cached, true, startedAtMs);
         return { payload: cached };
       }
@@ -209,6 +211,86 @@ function recordPublicDiffView(
     risk: payload.risk?.artifactRisk ?? "unknown",
     durationMs: Math.max(0, Date.now() - startedAtMs),
   });
+}
+
+/**
+ * Resolve a staged atpm candidate to its review URL.
+ *
+ * This is the link atpm's own staged dashboard points at, and the contract is
+ * that atpm can build it from what it already has in hand — the publishing
+ * account and the record key — without asking Drydock anything first. Everything
+ * that needs a lookup happens here: which package the candidate belongs to,
+ * which published release it should be read against, and which revision of the
+ * record is current.
+ *
+ * Anonymous, like the diff it redirects to. A staged candidate is a public
+ * record in the publisher's own repository, so requiring an account to look at a
+ * review of it would be asking people to sign in to read something they can
+ * already `curl` — and it would put a login between a maintainer and the
+ * decision this page exists to inform.
+ *
+ * A redirect rather than a page: the destination is the ordinary diff URL, so a
+ * reviewer who shares what they are looking at shares something stable and
+ * self-describing, and the review itself stays one surface rather than two.
+ */
+publicDiffRoutes.get("/atpm-stage", async (c) => {
+  const limited = await enforcePublicRateLimit(c, "stage-link", 30);
+  if (limited) return limited;
+
+  const publisher = c.req.query("publisher")?.trim() ?? "";
+  const rkey = c.req.query("rkey")?.trim() ?? "";
+  if (!publisher || !rkey) {
+    return c.json({ error: "publisher and rkey are required" }, 400);
+  }
+
+  const wantsHtml = c.req.header("accept")?.includes("text/html") ?? false;
+  c.header("Vary", "Accept");
+  try {
+    const resolved = await resolveAtpmStagedReview(c.env, workerExecutionContext(c.executionCtx), {
+      publisher,
+      rkey,
+    });
+    if (wantsHtml) {
+      // Temporary candidates are mutable and short-lived. A permanent redirect
+      // would let a browser retain a stale record revision after it is replaced.
+      return c.redirect(new URL(resolved.reviewPath, canonicalOrigin(c)).toString(), 302);
+    }
+    return c.json(resolved);
+  } catch (err) {
+    if (wantsHtml) {
+      const status = err instanceof PublicDiffError ? err.status : 502;
+      const message =
+        err instanceof PublicDiffError ? err.message : "could not read that staged release";
+      const candidateGone =
+        err instanceof PublicDiffError &&
+        err.status === 404 &&
+        err.message === "staged release not found";
+      return c.html(stagePlaceholder(message, candidateGone), status === 404 ? 404 : 502);
+    }
+    return publicDiffErrorResponse(c, err);
+  }
+});
+
+function stagePlaceholder(message: string, candidateGone: boolean): string {
+  const headline = candidateGone
+    ? "That staged release is no longer waiting"
+    : "Could not read that release";
+  const detail = candidateGone
+    ? "atpm removes a staged record once it is approved or withdrawn, so this link stops resolving as soon as the release is published. If it was published, the release itself can still be diffed."
+    : escapeHtml(message);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(headline)} · Drydock</title><meta name="robots" content="noindex"></head>
+<body><main><h1>${escapeHtml(headline)}</h1><p>${detail}</p>
+<p><a href="/diff">Diff a published release</a></p></main></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
+  );
 }
 
 publicDiffRoutes.get("/versions", async (c) => {
@@ -289,6 +371,7 @@ publicDiffRoutes.get("/", async (c) => {
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
       provenance: payload.provenance ?? [],
+      attestation: payload.attestation ?? null,
       displayName: payload.displayName ?? null,
       cachedAt: payload.cachedAt,
     },

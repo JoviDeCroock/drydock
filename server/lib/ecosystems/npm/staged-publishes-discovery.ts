@@ -11,6 +11,7 @@ import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } 
 import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../platform/analytics";
+import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -290,9 +291,7 @@ export async function discoverAndQueueStagedPublishes(
             throw err;
           }
         } else {
-          executionCtx.waitUntil(
-            executeScanJob(env, executionCtx, message, db, { finalAttempt: true }),
-          );
+          executionCtx.waitUntil(runScanInline(env, executionCtx, message, db));
         }
         return startedScan;
       }),
@@ -403,4 +402,30 @@ async function mapWithConcurrency<T, U>(
   await Promise.all(runners);
   if (firstError) throw firstError;
   return items.map((_, index) => results.get(index)!);
+}
+
+/**
+ * The no-queue fallback used by local dev and tests.
+ *
+ * `executeScanJob` records its own terminal state, so anything that escapes it
+ * is unexpected — a D1 write failing after the request that scheduled this has
+ * already returned, say. Left bare it becomes an unhandled rejection with no
+ * scan and no log attached to it, which is the least useful shape a failure can
+ * take.
+ */
+function runScanInline(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  message: ScanQueueMessage,
+  db: AppDb,
+): Promise<unknown> {
+  return executeScanJob(env, executionCtx, message, db, { finalAttempt: true }).catch((err) => {
+    emitOperationalEvent("error", "scan.job.unhandled", {
+      scanId: message.scanId,
+      organizationId: message.organizationId,
+      stageId: message.stageId,
+      error: describeOperationalError(err),
+    });
+    return null;
+  });
 }

@@ -26,6 +26,7 @@ import type {
 
 export const pypiAdapter: PackageAdapter<PyPiAdapterInput, PyPiBroker> = {
   id: "pypi",
+
   codePatternSet: "python",
 
   parseInput(raw: unknown): PyPiAdapterInput {

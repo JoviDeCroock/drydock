@@ -5,6 +5,14 @@ import {
   reliablePublicHttpsFetch,
   type AtpmRepoIdentity,
 } from "./identity";
+import {
+  readAtpmAttestation,
+  verifyAtpmProvenance,
+  ATPM_PROVENANCE_ABSENT,
+  ATPM_PROVENANCE_NOT_EVALUATED,
+  type AtpmProvenanceState,
+} from "./provenance";
+import { ATPM_STAGED_VERSION_PREFIX } from "./stage-ref";
 import { PublicDiffError } from "../../public-diff/error";
 import { compareSemver } from "../npm/registry";
 
@@ -29,7 +37,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * metadata checks change, so a cached diff computed under the old rules cannot
  * be served.
  */
-export const ATPM_RULES_VERSION = "10";
+export const ATPM_RULES_VERSION = "14";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -38,12 +46,26 @@ const RECORD_TIMEOUT_MS = 10_000;
 // the protocol says it serves.
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 
+/**
+ * How many versions of one package have their attestation verified per record
+ * read. Each verification is a handful of WebCrypto operations over a few
+ * kilobytes, so the cap is not about cost per version — it bounds what a
+ * publisher-written record with hundreds of fabricated version entries can make
+ * the parent Worker do on one anonymous request. Newest-first, so the versions a
+ * reader is most likely to be looking at are the ones that get evaluated.
+ */
+const MAX_VERIFIED_PROVENANCE_VERSIONS = 64;
+
 // atpm versions are npm versions. Keep the record parser and request adapter on
 // one predicate so `/versions` never advertises a value the diff route rejects.
 const ATPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
 export function isValidAtpmVersion(version: string): boolean {
-  return ATPM_VERSION_RE.test(version);
+  // Public staged-review URLs use this prefix for record-revision tokens and
+  // the first-release sentinel. Keeping it out of the published namespace is
+  // what makes every accepted version string unambiguous at the route, cache,
+  // and UI boundaries.
+  return ATPM_VERSION_RE.test(version) && !version.startsWith(ATPM_STAGED_VERSION_PREFIX);
 }
 
 /** One version, reduced to the fields a diff and its integrity checks need. */
@@ -64,6 +86,13 @@ export interface AtpmVersion {
   declaredTarball: string | null;
   /** SRI digest npm clients use to authenticate the installed tarball. */
   declaredIntegrity: string | null;
+  /**
+   * Verified build provenance for this version. Computed by
+   * {@link fetchAtpmPackageRecord}, since verification is asynchronous and
+   * record parsing is pure; a parsed-but-unverified entry carries
+   * `not-evaluated`.
+   */
+  provenance: AtpmProvenanceState;
 }
 
 export interface AtpmPackage {
@@ -114,9 +143,39 @@ export async function fetchAtpmPackageRecord(
   }
   if (!response.ok || !body) throw new PublicDiffError("package record fetch failed", 502);
 
-  const parsed = parseAtpmPackageRecord(body.value);
+  const parsed = reduceAtpmPackageRecord(body.value);
   if (!parsed) throw new PublicDiffError("package record is not a readable atpm package", 502);
-  return parsed;
+  return verifyRecordProvenance(parsed.pkg, parsed.attestations);
+}
+
+/**
+ * Replace every version's retained Sigstore bundle with a verdict.
+ *
+ * This runs before the record is cached, so what is stored is a few hundred
+ * bytes of verified build facts per version rather than the bundles themselves.
+ * Verification is intrinsic to each bundle — it does not depend on the reviewed
+ * bytes, the requested version pair, or anything else about the request — which
+ * is what makes caching the verdict sound.
+ */
+async function verifyRecordProvenance(
+  pkg: AtpmPackage,
+  attestations: Map<string, unknown>,
+): Promise<AtpmPackage> {
+  const order = [...pkg.versions].sort((a, b) => compareSemver(b.version, a.version));
+  const budget = new Set(
+    order.slice(0, MAX_VERIFIED_PROVENANCE_VERSIONS).map((entry) => entry.version),
+  );
+  for (const entry of pkg.versions) {
+    const raw = attestations.get(entry.version) ?? null;
+    if (raw === null) {
+      entry.provenance = ATPM_PROVENANCE_ABSENT;
+      continue;
+    }
+    entry.provenance = budget.has(entry.version)
+      ? await verifyAtpmProvenance(raw)
+      : ATPM_PROVENANCE_NOT_EVALUATED;
+  }
+  return pkg;
 }
 
 /**
@@ -128,6 +187,22 @@ export async function fetchAtpmPackageRecord(
  * installation disagree about which artifact the version names.
  */
 export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
+  return reduceAtpmPackageRecord(value)?.pkg ?? null;
+}
+
+/**
+ * The same reduction, plus the Sigstore bundles pulled out to one side.
+ *
+ * A bundle is by far the largest thing in a version entry, and it is only
+ * needed for the few milliseconds between reading the record and reaching a
+ * verdict about it. Keeping it out of `AtpmVersion` entirely means no caller —
+ * and no cache write — can accidentally carry it further: the public
+ * `parseAtpmPackageRecord` cannot return one, and `fetchAtpmPackageRecord`
+ * exchanges the map for verdicts before anything else sees the package.
+ */
+function reduceAtpmPackageRecord(
+  value: unknown,
+): { pkg: AtpmPackage; attestations: Map<string, unknown> } | null {
   if (!isRecord(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.$type !== ATPM_PACKAGE_COLLECTION) return null;
@@ -136,6 +211,7 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
   if (!Array.isArray(record.versions)) return null;
 
   const versions: AtpmVersion[] = [];
+  const attestations = new Map<string, unknown>();
   const unreadableVersions: string[] = [];
   const seenVersions = new Set<string>();
   for (const entry of record.versions) {
@@ -149,17 +225,21 @@ export function parseAtpmPackageRecord(value: unknown): AtpmPackage | null {
       if (rawVersion && isValidAtpmVersion(rawVersion)) unreadableVersions.push(rawVersion);
       continue;
     }
-    versions.push(parsed);
+    versions.push(parsed.version);
+    if (parsed.attestation !== null) attestations.set(parsed.version.version, parsed.attestation);
   }
 
-  const tags: Record<string, string> = {};
+  // Dist-tags are attacker-controlled npm tag names. A normal object would
+  // interpret `__proto__` as its legacy prototype setter and silently drop a
+  // valid tag, which can change staged-review baseline selection.
+  const tags = Object.create(null) as Record<string, string>;
   for (const [tag, target] of Object.entries(record.tags)) {
     if (typeof target === "string" && target) tags[tag] = target;
   }
-  return { tags, versions, unreadableVersions };
+  return { pkg: { tags, versions, unreadableVersions }, attestations };
 }
 
-function parseVersionEntry(entry: unknown): AtpmVersion | null {
+function parseVersionEntry(entry: unknown): { version: AtpmVersion; attestation: unknown } | null {
   if (!isRecord(entry)) return null;
   const value = entry as Record<string, unknown>;
   if (value.$type !== undefined && value.$type !== ATPM_PACKAGE_VERSION_TYPE) return null;
@@ -194,16 +274,20 @@ function parseVersionEntry(entry: unknown): AtpmVersion | null {
   }
   if (dist.integrity !== undefined && typeof dist.integrity !== "string") return null;
   return {
-    version,
-    cid,
-    size: blob.size as number,
-    mimeType: blob.mimeType,
-    createdAt: value.createdAt,
-    declaredName: meta.name,
-    declaredVersion: meta.version,
-    declaredShasum,
-    declaredTarball,
-    declaredIntegrity: typeof dist.integrity === "string" ? dist.integrity : null,
+    attestation: readAtpmAttestation(meta),
+    version: {
+      version,
+      cid,
+      size: blob.size as number,
+      mimeType: blob.mimeType,
+      createdAt: value.createdAt,
+      declaredName: meta.name,
+      declaredVersion: meta.version,
+      declaredShasum,
+      declaredTarball,
+      declaredIntegrity: typeof dist.integrity === "string" ? dist.integrity : null,
+      provenance: ATPM_PROVENANCE_NOT_EVALUATED,
+    },
   };
 }
 
@@ -256,12 +340,15 @@ export function assertAtpmBlobDigest(cid: string, archiveSha256: string | null):
  * Drydock reviews. Query ordering and percent-encoding may differ, but the
  * endpoint, DID, and CID must be exact and no extra parameters are accepted.
  */
-export function assertAtpmTarballUrl(entry: AtpmVersion, expectedUrl: string): void {
+export function assertAtpmTarballUrl(
+  entry: { declaredTarball: string | null },
+  expectedUrl: string,
+): void {
   let declared: URL;
   try {
     declared = new URL(entry.declaredTarball ?? "");
   } catch {
-    throw new PublicDiffError("package record has no readable dist.tarball URL", 502);
+    throw new PublicDiffError("record has no readable dist.tarball URL", 502);
   }
   const expected = new URL(expectedUrl);
   const parameters = [...declared.searchParams];

@@ -1,9 +1,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
+import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
 import {
   computePublicDiffCacheKey,
+  PublicDiffError,
   writePublicDiffCache,
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
@@ -90,6 +92,10 @@ async function exhaustRateLimit(
 }
 
 describe("public package-diff routes", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test("is disabled when the deployment uses a custom registry", async () => {
     const customRegistryEnv = {
       ...env,
@@ -293,6 +299,44 @@ describe("public package-diff routes", () => {
     );
     expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
     expect(limited.status).toBe(429);
+  });
+
+  test("file cache hits revalidate staged atpm candidates", async () => {
+    const packageName = "did:plc:twegdcgytckr5cxm57gyruxa/counter";
+    const toVersion = "staged.3lmabcdefghij.bafyreicachedrevision";
+    const payload = {
+      ...cachedPayload(packageName),
+      ecosystem: "atpm",
+      toVersion,
+      cacheExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+    } satisfies PublicPackageDiff;
+    const input = {
+      ecosystem: "atpm",
+      registryUrl: "at://",
+      packageName,
+      fromVersion: payload.fromVersion,
+      toVersion,
+    };
+    await writePublicDiffCache(env, await computePublicDiffCacheKey(input), payload);
+
+    const validate = vi
+      .spyOn(atpmPublicDiff, "validateCachedPair")
+      .mockRejectedValue(new PublicDiffError("staged release not found", 404));
+    const params = new URLSearchParams({
+      ecosystem: "atpm",
+      package: packageName,
+      from: payload.fromVersion,
+      to: toVersion,
+      path: "index.js",
+    });
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff/file?${params.toString()}`,
+      "10.99.2.99",
+    );
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "staged release not found" });
+    expect(validate).toHaveBeenCalledWith(env, expect.anything(), input);
   });
 
   test("the anonymous surface reaches D1 on no request path", async () => {

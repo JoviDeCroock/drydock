@@ -23,8 +23,11 @@ import type { PublicDiffAdapter } from "../public-diff/types";
  *    adapter; releases reach review through a workflow gate.
  *  - VS Code is gate-only today: the Marketplace has no staging concept and the
  *    public diff surface does not cover extensions.
- *  - atpm is public-diff-only: releases live in the publisher's own AT Protocol
- *    repository, which Drydock reads but has no gate on and no stage API for.
+ *  - atpm is public-diff-only, and that surface covers both published releases
+ *    and staged candidates: both are public records in the publisher's own AT
+ *    Protocol repository, so `/diff` reads either without a credential. Drydock
+ *    neither stages nor approves an atpm release — it is a review surface that
+ *    atpm's own dashboard links to.
  */
 const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
   npm: {

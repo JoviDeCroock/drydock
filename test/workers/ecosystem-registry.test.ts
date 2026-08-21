@@ -12,6 +12,7 @@ import {
   UnsupportedEcosystemError,
 } from "../../server/lib/ecosystems";
 import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
+import { ATPM_RECORD_CACHE_SCOPE } from "../../server/lib/ecosystems/atpm/public-diff";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a
@@ -35,8 +36,10 @@ describe("ecosystem capability registry", () => {
       pypi: { staged: false, gate: true, publicDiff: true },
       // VS Code is gate-only: no Marketplace staging, not on /diff.
       vscode: { staged: false, gate: true, publicDiff: false },
-      // atpm is public-diff-only: releases live in the publisher's own AT
-      // Protocol repository, which Drydock reads but cannot stage or gate.
+      // atpm is public-diff only, and that one surface covers both published
+      // releases and staged candidates: both are public records in the
+      // publisher's own repository. Drydock neither stages nor approves an
+      // atpm release.
       atpm: { staged: false, gate: false, publicDiff: true },
     });
   });
@@ -67,8 +70,12 @@ describe("ecosystem capability registry", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-19T12:00:00.000Z"));
     const adapter = getPublicDiffAdapter("atpm");
-    expect(adapter?.payloadVersion).toBe("v4");
-    expect(adapter?.rulesVersionSegment).toContain("atpm-10+identity-3");
+    expect(adapter?.payloadVersion).toBe("v10");
+    expect(adapter?.rulesVersionSegment).toContain("atpm-14+identity-3");
+    // Provenance verification and the trusted-publisher record are part of the
+    // trust boundary, so a change to either must invalidate cached pairs too.
+    expect(adapter?.rulesVersionSegment).toContain("provenance-9+publisher-1");
+    expect(ATPM_RECORD_CACHE_SCOPE).toBe("atpm-public-record-14-provenance-9-absolute-expiry-v1");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
     expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(

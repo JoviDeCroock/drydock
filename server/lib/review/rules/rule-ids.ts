@@ -23,6 +23,11 @@ export const DETERMINISTIC_RULE_IDS = {
   dependencyMajorBump: "dependency.major-bump",
   stageMetadataMismatch: "stage.metadata-mismatch",
   stageTarballDigestMismatch: "stage.tarball-digest-mismatch",
+  atpmProvenanceMissing: "atpm.provenance-missing",
+  atpmProvenanceInvalid: "atpm.provenance-invalid",
+  atpmProvenanceSubjectMismatch: "atpm.provenance-subject-mismatch",
+  atpmProvenancePublisherMismatch: "atpm.provenance-publisher-mismatch",
+  atpmTrustedPublishingLost: "atpm.trusted-publishing-lost",
   tarSuspiciousEntry: "tar.suspicious-entry",
   releaseSourceDrift: "release.source-drift",
 } as const;

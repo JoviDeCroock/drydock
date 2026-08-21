@@ -187,11 +187,23 @@ describe("parseAtpmPackageRecord", () => {
       declaredShasum: "53dde734249b5c8de540b4f86254273caa000ec5",
       declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
       declaredIntegrity: INTEGRITY_A,
+      provenance: { status: "not-evaluated" },
     });
     // The readme and the attestation bundle are the bulk of a real record and
     // are never read, so they must not reach the cache.
     expect(JSON.stringify(parsed)).not.toContain("xxxx");
     expect(JSON.stringify(parsed)).not.toContain("yyyy");
+  });
+
+  test("preserves dist-tags named __proto__ without changing the tag map prototype", () => {
+    const record = JSON.parse(JSON.stringify(RECORD)) as typeof RECORD;
+    record.tags = JSON.parse('{"__proto__":"0.0.15"}') as typeof RECORD.tags;
+
+    const parsed = parseAtpmPackageRecord(record);
+
+    expect(Object.getPrototypeOf(parsed?.tags)).toBeNull();
+    expect(Object.keys(parsed?.tags ?? {})).toEqual(["__proto__"]);
+    expect(parsed?.tags["__proto__"]).toBe("0.0.15");
   });
 
   test("drops unusable version entries without hiding the rest of the package", () => {
@@ -303,6 +315,8 @@ describe("parseAtpmPackageRecord", () => {
 describe("isValidAtpmVersion", () => {
   test("accepts registry version strings and rejects path/control shapes", () => {
     expect(isValidAtpmVersion("3.0.0-rc.1+build.4")).toBe(true);
+    expect(isValidAtpmVersion("staged.foo")).toBe(false);
+    expect(isValidAtpmVersion("staged.none")).toBe(false);
     expect(isValidAtpmVersion("bad/version")).toBe(false);
     expect(isValidAtpmVersion("line\nbreak")).toBe(false);
     expect(isValidAtpmVersion(`1.${"0".repeat(128)}`)).toBe(false);
@@ -503,6 +517,10 @@ describe("atpmRecordFindings", () => {
     declaredShasum: "53dde734249b5c8de540b4f86254273caa000ec5",
     declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID_A}`,
     declaredIntegrity: INTEGRITY_A,
+    // Parsing never verifies; `fetchAtpmPackageRecord` is what reaches a
+    // verdict. Provenance findings have their own suite in
+    // `atpm-provenance.test.ts`.
+    provenance: { status: "not-evaluated" } as const,
   };
   const manifest = { name: "@ebey.dev/counter", version: "1.0.0" };
 
@@ -513,6 +531,9 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "53dde734249b5c8de540b4f86254273caa000ec5",
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toEqual([]);
   });
@@ -560,6 +581,9 @@ describe("atpmRecordFindings", () => {
       manifest,
       archiveSha1: "f".repeat(40),
       recordName: "counter",
+      archiveSha512: null,
+      trustPublisher: null,
+      baseline: null,
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.tarball-digest-mismatch");
@@ -575,6 +599,9 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: "f".repeat(40),
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toEqual([]);
     expect(
@@ -583,6 +610,9 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toEqual([]);
   });
@@ -593,6 +623,9 @@ describe("atpmRecordFindings", () => {
       manifest: { name: "left-pad", version: "9.9.9" },
       archiveSha1: null,
       recordName: "counter",
+      archiveSha512: null,
+      trustPublisher: null,
+      baseline: null,
     });
     expect(findings).toHaveLength(1);
     expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
@@ -607,6 +640,9 @@ describe("atpmRecordFindings", () => {
         manifest: manifest as never,
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       });
       expect(findings).toHaveLength(1);
       expect(findings[0].ruleId).toBe("stage.metadata-mismatch");
@@ -621,6 +657,9 @@ describe("atpmRecordFindings", () => {
         manifest,
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toEqual([]);
     expect(
@@ -629,6 +668,9 @@ describe("atpmRecordFindings", () => {
         manifest: { name: "@someone.else/other", version: "1.0.0" },
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toHaveLength(1);
   });
@@ -641,6 +683,9 @@ describe("atpmRecordFindings", () => {
         manifest: { name: historicalName, version: "1.0.0" },
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       }),
     ).toEqual([]);
   });
@@ -652,6 +697,9 @@ describe("atpmRecordFindings", () => {
       manifest: { name: wrongName, version: "1.0.0" },
       archiveSha1: null,
       recordName: "counter",
+      archiveSha512: null,
+      trustPublisher: null,
+      baseline: null,
     });
 
     expect(findings).toHaveLength(1);
@@ -672,6 +720,9 @@ describe("atpmRecordFindings", () => {
         manifest: { name: malformedName, version: "1.0.0" },
         archiveSha1: null,
         recordName: "counter",
+        archiveSha512: null,
+        trustPublisher: null,
+        baseline: null,
       });
 
       expect(findings, malformedName).toHaveLength(1);

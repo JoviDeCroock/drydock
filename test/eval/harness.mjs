@@ -8,6 +8,7 @@
 // It reuses the real detection code paths so it can never drift from production:
 //   - npm:  createPackageDiff + deterministicFindings + packageJsonDiffFindings
 //   - pypi: createPyPiReleaseCandidateReview
+//   - atpm: atpmRecordFindings
 //
 // See docs/detection-eval.md for the design and the fixture v2 schema.
 
@@ -26,6 +27,7 @@ import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
 } from "../../server/lib/ecosystems/pypi";
+import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");
@@ -85,6 +87,7 @@ export function loadCorpus() {
   const regression = [
     ...readCases(join(CORPUS_DIR, "cases")).map((fx) => normalize(fx, "regression", "npm")),
     ...readCases(join(CORPUS_DIR, "cases-pypi")).map((fx) => normalize(fx, "regression", "pypi")),
+    ...readCases(join(CORPUS_DIR, "cases-atpm")).map((fx) => normalize(fx, "regression", "atpm")),
   ];
   const frontier = readCases(join(CORPUS_DIR, "cases-frontier")).map((fx) =>
     normalize(fx, "frontier", fx.ecosystem ?? "npm"),
@@ -97,6 +100,7 @@ export function loadCorpus() {
 
 function detect(record, fxOverride) {
   const fx = fxOverride ?? record.fx;
+  if (record.ecosystem === "atpm") return createAtpmCorpusReview(fx);
   if (record.ecosystem === "pypi") {
     const review = createPyPiReleaseCandidateReview({
       manifest: parsePyPiReleaseManifest(fx.manifest),

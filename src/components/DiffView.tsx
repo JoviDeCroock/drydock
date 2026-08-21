@@ -1,6 +1,7 @@
 import { diffArrays, diffLines, diffWordsWithSpace, type ChangeObject } from "diff";
 import { Fragment, type ComponentChildren } from "preact";
-import { useSignal, type Signal } from "@preact/signals";
+import { useComputed, useSignal, type Signal } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import { useEffect, useMemo, useRef } from "preact/hooks";
 import { Badge, severityTone, statusTone } from "./Badge";
 import {
@@ -515,17 +516,19 @@ function DiffScrollViewport({
     // has no anchoring at all. Disabling it makes every browser behave the
     // same.
     // tabIndex + region role: an overflow div is otherwise unreachable by
-    // keyboard, making the 560px pane unscrollable without a mouse. The focus
+    // keyboard, making the capped pane unscrollable without a mouse. The focus
     // ring is inset because the border shell clips an outer halo;
     // overscroll-contain keeps wheel momentum at the pane's edges from
     // scrolling the page underneath.
+    // max-h rather than a fixed height: a two-line diff should be two lines
+    // tall, not 560px of empty pane. Long files still cap and scroll.
     <div
       ref={ref}
       onScroll={syncScrollState}
       tabIndex={0}
       role="region"
       aria-label={label}
-      class="overflow-auto h-full pr-5 [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
+      class="overflow-auto max-h-[560px] pr-5 [overflow-anchor:none] overscroll-contain outline-none focus-visible:shadow-[inset_0_0_0_3px_var(--color-accent-soft)]"
     >
       {children}
     </div>
@@ -1207,7 +1210,7 @@ function PairedTwoSidedView({
         <span>{afterLabel}</span>
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
-      <div class="relative h-[560px]">
+      <div class="relative">
         <DiffScrollViewport
           resetKey={initialScrollResetKey(path, status, beforeText, afterText)}
           scrollState={scrollState}
@@ -1401,7 +1404,7 @@ function SingleSidedView({
         {label}
       </div>
       {unpinned.length ? <AnnotationBanner findings={unpinned} /> : null}
-      <div class="relative h-[560px]">
+      <div class="relative">
         <DiffScrollViewport
           resetKey={resetKey}
           scrollState={scrollState}
@@ -1464,28 +1467,39 @@ function DiffOverview({
   markers: DiffOverviewMarker[];
   scrollState: Signal<DiffScrollState | null>;
 }) {
+  // A pane short enough to show everything has nothing to navigate to, and the
+  // rail next to it reads as decoration rather than signal. Gated through Show
+  // so scroll frames flip one boundary instead of rerendering every marker.
+  const overflowing = useComputed(() => {
+    const state = scrollState.value;
+    return state !== null && state.content > state.viewport + 1;
+  });
   if (!markers.length) return null;
   return (
-    <div
-      aria-hidden="true"
-      class="pointer-events-none absolute right-1 top-2 bottom-2 w-[6px] rounded-full border border-border bg-surface/80 shadow-sm"
-    >
-      {markers.map((marker) => (
-        <span
-          key={marker.key}
-          class={cn(
-            "absolute left-[-1px] right-[-1px] rounded-full",
-            markerClass(marker),
-            marker.kind === "finding" ? "z-10 ring-1 ring-surface" : "opacity-75",
-          )}
-          style={{
-            top: `${marker.topPercent}%`,
-            height: `${marker.heightPercent}%`,
-          }}
-        />
-      ))}
-      <DiffOverviewThumb scrollState={scrollState} />
-    </div>
+    <Show when={overflowing}>
+      {() => (
+        <div
+          aria-hidden="true"
+          class="pointer-events-none absolute right-1 top-2 bottom-2 w-[6px] rounded-full border border-border bg-surface/80 shadow-sm"
+        >
+          {markers.map((marker) => (
+            <span
+              key={marker.key}
+              class={cn(
+                "absolute left-[-1px] right-[-1px] rounded-full",
+                markerClass(marker),
+                marker.kind === "finding" ? "z-10 ring-1 ring-surface" : "opacity-75",
+              )}
+              style={{
+                top: `${marker.topPercent}%`,
+                height: `${marker.heightPercent}%`,
+              }}
+            />
+          ))}
+          <DiffOverviewThumb scrollState={scrollState} />
+        </div>
+      )}
+    </Show>
   );
 }
 

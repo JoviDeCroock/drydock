@@ -80,11 +80,23 @@ Redirects cannot route around that policy. Parent-Worker identity and record fet
 
 Computed atpm pairs have a five-minute lifetime rather than the registry-backed 30-day default. Blob bytes are immutable once CID-pinned, but the repository record that maps a version to a CID, the DID document's PDS location, and the reverse-verified display handle are mutable. Identity and record cache entries therefore carry an absolute expiry, and the computed pair inherits the earlier one. KV writes, colo rewarms, version responses, share cards, and the separate display-name value all use only the remaining lifetime; moving a value between layers can never restart its five-minute clock. Server-rendered HTML reads the verified display name from that small KV value, so it never fetches and parses the full cached diff merely to build a title.
 
+## Build provenance
+
+A version's Sigstore bundle and its package's trusted-publisher record are both read here, and both are re-verified rather than taken from the record. The page renders what was proven (repository, workflow, commit, run) separately from what the publisher declared, and the deltas between two releases produce their own findings. That is a surface of its own; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
+
+Resolution and build provenance share one full-width card below the header, split into a `Resolution` column and a `Build provenance` column with a divider between them (stacked on narrow screens, and rendered as a single full-width column when a package has only one of the two). Keeping them adjacent but separated is the point: resolution is a chain of authorities a reader can re-walk, provenance is a signature check against Sigstore's root, and each column closes with its own caveat line rather than the two collapsing into one verdict. Every row is a label/value pair on a fixed label column, so a long run URL wraps inside its own column instead of dropping to the gutter and breaking the alignment of the rows around it.
+
+Every row that names something a reader can go look at links to it, and links to the artifact that proved the claim rather than to a page about it: the handle to its `_atproto` TXT record or its `/.well-known/atproto-did`, the DID to its DID document, the PDS to its own `describeServer`, the record to the `getRecord` call this diff was built from, and the attestation's repository, ref, commit, run and Rekor index to GitHub and the Sigstore search. The workflow row pins to the commit the certificate proves; the declared workflow has no commit to pin to and tracks the default branch, where a 404 is itself the signal that a package declares a file that is not there.
+
+Linking a value does not vouch for it. Almost nothing here is signed — a publisher picks their own handle, their own PDS, and the contents of their own repository — so the safety property is that no value can choose its destination, not that the destination is trustworthy. Every href is rebuilt from parsed, shape-validated, re-encoded parts against a host that is either fixed (`plc.directory`, `dns.google`, `search.sigstore.dev`) or one the value itself has to parse as a bare hostname; anything that fails degrades to plain text. A record therefore cannot smuggle a scheme, a redirect, or a host of its choosing into the card. `test/diff-evidence-links.test.ts` holds the hostile-input cases.
+
 ## What is not built
 
-- **No workflow gate and no staged review.** atpm has its own staging flow (`npm stage publish` / `list` / `approve`) and a trusted-publisher system; wiring Drydock into it would need atpm-side support, not just an adapter.
 - **No dependency diff links.** An atpm dependency spelled `@handle/name` resolves on npm to a scope someone else owns, so the manifest diff links nothing rather than something confidently wrong.
 - **No package-only `/diff/atpm/<name>` form.** Nothing links it.
+- **No approval, and no gate.** Drydock reviews staged candidates and stops there; approving is a write to the publisher's own repository, done in atpm.
+
+Staged candidates are diffed on this same surface: browser navigation to `/api/public/v1/package-diff/atpm-stage?publisher=<publisher>&rkey=<rkey>` redirects to an ordinary `/diff` URL whose `to` version names the staged record, so a pre-publish review is anonymous, shareable, and identical to a published one. See [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
 ## Records for reference
 
@@ -119,4 +131,4 @@ at://did:plc:twegdcgytckr5cxm57gyruxa/dev.atpm.alpha.package/counter    (@ebey.d
 }
 ```
 
-Everything outside the validated shape and retained fields above — the readme, the Sigstore attestation bundle, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read.
+Everything outside the validated shape and retained fields above — the readme, the rest of the npm manifest — is dropped at parse time. It is the bulk of a real record (~50 KB raw versus ~4 KB kept for this package) and none of it is read. The Sigstore attestation bundle is the one exception, and only briefly: it is pulled out to one side during parsing, exchanged for a small verified verdict before anything is returned or cached, and never reaches `AtpmVersion` at all.

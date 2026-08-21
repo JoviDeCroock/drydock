@@ -92,8 +92,8 @@ export async function executeScanJob(
 
     await markNpmConnectionUsed(db, message.organizationId);
 
-    // Staged-publish scans are npm-only today; resolving through the registry
-    // keeps the capability declaration authoritative rather than decorative.
+    // Staged-publish scans are npm-only; resolving through the registry keeps
+    // the capability declaration authoritative rather than decorative.
     const result = await runScanPipeline(
       { env, executionCtx, db, session },
       getStagedAdapter("npm"),
@@ -147,8 +147,8 @@ export async function executeScanJob(
           error: safe,
         });
         // Terminal counterpart to this scan's `scan.queued`, so a discovered
-        // candidate that npm withdrew before we could review it does not read
-        // as a scan that queued and vanished.
+        // candidate withdrawn before review does not read as a scan that queued
+        // and vanished.
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
@@ -230,6 +230,20 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "npm_connection_unvalidated",
       message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    };
+  }
+  if (message.includes("staged candidate changed after scan selection")) {
+    return {
+      code: "staged_candidate_changed",
+      message: "The staged candidate changed before its review started.",
+      retryable: false,
+    };
+  }
+  if (message.includes("staged release not found")) {
+    return {
+      code: "staged_tarball_unavailable",
+      message: "The staged candidate is no longer available for review.",
       retryable: false,
     };
   }

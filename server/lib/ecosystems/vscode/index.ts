@@ -31,6 +31,7 @@ const UNKNOWN_BASELINE_SHA256 = "00".repeat(32);
 
 export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
   id: "vscode",
+
   codePatternSet: "javascript",
 
   parseInput(raw: unknown): VscodeAdapterInput {

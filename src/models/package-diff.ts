@@ -21,6 +21,29 @@ export interface PublicDiffVersionsResponse {
   suggested: { from: string; to: string } | null;
 }
 
+export interface PublicDiffAttestation {
+  status: "verified" | "mismatch" | "invalid" | "absent" | "not-evaluated";
+  build?: {
+    repository: string;
+    ref: string | null;
+    commit: string | null;
+    workflow: string | null;
+    runUrl: string | null;
+    runnerEnvironment: string | null;
+    signedAt: string | null;
+    logIndex: string | null;
+    logBaseUrl: string;
+  };
+  reason?: string;
+  declared?: { repository: string; workflow: string; allowPublish: boolean };
+  match?:
+    | "match"
+    | "repository-mismatch"
+    | "workflow-mismatch"
+    | "workflow-unverified"
+    | "unknown-provider";
+}
+
 export interface PublicDiffResponse {
   ecosystem: DiffEcosystem;
   packageName: string;
@@ -39,6 +62,9 @@ export interface PublicDiffResponse {
   // How the reviewed bytes were located, when that is a chain of independent
   // authorities rather than a single registry (atpm). Empty elsewhere.
   provenance: Array<{ label: string; value: string; detail?: string }>;
+  // Whether the target release proves where it was built, and whether that
+  // matches the publisher's declared trusted-publishing workflow (atpm).
+  attestation: PublicDiffAttestation | null;
   // Readable spelling of `packageName`; see PublicDiffVersionsResponse.
   displayName: string | null;
   cachedAt: string;

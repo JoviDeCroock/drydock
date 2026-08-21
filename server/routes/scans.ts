@@ -1,9 +1,14 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
+import { getNpmConnection } from "../db/npm-connections";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
-import { getNpmConnection } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
+import {
+  ORGANIZATION_SCAN_LIMIT,
+  ORGANIZATION_SCAN_WINDOW_MS,
+  RateLimitError,
+  enforceRateLimit,
+} from "../lib/platform/rate-limit";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
@@ -45,6 +50,10 @@ import {
   decryptNpmToken,
   getOrganizationNpmToken,
 } from "../lib/ecosystems/npm/connection";
+import {
+  checkStagedPublishAccess,
+  fetchStagedPublishDetails,
+} from "../lib/ecosystems/npm/staged-publishes";
 import { isPublishedTarballUrlAllowed } from "../lib/ecosystems/npm/published-tarball";
 import { compareSemver, pickPreviousVersion } from "../lib/ecosystems/npm/registry";
 import { fetchPackageMetadataCached } from "../lib/ecosystems/npm/registry-cache";
@@ -54,10 +63,6 @@ import { parseScanInput } from "../lib/scan/input";
 import { reportExportFilename, serializeReportExport } from "../lib/scan/report-export";
 import { executeScanJob, type ScanQueueMessage } from "../lib/scan/job";
 import { roleCanManageIntegrations, roleCanManagePublicShares } from "../lib/auth/roles";
-import {
-  checkStagedPublishAccess,
-  fetchStagedPublishDetails,
-} from "../lib/ecosystems/npm/staged-publishes";
 import { recordProductEvent } from "../lib/platform/analytics";
 import type { Bindings, ScanInput, Variables } from "../types";
 
@@ -75,8 +80,8 @@ scansRoutes.post("/", async (c) => {
     const organizationId = await requireActiveOrganization(c, db);
     await enforceRateLimit(c.env, {
       key: `scan:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
+      limit: ORGANIZATION_SCAN_LIMIT,
+      windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     });
 
     const npmConnection = await getNpmConnection(db, organizationId);

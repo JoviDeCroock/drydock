@@ -222,9 +222,8 @@ describe("recordProductEvent", () => {
     }
     // The model id legitimately contains a slash and an @; assert it is the
     // only such value and that it is a model, not a path.
-    expect(points.flatMap((p) => p.blobs).filter((b) => b.includes("/"))).toEqual([
-      "@cf/meta/llama",
-      "@cf/meta/llama",
-    ]);
+    expect(new Set(points.flatMap((p) => p.blobs).filter((b) => b.includes("/")))).toEqual(
+      new Set(["@cf/meta/llama"]),
+    );
   });
 });

@@ -5,7 +5,9 @@ import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import {
   computePublicDiffCacheKey,
   jsonStringByteLength,
+  loadPublicPackageDiff,
   payloadCacheTtlSeconds,
+  PublicDiffError,
   readPublicDiffCache,
   SAMPLE_OMITTED_FLAG,
   serializePublicDiffCachePayload,
@@ -48,6 +50,10 @@ function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
 }
 
 describe("public diff cache", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test("versions computed results by deterministic rules and risk schema", async () => {
     const key = await computePublicDiffCacheKey({
       ecosystem: "npm",
@@ -153,6 +159,34 @@ describe("public diff cache", () => {
     expect(payloadCacheTtlSeconds(mutable, now + 119_000)).toBe(1);
     expect(payloadCacheTtlSeconds(mutable, now + 120_000)).toBe(0);
     expect(payloadCacheTtlSeconds({ ...mutable, cacheExpiresAt: undefined }, now)).toBe(0);
+  });
+
+  test("validates mutable source identity before returning a cached pair", async () => {
+    const toVersion = "staged.3lmabcdefghij.bafyreicachedrevision";
+    const input = {
+      ecosystem: "atpm",
+      registryUrl: "at://",
+      packageName: "did:plc:twegdcgytckr5cxm57gyruxa/counter",
+      fromVersion: "1.0.0",
+      toVersion,
+    };
+    const key = await computePublicDiffCacheKey(input);
+    const cachedPayload = {
+      ...payload(),
+      ecosystem: "atpm",
+      packageName: input.packageName,
+      fromVersion: input.fromVersion,
+      toVersion,
+      cacheExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+    };
+    await writePublicDiffCache(env, key, cachedPayload);
+    expect(await readPublicDiffCache(env, key)).not.toBeNull();
+
+    const error = new PublicDiffError("staged release not found", 404);
+    const validate = vi.spyOn(atpmPublicDiff, "validateCachedPair").mockRejectedValue(error);
+
+    await expect(loadPublicPackageDiff(env, {} as ExecutionContext, input)).rejects.toBe(error);
+    expect(validate).toHaveBeenCalledWith(env, expect.anything(), input);
   });
 
   test("rejects display metadata after its inherited absolute expiry", async () => {

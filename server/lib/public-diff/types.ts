@@ -9,7 +9,7 @@ export interface PublicDiffAcquiredSide {
 
 /**
  * One step in how the reviewed bytes were located, rendered on the page as a
- * plain label/value list.
+ * label/value list whose values may link to the evidence that produced them.
  *
  * Optional and empty for the ecosystems that do not need it: on npm or PyPI the
  * answer is "the registry", which is already the page's premise. It exists for
@@ -17,14 +17,69 @@ export interface PublicDiffAcquiredSide {
  * authorities a reader may want to check — atpm resolves a handle through DNS,
  * a DID through a directory, and the bytes from the publisher's own server.
  *
- * Values are rendered as text, never as links: every one of them is derived from
- * data the party under review controls.
+ * Values remain data the party under review controls. The UI rebuilds evidence
+ * links from validated parts rather than treating a value as an href.
  */
 export interface PublicDiffProvenanceEntry {
   label: string;
   value: string;
   /** Which mechanism produced this step, e.g. `DNS TXT`. */
   detail?: string;
+}
+
+/**
+ * One verified build, as a Sigstore bundle records it. Every field here came out
+ * of a signature check, not out of the package's own metadata.
+ */
+interface PublicDiffAttestationBuild {
+  /** Source repository, e.g. `https://github.com/owner/repo`. */
+  repository: string;
+  /** Ref the build ran from, e.g. `refs/tags/v1.2.3`. */
+  ref: string | null;
+  commit: string | null;
+  /** Workflow file, e.g. `.github/workflows/publish.yml`. */
+  workflow: string | null;
+  /** CI run the signing certificate was issued to. */
+  runUrl: string | null;
+  /** `github-hosted` or `self-hosted`, as the certificate recorded it. */
+  runnerEnvironment: string | null;
+  /** When the signature was made, authenticated by the transparency log. */
+  signedAt: string | null;
+  /** Transparency-log index authenticated by the log's signed promise. */
+  logIndex: string | null;
+  /** Transparency-log instance whose pinned key authenticated `logIndex`. */
+  logBaseUrl: string;
+}
+
+/**
+ * Whether a release proves where it was built, and whether that agrees with what
+ * its publisher declared.
+ *
+ * Only atpm sets this today: its trusted-publishing records and Sigstore bundles
+ * both live in the publisher's own repository, so both are readable without
+ * credentials on the anonymous surface. npm's equivalents would need registry
+ * calls this path deliberately does not make.
+ */
+export interface PublicDiffAttestation {
+  status: "verified" | "mismatch" | "invalid" | "absent" | "not-evaluated";
+  /** Set when a bundle verified intrinsically, including an artifact mismatch. */
+  build?: PublicDiffAttestationBuild;
+  /** Why the bundle did not verify or did not describe this artifact. */
+  reason?: string;
+  /** What the publisher declared as their trusted build pipeline, if anything. */
+  declared?: {
+    repository: string;
+    workflow: string;
+    /** CI may publish without a human approving the staged candidate. */
+    allowPublish: boolean;
+  };
+  /** How the verified build compares with `declared`. */
+  match?:
+    | "match"
+    | "repository-mismatch"
+    | "workflow-mismatch"
+    | "workflow-unverified"
+    | "unknown-provider";
 }
 
 /**
@@ -43,6 +98,8 @@ export interface PublicDiffAcquiredSources {
   notices?: string[];
   /** How the bytes were located, when that is not simply "the registry". */
   provenance?: PublicDiffProvenanceEntry[];
+  /** Verified build provenance for the target version, when the ecosystem has it. */
+  attestation?: PublicDiffAttestation;
   /** Friendlier spelling of the package name; see PublicDiffVersionListing. */
   displayName?: string;
   /**
@@ -133,6 +190,18 @@ export interface PublicDiffAdapter {
   isValidVersion(version: string): boolean;
   /** Cache-tag for package-level purges. */
   cacheTag(packageName: string): string;
+
+  /**
+   * Revalidate mutable release identity before returning a computed cache hit.
+   * The cached analysis may be reusable even when the source record itself must
+   * still exist (for example, an atpm staged candidate pinned by record CID).
+   * Throwing rejects the cached response with the adapter's source error.
+   */
+  validateCachedPair?(
+    env: Cloudflare.Env,
+    ctx: ExecutionContext,
+    input: PublicDiffInput,
+  ): Promise<void>;
 
   listVersions(
     env: Cloudflare.Env,

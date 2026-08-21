@@ -300,6 +300,8 @@ app.get("/api", (c) =>
       githubWebhooks: "POST /webhooks/github (signed by GitHub App webhook secret)",
       publicPackageDiff:
         "GET /api/public/v1/package-diff?package&from&to[&ecosystem=npm|pypi|atpm]; GET /api/public/v1/package-diff/versions?package[&ecosystem]; GET /api/public/v1/package-diff/file?package&from&to&path[&ecosystem] (anonymous, IP rate-limited, public release data only; on npm, from/to also accept pkg.pr.new preview URLs)",
+      atpmStagedReview:
+        "GET /api/public/v1/package-diff/atpm-stage?publisher&rkey — browser navigation redirects to the review; API requests receive the resolved review as JSON. Anonymous, IP rate-limited, public AT Protocol records only.",
       publicReports:
         "POST/DELETE /api/v1/scans/:id/share; GET /public/reports/:token; GET /public/reports/:token/attestation; GET /public/attestation-key (share token is the capability; no auth)",
       publicFeed:

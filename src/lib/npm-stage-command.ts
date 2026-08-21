@@ -23,5 +23,6 @@ export function npmStageCommandFor(
   if (scan.source === "workflow_gate") return null;
   const stageId = scan.stageId?.trim();
   if (!isValidStageId(stageId)) return null;
+
   return `npm stage ${decision === "publish" ? "approve" : "reject"} ${stageId}`;
 }

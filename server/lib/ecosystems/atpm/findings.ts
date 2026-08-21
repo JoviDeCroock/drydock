@@ -1,4 +1,7 @@
 import type { AtpmVersion } from "./record";
+import { atpmPurl, type AtpmProvenance, type AtpmProvenanceState } from "./provenance";
+import type { AtpmStagedVersion } from "./stage-record";
+import { matchTrustedPublisher, type AtpmTrustPublisher } from "./trust-publisher";
 import { evaluateStagedArtifactIntegrity } from "../artifact-integrity";
 import {
   DETERMINISTIC_RULE_IDS,
@@ -29,10 +32,22 @@ export function atpmRecordFindings(args: {
   manifest: PackageJsonSummary | null;
   /** SHA-1 the sandbox computed over the tarball's wire bytes, if it saw all of them. */
   archiveSha1: string | null;
+  /** SHA-512 over the same bytes, which is the digest a Sigstore subject binds. */
+  archiveSha512: string | null;
   /** The record key this version was resolved under — the unscoped package name. */
   recordName: string;
+  /** The publisher's trusted-publishing declaration for this package, if any. */
+  trustPublisher: AtpmTrustPublisher | null;
+  /** The version being compared against, so a lost attestation is visible. */
+  baseline: AtpmVersion | null;
+  /** SHA-512 over the baseline tarball, required before its provenance can be trusted. */
+  baselineArchiveSha512?: string | null;
 }): Finding[] {
-  return [...digestFindings(args.entry, args.archiveSha1), ...manifestFindings(args)];
+  return [
+    ...digestFindings(args.entry, args.archiveSha1),
+    ...manifestFindings(args),
+    ...provenanceFindings(args),
+  ];
 }
 
 /**
@@ -166,4 +181,334 @@ function metadataMismatchFinding(mismatches: string[]): Finding[] {
       ruleVersion: DETERMINISTIC_RULES_VERSION,
     },
   ];
+}
+
+/**
+ * Findings about how a release was built, rather than what is in it.
+ *
+ * Provenance is the one part of an atpm record that is not the publisher's word
+ * for something: a Sigstore bundle is signed by an ephemeral key that Fulcio
+ * issued to one GitHub Actions run, so it survives being copied into a record
+ * the publisher controls. `./provenance.ts` has already checked each bundle
+ * against the pinned Sigstore root; what is left is to bind that verified claim
+ * to the bytes under review, to the publisher's own declaration of who may build
+ * this package, and to what the previous release did.
+ */
+function provenanceFindings(args: {
+  entry: AtpmVersion;
+  archiveSha512: string | null;
+  trustPublisher: AtpmTrustPublisher | null;
+  baseline: AtpmVersion | null;
+  baselineArchiveSha512?: string | null;
+}): Finding[] {
+  const { entry, trustPublisher, baseline } = args;
+  const state = entry.provenance;
+  const findings: Finding[] = [];
+
+  if (state.status === "invalid") {
+    findings.push({
+      severity: "high",
+      file: "package.json",
+      evidence: `attestation on version ${entry.version} did not verify: ${state.reason}`,
+      reason:
+        "this version carries a build attestation that does not verify against Sigstore's root, so it proves nothing about where the release came from: a release that ships an unverifiable attestation is claiming provenance it cannot support",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceInvalid,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  if (state.status === "verified") {
+    findings.push(...subjectBindingFindings(entry, state.provenance, args.archiveSha512));
+    if (provenanceMatchesArtifact(entry, state.provenance, args.archiveSha512)) {
+      findings.push(...publisherMatchFindings(entry, state.provenance, trustPublisher));
+    }
+  } else if (trustPublisher?.github && state.status === "absent") {
+    findings.push({
+      severity: "low",
+      file: "package.json",
+      evidence: `no attestation on version ${entry.version}; the package declares trusted publishing from ${trustPublisher.github.username}/${trustPublisher.github.repository}`,
+      reason:
+        "this package declares a trusted publishing workflow, but this version carries no build attestation, so it cannot be shown to have come from that workflow rather than from someone's machine",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceMissing,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  const lost = lostProvenanceEvidence(
+    entry,
+    args.archiveSha512,
+    state,
+    baseline,
+    args.baselineArchiveSha512 ?? null,
+  );
+  if (lost) {
+    findings.push({
+      severity: "medium",
+      file: "package.json",
+      evidence: lost,
+      reason:
+        "the previous release proved which repository built it and this one does not prove the same thing, so a property this package's consumers could previously rely on is no longer available for this version",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmTrustedPublishingLost,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Bind a verified attestation to the artifact actually reviewed.
+ *
+ * A bundle is valid on its own terms no matter which record it is pasted into,
+ * so this is what stops one package's real attestation from being presented as
+ * another's. The digest half fails to silence rather than to "mismatch" when the
+ * sandbox did not see every byte, matching how `dist.shasum` is handled above.
+ */
+function subjectBindingFindings(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  archiveSha512: string | null,
+): Finding[] {
+  const mismatches: string[] = [];
+  if (entry.declaredName) {
+    const expected = atpmPurl(entry.declaredName, entry.version);
+    if (provenance.subjectName !== expected) {
+      mismatches.push(`attested subject ${provenance.subjectName} != ${expected}`);
+    }
+  }
+  if (archiveSha512 && provenance.subjectSha512 !== archiveSha512.toLowerCase()) {
+    mismatches.push(
+      `attested sha512 ${provenance.subjectSha512} != tarball sha512 ${archiveSha512.toLowerCase()}`,
+    );
+  }
+  if (!mismatches.length) return [];
+  return [
+    {
+      severity: "critical",
+      file: "package.json",
+      evidence: mismatches.join("; "),
+      reason:
+        "the build attestation on this version is valid but describes a different artifact, so it was copied here rather than produced for these bytes: the provenance shown for this release does not belong to it",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenanceSubjectMismatch,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    },
+  ];
+}
+
+function provenanceMatchesArtifact(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  archiveSha512: string | null,
+): boolean {
+  return Boolean(
+    entry.declaredName &&
+    archiveSha512 &&
+    provenance.subjectName === atpmPurl(entry.declaredName, entry.version) &&
+    provenance.subjectSha512 === archiveSha512.toLowerCase(),
+  );
+}
+
+function publisherMatchFindings(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  trustPublisher: AtpmTrustPublisher | null,
+): Finding[] {
+  if (!trustPublisher) return [];
+  const match = matchTrustedPublisher(provenance, trustPublisher);
+  // A declaration naming a provider this deployment cannot evaluate is not a
+  // disagreement; reporting one would be inventing evidence.
+  if (match.status === "match" || match.status === "unknown-provider") return [];
+  if (match.status === "workflow-unverified") {
+    return [
+      {
+        severity: "high",
+        file: "package.json",
+        evidence: `version ${entry.version} has no certificate-authenticated workflow identity; the package's trusted publisher declares ${match.expected}`,
+        reason:
+          "the signing certificate proves the source repository but not which workflow produced this release, so the release cannot be shown to come from the workflow its publisher declared as trusted",
+        ruleId: DETERMINISTIC_RULE_IDS.atpmProvenancePublisherMismatch,
+        ruleVersion: DETERMINISTIC_RULES_VERSION,
+      },
+    ];
+  }
+  const subject = match.status === "repository-mismatch" ? "repository" : "workflow";
+  return [
+    {
+      severity: "high",
+      file: "package.json",
+      evidence: `version ${entry.version} was built by ${subject} ${match.actual}; the package's trusted publisher declares ${match.expected}`,
+      reason:
+        "this release was built somewhere other than the workflow its own publisher declared as trusted, so either the declaration is stale or the release did not come from the pipeline consumers were told to expect",
+      ruleId: DETERMINISTIC_RULE_IDS.atpmProvenancePublisherMismatch,
+      ruleVersion: DETERMINISTIC_RULES_VERSION,
+    },
+  ];
+}
+
+/**
+ * Describe provenance the baseline had and the target does not, or null when
+ * nothing was lost.
+ *
+ * `not-evaluated` on either side is silence, not a loss: it means the per-record
+ * verification budget was spent elsewhere, and reporting that as a regression
+ * would turn an internal limit into a finding about the package.
+ */
+function lostProvenanceEvidence(
+  entry: AtpmVersion,
+  archiveSha512: string | null,
+  state: AtpmProvenanceState,
+  baseline: AtpmVersion | null,
+  baselineArchiveSha512: string | null,
+): string | null {
+  const previous = baseline?.provenance;
+  if (
+    previous?.status !== "verified" ||
+    !baseline?.declaredName ||
+    !baselineArchiveSha512 ||
+    previous.provenance.subjectName !== atpmPurl(baseline.declaredName, baseline.version) ||
+    previous.provenance.subjectSha512 !== baselineArchiveSha512.toLowerCase()
+  ) {
+    return null;
+  }
+  const from = previous.provenance.sourceRepository;
+  if (state.status === "absent") {
+    return `previous version was built by ${from}; this version carries no attestation`;
+  }
+  if (state.status === "invalid") {
+    return `previous version was built by ${from}; this version's attestation does not verify`;
+  }
+  if (
+    state.status === "verified" &&
+    provenanceMatchesArtifact(entry, state.provenance, archiveSha512) &&
+    normalizeSourceRepository(state.provenance.sourceRepository) !== normalizeSourceRepository(from)
+  ) {
+    return `previous version was built by ${from}; this version was built by ${state.provenance.sourceRepository}`;
+  }
+  return null;
+}
+
+function normalizeSourceRepository(value: string): string {
+  return value
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+}
+
+/**
+ * Findings for a staged candidate — a release that has been uploaded to the
+ * publisher's repository but not yet approved into the package record.
+ *
+ * The checks are the published ones asked one step earlier, which is the point
+ * of reviewing here at all: a candidate whose record and tarball already
+ * disagree would publish that disagreement unchanged, and a candidate whose
+ * attestation does not verify would carry the same unverifiable claim into the
+ * release. Comparing provenance to the published baseline also lets the review
+ * warn when approving this candidate would replace a verified build trail.
+ *
+ * One check exists only in this direction. atpm requires a candidate's scope to
+ * be the publishing account's *current* handle, so unlike a historical release
+ * the scope can and must be compared against the handle this resolution proved.
+ */
+export function atpmStagedFindings(args: {
+  staged: Pick<
+    AtpmStagedVersion,
+    "declaredName" | "declaredManifestName" | "version" | "declaredVersion" | "provenance"
+  > & {
+    shasum?: string | null;
+  };
+  manifest: PackageJsonSummary | null;
+  archiveSha1: string | null;
+  archiveSha512: string | null;
+  trustPublisher: AtpmTrustPublisher | null;
+  baseline: AtpmVersion | null;
+  baselineArchiveSha512: string | null;
+  /** The handle this resolution proved in both directions, or null. */
+  verifiedHandle: string | null;
+}): Finding[] {
+  const { staged } = args;
+  const entry: AtpmVersion = {
+    version: staged.version,
+    cid: "",
+    size: null,
+    mimeType: null,
+    createdAt: null,
+    declaredName: staged.declaredName,
+    declaredVersion: staged.declaredVersion,
+    declaredShasum: staged.shasum ?? null,
+    declaredTarball: null,
+    declaredIntegrity: null,
+    provenance: staged.provenance,
+  };
+
+  return [
+    ...digestFindings(entry, args.archiveSha1),
+    ...metadataMismatchFinding(stagedMismatches(args)),
+    ...provenanceFindings({
+      entry,
+      archiveSha512: args.archiveSha512,
+      trustPublisher: args.trustPublisher,
+      baseline: args.baseline,
+      baselineArchiveSha512: args.baselineArchiveSha512,
+    }),
+  ];
+}
+
+function stagedMismatches(args: {
+  staged: Pick<
+    AtpmStagedVersion,
+    "declaredName" | "declaredManifestName" | "version" | "declaredVersion"
+  >;
+  manifest: PackageJsonSummary | null;
+  verifiedHandle: string | null;
+}): string[] {
+  const { staged, manifest } = args;
+  const mismatches: string[] = [];
+  if (!manifest) return ["tarball has no readable package.json"];
+
+  const rawManifest = manifest as Record<string, unknown>;
+  const manifestName =
+    typeof rawManifest.name === "string" && rawManifest.name ? rawManifest.name : null;
+  const manifestVersion =
+    typeof rawManifest.version === "string" && rawManifest.version ? rawManifest.version : null;
+  if (!manifestName) mismatches.push("tarball package.json has no readable name");
+  if (!manifestVersion) mismatches.push("tarball package.json has no readable version");
+
+  if (manifestName && staged.declaredName !== manifestName) {
+    mismatches.push(`staged name ${staged.declaredName} != package.json name ${manifestName}`);
+  }
+  if (manifestName && staged.declaredManifestName !== manifestName) {
+    mismatches.push(
+      `staged meta.name ${staged.declaredManifestName} != package.json name ${manifestName}`,
+    );
+  }
+  for (const [label, declared] of [
+    ["version", staged.version],
+    ["meta.version", staged.declaredVersion],
+  ] as const) {
+    if (declared && manifestVersion && declared !== manifestVersion) {
+      mismatches.push(`staged ${label} ${declared} != package.json version ${manifestVersion}`);
+    }
+  }
+
+  const scope = scopeOf(staged.declaredName);
+  if (!scope) {
+    mismatches.push(`staged name ${staged.declaredName} is not a scoped atpm package name`);
+  } else if (!args.verifiedHandle) {
+    mismatches.push(
+      `staged scope @${scope} cannot be verified because the publisher has no handle`,
+    );
+  } else if (scope !== args.verifiedHandle) {
+    // atpm's own stage endpoint rejects a scope that is not the publishing
+    // account's handle, so a candidate that carries someone else's scope could
+    // not have been staged through it.
+    mismatches.push(`staged scope @${scope} is not the publisher's handle @${args.verifiedHandle}`);
+  }
+  return mismatches;
+}
+
+function scopeOf(packageName: string): string | null {
+  if (!packageName.startsWith("@")) return null;
+  const slash = packageName.indexOf("/");
+  if (slash <= 1 || slash !== packageName.lastIndexOf("/")) return null;
+  return packageName.slice(1, slash);
 }
