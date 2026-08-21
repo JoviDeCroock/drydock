@@ -421,15 +421,52 @@ function unescapeDoubleQuoted(value: string): string {
       continue;
     }
     const next = value[++i];
-    if (next === undefined) break;
-    if (next === "n") out += "\n";
-    else if (next === "t") out += "\t";
-    else if (next === "r") out += "\r";
-    else if (next === "0") out += "\0";
-    else out += next;
+    if (next === undefined) {
+      throw new WorkflowYamlError("unsupported_syntax", "unterminated YAML escape sequence");
+    }
+    const simple = YAML_DOUBLE_QUOTED_ESCAPES[next];
+    if (simple !== undefined) {
+      out += simple;
+      continue;
+    }
+    const digits = next === "x" ? 2 : next === "u" ? 4 : next === "U" ? 8 : 0;
+    if (digits > 0) {
+      const encoded = value.slice(i + 1, i + 1 + digits);
+      if (encoded.length !== digits || !/^[0-9a-f]+$/i.test(encoded)) {
+        throw new WorkflowYamlError("unsupported_syntax", "invalid YAML hexadecimal escape");
+      }
+      const codePoint = Number.parseInt(encoded, 16);
+      if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+        throw new WorkflowYamlError("unsupported_syntax", "invalid YAML Unicode code point");
+      }
+      out += String.fromCodePoint(codePoint);
+      i += digits;
+      continue;
+    }
+    throw new WorkflowYamlError("unsupported_syntax", `unsupported YAML escape \\${next}`);
   }
   return out;
 }
+
+const YAML_DOUBLE_QUOTED_ESCAPES: Readonly<Record<string, string>> = {
+  "0": "\0",
+  a: "\u0007",
+  b: "\b",
+  t: "\t",
+  n: "\n",
+  v: "\u000b",
+  f: "\f",
+  r: "\r",
+  e: "\u001b",
+  " ": " ",
+  '"': '"',
+  "/": "/",
+  "\\": "\\",
+  N: "\u0085",
+  _: "\u00a0",
+  L: "\u2028",
+  P: "\u2029",
+};
 
 /**
  * Strip a trailing `# comment` from a plain scalar. A `#` only starts a comment

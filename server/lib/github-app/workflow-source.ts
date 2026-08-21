@@ -21,10 +21,13 @@ import type {
 import {
   MAX_WORKFLOW_BYTES,
   WorkflowYamlError,
+  asRecord,
+  asString,
   parseWorkflowYaml,
 } from "../release-authority/yaml";
 import { readStreamBounded } from "../tar-parser.js";
 import { reliableFetch } from "../platform/reliable-fetch";
+import { sha256Hex, stableJson } from "../platform/stable-json";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { githubInstallationHeaders } from "./http";
@@ -32,6 +35,9 @@ import { githubInstallationHeaders } from "./http";
 // A release whose authority graph is wider than this is bounded rather than
 // followed to the end; the overflow is recorded as unresolved coverage.
 const MAX_REFERENCED_WORKFLOWS = 16;
+const MAX_LOCAL_ACTIONS = 32;
+const MAX_LOCAL_ACTION_ENTRIES = 512;
+const MAX_LOCAL_ACTION_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const REPOSITORY_FULL_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 
@@ -152,6 +158,8 @@ export async function fetchReleaseAuthoritySourcesWithToken(
   }
 
   const workflows: WorkflowSource[] = [];
+  const localActionCache = new Map<string, Promise<FetchedLocalActionDigest>>();
+  let localActionCount = 0;
   for (const request of requests) {
     // Referenced workflows are keyed repo-qualified so two repositories that
     // both ship `.github/workflows/publish.yml` stay distinct in the snapshot.
@@ -183,6 +191,39 @@ export async function fetchReleaseAuthoritySourcesWithToken(
       });
       continue;
     }
+    const localActionDigests = Object.create(null) as Record<string, string>;
+    for (const uses of collectLocalActionUses(document)) {
+      const actionPath = normalizeLocalActionPath(uses);
+      if (!actionPath || !request.ref) {
+        unresolved.push({ path: `${qualifiedPath} -> ${uses}`, reason: "not_accessible" });
+        continue;
+      }
+      const cacheKey = `${request.repositoryFullName}\u0000${request.ref}\u0000${actionPath}`;
+      let pending = localActionCache.get(cacheKey);
+      if (!pending) {
+        localActionCount += 1;
+        if (localActionCount > MAX_LOCAL_ACTIONS) {
+          unresolved.push({ path: `${qualifiedPath} -> ${uses}`, reason: "limit_reached" });
+          continue;
+        }
+        pending = fetchLocalActionDigest(
+          token,
+          request.repositoryFullName,
+          actionPath,
+          request.ref,
+        );
+        localActionCache.set(cacheKey, pending);
+      }
+      const localAction = await pending;
+      if (localAction.error || !localAction.digest) {
+        unresolved.push({
+          path: `${qualifiedPath} -> ${uses}`,
+          reason: localAction.error ?? "fetch_failed",
+        });
+        continue;
+      }
+      localActionDigests[uses] = localAction.digest;
+    }
     workflows.push({
       path: qualifiedPath,
       repositoryFullName: request.repositoryFullName,
@@ -192,10 +233,28 @@ export async function fetchReleaseAuthoritySourcesWithToken(
       content: fetched.content,
       document,
       documentComplete,
+      localActionDigests,
     });
   }
 
   return { run, workflows, unresolved };
+}
+
+function collectLocalActionUses(document: WorkflowSource["document"]): string[] {
+  const doc = asRecord(document);
+  const jobs = doc && asRecord(doc.jobs);
+  if (!jobs) return [];
+  const uses = new Set<string>();
+  for (const rawJob of Object.values(jobs)) {
+    const job = asRecord(rawJob);
+    const steps = job && Array.isArray(job.steps) ? job.steps : [];
+    for (const rawStep of steps) {
+      const step = asRecord(rawStep);
+      const value = step && asString(step.uses)?.trim();
+      if (value?.startsWith("./")) uses.add(value);
+    }
+  }
+  return [...uses].sort();
 }
 
 // ── GitHub API ───────────────────────────────────────────────────────────────
@@ -301,6 +360,89 @@ interface FetchedContent {
   error: AuthorityUnresolvedReason | null;
 }
 
+interface FetchedLocalActionDigest {
+  digest: string | null;
+  error: AuthorityUnresolvedReason | null;
+}
+
+interface GithubContentEntry {
+  path?: unknown;
+  sha?: unknown;
+  type?: unknown;
+}
+
+/**
+ * Bind a local action to the Git tree identities of everything in its
+ * directory. A directory entry's Git tree sha covers all descendants, so one
+ * bounded Contents API response captures composite metadata, JavaScript entry
+ * points, Dockerfiles, and helper files without downloading or executing any of
+ * them.
+ */
+async function fetchLocalActionDigest(
+  token: string,
+  repositoryFullName: string,
+  actionPath: string,
+  ref: string,
+): Promise<FetchedLocalActionDigest> {
+  if (!REPOSITORY_FULL_NAME_RE.test(repositoryFullName) || !isSafeRepositoryPath(actionPath)) {
+    return { digest: null, error: "not_accessible" };
+  }
+  const [owner, repo] = repositoryFullName.split("/");
+  const segments = actionPath.split("/").map(encodeURIComponent).join("/");
+  const url =
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
+    `/contents/${segments}?ref=${encodeURIComponent(ref)}`;
+  const response = await reliableFetch(url, {
+    headers: githubInstallationHeaders(token),
+    redirect: "manual",
+  }).catch(() => null);
+  if (!response) return { digest: null, error: "fetch_failed" };
+  if (response.status === 403 || response.status === 404) {
+    await response.body?.cancel();
+    return { digest: null, error: "not_accessible" };
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    return { digest: null, error: "fetch_failed" };
+  }
+
+  let data: unknown;
+  try {
+    const bytes = await readStreamBounded(response.body, MAX_LOCAL_ACTION_RESPONSE_BYTES);
+    data = JSON.parse(new TextDecoder().decode(bytes));
+  } catch (err) {
+    return {
+      digest: null,
+      error:
+        err instanceof Error && err.message === "archive too large" ? "too_large" : "unparseable",
+    };
+  }
+  if (!Array.isArray(data)) return { digest: null, error: "unparseable" };
+  if (data.length === 0) return { digest: null, error: "not_accessible" };
+  if (data.length > MAX_LOCAL_ACTION_ENTRIES) return { digest: null, error: "limit_reached" };
+
+  const entries: Array<{ path: string; sha: string; type: string }> = [];
+  for (const raw of data) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { digest: null, error: "unparseable" };
+    }
+    const item = raw as GithubContentEntry;
+    const path = typeof item.path === "string" ? item.path : "";
+    const sha = typeof item.sha === "string" ? item.sha : "";
+    const type = typeof item.type === "string" ? item.type : "";
+    if (
+      !path.startsWith(`${actionPath}/`) ||
+      !/^[0-9a-f]{40}$/i.test(sha) ||
+      !["file", "dir", "symlink", "submodule"].includes(type)
+    ) {
+      return { digest: null, error: "unparseable" };
+    }
+    entries.push({ path, sha: sha.toLowerCase(), type });
+  }
+  entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  return { digest: await sha256Hex(stableJson(entries)), error: null };
+}
+
 async function fetchWorkflowContent(
   token: string,
   repositoryFullName: string,
@@ -356,6 +498,19 @@ function isSafeWorkflowPath(path: string): boolean {
   if (!path.startsWith(".github/workflows/")) return false;
   if (path.includes("..") || path.includes("//")) return false;
   return path.length <= 512 && /^[A-Za-z0-9._/-]+$/.test(path);
+}
+
+function normalizeLocalActionPath(uses: string): string | null {
+  if (!uses.startsWith("./")) return null;
+  const path = uses.slice(2).replace(/\/+$/, "");
+  return isSafeRepositoryPath(path) ? path : null;
+}
+
+function isSafeRepositoryPath(path: string): boolean {
+  if (!path || path.length > 512 || path.includes("//")) return false;
+  const segments = path.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return false;
+  return /^[A-Za-z0-9._@+/-]+$/.test(path);
 }
 
 function str(value: unknown): string | null {

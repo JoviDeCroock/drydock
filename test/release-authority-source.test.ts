@@ -94,6 +94,64 @@ describe("fetchReleaseAuthoritySources", () => {
     expect(contents?.url).toContain(`ref=${"a".repeat(40)}`);
   });
 
+  it("binds a local action to its complete directory tree at the run commit", async () => {
+    const workflow = `on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/publish
+`;
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+      if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+        return new Response(workflow);
+      }
+      if (url.pathname.endsWith("/contents/actions/publish")) {
+        return Response.json([
+          { path: "actions/publish/action.yml", sha: "b".repeat(40), type: "file" },
+          { path: "actions/publish/dist", sha: "c".repeat(40), type: "dir" },
+        ]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.unresolved).toEqual([]);
+    expect(sources.workflows[0].localActionDigests?.["./actions/publish"]).toMatch(
+      /^[0-9a-f]{64}$/,
+    );
+    const actionRequest = seen.find((entry) => entry.url.includes("/contents/actions/publish"));
+    expect(actionRequest?.url).toContain(`ref=${"a".repeat(40)}`);
+  });
+
+  it("marks local-action coverage incomplete when its directory cannot be read", async () => {
+    const workflow = `on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/publish
+`;
+    mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+      if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+        return new Response(workflow);
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.unresolved).toEqual([
+      {
+        path: ".github/workflows/release.yml -> ./actions/publish",
+        reason: "not_accessible",
+      },
+    ]);
+  });
+
   it("resolves the reusable-workflow graph GitHub already pinned", async () => {
     mockGithub((url) => {
       if (url.pathname.endsWith("/actions/runs/4242")) {

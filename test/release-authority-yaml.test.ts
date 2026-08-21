@@ -163,6 +163,28 @@ key with spaces: plain
     expect(doc["quoted-key"]).toBe("value");
   });
 
+  it("decodes the complete YAML double-quoted escape set", () => {
+    const doc = parseWorkflowYaml(
+      'unicode: "prod\\u0075ction"\nhex: "\\x41"\nemoji: "\\U0001F680"\nspace: "a\\ b"\n',
+    ).value as Record<string, unknown>;
+
+    expect(doc).toMatchObject({
+      unicode: "production",
+      hex: "A",
+      emoji: "🚀",
+      space: "a b",
+    });
+  });
+
+  it.each(['bad: "\\q"\n', 'bad: "\\u12"\n', 'bad: "\\U00110000"\n'])(
+    "rejects unsupported or invalid double-quoted escapes",
+    (source) => {
+      expect(() => parseWorkflowYaml(source)).toThrow(
+        expect.objectContaining({ code: "unsupported_syntax" }),
+      );
+    },
+  );
+
   it("keeps a quoted merge-looking key as ordinary text", () => {
     const doc = parseWorkflowYaml('"<<": value\nflow: { "<<": value }\n').value as Record<
       string,

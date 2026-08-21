@@ -116,7 +116,7 @@ export interface ReleaseAuthorityDelta {
   status: AuthorityDeltaStatus;
   baseline: AuthorityBaselineRef | null;
   changes: AuthorityChange[];
-  /** Total changes found, which may exceed `changes.length` after capping. */
+  /** Total changes found. */
   changeCount: number;
   highestSignificance: AuthoritySignificance | "none";
   standing: AuthorityStanding;
@@ -127,8 +127,6 @@ export interface ReleaseAuthorityDelta {
    */
   requiresApproval: boolean;
 }
-
-export const AUTHORITY_CHANGES_CAP = 100;
 
 // Events that hand release authority to a wider set of actors or contexts.
 // Gaining one of these is a different class of change from gaining `push`.
@@ -151,6 +149,11 @@ const PERMISSION_RANK: Record<PermissionLevel, number> = {
 };
 
 const SIGNIFICANCE_RANK: Record<AuthoritySignificance, number> = { low: 0, medium: 1, high: 2 };
+
+// The tolerant persisted-data reader still needs a defensive array bound. This
+// comfortably exceeds the maximum delta produced from the snapshot's bounded
+// lists; computed deltas themselves are never truncated.
+export const AUTHORITY_CHANGES_CAP = 16_384;
 
 /**
  * Context a delta needs that the two snapshots cannot supply on their own.
@@ -225,7 +228,10 @@ export function computeReleaseAuthorityDelta(
     schema: RELEASE_AUTHORITY_DELTA_SCHEMA,
     status,
     baseline: baseline.ref,
-    changes: ordered.slice(0, AUTHORITY_CHANGES_CAP),
+    // Every source list in the snapshot is already bounded. Keep the complete
+    // delta: a maintainer must never be asked to acknowledge authority changes
+    // that the review packet omitted.
+    changes: ordered,
     changeCount: ordered.length,
     highestSignificance: ordered.length > 0 ? ordered[0].significance : "none",
     standing,

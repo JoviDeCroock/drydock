@@ -54,7 +54,13 @@ jobs:
 `;
 
 interface SnapshotOptions {
-  workflows?: Array<{ path: string; content: string; role?: "entry" | "referenced"; sha?: string }>;
+  workflows?: Array<{
+    path: string;
+    content: string;
+    role?: "entry" | "referenced";
+    sha?: string;
+    localActionDigests?: Record<string, string>;
+  }>;
   artifacts?: AuthorityArtifact[];
   unresolved?: AuthorityUnresolved[];
   /** `null` models a run GitHub reported no entry workflow path for. */
@@ -87,6 +93,7 @@ function makeSnapshot(options: SnapshotOptions = {}): Promise<ReleaseAuthoritySn
         content: workflow.content,
         document: parsed.value,
         documentComplete: parsed.complete,
+        localActionDigests: workflow.localActionDigests,
       };
     }),
     artifacts: options.artifacts ?? [
@@ -150,6 +157,22 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).toEqual(["workflow_content_changed"]);
   });
 
+  it("treats order-insensitive permission key reordering as cosmetic", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "permissions:\n  contents: read\n\njobs:",
+      "permissions:\n  contents: read\n  id-token: none\n\njobs:",
+    );
+    const current = BASE_WORKFLOW.replace(
+      "permissions:\n  contents: read\n\njobs:",
+      "permissions:\n  id-token: none\n  contents: read\n\njobs:",
+    );
+
+    const delta = await deltaBetween(prior, current);
+
+    expect(delta.status).toBe("cosmetic");
+    expect(kinds(delta.changes)).toEqual(["workflow_content_changed"]);
+  });
+
   it("does not treat a long authority value changed past its display bound as cosmetic", async () => {
     const prefix = `npm publish --tag ${"x".repeat(320)}`;
     const prior = BASE_WORKFLOW.replace(
@@ -182,6 +205,47 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       label: "job dependency",
       prior: BASE_WORKFLOW,
       current: BASE_WORKFLOW.replace("    needs: build\n", "    needs: bootstrap\n"),
+    },
+    {
+      label: "job runner selection",
+      prior: BASE_WORKFLOW,
+      current: BASE_WORKFLOW.replace(
+        "    runs-on: ubuntu-latest\n    environment: pypi",
+        "    runs-on: self-hosted\n    environment: pypi",
+      ),
+    },
+    {
+      label: "job container",
+      prior: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    container: node:22\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    container: attacker.example/build:latest\n",
+      ),
+    },
+    {
+      label: "job service",
+      prior: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    services:\n      registry:\n        image: registry:2\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    services:\n      registry:\n        image: attacker.example/registry:latest\n",
+      ),
+    },
+    {
+      label: "job output mapping",
+      prior: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    outputs:\n      registry: stable\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  build:\n    runs-on: ubuntu-latest\n",
+        "  build:\n    runs-on: ubuntu-latest\n    outputs:\n      registry: attacker-controlled\n",
+      ),
     },
     {
       label: "job environment mapping",
@@ -826,6 +890,53 @@ jobs:
         subject: "reusable workflow",
       });
     });
+  });
+
+  describe("local actions", () => {
+    const workflow = `
+on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/publish
+`;
+
+    it("flags a changed local-action directory with unchanged workflow YAML", async () => {
+      const prior = await makeSnapshot({
+        workflows: [
+          { path: ENTRY, content: workflow, localActionDigests: { "./actions/publish": "a" } },
+        ],
+      });
+      const current = await makeSnapshot({
+        workflows: [
+          { path: ENTRY, content: workflow, localActionDigests: { "./actions/publish": "b" } },
+        ],
+      });
+
+      const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
+
+      expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+        significance: "high",
+        subject: "./actions/publish",
+      });
+      expect(delta.status).toBe("changed");
+    });
+  });
+
+  it("keeps every bounded authority change reviewable past the former display cap", async () => {
+    const steps = (ref: string) =>
+      Array.from({ length: 120 }, (_, index) => `      - uses: acme/action-${index}@${ref}`).join(
+        "\n",
+      );
+    const prior = `on: push\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n${steps("a".repeat(40))}\n`;
+    const current = `on: push\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n${steps("b".repeat(40))}\n`;
+
+    const delta = await deltaBetween(prior, current);
+
+    expect(delta.changeCount).toBe(120);
+    expect(delta.changes).toHaveLength(120);
+    expect(new Set(delta.changes.map((change) => change.subject)).size).toBe(120);
   });
 
   describe("artifact continuity", () => {

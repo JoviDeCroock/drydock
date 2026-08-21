@@ -55,7 +55,7 @@ const CHANGE_LABEL: Record<AuthorityChangeKind, string> = {
   action_added: "Action added",
   action_removed: "Action removed",
   action_ref_changed: "Action reference changed",
-  action_configuration_changed: "Publishing action or reusable-workflow configuration changed",
+  action_configuration_changed: "Action source or authority-sensitive configuration changed",
   action_unpinned: "Action reference no longer pinned to a commit",
   action_pinned: "Action reference pinned to a commit",
   secrets_inherit_added: "Reusable workflow now inherits secrets",

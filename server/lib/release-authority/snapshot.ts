@@ -192,6 +192,12 @@ export interface WorkflowSource {
   document: YamlValue;
   /** False when the reader stopped early; recorded as partial coverage. */
   documentComplete: boolean;
+  /**
+   * Bounded digests of local-action directories referenced by this workflow,
+   * keyed by the trimmed `uses: ./...` value. The control-plane fetcher builds
+   * these from Git blob/tree identities at the workflow's resolved commit.
+   */
+  localActionDigests?: Readonly<Record<string, string>>;
 }
 
 export interface BuildSnapshotInput {
@@ -417,7 +423,14 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
       job.if,
       job.needs,
       job.env,
-      { strategy: job.strategy, continueOnError: job["continue-on-error"] },
+      {
+        strategy: job.strategy,
+        continueOnError: job["continue-on-error"],
+        runsOn: job["runs-on"],
+        container: job.container,
+        services: job.services,
+        outputs: job.outputs,
+      },
     );
     if (jobExecutionContext) projection.executionContext.push(jobExecutionContext);
 
@@ -445,7 +458,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         { continueOnError: step["continue-on-error"] },
       );
       if (stepExecutionContext) projection.executionContext.push(stepExecutionContext);
-      await readStep(projection, workflow, jobName, step);
+      await readStep(projection, source, workflow, jobName, step);
     }
   }
 
@@ -468,7 +481,14 @@ async function readExecutionContext(
   conditionValue: YamlValue,
   needsValue: YamlValue,
   envValue: YamlValue,
-  controlValues: { strategy?: YamlValue; continueOnError?: YamlValue } = {},
+  controlValues: {
+    strategy?: YamlValue;
+    continueOnError?: YamlValue;
+    runsOn?: YamlValue;
+    container?: YamlValue;
+    services?: YamlValue;
+    outputs?: YamlValue;
+  } = {},
 ): Promise<AuthorityExecutionContext | null> {
   const condition = asString(conditionValue)?.trim() || null;
   const needs = [...asStringList(needsValue)].sort();
@@ -479,6 +499,10 @@ async function readExecutionContext(
   if (controlValues.continueOnError != null) {
     controls.continueOnError = controlValues.continueOnError;
   }
+  if (controlValues.runsOn != null) controls.runsOn = controlValues.runsOn;
+  if (controlValues.container != null) controls.container = controlValues.container;
+  if (controlValues.services != null) controls.services = controlValues.services;
+  if (controlValues.outputs != null) controls.outputs = controlValues.outputs;
   const controlsDigest =
     Object.keys(controls).length > 0 ? await sha256Hex(stableJson(controls)) : null;
   if (!condition && needs.length === 0 && !envDigest && !controlsDigest) return null;
@@ -518,12 +542,47 @@ function canonicalizeProjectionForDigest(projection: WorkflowProjection): Workfl
 
   return {
     ...projection,
-    permissions: projection.permissions.filter(
-      (permission) =>
-        permission.job === null ||
-        !redundantJobBlocks.has(`${permission.workflow}\u0000${permission.job}`),
+    triggers: [...projection.triggers].sort(
+      byKey((item) => `${item.workflow}\u0000${item.event}\u0000${item.filter}`),
     ),
+    permissions: projection.permissions
+      .filter(
+        (permission) =>
+          permission.job === null ||
+          !redundantJobBlocks.has(`${permission.workflow}\u0000${permission.job}`),
+      )
+      .sort(
+        byKey(
+          (item) => `${item.workflow}\u0000${item.job ?? ""}\u0000${item.scope}\u0000${item.level}`,
+        ),
+      ),
+    environments: [...projection.environments].sort(
+      byKey((item) => `${item.workflow}\u0000${item.job}\u0000${item.name}`),
+    ),
+    // Job-map key order is cosmetic, while step order inside one job is not.
+    // Sort the job groups and preserve their original intra-job order.
+    actions: sortJobGroups(projection.actions),
+    publishSteps: sortJobGroups(projection.publishSteps),
+    safeguards: sortJobGroups(projection.safeguards),
+    artifactFlow: sortJobGroups(projection.artifactFlow),
   };
+}
+
+function sortJobGroups<T extends { workflow: string; job: string }>(items: T[]): T[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (left, right) =>
+        compareStrings(
+          `${left.item.workflow}\u0000${left.item.job}`,
+          `${right.item.workflow}\u0000${right.item.job}`,
+        ) || left.index - right.index,
+    )
+    .map(({ item }) => item);
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function permissionBlocksEqual(left: AuthorityPermission[], right: AuthorityPermission[]): boolean {
@@ -537,6 +596,7 @@ function permissionBlocksEqual(left: AuthorityPermission[], right: AuthorityPerm
 
 async function readStep(
   projection: WorkflowProjection,
+  source: WorkflowSource,
   workflow: string,
   job: string,
   step: { [key: string]: YamlValue },
@@ -556,6 +616,7 @@ async function readStep(
         step.secrets,
         step.with,
         isPublishAction(actionName) || safeguard !== null,
+        source.localActionDigests?.[uses.trim()] ?? null,
       ),
     );
     if (isPublishAction(actionName)) {
@@ -685,6 +746,8 @@ function triggerInputConfiguration(
   if (event === "workflow_call") {
     const secrets = projectNamedTriggerConfiguration(config.secrets, ["required"]);
     if (secrets) projection.secrets = secrets;
+    const outputs = projectNamedTriggerConfiguration(config.outputs, ["value"]);
+    if (outputs) projection.outputs = outputs;
   }
   return Object.keys(projection).length > 0 ? projection : null;
 }
@@ -757,6 +820,7 @@ async function readActionRef(
   secrets: YamlValue,
   inputs: YamlValue,
   trackConfiguration: boolean,
+  localActionDigest: string | null = null,
 ): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
   const local = trimmed.startsWith("./") || trimmed.startsWith("../");
@@ -765,9 +829,10 @@ async function readActionRef(
   const inputMap = asRecord(inputs);
   const secretMap = asRecord(secrets);
   const hasConfiguration =
-    trackConfiguration &&
-    ((inputMap && Object.keys(inputMap).length > 0) ||
-      (secretMap && Object.keys(secretMap).length > 0));
+    localActionDigest !== null ||
+    (trackConfiguration &&
+      ((inputMap && Object.keys(inputMap).length > 0) ||
+        (secretMap && Object.keys(secretMap).length > 0)));
   return {
     workflow,
     job,
@@ -778,7 +843,13 @@ async function readActionRef(
     pinned: local || isCommitSha(ref),
     secretsInherit: asString(secrets)?.trim().toLowerCase() === "inherit",
     configurationDigest: hasConfiguration
-      ? await sha256Hex(stableJson({ inputs: inputMap ?? {}, secrets: secretMap ?? {} }))
+      ? await sha256Hex(
+          stableJson({
+            inputs: trackConfiguration ? (inputMap ?? {}) : {},
+            secrets: trackConfiguration ? (secretMap ?? {}) : {},
+            localActionDigest,
+          }),
+        )
       : null,
   };
 }
