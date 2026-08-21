@@ -67,8 +67,15 @@ Dependabot-triggered `pull_request` runs honor the workflow-level `permissions`
 key (GitHub changelog 2022-02-10); the `dependabot/fetch-metadata` README still
 recommends `pull_request_target` for write access, but GitHub's own Dependabot
 automation tutorial uses exactly this `pull_request` + `permissions` shape.
-Grouped Dependabot PRs expose `updated-dependencies-list` instead of a single
-previous/new pair; the snippet comments only on single-dependency PRs.
+Grouped Dependabot PRs join every updated dependency into `dependency-names`
+while `previous-version`/`new-version` describe only the first of them, so the
+snippet's comma guard — not the empty-version guard — is what keeps it to
+single-dependency PRs.
+
+This repository runs the documented snippet against its own Dependabot PRs in
+`.github/workflows/drydock-diff-link.yml`, pinned to a `fetch-metadata` commit
+per the `.github/workflows/ci.yml` convention. Keep the two in step: it is the
+only place the copy-paste YAML is actually exercised.
 
 ## Operational posture
 
