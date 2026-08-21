@@ -13,7 +13,7 @@ Four gates, in order: verify, adversarial self-review, docs, safe push. Skipping
 pnpm run verify
 ```
 
-Runs lint + format check + typecheck + the logic and Worker test suites in parallel (`scripts/verify.mjs`); all four always run to completion so one pass surfaces every failure. Fix everything it reports. If e2e scenarios or registry behavior changed, also run `pnpm run test:e2e`.
+Runs lint + format check + typecheck + knip + the logic and Worker test suites in parallel (`scripts/verify.mjs`); all five always run to completion so one pass surfaces every failure. Fix everything it reports. If e2e scenarios or registry behavior changed, also run `pnpm run test:e2e`.
 
 ## 2. Adversarial self-review
 

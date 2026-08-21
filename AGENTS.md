@@ -49,10 +49,11 @@ New functionality needs tests at the narrowest useful layer; add broader coverag
 
 ## Commands
 
-- `pnpm run verify` — lint + format check + typecheck + tests; run before every commit when practical.
-- `pnpm run verify:quick` — the iteration loop: lint/format on changed files only, full typecheck, changed-only Vitest. Not the commit gate — finish with `pnpm run verify`.
+- `pnpm run verify` — lint + format check + typecheck + knip + tests; run before every commit when practical.
+- `pnpm run verify:quick` — the iteration loop: lint/format on changed files only, full typecheck, knip, changed-only Vitest. Not the commit gate — finish with `pnpm run verify`.
 - `pnpm run dev` — Vite dev server with the Cloudflare plugin (`http://localhost:5173`).
 - `pnpm run lint` / `pnpm run lint:fix` — oxlint.
+- `pnpm run knip` — unused files/exports/dependencies.
 - `pnpm run format` / `pnpm run format:check` — oxfmt.
 - `pnpm run typecheck` — TypeScript typecheck.
 - `pnpm run test` — Vitest logic + Worker-runtime suites. Forwards args to Vitest: `pnpm test -- <file>` runs one file, add `--project node` or `--project workers` to pin a suite.
