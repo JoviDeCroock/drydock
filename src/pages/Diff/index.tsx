@@ -667,13 +667,15 @@ function EvidenceRow({
   detail,
   detailPrefix,
   href,
+  detailHref,
 }: {
   label: string;
   value: string;
   detail?: string | null;
   detailPrefix: string;
-  /** Set only for values a reader can be sent to; see `attestationLinks`. */
+  /** Destinations for the value and, when it names one of its own, the detail. */
   href?: string | null;
+  detailHref?: string | null;
 }) {
   return (
     <div class="grid grid-cols-1 gap-x-3 sm:grid-cols-[76px_minmax(0,1fr)] sm:items-baseline">
@@ -696,7 +698,19 @@ function EvidenceRow({
         {detail ? (
           <span class="text-ink-subtle">
             {" "}
-            {detailPrefix} {detail}
+            {detailPrefix}{" "}
+            {detailHref ? (
+              <a
+                href={detailHref}
+                target="_blank"
+                rel="noreferrer"
+                class="text-ink-subtle underline hover:text-ink"
+              >
+                {detail}
+              </a>
+            ) : (
+              detail
+            )}
           </span>
         ) : null}
       </dd>
@@ -709,9 +723,14 @@ function EvidenceRow({
 // atpm diff this is the substance of the page's claim — a handle proved through
 // DNS, a DID through a directory, bytes from the publisher's own server.
 //
-// Rendered as text, never as links: every value here comes from data the
-// publisher under review controls.
+// Each row links to the artifact that proved it, not to a page about it: the
+// TXT record, the DID document, the PDS's own description, the record itself.
+// The reader can re-run the resolution rather than take this column's word for
+// it, which is the only thing that makes an unauthenticated trail worth
+// printing. See `resolutionLinks` for why publisher-chosen hosts are safe to
+// send a reader to here.
 function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] }) {
+  const links = resolutionLinks(steps);
   return (
     <div class="p-5 flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-2 min-h-[22px]">
@@ -725,6 +744,7 @@ function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] })
             value={step.value}
             detail={step.detail}
             detailPrefix="via"
+            href={links.get(step.label)}
           />
         ))}
       </dl>
@@ -732,11 +752,96 @@ function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] })
           caveat lines sit on the card's bottom edge together instead of leaving
           the shorter column trailing into blank space. */}
       <Muted class="m-0 mt-auto text-[12px] leading-[1.6]">
-        Each step was resolved independently, and every value here is published by the party under
-        review — shown as text, never as a link.
+        Each step was resolved independently, and each link goes to the record that proved it.
+        Everything here is published by the party under review, so it is evidence to check rather
+        than a claim to take on trust.
       </Muted>
     </div>
   );
+}
+
+// Destinations for the resolution trail, keyed by the step label the server
+// emits.
+//
+// Unlike the attestation, none of this is signed — a publisher picks their own
+// handle, their own PDS, and the contents of their own repository. Linking it
+// is still right, and safe, because of how the hrefs are built: the host is
+// either fixed (`plc.directory`, `dns.google`) or a hostname the value itself
+// has to parse as, and every path and query part is validated by shape and
+// re-encoded. No value reaches an `href` as the string it arrived as, so a
+// record cannot smuggle a scheme or a destination of its choosing into this
+// column. What a publisher does control is which of *their* servers a reader is
+// sent to, which is exactly what the row is claiming and what the reader came
+// to check.
+export function resolutionLinks(
+  steps: PublicDiffResponse["provenance"],
+): Map<string, string | null> {
+  const byLabel = new Map(steps.map((step) => [step.label, step]));
+  const links = new Map<string, string | null>();
+
+  const handle = byLabel.get("Handle");
+  if (handle) {
+    const host = hostnameOrNull(handle.value.replace(/^@/, ""));
+    // The proof for a handle is whichever record the resolver read: a TXT
+    // record under `_atproto`, or a file on the handle's own domain.
+    links.set(
+      "Handle",
+      !host
+        ? null
+        : handle.detail === "DNS TXT"
+          ? `https://dns.google/resolve?name=${encodeURIComponent(`_atproto.${host}`)}&type=TXT`
+          : `https://${host}/.well-known/atproto-did`,
+    );
+  }
+
+  const did = byLabel.get("DID");
+  if (did) links.set("DID", didDocumentUrl(did.value));
+
+  const pds = byLabel.get("PDS");
+  const pdsHost = pds ? hostnameOrNull(pds.value) : null;
+  // describeServer rather than the bare origin: a PDS root is whatever the
+  // operator serves there, while this endpoint answers the question the row
+  // raises — which server is this, and what does it say it is.
+  if (pds) {
+    links.set("PDS", pdsHost ? `https://${pdsHost}/xrpc/com.atproto.server.describeServer` : null);
+  }
+
+  const record = byLabel.get("Record");
+  if (record) links.set("Record", pdsHost ? recordUrl(pdsHost, record.value) : null);
+
+  return links;
+}
+
+/** The DID document itself: `plc.directory` for did:plc, the domain for did:web. */
+function didDocumentUrl(did: string): string | null {
+  if (/^did:plc:[a-z2-7]{24}$/.test(did)) return `https://plc.directory/${did}`;
+  if (did.startsWith("did:web:")) {
+    // did:web encodes path segments with `:`; the bare form means /.well-known.
+    const [domain, ...segments] = did.slice("did:web:".length).split(":");
+    const host = hostnameOrNull(decodeURIComponent(domain ?? ""));
+    if (!host) return null;
+    return segments.length
+      ? `https://${host}/${segments.map((part) => encodeURIComponent(decodeURIComponent(part))).join("/")}/did.json`
+      : `https://${host}/.well-known/did.json`;
+  }
+  return null;
+}
+
+/** The `at://` record as the PDS read it, so a reader sees the same bytes. */
+function recordUrl(pdsHost: string, uri: string): string | null {
+  const match = /^at:\/\/(did:[a-z0-9]+:[a-zA-Z0-9._:%-]+)\/([a-zA-Z0-9.]+)\/(.+)$/.exec(uri);
+  if (!match) return null;
+  const [, did, collection, rkey] = match;
+  const query = new URLSearchParams({ repo: did, collection, rkey });
+  return `https://${pdsHost}/xrpc/com.atproto.repo.getRecord?${query.toString()}`;
+}
+
+/** The value read strictly as a hostname, so it can only ever be an origin. */
+function hostnameOrNull(value: string): string | null {
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(value)) {
+    return null;
+  }
+  return value.toLowerCase();
 }
 
 // Where a release was built, and whether that matches what its publisher said
@@ -753,6 +858,7 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
   const declared = attestation.declared;
   const mismatch = isTrustedPublisherMismatch(attestation);
   const links = build ? attestationLinks(build) : null;
+  const declaredRepo = declared ? githubRepoUrl(declared.repository) : null;
 
   return (
     <div class="p-5 flex flex-col gap-3">
@@ -787,7 +893,21 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
       ) : null}
       {declared ? (
         <dl class={cn("flex flex-col gap-1.5 m-0", build && "border-t border-border pt-3")}>
-          <ProvenanceRow label="Declared" value={declared.repository} detail={declared.workflow} />
+          <ProvenanceRow
+            label="Declared"
+            value={declared.repository}
+            detail={declared.workflow}
+            href={declaredRepo}
+            // No commit to pin to — the declaration names a pipeline, not a
+            // build — so the workflow link tracks the repository's default
+            // branch. A 404 here is itself worth seeing: it means the package
+            // declares a workflow file that is not there.
+            detailHref={
+              declaredRepo && declared.workflow
+                ? `${declaredRepo}/blob/HEAD/${encodePath(declared.workflow)}`
+                : null
+            }
+          />
         </dl>
       ) : null}
       <Muted class="m-0 mt-auto text-[12px] leading-[1.6]">
@@ -802,29 +922,41 @@ function ProvenanceRow({
   value,
   detail,
   href,
+  detailHref,
 }: {
   label: string;
   value: string;
   detail?: string;
   href?: string | null;
+  detailHref?: string | null;
 }) {
-  return <EvidenceRow label={label} value={value} detail={detail} detailPrefix="·" href={href} />;
+  return (
+    <EvidenceRow
+      label={label}
+      value={value}
+      detail={detail}
+      detailPrefix="·"
+      href={href}
+      detailHref={detailHref}
+    />
+  );
 }
 
 // Destinations for the proven half of an attestation.
 //
-// Only the proven half gets them. Those values were read out of a Fulcio
-// certificate that verified against Sigstore's root, so the repository, ref,
-// commit and run are facts a reader can go check. The declared half is the
-// publisher's own statement about themselves — a package lying about its
-// trusted publisher must not get a link out of Drydock to wherever it points —
-// so it stays plain text, the same rule the resolution trail follows.
+// These values were read out of a Fulcio certificate that verified against
+// Sigstore's root, so the repository, ref, commit and run are facts a reader
+// can go check rather than claims to take on faith. The declared half is
+// linked too (see `BuildProvenance`), but it is only ever the publisher's own
+// statement — which is why the two halves stay visually separated and the
+// explanation line says plainly when they disagree. A reader told the declared
+// publisher does not match is exactly the reader who needs to go look at it.
 //
 // Every href is rebuilt from parsed, re-validated parts rather than
 // interpolated from the raw string, so a certificate carrying anything other
 // than a public github.com repository degrades to text instead of emitting
 // whatever it happened to say.
-function attestationLinks(build: NonNullable<PublicDiffAttestation["build"]>) {
+export function attestationLinks(build: NonNullable<PublicDiffAttestation["build"]>) {
   const repo = githubRepoUrl(build.repository);
   // The certificate spells a fully-qualified ref; GitHub resolves the bare
   // branch or tag name under /tree.
@@ -851,7 +983,7 @@ function attestationLinks(build: NonNullable<PublicDiffAttestation["build"]>) {
 }
 
 /** `https://github.com/<owner>/<repo>`, rebuilt from the parsed URL, or null. */
-function githubRepoUrl(repository: string): string | null {
+export function githubRepoUrl(repository: string): string | null {
   const url = githubUrl(repository);
   if (!url) return null;
   const segments = new URL(url).pathname.split("/").filter(Boolean);
