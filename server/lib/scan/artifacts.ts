@@ -9,6 +9,7 @@ import {
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../ai-review/types";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
+import { SCAN_FILE_SAMPLE_LIMIT } from "../sample-retention";
 import { sha256Hex, stableJson, utf8Size } from "../platform/stable-json";
 
 const SCAN_ARTIFACT_STORAGE_VERSION = 1;
@@ -16,11 +17,14 @@ export const SCAN_ARTIFACT_WRITE_ATTEMPTS = 3;
 const ARTIFACT_CONTENT_TYPE = "application/json; charset=utf-8";
 
 // Per-file display sample bound. Deterministic detection runs over the WHOLE
-// file in the parent worker (the sandbox no longer clips the scanned text; see
-// issue #191), so this cap is purely about what we persist for the diff/file
-// viewer — it never narrows the review window. A finding past this bound is
-// surfaced in the UI's out-of-sample banner rather than pinned to a hunk.
-export const SCAN_FILE_SAMPLE_LIMIT = 128 * 1024;
+// retained body of the reviewed side in the parent worker (the sandbox does not
+// clip the staged text; see issue #191), so this cap is purely about what we
+// persist for the diff/file viewer — it never narrows the review window. A
+// finding past this bound is surfaced in the UI's out-of-sample banner rather
+// than pinned to a hunk. Lives in `sample-retention.ts` next to the baseline
+// wire cap it is sized against; re-exported here because this is where the clip
+// is applied.
+export { SCAN_FILE_SAMPLE_LIMIT };
 
 export interface ScanArtifactMetadata {
   artifactStorageVersion: number;

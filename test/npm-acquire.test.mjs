@@ -7,6 +7,7 @@ vi.mock("cloudflare:workers", () => ({
 const { acquireBaselineNpm, acquireStagedNpm } =
   await import("../server/lib/ecosystems/npm/acquire");
 const { SandboxError } = await import("../server/lib/sandbox");
+const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/sample-retention");
 
 function stagedArtifact() {
   return {
@@ -61,9 +62,11 @@ describe("acquireBaselineNpm", () => {
       version: "1.0.0",
       reason: "dist-tag:latest:baseline-too-large",
     });
+    // The baseline is parsed with the sandbox-side text-sample cap; the staged
+    // side never is (issue #191).
     expect(broker.downloadPublished).toHaveBeenCalledWith(
       "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
-      { maxFiles: undefined },
+      { maxFiles: undefined, maxTextSampleChars: BASELINE_TEXT_SAMPLE_LIMIT },
     );
   });
 

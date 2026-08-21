@@ -4,6 +4,8 @@ import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
 
 interface PyPiBrokerDownloadOptions {
   maxFiles?: number;
+  /** See `DownloadOptions.maxTextSampleChars` in `lib/sandbox.ts`. */
+  maxTextSampleChars?: number;
 }
 
 interface PyPiPublicArtifactRef {
@@ -64,6 +66,7 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
         archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
         publicArtifactUrls: [artifact.url],
         maxFiles: opts?.maxFiles,
+        maxTextSampleChars: opts?.maxTextSampleChars,
       });
     },
 

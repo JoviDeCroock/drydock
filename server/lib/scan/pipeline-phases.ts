@@ -6,11 +6,16 @@ import type {
   AcquiredArtifact,
   AdapterBroker,
   AdapterContext,
+  AdapterPackageSummary,
   BaselineInfo,
   PackageAdapter,
   StagedDetails,
 } from "../ecosystems/package-adapter";
-import type { IntentEnvelope } from "../intent-envelope";
+import {
+  extractDeclaredRepository,
+  normalizeRepositoryUrl,
+  type IntentEnvelope,
+} from "../intent-envelope";
 import {
   describeOperationalError,
   durationMsSince,
@@ -70,6 +75,31 @@ interface FindingAnnotationRecord {
   releaseDelta: boolean;
 }
 
+/**
+ * Everything later phases need from the *raw* acquired artifacts, so the raw
+ * file arrays (unredacted text of both package sides) can be released as soon
+ * as deterministic findings have run. Nothing here carries file text: the only
+ * text that survives this boundary is the redacted evidence on
+ * `DeterministicFindings`.
+ */
+export interface ArtifactFacts {
+  packageSummary: AdapterPackageSummary;
+  fileCount: number;
+  previousFileCount: number;
+  baseline: BaselineInfo;
+  previousVersionAvailable: boolean;
+  baselineComparisonSkipped: boolean;
+  /**
+   * Bounded canonical repository URL read off the staged evidence, for the
+   * advisory intent envelope. Normalize it before it crosses this boundary:
+   * the raw manifest value is package-controlled and may itself be a
+   * multi-megabyte string or object. Both extraction inputs — the staged
+   * manifest text and the PyPI core-metadata body — are gone once
+   * `analyzeRelease` returns.
+   */
+  declaredRepository: string | null;
+}
+
 export interface DeterministicFindings {
   ruleFindings: Finding[];
   redactedStagedFiles: FileRecord[];
@@ -102,9 +132,14 @@ export function computeDiff(resolved: ResolvedArtifacts): ComputedDiff {
   const manifestDiff = redactJson(
     summarizePackageJsonDiff(baseline.artifact?.manifest, staged.artifact.manifest),
   );
-  const stagedManifestText =
-    staged.artifact.files.find((file) => file.path === "package.json")?.textSample ?? null;
-  return { fileDiff, manifestDiff, stagedManifestText };
+  return { fileDiff, manifestDiff, stagedManifestText: readStagedManifestText(staged.artifact) };
+}
+
+// The staged `package.json` body, unredacted. Shared by `computeDiff` and
+// `summarizeResolvedArtifacts` so the two cannot drift over which file counts
+// as the manifest.
+function readStagedManifestText(staged: AcquiredArtifact): string | null {
+  return staged.files.find((file) => file.path === "package.json")?.textSample ?? null;
 }
 
 // Pure: run the adapter's deterministic rules, redact evidence, and annotate
@@ -157,6 +192,103 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     annotatedFindings,
     releaseRuleFindings,
   };
+}
+
+// Pure: project the raw artifacts into the compact facts later phases need
+// (package summary, file counts, baseline). Must run while the raw artifacts
+// are still alive — that is, before `releaseResolvedArtifacts`.
+export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  adapterInput: TInput,
+  resolved: ResolvedArtifacts,
+): ArtifactFacts {
+  const { staged, baseline } = resolved;
+  return {
+    packageSummary: adapter.describe({
+      input: adapterInput,
+      staged: staged.artifact,
+      details: staged.details,
+      baseline: baseline.baseline,
+      previous: baseline.artifact,
+    }),
+    fileCount: staged.artifact.files.length,
+    previousFileCount: baseline.artifact?.files.length ?? 0,
+    baseline: baseline.baseline,
+    previousVersionAvailable: baseline.artifact !== null,
+    baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
+    declaredRepository: normalizeRepositoryUrl(
+      extractDeclaredRepository({
+        manifestText: readStagedManifestText(staged.artifact),
+        files: staged.artifact.files,
+      }),
+    ),
+  };
+}
+
+// Drop the unredacted file records of both package sides once findings have run
+// (they scan raw text; see `runDeterministicFindings`).
+//
+// Scope, precisely: this frees the record wrappers and the two arrays, not the
+// sample text. `redactFileRecords` spreads each record and runs `String.replace`
+// over its sample, and a replace that matches nothing returns the receiver — so
+// for the overwhelmingly common clean file the raw and redacted records point at
+// the *same* string instance, and the text only becomes collectable when the
+// redacted set does. What this buys is (a) the wrapper objects and arrays for
+// both sides, (b) the raw text of files redaction actually rewrote, and (c) an
+// enforced structure: no phase after this one is handed an unredacted body, so
+// a future change cannot start reading one by accident.
+export function releaseResolvedArtifacts(resolved: ResolvedArtifacts): void {
+  resolved.staged.artifact.files = [];
+  resolved.staged.artifact.suspiciousTarEntries = undefined;
+  if (resolved.baseline.artifact) {
+    resolved.baseline.artifact.files = [];
+    resolved.baseline.artifact.suspiciousTarEntries = undefined;
+  }
+}
+
+export interface ReleaseAnalysis {
+  diff: ComputedDiff;
+  findings: DeterministicFindings;
+  facts: ArtifactFacts;
+}
+
+/**
+ * Acquire both package sides, diff them, run deterministic findings over raw
+ * text, then release the raw records. `ResolvedArtifacts` never escapes this
+ * function, which is what makes the release effective: no later phase can hold
+ * a reference to an unredacted file array because none of them is given one.
+ *
+ * Order is load-bearing: findings run on raw text (a redacted sample would let
+ * a rule miss what redaction rewrote), and every field that crosses this
+ * boundary is redacted — including `ComputedDiff.stagedManifestText`, which is
+ * raw manifest text the rules need and no later phase reads, so it is dropped
+ * here rather than carried out unredacted. The one thing downstream still wants
+ * from it — the declared repository for the intent envelope — is extracted into
+ * `ArtifactFacts` while the raw evidence is alive, so dropping it cannot
+ * silently blank the envelope.
+ *
+ * Note for the workflow-gate path: the staged bytes there were parsed before the
+ * pipeline ran and are still held by the gate's `PreparedGatePackage` list for
+ * the whole gate run, so this release does not shorten their lifetime. It is
+ * effective for registry-staged scans, where this pipeline owns the only
+ * reference.
+ */
+export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  ctx: AdapterContext,
+  adapterInput: TInput,
+  broker: TBroker,
+  extraFindings: (resolved: ResolvedArtifacts) => Promise<Finding[]> = async () => [],
+): Promise<ReleaseAnalysis> {
+  const resolved = await resolveBaseline(adapter, ctx, adapterInput, broker);
+  const diff = computeDiff(resolved);
+  const findings = runDeterministicFindings(adapter, resolved, diff, await extraFindings(resolved));
+  const facts = summarizeResolvedArtifacts(adapter, adapterInput, resolved);
+  releaseResolvedArtifacts(resolved);
+  // Raw manifest text; only `adapter.runFindings` reads it, and it has run.
+  // `findings.redactedStagedManifest` is the redacted form later phases persist.
+  diff.stagedManifestText = null;
+  return { diff, findings, facts };
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context
@@ -253,9 +385,14 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   db: AppDb;
   session: WorkspaceSession;
   adapter: PackageAdapter<TInput, TBroker>;
-  adapterInput: TInput;
   identity: PipelineIdentity;
-  resolved: ResolvedArtifacts;
+  /**
+   * Compact projection of the acquired artifacts. Deliberately not
+   * `ResolvedArtifacts`: by the time this phase runs the raw (unredacted) file
+   * arrays have been released, so persistence cannot reach them even by
+   * accident.
+   */
+  facts: ArtifactFacts;
   diff: ComputedDiff;
   findings: DeterministicFindings;
   aiFindings: AiReview;
@@ -278,27 +415,19 @@ export interface PersistedScanOutcome {
 export async function persistResults<TInput, TBroker extends AdapterBroker>(
   args: PersistResultsArgs<TInput, TBroker>,
 ): Promise<PersistedScanOutcome> {
-  const { db, session, adapter, adapterInput, identity, resolved, diff, findings } = args;
-  const { staged, baseline } = resolved;
+  const { db, session, adapter, identity, facts, diff, findings } = args;
   const mergedAi = args.mergedAiFindings ?? { records: [], annotatedRecords: [] };
   const risk = args.riskSummary.artifactRisk;
 
   const safety = pipelineSafety();
-  const packageSummary = adapter.describe({
-    input: adapterInput,
-    staged: staged.artifact,
-    details: staged.details,
-    baseline: baseline.baseline,
-    previous: baseline.artifact,
-  });
 
   const result: ScanResult = {
     id: identity.scanId,
     stageId: identity.stageId,
-    package: packageSummary,
-    baseline: baseline.baseline,
-    fileCount: staged.artifact.files.length,
-    previousFileCount: baseline.artifact?.files.length ?? 0,
+    package: facts.packageSummary,
+    baseline: facts.baseline,
+    fileCount: facts.fileCount,
+    previousFileCount: facts.previousFileCount,
     packageJson: findings.redactedStagedManifest,
     packageJsonDiff: diff.manifestDiff,
     diff: diff.fileDiff,
@@ -330,7 +459,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     stageId: identity.stageId,
     stagedPublish: findings.redactedDetails,
     package: result.package,
-    baseline: baseline.baseline,
+    baseline: facts.baseline,
     fileCount: result.fileCount,
     previousFileCount: result.previousFileCount,
     packageJson: findings.redactedStagedManifest,
@@ -378,7 +507,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       diff: diff.fileDiff,
       risk: args.riskSummary,
       stagedPublish: findings.redactedDetails,
-      baseline: baseline.baseline,
+      baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
       safety: result.safety,

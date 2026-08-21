@@ -1,3 +1,4 @@
+import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../sample-retention";
 import type { FileRecord, PackageJsonSummary } from "../../review";
 import type {
   AcquiredArtifact,
@@ -136,10 +137,13 @@ export async function acquireBaselinePyPi(
         filenameArtifactNamespace(b.filename, b.kind),
       ) || a.filename.localeCompare(b.filename),
   )) {
-    const result = await broker.downloadPublicArtifact({
-      url: artifact.url,
-      kind: artifact.kind,
-    });
+    const result = await broker.downloadPublicArtifact(
+      { url: artifact.url, kind: artifact.kind },
+      // Baseline samples are diff/annotation context only, so they are clipped
+      // inside the sandbox rather than shipped whole. Manifests (METADATA,
+      // PKG-INFO, pyproject.toml) stay exempt in the parser.
+      { maxTextSampleChars: BASELINE_TEXT_SAMPLE_LIMIT },
+    );
     const prepared = preparePyPiArtifact({ path: artifact.filename, files: result.files });
     compactBaselineArtifactSamples([prepared], stagedRetention, retainedDigests);
     preparedArtifacts.push(prepared);

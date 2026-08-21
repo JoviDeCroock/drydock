@@ -331,6 +331,71 @@ async function seedDigestMatchedLegacyScan(
   return { db, scanId };
 }
 
+describe("scan status poll route", () => {
+  test("returns the polling fields without the heavy JSON blobs", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const { db, scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+
+    // The row this poll reads really does carry a large summary blob.
+    const [row] = await db
+      .select({ summaryJson: schema.scans.summaryJson, aiJson: schema.scans.aiJson })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId))
+      .limit(1);
+    expect(row?.summaryJson).toBeTruthy();
+    expect(row?.aiJson).toBeTruthy();
+
+    const res = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/status`, {
+      method: "GET",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scan: Record<string, unknown> };
+
+    // Everything the UI poller and the versions route read.
+    expect(body.scan).toMatchObject({
+      id: scanId,
+      status: "complete",
+      risk: "high",
+      packageName: "@org/artifact-backfill",
+      stagedVersion: "1.0.0",
+    });
+    for (const key of [
+      "stageId",
+      "source",
+      "findingCount",
+      "changedFileCount",
+      "riskSummaryJson",
+      "reportDigest",
+      "createdAt",
+      "updatedAt",
+    ]) {
+      expect(body.scan, `status response must keep ${key}`).toHaveProperty(key);
+    }
+
+    // The poll that observes the terminal transition must not ship the whole
+    // diff + AI envelope: the client fetches the full detail right after.
+    expect(body.scan).not.toHaveProperty("summaryJson");
+    expect(body.scan).not.toHaveProperty("aiJson");
+    expect(body.scan).not.toHaveProperty("errorJson");
+    expect(JSON.stringify(body).length).toBeLessThan(
+      JSON.stringify({ summaryJson: row?.summaryJson }).length,
+    );
+  });
+
+  test("is organization-scoped", async () => {
+    const owner = await seedUser();
+    const other = await seedUser();
+    const { scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+
+    const res = await fetchJsonWithSession(buildTestApp(other), `/api/v1/scans/${scanId}/status`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("scan artifact backfill route", () => {
   test("retries transient artifact write failures before marking a scan backed", async () => {
     const owner = await seedUser();

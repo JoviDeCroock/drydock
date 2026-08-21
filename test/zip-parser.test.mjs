@@ -466,6 +466,67 @@ describe("readZipStream", () => {
   });
 });
 
+describe("zip baseline text-sample cap", () => {
+  // Same opt-in cap as the tar reader: baseline parses only, manifests exempt,
+  // identity (size + sha256) always computed over the whole body.
+  const CAP = 512;
+
+  test("readZipStream clips retained samples and exempts wheel manifests", async () => {
+    const long = "# pad\n".repeat(300); // ~1800 chars
+    const metadata = `Metadata-Version: 2.3\nName: demo\nVersion: 1.0.0\n${long}`;
+    const zip = buildZip([
+      { path: "demo/__init__.py", body: long },
+      { path: "demo-1.0.0.dist-info/METADATA", body: metadata },
+    ]);
+
+    const uncapped = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20, 100);
+    const capped = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20, 100, CAP);
+
+    const byPath = Object.fromEntries(capped.files.map((file) => [file.path, file]));
+    const uncappedByPath = Object.fromEntries(uncapped.files.map((file) => [file.path, file]));
+
+    expect(byPath["demo/__init__.py"].flags).toContain("baseline-truncated");
+    expect(byPath["demo/__init__.py"].textSample.length).toBeLessThanOrEqual(CAP);
+    expect(byPath["demo/__init__.py"].sha256).toBe(uncappedByPath["demo/__init__.py"].sha256);
+    expect(byPath["demo/__init__.py"].size).toBe(uncappedByPath["demo/__init__.py"].size);
+
+    expect(byPath["demo-1.0.0.dist-info/METADATA"].textSample).toBe(metadata);
+    expect(byPath["demo-1.0.0.dist-info/METADATA"].flags).not.toContain("baseline-truncated");
+  });
+
+  test("readZipArchiveBuffered clips retained samples and exempts the VSIX manifest", async () => {
+    const long = "// pad\n".repeat(300);
+    const manifest = JSON.stringify({
+      name: "demo",
+      publisher: "example",
+      version: "1.0.0",
+      description: "d".repeat(2_000),
+    });
+    const zip = buildZip([
+      { path: "extension/package.json", body: manifest, dataDescriptor: true, deflate: true },
+      { path: "extension/extension.js", body: long, dataDescriptor: true },
+    ]);
+
+    const { files } = await readZipArchiveBuffered(zip, 2_500, 25 * 1024 * 1024, 2_500, CAP);
+    const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
+
+    expect(byPath["extension/package.json"].textSample).toBe(manifest);
+    expect(byPath["extension/package.json"].flags).not.toContain("baseline-truncated");
+    expect(byPath["extension/extension.js"].flags).toContain("baseline-truncated");
+    expect(byPath["extension/extension.js"].textSample.length).toBeLessThanOrEqual(CAP);
+  });
+
+  test("is off by default", async () => {
+    const long = "# pad\n".repeat(300);
+    const zip = buildZip([{ path: "demo/__init__.py", body: long }]);
+
+    const { files } = await readZipStream(chunkedStream(zip), 100, 1 << 20, 1 << 20, 100);
+
+    expect(files[0].textSample).toBe(long);
+    expect(files[0].flags).not.toContain("baseline-truncated");
+  });
+});
+
 describe("readZipArchiveBuffered", () => {
   // The CD-first buffered path VSIX archives require: vsce packs with yazl,
   // whose streamed entries set bit 3 and put their sizes in a data descriptor

@@ -57,6 +57,7 @@ vi.mock("../server/lib/ai-review/index.ts", async () => ({
 
 const { runScanPipeline } = await import("../server/lib/scan/pipeline");
 const { npmAdapter } = await import("../server/lib/ecosystems/npm");
+const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/sample-retention");
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
@@ -194,6 +195,23 @@ describe("scan pipeline baseline selection", () => {
 
     expect(registryMock.fetchPackageMetadata).not.toHaveBeenCalled();
     expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
+  // Load-bearing asymmetry (issue #191): the reviewed side is scanned whole, so
+  // its parse must never carry a text-sample cap. Only the baseline opts in.
+  test("caps baseline text samples in the sandbox and never the staged parse", async () => {
+    await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_retention",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+
+    const stagedOptions = sandboxMock.downloadInSandbox.mock.calls[0][2];
+    expect(stagedOptions.stageId).toBe("stage-beta-123");
+    expect(stagedOptions).not.toHaveProperty("maxTextSampleChars");
+
+    const baselineOptions = publishedTarballMock.downloadPublishedTarball.mock.calls[0][3];
+    expect(baselineOptions.maxTextSampleChars).toBe(BASELINE_TEXT_SAMPLE_LIMIT);
   });
 
   test("propagates deleted credential failures during baseline metadata lookup", async () => {

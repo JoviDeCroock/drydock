@@ -12,6 +12,9 @@ const {
   resolveBaseline,
   computeDiff,
   runDeterministicFindings,
+  summarizeResolvedArtifacts,
+  releaseResolvedArtifacts,
+  analyzeRelease,
   scoreRisk,
   mergeAiFindings,
   resolveReleaseConsistency,
@@ -66,6 +69,23 @@ const stagedArtifact = {
     },
   ],
   manifest: { name: "pkg", version: "1.0.1" },
+};
+
+// Same staged side, but the manifest declares a repository. The declared
+// repository has to survive `analyzeRelease` dropping the raw manifest text.
+const stagedArtifactWithRepository = {
+  ...stagedArtifact,
+  files: [
+    {
+      ...stagedArtifact.files[0],
+      textSample: JSON.stringify({
+        name: "pkg",
+        version: "1.0.1",
+        repository: "git+https://github.com/acme/pkg.git",
+      }),
+    },
+    ...stagedArtifact.files.slice(1),
+  ],
 };
 
 const baselineInfo = {
@@ -206,6 +226,220 @@ describe("runDeterministicFindings", () => {
 
     expect(out.redactedPreviousFiles).toEqual([]);
     expect(out.redactedPreviousManifest).toBeNull();
+  });
+});
+
+describe("summarizeResolvedArtifacts", () => {
+  test("projects the package summary + counts so later phases need no raw artifact", () => {
+    const adapter = makeAdapter();
+
+    const facts = summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved);
+
+    expect(facts).toEqual({
+      packageSummary: {
+        name: "pkg",
+        stagedVersion: "1.0.1",
+        stagedTag: "latest",
+        previousVersion: "1.0.0",
+      },
+      fileCount: 3,
+      previousFileCount: 2,
+      baseline: baselineInfo,
+      previousVersionAvailable: true,
+      baselineComparisonSkipped: false,
+      declaredRepository: null,
+    });
+    // Nothing in the facts carries file text: that is the whole point.
+    expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);
+    expect(JSON.stringify(facts)).not.toContain("export const value");
+  });
+
+  test("carries the staged manifest's declared repository", () => {
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: { ...resolved.staged, artifact: stagedArtifactWithRepository },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
+  });
+
+  test("does not retain an oversized raw repository object in artifact facts", () => {
+    const oversizedRepository = {
+      url: "git+https://github.com/acme/pkg.git",
+      padding: "x".repeat(2 * 1024 * 1024),
+    };
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: {
+          ...resolved.staged,
+          artifact: {
+            ...stagedArtifact,
+            files: [
+              {
+                ...stagedArtifact.files[0],
+                textSample: JSON.stringify({
+                  name: "pkg",
+                  version: "1.0.1",
+                  repository: oversizedRepository,
+                }),
+              },
+              ...stagedArtifact.files.slice(1),
+            ],
+          },
+        },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
+    expect(JSON.stringify(facts).length).toBeLessThan(1_000);
+  });
+
+  test("falls back to PyPI core metadata when there is no package.json", () => {
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter(),
+      { stageId: "stage-1" },
+      {
+        ...resolved,
+        staged: {
+          ...resolved.staged,
+          artifact: {
+            files: [
+              {
+                path: "pkg-1.0.1/PKG-INFO",
+                size: 80,
+                sha256: "pkg-info",
+                flags: [],
+                textSample:
+                  "Metadata-Version: 2.1\nName: pkg\nProject-URL: Source, https://github.com/acme/pkg\n",
+              },
+            ],
+            manifest: null,
+          },
+        },
+      },
+    );
+
+    expect(facts.declaredRepository).toBe("https://github.com/acme/pkg");
+  });
+});
+
+describe("analyzeRelease", () => {
+  function clonedResolved() {
+    return {
+      staged: {
+        artifact: {
+          files: stagedArtifact.files.map((file) => ({ ...file })),
+          manifest: { ...stagedArtifact.manifest },
+          suspiciousTarEntries: [{ kind: "duplicate", path: "index.js", detail: "dupe" }],
+        },
+        details: { stageId: "stage-1" },
+      },
+      baseline: {
+        artifact: {
+          files: baselineArtifact.files.map((file) => ({ ...file })),
+          manifest: { ...baselineArtifact.manifest },
+        },
+        baseline: baselineInfo,
+      },
+    };
+  }
+
+  test("runs findings on raw text, then releases both sides' unredacted files", async () => {
+    const acquired = clonedResolved();
+    // Captured inside runFindings: the arrays it is handed are the ones that get
+    // released afterwards, so the sample has to be read at call time.
+    let scannedStagedSample = null;
+    let scannedBaselineFileCount = null;
+    const base = makeAdapter();
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      runFindings: vi.fn((args) => {
+        scannedStagedSample = args.staged.files.find((f) => f.path === "index.js").textSample;
+        scannedBaselineFileCount = args.baseline.files.length;
+        return base.runFindings(args);
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Order invariant: rules see the unredacted body, redaction happens after.
+    expect(scannedStagedSample).toContain(NPM_TOKEN);
+    expect(scannedBaselineFileCount).toBe(2);
+    expect(
+      out.findings.redactedStagedFiles.find((f) => f.path === "index.js").textSample,
+    ).toContain("[REDACTED_NPM_TOKEN]");
+
+    // Raw arrays are gone once findings have run: only the redacted copies and
+    // the metadata-only diff survive into report assembly.
+    expect(acquired.staged.artifact.files).toEqual([]);
+    expect(acquired.staged.artifact.suspiciousTarEntries).toBeUndefined();
+    expect(acquired.baseline.artifact.files).toEqual([]);
+    expect(out.findings.redactedStagedFiles).toHaveLength(3);
+    expect(out.findings.redactedPreviousFiles).toHaveLength(2);
+    expect(out.facts.fileCount).toBe(3);
+    expect(out.facts.previousFileCount).toBe(2);
+    expect(out.diff.fileDiff.length).toBe(3);
+  });
+
+  test("drops the raw staged manifest text once the rules have read it", async () => {
+    const acquired = clonedResolved();
+    let manifestTextSeenByRules;
+    const base = makeAdapter();
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      runFindings: vi.fn((args) => {
+        manifestTextSeenByRules = args.stagedManifestText;
+        return base.runFindings(args);
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Rules get the raw manifest; nothing downstream does — the redacted
+    // summary on `findings` is what persistence uses.
+    expect(manifestTextSeenByRules).toBe(JSON.stringify({ name: "pkg", version: "1.0.1" }));
+    expect(out.diff.stagedManifestText).toBeNull();
+    expect(out.findings.redactedStagedManifest).toMatchObject({ name: "pkg", version: "1.0.1" });
+  });
+
+  test("surfaces the declared repository even though the raw evidence is gone", async () => {
+    const acquired = clonedResolved();
+    acquired.staged.artifact.files = stagedArtifactWithRepository.files.map((file) => ({
+      ...file,
+    }));
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+
+    // Both inputs the extraction needs are dead by the time `analyzeRelease`
+    // returns, so the fact has to be projected inside the boundary. Reading it
+    // from the caller is what silently blanks every intent envelope.
+    expect(out.diff.stagedManifestText).toBeNull();
+    expect(acquired.staged.artifact.files).toEqual([]);
+    expect(out.facts.declaredRepository).toBe("https://github.com/acme/pkg");
+  });
+
+  test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {
+    const acquired = clonedResolved();
+    acquired.baseline = { artifact: null, baseline: baselineInfo };
+
+    expect(() => releaseResolvedArtifacts(acquired)).not.toThrow();
+    expect(acquired.staged.artifact.files).toEqual([]);
   });
 });
 
@@ -416,9 +650,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity,
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,
@@ -476,9 +709,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: aiReview,
@@ -505,9 +737,8 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,
