@@ -110,8 +110,11 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
       risk: review.risk,
       releaseAssessment: review.releaseAssessment,
       findings: review.findings,
-      // Historical records (and hand-built fixtures) predate the field.
-      comments: review.comments ?? [],
+      // Historical records (and hand-built fixtures) predate the field, while
+      // scan detail still receives ai_json as unknown persisted data. Project
+      // defensively so a malformed record cannot crash a UI consumer that
+      // iterates these notes.
+      comments: normalizeAiReviewComments(review.comments),
       requiresManualReview: review.requiresManualReview,
     };
   }
@@ -121,4 +124,28 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
     summary: review.summary,
     status: review.status === "complete" ? "invalid" : review.status,
   };
+}
+
+function normalizeAiReviewComments(value: unknown): AiReviewComment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((comment): AiReviewComment[] => {
+    if (!comment || typeof comment !== "object" || Array.isArray(comment)) return [];
+    const record = comment as Record<string, unknown>;
+    if (typeof record.file !== "string" || typeof record.note !== "string") return [];
+    const line = record.line;
+    if (
+      line !== undefined &&
+      line !== null &&
+      (typeof line !== "number" || !Number.isInteger(line) || line <= 0)
+    ) {
+      return [];
+    }
+    return [
+      {
+        file: record.file,
+        note: record.note,
+        ...(line === null ? { line: null } : typeof line === "number" ? { line } : {}),
+      },
+    ];
+  });
 }

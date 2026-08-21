@@ -1188,6 +1188,31 @@ describe("displayedAiResult", () => {
     });
   });
 
+  test("complete review drops malformed persisted comments before display", () => {
+    const review = {
+      status: "complete",
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      summary: "No concerns.",
+      findings: [],
+      requiresManualReview: false,
+      model: "test-model",
+    };
+
+    expect(displayedAiResult({ ...review, comments: { file: "index.js" } }).comments).toEqual([]);
+    expect(
+      displayedAiResult({
+        ...review,
+        comments: [
+          null,
+          { file: "index.js" },
+          { file: "index.js", note: "Invalid line.", line: 0 },
+          { file: "index.js", note: "Valid note.", line: 4 },
+        ],
+      }).comments,
+    ).toEqual([{ file: "index.js", note: "Valid note.", line: 4 }]);
+  });
+
   test("complete review with not_assessed assessment is treated as unavailable (defensive)", () => {
     const result = displayedAiResult({
       status: "complete",
