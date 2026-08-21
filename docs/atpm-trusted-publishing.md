@@ -24,7 +24,7 @@ All three live in the publisher's repository, under the identity Drydock already
 
 `npm stage publish --provenance` attaches a Sigstore bundle, and atpm verifies it at stage time. What it stores afterwards is a copy of that bundle inside a record the publisher can rewrite, so "atpm accepted this" is not a claim a reader of the record can check.
 
-The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystems/atpm/provenance.ts`) against a pinned Sigstore root:
+The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystems/atpm/provenance.ts`) against a pinned Sigstore root. The anchors themselves — the Fulcio roots, the Rekor log keys and their validity windows, and the Fulcio extension OIDs — are pinned constants in `server/lib/ecosystems/atpm/trust-roots.ts`, kept apart from the verification flow so the trust model can be reviewed on its own:
 
 - the Fulcio certificate chain, using a bounded DER reader (`server/lib/platform/x509.ts`) rather than a general X.509 library — nothing here builds chains or consults a certificate store, because the accepted issuers are pinned constants;
 - the required Rekor signed-entry timestamp against a pinned transparency-log key before its integrated time is allowed to evaluate every certificate in the pinned Fulcio chain; a bundle with no authenticated entry is unverifiable;
