@@ -16,6 +16,7 @@ import {
   type AtpmProvenanceState,
 } from "./provenance";
 import { isValidAtpmVersion } from "./record";
+import { isValidAtpmStageRkey } from "./stage-ref";
 import { PublicDiffError } from "../../public-diff/error";
 
 /**
@@ -39,13 +40,6 @@ const STAGE_TIMEOUT_MS = 10_000;
 
 // One staged record holds a full npm manifest and possibly a Sigstore bundle.
 const MAX_STAGE_RECORD_BYTES = 4 * 1024 * 1024;
-
-/** atproto record keys for staged entries are TIDs, written by the CLI. */
-const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
-
-export function isValidAtpmStageRkey(rkey: string): boolean {
-  return TID_RE.test(rkey);
-}
 
 /** One staged release candidate, reduced to the fields review reads. */
 export interface AtpmStagedVersion {

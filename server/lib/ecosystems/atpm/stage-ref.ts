@@ -1,5 +1,11 @@
 import { parseAtpmPackageName, type AtpmPackageRef } from "./identity";
-import { isValidAtpmStageRkey } from "./stage-record";
+
+/** atproto record keys for staged entries are TIDs, written by the CLI. */
+const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
+
+export function isValidAtpmStageRkey(rkey: string): boolean {
+  return TID_RE.test(rkey);
+}
 
 /**
  * How a staged candidate is named in a *public* URL.
@@ -23,7 +29,7 @@ import { isValidAtpmStageRkey } from "./stage-record";
  * The spelling stays inside the shared version grammar (leading alphanumeric,
  * then alphanumerics/`.`/`_`/`+`/`-`) so nothing downstream needs widening.
  */
-const ATPM_STAGED_VERSION_PREFIX = "staged.";
+export const ATPM_STAGED_VERSION_PREFIX = "staged.";
 
 /**
  * Stands in for "there is no published release to compare against" in the
@@ -47,12 +53,14 @@ export function formatAtpmStagedVersion(rkey: string, recordCid: string): string
 }
 
 export function isAtpmStagedVersion(value: string): boolean {
-  return value.startsWith(ATPM_STAGED_VERSION_PREFIX) && value !== ATPM_NO_BASELINE_VERSION;
+  return parseAtpmStagedVersion(value) !== null;
 }
 
 /** Parse a staged version token, or null when it is not one. */
 export function parseAtpmStagedVersion(value: string): AtpmStagedVersionRef | null {
-  if (!isAtpmStagedVersion(value)) return null;
+  if (!value.startsWith(ATPM_STAGED_VERSION_PREFIX) || value === ATPM_NO_BASELINE_VERSION) {
+    return null;
+  }
   const body = value.slice(ATPM_STAGED_VERSION_PREFIX.length);
   const separator = body.indexOf(".");
   if (separator <= 0) return null;

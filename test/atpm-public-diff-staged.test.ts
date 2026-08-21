@@ -42,7 +42,7 @@ async function stageRecord() {
 }
 
 function stubAtpmRecords(
-  staged: Awaited<ReturnType<typeof stageRecord>>,
+  staged: Awaited<ReturnType<typeof stageRecord>> | null,
   published: unknown | null,
 ) {
   vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
@@ -62,7 +62,11 @@ function stubAtpmRecords(
       );
     }
     if (url.includes("collection=dev.atpm.alpha.stage")) {
-      return Promise.resolve(Response.json(staged));
+      return Promise.resolve(
+        staged
+          ? Response.json(staged)
+          : Response.json({ error: "RecordNotFound" }, { status: 400 }),
+      );
     }
     if (url.includes("collection=dev.atpm.alpha.package")) {
       return Promise.resolve(
@@ -149,5 +153,27 @@ describe("atpm staged public diff", () => {
       message: "no-baseline is only valid for a first staged release",
     });
     expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
+  });
+
+  test("revalidates a staged record before serving a computed cache hit", async () => {
+    const staged = await stageRecord();
+    const input = {
+      ecosystem: "atpm",
+      packageName: `${DID}/counter`,
+      fromVersion: ATPM_NO_BASELINE_VERSION,
+      toVersion: formatAtpmStagedVersion(RKEY, staged.cid),
+      registryUrl: "at://",
+    };
+
+    stubAtpmRecords(staged, null);
+    await expect(
+      atpmPublicDiff.validateCachedPair!({} as Cloudflare.Env, {} as ExecutionContext, input),
+    ).resolves.toBeUndefined();
+
+    vi.unstubAllGlobals();
+    stubAtpmRecords(null, null);
+    await expect(
+      atpmPublicDiff.validateCachedPair!({} as Cloudflare.Env, {} as ExecutionContext, input),
+    ).rejects.toMatchObject({ status: 404, message: "staged release not found" });
   });
 });

@@ -115,6 +115,18 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     version === ATPM_NO_BASELINE_VERSION,
   cacheTag: (packageName) => `public-diff:atpm:${packageName}`,
 
+  async validateCachedPair(env, ctx, input) {
+    const staged = parseAtpmStagedVersion(input.toVersion);
+    if (!staged) return;
+    const ref = parseAtpmPackageName(input.packageName);
+    if (!ref) throw new PublicDiffError("invalid package name", 400);
+    const identity = await resolveIdentityCached(env, ctx, ref);
+    // Pair analysis is expensive and safe to reuse because the URL pins the
+    // record CID. The record's existence is mutable, though: approval,
+    // withdrawal, or replacement must invalidate the public review immediately.
+    await resolveStagedEntry(identity.value, ref, staged);
+  },
+
   async listVersions(env, ctx, packageName) {
     const { ref, identity, pkg, cacheExpiresAt } = await loadAtpmPackage(env, ctx, packageName);
     const { versions, suggested } = listAtpmVersions(requirePublishedRecord(pkg));

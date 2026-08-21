@@ -118,11 +118,13 @@ describe("staged version tokens", () => {
   test("reject malformed tokens", () => {
     for (const value of [
       "0.0.15",
+      "staged.foo",
       "staged.",
       "staged.NOTATID.bafyrei",
       `staged.${RKEY}`,
       `staged.${RKEY}.../../x`,
     ]) {
+      expect(isAtpmStagedVersion(value), value).toBe(false);
       expect(parseAtpmStagedVersion(value), value).toBeNull();
     }
   });

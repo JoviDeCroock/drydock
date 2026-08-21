@@ -189,6 +189,18 @@ export interface PublicDiffAdapter {
   /** Cache-tag for package-level purges. */
   cacheTag(packageName: string): string;
 
+  /**
+   * Revalidate mutable release identity before returning a computed cache hit.
+   * The cached analysis may be reusable even when the source record itself must
+   * still exist (for example, an atpm staged candidate pinned by record CID).
+   * Throwing rejects the cached response with the adapter's source error.
+   */
+  validateCachedPair?(
+    env: Cloudflare.Env,
+    ctx: ExecutionContext,
+    input: PublicDiffInput,
+  ): Promise<void>;
+
   listVersions(
     env: Cloudflare.Env,
     ctx: ExecutionContext,

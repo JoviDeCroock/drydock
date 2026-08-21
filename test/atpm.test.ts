@@ -315,6 +315,8 @@ describe("parseAtpmPackageRecord", () => {
 describe("isValidAtpmVersion", () => {
   test("accepts registry version strings and rejects path/control shapes", () => {
     expect(isValidAtpmVersion("3.0.0-rc.1+build.4")).toBe(true);
+    expect(isValidAtpmVersion("staged.foo")).toBe(false);
+    expect(isValidAtpmVersion("staged.none")).toBe(false);
     expect(isValidAtpmVersion("bad/version")).toBe(false);
     expect(isValidAtpmVersion("line\nbreak")).toBe(false);
     expect(isValidAtpmVersion(`1.${"0".repeat(128)}`)).toBe(false);

@@ -133,7 +133,10 @@ export async function loadPublicPackageDiff(
   const cacheKey = await computePublicDiffCacheKey(input);
   const cached = await readPublicDiffCache(env, cacheKey);
   options.onCacheOutcome?.(Boolean(cached));
-  if (cached) return cached;
+  if (cached) {
+    await adapter.validateCachedPair?.(env, ctx, input);
+    return cached;
+  }
 
   const sources = await adapter.acquire(env, ctx, input);
 

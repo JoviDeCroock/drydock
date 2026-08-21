@@ -12,6 +12,7 @@ import {
   ATPM_PROVENANCE_NOT_EVALUATED,
   type AtpmProvenanceState,
 } from "./provenance";
+import { ATPM_STAGED_VERSION_PREFIX } from "./stage-ref";
 import { PublicDiffError } from "../../public-diff/error";
 import { compareSemver } from "../npm/registry";
 
@@ -36,7 +37,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * metadata checks change, so a cached diff computed under the old rules cannot
  * be served.
  */
-export const ATPM_RULES_VERSION = "13";
+export const ATPM_RULES_VERSION = "14";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -60,7 +61,11 @@ const MAX_VERIFIED_PROVENANCE_VERSIONS = 64;
 const ATPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
 export function isValidAtpmVersion(version: string): boolean {
-  return ATPM_VERSION_RE.test(version);
+  // Public staged-review URLs use this prefix for record-revision tokens and
+  // the first-release sentinel. Keeping it out of the published namespace is
+  // what makes every accepted version string unambiguous at the route, cache,
+  // and UI boundaries.
+  return ATPM_VERSION_RE.test(version) && !version.startsWith(ATPM_STAGED_VERSION_PREFIX);
 }
 
 /** One version, reduced to the fields a diff and its integrity checks need. */
