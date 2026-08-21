@@ -155,7 +155,7 @@ describe("session secondary storage", () => {
     expect(rows.some((row) => row.token === token)).toBe(true);
   });
 
-  test("an empty KV namespace falls back to the durable D1 session", async () => {
+  test("an empty KV namespace falls back to D1 without persisting a stale read", async () => {
     const jar = await signUp();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
     expect(token).toBeTruthy();
@@ -164,7 +164,11 @@ describe("session secondary storage", () => {
 
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
-    expect(await env.AUTH_SESSIONS?.get(token)).toBeTruthy();
+    // A read-through put can race a concurrent revocation and land after both
+    // the KV and D1 deletes, resurrecting the session until its original expiry.
+    // D1 fallback is therefore request-local; only Better Auth's authoritative
+    // create/update paths persist session values.
+    expect(await env.AUTH_SESSIONS?.get(token)).toBeNull();
   });
 
   test("a KV write failure does not fail session creation after the D1 write", async () => {
@@ -201,11 +205,22 @@ describe("session secondary storage", () => {
     expect(listed.status).toBe(200);
     expect(await listed.json()).toHaveLength(2);
 
+    const tokens = [primary, secondary].map(
+      (jar) => decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0],
+    );
+    // Rebuilding the active-session index may persist the non-authorizing index,
+    // but token payloads stay request-local so a concurrent revocation cannot be
+    // overwritten by this D1 fallback.
+    expect(await Promise.all(tokens.map((token) => env.AUTH_SESSIONS?.get(token)))).toEqual([
+      null,
+      null,
+    ]);
+
     const revoked = await call("POST", "/api/auth/revoke-other-sessions", { jar: primary });
     expect(revoked.status).toBe(200);
 
     // Remove the bounded cookie cache so this proves the durable session and
-    // its newly hydrated KV entry were both revoked.
+    // request-local fallback were both revoked.
     secondary.delete(SESSION_DATA_COOKIE);
     expect((await call("GET", "/api/health", { jar: secondary })).status).toBe(401);
     expect((await call("GET", "/api/health", { jar: primary })).status).toBe(200);

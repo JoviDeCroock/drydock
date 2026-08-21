@@ -200,7 +200,7 @@ function createSessionSecondaryStorage(
         ttl === undefined ? {} : { expirationTtl: Math.max(60, Math.ceil(ttl)) },
       );
     } catch (err) {
-      // D1 is the durable session store, so a failed cache fill must not fail a
+      // D1 is the durable session store, so a failed cache write must not fail a
       // sign-in after Better Auth has already created the D1 session row.
       reportSessionCacheFailure("write", err);
     }
@@ -245,17 +245,14 @@ function createSessionSecondaryStorage(
       expiresAt: session.expiresAt.getTime(),
     }));
     if (user) {
-      await Promise.all(
-        sessions.map((session) => {
-          const value = JSON.stringify({ session, user });
-          hydratedSessionValues.set(session.token, value);
-          return setWithSafeTtl(
-            session.token,
-            value,
-            Math.ceil((session.expiresAt.getTime() - nowMs) / 1000),
-          );
-        }),
-      );
+      // Keep these values request-local. Persisting a D1 fallback into KV can
+      // race a concurrent revocation: the revoker deletes KV and D1, then this
+      // stale reader puts the session back after both deletes. Better Auth trusts
+      // a KV hit without consulting D1, so that ordering would resurrect the
+      // revoked session until its original expiry.
+      for (const session of sessions) {
+        hydratedSessionValues.set(session.token, JSON.stringify({ session, user }));
+      }
     }
 
     if (active.length === 0) {
@@ -277,10 +274,10 @@ function createSessionSecondaryStorage(
     const cached = await readCacheValue(key);
     if (cached.value !== null) return cached.value;
 
-    // Better Auth falls back to D1 after a secondary-storage miss, but it does
-    // not fill secondary storage from that result. Hydrate the same payload it
-    // expects here so a newly bound, cleared, or recovered KV namespace stops
-    // sending this session back to D1 after every cookie-cache expiry.
+    // Better Auth falls back to D1 after a secondary-storage miss. Build the
+    // payload it expects, but keep it request-local: a persistent read-through
+    // fill can land after a concurrent sign-out has deleted both KV and D1,
+    // resurrecting the revoked session until its original expiry.
     const [session] = await db
       .select()
       .from(schema.session)
@@ -297,8 +294,6 @@ function createSessionSecondaryStorage(
 
     const value = JSON.stringify({ session, user });
     hydratedSessionValues.set(key, value);
-    const ttl = Math.ceil((session.expiresAt.getTime() - Date.now()) / 1000);
-    if (ttl > 0) await setWithSafeTtl(key, value, ttl);
     return value;
   }
 
