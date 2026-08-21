@@ -139,6 +139,16 @@ describe("mapWithConcurrency", () => {
     expect(started).toEqual([0, 1]);
   });
 
+  test("rethrows falsey rejection reasons instead of resolving with a hole", async () => {
+    for (const reason of [undefined, null, 0, ""] as const) {
+      const outcome = await mapWithConcurrency([1], 1, async () => Promise.reject(reason)).then(
+        (value) => ({ rejected: false, value }),
+        (value: unknown) => ({ rejected: true, value }),
+      );
+      expect(outcome).toEqual({ rejected: true, value: reason });
+    }
+  });
+
   test("awaits in-flight workers before rethrowing, leaving nothing dangling", async () => {
     // Workers outliving the rejection is what makes an unhandled rejection
     // escape the request context in a Worker.
