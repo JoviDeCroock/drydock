@@ -165,7 +165,10 @@ function isSequenceEntry(text: string): boolean {
 
 function parseMapping(state: ParseState, indent: number, depth: number): YamlValue {
   guardDepth(depth);
-  const map: { [key: string]: YamlValue } = {};
+  // YAML keys are hostile input. A normal object gives `__proto__` setter
+  // semantics, which would hide a valid GitHub Actions job with that id while
+  // still reporting complete coverage.
+  const map = Object.create(null) as { [key: string]: YamlValue };
   let sawKey = false;
 
   for (;;) {
@@ -505,7 +508,7 @@ function readFlowSequence(cursor: FlowCursor): YamlValue | undefined {
 function readFlowMapping(cursor: FlowCursor): YamlValue | undefined {
   cursor.index += 1;
   cursor.depth += 1;
-  const map: { [key: string]: YamlValue } = {};
+  const map = Object.create(null) as { [key: string]: YamlValue };
   for (;;) {
     skipFlowSpace(cursor);
     if (cursor.index >= cursor.text.length) return undefined;

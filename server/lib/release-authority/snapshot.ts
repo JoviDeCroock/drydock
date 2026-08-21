@@ -341,10 +341,27 @@ interface WorkflowProjection {
   triggers: AuthorityTrigger[];
   permissions: AuthorityPermission[];
   environments: AuthorityEnvironment[];
+  executionContext: AuthorityExecutionContext[];
   actions: AuthorityActionRef[];
   publishSteps: AuthorityPublishStep[];
   safeguards: AuthoritySafeguard[];
   artifactFlow: AuthorityArtifactFlow[];
+}
+
+/**
+ * Authority-sensitive execution controls that are hashed but not persisted for
+ * display. Conditions and dependencies decide whether a publishing job/step
+ * can run, while env mappings can redirect an otherwise unchanged publish
+ * command or select a different credential. Hashing the values catches those
+ * edits without exposing them in the stored snapshot.
+ */
+interface AuthorityExecutionContext {
+  workflow: string;
+  job: string;
+  step: number | null;
+  condition: string | null;
+  needs: string[];
+  envDigest: string | null;
 }
 
 async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjection> {
@@ -352,6 +369,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     triggers: [],
     permissions: [],
     environments: [],
+    executionContext: [],
     actions: [],
     publishSteps: [],
     safeguards: [],
@@ -373,6 +391,15 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     projection.permissions.push(...readPermissions(workflow, jobName, job.permissions));
     const environment = readEnvironmentName(job.environment);
     if (environment) projection.environments.push({ workflow, job: jobName, name: environment });
+    const jobExecutionContext = await readExecutionContext(
+      workflow,
+      jobName,
+      null,
+      job.if,
+      job.needs,
+      job.env,
+    );
+    if (jobExecutionContext) projection.executionContext.push(jobExecutionContext);
 
     // A job-level `uses:` is a reusable-workflow call: the job's whole body is
     // delegated to another definition, so the reference and whether it inherits
@@ -385,14 +412,46 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     }
 
     const steps = Array.isArray(job.steps) ? job.steps : [];
-    for (const rawStep of steps) {
+    for (const [stepIndex, rawStep] of steps.entries()) {
       const step = asRecord(rawStep);
       if (!step) continue;
+      const stepExecutionContext = await readExecutionContext(
+        workflow,
+        jobName,
+        stepIndex,
+        step.if,
+        null,
+        step.env,
+      );
+      if (stepExecutionContext) projection.executionContext.push(stepExecutionContext);
       await readStep(projection, workflow, jobName, step);
     }
   }
 
+  projection.executionContext.sort(
+    byKey(
+      (item) =>
+        `${item.workflow}\u0000${item.job}\u0000${item.step === null ? "job" : `step:${item.step}`}`,
+    ),
+  );
+
   return projection;
+}
+
+async function readExecutionContext(
+  workflow: string,
+  job: string,
+  step: number | null,
+  conditionValue: YamlValue,
+  needsValue: YamlValue,
+  envValue: YamlValue,
+): Promise<AuthorityExecutionContext | null> {
+  const condition = asString(conditionValue)?.trim() || null;
+  const needs = [...asStringList(needsValue)].sort();
+  const env = asRecord(envValue);
+  const envDigest = env && Object.keys(env).length > 0 ? await sha256Hex(stableJson(env)) : null;
+  if (!condition && needs.length === 0 && !envDigest) return null;
+  return { workflow, job, step, condition, needs, envDigest };
 }
 
 async function readStep(
@@ -684,6 +743,7 @@ function boundProjectionDetails(projection: WorkflowProjection): WorkflowProject
     triggers: projection.triggers.map((item) => ({ ...item, filter: truncate(item.filter) })),
     permissions: projection.permissions,
     environments: projection.environments,
+    executionContext: projection.executionContext,
     actions: projection.actions.map((item) => ({ ...item, uses: truncate(item.uses) })),
     publishSteps: projection.publishSteps.map((item) => ({
       ...item,

@@ -166,6 +166,57 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
   });
 
+  it.each([
+    {
+      label: "job condition",
+      prior: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    if: github.ref_type == 'tag'\n    needs: build\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    if: always()\n    needs: build\n",
+      ),
+    },
+    {
+      label: "job dependency",
+      prior: BASE_WORKFLOW,
+      current: BASE_WORKFLOW.replace("    needs: build\n", "    needs: bootstrap\n"),
+    },
+    {
+      label: "job environment mapping",
+      prior: BASE_WORKFLOW.replace(
+        "    environment: pypi\n",
+        "    environment: pypi\n    env:\n      NPM_CONFIG_REGISTRY: https://registry.npmjs.org\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "    environment: pypi\n",
+        "    environment: pypi\n    env:\n      NPM_CONFIG_REGISTRY: https://packages.example.test\n",
+      ),
+    },
+    {
+      label: "publish-step condition",
+      prior: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - if: github.ref_type == 'tag'\n        uses: pypa/gh-action-pypi-publish@release/v1\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - if: always()\n        uses: pypa/gh-action-pypi-publish@release/v1\n",
+      ),
+    },
+  ])("does not call a changed $label cosmetic", async ({ prior, current }) => {
+    const delta = await deltaBetween(prior, current);
+
+    expect(delta.status).toBe("changed");
+    expect(delta.requiresApproval).toBe(true);
+    expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
+      significance: "medium",
+      scope: ENTRY,
+    });
+    expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
+  });
+
   it("flags a widened permission", async () => {
     const delta = await deltaBetween(
       BASE_WORKFLOW,

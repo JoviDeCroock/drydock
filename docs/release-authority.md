@@ -101,6 +101,9 @@ A snapshot records:
   reusable workflow GitHub reports the run referenced, each with the sha GitHub
   already resolved it to, and both digests;
 - triggers with their normalized branch/tag/path/type filters;
+- authority-sensitive execution controls: job and step conditions, job
+  dependencies, and digests of job/step environment mappings (the environment
+  values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
   shorthands and the empty-block case;
 - GitHub Environment names per job;
@@ -234,7 +237,10 @@ authorized, and the delta never modifies risk levels or deterministic findings.
 - **`GET /api/v1/github-app/workflow-gates/by-scan/:scanId`** — `releaseAuthority`
   and `organizationRequiresAuthorityApproval`.
 - **`drydock.report.v2`** — a `releaseAuthority` block carrying the full
-  snapshot, the delta, the binding digest, and the approval time. Null for
+  snapshot, the delta, the binding digest, and the approval time. The delta
+  keeps a `baseline: { present: true }` marker when a comparison occurred, but
+  strips the prior private gate's snapshot id, gate id, run/commit coordinates,
+  and approval time. Null for
   staged-publish scans and for gates with no record; null means _not assessed_.
   Identity is scrubbed on the way out: the export has one serialization, shared
   by the authenticated download, the `/public/reports/:token` body, and the
@@ -243,8 +249,10 @@ authorized, and the delta never modifies risk levels or deterministic findings.
   omitted and the run's `actor`/`triggeringActor` export as null — the
   authenticated gate lookup above is where a member sees who acted.
 - **Settings → Release security** — the owner-only policy toggle.
-- **Events** — `github_workflow_gate.authority_captured`, and
-  `authorityChangeAcknowledged` on the gate decision event.
+- **Events** — `github_workflow_gate.authority_captured`, and a verified
+  `authorityChangeAcknowledged` on the gate decision event. The latter is true
+  only for an approval carrying the token for the exact changed delta; an
+  unverified request flag and every rejection record false.
 
 ## Incident replay
 

@@ -225,7 +225,10 @@ export async function findApprovedAuthorityBaseline(
         isNotNull(releaseAuthoritySnapshots.approvedAt),
       ),
     )
-    .orderBy(desc(releaseAuthoritySnapshots.approvedAt))
+    // Match the revision lookup's total ordering so an acknowledgement cannot
+    // name one latest snapshot while its delta was computed against another
+    // approval recorded in the same millisecond.
+    .orderBy(desc(releaseAuthoritySnapshots.approvedAt), desc(releaseAuthoritySnapshots.id))
     .limit(1);
   if (!row) return null;
   const record = readRow(row);

@@ -552,6 +552,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   let authorityForDecision: ReleaseAuthorityRecord | null = null;
   let expectedLatestApprovedSnapshotId: string | null | undefined;
   let orgRequiresAuthorityApproval = false;
+  let authorityChangeAcknowledged = false;
   if (decision === "approved") {
     orgRequiresAuthorityApproval = await organizationRequiresAuthorityChangeApproval(
       db,
@@ -575,11 +576,12 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const authority = authorityForDecision;
     const requiresAuthorityApproval = authority?.delta?.requiresApproval === true;
     const acknowledgementToken = await releaseAuthorityAcknowledgementToken(authority);
-    const acknowledgedCurrentDelta =
+    authorityChangeAcknowledged =
+      requiresAuthorityApproval &&
       body.acknowledgeAuthorityChange === true &&
       typeof body.authorityAcknowledgementToken === "string" &&
       body.authorityAcknowledgementToken === acknowledgementToken;
-    if (requiresAuthorityApproval && !acknowledgedCurrentDelta) {
+    if (requiresAuthorityApproval && !authorityChangeAcknowledged) {
       if (orgRequiresAuthorityApproval) {
         const packages = await listGatePackageScans(db, organizationId, gateId);
         return c.json(
@@ -824,7 +826,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         // Whether the maintainer explicitly accepted a release-authority change
         // as part of this decision — the durable record of *what* was approved,
         // not just that something was.
-        authorityChangeAcknowledged: body.acknowledgeAuthorityChange === true,
+        authorityChangeAcknowledged,
       },
     });
   } catch (err) {

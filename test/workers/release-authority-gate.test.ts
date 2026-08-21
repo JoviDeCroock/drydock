@@ -553,6 +553,57 @@ describe("release-authority baseline", () => {
     expect(other).toBeNull();
   });
 
+  test("uses the same id tie-breaker for equal-time baselines and revisions", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const approvals: SeededGate[] = [];
+    for (const headSha of ["a".repeat(40), "b".repeat(40)]) {
+      const seeded = await seedGate(
+        fixture.organizationId,
+        fixture.userId,
+        fixture.releaseTargetId,
+        fixture.installationRowId,
+        fixture.repositoryId,
+      );
+      mockGithub({ workflow: RELEASE_WORKFLOW, headSha });
+      await capture(fixture, seeded.gate);
+      await markAuthoritySnapshotApproved(db, {
+        organizationId: fixture.organizationId,
+        gateId: seeded.gate.id,
+        approvedByUserId: fixture.userId,
+      });
+      approvals.push(seeded);
+    }
+
+    const sameApprovalTime = new Date("2026-08-21T12:00:00.000Z");
+    await db
+      .update(schema.releaseAuthoritySnapshots)
+      .set({ approvedAt: sameApprovalTime })
+      .where(eq(schema.releaseAuthoritySnapshots.releaseTargetId, fixture.releaseTargetId));
+
+    const records = await Promise.all(
+      approvals.map(({ gate }) => getReleaseAuthorityForGate(db, fixture.organizationId, gate.id)),
+    );
+    const expectedId = records
+      .map((record) => record!.id)
+      .sort()
+      .at(-1)!;
+    const baseline = await findApprovedAuthorityBaseline(db, {
+      organizationId: fixture.organizationId,
+      releaseTargetId: fixture.releaseTargetId,
+      workflowPath: ".github/workflows/release.yml",
+      excludeGateId: "pending-gate",
+    });
+    const revision = await findLatestApprovedAuthoritySnapshotId(db, {
+      organizationId: fixture.organizationId,
+      releaseTargetId: fixture.releaseTargetId,
+      excludeGateId: "pending-gate",
+    });
+
+    expect(baseline?.ref.snapshotId).toBe(expectedId);
+    expect(revision).toBe(expectedId);
+  });
+
   // Separate baselines per release path must not turn into a quiet spot. A
   // second publish workflow appearing on a target with approved history leaves
   // the package diff clean while changing who may publish — reporting that as
@@ -741,6 +792,11 @@ describe("release-authority approval policy", () => {
     expect(record?.approvedAt).toBeInstanceOf(Date);
     expect(record?.approvedByUserId).toBe(fixture.userId);
     expect(record?.artifactBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+    const [event] = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.type, "github_workflow_gate.approved"));
+    expect(event?.metadata).toMatchObject({ authorityChangeAcknowledged: true });
   });
 
   test("refreshes a stale delta and rejects an acknowledgement bound to the old baseline", async () => {
@@ -964,7 +1020,12 @@ describe("release-authority approval policy", () => {
       "POST",
       `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
       {
-        body: { decision: "rejected", scanId: second.scanId },
+        body: {
+          decision: "rejected",
+          scanId: second.scanId,
+          acknowledgeAuthorityChange: true,
+          authorityAcknowledgementToken: "forged",
+        },
         jar: fixture.jar,
         env: gitEnv,
       },
@@ -975,6 +1036,11 @@ describe("release-authority approval policy", () => {
     // A rejected release must not become the baseline either.
     const record = await getReleaseAuthorityForGate(db, fixture.organizationId, second.gate.id);
     expect(record?.approvedAt).toBeNull();
+    const [event] = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.type, "github_workflow_gate.rejected"));
+    expect(event?.metadata).toMatchObject({ authorityChangeAcknowledged: false });
   });
 
   test("approves without acknowledgement while the policy is off", async () => {
@@ -1085,12 +1151,23 @@ describe("release-authority surfaces", () => {
     expect(report.res.status).toBe(200);
     const exported = report.json?.releaseAuthority as {
       snapshot: { schema: string };
-      delta: { status: string };
+      delta: { status: string; baseline: { present: true } | null };
       artifactBindingDigest: string;
     };
     expect(exported.snapshot.schema).toBe("drydock.release-authority.v1");
     expect(exported.delta.status).toBe("changed");
+    expect(exported.delta.baseline).toEqual({ present: true });
     expect(exported.artifactBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    const baselineRecord = await getReleaseAuthorityForGate(
+      db,
+      fixture.organizationId,
+      first.gate.id,
+    );
+    const serialized = JSON.stringify(report.json);
+    expect(serialized).not.toContain(first.gate.id);
+    expect(serialized).not.toContain(baselineRecord!.id);
+    expect(serialized).not.toContain(baselineRecord!.approvedAt!.toISOString());
   });
 
   // The report export has exactly one serialization: the authenticated

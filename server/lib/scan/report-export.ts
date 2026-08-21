@@ -231,7 +231,18 @@ function extractReleaseAuthority(record: ScanDetail["releaseAuthority"]) {
     artifactBindingDigest: record.artifactBindingDigest,
     approvedAt: toIso(record.approvedAt),
     snapshot: withoutRunIdentity(record.snapshot),
-    delta: record.delta,
+    delta: exportReleaseAuthorityDelta(record.delta),
+  };
+}
+
+// The delta's baseline reference points at a different gate the organization
+// may never have shared. Keep the fact that a comparison happened, but do not
+// export that private gate's ids, run/commit coordinates, or approval time.
+function exportReleaseAuthorityDelta(delta: NonNullable<ScanDetail["releaseAuthority"]>["delta"]) {
+  if (!delta) return null;
+  return {
+    ...delta,
+    baseline: delta.baseline ? { present: true as const } : null,
   };
 }
 

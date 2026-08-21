@@ -172,6 +172,22 @@ key with spaces: plain
     expect(doc.flow).toEqual({ "<<": "value" });
   });
 
+  it("keeps __proto__ as an enumerable mapping key", () => {
+    const parsed = parseWorkflowYaml(`
+jobs:
+  __proto__:
+    environment: production
+    steps:
+      - run: npm publish
+`);
+    const doc = parsed.value as Record<string, Record<string, unknown>>;
+    const jobs = doc.jobs as Record<string, Record<string, unknown>>;
+
+    expect(parsed.complete).toBe(true);
+    expect(Object.keys(jobs)).toEqual(["__proto__"]);
+    expect(jobs.__proto__.environment).toBe("production");
+  });
+
   it("reads only the first document of a stream", () => {
     const doc = parseWorkflowYaml(`
 ---
