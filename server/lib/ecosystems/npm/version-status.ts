@@ -123,7 +123,7 @@ export async function fetchNpmVersionStatus(
   }
 
   if (!response.ok) {
-    await response.body?.cancel();
+    await response.body?.cancel().catch(() => undefined);
     return unavailable(reasonForStatus(response.status), response.status);
   }
 

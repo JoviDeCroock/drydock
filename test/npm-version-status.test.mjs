@@ -98,6 +98,28 @@ describe("npm version status lookup", () => {
     expect(result).toEqual({ ok: false, reason, httpStatus });
   });
 
+  test("a failed error-body cancellation does not escape the no-throw contract", async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              throw new Error("connection reset while cancelling");
+            },
+          }),
+          { status: 500 },
+        ),
+    );
+
+    const lookup = fetchNpmVersionStatus("https://registry.npmjs.org", "t", "pkg", "1.0.0");
+
+    await expect(lookup).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+      httpStatus: 500,
+    });
+  });
+
   test("a status npm has not documented is unknown, not passed through", async () => {
     respond(200, { packageName: "pkg", version: "1.0.0", status: "quarantined" });
 
