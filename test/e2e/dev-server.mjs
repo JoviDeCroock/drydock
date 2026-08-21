@@ -18,6 +18,7 @@ const outputArtifactsDir = resolveOptionalRepoPath(process.env.E2E_ARTIFACTS_DIR
 const outputConfigDir = resolveOptionalRepoPath(process.env.E2E_CONFIG_DIR) ?? configDir;
 const persistRoot = path.join(outputConfigDir, "state");
 const wranglerConfigPath = path.join(outputConfigDir, "wrangler.jsonc");
+const seedAfterStart = process.argv.includes("--seed") || process.env.E2E_SEED === "1";
 let shuttingDown = false;
 
 await mkdir(outputConfigDir, { recursive: true });
@@ -59,6 +60,26 @@ const app = start(
 );
 children.push(app);
 await waitForUrl(appUrl);
+
+if (seedAfterStart) {
+  // Seed one scanned fixture release through the same HTTP surface the browser
+  // uses, so `pnpm run e2e:dev:seed` boots straight into realistic scan data.
+  // Async (not spawnSync): the registry/app children pipe through this process,
+  // so blocking the event loop while they log could deadlock on a full pipe.
+  try {
+    await runAsync("node", ["scripts/e2e-seed.mjs"], {
+      E2E_APP_URL: appUrl,
+      E2E_NPM_REGISTRY: registryUrl,
+    });
+  } catch (err) {
+    // Don't orphan the registry/app children (and their ports) on seed failure.
+    shuttingDown = true;
+    for (const child of children.slice().reverse()) {
+      if (!child.killed) child.kill("SIGTERM");
+    }
+    throw err;
+  }
+}
 
 console.log(`E2E app: ${appUrl}`);
 console.log(`Fake npm registry: ${registryUrl}`);
@@ -144,6 +165,21 @@ function run(command, args) {
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}`);
   }
+}
+
+function runAsync(command, args, env = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      env: { ...process.env, ...env },
+      stdio: "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) resolve(undefined);
+      else reject(new Error(`${command} ${args.join(" ")} failed with status ${code}`));
+    });
+  });
 }
 
 function start(command, args, env) {

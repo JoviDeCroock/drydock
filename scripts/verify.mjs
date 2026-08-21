@@ -18,6 +18,7 @@ import {
   OXLINT_EXTENSIONS,
   resolveMergeBase,
 } from "./lib/changed-files.mjs";
+import { condenseFailureOutput } from "./lib/output-truncation.mjs";
 
 const quick = process.argv.includes("--quick");
 const label = quick ? "verify --quick" : "verify";
@@ -98,7 +99,13 @@ function runCheck(check) {
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
     child.on("close", (code) => {
-      resolve({ name: check.name, code: code ?? 1, output, seconds: (Date.now() - start) / 1000 });
+      resolve({
+        name: check.name,
+        command: check.args.join(" "),
+        code: code ?? 1,
+        output,
+        seconds: (Date.now() - start) / 1000,
+      });
     });
   });
 }
@@ -126,7 +133,13 @@ if (checks !== null) {
 
   const failures = results.filter((result) => result.code !== 0);
   for (const failure of failures) {
-    process.stdout.write(`\n──── ${failure.name} output ────\n${failure.output}\n`);
+    // Elide long passing/noise regions while keeping every failure line verbatim
+    // (see scripts/lib/output-truncation.mjs). The test check's output is already
+    // condensed by scripts/test.mjs; a second pass over it is a no-op.
+    const condensed = condenseFailureOutput(failure.output, {
+      rerunHint: `rerun the failing check directly for full output: pnpm ${failure.command}`,
+    });
+    process.stdout.write(`\n──── ${failure.name} output ────\n${condensed}\n`);
   }
 
   if (failures.length > 0) {

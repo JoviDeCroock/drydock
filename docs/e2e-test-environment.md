@@ -23,6 +23,8 @@ fixture scenario and journal assertion in this harness. See
 ```sh
 pnpm run e2e:fixtures
 pnpm run e2e:dev
+pnpm run e2e:dev:seed
+pnpm run e2e:seed
 pnpm run test:e2e
 pnpm run agent:tour
 ```
@@ -37,6 +39,15 @@ Override ports when needed:
 ```sh
 E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 ```
+
+`pnpm run e2e:dev:seed` is the one-command seeded path for UI iteration: it
+starts the same harness and then runs `scripts/e2e-seed.mjs`, which signs up a
+throwaway account, connects the fake registry, and runs the implicit node-gyp
+fixture through a full scan — all over the app's own HTTP API, with no real
+credentials. It prints the login email/password and the scan URL. Against an
+already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
+fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
+arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
 
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
 
@@ -67,6 +78,13 @@ responsive/theme coverage without rerunning every staged-publish fixture.
 When `CONDUCTOR_PORT` is present, the E2E runner uses it as the app port and
 `CONDUCTOR_PORT + 1` as the fake registry port. That lets multiple workspaces run
 the harness concurrently without requiring repository-specific Conductor settings.
+
+Plain `pnpm run dev` (vite.config.ts) follows the same override chain
+(`E2E_APP_PORT`, then `CONDUCTOR_PORT`, then `5173`), so two workspaces can run
+dev servers side by side. Ports stay strict rather than auto-picked on
+conflict: `BETTER_AUTH_URL` and the generated e2e Wrangler config bake the app
+port in before the server starts, so a silently reassigned port would break
+auth and the harness. A taken port fails fast — set the env var instead.
 
 ## Local HTTP Registry Guard
 

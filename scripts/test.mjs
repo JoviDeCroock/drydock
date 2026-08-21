@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { condenseFailureOutput } from "./lib/output-truncation.mjs";
 
 const forwardedArgs = process.argv.slice(2);
 const extraArgs = forwardedArgs[0] === "--" ? forwardedArgs.slice(1) : forwardedArgs;
@@ -59,7 +60,12 @@ for (const result of results) {
 
 const failures = results.filter((result) => result.code !== 0);
 for (const failure of failures) {
-  process.stdout.write(`\n──── ${failure.name} output ────\n${failure.output}\n`);
+  // Keep the failure section verbatim but elide long passing/noise regions so
+  // a red run doesn't dump thousands of lines (see scripts/lib/output-truncation.mjs).
+  const condensed = condenseFailureOutput(failure.output, {
+    rerunHint: "rerun scoped for full output: pnpm test -- <file>",
+  });
+  process.stdout.write(`\n──── ${failure.name} output ────\n${condensed}\n`);
 }
 
 if (failures.length > 0) {
