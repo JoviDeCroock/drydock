@@ -167,6 +167,7 @@ async function loadRequestedDiff(
       const cacheKey = await computePublicDiffCacheKey(input);
       const cached = await readPublicDiffCache(c.env, cacheKey);
       if (cached) {
+        await adapter.validateCachedPair?.(c.env, workerExecutionContext(c.executionCtx), input);
         if (options.countView) recordPublicDiffView(c, cached, true, startedAtMs);
         return { payload: cached };
       }
