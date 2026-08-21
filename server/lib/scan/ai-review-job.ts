@@ -1,7 +1,7 @@
 import { type AppDb, createDb } from "../../db/client";
 import {
   applyAiReviewPatch,
-  getScanStatus,
+  getScanRecord,
   markAiReviewStarted,
   STALLED_QUEUED_TIMEOUT_MS,
   STALLED_RUNNING_TIMEOUT_MS,
@@ -67,7 +67,7 @@ export async function executeAiReviewJob(
   options: ExecuteAiReviewJobOptions = {},
 ): Promise<AiReviewJobOutcome> {
   const startedAtMs = Date.now();
-  const scan = await getScanStatus(db, message.scanId, message.organizationId);
+  const scan = await getScanRecord(db, message.scanId, message.organizationId);
   if (!scan) return skip(message, "scan_not_found");
   if (scan.status === "pending" || scan.status === "running") {
     // The row is not the completed scan this message is for. The producer writes
@@ -137,7 +137,7 @@ export async function executeAiReviewJob(
   return applyAiReviewToScan({ env, db, scan, message, review, evidence, startedAtMs });
 }
 
-type ScanRow = NonNullable<Awaited<ReturnType<typeof getScanStatus>>>;
+type ScanRow = NonNullable<Awaited<ReturnType<typeof getScanRecord>>>;
 
 async function runReview(
   env: Cloudflare.Env,
@@ -553,7 +553,7 @@ async function deleteSupersededReportRevision(
 ): Promise<void> {
   if (!bucket || !report) return;
   try {
-    const current = await getScanStatus(db, message.scanId, message.organizationId);
+    const current = await getScanRecord(db, message.scanId, message.organizationId);
     if (
       current &&
       (current.reportArtifactKey === report.reportArtifactKey ||
@@ -643,7 +643,7 @@ export async function closeAbandonedAiReview(
     runningTimeoutMs?: number;
   } = {},
 ): Promise<boolean> {
-  const scan = await getScanStatus(db, scanId, organizationId);
+  const scan = await getScanRecord(db, scanId, organizationId);
   if (!scan || scan.status !== "complete" || scan.aiStatus !== "pending") return false;
   const now = options.now ?? new Date();
   const abandonedBefore =

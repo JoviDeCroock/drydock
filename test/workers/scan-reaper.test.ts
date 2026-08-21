@@ -8,7 +8,7 @@ import {
   createScanJob,
   discardScanAttempt,
   failStalledScans,
-  getScanStatus,
+  getScanRecord,
   listExistingScanStageIds,
   listScans,
   listStalledAiReviewScans,
@@ -106,13 +106,13 @@ describe("stalled scan reaper", () => {
       }),
     ]);
 
-    const closed = await getScanStatus(db, stalled, owner.organizationId);
+    const closed = await getScanRecord(db, stalled, owner.organizationId);
     expect(closed?.status).toBe("failed");
     expect(closed?.risk).toBe("unknown");
     expect(closed?.errorJson).toMatchObject({ code: "scan_stalled", retryable: false });
     expect(closed?.completedAt).not.toBeNull();
 
-    expect((await getScanStatus(db, fresh, owner.organizationId))?.status).toBe("running");
+    expect((await getScanRecord(db, fresh, owner.organizationId))?.status).toBe("running");
   });
 
   test("closes pending scans whose queue message never arrived, with a distinct reason", async () => {
@@ -123,7 +123,7 @@ describe("stalled scan reaper", () => {
 
     const sweep = await failStalledScans(db);
     expect(sweep).toMatchObject({ running: 0, pending: 1 });
-    const closed = await getScanStatus(db, stranded, owner.organizationId);
+    const closed = await getScanRecord(db, stranded, owner.organizationId);
     expect(closed?.status).toBe("failed");
     expect(closed?.errorJson).toMatchObject({ code: "scan_never_started" });
   });
@@ -137,7 +137,7 @@ describe("stalled scan reaper", () => {
     await ageScan(queued, 90);
 
     expect(await failStalledScans(db)).toMatchObject({ running: 0, pending: 0 });
-    expect((await getScanStatus(db, queued, owner.organizationId))?.status).toBe("pending");
+    expect((await getScanRecord(db, queued, owner.organizationId))?.status).toBe("pending");
     expect(STALLED_QUEUED_TIMEOUT_MS).toBeGreaterThan(STALLED_RUNNING_TIMEOUT_MS);
   });
 
@@ -168,7 +168,7 @@ describe("stalled scan reaper", () => {
     expect(await failStalledScans(db, { limit: 1 })).toMatchObject({ running: 0, pending: 1 });
     expect(await failStalledScans(db, { limit: 5 })).toMatchObject({ running: 0, pending: 1 });
     expect(await failStalledScans(db, { limit: 5 })).toMatchObject({ running: 0, pending: 0 });
-    expect((await getScanStatus(db, done, owner.organizationId))?.status).toBe("complete");
+    expect((await getScanRecord(db, done, owner.organizationId))?.status).toBe("complete");
   });
 
   test("finds completed scans whose deferred AI review never came back", async () => {
@@ -197,7 +197,7 @@ describe("stalled scan reaper", () => {
     const abandoned = await listStalledAiReviewScans(db);
     expect(abandoned.map((row) => row.id)).toEqual([scanId]);
     // A completed scan whose review is still in flight is not a candidate.
-    expect((await getScanStatus(db, fresh, owner.organizationId))?.aiStatus).toBe("pending");
+    expect((await getScanRecord(db, fresh, owner.organizationId))?.aiStatus).toBe("pending");
   });
 
   test("ages an active AI review from its own start and revalidates before closing it", async () => {
@@ -234,7 +234,7 @@ describe("stalled scan reaper", () => {
         runningTimeoutMs: STALLED_RUNNING_TIMEOUT_MS,
       }),
     ).toBe(false);
-    expect((await getScanStatus(db, scanId, owner.organizationId))?.aiStatus).toBe("pending");
+    expect((await getScanRecord(db, scanId, owner.organizationId))?.aiStatus).toBe("pending");
     expect((await listStalledAiReviewScans(db)).map((row) => row.id)).not.toContain(scanId);
 
     await ageAiReviewStart(scanId, 45);
@@ -345,13 +345,13 @@ describe("withdrawn stage tombstones", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = await newScan(owner, "withdrawn");
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
     const stageId = scan!.stageId;
     await claimScanForRun(db, scanId, owner.organizationId);
 
     await discardScanAttempt(db, scanId, owner.organizationId);
 
-    const discarded = await getScanStatus(db, scanId, owner.organizationId);
+    const discarded = await getScanRecord(db, scanId, owner.organizationId);
     expect(discarded?.status).toBe("discarded");
     expect(discarded?.errorJson).toMatchObject({ code: "staged_tarball_withdrawn" });
 
@@ -385,6 +385,6 @@ describe("withdrawn stage tombstones", () => {
     await ageScan(scanId, 120);
 
     expect(await failStalledScans(db)).toMatchObject({ running: 0, pending: 0 });
-    expect((await getScanStatus(db, scanId, owner.organizationId))?.status).toBe("discarded");
+    expect((await getScanRecord(db, scanId, owner.organizationId))?.status).toBe("discarded");
   });
 });

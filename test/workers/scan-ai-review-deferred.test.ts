@@ -7,7 +7,7 @@ import {
   createScanJob,
   getScan,
   getScanPollStatus,
-  getScanStatus,
+  getScanRecord,
   persistScan,
   recordScanDecision,
 } from "../../server/db/scans";
@@ -255,7 +255,7 @@ function messageFor(scanId: string, owner: SeededUser): AiReviewQueueMessage {
 
 function applyArgs(
   owner: SeededUser,
-  scan: NonNullable<Awaited<ReturnType<typeof getScanStatus>>>,
+  scan: NonNullable<Awaited<ReturnType<typeof getScanRecord>>>,
   review: ApplyAiReviewArgs["review"],
   reviewEnv: Cloudflare.Env = env,
 ): ApplyAiReviewArgs {
@@ -290,7 +290,7 @@ describe("deferred AI review", () => {
   test("patching an artifact-backed scan adds the AI finding and escalates risk", async () => {
     const owner = await seedUser();
     const { db, scanId, reportDigest } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     const outcome = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
     expect(outcome).toEqual({ outcome: "patched", status: "complete" });
@@ -351,11 +351,11 @@ describe("deferred AI review", () => {
         publicFeedListedAt: listedAt,
       })
       .where(eq(schema.scans.id, scanId));
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
 
-    const updated = await getScanStatus(db, scanId, owner.organizationId);
+    const updated = await getScanRecord(db, scanId, owner.organizationId);
     expect(updated?.publicFeedListedAt?.getTime()).toBe(listedAt.getTime() + 1);
     expect(updated?.risk).toBe("critical");
     expect(updated?.findingCount).toBe(2);
@@ -364,18 +364,18 @@ describe("deferred AI review", () => {
   test("does not publish an unlisted scan when its deferred review completes", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
 
-    const updated = await getScanStatus(db, scanId, owner.organizationId);
+    const updated = await getScanRecord(db, scanId, owner.organizationId);
     expect(updated?.publicFeedListedAt).toBeNull();
   });
 
   test("refuses to patch a scan that is not artifact-backed", async () => {
     const owner = await seedUser();
     const { db, scanId, reportDigest } = await seedPendingScan(owner, { artifactBacked: false });
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     const outcome = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
 
@@ -406,7 +406,7 @@ describe("deferred AI review", () => {
     // must floor at what the scan already showed rather than trusting its own
     // recomputation to agree.
     const { db, scanId } = await seedPendingScan(owner, { artifactBacked: true, risk: "high" });
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, lowReview));
 
@@ -420,15 +420,15 @@ describe("deferred AI review", () => {
   test("a replayed follow-up cannot patch the same scan twice", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
-    const patched = await getScanStatus(db, scanId, owner.organizationId);
+    const patched = await getScanRecord(db, scanId, owner.organizationId);
     // Same stale row, as a duplicated queue delivery would carry.
     const second = await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
     expect(second).toEqual({ outcome: "skipped", reason: "not_pending" });
 
-    const updated = await getScanStatus(db, scanId, owner.organizationId);
+    const updated = await getScanRecord(db, scanId, owner.organizationId);
     expect(updated?.findingCount).toBe(2);
     expect(updated?.updatedAt).toEqual(patched?.updatedAt);
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
@@ -438,7 +438,7 @@ describe("deferred AI review", () => {
   test("a duplicate delivery with identical output cannot delete the live report", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     // Two deliveries of the same message that produce the same review — the
     // killswitch-off sentinel, the final-attempt fail-safe, and an AI Gateway
@@ -461,16 +461,16 @@ describe("deferred AI review", () => {
   test("a duplicate delivery with different output reclaims only its own revision", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
-    const live = (await getScanStatus(db, scanId, owner.organizationId))!;
+    const live = (await getScanRecord(db, scanId, owner.organizationId))!;
     // A different review hashes to different keys, so the loser's revision is
     // genuinely unreferenced and is reclaimed.
     const loser = await applyAiReviewToScan(applyArgs(owner, scan!, lowReview));
     expect(loser).toEqual({ outcome: "skipped", reason: "not_pending" });
 
-    const after = (await getScanStatus(db, scanId, owner.organizationId))!;
+    const after = (await getScanRecord(db, scanId, owner.organizationId))!;
     expect(after.reportArtifactKey).toBe(live.reportArtifactKey);
     expect(await env.ARTIFACTS.get(after.reportArtifactKey!)).not.toBeNull();
     const listed = await env.ARTIFACTS.list({ prefix: `${keyPrefix(owner, scanId)}/report.` });
@@ -483,7 +483,7 @@ describe("deferred AI review", () => {
   test("a lost patch deletes its revision when the scan row was removed", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner);
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
 
     // Model the organization-delete race after the worker captured a pending
     // row but before it republishes and claims the terminal review.
@@ -512,11 +512,11 @@ describe("deferred AI review", () => {
       loadAiReviewInput(env.ARTIFACTS, scanId, { ...aiReviewInput, digest: "0".repeat(64) }),
     ).rejects.toThrow(/digest mismatch/);
 
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
 
     expect(await env.ARTIFACTS.get(aiReviewInput.key)).toBeNull();
-    const summary = (await getScanStatus(db, scanId, owner.organizationId))?.summaryJson as Record<
+    const summary = (await getScanRecord(db, scanId, owner.organizationId))?.summaryJson as Record<
       string,
       unknown
     >;
@@ -595,7 +595,7 @@ describe("deferred AI review", () => {
     );
     expect(points.map((point) => point.indexes?.[0])).toEqual(["scan.decided"]);
 
-    const pending = await getScanStatus(db, scanId, owner.organizationId);
+    const pending = await getScanRecord(db, scanId, owner.organizationId);
     await applyAiReviewToScan(applyArgs(owner, pending!, criticalReview, analyticsEnv));
 
     expect(points.map((point) => point.indexes?.[0])).toEqual([
@@ -657,7 +657,7 @@ describe("deferred AI review", () => {
     await worker.queue(batch, flagged, createExecutionContext());
 
     expect(retry).not.toHaveBeenCalled();
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
     expect(scan?.aiStatus).toBe("unavailable");
     expect((scan!.aiJson as { model?: string }).model).toBeTruthy();
   });
@@ -681,7 +681,7 @@ describe("deferred AI review", () => {
   test("executeAiReviewJob skips a scan that is no longer pending", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedPendingScan(owner, { artifactBacked: false });
-    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    const scan = await getScanRecord(db, scanId, owner.organizationId);
     await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
 
     const outcome = await executeAiReviewJob(env, messageFor(scanId, owner), db, {

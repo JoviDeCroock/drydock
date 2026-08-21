@@ -1,5 +1,5 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
-import { getScanStatus } from "../../db/scans";
+import { getScanRecord } from "../../db/scans";
 import type { AiReview } from "../ai-review/types";
 import { pendingAiReview } from "../ai-review/types";
 import type {
@@ -374,7 +374,7 @@ async function handleDeferredAiReview(args: DeferredAiReviewArgs): Promise<void>
     // attempts wrote evidence. Re-read the winner before cleanup: identical
     // evidence has the same content-addressed key, and deleting the loser's
     // object in that case would delete the winner's live input too.
-    const winner = await getScanStatus(args.db, identity.scanId, identity.organizationId);
+    const winner = await getScanRecord(args.db, identity.scanId, identity.organizationId);
     const summary =
       winner?.summaryJson &&
       typeof winner.summaryJson === "object" &&

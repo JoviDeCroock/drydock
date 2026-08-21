@@ -352,26 +352,14 @@ describe("scan status poll route", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { scan: Record<string, unknown> };
 
-    // Everything the UI poller and the versions route read.
-    expect(body.scan).toMatchObject({
+    // Only the lifecycle fields the dashboard poller reads. Package metadata
+    // and report summaries come from the detail endpoint after a transition.
+    expect(body.scan).toEqual({
       id: scanId,
       status: "complete",
-      risk: "high",
-      packageName: "@org/artifact-backfill",
-      stagedVersion: "1.0.0",
+      aiStatus: "unavailable",
+      updatedAt: expect.any(String),
     });
-    for (const key of [
-      "stageId",
-      "source",
-      "findingCount",
-      "changedFileCount",
-      "riskSummaryJson",
-      "reportDigest",
-      "createdAt",
-      "updatedAt",
-    ]) {
-      expect(body.scan, `status response must keep ${key}`).toHaveProperty(key);
-    }
 
     // The poll that observes the terminal transition must not ship the whole
     // diff + AI envelope: the client fetches the full detail right after.

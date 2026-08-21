@@ -1471,6 +1471,22 @@ export async function getScanFile(
 }
 
 /**
+ * Single full-row read for trusted server-side lifecycle work.
+ *
+ * Keep this separate from `getScanStatus`: API callers use that projection to
+ * avoid reading report-sized JSON blobs, while deferred-review finalization
+ * needs those blobs and the artifact pointers to update the canonical report.
+ */
+export async function getScanRecord(db: AppDb, id: string, organizationId: string) {
+  const [scan] = await db
+    .select()
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return scan ?? null;
+}
+
+/**
  * Single indexed row read for the poll path (`GET /api/v1/scans/:id/status`)
  * and for routes that only need the scan's identity.
  *

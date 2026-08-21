@@ -10,7 +10,7 @@ const dbMock = vi.hoisted(() => ({
   getNpmConnection: vi.fn(),
   createDb: vi.fn(() => ({})),
   // Read by the deferred-review close path when a follow-up cannot be enqueued.
-  getScanStatus: vi.fn(async () => ({
+  getScanRecord: vi.fn(async () => ({
     id: "scan",
     status: "complete",
     aiStatus: "pending",
@@ -144,7 +144,7 @@ describe("scan pipeline baseline selection", () => {
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
-    dbMock.getScanStatus.mockClear();
+    dbMock.getScanRecord.mockClear();
     dbMock.applyAiReviewPatch.mockClear();
     registryMock.fetchPackageMetadata.mockReset();
     sandboxMock.downloadInSandbox.mockReset();
@@ -681,7 +681,7 @@ describe("scan pipeline baseline selection", () => {
         throw new Error("queue unavailable");
       });
       const bucket = artifactBucket();
-      dbMock.getScanStatus.mockImplementationOnce(async () => ({
+      dbMock.getScanRecord.mockImplementationOnce(async () => ({
         id: "scan_ai_enqueue_fail",
         status: "complete",
         aiStatus: "pending",
@@ -715,7 +715,7 @@ describe("scan pipeline baseline selection", () => {
       // The failure is known synchronously. Leaving the row pending would mean
       // hours of "AI review pending" with no fail-safe floor and no completion
       // notification, so the scan is closed on the spot instead.
-      expect(dbMock.getScanStatus).toHaveBeenCalledWith({}, "scan_ai_enqueue_fail", "org_1");
+      expect(dbMock.getScanRecord).toHaveBeenCalledWith({}, "scan_ai_enqueue_fail", "org_1");
       expect(dbMock.applyAiReviewPatch).toHaveBeenCalledWith(
         {},
         expect.objectContaining({
@@ -734,7 +734,7 @@ describe("scan pipeline baseline selection", () => {
       dbMock.persistScan.mockResolvedValueOnce({ persisted: false, reason: "already_terminal" });
       const sendAiReviewMessage = vi.fn(async () => undefined);
       const bucket = artifactBucket();
-      dbMock.getScanStatus.mockImplementationOnce(async () => ({
+      dbMock.getScanRecord.mockImplementationOnce(async () => ({
         summaryJson: {
           aiReviewInput: dbMock.persistScan.mock.calls.at(-1)?.[1].summary.aiReviewInput,
         },
