@@ -310,6 +310,54 @@ describe("resolveAtpmStagedReview", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
+  test("rejects staged tag shapes the review cannot model", async () => {
+    for (const tags of [{ latest: "0.0.15" }, { latest: "0.0.16", next: "0.0.16" }]) {
+      const staged = stageRecord();
+      staged.value.tags = tags;
+      staged.cid = await atpmRecordCid(staged.value);
+      stubNetwork({ staged });
+      await expect(
+        resolveAtpmStagedReview(env, ctx, { publisher: "@ebey.dev", rkey: RKEY }),
+      ).rejects.toMatchObject({ status: 502 });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("reuses cached identity and published provenance across link lookups", async () => {
+    const values = new Map<string, string>();
+    const cache = {
+      get: vi.fn((key: string) => {
+        const value = values.get(key);
+        return Promise.resolve(value ? JSON.parse(value) : null);
+      }),
+      put: vi.fn((key: string, value: string) => {
+        values.set(key, value);
+        return Promise.resolve();
+      }),
+    } as KVNamespace;
+    const pending: Promise<unknown>[] = [];
+    const cachedEnv = { COMPARE_CACHE: cache } as Cloudflare.Env;
+    const cachedCtx = {
+      waitUntil(promise: Promise<unknown>) {
+        pending.push(promise);
+      },
+    } as ExecutionContext;
+    let publishedFetches = 0;
+    stubNetwork();
+    const network = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("collection=dev.atpm.alpha.package")) publishedFetches += 1;
+      return network(input, init);
+    });
+
+    await resolveAtpmStagedReview(cachedEnv, cachedCtx, { publisher: "@ebey.dev", rkey: RKEY });
+    await Promise.all(pending.splice(0));
+    await resolveAtpmStagedReview(cachedEnv, cachedCtx, { publisher: "@ebey.dev", rkey: RKEY });
+
+    expect(publishedFetches).toBe(1);
+    await Promise.all(pending);
+  });
+
   test("refuses a publisher that is not addressable", async () => {
     await expect(
       resolveAtpmStagedReview(env, ctx, { publisher: "@localhost", rkey: RKEY }),

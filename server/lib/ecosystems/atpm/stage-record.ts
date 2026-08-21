@@ -156,6 +156,8 @@ async function parseStageRecord(
   const declaredName = typeof value.name === "string" ? value.name : null;
   const version = typeof value.version === "string" ? value.version : null;
   if (!declaredName || !version || !isValidAtpmVersion(version)) return null;
+  const tag = candidateTag(value.tags, version);
+  if (!tag) return null;
 
   const blob = asObject(value.blob);
   const ref = asObject(blob?.ref);
@@ -184,7 +186,7 @@ async function parseStageRecord(
     version,
     declaredManifestName,
     declaredVersion,
-    tag: firstTag(value.tags),
+    tag,
     createdAt: value.createdAt,
     cid,
     size: blob.size as number,
@@ -282,17 +284,17 @@ function decodeAtprotoBytes(value: string): Uint8Array {
 }
 
 /**
- * The dist-tag a candidate would take on approval. atpm stores npm's whole
- * `dist-tags` object; the CLI sends exactly one, and taking the first matches
- * what atpm's own staged listing reports.
+ * The dist-tag a candidate would take on approval. atpm merges this entire
+ * publisher-written object into the package record, so review only accepts the
+ * CLI shape it can model honestly: exactly one tag targeting this candidate.
  */
-function firstTag(tags: unknown): string | null {
+function candidateTag(tags: unknown, candidateVersion: string): string | null {
   const record = asObject(tags);
   if (!record) return null;
-  for (const [tag, target] of Object.entries(record)) {
-    if (typeof tag === "string" && tag && typeof target === "string") return tag;
-  }
-  return null;
+  const entries = Object.entries(record);
+  if (entries.length !== 1) return null;
+  const [tag, target] = entries[0];
+  return tag && target === candidateVersion ? tag : null;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {

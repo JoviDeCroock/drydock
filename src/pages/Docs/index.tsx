@@ -505,7 +505,8 @@ export default function DocsPage() {
                   </>,
                   <>
                     Approve or withdraw in atpm, with <Code>npm stage approve &lt;id&gt;</Code> or{" "}
-                    <Code>npm stage rm &lt;id&gt;</Code>. Drydock takes no part in that decision.
+                    <Code>npm stage reject &lt;id&gt;</Code>. Drydock takes no part in that
+                    decision.
                   </>,
                 ]}
               />

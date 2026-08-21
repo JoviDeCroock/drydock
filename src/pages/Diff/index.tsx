@@ -895,7 +895,7 @@ function buildProvenanceLabel(attestation: PublicDiffAttestation) {
   return "not checked";
 }
 
-function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch: boolean) {
+export function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch: boolean) {
   if (attestation.status === "invalid") {
     return `This version carries a build attestation that does not verify: ${attestation.reason ?? "unreadable"}. Nothing about where it was built can be concluded from it.`;
   }
@@ -918,6 +918,9 @@ function buildProvenanceExplanation(attestation: PublicDiffAttestation, mismatch
   }
   if (attestation.match === "match") {
     return "Verified against Sigstore's root, and the repository and workflow match the trusted publisher this package declares. Transparency-log inclusion is not independently checked.";
+  }
+  if (attestation.match === "unknown-provider") {
+    return "Verified against Sigstore's root. The package declares a trusted-publisher provider this deployment cannot evaluate, so the build cannot be compared with that declaration.";
   }
   return "Verified against Sigstore's root. The package declares no trusted publisher to compare it against, so this says where the release was built, not that it was supposed to be built there.";
 }

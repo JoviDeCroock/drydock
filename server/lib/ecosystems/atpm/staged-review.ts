@@ -1,5 +1,6 @@
-import { resolveAtpmRepoIdentity, type AtpmRepoIdentity } from "./identity";
-import { fetchAtpmPackageRecord, type AtpmPackage } from "./record";
+import type { AtpmRepoIdentity } from "./identity";
+import type { AtpmPackage } from "./record";
+import { fetchRecordCached, resolveIdentityCached } from "./metadata-cache";
 import { fetchAtpmStagedVersion, type AtpmStagedVersion } from "./stage-record";
 import {
   ATPM_NO_BASELINE_VERSION,
@@ -52,21 +53,21 @@ export interface AtpmStagedReview {
  * one that does not resolve at all.
  */
 export async function resolveAtpmStagedReview(
-  _env: Cloudflare.Env,
-  _ctx: ExecutionContext,
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
   input: { publisher: string; rkey: string },
 ): Promise<AtpmStagedReview> {
   const ref = parseAtpmPublisherRef(input.publisher);
   if (!ref) throw new PublicDiffError("invalid publisher", 400);
 
-  const identity = await resolveAtpmRepoIdentity(ref);
+  const identity = (await resolveIdentityCached(env, ctx, ref)).value;
   const candidate = await fetchAtpmStagedVersion(identity, input.rkey);
   const recordName = recordNameOf(candidate.declaredName);
   if (!recordName) {
     throw new PublicDiffError("staged candidate does not name a publishable package", 502);
   }
 
-  const published = await loadPublishedRecord(identity, recordName);
+  const published = await loadPublishedRecord(env, ctx, identity, recordName);
   const baselineVersion = published ? selectBaselineVersion(published, candidate) : null;
 
   const packageName = `${identity.did}/${recordName}`;
@@ -101,11 +102,13 @@ function recordNameOf(packageName: string): string | null {
 
 /** A package with no published record yet is a first release, not a failure. */
 async function loadPublishedRecord(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
   identity: AtpmRepoIdentity,
   recordName: string,
 ): Promise<AtpmPackage | null> {
   try {
-    return await fetchAtpmPackageRecord(identity, recordName);
+    return (await fetchRecordCached(env, ctx, identity, recordName)).value;
   } catch (err) {
     if (err instanceof PublicDiffError && err.status === 404) return null;
     throw err;

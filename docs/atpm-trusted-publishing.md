@@ -30,7 +30,7 @@ The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystem
 - the required Rekor signed-entry timestamp against a pinned transparency-log key before its integrated time is allowed to evaluate the short-lived Fulcio leaf's validity window; a bundle with no authenticated entry is unverifiable;
 - the DSSE signature over the in-toto statement;
 - the statement's shape: exactly one subject, a readable npm purl, a SHA-512 digest;
-- the Fulcio OIDs: issuer, source repository, ref, commit, build-config workflow, run invocation, runner environment, repository visibility. The workflow is trusted only when Fulcio authenticated it into the certificate; publisher-controlled fields in the signed predicate are not an identity fallback.
+- the Fulcio OIDs: issuer, source repository, ref, commit, build-config workflow, run invocation, runner environment, repository visibility. The issuer must be GitHub Actions, the runner must be `github-hosted`, and the repository must be `public`, matching atpm's own approval policy. The workflow is trusted only when Fulcio authenticated it into the certificate; publisher-controlled fields in the signed predicate are not an identity fallback.
 
 Verification is _intrinsic_ to the bundle — it does not depend on the reviewed bytes or the request — which is what makes caching a small verdict per version sound instead of caching ~10 KB of bundle. Binding to the artifact happens afterwards, in `findings.ts`.
 
@@ -90,7 +90,7 @@ Rather than a second review surface that would drift from the published one, a s
 
 Drydock does not trust the PDS merely to echo that record CID. It re-encodes the returned value as DAG-CBOR and recomputes the CID locally before the value can become a review or cache entry.
 
-Baseline selection prefers the published version behind the dist-tag the candidate would move — approving moves that tag, so it is the sharpest answer to "what changes for someone who installs this?" — then the immediate semver predecessor, then the highest published version.
+The staged record must contain exactly one dist-tag targeting the candidate version, matching the shape atpm's CLI writes and the review can model without hiding additional tag moves. Baseline selection then prefers the published version behind that tag — approving moves it, so this is the sharpest answer to "what changes for someone who installs this?" — then the immediate semver predecessor, then the highest published version. Identity and published-record resolution reuse the same five-minute metadata cache as `/diff`; only the mutable staged candidate is fetched live for each link lookup.
 
 ### What a candidate is checked for
 

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { atpmRecordFindings } from "../server/lib/ecosystems/atpm/findings";
 import {
+  atpmGithubCredentialPolicyError,
   atpmPurl,
   readAtpmAttestation,
   transparencyLogBodyMatches,
@@ -145,6 +146,22 @@ describe("record provenance", () => {
     );
     expect(pkg.versions[0].provenance).toEqual({ status: "absent" });
   });
+
+  test("a present malformed attestation is invalid rather than absent", async () => {
+    for (const malformed of ["corrupt", null]) {
+      vi.stubGlobal("fetch", () =>
+        Promise.resolve(Response.json({ value: recordWithAttestation(malformed) })),
+      );
+      const pkg = await fetchAtpmPackageRecord(
+        { did: DID, pds: PDS, handle: null, handleMethod: null },
+        "counter",
+      );
+      expect(pkg.versions[0].provenance).toEqual({
+        status: "invalid",
+        reason: "attestation is not an object",
+      });
+    }
+  });
 });
 
 describe("x509 reader", () => {
@@ -178,6 +195,12 @@ describe("verifyAtpmProvenance", () => {
     if (state.status !== "verified") return;
     expect(state.provenance.sourceRepository).toBe("https://github.com/sigstore/sigstore-js");
     expect(state.provenance.workflowPath).toBe(".github/workflows/release.yml");
+    expect(
+      atpmGithubCredentialPolicyError(
+        state.provenance.runnerEnvironment,
+        state.provenance.repositoryVisibility,
+      ),
+    ).toBeNull();
     expect(state.provenance.runnerEnvironment).toBe("github-hosted");
     expect(state.provenance.repositoryVisibility).toBe("public");
     expect(state.provenance.subjectName).toBe("pkg:npm/sigstore@3.0.0");
@@ -328,6 +351,15 @@ describe("verifyAtpmProvenance", () => {
       expect(["invalid", "absent"]).toContain(state.status);
     }
   });
+
+  test("rejects credentials atpm will not approve", () => {
+    expect(atpmGithubCredentialPolicyError("self-hosted", "public")).toBe(
+      "unsupported runner environment self-hosted",
+    );
+    expect(atpmGithubCredentialPolicyError("github-hosted", "private")).toBe(
+      "unsupported repository visibility private",
+    );
+  });
 });
 
 describe("readAtpmAttestation", () => {
@@ -335,10 +367,10 @@ describe("readAtpmAttestation", () => {
     expect(readAtpmAttestation({ dist: { attestations: { provenance: BUNDLE } } })).toBe(BUNDLE);
   });
 
-  test("returns null for every other shape", () => {
+  test("returns null only when no provenance value is present", () => {
     expect(readAtpmAttestation(null)).toBeNull();
     expect(readAtpmAttestation({ dist: {} })).toBeNull();
-    expect(readAtpmAttestation({ dist: { attestations: { provenance: "x" } } })).toBeNull();
+    expect(readAtpmAttestation({ dist: { attestations: { provenance: "x" } } })).toBe("x");
   });
 });
 

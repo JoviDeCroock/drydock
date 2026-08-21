@@ -49,7 +49,7 @@ import {
  * accepted by an older deployment would be rejected now, so a cached verdict
  * cannot outlive the rules that produced it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "4";
+export const ATPM_PROVENANCE_RULES_VERSION = "5";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -120,6 +120,20 @@ const OID_SOURCE_REPO_VISIBILITY = "1.3.6.1.4.1.57264.1.22";
 
 const GITHUB_ACTIONS_ISSUER = "https://token.actions.githubusercontent.com";
 
+/** The GitHub credential policy atpm enforces again when a stage is approved. */
+export function atpmGithubCredentialPolicyError(
+  runnerEnvironment: string | null,
+  repositoryVisibility: string | null,
+): string | null {
+  if (runnerEnvironment !== "github-hosted") {
+    return `unsupported runner environment ${runnerEnvironment ?? "(absent)"}`;
+  }
+  if (repositoryVisibility !== "public") {
+    return `unsupported repository visibility ${repositoryVisibility ?? "(absent)"}`;
+  }
+  return null;
+}
+
 const SUPPORTED_BUNDLE_MEDIA_TYPES = new Set([
   "application/vnd.dev.sigstore.bundle.v0.1+json",
   "application/vnd.dev.sigstore.bundle.v0.2+json",
@@ -182,6 +196,11 @@ const NOT_EVALUATED: AtpmProvenanceState = { status: "not-evaluated" };
 export const ATPM_PROVENANCE_ABSENT: AtpmProvenanceState = { status: "absent" };
 export const ATPM_PROVENANCE_NOT_EVALUATED = NOT_EVALUATED;
 
+// `null` is a valid JSON value but not a Sigstore bundle. Keep it distinct from
+// the null sentinel returned for a missing property so a publisher cannot turn
+// a malformed present attestation into "absent" before verification sees it.
+const PRESENT_NULL_ATTESTATION = Symbol("present-null-atpm-attestation");
+
 function invalid(reason: string): AtpmProvenanceState {
   return { status: "invalid", reason };
 }
@@ -203,8 +222,9 @@ export function readAtpmAttestation(meta: unknown): unknown {
   if (!dist || typeof dist !== "object") return null;
   const attestations = (dist as Record<string, unknown>).attestations;
   if (!attestations || typeof attestations !== "object") return null;
-  const provenance = (attestations as Record<string, unknown>).provenance;
-  return provenance && typeof provenance === "object" ? provenance : null;
+  const record = attestations as Record<string, unknown>;
+  if (!Object.hasOwn(record, "provenance")) return null;
+  return record.provenance === null ? PRESENT_NULL_ATTESTATION : record.provenance;
 }
 
 let pinnedAnchors: Promise<X509Certificate[]> | null = null;
@@ -338,6 +358,10 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
   if (!sourceRepository) {
     return invalid("signing certificate names no source repository");
   }
+  const runnerEnvironment = extensionString(leaf, OID_RUNNER_ENVIRONMENT);
+  const repositoryVisibility = extensionString(leaf, OID_SOURCE_REPO_VISIBILITY);
+  const policyError = atpmGithubCredentialPolicyError(runnerEnvironment, repositoryVisibility);
+  if (policyError) return invalid(policyError);
 
   return {
     status: "verified",
@@ -347,8 +371,8 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       sourceCommit: extensionString(leaf, OID_SOURCE_REPO_DIGEST),
       workflowPath: workflowPath(leaf, sourceRepository),
       runInvocation: extensionString(leaf, OID_RUN_INVOCATION_URI),
-      runnerEnvironment: extensionString(leaf, OID_RUNNER_ENVIRONMENT),
-      repositoryVisibility: extensionString(leaf, OID_SOURCE_REPO_VISIBILITY),
+      runnerEnvironment,
+      repositoryVisibility,
       subjectName: statement.subjectName,
       subjectSha512: statement.subjectSha512,
       logIndex: transparencyLog.logIndex,
