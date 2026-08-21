@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildProvenanceExplanation } from "../src/pages/Diff";
+import { buildProvenanceExplanation } from "../src/pages/Diff/TrustEvidence";
 
 describe("atpm build provenance copy", () => {
   test("does not collapse an unsupported trusted-publisher provider into no declaration", () => {
