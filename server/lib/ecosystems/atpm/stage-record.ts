@@ -270,7 +270,10 @@ function atprotoJsonToIpld(value: unknown): IpldValue {
     return decodeAtprotoBytes(object.$bytes);
   }
 
-  const converted: Record<string, IpldValue> = {};
+  // Record keys are hostile too. In particular, assigning `__proto__` to a
+  // normal object invokes its legacy setter instead of creating the own
+  // property that DAG-CBOR must hash.
+  const converted = Object.create(null) as Record<string, IpldValue>;
   for (const [key, entry] of Object.entries(object)) converted[key] = atprotoJsonToIpld(entry);
   return converted;
 }

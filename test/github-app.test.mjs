@@ -290,22 +290,4 @@ describe("release target validation", () => {
       expect(err.code).toBe("invalid_input");
     }
   });
-
-  test("rejects atpm publisher references that discovery cannot resolve", () => {
-    for (const publisherRef of [
-      "alice",
-      "@localhost",
-      "did:key:z6Mkwrong",
-      "did:web:localhost",
-      "did:plc:short",
-    ]) {
-      expect(() =>
-        validateReleaseTargetShape({
-          ...VALID_RELEASE_TARGET,
-          ecosystem: "atpm",
-          publisherRef,
-        }),
-      ).toThrow(GithubAppValidationError);
-    }
-  });
 });

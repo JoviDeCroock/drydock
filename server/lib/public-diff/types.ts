@@ -9,7 +9,7 @@ export interface PublicDiffAcquiredSide {
 
 /**
  * One step in how the reviewed bytes were located, rendered on the page as a
- * plain label/value list.
+ * label/value list whose values may link to the evidence that produced them.
  *
  * Optional and empty for the ecosystems that do not need it: on npm or PyPI the
  * answer is "the registry", which is already the page's premise. It exists for
@@ -17,8 +17,8 @@ export interface PublicDiffAcquiredSide {
  * authorities a reader may want to check — atpm resolves a handle through DNS,
  * a DID through a directory, and the bytes from the publisher's own server.
  *
- * Values are rendered as text, never as links: every one of them is derived from
- * data the party under review controls.
+ * Values remain data the party under review controls. The UI rebuilds evidence
+ * links from validated parts rather than treating a value as an href.
  */
 export interface PublicDiffProvenanceEntry {
   label: string;

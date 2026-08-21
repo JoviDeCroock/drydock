@@ -144,6 +144,14 @@ describe("staged record content address", () => {
       assertAtpmRecordCid({ ...record.value, version: "9.9.9" }, RECORD_CID),
     ).rejects.toMatchObject({ status: 502 });
   });
+
+  test("includes an own __proto__ key in the content address", async () => {
+    const record = stageRecord();
+    record.value.tags = JSON.parse('{"__proto__":"0.0.16"}') as typeof record.value.tags;
+    const withoutTag = { ...record.value, tags: {} };
+
+    expect(await atpmRecordCid(record.value)).not.toBe(await atpmRecordCid(withoutTag));
+  });
 });
 
 describe("staged candidate findings", () => {
