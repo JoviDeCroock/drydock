@@ -666,11 +666,14 @@ function EvidenceRow({
   value,
   detail,
   detailPrefix,
+  href,
 }: {
   label: string;
   value: string;
   detail?: string | null;
   detailPrefix: string;
+  /** Set only for values a reader can be sent to; see `attestationLinks`. */
+  href?: string | null;
 }) {
   return (
     <div class="grid grid-cols-1 gap-x-3 sm:grid-cols-[76px_minmax(0,1fr)] sm:items-baseline">
@@ -678,7 +681,18 @@ function EvidenceRow({
       {/* break-words, not break-all: a DID has no break opportunity and splits
           anyway, but readable text like `via plc.directory` stays whole. */}
       <dd class="font-mono text-[12px] text-ink-muted m-0 break-words">
-        {value}
+        {href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            class="text-ink-muted underline hover:text-ink"
+          >
+            {value}
+          </a>
+        ) : (
+          value
+        )}
         {detail ? (
           <span class="text-ink-subtle">
             {" "}
@@ -738,6 +752,7 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
   const build = attestation.build;
   const declared = attestation.declared;
   const mismatch = isTrustedPublisherMismatch(attestation);
+  const links = build ? attestationLinks(build) : null;
 
   return (
     <div class="p-5 flex flex-col gap-3">
@@ -751,15 +766,23 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
           kinds of claim rather than one continuous record. */}
       {build ? (
         <dl class="flex flex-col gap-1.5 m-0">
-          <ProvenanceRow label="Repo" value={build.repository} />
-          {build.workflow ? <ProvenanceRow label="Workflow" value={build.workflow} /> : null}
-          {build.ref ? <ProvenanceRow label="Ref" value={build.ref} /> : null}
-          {build.commit ? <ProvenanceRow label="Commit" value={build.commit} /> : null}
-          {build.runUrl ? <ProvenanceRow label="Run" value={build.runUrl} /> : null}
+          <ProvenanceRow label="Repo" value={build.repository} href={links?.repo} />
+          {build.workflow ? (
+            <ProvenanceRow label="Workflow" value={build.workflow} href={links?.workflow} />
+          ) : null}
+          {build.ref ? <ProvenanceRow label="Ref" value={build.ref} href={links?.ref} /> : null}
+          {build.commit ? (
+            <ProvenanceRow label="Commit" value={build.commit} href={links?.commit} />
+          ) : null}
+          {build.runUrl ? (
+            <ProvenanceRow label="Run" value={build.runUrl} href={links?.run} />
+          ) : null}
           {build.runnerEnvironment ? (
             <ProvenanceRow label="Runner" value={build.runnerEnvironment} />
           ) : null}
-          {build.logIndex ? <ProvenanceRow label="Rekor" value={build.logIndex} /> : null}
+          {build.logIndex ? (
+            <ProvenanceRow label="Rekor" value={build.logIndex} href={links?.rekor} />
+          ) : null}
         </dl>
       ) : null}
       {declared ? (
@@ -778,12 +801,80 @@ function ProvenanceRow({
   label,
   value,
   detail,
+  href,
 }: {
   label: string;
   value: string;
   detail?: string;
+  href?: string | null;
 }) {
-  return <EvidenceRow label={label} value={value} detail={detail} detailPrefix="·" />;
+  return <EvidenceRow label={label} value={value} detail={detail} detailPrefix="·" href={href} />;
+}
+
+// Destinations for the proven half of an attestation.
+//
+// Only the proven half gets them. Those values were read out of a Fulcio
+// certificate that verified against Sigstore's root, so the repository, ref,
+// commit and run are facts a reader can go check. The declared half is the
+// publisher's own statement about themselves — a package lying about its
+// trusted publisher must not get a link out of Drydock to wherever it points —
+// so it stays plain text, the same rule the resolution trail follows.
+//
+// Every href is rebuilt from parsed, re-validated parts rather than
+// interpolated from the raw string, so a certificate carrying anything other
+// than a public github.com repository degrades to text instead of emitting
+// whatever it happened to say.
+function attestationLinks(build: NonNullable<PublicDiffAttestation["build"]>) {
+  const repo = githubRepoUrl(build.repository);
+  // The certificate spells a fully-qualified ref; GitHub resolves the bare
+  // branch or tag name under /tree.
+  const refName = build.ref?.replace(/^refs\/(?:heads|tags)\//, "") ?? null;
+  const commit = build.commit && /^[0-9a-f]{7,64}$/i.test(build.commit) ? build.commit : null;
+  // Workflow pins to the commit the certificate proves, not to a moving
+  // branch: the point of the row is which file ran for *this* release.
+  const workflowRev = commit ?? refName;
+  return {
+    repo,
+    workflow:
+      repo && build.workflow && workflowRev
+        ? `${repo}/blob/${encodePath(workflowRev)}/${encodePath(build.workflow)}`
+        : null,
+    ref: repo && refName ? `${repo}/tree/${encodePath(refName)}` : null,
+    commit: repo && commit ? `${repo}/commit/${commit}` : null,
+    run: githubUrl(build.runUrl),
+    // Rekor's public viewer; the index is the entry's address in the log.
+    rekor:
+      build.logIndex && /^\d+$/.test(build.logIndex)
+        ? `https://search.sigstore.dev/?logIndex=${build.logIndex}`
+        : null,
+  };
+}
+
+/** `https://github.com/<owner>/<repo>`, rebuilt from the parsed URL, or null. */
+function githubRepoUrl(repository: string): string | null {
+  const url = githubUrl(repository);
+  if (!url) return null;
+  const segments = new URL(url).pathname.split("/").filter(Boolean);
+  if (segments.length !== 2) return null;
+  return `https://github.com/${encodePath(segments.join("/"))}`;
+}
+
+/** A value echoed as a link only if it really is an https github.com URL. */
+function githubUrl(value: string | null): string | null {
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.hostname !== "github.com") return null;
+  return url.toString();
+}
+
+/** Encode each path segment while leaving the separators intact. */
+function encodePath(value: string): string {
+  return value.split("/").map(encodeURIComponent).join("/");
 }
 
 function buildProvenanceTone(attestation: PublicDiffAttestation) {

@@ -158,7 +158,6 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     const { displayName } = canonicalNames(ref, identity);
     const pageNotices = reviewNotices({
       identity,
-      staged: staged !== null,
       withoutBaseline: from === null,
     });
     return {
@@ -269,17 +268,13 @@ function stagedAsVersion(candidate: AtpmStagedVersion): AtpmVersion {
   };
 }
 
-function reviewNotices(args: {
-  identity: AtpmRepoIdentity;
-  staged: boolean;
-  withoutBaseline: boolean;
-}): string[] {
+// Notices state facts about the pair being diffed that the diff itself cannot
+// show. They are deliberately not the place to tell a reader what to do with
+// the release: /diff is anonymous, so a staged candidate is read by consumers
+// auditing a build as often as by the one maintainer who could publish it. The
+// staged status rides the header badge and closing section instead.
+function reviewNotices(args: { identity: AtpmRepoIdentity; withoutBaseline: boolean }): string[] {
   const notices: string[] = [];
-  if (args.staged) {
-    notices.push(
-      "This release is staged and not yet published. Approving it publishes exactly these bytes — the candidate is pinned by content address, so nothing is rebuilt in between.",
-    );
-  }
   if (args.withoutBaseline) {
     notices.push(
       "This is the first release of this package, so there is nothing published to compare against and every file reads as added.",
