@@ -307,7 +307,7 @@ function RecentReviewsSection({
             variant="secondary"
             size="sm"
             onClick={() => void scans.loadMore()}
-            disabled={scans.loadingMore.value}
+            disabled={scans.loadingMore.value || scans.refreshing.value}
           >
             {scans.loadingMore.value ? "Loading…" : "Load more"}
           </Button>
