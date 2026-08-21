@@ -380,14 +380,6 @@ export function selectReportedFindings(
     .slice(0, MAX_AI_FINDINGS);
 }
 
-// Comments have no severity to rank by (they are notes, not signals), so the
-// trim keeps submission order and caps the count.
-export function selectReportedComments(
-  comments: AiReviewSubmissionComment[] | undefined,
-): AiReviewSubmissionComment[] {
-  return (comments ?? []).slice(0, MAX_AI_COMMENTS);
-}
-
 // Validation schema for a *persisted* AiReview (as stored in `scans.ai_json`),
 // as opposed to `aiReviewSubmissionSchema` which validates the model's raw
 // tool call. This one carries the reviewer envelope the pipeline adds after

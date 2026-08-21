@@ -1079,6 +1079,25 @@ describe("anchored findings and inline comments", () => {
     expect(ai.comments).toHaveLength(MAX_AI_COMMENTS);
   });
 
+  test("caps comments after dropping entries outside the changed-file diff", async () => {
+    const ai = await reviewWith({
+      comments: [
+        ...Array.from({ length: MAX_AI_COMMENTS }, (_, index) => ({
+          file: `vendor/ghost-${index}.js`,
+          anchor: "const https = require('https');",
+          note: `invented ${index}`,
+        })),
+        {
+          file: "index.js",
+          anchor: "const https = require('https');",
+          note: "Valid changed-file note.",
+        },
+      ],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Valid changed-file note.", line: 1 }]);
+  });
+
   test("a submission without comments completes with an empty list", async () => {
     const ai = await reviewWith({});
     expect(ai.comments).toEqual([]);

@@ -7,9 +7,9 @@ import {
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
+  MAX_AI_COMMENTS,
   MAX_LOW_SIGNAL_CHANGED_FILES,
   MAX_REVIEW_OUTPUT_TOKENS,
-  selectReportedComments,
   selectReportedFindings,
   type AiReviewSubmission,
 } from "./contract";
@@ -440,12 +440,14 @@ function normalizeParsedReview(model: string, value: unknown, anchors: AnchorRes
     // evidence can inform the summary, but the workbench hides package-context
     // files by default and comments intentionally have no tree count to reveal
     // them. An unpinned comment on a changed file is kept in that file's banner.
-    comments: selectReportedComments(review.comments).flatMap((comment) => {
-      const resolved = anchors(comment.file, comment.anchor);
-      return resolved?.changed
-        ? [{ file: resolved.file, note: comment.note, line: resolved.line }]
-        : [];
-    }),
+    comments: (review.comments ?? [])
+      .flatMap((comment) => {
+        const resolved = anchors(comment.file, comment.anchor);
+        return resolved?.changed
+          ? [{ file: resolved.file, note: comment.note, line: resolved.line }]
+          : [];
+      })
+      .slice(0, MAX_AI_COMMENTS),
     requiresManualReview: review.requiresManualReview,
     model,
     reviewerVersion: AI_REVIEWER_VERSION,
