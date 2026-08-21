@@ -109,18 +109,19 @@ A snapshot records:
   and `workflow_call` output mappings;
 - authority-sensitive execution controls: job and step conditions, job
   dependencies, runner selection, containers and services, job output mappings,
-  job strategy matrices, `continue-on-error`, and digests of workflow/job/step
-  environment mappings (the values themselves are not persisted);
+  job strategy matrices, `continue-on-error`, step working directories,
+  workflow/job run defaults, and digests of workflow/job/step environment
+  mappings (the values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
   shorthands and the empty-block case;
 - GitHub Environment names per job;
 - every `uses:` reference with its ref, whether it is pinned to a 40-hex commit,
   and whether the call inherits secrets; local actions carry a bounded digest
-  of their complete directory tree at the workflow's resolved commit, while
-  publishing actions, safeguard actions, and reusable-workflow calls also carry
-  a digest of their `with:` inputs and explicit `secrets:` map, so source,
-  credential, target, or protected-subject changes are detected without
-  persisting those values;
+  of their complete directory tree and call inputs at the workflow's resolved
+  commit, while publishing actions, safeguard actions, and reusable-workflow
+  calls also carry a digest of their `with:` inputs and explicit `secrets:` map,
+  so source, credential, target, or protected-subject changes are detected
+  without persisting those values;
 - detected publish steps (known publishing actions and publish commands);
 - detected release safeguards (attestation, signing, provenance — including
   `with: attestations`/`provenance` inputs);

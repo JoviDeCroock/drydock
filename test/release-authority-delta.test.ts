@@ -308,6 +308,39 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
         "      - uses: actions/attest-build-provenance@v2\n        continue-on-error: true\n",
       ),
     },
+    {
+      label: "publish working directory",
+      prior: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - run: npm publish\n        working-directory: packages/public\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - run: npm publish\n        working-directory: packages/internal\n",
+      ),
+    },
+    {
+      label: "job default working directory",
+      prior: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    defaults:\n      run:\n        working-directory: packages/public\n    needs: build\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    defaults:\n      run:\n        working-directory: packages/internal\n    needs: build\n",
+      ),
+    },
+    {
+      label: "workflow default working directory",
+      prior: BASE_WORKFLOW.replace(
+        "permissions:\n",
+        "defaults:\n  run:\n    working-directory: packages/public\n\npermissions:\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "permissions:\n",
+        "defaults:\n  run:\n    working-directory: packages/internal\n\npermissions:\n",
+      ),
+    },
   ])("does not call a changed $label cosmetic", async ({ prior, current }) => {
     const delta = await deltaBetween(prior, current);
 
@@ -694,28 +727,27 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
   });
 
-  it("falls back to a generic authority change when no category explains it", async () => {
-    // The category comparisons key by (workflow, job, identity), so a job that
-    // uses the *same* action twice collapses to one entry and a change in the
-    // second occurrence is not attributable to a category. The authority digest
-    // still moves, and the safety net turns that into a reported change rather
-    // than letting the release read as unchanged.
-    const twice = BASE_WORKFLOW.replace(
-      "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-      "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
-        "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+  it("reports a changed duplicate action beside another categorized change", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n" +
+        "        with:\n" +
+        "          repository-url: https://upload.pypi.org/legacy/\n" +
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n" +
+        "        with:\n" +
+        "          repository-url: https://test.pypi.org/legacy/\n",
     );
-    const moved = twice.replace(
-      "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-      "      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      - uses: actions/checkout@main\n",
-    );
+    const current = prior
+      .replace('      - "v*"', '      - "release-*"')
+      .replace("https://test.pypi.org/legacy/", "https://packages.example.test/");
 
-    const delta = await deltaBetween(twice, moved);
-    expect(delta.status).toBe("changed");
-    expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
-      significance: "medium",
-      scope: ENTRY,
+    const delta = await deltaBetween(prior, current);
+    expect(find(delta.changes, "trigger_filter_changed")).toBeDefined();
+    expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+      significance: "high",
+      subject: "pypa/gh-action-pypi-publish",
     });
+    expect(kinds(delta.changes)).not.toContain("workflow_authority_changed");
   });
 
   it("flags a changed artifact producer/consumer path", async () => {
@@ -912,6 +944,32 @@ jobs:
         workflows: [
           { path: ENTRY, content: workflow, localActionDigests: { "./actions/publish": "b" } },
         ],
+      });
+
+      const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
+
+      expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+        significance: "high",
+        subject: "./actions/publish",
+      });
+      expect(delta.status).toBe("changed");
+    });
+
+    it("flags changed local-action inputs with an unchanged directory", async () => {
+      const priorWorkflow = workflow.replace(
+        "      - uses: ./actions/publish\n",
+        "      - uses: ./actions/publish\n        with:\n          registry: https://registry.npmjs.org\n",
+      );
+      const currentWorkflow = priorWorkflow.replace(
+        "https://registry.npmjs.org",
+        "https://packages.example.test",
+      );
+      const localActionDigests = { "./actions/publish": "unchanged" };
+      const prior = await makeSnapshot({
+        workflows: [{ path: ENTRY, content: priorWorkflow, localActionDigests }],
+      });
+      const current = await makeSnapshot({
+        workflows: [{ path: ENTRY, content: currentWorkflow, localActionDigests }],
       });
 
       const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });

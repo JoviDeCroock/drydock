@@ -404,6 +404,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     null,
     null,
     doc.env,
+    { runDefaults: asRecord(doc.defaults)?.run },
   );
   if (workflowExecutionContext) projection.executionContext.push(workflowExecutionContext);
 
@@ -430,6 +431,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         container: job.container,
         services: job.services,
         outputs: job.outputs,
+        runDefaults: asRecord(job.defaults)?.run,
       },
     );
     if (jobExecutionContext) projection.executionContext.push(jobExecutionContext);
@@ -455,7 +457,10 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         step.if,
         null,
         step.env,
-        { continueOnError: step["continue-on-error"] },
+        {
+          continueOnError: step["continue-on-error"],
+          workingDirectory: step["working-directory"],
+        },
       );
       if (stepExecutionContext) projection.executionContext.push(stepExecutionContext);
       await readStep(projection, source, workflow, jobName, step);
@@ -488,6 +493,8 @@ async function readExecutionContext(
     container?: YamlValue;
     services?: YamlValue;
     outputs?: YamlValue;
+    runDefaults?: YamlValue;
+    workingDirectory?: YamlValue;
   } = {},
 ): Promise<AuthorityExecutionContext | null> {
   const condition = asString(conditionValue)?.trim() || null;
@@ -503,6 +510,10 @@ async function readExecutionContext(
   if (controlValues.container != null) controls.container = controlValues.container;
   if (controlValues.services != null) controls.services = controlValues.services;
   if (controlValues.outputs != null) controls.outputs = controlValues.outputs;
+  if (controlValues.runDefaults != null) controls.runDefaults = controlValues.runDefaults;
+  if (controlValues.workingDirectory != null) {
+    controls.workingDirectory = controlValues.workingDirectory;
+  }
   const controlsDigest =
     Object.keys(controls).length > 0 ? await sha256Hex(stableJson(controls)) : null;
   if (!condition && needs.length === 0 && !envDigest && !controlsDigest) return null;
@@ -615,7 +626,10 @@ async function readStep(
         uses,
         step.secrets,
         step.with,
-        isPublishAction(actionName) || safeguard !== null,
+        uses.trim().startsWith("./") ||
+          uses.trim().startsWith("../") ||
+          isPublishAction(actionName) ||
+          safeguard !== null,
         source.localActionDigests?.[uses.trim()] ?? null,
       ),
     );

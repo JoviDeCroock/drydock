@@ -755,92 +755,125 @@ function compareActions(
   prior: AuthorityActionRef[],
   current: AuthorityActionRef[],
 ): AuthorityChange[] {
-  const key = (item: AuthorityActionRef) =>
+  const groupKey = (item: AuthorityActionRef) =>
     `${item.workflow}\u0000${item.job}\u0000${actionIdentity(item.uses)}`;
-  const priorByKey = keyBy(prior, key);
-  const currentByKey = keyBy(current, key);
+  const priorGroups = groupBy(prior, groupKey);
+  const currentGroups = groupBy(current, groupKey);
   const changes: AuthorityChange[] = [];
 
-  for (const [actionKey, item] of currentByKey) {
-    const before = priorByKey.get(actionKey);
-    const scope = scopeLabel(item.workflow, item.job);
-    if (!before) {
-      changes.push({
-        kind: "action_added",
-        significance: "medium",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: null,
-        after: item.uses,
-      });
-      continue;
-    }
-    if (!item.pinned && before.pinned) {
-      // A pinned reference that became mutable can now change under the
-      // approval without any further review. A reference that was always
-      // mutable is standing, not a delta, and is reported separately.
-      changes.push({
-        kind: "action_unpinned",
-        significance: "high",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: before.ref,
-        after: item.ref,
-      });
-    } else if (item.pinned && !before.pinned) {
-      changes.push({
-        kind: "action_pinned",
-        significance: "low",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: before.ref,
-        after: item.ref,
-      });
-    } else if (before.ref !== item.ref) {
-      changes.push({
-        kind: "action_ref_changed",
-        significance: "medium",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: before.ref,
-        after: item.ref,
-      });
-    }
-    if (item.secretsInherit && !before.secretsInherit) {
-      changes.push({
-        kind: "secrets_inherit_added",
-        significance: "high",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: "explicit secrets",
-        after: "inherit",
-      });
-    }
-    if (item.configurationDigest !== before.configurationDigest) {
-      changes.push({
-        kind: "action_configuration_changed",
-        significance: "high",
-        scope,
-        subject: actionIdentity(item.uses),
-        before: before.configurationDigest?.slice(0, 12) ?? "not captured",
-        after: item.configurationDigest?.slice(0, 12) ?? "none",
-      });
-    }
-  }
+  for (const key of new Set([...priorGroups.keys(), ...currentGroups.keys()])) {
+    const unmatchedPrior = [...(priorGroups.get(key) ?? [])];
+    const unmatchedCurrent: AuthorityActionRef[] = [];
 
-  for (const [actionKey, item] of priorByKey) {
-    if (currentByKey.has(actionKey)) continue;
-    changes.push({
-      kind: "action_removed",
-      significance: "low",
-      scope: scopeLabel(item.workflow, item.job),
-      subject: actionIdentity(item.uses),
-      before: item.uses,
-      after: null,
-    });
+    // Match identical occurrences first. This preserves an unchanged invocation
+    // when the same action is used more than once in a job and only one call
+    // changes its ref or authority-sensitive configuration.
+    for (const item of currentGroups.get(key) ?? []) {
+      const exactIndex = unmatchedPrior.findIndex((before) => actionRefsEqual(before, item));
+      if (exactIndex >= 0) unmatchedPrior.splice(exactIndex, 1);
+      else unmatchedCurrent.push(item);
+    }
+
+    const pairedCount = Math.min(unmatchedPrior.length, unmatchedCurrent.length);
+    for (let index = 0; index < pairedCount; index += 1) {
+      compareActionPair(unmatchedPrior[index], unmatchedCurrent[index], changes);
+    }
+    for (const item of unmatchedCurrent.slice(pairedCount)) changes.push(actionAdded(item));
+    for (const item of unmatchedPrior.slice(pairedCount)) changes.push(actionRemoved(item));
   }
 
   return changes;
+}
+
+function compareActionPair(
+  before: AuthorityActionRef,
+  item: AuthorityActionRef,
+  changes: AuthorityChange[],
+): void {
+  const scope = scopeLabel(item.workflow, item.job);
+  if (!item.pinned && before.pinned) {
+    // A pinned reference that became mutable can now change under the
+    // approval without any further review. A reference that was always
+    // mutable is standing, not a delta, and is reported separately.
+    changes.push({
+      kind: "action_unpinned",
+      significance: "high",
+      scope,
+      subject: actionIdentity(item.uses),
+      before: before.ref,
+      after: item.ref,
+    });
+  } else if (item.pinned && !before.pinned) {
+    changes.push({
+      kind: "action_pinned",
+      significance: "low",
+      scope,
+      subject: actionIdentity(item.uses),
+      before: before.ref,
+      after: item.ref,
+    });
+  } else if (before.ref !== item.ref) {
+    changes.push({
+      kind: "action_ref_changed",
+      significance: "medium",
+      scope,
+      subject: actionIdentity(item.uses),
+      before: before.ref,
+      after: item.ref,
+    });
+  }
+  if (item.secretsInherit && !before.secretsInherit) {
+    changes.push({
+      kind: "secrets_inherit_added",
+      significance: "high",
+      scope,
+      subject: actionIdentity(item.uses),
+      before: "explicit secrets",
+      after: "inherit",
+    });
+  }
+  if (item.configurationDigest !== before.configurationDigest) {
+    changes.push({
+      kind: "action_configuration_changed",
+      significance: "high",
+      scope,
+      subject: actionIdentity(item.uses),
+      before: before.configurationDigest?.slice(0, 12) ?? "not captured",
+      after: item.configurationDigest?.slice(0, 12) ?? "none",
+    });
+  }
+}
+
+function actionAdded(item: AuthorityActionRef): AuthorityChange {
+  return {
+    kind: "action_added",
+    significance: "medium",
+    scope: scopeLabel(item.workflow, item.job),
+    subject: actionIdentity(item.uses),
+    before: null,
+    after: item.uses,
+  };
+}
+
+function actionRemoved(item: AuthorityActionRef): AuthorityChange {
+  return {
+    kind: "action_removed",
+    significance: "low",
+    scope: scopeLabel(item.workflow, item.job),
+    subject: actionIdentity(item.uses),
+    before: item.uses,
+    after: null,
+  };
+}
+
+function actionRefsEqual(left: AuthorityActionRef, right: AuthorityActionRef): boolean {
+  return (
+    left.uses === right.uses &&
+    left.ref === right.ref &&
+    left.pinned === right.pinned &&
+    left.secretsInherit === right.secretsInherit &&
+    left.configurationDigest === right.configurationDigest
+  );
 }
 
 function compareArtifactFlow(
