@@ -441,8 +441,10 @@ export const ScanDetailModel = createModel((id: string) => {
   // from `pollingStalled`: the report is complete and on screen, so the UI drops
   // the running indicator rather than warning that a review never finished.
   const aiPollingStopped = signal(false);
-  // Whether a full `GET /scans/:id` has ever landed for this scan. Distinct from
-  // "the detail has files": a degraded artifact read returns neither.
+  // Whether a full completed report has landed for this scan. Distinct from
+  // "the detail has files": a degraded artifact read returns neither. A full
+  // response received while the scan is still running does not contain the
+  // eventual report and must not suppress that report fetch on completion.
   const fullDetailLoaded = signal(false);
   const versions = signal<ScanVersionsResponse | null>(null);
   const selectedVersion = signal<string | null>(null);
@@ -649,7 +651,7 @@ export const ScanDetailModel = createModel((id: string) => {
         const data = await getScan(id);
         batch(() => {
           this.detail.value = data;
-          fullDetailLoaded.value = true;
+          fullDetailLoaded.value = data.scan.status === "complete";
           this.share.value = data.scan.publicShareToken
             ? {
                 token: data.scan.publicShareToken,

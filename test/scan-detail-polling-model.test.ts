@@ -37,6 +37,25 @@ function aiPendingDetail(): PersistedScanDetail {
   };
 }
 
+function completedReportDetail(): PersistedScanDetail {
+  const detail = aiPendingDetail();
+  return {
+    ...detail,
+    files: [
+      {
+        id: "file-1",
+        scanId: "scan-1",
+        path: "index.js",
+        status: "added",
+        size: 18,
+        sha256: "sha256",
+        flagsJson: [],
+        textSample: "module.exports = 1",
+      },
+    ],
+  };
+}
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -166,6 +185,32 @@ describe("ScanDetailModel polling", () => {
     expect(model.pollingStalled.value).toBe(false);
     expect(model.aiPollingStopped.value).toBe(false);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  test("fetches the completed report after the initial load returns a running scan", async () => {
+    const completed = completedReportDetail();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/status")) {
+        return Promise.resolve(jsonResponse({ scan: completed.scan }));
+      }
+      if (url.endsWith("?poll=1")) return Promise.resolve(jsonResponse(completed));
+      return Promise.resolve(jsonResponse(runningDetail()));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanDetailModel("scan-1");
+    await model.load();
+
+    await vi.advanceTimersByTimeAsync(SCAN_POLL_BASE_DELAY_MS);
+
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/v1/scans/scan-1",
+      "/api/v1/scans/scan-1/status",
+      "/api/v1/scans/scan-1?poll=1",
+    ]);
+    expect(model.detail.value?.scan.status).toBe("complete");
+    expect(model.detail.value?.files).toEqual(completed.files);
   });
 
   test("latches aiPollingStopped once it gives up on a pending review", async () => {
