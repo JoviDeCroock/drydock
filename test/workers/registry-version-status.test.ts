@@ -67,6 +67,7 @@ async function seedOrg(): Promise<Seeded> {
 async function seedCompletedScan(
   org: Seeded,
   overrides: {
+    scanId?: string;
     stageId?: string;
     version?: string;
     createdAt?: Date;
@@ -75,7 +76,7 @@ async function seedCompletedScan(
   } = {},
 ) {
   const db = createDb(env.DB);
-  const scanId = crypto.randomUUID();
+  const scanId = overrides.scanId ?? crypto.randomUUID();
   const stageId = overrides.stageId ?? `stage-${scanId.slice(0, 8)}`;
   await createScanJob(db, {
     id: scanId,
@@ -187,6 +188,71 @@ describe("registry version status resolution", () => {
     expect(recovered.registryVersion).toBe(VERSION);
     expect(recovered.registryStatusSupersededAt).toBeNull();
     expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+  });
+
+  test.each([
+    { packageName: PACKAGE, stagedVersion: null },
+    { packageName: null, stagedVersion: VERSION },
+  ])("completes partially known registry coordinates", async ({ packageName, stagedVersion }) => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, {
+      createdAt: new Date("2026-08-20T10:00:00.000Z"),
+    });
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-partial-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+      packageName,
+      stagedVersion,
+    });
+
+    await backfillScanRegistryReleaseIdentity(db, {
+      scanId,
+      organizationId: org.organizationId,
+      registryUrl: REGISTRY_URL,
+      packageName: PACKAGE,
+      version: VERSION,
+      observedAt: new Date("2026-08-21T10:00:00.000Z"),
+    });
+
+    const recovered = await readScan(scanId);
+    expect(recovered.registryPackageName).toBe(PACKAGE);
+    expect(recovered.registryVersion).toBe(VERSION);
+    expect(recovered.registryStatusSupersededAt).toBeNull();
+    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+  });
+
+  test("uses insertion order when recovered owners share a creation timestamp", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const createdAt = new Date("2026-08-20T10:00:00.000Z");
+    const older = await seedCompletedScan(org, { scanId: "scan-z", createdAt });
+    const scanId = "scan-a";
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-recovered-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+    });
+    await db.update(schema.scans).set({ createdAt }).where(eq(schema.scans.id, scanId));
+
+    await backfillScanRegistryReleaseIdentity(db, {
+      scanId,
+      organizationId: org.organizationId,
+      registryUrl: REGISTRY_URL,
+      packageName: PACKAGE,
+      version: VERSION,
+      observedAt: new Date("2026-08-21T10:00:00.000Z"),
+    });
+
+    expect(older.scanId.localeCompare(scanId)).toBeGreaterThan(0);
+    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+    expect((await readScan(scanId)).registryStatusSupersededAt).toBeNull();
   });
 
   test("does not let a late identity recovery displace a newer owner", async () => {
