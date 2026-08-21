@@ -13,10 +13,11 @@ import path from "node:path";
 // the output honest.
 export const OXLINT_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"];
 
-// oxfmt also formats JSON, Markdown, CSS, and YAML (verified against oxfmt
-// 0.62: a misformatted file of each kind fails `--check`). `.oxfmtrc.json`
-// ignorePatterns still apply; --no-error-on-unmatched-pattern keeps explicitly
-// passed ignored files from turning into an error.
+// oxfmt also formats JSON, Markdown, CSS, YAML, and HTML — but not XML or SVG
+// (verified against oxfmt 0.62: a misformatted file of each kind fails
+// `--check`, xml/svg report "no files found"). `.oxfmtrc.json` ignorePatterns
+// still apply; --no-error-on-unmatched-pattern keeps explicitly passed ignored
+// files from turning into an error.
 export const OXFMT_EXTENSIONS = [
   ...OXLINT_EXTENSIONS,
   ".json",
@@ -25,6 +26,7 @@ export const OXFMT_EXTENSIONS = [
   ".css",
   ".yaml",
   ".yml",
+  ".html",
 ];
 
 function git(args, cwd) {

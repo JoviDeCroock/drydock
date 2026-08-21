@@ -105,7 +105,7 @@ describe("listChangedFiles", () => {
 });
 
 describe("filterByExtension", () => {
-  const changed = ["a.ts", "b.md", "c file.tsx", "d.sql", "e.json", "f.mjs"];
+  const changed = ["a.ts", "b.md", "c file.tsx", "d.sql", "e.json", "f.mjs", "g.html", "h.svg"];
 
   it("keeps only lintable files for oxlint", () => {
     expect(filterByExtension(changed, OXLINT_EXTENSIONS)).toEqual(["a.ts", "c file.tsx", "f.mjs"]);
@@ -118,6 +118,7 @@ describe("filterByExtension", () => {
       "c file.tsx",
       "e.json",
       "f.mjs",
+      "g.html",
     ]);
   });
 });

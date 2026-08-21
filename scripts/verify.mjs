@@ -55,13 +55,24 @@ function buildQuickChecks() {
     process.stdout.write("  SKIP format:check — no changed files oxfmt handles\n");
   }
 
+  // "./" keeps a hypothetical dash-leading filename from parsing as a flag;
+  // both tools still apply their ignore patterns to "./"-prefixed paths.
+  const asArgs = (files) => files.map((file) => `./${file}`);
   return [
-    ...(lintFiles.length > 0 ? [{ name: "lint", args: ["exec", "oxlint", ...lintFiles] }] : []),
+    ...(lintFiles.length > 0
+      ? [{ name: "lint", args: ["exec", "oxlint", ...asArgs(lintFiles)] }]
+      : []),
     ...(formatFiles.length > 0
       ? [
           {
             name: "format:check",
-            args: ["exec", "oxfmt", "--check", "--no-error-on-unmatched-pattern", ...formatFiles],
+            args: [
+              "exec",
+              "oxfmt",
+              "--check",
+              "--no-error-on-unmatched-pattern",
+              ...asArgs(formatFiles),
+            ],
           },
         ]
       : []),
