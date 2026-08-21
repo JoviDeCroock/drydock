@@ -6,12 +6,12 @@ import {
   organizationRequiresTwoFactorForReleaseDecisions,
 } from "../db/organizations";
 import {
+  findLatestApprovedAuthoritySnapshotId,
   type ReleaseAuthorityRecord,
-  markAuthoritySnapshotApproved,
   refreshReleaseAuthorityDeltaForGate,
   releaseAuthorityAcknowledgementToken,
 } from "../db/release-authority";
-import { getScan, recordGatePackageDecision } from "../db/scans";
+import { claimGatePackageDecision, getScan, recordClaimedGatePackageDecision } from "../db/scans";
 import { badgeLookupKey } from "../db/scan-share";
 import {
   requireActiveOrganization,
@@ -28,7 +28,6 @@ import {
 import { purgePublicFeedCache, scanDistTag } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
-import { scanArtifactReadBucket } from "../lib/scan/artifacts";
 import {
   buildHumanDecisionComment,
   buildReportUrl,
@@ -550,8 +549,30 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // the per-package decision is recorded so a refused approval leaves no
   // partial state behind, and it never applies to a rejection: blocking a
   // release must stay one click.
+  let authorityForDecision: ReleaseAuthorityRecord | null = null;
+  let expectedLatestApprovedSnapshotId: string | null | undefined;
+  let orgRequiresAuthorityApproval = false;
   if (decision === "approved") {
-    const authority = await refreshReleaseAuthorityDeltaForGate(db, organizationId, gateId);
+    orgRequiresAuthorityApproval = await organizationRequiresAuthorityChangeApproval(
+      db,
+      organizationId,
+    );
+    // Read the revision before refreshing the delta. If an overlapping approval
+    // lands between these reads, the final atomic CAS rejects conservatively;
+    // reading them in the opposite order could bind a fresh revision to a stale
+    // delta and let it through.
+    const authorityRevision = orgRequiresAuthorityApproval
+      ? await findLatestApprovedAuthoritySnapshotId(db, {
+          organizationId,
+          releaseTargetId: existing.releaseTargetId,
+          excludeGateId: gateId,
+        })
+      : undefined;
+    authorityForDecision = await refreshReleaseAuthorityDeltaForGate(db, organizationId, gateId);
+    if (orgRequiresAuthorityApproval && authorityForDecision?.delta) {
+      expectedLatestApprovedSnapshotId = authorityRevision;
+    }
+    const authority = authorityForDecision;
     const requiresAuthorityApproval = authority?.delta?.requiresApproval === true;
     const acknowledgementToken = await releaseAuthorityAcknowledgementToken(authority);
     const acknowledgedCurrentDelta =
@@ -559,10 +580,6 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       typeof body.authorityAcknowledgementToken === "string" &&
       body.authorityAcknowledgementToken === acknowledgementToken;
     if (requiresAuthorityApproval && !acknowledgedCurrentDelta) {
-      const orgRequiresAuthorityApproval = await organizationRequiresAuthorityChangeApproval(
-        db,
-        organizationId,
-      );
       if (orgRequiresAuthorityApproval) {
         const packages = await listGatePackageScans(db, organizationId, gateId);
         return c.json(
@@ -630,24 +647,19 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
-  // Persist the per-package decision while the gate is still pending.
-  // `recordGatePackageDecision` also writes the `scan.decided` audit event and
-  // keeps the workbench decision filters consistent (approved → publish,
-  // rejected → no_publish).
-  const decidedPackage = await recordGatePackageDecision(
-    db,
-    {
-      scanId: packageScanId,
-      organizationId,
-      gateId,
-      actorUserId: session.userId,
-      decision: decision === "approved" ? "publish" : "no_publish",
-      reason: comment || null,
-    },
-    scanArtifactReadBucket(c.env),
-    c.env,
-  );
-  if (!decidedPackage) {
+  // Claim the per-package decision while the gate is still pending. Its audit
+  // and product events are delayed until the finalizing batch either commits or
+  // confirms that another request already finalized the gate.
+  const packageDecisionInput = {
+    scanId: packageScanId,
+    organizationId,
+    gateId,
+    actorUserId: session.userId,
+    decision: decision === "approved" ? ("publish" as const) : ("no_publish" as const),
+    reason: comment || null,
+  };
+  const claimedPackage = await claimGatePackageDecision(db, packageDecisionInput);
+  if (!claimedPackage) {
     const current = await getGateForOrganization(db, organizationId, gateId);
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
@@ -666,18 +678,18 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // assert ("reviewed · risk" → "approved"/"blocked"); drop both so the
   // change is not delayed by the colo TTL in at least this region. Same
   // canonical-origin purge as the staged decision route and (un)listing.
-  if (decidedPackage.scan.publicFeedListedAt) {
+  if (scan.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
       badgeLookupKey({
-        source: decidedPackage.scan.source,
-        packageName: decidedPackage.scan.packageName,
-        summaryJson: decidedPackage.scan.summaryJson,
+        source: scan.scan.source,
+        packageName: scan.scan.packageName,
+        summaryJson: scan.scan.summaryJson,
       }),
       // Gate scans carry no dist-tag today, so this resolves to the default
       // entry — passed explicitly so it stays correct if they ever do.
-      scanDistTag(decidedPackage.scan.summaryJson),
+      scanDistTag(scan.scan.summaryJson),
     );
   }
 
@@ -688,6 +700,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
     // Other packages still need a decision; keep the deployment held.
+    await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
     return c.json({ gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor) });
   }
   if (allApproved && !existing.scanId) {
@@ -708,10 +721,53 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     decision: gateDecision,
     comment: comment || buildHumanDecisionComment(gateDecision, reportUrl),
     reportUrl,
+    packageClaim: {
+      scanId: packageScanId,
+      actorUserId: session.userId,
+      decidedAt: claimedPackage.decidedAt,
+      decision: packageDecisionInput.decision,
+    },
+    authorityApproval:
+      gateDecision === "approved"
+        ? {
+            approvedByUserId: session.userId,
+            releaseTargetId: existing.releaseTargetId,
+            expectedLatestApprovedSnapshotId,
+          }
+        : undefined,
   });
   if (!decided) {
-    // Lost a race to a concurrent finalize or a fail-closed artifact reject.
+    // Lost a race to a concurrent finalize, an overlapping authority approval,
+    // or a fail-closed artifact reject. The atomic batch restores this package
+    // claim when the gate is still pending, so a stale authority delta can be
+    // reloaded and submitted again without leaving partial decision state.
     const current = await getGateForOrganization(db, organizationId, gateId);
+    if (current?.status !== "pending") {
+      await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
+    }
+    if (
+      current?.status === "pending" &&
+      gateDecision === "approved" &&
+      orgRequiresAuthorityApproval &&
+      authorityForDecision?.delta
+    ) {
+      const refreshedAuthority = await refreshReleaseAuthorityDeltaForGate(
+        db,
+        organizationId,
+        gateId,
+      );
+      const currentPackages = await listGatePackageScans(db, organizationId, gateId);
+      return c.json(
+        {
+          gate: publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor),
+          error:
+            "the approved release-authority baseline changed while this decision was being submitted — review the refreshed delta and confirm it again",
+          code: "authority_change_acknowledgement_required",
+          authorityChangeCount: refreshedAuthority?.delta?.changeCount ?? 0,
+        },
+        409,
+      );
+    }
     return c.json(
       {
         gate: current ? publicWorkflowGate(current, packages, orgRequiresTwoFactor) : null,
@@ -727,6 +783,17 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const message = { kind: "workflow_gate" as const, organizationId, gateId };
   c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
 
+  try {
+    await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.package_decision_bookkeeping_failed", {
+      organizationId,
+      gateId,
+      scanId: packageScanId,
+      error: describeOperationalError(err),
+    });
+  }
+
   // Counted separately from the automatic block below, so approval rate stays
   // measurable against reviews instead of being diluted by auto-rejections.
   recordProductEvent(c.env, {
@@ -736,26 +803,6 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     decision: gateDecision,
     packageCount: packages.length,
   });
-
-  // The durable approval record: this release's authority snapshot is what
-  // future releases on this boundary are compared against, bound to the exact
-  // artifact digests it was captured with. Only an approved gate sets it, so a
-  // rejected authority change can never launder itself into the baseline.
-  if (gateDecision === "approved") {
-    try {
-      await markAuthoritySnapshotApproved(db, {
-        organizationId,
-        gateId,
-        approvedByUserId: session.userId,
-      });
-    } catch (err) {
-      emitOperationalEvent("warn", "github_workflow_gate.authority_approval_failed", {
-        organizationId,
-        gateId,
-        error: describeOperationalError(err),
-      });
-    }
-  }
 
   try {
     await recordScanEvent(db, {

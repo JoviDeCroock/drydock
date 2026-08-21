@@ -345,7 +345,10 @@ export default function ScanDetailPage() {
             {/* Sits above the diff because it answers the prior question: the
                 diff says what is in the release, this says whether the
                 machinery that produced it is still the agreed one. */}
-            <ReleaseAuthoritySection authority={detail.releaseAuthority} />
+            <ReleaseAuthoritySection
+              authority={detail.releaseAuthority}
+              workflowGate={detail.scan.source === "workflow_gate"}
+            />
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">

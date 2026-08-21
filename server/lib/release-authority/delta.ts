@@ -443,6 +443,7 @@ function comparePermissions(
   const priorBlocks = keyBy(prior, blockKey);
   const currentBlocks = keyBy(current, blockKey);
   const changes: AuthorityChange[] = [];
+  const shorthandBlocks = new Set<string>();
 
   // Dropping the `permissions:` block entirely is not a narrowing — the job
   // falls back to the repository default, which is usually broader than any
@@ -470,7 +471,27 @@ function comparePermissions(
     });
   }
 
+  // `read-all` / `write-all` / `{}` are stored as the synthetic `*` scope.
+  // Compare those blocks semantically instead of treating `*` as an ordinary
+  // newly added scope: moving from an explicit allowlist to read-all widens
+  // every unlisted permission, even when the explicit scopes themselves did
+  // not change level.
+  for (const key of priorBlocks.keys()) {
+    if (!currentBlocks.has(key)) continue;
+    const priorItems = prior.filter((item) => blockKey(item) === key);
+    const currentItems = current.filter((item) => blockKey(item) === key);
+    if (
+      !priorItems.some((item) => item.scope === "*") &&
+      !currentItems.some((item) => item.scope === "*")
+    ) {
+      continue;
+    }
+    shorthandBlocks.add(key);
+    changes.push(...comparePermissionShorthandBlock(priorItems, currentItems));
+  }
+
   for (const [key, item] of currentByScope) {
+    if (shorthandBlocks.has(blockKey(item))) continue;
     const before = priorByScope.get(key);
     const scope = scopeLabel(item.workflow, item.job);
     if (!before) {
@@ -500,6 +521,7 @@ function comparePermissions(
   }
 
   for (const [key, item] of priorByScope) {
+    if (shorthandBlocks.has(blockKey(item))) continue;
     if (currentByScope.has(key)) continue;
     if (!currentBlocks.has(blockKey(item))) continue;
     changes.push({
@@ -513,6 +535,88 @@ function comparePermissions(
   }
 
   return changes;
+}
+
+function comparePermissionShorthandBlock(
+  prior: AuthorityPermission[],
+  current: AuthorityPermission[],
+): AuthorityChange[] {
+  const beforeStar = prior.find((item) => item.scope === "*");
+  const afterStar = current.find((item) => item.scope === "*");
+  const representative = current[0] ?? prior[0];
+  if (!representative) return [];
+  const scope = scopeLabel(representative.workflow, representative.job);
+  const changes: AuthorityChange[] = [];
+
+  if (beforeStar && afterStar) {
+    const change = permissionLevelChange(scope, "*", beforeStar.level, afterStar.level);
+    return change ? [change] : [];
+  }
+
+  if (afterStar) {
+    for (const item of prior) {
+      const change = permissionLevelChange(scope, item.scope, item.level, afterStar.level);
+      if (change) changes.push(change);
+    }
+    if (afterStar.level !== "none") {
+      changes.push({
+        kind: "permission_widened",
+        significance: "high",
+        scope,
+        subject: "unlisted scopes",
+        before: "none",
+        after: afterStar.level,
+      });
+    }
+    return changes;
+  }
+
+  if (!beforeStar) return changes;
+  for (const item of current) {
+    if (beforeStar.level === "none") {
+      if (item.level === "none") continue;
+      changes.push({
+        kind: "permission_added",
+        significance: item.level === "write" ? "high" : "medium",
+        scope,
+        subject: item.scope,
+        before: null,
+        after: item.level,
+      });
+      continue;
+    }
+    const change = permissionLevelChange(scope, item.scope, beforeStar.level, item.level);
+    if (change) changes.push(change);
+  }
+  if (beforeStar.level !== "none") {
+    changes.push({
+      kind: "permission_narrowed",
+      significance: "low",
+      scope,
+      subject: "unlisted scopes",
+      before: beforeStar.level,
+      after: "none",
+    });
+  }
+  return changes;
+}
+
+function permissionLevelChange(
+  scope: string,
+  subject: string,
+  before: PermissionLevel,
+  after: PermissionLevel,
+): AuthorityChange | null {
+  if (before === after) return null;
+  const widened = PERMISSION_RANK[after] > PERMISSION_RANK[before];
+  return {
+    kind: widened ? "permission_widened" : "permission_narrowed",
+    significance: widened ? "high" : "low",
+    scope,
+    subject,
+    before,
+    after,
+  };
 }
 
 function compareEnvironments(

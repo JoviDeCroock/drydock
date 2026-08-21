@@ -9,16 +9,20 @@ import {
   setRequireAuthorityChangeApproval,
 } from "../../server/db/organizations";
 import {
+  findLatestApprovedAuthoritySnapshotId,
   findApprovedAuthorityBaseline,
   getReleaseAuthorityForGate,
   markAuthoritySnapshotApproved,
 } from "../../server/db/release-authority";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { claimGatePackageDecision, createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import type { WorkflowGateRecord } from "../../server/lib/github-app/webhook-gates";
-import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import {
+  getGateForOrganization,
+  markGateDecidedForPackageAggregate,
+} from "../../server/lib/github-app/webhook-gates";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { captureReleaseAuthority } from "../../server/lib/release-authority/capture";
 
@@ -823,6 +827,101 @@ describe("release-authority approval policy", () => {
       .from(schema.scans)
       .where(eq(schema.scans.id, stale.scanId));
     expect(scan[0]?.decision).toBeNull();
+  });
+
+  test("atomically rejects an approval when the authority revision moves after refresh", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stale = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
+    const authorityRevision = await findLatestApprovedAuthoritySnapshotId(db, {
+      organizationId: fixture.organizationId,
+      releaseTargetId: fixture.releaseTargetId,
+      excludeGateId: stale.gate.id,
+    });
+
+    const claimed = await claimGatePackageDecision(db, {
+      scanId: stale.scanId,
+      organizationId: fixture.organizationId,
+      gateId: stale.gate.id,
+      actorUserId: fixture.userId,
+      decision: "publish",
+      reason: null,
+    });
+    expect(claimed).not.toBeNull();
+
+    // Another release becomes the approved baseline after this request read its
+    // revision and delta but before it reaches the final gate CAS.
+    const moved = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "c".repeat(40),
+    });
+    await capture(fixture, moved.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: moved.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const decided = await markGateDecidedForPackageAggregate(db, {
+      gateId: stale.gate.id,
+      organizationId: fixture.organizationId,
+      decision: "approved",
+      comment: "approved",
+      packageClaim: {
+        scanId: stale.scanId,
+        actorUserId: fixture.userId,
+        decidedAt: claimed!.decidedAt,
+        decision: "publish",
+      },
+      authorityApproval: {
+        approvedByUserId: fixture.userId,
+        releaseTargetId: fixture.releaseTargetId,
+        expectedLatestApprovedSnapshotId: authorityRevision,
+      },
+    });
+
+    expect(decided).toBeNull();
+    expect(await getGateForOrganization(db, fixture.organizationId, stale.gate.id)).toMatchObject({
+      status: "pending",
+    });
+    const [scan] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, stale.scanId));
+    expect(scan?.decision).toBeNull();
+    const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
+    expect(authority?.approvedAt).toBeNull();
   });
 
   test("never blocks a rejection on an unacknowledged authority change", async () => {

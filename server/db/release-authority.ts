@@ -175,6 +175,33 @@ export interface BaselineLookupInput {
 }
 
 /**
+ * Revision of the approved authority state for one release target. Read before
+ * refreshing a pending delta, then checked again by the atomic gate-finalize
+ * batch. Any overlapping approval changes this id and invalidates the stale
+ * decision, including an approval on another release path that can affect the
+ * no-baseline/new-path comparison.
+ */
+export async function findLatestApprovedAuthoritySnapshotId(
+  db: AppDb,
+  input: { organizationId: string; releaseTargetId: string; excludeGateId: string },
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: releaseAuthoritySnapshots.id })
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.releaseTargetId, input.releaseTargetId),
+        ne(releaseAuthoritySnapshots.gateId, input.excludeGateId),
+        isNotNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    )
+    .orderBy(desc(releaseAuthoritySnapshots.approvedAt), desc(releaseAuthoritySnapshots.id))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
  * The most recently approved snapshot for the same release boundary, or null.
  *
  * Only approved snapshots are eligible. A release that was reviewed but never

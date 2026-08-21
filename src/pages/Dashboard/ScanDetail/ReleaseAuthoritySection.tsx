@@ -66,10 +66,26 @@ const CHANGE_LABEL: Record<AuthorityChangeKind, string> = {
 
 export function ReleaseAuthoritySection({
   authority,
+  workflowGate,
 }: {
   authority: PersistedReleaseAuthority | null | undefined;
+  workflowGate: boolean;
 }) {
-  if (!authority) return null;
+  if (!authority) {
+    if (!workflowGate) return null;
+    return (
+      <section class="flex flex-col gap-3 min-w-0">
+        <SectionLabel as="h2" aside={<Badge tone="neutral">not assessed</Badge>}>
+          Release authority
+        </SectionLabel>
+        <Alert tone="warn">
+          The publishing authority behind this workflow-gated release was not captured. Treat it as
+          unreviewed rather than unchanged, and inspect the workflow and run directly before making
+          a release decision.
+        </Alert>
+      </section>
+    );
+  }
   const delta = authority.delta;
 
   return (

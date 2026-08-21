@@ -205,6 +205,26 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).not.toContain("permission_removed");
   });
 
+  it("treats an explicit permissions allowlist becoming read-all as a widening", async () => {
+    const readAll = BASE_WORKFLOW.replace(
+      "    permissions:\n      id-token: write\n      contents: read\n",
+      "    permissions: read-all\n",
+    );
+    const delta = await deltaBetween(BASE_WORKFLOW, readAll);
+
+    expect(delta.highestSignificance).toBe("high");
+    expect(delta.changes).toContainEqual(
+      expect.objectContaining({
+        kind: "permission_widened",
+        significance: "high",
+        scope: `${ENTRY}/publish`,
+        subject: "unlisted scopes",
+        before: "none",
+        after: "read",
+      }),
+    );
+  });
+
   it("flags a newly added dangerous trigger above an ordinary one", async () => {
     const dispatch = await deltaBetween(
       BASE_WORKFLOW,
