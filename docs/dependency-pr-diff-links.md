@@ -59,23 +59,68 @@ Shape notes, so edits keep the links correct:
 ## Dependabot
 
 Dependabot has no PR-body templating. The documented path is a small workflow
-using `dependabot/fetch-metadata` (which parses the bump from the PR) plus a
-`gh pr comment` call — copy-paste YAML on the Docs page, no Drydock-owned
-action required. The workflow never checks out or executes PR code, so granting
-`pull-requests: write` to the Dependabot-triggered run is safe. Note that
-Dependabot-triggered `pull_request` runs honor the workflow-level `permissions`
-key (GitHub changelog 2022-02-10); the `dependabot/fetch-metadata` README still
-recommends `pull_request_target` for write access, but GitHub's own Dependabot
-automation tutorial uses exactly this `pull_request` + `permissions` shape.
-Grouped Dependabot PRs join every updated dependency into `dependency-names`
-while `previous-version`/`new-version` describe only the first of them, so the
-snippet's comma guard — not the empty-version guard — is what keeps it to
-single-dependency PRs.
+using `dependabot/fetch-metadata` plus a comment upsert — copy-paste YAML on the
+Docs page, no Drydock-owned action required. The workflow never checks out or
+executes PR code, so granting `pull-requests: write` to the Dependabot-triggered
+run is safe. Note that Dependabot-triggered `pull_request` runs honor the
+workflow-level `permissions` key (GitHub changelog 2022-02-10); the
+`dependabot/fetch-metadata` README still recommends `pull_request_target` for
+write access, but GitHub's own Dependabot automation tutorial uses exactly this
+`pull_request` + `permissions` shape.
 
-This repository runs the documented snippet against its own Dependabot PRs in
+`fetch-metadata` runs first for its own sake, not only for its outputs: it fails
+the job unless the PR's first commit is an authentic, signed Dependabot commit.
+That verification is what makes it safe for the next step to parse that commit
+message, so nothing may be reordered ahead of it.
+
+### Grouped PRs and where the versions come from
+
+Grouped updates are Dependabot's recommended default and, for a repository that
+groups by dependency type, they are effectively every PR — so a workflow that
+handles only single-dependency PRs never fires. The group is the case that
+matters most anyway: eight bumps in one PR is exactly where a reviewer wants
+eight diffs.
+
+The version pair is read from a different place per shape, and the reason is
+subtle enough to state outright:
+
+- **Single-dependency PRs** use the action's `previous-version`/`new-version`
+  outputs.
+- **Grouped PRs** are detected by a comma in `dependency-names` (the action
+  joins every updated dependency into that one output) and are parsed from the
+  ``Updates `name` from A to B`` lines in the commit message. Dependabot emits
+  those lines only when a PR updates more than one dependency, which is why the
+  single-dependency path cannot use them.
+
+Grouped PRs do not use the action's own per-dependency output
+(`updated-dependencies-json`) even though one exists, because the action fills
+each entry's new version from the commit's `dependency-version` metadata in
+preference to the `Updates` line, and that metadata can lag the version the PR
+actually merges once Dependabot revises a group. Observed on this repository's
+PR #589: the metadata claimed `@cloudflare/vite-plugin` 1.51.2 and `knip` 6.32.1
+while the manifest in the same PR moved to 1.52.1 and 6.32.2. Both stale values
+are real published releases, so the links would have resolved — to a range the
+PR does not merge. The `Updates` lines matched the manifest for all eight.
+No link beats a confidently wrong one, the same rule the Renovate guards follow.
+
+Because a grouped PR is rewritten in place as its contents change, the workflow
+triggers on `synchronize` as well as `opened` and upserts one comment keyed by a
+`<!-- drydock:diff-link -->` marker, rather than stacking a new comment under
+each stale one — the same marker convention
+`scripts/comment-detection-eval.mjs` uses for its PR comment. A per-PR
+`concurrency` group keeps two quick pushes from racing the read-then-write into
+duplicate comments.
+
+Unlike that script, this logic stays inline in the workflow rather than moving
+under `scripts/`: the published artifact is copy-paste YAML for repositories
+that cannot reference anything in this one, so a shared script would be
+reachable only by us and would end the dogfooding below.
+
+This repository runs the documented workflow against its own Dependabot PRs in
 `.github/workflows/drydock-diff-link.yml`, pinned to a `fetch-metadata` commit
-per the `.github/workflows/ci.yml` convention. Keep the two in step: it is the
-only place the copy-paste YAML is actually exercised.
+per the `.github/workflows/ci.yml` convention where the published snippet floats
+on `@v3`. That pin is the only intended difference; keep the two otherwise in
+step, since the repository copy is the only place the snippet is exercised.
 
 ## Operational posture
 
