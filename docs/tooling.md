@@ -74,6 +74,15 @@ them out of the worker boot graph.
 
 Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
 
+## Agent hooks
+
+`scripts/hooks/` holds harness-agnostic hook scripts that give coding agents edit-time feedback. Each accepts the target file as `argv[2]` or as hook JSON on stdin (Claude Code's `tool_input.file_path` shape; Codex CLI's `apply_patch` patch envelope is also parsed):
+
+- `post-edit-check.mjs` — after an Edit/Write, runs `oxfmt --check` + `oxlint` scoped to the edited file and exits 2 with a concise message on violations. Report-only by design: rewriting the file in place would invalidate the harness's file-state tracking and cause "file modified since read" friction on the next edit. It fails open (exit 0) on unparseable input, missing files, or missing binaries — `pnpm run verify` stays authoritative. The target file is never executed.
+- `guard-protected-paths.mjs` — before an Edit/Write, blocks (exit 2) writes to `drizzle/**/*.sql` and `drizzle/meta/**`; migrations are generated via `pnpm db:generate` (Bash, unaffected). It only blocks clearly matched paths and fails open otherwise.
+
+Wired for Claude Code in `.claude/settings.json` (PreToolUse/PostToolUse on `Edit|Write`) and for Codex CLI in `.codex/hooks.json` (same schema; Codex maps `Edit`/`Write` matchers onto `apply_patch` and requires trusting project hooks via `/hooks` once). Tests: `test/agent-hooks.test.mjs`.
+
 ## Banned hooks
 
 `useState` and `useReducer` are forbidden via oxlint's `no-restricted-imports` from `preact/hooks` (and `react`, defensively). The codebase is migrating component-local state to:

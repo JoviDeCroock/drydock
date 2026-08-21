@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/guard-protected-paths.mjs\"",
+            "statusMessage": "Guarding generated migration paths",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/post-edit-check.mjs\"",
+            "statusMessage": "Checking edited file with oxfmt/oxlint",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

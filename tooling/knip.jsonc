@@ -1,5 +1,11 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Agent-harness hooks: the entry points are invoked by Claude Code and Codex
+  // CLI from .claude/settings.json / .codex/hooks.json, which knip can't read.
+  "entry": [
+    "scripts/hooks/guard-protected-paths.mjs",
+    "scripts/hooks/post-edit-check.mjs"
+  ],
   "ignore": [
     // Package fixtures are hostile-evidence samples the fixture builder reads as
     // bytes at runtime; they are never part of the module graph.
