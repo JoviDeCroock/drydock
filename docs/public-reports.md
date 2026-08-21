@@ -15,6 +15,12 @@ a shields.io badge per package and an opt-in public threat feed.
   revoke.
 - Both actions are recorded as scan events (`scan.share_enabled`,
   `scan.share_revoked`) and surface in the organization audit log.
+- Revocation is the owner's action and nothing else's: the opt-in
+  `SCAN_RETENTION_DAYS` sweep ([`artifact-storage.md`](./artifact-storage.md))
+  excludes scans with a live share token, so a link an owner handed out — and
+  the feed listing and badge that hang off it — never disappears because a
+  background job aged the scan out. Revoking the share returns the scan to the
+  retention window.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
 - That button only appears once the release is decided `publish` — a public
