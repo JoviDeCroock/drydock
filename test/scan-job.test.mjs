@@ -143,6 +143,19 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry a staged release identity mismatch", () => {
+    expect(
+      classifyScanError(
+        new Error("The staged release identity changed after this scan was queued."),
+      ),
+    ).toEqual({
+      code: "staged_release_identity_changed",
+      message:
+        "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
+      retryable: false,
+    });
+  });
+
   test("does not retry archive file-count limit failures", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),

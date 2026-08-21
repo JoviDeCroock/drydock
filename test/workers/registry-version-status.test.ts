@@ -226,6 +226,35 @@ describe("registry version status resolution", () => {
     expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
   });
 
+  test("rejects recovered coordinates that disagree with the queued identity", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-mismatched-123",
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      registryUrl: REGISTRY_URL,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+    });
+
+    await expect(
+      backfillScanRegistryReleaseIdentity(db, {
+        scanId,
+        organizationId: org.organizationId,
+        registryUrl: REGISTRY_URL,
+        packageName: "@drydock/different-package",
+        version: "9.9.9",
+      }),
+    ).resolves.toBe("mismatch");
+
+    const scan = await readScan(scanId);
+    expect(scan.registryPackageName).toBe(PACKAGE);
+    expect(scan.registryVersion).toBe(VERSION);
+  });
+
   test("uses insertion order when recovered owners share a creation timestamp", async () => {
     const org = await seedOrg();
     const db = createDb(env.DB);

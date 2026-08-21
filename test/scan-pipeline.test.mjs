@@ -201,6 +201,21 @@ describe("scan pipeline baseline selection", () => {
     );
   });
 
+  test("fails when staged details disagree with the queued registry identity", async () => {
+    dbMock.backfillScanRegistryReleaseIdentity.mockResolvedValueOnce("mismatch");
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_registry_identity_mismatch",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+        registryUrl: "https://registry.npmjs.org",
+      }),
+    ).rejects.toThrow("staged release identity changed after this scan was queued");
+
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
   test("propagates credential failures during baseline metadata lookup", async () => {
     dbMock.getNpmConnection
       .mockResolvedValueOnce({

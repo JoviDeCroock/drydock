@@ -334,6 +334,14 @@ export function classifyScanError(err: unknown): SafeScanError {
       retryable: false,
     };
   }
+  if (message.includes("staged release identity changed after this scan was queued")) {
+    return {
+      code: "staged_release_identity_changed",
+      message:
+        "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
+      retryable: false,
+    };
+  }
   emitOperationalEvent("error", "scan.error.unclassified", {
     error: describeOperationalError(err),
   });

@@ -90,12 +90,15 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       async (resolved) => {
         const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
         if (input.scanId && registryUrl && registryIdentity) {
-          await backfillScanRegistryReleaseIdentity(db, {
+          const identityResult = await backfillScanRegistryReleaseIdentity(db, {
             scanId: input.scanId,
             organizationId: input.organizationId,
             registryUrl,
             ...registryIdentity,
           });
+          if (identityResult === "mismatch") {
+            throw new Error("The staged release identity changed after this scan was queued.");
+          }
         }
         return collectReleaseFingerprintFindings(db, identity, resolved);
       },
