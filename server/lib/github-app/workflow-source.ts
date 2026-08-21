@@ -37,6 +37,8 @@ import { githubInstallationHeaders } from "./http";
 const MAX_REFERENCED_WORKFLOWS = 16;
 const MAX_LOCAL_ACTIONS = 32;
 const MAX_LOCAL_ACTION_ENTRIES = 512;
+const MAX_LOCAL_ACTION_DEPTH = 32;
+const MAX_LOCAL_ACTION_OBJECTS = 256;
 const MAX_LOCAL_ACTION_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const REPOSITORY_FULL_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -196,6 +198,7 @@ export async function fetchReleaseAuthoritySourcesWithToken(
 
   const workflows: WorkflowSource[] = [];
   const localActionCache = new Map<string, Promise<FetchedLocalActionDigest>>();
+  const localActionObjectCache = new Map<string, Promise<FetchedGithubJson>>();
   let localActionCount = 0;
   for (const request of requests) {
     // Referenced workflows are keyed repo-qualified so two repositories that
@@ -250,6 +253,7 @@ export async function fetchReleaseAuthoritySourcesWithToken(
           request.repositoryFullName,
           actionPath,
           request.ref,
+          localActionObjectCache,
         );
         localActionCache.set(cacheKey, pending);
       }
@@ -447,82 +451,191 @@ interface FetchedLocalActionDigest {
   error: AuthorityUnresolvedReason | null;
 }
 
-interface GithubContentEntry {
+interface FetchedGithubJson {
+  data: unknown;
+  error: AuthorityUnresolvedReason | null;
+}
+
+interface GithubTreeEntry {
+  mode?: unknown;
   path?: unknown;
   sha?: unknown;
   type?: unknown;
 }
 
+interface ValidGithubTreeEntry {
+  mode: string;
+  path: string;
+  sha: string;
+  type: string;
+}
+
+interface FetchedGithubTree {
+  entries: ValidGithubTreeEntry[] | null;
+  error: AuthorityUnresolvedReason | null;
+}
+
 /**
- * Bind a local action to the Git tree identities of everything in its
- * directory. A directory entry's Git tree sha covers all descendants, so one
- * bounded Contents API response captures composite metadata, JavaScript entry
- * points, Dockerfiles, and helper files without downloading or executing any of
- * them.
+ * Bind a local action to its directory's Git tree identity. Tree identities
+ * cover every descendant's path, object id, and mode, so executable-bit-only
+ * changes are visible alongside content changes without downloading or
+ * executing any repository files.
  */
 async function fetchLocalActionDigest(
   token: string,
   repositoryFullName: string,
   actionPath: string,
   ref: string,
+  objectCache: Map<string, Promise<FetchedGithubJson>>,
 ): Promise<FetchedLocalActionDigest> {
-  if (!REPOSITORY_FULL_NAME_RE.test(repositoryFullName) || !isSafeRepositoryPath(actionPath)) {
+  const pathSegments = actionPath.split("/");
+  if (
+    !REPOSITORY_FULL_NAME_RE.test(repositoryFullName) ||
+    !isSafeRepositoryPath(actionPath) ||
+    !/^[0-9a-f]{40}$/i.test(ref) ||
+    pathSegments.length > MAX_LOCAL_ACTION_DEPTH
+  ) {
     return { digest: null, error: "not_accessible" };
   }
   const [owner, repo] = repositoryFullName.split("/");
-  const segments = actionPath.split("/").map(encodeURIComponent).join("/");
-  const url =
+  const baseUrl =
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
-    `/contents/${segments}?ref=${encodeURIComponent(ref)}`;
+    "/git";
+  const commit = await fetchCachedGithubJson(
+    `${baseUrl}/commits/${encodeURIComponent(ref)}`,
+    token,
+    objectCache,
+  );
+  if (commit.error) return { digest: null, error: commit.error };
+  if (!commit.data || typeof commit.data !== "object" || Array.isArray(commit.data)) {
+    return { digest: null, error: "unparseable" };
+  }
+  const commitTree = (commit.data as { tree?: unknown }).tree;
+  if (!commitTree || typeof commitTree !== "object" || Array.isArray(commitTree)) {
+    return { digest: null, error: "unparseable" };
+  }
+  const rawTreeSha = (commitTree as { sha?: unknown }).sha;
+  if (typeof rawTreeSha !== "string" || !/^[0-9a-f]{40}$/i.test(rawTreeSha)) {
+    return { digest: null, error: "unparseable" };
+  }
+  let treeSha = rawTreeSha;
+
+  for (const segment of pathSegments) {
+    const fetched = await fetchGithubTree(baseUrl, treeSha, token, objectCache);
+    if (fetched.error || !fetched.entries) {
+      return { digest: null, error: fetched.error ?? "unparseable" };
+    }
+    let nextTreeSha: string | null = null;
+    for (const entry of fetched.entries) {
+      if (entry.path === segment) {
+        if (nextTreeSha || entry.type !== "tree" || entry.mode !== "040000") {
+          return { digest: null, error: "unparseable" };
+        }
+        nextTreeSha = entry.sha;
+      }
+    }
+    if (!nextTreeSha) return { digest: null, error: "not_accessible" };
+    treeSha = nextTreeSha;
+  }
+
+  const actionTree = await fetchGithubTree(baseUrl, treeSha, token, objectCache);
+  if (actionTree.error || !actionTree.entries) {
+    return { digest: null, error: actionTree.error ?? "unparseable" };
+  }
+  return {
+    digest: await sha256Hex(
+      stableJson({ gitTreeSha: treeSha.toLowerCase(), entries: actionTree.entries }),
+    ),
+    error: null,
+  };
+}
+
+async function fetchGithubTree(
+  baseUrl: string,
+  treeSha: string,
+  token: string,
+  objectCache: Map<string, Promise<FetchedGithubJson>>,
+): Promise<FetchedGithubTree> {
+  const fetched = await fetchCachedGithubJson(
+    `${baseUrl}/trees/${encodeURIComponent(treeSha)}`,
+    token,
+    objectCache,
+  );
+  if (fetched.error) return { entries: null, error: fetched.error };
+  if (!fetched.data || typeof fetched.data !== "object" || Array.isArray(fetched.data)) {
+    return { entries: null, error: "unparseable" };
+  }
+  const tree = fetched.data as { tree?: unknown; truncated?: unknown };
+  if (!Array.isArray(tree.tree)) return { entries: null, error: "unparseable" };
+  if (tree.truncated === true || tree.tree.length > MAX_LOCAL_ACTION_ENTRIES) {
+    return { entries: null, error: "limit_reached" };
+  }
+
+  const entries: ValidGithubTreeEntry[] = [];
+  for (const raw of tree.tree) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { entries: null, error: "unparseable" };
+    }
+    const entry = raw as GithubTreeEntry;
+    const path = typeof entry.path === "string" ? entry.path : "";
+    const sha = typeof entry.sha === "string" ? entry.sha : "";
+    const type = typeof entry.type === "string" ? entry.type : "";
+    const mode = typeof entry.mode === "string" ? entry.mode : "";
+    if (
+      !path ||
+      path.includes("/") ||
+      !/^[0-9a-f]{40}$/i.test(sha) ||
+      !["blob", "tree", "commit"].includes(type) ||
+      !/^(?:040000|100644|100755|120000|160000)$/.test(mode)
+    ) {
+      return { entries: null, error: "unparseable" };
+    }
+    entries.push({ path, sha: sha.toLowerCase(), type, mode });
+  }
+  entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  return { entries, error: null };
+}
+
+function fetchCachedGithubJson(
+  url: string,
+  token: string,
+  cache: Map<string, Promise<FetchedGithubJson>>,
+): Promise<FetchedGithubJson> {
+  const cached = cache.get(url);
+  if (cached) return cached;
+  if (cache.size >= MAX_LOCAL_ACTION_OBJECTS) {
+    return Promise.resolve({ data: null, error: "limit_reached" });
+  }
+  const pending = fetchGithubJson(url, token);
+  cache.set(url, pending);
+  return pending;
+}
+
+async function fetchGithubJson(url: string, token: string): Promise<FetchedGithubJson> {
   const response = await reliableFetch(url, {
     headers: githubInstallationHeaders(token),
     redirect: "manual",
   }).catch(() => null);
-  if (!response) return { digest: null, error: "fetch_failed" };
+  if (!response) return { data: null, error: "fetch_failed" };
   if (response.status === 403 || response.status === 404) {
     await response.body?.cancel();
-    return { digest: null, error: "not_accessible" };
+    return { data: null, error: "not_accessible" };
   }
   if (!response.ok) {
     await response.body?.cancel();
-    return { digest: null, error: "fetch_failed" };
+    return { data: null, error: "fetch_failed" };
   }
 
-  let data: unknown;
   try {
     const bytes = await readStreamBounded(response.body, MAX_LOCAL_ACTION_RESPONSE_BYTES);
-    data = JSON.parse(new TextDecoder().decode(bytes));
+    return { data: JSON.parse(new TextDecoder().decode(bytes)), error: null };
   } catch (err) {
     return {
-      digest: null,
+      data: null,
       error:
         err instanceof Error && err.message === "archive too large" ? "too_large" : "unparseable",
     };
   }
-  if (!Array.isArray(data)) return { digest: null, error: "unparseable" };
-  if (data.length === 0) return { digest: null, error: "not_accessible" };
-  if (data.length > MAX_LOCAL_ACTION_ENTRIES) return { digest: null, error: "limit_reached" };
-
-  const entries: Array<{ path: string; sha: string; type: string }> = [];
-  for (const raw of data) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      return { digest: null, error: "unparseable" };
-    }
-    const item = raw as GithubContentEntry;
-    const path = typeof item.path === "string" ? item.path : "";
-    const sha = typeof item.sha === "string" ? item.sha : "";
-    const type = typeof item.type === "string" ? item.type : "";
-    if (
-      !path.startsWith(`${actionPath}/`) ||
-      !/^[0-9a-f]{40}$/i.test(sha) ||
-      !["file", "dir", "symlink", "submodule"].includes(type)
-    ) {
-      return { digest: null, error: "unparseable" };
-    }
-    entries.push({ path, sha: sha.toLowerCase(), type });
-  }
-  entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  return { digest: await sha256Hex(stableJson(entries)), error: null };
 }
 
 async function fetchWorkflowContent(

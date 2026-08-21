@@ -183,6 +183,8 @@ describe("fetchReleaseAuthoritySources", () => {
   ])(
     "binds local action %s to its complete directory tree at the run commit",
     async (uses, actionPath) => {
+      const actionSegments = actionPath.split("/");
+      const treeShas = ["b", "c", "d", "e"].map((character) => character.repeat(40));
       const workflow = `on: push
 jobs:
   publish:
@@ -195,11 +197,28 @@ jobs:
         if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
           return new Response(workflow);
         }
-        if (url.pathname.endsWith(`/contents/${actionPath}`)) {
-          return Response.json([
-            { path: `${actionPath}/action.yml`, sha: "b".repeat(40), type: "file" },
-            { path: `${actionPath}/dist`, sha: "c".repeat(40), type: "dir" },
-          ]);
+        if (url.pathname.endsWith(`/git/commits/${"a".repeat(40)}`)) {
+          return Response.json({ tree: { sha: treeShas[0] } });
+        }
+        const treeIndex = treeShas.findIndex((sha) => url.pathname.endsWith(`/git/trees/${sha}`));
+        if (treeIndex >= 0 && treeIndex < actionSegments.length) {
+          return Response.json({
+            truncated: false,
+            tree: [
+              {
+                path: actionSegments[treeIndex],
+                mode: "040000",
+                type: "tree",
+                sha: treeShas[treeIndex + 1],
+              },
+            ],
+          });
+        }
+        if (treeIndex === actionSegments.length) {
+          return Response.json({
+            truncated: false,
+            tree: [{ path: "action.yml", mode: "100644", type: "blob", sha: "f".repeat(40) }],
+          });
         }
         throw new Error(`unexpected ${url}`);
       });
@@ -208,10 +227,117 @@ jobs:
 
       expect(sources.unresolved).toEqual([]);
       expect(sources.workflows[0].localActionDigests?.[uses]).toMatch(/^[0-9a-f]{64}$/);
-      const actionRequest = seen.find((entry) => entry.url.includes(`/contents/${actionPath}`));
-      expect(actionRequest?.url).toContain(`ref=${"a".repeat(40)}`);
+      expect(seen.some((entry) => entry.url.endsWith(`/git/commits/${"a".repeat(40)}`))).toBe(true);
     },
   );
+
+  it("changes a local-action digest when Git's directory identity changes", async () => {
+    const workflow = `on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./action
+`;
+    const digestForTree = async (actionTreeSha: string) => {
+      mockGithub((url) => {
+        if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+        if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+          return new Response(workflow);
+        }
+        if (url.pathname.endsWith(`/git/commits/${"a".repeat(40)}`)) {
+          return Response.json({ tree: { sha: "b".repeat(40) } });
+        }
+        if (url.pathname.endsWith(`/git/trees/${"b".repeat(40)}`)) {
+          return Response.json({
+            truncated: false,
+            tree: [{ path: "action", mode: "040000", type: "tree", sha: actionTreeSha }],
+          });
+        }
+        if (url.pathname.endsWith(`/git/trees/${actionTreeSha}`)) {
+          return Response.json({
+            truncated: false,
+            tree: [
+              {
+                path: "action.yml",
+                mode: actionTreeSha === "c".repeat(40) ? "100644" : "100755",
+                type: "blob",
+                sha: "e".repeat(40),
+              },
+            ],
+          });
+        }
+        throw new Error(`unexpected ${url}`);
+      });
+      const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+      return sources.workflows[0].localActionDigests?.["./action"];
+    };
+
+    // Git computes a different directory tree SHA when an immediate child's
+    // mode changes from 100644 to 100755 even if its blob SHA is unchanged.
+    const nonExecutable = await digestForTree("c".repeat(40));
+    const executable = await digestForTree("d".repeat(40));
+
+    expect(nonExecutable).toMatch(/^[0-9a-f]{64}$/);
+    expect(executable).toMatch(/^[0-9a-f]{64}$/);
+    expect(executable).not.toBe(nonExecutable);
+  });
+
+  it("reuses Git objects shared by multiple local actions", async () => {
+    const workflow = `on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/one
+      - uses: ./actions/two
+`;
+    const rootTree = "b".repeat(40);
+    const actionsTree = "c".repeat(40);
+    const firstTree = "d".repeat(40);
+    const secondTree = "e".repeat(40);
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+      if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+        return new Response(workflow);
+      }
+      if (url.pathname.endsWith(`/git/commits/${"a".repeat(40)}`)) {
+        return Response.json({ tree: { sha: rootTree } });
+      }
+      if (url.pathname.endsWith(`/git/trees/${rootTree}`)) {
+        return Response.json({
+          tree: [{ path: "actions", mode: "040000", type: "tree", sha: actionsTree }],
+        });
+      }
+      if (url.pathname.endsWith(`/git/trees/${actionsTree}`)) {
+        return Response.json({
+          tree: [
+            { path: "one", mode: "040000", type: "tree", sha: firstTree },
+            { path: "two", mode: "040000", type: "tree", sha: secondTree },
+          ],
+        });
+      }
+      if (
+        url.pathname.endsWith(`/git/trees/${firstTree}`) ||
+        url.pathname.endsWith(`/git/trees/${secondTree}`)
+      ) {
+        return Response.json({
+          tree: [{ path: "action.yml", mode: "100644", type: "blob", sha: "f".repeat(40) }],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.unresolved).toEqual([]);
+    expect(Object.keys(sources.workflows[0].localActionDigests ?? {})).toEqual([
+      "./actions/one",
+      "./actions/two",
+    ]);
+    expect(seen.filter((entry) => entry.url.endsWith(`/git/trees/${rootTree}`))).toHaveLength(1);
+    expect(seen.filter((entry) => entry.url.endsWith(`/git/trees/${actionsTree}`))).toHaveLength(1);
+  });
 
   it("marks local-action coverage incomplete when its directory cannot be read", async () => {
     const workflow = `on: push

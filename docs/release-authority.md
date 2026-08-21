@@ -133,7 +133,9 @@ A snapshot records:
   commands are stored as a safe category plus a digest, never as raw text that
   could contain a literal credential;
 - detected release safeguards (attestation, signing, provenance — including
-  `with: attestations`/`provenance` inputs);
+  explicitly enabled `attestations`/`provenance` inputs on recognized publisher
+  actions); input values remain represented only by the action configuration
+  digest;
 - artifact producer/consumer paths (`upload-artifact` / `download-artifact`);
 - the reviewed artifacts with the digests the control plane recomputed;
 - coverage: whether anything could not be read, and why.

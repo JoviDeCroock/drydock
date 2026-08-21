@@ -652,28 +652,13 @@ async function readStep(
     if (flow) projection.artifactFlow.push({ workflow, job, ...flow });
   }
 
-  // Safeguards can also be step inputs rather than separate steps: PyPI
-  // publishing takes `attestations`, npm takes `provenance`. Losing either is
-  // the same class of change as deleting an attestation step.
-  for (const [key, value] of Object.entries(inputs ?? {})) {
-    const normalizedKey = key.toLowerCase();
-    const enabled = asString(value);
-    if (normalizedKey === "attestations" && enabled !== "false") {
-      projection.safeguards.push({
-        workflow,
-        job,
-        kind: "attestation",
-        detail: `with.attestations=${enabled ?? "true"}`,
-      });
-    }
-    if (normalizedKey === "provenance" && enabled !== "false") {
-      projection.safeguards.push({
-        workflow,
-        job,
-        kind: "provenance",
-        detail: `with.provenance=${enabled ?? "true"}`,
-      });
-    }
+  // Some publisher actions expose a safeguard as a boolean input. Only infer
+  // semantics for known publishers and explicit literal `true`; expressions
+  // and arbitrary values remain covered by the action's input digest without
+  // being persisted or presented as enabled safeguards.
+  const publisherInputSafeguard = safeguardForPublisherInput(actionIdentity(uses ?? ""), inputs);
+  if (publisherInputSafeguard) {
+    projection.safeguards.push({ workflow, job, ...publisherInputSafeguard });
   }
 
   if (run) {
@@ -944,6 +929,15 @@ const SAFEGUARD_ACTIONS = new Map<string, AuthoritySafeguard["kind"]>([
   ["slsa-framework/slsa-github-generator", "provenance"],
 ]);
 
+const PUBLISHER_INPUT_SAFEGUARDS = new Map<
+  string,
+  { input: string; kind: AuthoritySafeguard["kind"] }
+>([
+  ["pypa/gh-action-pypi-publish", { input: "attestations", kind: "attestation" }],
+  ["js-devtools/npm-publish", { input: "provenance", kind: "provenance" }],
+  ["jsdevtools/npm-publish", { input: "provenance", kind: "provenance" }],
+]);
+
 const SAFEGUARD_COMMAND_PATTERNS: Array<{
   pattern: RegExp;
   kind: AuthoritySafeguard["kind"];
@@ -966,6 +960,20 @@ function isPublishAction(actionName: string): boolean {
 
 function safeguardForAction(actionName: string): AuthoritySafeguard["kind"] | null {
   return SAFEGUARD_ACTIONS.get(actionName) ?? null;
+}
+
+function safeguardForPublisherInput(
+  actionName: string,
+  inputs: { [key: string]: YamlValue } | null,
+): Pick<AuthoritySafeguard, "kind" | "detail"> | null {
+  const safeguard = PUBLISHER_INPUT_SAFEGUARDS.get(actionName);
+  if (!safeguard || !inputs) return null;
+  const entry = Object.entries(inputs).find(([key]) => key.toLowerCase() === safeguard.input);
+  if (!entry || asString(entry[1])?.trim().toLowerCase() !== "true") return null;
+  return {
+    kind: safeguard.kind,
+    detail: `with.${safeguard.input}=true`,
+  };
 }
 
 function publishCommands(run: string): Array<{ label: string; raw: string }> {

@@ -212,6 +212,53 @@ describe("computeReleaseAuthorityDelta", () => {
     expect(serialized).not.toContain("_authToken");
   });
 
+  it("records only explicit safeguards on recognized publisher actions", async () => {
+    const workflow = `
+on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          Attestations: TRUE
+      - uses: js-devtools/npm-publish@v3
+        with:
+          provenance: "true"
+`;
+
+    const snapshot = await makeSnapshot({ workflows: [{ path: ENTRY, content: workflow }] });
+
+    expect(snapshot.safeguards).toEqual([
+      expect.objectContaining({ kind: "attestation", detail: "with.attestations=true" }),
+      expect.objectContaining({ kind: "provenance", detail: "with.provenance=true" }),
+    ]);
+  });
+
+  it("does not expose or infer safeguard semantics from arbitrary action inputs", async () => {
+    const privateValue = "private-attestation-policy";
+    const workflow = `
+on: push
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: ${privateValue}
+      - uses: acme/unrelated-action@v1
+        with:
+          attestations: true
+          provenance: true
+`;
+
+    const snapshot = await makeSnapshot({ workflows: [{ path: ENTRY, content: workflow }] });
+    const serialized = JSON.stringify(snapshot);
+
+    expect(snapshot.safeguards).toEqual([]);
+    expect(serialized).not.toContain(privateValue);
+  });
+
   it("treats GitHub's same-repository reusable-workflow path forms as pinned equivalents", async () => {
     const priorWorkflow = `
 on: workflow_dispatch
