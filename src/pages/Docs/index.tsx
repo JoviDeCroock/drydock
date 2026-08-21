@@ -673,46 +673,124 @@ export default function DocsPage() {
 
             <Subsection id="dependabot-diff-links" title="Dependabot">
               <Prose>
-                Dependabot cannot template PR bodies, so a small workflow comments the link instead.
-                It reads the bump from the PR metadata and never checks out or executes the updated
-                code. Grouped update PRs have no single version pair, so the workflow skips them.
+                Dependabot cannot template PR bodies, so a small workflow comments the links
+                instead. It reads the bumps from the PR metadata and never checks out or executes
+                the updated code. Grouped update PRs get one link per dependency in a single
+                comment, rewritten in place each time Dependabot revises the group.
               </Prose>
               <WorkflowExample title="Dependabot diff comment" defaultOpen>
                 {`name: drydock-diff-link
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
 
-# Dependabot-triggered runs honor this permissions key; the read-only
-# default token does not apply when permissions are set explicitly.
+# Dependabot-triggered runs honor this permissions key; the read-only default
+# token does not apply when permissions are set explicitly.
 permissions:
   pull-requests: write
+
+# Dependabot rewrites a grouped PR in place as the group's contents change, so
+# the comment is rebuilt on every push. Serialize per PR so two pushes cannot
+# race the read-then-write below into two comments.
+concurrency:
+  group: drydock-diff-link-\${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   diff-link:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # Fails the job unless the PR's first commit is an authentic, signed
+      # Dependabot commit, which is what makes it safe for the next step to
+      # parse that commit message. Also derives the ecosystem from the branch.
       - id: meta
-        uses: dependabot/fetch-metadata@v2
-      - if: steps.meta.outputs.previous-version != '' && steps.meta.outputs.new-version != ''
-        env:
+        uses: dependabot/fetch-metadata@v3
+
+      - env:
           GH_TOKEN: \${{ github.token }}
-          PR_URL: \${{ github.event.pull_request.html_url }}
+          REPO: \${{ github.repository }}
+          PR: \${{ github.event.pull_request.number }}
           ECOSYSTEM: \${{ steps.meta.outputs.package-ecosystem }}
-          NAME: \${{ steps.meta.outputs.dependency-names }}
+          NAMES: \${{ steps.meta.outputs.dependency-names }}
           FROM: \${{ steps.meta.outputs.previous-version }}
           TO: \${{ steps.meta.outputs.new-version }}
         run: |
+          set -euo pipefail
+
           case "$ECOSYSTEM" in
-            npm_and_yarn) path="$NAME" ;;
-            pip) path="pypi/$NAME" ;;
-            *) exit 0 ;;
+            npm_and_yarn) prefix="" ;;
+            pip) prefix="pypi/" ;;
+            *) echo "No /diff pages for $ECOSYSTEM."; exit 0 ;;
           esac
-          case "$NAME" in *,*) exit 0 ;; esac
-          gh pr comment "$PR_URL" --body \\
-            "[Read the diff of $NAME $FROM → $TO](https://drydock.org/diff/$path/$FROM/$TO)"`}
+
+          api="repos/$REPO"
+
+          # A single-dependency PR carries its one pair in the action's outputs.
+          # A grouped PR carries one \`Updates ...\` line per dependency in the
+          # commit message, and is the only kind that does. Those lines are read
+          # directly rather than through the action, which collapses a group to
+          # one pair and fills the new version from the commit's
+          # \`dependency-version\` metadata -- a value that can lag the version the
+          # PR actually merges once Dependabot revises the group.
+          case "$NAMES" in
+            *,*)
+              msg=$(gh api "$api/pulls/$PR/commits" --jq '.[0].commit.message')
+              pairs=$(printf '%s\\n' "$msg" | sed -n \\
+                's/^Updates \`\\([^\`]*\\)\` from \\([^ ]*\\) to \\([^ ]*\\)$/\\1 \\2 \\3/p')
+              ;;
+            *)
+              pairs="$NAMES $FROM $TO"
+              ;;
+          esac
+
+          # Anything that is not two distinct published versions of one package
+          # gets no link: no link beats a confidently wrong one.
+          links=""
+          count=0
+          while read -r name from to; do
+            [ -n "$name" ] && [ -n "$from" ] && [ -n "$to" ] || continue
+            [ "$from" != "$to" ] || continue
+            url="https://drydock.org/diff/$prefix$name/$from/$to"
+            links="$links- [$name $from → $to]($url)
+          "
+            count=$((count + 1))
+          done < <(printf '%s\\n' "$pairs")
+
+          if [ "$count" -eq 0 ]; then
+            echo "No linkable version pair in this PR."
+            exit 0
+          fi
+
+          lead="Read the diff this PR merges:"
+          if [ "$count" -gt 1 ]; then
+            lead="Read the diff of each update in this group:"
+          fi
+
+          MARKER="<!-- drydock:diff-link -->"
+          body="$MARKER
+          $lead
+
+          $links"
+
+          # Upsert, so a revised group updates its comment instead of
+          # stacking a second one underneath the now-stale first.
+          comments="$api/issues/$PR/comments"
+          existing=$(MARKER="$MARKER" gh api "$comments" --paginate \\
+            --jq '[.[] | select(.body | contains(env.MARKER))][0].id // empty')
+          # --paginate applies the filter per page and concatenates, so keep
+          # the first line only. Trimmed in bash rather than through \`head\`,
+          # which under \`pipefail\` can fail the job on EPIPE.
+          existing=\${existing%%$'\\n'*}
+          if [ -n "$existing" ]; then
+            method=PATCH
+            target="$api/issues/comments/$existing"
+          else
+            method=POST
+            target="$comments"
+          fi
+          gh api -X "$method" "$target" -f body="$body" --silent`}
               </WorkflowExample>
             </Subsection>
 

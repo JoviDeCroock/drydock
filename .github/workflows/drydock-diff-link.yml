@@ -1,0 +1,116 @@
+name: drydock-diff-link
+
+# The Dependabot integration documented on the Docs page ("Diffs in dependency
+# PRs") and in docs/dependency-pr-diff-links.md, running against this repo's own
+# update PRs. Never checks out or executes the updated code.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+# Dependabot-triggered runs honor this permissions key; the read-only default
+# token does not apply when permissions are set explicitly.
+permissions:
+  pull-requests: write
+
+# Dependabot rewrites a grouped PR in place as the group's contents change, so
+# the comment is rebuilt on every push. Serialize per PR so two pushes cannot
+# race the read-then-write below into two comments.
+concurrency:
+  group: drydock-diff-link-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diff-link:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      # Fails the job unless the PR's first commit is an authentic, signed
+      # Dependabot commit, which is what makes it safe for the next step to
+      # parse that commit message. Also derives the ecosystem from the branch.
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          NAMES: ${{ steps.meta.outputs.dependency-names }}
+          FROM: ${{ steps.meta.outputs.previous-version }}
+          TO: ${{ steps.meta.outputs.new-version }}
+        run: |
+          set -euo pipefail
+
+          case "$ECOSYSTEM" in
+            npm_and_yarn) prefix="" ;;
+            pip) prefix="pypi/" ;;
+            *) echo "No /diff pages for $ECOSYSTEM."; exit 0 ;;
+          esac
+
+          api="repos/$REPO"
+
+          # A single-dependency PR carries its one pair in the action's outputs.
+          # A grouped PR carries one `Updates ...` line per dependency in the
+          # commit message, and is the only kind that does. Those lines are read
+          # directly rather than through the action, which collapses a group to
+          # one pair and fills the new version from the commit's
+          # `dependency-version` metadata -- a value that can lag the version the
+          # PR actually merges once Dependabot revises the group.
+          case "$NAMES" in
+            *,*)
+              msg=$(gh api "$api/pulls/$PR/commits" --jq '.[0].commit.message')
+              pairs=$(printf '%s\n' "$msg" | sed -n \
+                's/^Updates `\([^`]*\)` from \([^ ]*\) to \([^ ]*\)$/\1 \2 \3/p')
+              ;;
+            *)
+              pairs="$NAMES $FROM $TO"
+              ;;
+          esac
+
+          # Anything that is not two distinct published versions of one package
+          # gets no link: no link beats a confidently wrong one.
+          links=""
+          count=0
+          while read -r name from to; do
+            [ -n "$name" ] && [ -n "$from" ] && [ -n "$to" ] || continue
+            [ "$from" != "$to" ] || continue
+            url="https://drydock.org/diff/$prefix$name/$from/$to"
+            links="$links- [$name $from → $to]($url)
+          "
+            count=$((count + 1))
+          done < <(printf '%s\n' "$pairs")
+
+          if [ "$count" -eq 0 ]; then
+            echo "No linkable version pair in this PR."
+            exit 0
+          fi
+
+          lead="Read the diff this PR merges:"
+          if [ "$count" -gt 1 ]; then
+            lead="Read the diff of each update in this group:"
+          fi
+
+          MARKER="<!-- drydock:diff-link -->"
+          body="$MARKER
+          $lead
+
+          $links"
+
+          # Upsert, so a revised group updates its comment instead of
+          # stacking a second one underneath the now-stale first.
+          comments="$api/issues/$PR/comments"
+          existing=$(MARKER="$MARKER" gh api "$comments" --paginate \
+            --jq '[.[] | select(.body | contains(env.MARKER))][0].id // empty')
+          # --paginate applies the filter per page and concatenates, so keep
+          # the first line only. Trimmed in bash rather than through `head`,
+          # which under `pipefail` can fail the job on EPIPE.
+          existing=${existing%%$'\n'*}
+          if [ -n "$existing" ]; then
+            method=PATCH
+            target="$api/issues/comments/$existing"
+          else
+            method=POST
+            target="$comments"
+          fi
+          gh api -X "$method" "$target" -f body="$body" --silent
