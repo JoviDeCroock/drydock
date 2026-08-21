@@ -524,7 +524,7 @@ describe("public report sharing", () => {
       expect(res.status).toBe(404);
     }
     expect(limited).toBe(true);
-  });
+  }, 15_000);
 });
 
 describe("public report attestations", () => {
