@@ -442,16 +442,13 @@ describe("ScanListModel registry status refreshes", () => {
     expect(model.nextCursor.value).toBe("cursor-b");
   });
 
-  test("ignores a preserved refresh when pagination starts later", async () => {
+  test("does not paginate with a stale cursor while an organization refresh is in flight", async () => {
     const refreshResponse = deferred<Response>();
-    const loadMoreResponse = deferred<Response>();
-    const fetchMock = vi
-      .fn()
-      .mockReturnValueOnce(refreshResponse.promise)
-      .mockReturnValueOnce(loadMoreResponse.promise);
+    const fetchMock = vi.fn().mockReturnValueOnce(refreshResponse.promise);
     vi.stubGlobal("fetch", fetchMock);
     model = new ScanListModel();
     model.filter.value = "all";
+    setActiveOrganizationId("org-a");
     model.scans.value = [
       { ...scanDetail(null).scan, id: "scan-a" },
       { ...scanDetail(null).scan, id: "scan-b" },
@@ -459,38 +456,27 @@ describe("ScanListModel registry status refreshes", () => {
     ];
     model.nextCursor.value = "cursor-c";
 
-    const refreshing = model.refresh({ preserveLoaded: true });
-    const loadingMore = model.loadMore();
-    loadMoreResponse.resolve(
-      jsonResponse({
-        scans: [
-          { ...scanDetail(null).scan, id: "scan-d" },
-          { ...scanDetail(null).scan, id: "scan-e" },
-        ],
-        nextCursor: "cursor-e",
+    setActiveOrganizationId("org-b");
+    const refreshing = model.refresh();
+    await model.loadMore();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/scans?filter=all",
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-b" }),
       }),
     );
-    await loadingMore;
     refreshResponse.resolve(
       jsonResponse({
-        scans: [
-          { ...scanDetail(null).scan, id: "scan-new" },
-          { ...scanDetail(null).scan, id: "scan-a" },
-          { ...scanDetail(null).scan, id: "scan-b" },
-        ],
-        nextCursor: "cursor-b",
+        scans: [{ ...scanDetail(null).scan, id: "scan-new" }],
+        nextCursor: null,
       }),
     );
     await refreshing;
 
-    expect(model.scans.value.map((scan) => scan.id)).toEqual([
-      "scan-a",
-      "scan-b",
-      "scan-c",
-      "scan-d",
-      "scan-e",
-    ]);
-    expect(model.nextCursor.value).toBe("cursor-e");
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-new"]);
+    expect(model.nextCursor.value).toBeNull();
   });
 
   test("cancels pending refreshes when the model is disposed", async () => {
