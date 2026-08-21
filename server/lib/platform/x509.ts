@@ -161,7 +161,7 @@ export interface X509Certificate {
   extensions: Map<string, Uint8Array>;
 }
 
-type EcCurve = "P-256" | "P-384" | "P-521";
+export type EcCurve = "P-256" | "P-384" | "P-521";
 
 const EC_PUBLIC_KEY_OID = "1.2.840.10045.2.1";
 const CURVE_OIDS: Record<string, EcCurve> = {
@@ -380,22 +380,61 @@ export async function verifyWithCertificateKey(
   hash: "SHA-256" | "SHA-384" | "SHA-512" = "SHA-256",
 ): Promise<boolean> {
   if (!certificate.namedCurve) return false;
+  return verifyWithSpkiKey(certificate.spki, signature, data, {
+    name: "ECDSA",
+    namedCurve: certificate.namedCurve,
+    hash,
+  });
+}
+
+type SpkiSignatureAlgorithm =
+  | {
+      name: "ECDSA";
+      namedCurve: EcCurve;
+      hash: "SHA-256" | "SHA-384" | "SHA-512";
+    }
+  | { name: "Ed25519" };
+
+/** Verify a detached signature with a pinned SubjectPublicKeyInfo key. */
+export async function verifyWithSpkiKey(
+  spki: Uint8Array,
+  signature: Uint8Array,
+  data: Uint8Array,
+  algorithm: SpkiSignatureAlgorithm,
+): Promise<boolean> {
+  if (algorithm.name === "Ed25519") {
+    if (signature.length !== 64) return false;
+    try {
+      const key = await crypto.subtle.importKey("spki", bufferSource(spki), "Ed25519", false, [
+        "verify",
+      ]);
+      return await crypto.subtle.verify(
+        "Ed25519",
+        key,
+        bufferSource(signature),
+        bufferSource(data),
+      );
+    } catch {
+      return false;
+    }
+  }
+
   // Signers may emit either encoding; DER is what Node's `crypto.sign`
   // produces and is what npm's Sigstore signer attaches.
   const raw =
-    derEcdsaSignatureToRaw(signature, certificate.namedCurve) ??
-    (signature.length === CURVE_COORDINATE_BYTES[certificate.namedCurve] * 2 ? signature : null);
+    derEcdsaSignatureToRaw(signature, algorithm.namedCurve) ??
+    (signature.length === CURVE_COORDINATE_BYTES[algorithm.namedCurve] * 2 ? signature : null);
   if (!raw) return false;
   try {
     const key = await crypto.subtle.importKey(
       "spki",
-      bufferSource(certificate.spki),
-      { name: "ECDSA", namedCurve: certificate.namedCurve },
+      bufferSource(spki),
+      { name: "ECDSA", namedCurve: algorithm.namedCurve },
       false,
       ["verify"],
     );
     return await crypto.subtle.verify(
-      { name: "ECDSA", hash },
+      { name: "ECDSA", hash: algorithm.hash },
       key,
       bufferSource(raw),
       bufferSource(data),

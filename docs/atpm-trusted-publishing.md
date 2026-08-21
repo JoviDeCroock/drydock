@@ -27,6 +27,7 @@ All three live in the publisher's repository, under the identity Drydock already
 The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystems/atpm/provenance.ts`) against a pinned Sigstore root:
 
 - the Fulcio certificate chain, using a bounded DER reader (`server/lib/platform/x509.ts`) rather than a general X.509 library — nothing here builds chains or consults a certificate store, because the accepted issuers are pinned constants;
+- the Rekor signed-entry timestamp against a pinned transparency-log key before its integrated time is allowed to evaluate the short-lived Fulcio leaf's validity window;
 - the DSSE signature over the in-toto statement;
 - the statement's shape: exactly one subject, a readable npm purl, a SHA-512 digest;
 - the Fulcio OIDs: issuer, source repository, ref, commit, build-config workflow, run invocation, runner environment, repository visibility. The workflow is trusted only when Fulcio authenticated it into the certificate; publisher-controlled fields in the signed predicate are not an identity fallback.
@@ -36,7 +37,7 @@ Verification is _intrinsic_ to the bundle — it does not depend on the reviewed
 Two limits, stated because they bound what a page may claim:
 
 - **The chain is pinned, not built.** A Fulcio intermediate rotation is a code change (`FULCIO_INTERMEDIATE_PEMS`), and until it lands, bundles issued under the new intermediate read as unverifiable rather than as verified.
-- **Rekor inclusion is not verified.** The transparency-log entry supplies only the signing timestamp used to evaluate the short-lived leaf's validity window, and that timestamp comes from the record. It cannot manufacture a signature — a Fulcio leaf is issued to one repository and its private key is ephemeral — so a forged timestamp buys nothing beyond skipping an expiry check. Verification is capped at the newest 64 published versions per package record so a fabricated record cannot turn one anonymous request into unbounded cryptographic work; a staged review fetches and verifies only the one candidate its link names.
+- **The Rekor inclusion promise is verified, not the Merkle proof.** Drydock verifies the log's signed-entry timestamp over the canonicalized body, integrated time, log ID, and log index against a pinned Rekor key. This authenticates the timestamp used for certificate validity, but does not independently reconstruct the Merkle inclusion proof. Verification is capped at the newest 64 published versions per package record so a fabricated record cannot turn one anonymous request into unbounded cryptographic work; a staged review fetches and verifies only the one candidate its link names.
 
 ### Findings
 

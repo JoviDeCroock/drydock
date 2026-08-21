@@ -209,6 +209,24 @@ describe("verifyAtpmProvenance", () => {
     expect((await verifyAtpmProvenance(tampered)).status).toBe("invalid");
   });
 
+  test("rejects transparency-log metadata that no longer matches Rekor's signed promise", async () => {
+    for (const mutate of [
+      (entry: Record<string, any>) => {
+        entry.integratedTime = "1728922426";
+      },
+      (entry: Record<string, any>) => {
+        entry.logIndex = "139985225";
+      },
+    ]) {
+      const bundle = clone(BUNDLE) as any;
+      mutate(bundle.verificationMaterial.tlogEntries[0]);
+      expect(await verifyAtpmProvenance(bundle)).toEqual({
+        status: "invalid",
+        reason: "transparency-log inclusion promise does not verify",
+      });
+    }
+  });
+
   test("refuses a self-signed certificate that does not chain to Fulcio", async () => {
     const bundle = clone(BUNDLE) as any;
     // Swap the leaf for the pinned intermediate: a real, well-formed certificate

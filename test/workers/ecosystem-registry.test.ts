@@ -12,6 +12,7 @@ import {
   UnsupportedEcosystemError,
 } from "../../server/lib/ecosystems";
 import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
+import { ATPM_RECORD_CACHE_SCOPE } from "../../server/lib/ecosystems/atpm/public-diff";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a
@@ -73,7 +74,8 @@ describe("ecosystem capability registry", () => {
     expect(adapter?.rulesVersionSegment).toContain("atpm-11+identity-3");
     // Provenance verification and the trusted-publisher record are part of the
     // trust boundary, so a change to either must invalidate cached pairs too.
-    expect(adapter?.rulesVersionSegment).toContain("provenance-2+publisher-1");
+    expect(adapter?.rulesVersionSegment).toContain("provenance-3+publisher-1");
+    expect(ATPM_RECORD_CACHE_SCOPE).toBe("atpm-public-record-11-provenance-3-absolute-expiry-v1");
     expect(adapter?.cacheTtlSeconds).toBe(5 * 60);
     expect(publicDiffVersionCacheControl(adapter!)).toBe("public, max-age=300");
     expect(publicDiffVersionCacheControl(adapter!, "2026-08-19T12:02:00.000Z")).toBe(

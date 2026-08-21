@@ -77,6 +77,7 @@ const ATPM_PROTOCOL = "at://";
 const PUBLIC_CACHE_SCOPE = "atpm-public";
 const ATPM_PAIR_CACHE_TTL_SECONDS = 5 * 60;
 const ATPM_CACHE_ENVELOPE_VERSION = "absolute-expiry-v1";
+export const ATPM_RECORD_CACHE_SCOPE = `${PUBLIC_CACHE_SCOPE}-record-${ATPM_RULES_VERSION}-provenance-${ATPM_PROVENANCE_RULES_VERSION}-${ATPM_CACHE_ENVELOPE_VERSION}`;
 const DID_WEB_NOTICE =
   "This publisher uses did:web, whose control follows the domain. The canonical URL pins the current DID spelling but cannot permanently pin publisher ownership.";
 
@@ -391,9 +392,10 @@ async function fetchRecordCached(
   const key = await computeCompareMetadataCacheKey({
     registryUrl: ATPM_PROTOCOL,
     packageName: `${identity.did}/${ref.name}`,
-    // Parsing is part of the trust boundary. A rules bump must not revive a
-    // record reduced under older ambiguity or validation semantics.
-    cacheScope: `${PUBLIC_CACHE_SCOPE}-record-${ATPM_RULES_VERSION}-${ATPM_CACHE_ENVELOPE_VERSION}`,
+    // Parsing and provenance verification are both part of the trust boundary.
+    // A rules bump must not revive a record reduced or verified under older
+    // ambiguity, validation, or signature semantics.
+    cacheScope: ATPM_RECORD_CACHE_SCOPE,
   });
   const cached = await readCompareMetadataCache<AtpmCacheEnvelope<AtpmPackage>>(env, key);
   if (isFreshEnvelope(cached)) return cached;

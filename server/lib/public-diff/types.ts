@@ -43,9 +43,9 @@ interface PublicDiffAttestationBuild {
   runUrl: string | null;
   /** `github-hosted` or `self-hosted`, as the certificate recorded it. */
   runnerEnvironment: string | null;
-  /** When the signature was made, per the transparency log entry. */
+  /** When the signature was made, authenticated by the transparency log. */
   signedAt: string | null;
-  /** Transparency-log index. Present for lookup; inclusion is not verified. */
+  /** Transparency-log index authenticated by the log's signed promise. */
   logIndex: string | null;
 }
 

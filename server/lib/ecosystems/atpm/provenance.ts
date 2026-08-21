@@ -5,6 +5,7 @@ import {
   pemToDer,
   verifyCertificateSignature,
   verifyWithCertificateKey,
+  verifyWithSpkiKey,
   type X509Certificate,
 } from "../../platform/x509";
 
@@ -34,12 +35,10 @@ import {
  *    intermediate. There is no chain building and no certificate store, so a
  *    Fulcio intermediate rotation is a code change here, and fails closed
  *    (bundles read as unverifiable) until it happens.
- *  - Rekor inclusion is **not** verified. The transparency-log entry supplies
- *    only the signing timestamp used to evaluate the short-lived leaf's
- *    validity window, and that timestamp comes from the record. It cannot
- *    manufacture a signature: the leaf is Fulcio-issued for a specific
- *    repository and its private key is ephemeral and never persisted, so a
- *    forged timestamp buys nothing beyond skipping an expiry check.
+ *  - A Rekor signed-entry timestamp is verified against a pinned transparency-
+ *    log key before its integrated time may evaluate the short-lived leaf's
+ *    validity window. The Merkle inclusion proof is not independently checked;
+ *    this verifies the log's signed promise that it accepted the entry.
  *  - Nothing here is bound to the reviewed bytes. Verification is intrinsic to
  *    the bundle; `./findings.ts` compares the attested subject and digest
  *    against the artifact the sandbox actually parsed.
@@ -50,7 +49,7 @@ import {
  * accepted by an older deployment would be rejected now, so a cached verdict
  * cannot outlive the rules that produced it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "2";
+export const ATPM_PROVENANCE_RULES_VERSION = "3";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -89,6 +88,26 @@ mygUY7Ii2zbdCdliiow=
 -----END CERTIFICATE-----`,
 ];
 
+/**
+ * Sigstore's public-good Rekor keys, copied from its signed trusted root.
+ * Like the Fulcio anchors above, rotations are explicit code changes so a
+ * publisher-controlled bundle cannot nominate its own timestamp authority.
+ */
+const REKOR_LOG_KEYS = [
+  {
+    keyId: "wNI9atQGlz+VWfO6LRygH4QUfY/8W4RFwiT5i5WRgB0=",
+    spki: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwrkBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==",
+    validFrom: Date.parse("2021-01-12T11:53:27Z"),
+    algorithm: { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" } as const,
+  },
+  {
+    keyId: "zxGZFVvd0FEmjR8WrFwMdcAJ9vtaY/QXf44Y1wUeP6A=",
+    spki: "MCowBQYDK2VwAyEAt8rlp1knGwjfbcXAYPYAkn0XiLz1x8O4t0YkEhie244=",
+    validFrom: Date.parse("2025-09-23T00:00:00Z"),
+    algorithm: { name: "Ed25519" } as const,
+  },
+] as const;
+
 // Fulcio extension OIDs (https://github.com/sigstore/fulcio/blob/main/docs/oid-info.md)
 const OID_ISSUER = "1.3.6.1.4.1.57264.1.8";
 const OID_RUNNER_ENVIRONMENT = "1.3.6.1.4.1.57264.1.11";
@@ -121,6 +140,7 @@ const IN_TOTO_STATEMENT_TYPES = new Set([
  * how much a record can make the parent Worker decode and parse per version.
  */
 const MAX_PAYLOAD_BASE64_LENGTH = 512 * 1024;
+const MAX_TLOG_BODY_BASE64_LENGTH = 1024 * 1024;
 
 /** Verified build facts, small enough to cache alongside the pruned record. */
 export interface AtpmProvenance {
@@ -142,9 +162,9 @@ export interface AtpmProvenance {
   subjectName: string;
   /** SHA-512 the statement binds as the artifact's digest, lowercase hex. */
   subjectSha512: string;
-  /** Rekor log index, when the bundle carries one. Not independently verified. */
+  /** Rekor log index authenticated by the log's signed-entry timestamp. */
   logIndex: string | null;
-  /** Signing time taken from the transparency-log entry, when readable. */
+  /** Signing time authenticated by the log's signed-entry timestamp. */
   signedAt: string | null;
 }
 
@@ -260,16 +280,6 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
     return invalid("signing certificate does not chain to the pinned Sigstore root");
   }
 
-  const signedAt = transparencyLogTime(material);
-  // Fulcio leaves live about ten minutes, so a release staged and approved days
-  // apart is normally verified long after its certificate expired. The window
-  // is therefore evaluated at signing time, as recorded by the transparency-log
-  // entry, falling back to now when the bundle carries no readable timestamp.
-  const reference = signedAt ?? new Date();
-  if (reference < leaf.notBefore || reference > leaf.notAfter) {
-    return invalid("signing certificate was not valid when the signature was made");
-  }
-
   const payloadBase64 = typeof envelope.payload === "string" ? envelope.payload : "";
   if (!payloadBase64 || payloadBase64.length > MAX_PAYLOAD_BASE64_LENGTH) {
     return invalid("bundle payload is missing or too large");
@@ -300,6 +310,20 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
   );
   if (!verified) return invalid("bundle signature does not verify");
 
+  const transparencyLog = await verifiedTransparencyLogEntry(material, envelope, certificateBase64);
+  if (transparencyLog === false) {
+    return invalid("transparency-log inclusion promise does not verify");
+  }
+  const signedAt = transparencyLog?.signedAt ?? null;
+  // Fulcio leaves live about ten minutes, so a release staged and approved days
+  // apart is normally verified long after its certificate expired. The window
+  // is therefore evaluated at a timestamp authenticated by the transparency
+  // log, falling back to now when the bundle carries no log entry.
+  const reference = signedAt ?? new Date();
+  if (reference < leaf.notBefore || reference > leaf.notAfter) {
+    return invalid("signing certificate was not valid when the signature was made");
+  }
+
   const statement = parseStatement(payload);
   if (!statement) return invalid("attested statement is not a readable in-toto statement");
 
@@ -327,7 +351,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       repositoryVisibility: extensionString(leaf, OID_SOURCE_REPO_VISIBILITY),
       subjectName: statement.subjectName,
       subjectSha512: statement.subjectSha512,
-      logIndex: transparencyLogIndex(material),
+      logIndex: transparencyLog?.logIndex ?? null,
       signedAt: signedAt?.toISOString() ?? null,
     },
   };
@@ -440,30 +464,258 @@ function transparencyLogEntry(material: Record<string, unknown>): Record<string,
   return asObject(entries[0]);
 }
 
-function transparencyLogIndex(material: Record<string, unknown>): string | null {
-  const raw = transparencyLogEntry(material)?.logIndex;
-  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0) return String(raw);
-  if (typeof raw === "string" && /^\d{1,19}$/.test(raw)) return raw;
-  return null;
+function protobufUint64(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\d{1,19}$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function transparencyLogIndex(entry: Record<string, unknown>): number | null {
+  return protobufUint64(entry.logIndex);
+}
+
+function transparencyLogTime(entry: Record<string, unknown>): Date | null {
+  const seconds = protobufUint64(entry.integratedTime);
+  if (seconds === null || seconds === 0) return null;
+  const milliseconds = seconds * 1000;
+  if (!Number.isSafeInteger(milliseconds)) return null;
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+interface VerifiedTransparencyLogEntry {
+  signedAt: Date;
+  logIndex: string;
 }
 
 /**
- * When the signature was made, per the transparency-log entry.
- *
- * The protobuf JSON mapping renders `integratedTime` (an int64 of seconds) as a
- * decimal string, but bundles produced by other tooling have been seen carrying
- * an RFC 3339 timestamp in the same field. Both are read; anything else is
- * treated as absent rather than guessed at.
+ * Verify Rekor's Signed Entry Timestamp (SET), also called an inclusion
+ * promise. `false` means an entry was present but untrusted; `null` means the
+ * bundle carried no entry, in which case certificate validity is checked now.
  */
-function transparencyLogTime(material: Record<string, unknown>): Date | null {
-  const raw = transparencyLogEntry(material)?.integratedTime;
-  if (typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0) {
-    return new Date(raw * 1000);
+async function verifiedTransparencyLogEntry(
+  material: Record<string, unknown>,
+  envelope: Record<string, unknown>,
+  certificateBase64: string,
+): Promise<VerifiedTransparencyLogEntry | null | false> {
+  const entry = transparencyLogEntry(material);
+  if (!entry) {
+    return Array.isArray(material.tlogEntries) && material.tlogEntries.length > 0 ? false : null;
   }
-  if (typeof raw !== "string" || !raw) return null;
-  if (/^\d{1,12}$/.test(raw)) return new Date(Number(raw) * 1000);
-  const parsed = Date.parse(raw);
-  return Number.isFinite(parsed) ? new Date(parsed) : null;
+
+  const signedAt = transparencyLogTime(entry);
+  const logIndex = transparencyLogIndex(entry);
+  const logId = asObject(entry.logId)?.keyId;
+  const body = entry.canonicalizedBody;
+  const promise = asObject(entry.inclusionPromise)?.signedEntryTimestamp;
+  if (
+    !signedAt ||
+    logIndex === null ||
+    typeof logId !== "string" ||
+    typeof body !== "string" ||
+    body.length > MAX_TLOG_BODY_BASE64_LENGTH ||
+    typeof promise !== "string"
+  ) {
+    return false;
+  }
+
+  const trustedKey = REKOR_LOG_KEYS.find((candidate) => candidate.keyId === logId);
+  if (!trustedKey || signedAt.getTime() < trustedKey.validFrom) return false;
+
+  let keyIdBytes: Uint8Array;
+  let spki: Uint8Array;
+  let signature: Uint8Array;
+  let bodyBytes: Uint8Array;
+  try {
+    keyIdBytes = decodeBase64(logId);
+    spki = decodeBase64(trustedKey.spki);
+    signature = decodeBase64(promise);
+    bodyBytes = decodeBase64(body);
+  } catch {
+    return false;
+  }
+
+  // The promise authenticates `canonicalizedBody`, but its timestamp is useful
+  // for this bundle only when that body names this envelope's signature and
+  // payload. Otherwise an old, valid promise could be replayed alongside a new
+  // signature made with a retained Fulcio leaf key.
+  if (!(await transparencyLogBodyMatches(entry, bodyBytes, envelope, certificateBase64))) {
+    return false;
+  }
+
+  // RFC 8785 sorts these four keys exactly as written. Their values are only
+  // integers or base64/hex ASCII, so JSON.stringify is canonical for this
+  // deliberately narrow payload without a general hostile-JSON canonicalizer.
+  const payload = new TextEncoder().encode(
+    JSON.stringify({
+      body,
+      integratedTime: Math.floor(signedAt.getTime() / 1000),
+      logID: bytesToHex(keyIdBytes),
+      logIndex,
+    }),
+  );
+  const verified = await verifyWithSpkiKey(spki, signature, payload, trustedKey.algorithm);
+  return verified ? { signedAt, logIndex: String(logIndex) } : false;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  let value = "";
+  for (const byte of bytes) value += byte.toString(16).padStart(2, "0");
+  return value;
+}
+
+async function transparencyLogBodyMatches(
+  entry: Record<string, unknown>,
+  bodyBytes: Uint8Array,
+  envelope: Record<string, unknown>,
+  certificateBase64: string,
+): Promise<boolean> {
+  let body: Record<string, unknown> | null;
+  try {
+    body = asObject(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes)));
+  } catch {
+    return false;
+  }
+  const kind = asObject(entry.kindVersion)?.kind;
+  const version = asObject(entry.kindVersion)?.version;
+  if (
+    !body ||
+    typeof kind !== "string" ||
+    typeof version !== "string" ||
+    body.kind !== kind ||
+    body.apiVersion !== version
+  ) {
+    return false;
+  }
+
+  const payloadBase64 = envelope.payload;
+  const signatures = Array.isArray(envelope.signatures) ? envelope.signatures : [];
+  const signatureBase64 = asObject(signatures[0])?.sig;
+  if (
+    typeof payloadBase64 !== "string" ||
+    !payloadBase64 ||
+    payloadBase64.length > MAX_PAYLOAD_BASE64_LENGTH ||
+    signatures.length !== 1 ||
+    typeof signatureBase64 !== "string"
+  ) {
+    return false;
+  }
+
+  let payload: Uint8Array;
+  let signature: Uint8Array;
+  let certificate: Uint8Array;
+  try {
+    payload = decodeBase64(payloadBase64);
+    signature = decodeBase64(signatureBase64);
+    certificate = decodeBase64(certificateBase64);
+  } catch {
+    return false;
+  }
+  const digestInput = new Uint8Array(payload.length);
+  digestInput.set(payload);
+  const payloadDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput));
+
+  if (kind === "intoto" && version === "0.0.2") {
+    const content = asObject(asObject(asObject(body.spec)?.content)?.envelope);
+    const contentRoot = asObject(asObject(body.spec)?.content);
+    const bodySignatures = Array.isArray(content?.signatures) ? content.signatures : [];
+    const bodySignature = asObject(bodySignatures[0]);
+    const payloadHash = asObject(contentRoot?.payloadHash);
+    if (
+      bodySignatures.length !== 1 ||
+      payloadHash?.algorithm !== "sha256" ||
+      typeof payloadHash.value !== "string" ||
+      typeof bodySignature?.sig !== "string" ||
+      typeof bodySignature.publicKey !== "string"
+    ) {
+      return false;
+    }
+    try {
+      const encodedSignature = decodeBase64Text(bodySignature.sig);
+      const certificatePem = decodeBase64Text(bodySignature.publicKey);
+      return (
+        bytesEqual(signature, decodeBase64(encodedSignature)) &&
+        bytesEqual(payloadDigest, hexToBytes(payloadHash.value)) &&
+        bytesEqual(certificate, pemToDer(certificatePem))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  if (kind === "dsse" && version === "0.0.1") {
+    const spec = asObject(body.spec);
+    const bodySignatures = Array.isArray(spec?.signatures) ? spec.signatures : [];
+    const bodySignature = asObject(bodySignatures[0])?.signature;
+    const payloadHash = asObject(spec?.payloadHash);
+    if (
+      bodySignatures.length !== 1 ||
+      typeof bodySignature !== "string" ||
+      payloadHash?.algorithm !== "sha256" ||
+      typeof payloadHash.value !== "string"
+    ) {
+      return false;
+    }
+    try {
+      return (
+        bytesEqual(signature, decodeBase64(bodySignature)) &&
+        bytesEqual(payloadDigest, hexToBytes(payloadHash.value))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  if (kind === "dsse" && version === "0.0.2") {
+    const spec = asObject(asObject(body.spec)?.dsseV002);
+    const bodySignatures = Array.isArray(spec?.signatures) ? spec.signatures : [];
+    const bodySignature = asObject(bodySignatures[0]);
+    const payloadHash = asObject(spec?.payloadHash);
+    const verifier = asObject(bodySignature?.verifier);
+    const x509Certificate = asObject(verifier?.x509Certificate);
+    if (
+      bodySignatures.length !== 1 ||
+      typeof bodySignature?.content !== "string" ||
+      payloadHash?.algorithm !== "SHA2_256" ||
+      typeof payloadHash.digest !== "string" ||
+      typeof x509Certificate?.rawBytes !== "string"
+    ) {
+      return false;
+    }
+    try {
+      return (
+        bytesEqual(signature, decodeBase64(bodySignature.content)) &&
+        bytesEqual(payloadDigest, decodeBase64(payloadHash.digest)) &&
+        bytesEqual(certificate, decodeBase64(x509Certificate.rawBytes))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function decodeBase64Text(value: string): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64(value));
+}
+
+function hexToBytes(value: string): Uint8Array {
+  if (!/^[0-9a-fA-F]{64}$/.test(value)) throw new Error("invalid SHA-256 digest");
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < bytes.length; i++)
+    bytes[i] = Number.parseInt(value.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let i = 0; i < left.length; i++) difference |= left[i] ^ right[i];
+  return difference === 0;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
