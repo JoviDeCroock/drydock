@@ -21,7 +21,7 @@ const CATEGORY_LABELS: Record<AuditCategory, string> = {
   organization: "Org",
 };
 
-function severityTone(severity: AuditSeverity): BadgeTone {
+function auditSeverityTone(severity: AuditSeverity): BadgeTone {
   if (severity === "security") return "high";
   if (severity === "notice") return "medium";
   return "info";
@@ -80,7 +80,7 @@ export function AuditLogSection({
             <SettingsCardListItem key={event.id}>
               <div class="flex flex-col gap-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <Badge tone={severityTone(event.severity)} dot>
+                  <Badge tone={auditSeverityTone(event.severity)} dot>
                     {CATEGORY_LABELS[event.category]}
                   </Badge>
                   <span class="text-[13px] font-medium text-ink">{event.label}</span>

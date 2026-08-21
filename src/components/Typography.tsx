@@ -150,3 +150,23 @@ export function EmptyLine({
 }) {
   return <p class={cn("text-ink-muted m-0 text-[13px] leading-[1.55]", className)}>{children}</p>;
 }
+
+/**
+ * A paragraph of body copy on a content page (docs, privacy). The max-width is
+ * a measure limit, not a layout constraint — long-form prose gets unreadable
+ * past roughly 80 characters.
+ */
+export function Prose({ children }: { children: ComponentChildren }) {
+  return <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">{children}</p>;
+}
+
+/**
+ * A code span inside prose — a command, a file name, a field. The tinted
+ * background is what separates it from surrounding text at 12px; block-level
+ * code belongs in the docs page's CodeBlock instead.
+ */
+export function InlineCode({ children }: { children: ComponentChildren }) {
+  return (
+    <code class="font-mono text-[12px] text-ink bg-surface-2 px-1 py-0.5 rounded">{children}</code>
+  );
+}

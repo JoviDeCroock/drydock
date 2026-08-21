@@ -1,7 +1,7 @@
 import { Card } from "../../components/Card";
 import { LinkButton } from "../../components/Button";
 import { Badge } from "../../components/Badge";
-import { Muted, SectionLabel } from "../../components/Typography";
+import { InlineCode, Muted, SectionLabel } from "../../components/Typography";
 
 // Shown only to an organization that has never had a scan.
 //
@@ -40,8 +40,8 @@ export function GettingStarted({ npmConnected }: { npmConnected: boolean }) {
           )}
         </Step>
         <Step index={2} title="Stage a release">
-          Run <Code>npm stage publish</Code> from your package directory. npm holds the candidate
-          privately until you approve it. Drydock finds it automatically, or use{" "}
+          Run <InlineCode>npm stage publish</InlineCode> from your package directory. npm holds the
+          candidate privately until you approve it. Drydock finds it automatically, or use{" "}
           <strong class="font-medium text-ink">Check npm</strong> below.
         </Step>
         <Step index={3} title="Review and decide">
@@ -100,8 +100,4 @@ function Step({
       </div>
     </li>
   );
-}
-
-function Code({ children }: { children: preact.ComponentChildren }) {
-  return <code class="font-mono text-[12px] text-ink">{children}</code>;
 }

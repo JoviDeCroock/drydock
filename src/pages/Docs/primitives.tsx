@@ -288,10 +288,6 @@ export function Subsection({
   );
 }
 
-export function Prose({ children }: { children: ComponentChildren }) {
-  return <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">{children}</p>;
-}
-
 export function Steps({ items }: { items: ComponentChildren[] }) {
   return (
     <ol class="list-none p-0 m-0 flex flex-col">
@@ -315,12 +311,6 @@ export function Steps({ items }: { items: ComponentChildren[] }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-export function Code({ children }: { children: string }) {
-  return (
-    <code class="font-mono text-[12px] text-ink bg-surface-2 px-1 py-0.5 rounded">{children}</code>
   );
 }
 
