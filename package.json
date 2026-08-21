@@ -34,7 +34,8 @@
     "e2e:dev": "node test/e2e/dev-server.mjs",
     "agent:tour": "node scripts/agent-tour.mjs",
     "test:e2e": "playwright test",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "verify:quick": "node scripts/verify.mjs --quick"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
