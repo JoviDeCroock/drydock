@@ -138,7 +138,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
     // side — every file added — with a notice saying why.
     let from: AtpmVersion | null;
     if (input.fromVersion === ATPM_NO_BASELINE_VERSION) {
-      if (!stagedCandidate || (pkg && pkg.versions.length > 0)) {
+      if (
+        !stagedCandidate ||
+        (pkg && (pkg.versions.length > 0 || pkg.unreadableVersions.length > 0))
+      ) {
         throw new PublicDiffError("no-baseline is only valid for a first staged release", 400);
       }
       from = null;

@@ -45,11 +45,11 @@ import {
  */
 
 /**
- * Cache-identity segment for provenance verification. Bump when a bundle
- * accepted by an older deployment would be rejected now, so a cached verdict
- * cannot outlive the rules that produced it.
+ * Cache-identity segment for provenance verification. Bump whenever a bundle's
+ * verdict can change, so a cached result cannot outlive the rules that produced
+ * it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "5";
+export const ATPM_PROVENANCE_RULES_VERSION = "6";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -614,6 +614,7 @@ export async function transparencyLogBodyMatches(
   }
 
   const payloadBase64 = envelope.payload;
+  const payloadType = envelope.payloadType;
   const signatures = Array.isArray(envelope.signatures) ? envelope.signatures : [];
   const signatureBase64 = asObject(signatures[0])?.sig;
   if (
@@ -713,6 +714,36 @@ export async function transparencyLogBodyMatches(
       return (
         bytesEqual(signature, decodeBase64(bodySignature.content)) &&
         bytesEqual(payloadDigest, decodeBase64(payloadHash.digest)) &&
+        bytesEqual(certificate, decodeBase64(x509Certificate.rawBytes))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  if (kind === "hashedrekord" && version === "0.0.2") {
+    const spec = asObject(asObject(body.spec)?.hashedRekordV002);
+    const data = asObject(spec?.data);
+    const bodySignature = asObject(spec?.signature);
+    const verifier = asObject(bodySignature?.verifier);
+    const x509Certificate = asObject(verifier?.x509Certificate);
+    if (
+      typeof payloadType !== "string" ||
+      data?.algorithm !== "SHA2_256" ||
+      typeof data.digest !== "string" ||
+      typeof bodySignature?.content !== "string" ||
+      typeof x509Certificate?.rawBytes !== "string"
+    ) {
+      return false;
+    }
+    try {
+      const signedBytes = preAuthenticationEncoding(payloadType, payload);
+      const signedDigestInput = new Uint8Array(signedBytes.length);
+      signedDigestInput.set(signedBytes);
+      const signedDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", signedDigestInput));
+      return (
+        bytesEqual(signature, decodeBase64(bodySignature.content)) &&
+        bytesEqual(signedDigest, decodeBase64(data.digest)) &&
         bytesEqual(certificate, decodeBase64(x509Certificate.rawBytes))
       );
     } catch {

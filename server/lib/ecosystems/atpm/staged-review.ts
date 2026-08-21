@@ -130,16 +130,21 @@ export function selectBaselineVersion(
   candidate: Pick<AtpmStagedVersion, "version" | "tag">,
 ): string | null {
   const byVersion = new Set(published.versions.map((entry) => entry.version));
+  const unreadableVersions = new Set(published.unreadableVersions);
 
   const tagged = candidate.tag ? published.tags[candidate.tag] : null;
-  if (tagged && published.unreadableVersions.includes(tagged)) {
+  if (tagged && unreadableVersions.has(tagged)) {
     throw new PublicDiffError("tagged baseline version metadata is unreadable", 502);
   }
   if (tagged && byVersion.has(tagged)) return tagged;
 
-  const ordered = [...published.versions]
-    .map((entry) => entry.version)
-    .sort((a, b) => compareSemver(b, a));
+  const ordered = [...new Set([...byVersion, ...unreadableVersions])].sort((a, b) =>
+    compareSemver(b, a),
+  );
   const predecessor = ordered.find((version) => compareSemver(version, candidate.version) < 0);
-  return predecessor ?? ordered[0] ?? null;
+  const baseline = predecessor ?? ordered[0] ?? null;
+  if (baseline && unreadableVersions.has(baseline)) {
+    throw new PublicDiffError("baseline version metadata is unreadable", 502);
+  }
+  return baseline;
 }

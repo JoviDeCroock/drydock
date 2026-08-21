@@ -41,6 +41,43 @@ async function stageRecord() {
   };
 }
 
+function stubAtpmRecords(
+  staged: Awaited<ReturnType<typeof stageRecord>>,
+  published: unknown | null,
+) {
+  vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("https://cloudflare-dns.com/dns-query")) {
+      return Promise.resolve(Response.json({ Answer: [{ type: 16, data: `"did=${DID}"` }] }));
+    }
+    if (url.startsWith(`https://plc.directory/${encodeURIComponent(DID)}`)) {
+      return Promise.resolve(
+        Response.json({
+          id: DID,
+          alsoKnownAs: ["at://ebey.dev"],
+          service: [
+            { id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: PDS },
+          ],
+        }),
+      );
+    }
+    if (url.includes("collection=dev.atpm.alpha.stage")) {
+      return Promise.resolve(Response.json(staged));
+    }
+    if (url.includes("collection=dev.atpm.alpha.package")) {
+      return Promise.resolve(
+        published
+          ? Response.json({ value: published })
+          : Response.json({ error: "RecordNotFound" }, { status: 400 }),
+      );
+    }
+    if (url.includes("collection=dev.atpm.alpha.trustPublisher")) {
+      return Promise.resolve(Response.json({ error: "RecordNotFound" }, { status: 400 }));
+    }
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  });
+}
+
 describe("atpm staged public diff", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -49,33 +86,7 @@ describe("atpm staged public diff", () => {
 
   test("loads a first release without requiring a published package record", async () => {
     const staged = await stageRecord();
-    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.startsWith("https://cloudflare-dns.com/dns-query")) {
-        return Promise.resolve(Response.json({ Answer: [{ type: 16, data: `"did=${DID}"` }] }));
-      }
-      if (url.startsWith(`https://plc.directory/${encodeURIComponent(DID)}`)) {
-        return Promise.resolve(
-          Response.json({
-            id: DID,
-            alsoKnownAs: ["at://ebey.dev"],
-            service: [
-              { id: "#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: PDS },
-            ],
-          }),
-        );
-      }
-      if (url.includes("collection=dev.atpm.alpha.stage")) {
-        return Promise.resolve(Response.json(staged));
-      }
-      if (
-        url.includes("collection=dev.atpm.alpha.package") ||
-        url.includes("collection=dev.atpm.alpha.trustPublisher")
-      ) {
-        return Promise.resolve(Response.json({ error: "RecordNotFound" }, { status: 400 }));
-      }
-      return Promise.resolve(new Response("not found", { status: 404 }));
-    });
+    stubAtpmRecords(staged, null);
     sandboxMock.downloadInSandbox.mockResolvedValue({
       files: [
         {
@@ -114,5 +125,29 @@ describe("atpm staged public diff", () => {
         },
       ]),
     );
+  });
+
+  test("rejects no-baseline when a published version is unreadable", async () => {
+    const staged = await stageRecord();
+    stubAtpmRecords(staged, {
+      $type: "dev.atpm.alpha.package",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      tags: { latest: "0.0.0" },
+      versions: [{ version: "0.0.0" }],
+    });
+
+    await expect(
+      atpmPublicDiff.acquire({} as Cloudflare.Env, {} as ExecutionContext, {
+        ecosystem: "atpm",
+        packageName: `${DID}/counter`,
+        fromVersion: ATPM_NO_BASELINE_VERSION,
+        toVersion: formatAtpmStagedVersion(RKEY, staged.cid),
+        registryUrl: "at://",
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: "no-baseline is only valid for a first staged release",
+    });
+    expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
   });
 });

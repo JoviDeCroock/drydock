@@ -304,6 +304,58 @@ describe("verifyAtpmProvenance", () => {
     ).resolves.toBe(false);
   });
 
+  test("binds a Rekor v2 hashedrekord entry to the DSSE signed bytes", async () => {
+    const bundle = clone(BUNDLE) as any;
+    const envelope = bundle.dsseEnvelope;
+    const payload = decodeBase64(envelope.payload);
+    const prefix = new TextEncoder().encode(
+      `DSSEv1 ${envelope.payloadType.length} ${envelope.payloadType} ${payload.length} `,
+    );
+    const signedBytes = new Uint8Array(prefix.length + payload.length);
+    signedBytes.set(prefix);
+    signedBytes.set(payload, prefix.length);
+    const signedDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", signedBytes));
+    const certificateBase64 =
+      bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes;
+    const body = {
+      kind: "hashedrekord",
+      apiVersion: "0.0.2",
+      spec: {
+        hashedRekordV002: {
+          data: {
+            algorithm: "SHA2_256",
+            digest: btoa(String.fromCharCode(...signedDigest)),
+          },
+          signature: {
+            content: envelope.signatures[0].sig,
+            verifier: { x509Certificate: { rawBytes: certificateBase64 } },
+          },
+        },
+      },
+    };
+    const entry = { kindVersion: { kind: "hashedrekord", version: "0.0.2" } };
+
+    await expect(
+      transparencyLogBodyMatches(
+        entry,
+        new TextEncoder().encode(JSON.stringify(body)),
+        envelope,
+        certificateBase64,
+      ),
+    ).resolves.toBe(true);
+
+    const payloadDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
+    body.spec.hashedRekordV002.data.digest = btoa(String.fromCharCode(...payloadDigest));
+    await expect(
+      transparencyLogBodyMatches(
+        entry,
+        new TextEncoder().encode(JSON.stringify(body)),
+        envelope,
+        certificateBase64,
+      ),
+    ).resolves.toBe(false);
+  });
+
   test("refuses a self-signed certificate that does not chain to Fulcio", async () => {
     const bundle = clone(BUNDLE) as any;
     // Swap the leaf for the pinned intermediate: a real, well-formed certificate

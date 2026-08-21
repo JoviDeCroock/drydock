@@ -429,6 +429,24 @@ describe("selectBaselineVersion", () => {
     ).toBe("0.0.15");
   });
 
+  test("fails closed when the immediate predecessor is unreadable", () => {
+    const record = published(["0.0.14"]);
+    record.unreadableVersions = ["0.0.15"];
+
+    expect(() => selectBaselineVersion(record, { version: "0.0.16", tag: "next" })).toThrowError(
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
+  test("does not mistake an unreadable published release for a first release", () => {
+    const record = published([]);
+    record.unreadableVersions = ["0.0.1"];
+
+    expect(() => selectBaselineVersion(record, { version: "0.0.2", tag: "latest" })).toThrowError(
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
   test("has nothing to compare a first release against", () => {
     expect(selectBaselineVersion(published([]), { version: "0.0.1", tag: "latest" })).toBeNull();
   });
