@@ -1,9 +1,5 @@
 import { createDb, type AppDb } from "../../db/client";
-import {
-  getNpmConnection,
-  listAutoDiscoveryNpmConnectionRefs,
-  type AutoDiscoveryNpmConnectionCursor,
-} from "../../db/npm-connections";
+import { getNpmConnection, listAutoDiscoveryNpmConnectionRefs } from "../../db/npm-connections";
 import { getOrganizationOwnerUserId } from "../../db/organizations";
 import { allowInsecureLocalRegistry } from "../ecosystems/npm/connection";
 import {
@@ -104,14 +100,14 @@ export async function enqueueDiscoverySweeps(
 
   emitOperationalEvent("info", "staged_publishes.cron.started", { mode: "queue" });
 
-  let cursor: AutoDiscoveryNpmConnectionCursor | null = null;
+  let cursor: string | null = null;
   let organizations = 0;
   let batches = 0;
   let exhaustedPageBudget = true;
   for (let page = 0; page < maxPages; page++) {
     const refs = await listAutoDiscoveryNpmConnectionRefs(db, {
       limit: DISCOVERY_SWEEP_BATCH_SIZE,
-      after: cursor,
+      afterId: cursor,
     });
     if (!refs.length) {
       exhaustedPageBudget = false;
@@ -125,7 +121,7 @@ export async function enqueueDiscoverySweeps(
     organizations += refs.length;
     batches += 1;
     const last = refs[refs.length - 1]!;
-    cursor = { validationStatus: last.validationStatus, id: last.id };
+    cursor = last.id;
     if (refs.length < DISCOVERY_SWEEP_BATCH_SIZE) {
       exhaustedPageBudget = false;
       break;
@@ -136,7 +132,7 @@ export async function enqueueDiscoverySweeps(
   // count that happens to be a multiple of the page size would otherwise raise a
   // false alarm every tick. One extra bounded read settles it.
   const truncated = exhaustedPageBudget
-    ? (await listAutoDiscoveryNpmConnectionRefs(db, { limit: 1, after: cursor })).length > 0
+    ? (await listAutoDiscoveryNpmConnectionRefs(db, { limit: 1, afterId: cursor })).length > 0
     : false;
 
   emitOperationalEvent(truncated ? "error" : "info", "staged_publishes.cron.enqueued", {
@@ -155,16 +151,16 @@ async function runInlineDiscoverySweeps(
   maxPages: number,
 ): Promise<void> {
   const organizationIds: string[] = [];
-  let cursor: AutoDiscoveryNpmConnectionCursor | null = null;
+  let cursor: string | null = null;
   for (let page = 0; page < maxPages; page++) {
     const refs = await listAutoDiscoveryNpmConnectionRefs(db, {
       limit: DISCOVERY_SWEEP_BATCH_SIZE,
-      after: cursor,
+      afterId: cursor,
     });
     if (!refs.length) break;
     for (const ref of refs) organizationIds.push(ref.organizationId);
     const last = refs[refs.length - 1]!;
-    cursor = { validationStatus: last.validationStatus, id: last.id };
+    cursor = last.id;
     if (refs.length < DISCOVERY_SWEEP_BATCH_SIZE) break;
   }
 

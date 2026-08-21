@@ -184,11 +184,12 @@ describe("discovery sweep producer", () => {
     );
   });
 
-  test("pages the enumeration and keeps each send under the 100-message batch cap", async () => {
+  test("pages by stable id while consumers change validation status", async () => {
     // 101 eligible orgs: the cursor has to advance past the first full page, and
-    // no single sendBatch may exceed the Queues limit of 100 messages.
-    const validExpected: string[] = [];
-    const unvalidatedExpected: string[] = [];
+    // no single sendBatch may exceed the Queues limit of 100 messages. Updating
+    // unvalidated rows after the first send simulates consumers validating the
+    // connections while the producer is still enumerating later pages.
+    const expected: string[] = [];
     for (let index = 0; index < 101; index++) {
       // Deterministic connection ids so the keyset order is known, which is what
       // makes a skipped or repeated page visible.
@@ -197,11 +198,19 @@ describe("discovery sweep producer", () => {
         validationStatus: index % 2 === 0 ? "valid" : "unvalidated",
         connectionId: `npmconn_${String(index).padStart(4, "0")}`,
       });
-      (index % 2 === 0 ? validExpected : unvalidatedExpected).push(seeded.organizationId);
+      expected.push(seeded.organizationId);
     }
 
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const sendBatch = vi.fn(async () => undefined);
+    let batchesSent = 0;
+    const sendBatch = vi.fn(async () => {
+      batchesSent++;
+      if (batchesSent !== 1) return;
+      await createDb(env.DB)
+        .update(schema.npmConnections)
+        .set({ validationStatus: "valid" })
+        .where(eq(schema.npmConnections.validationStatus, "unvalidated"));
+    });
     const ctx = createExecutionContext();
     await worker.scheduled(
       scheduledController(),
@@ -216,10 +225,7 @@ describe("discovery sweep producer", () => {
     const enqueued = enqueuedOrganizationIds(sendBatch);
     expect(enqueued).toHaveLength(101);
     expect(new Set(enqueued).size).toBe(101);
-    // The exact order matches the `(validation_status, id)` index. Besides
-    // preventing a temporary sort, this exercises a cursor page that crosses
-    // from unvalidated rows into valid rows without skipping the last item.
-    expect(enqueued).toEqual([...unvalidatedExpected, ...validExpected]);
+    expect(enqueued).toEqual(expected);
   });
 
   test("flags truncation only when the page budget actually leaves orgs behind", async () => {

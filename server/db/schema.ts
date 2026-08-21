@@ -333,13 +333,13 @@ export const npmConnections = sqliteTable(
   (table) => ({
     orgUniqueIdx: uniqueIndex("npm_connections_org_unique_idx").on(table.organizationId),
     fingerprintIdx: index("npm_connections_fingerprint_idx").on(table.tokenFingerprint),
-    // The discovery cron enumerates every sweep-eligible connection each tick
-    // (validation_status in valid/unvalidated) and pages by `id`. Without this
-    // index that enumeration is a full table scan of a table that grows with
-    // every organization.
-    validationStatusIdx: index("npm_connections_validation_status_idx").on(
-      table.validationStatus,
+    // Discovery pages by immutable id while filtering on validation status.
+    // Keeping the filter and selected organization id in the same index makes
+    // that stable keyset walk covering as the connection table grows.
+    discoveryCursorIdx: index("npm_connections_discovery_cursor_idx").on(
       table.id,
+      table.validationStatus,
+      table.organizationId,
     ),
   }),
 );

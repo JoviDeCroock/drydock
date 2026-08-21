@@ -1,0 +1,1 @@
+CREATE INDEX `npm_connections_discovery_cursor_idx` ON `npm_connections` (`id`,`validation_status`,`organization_id`);

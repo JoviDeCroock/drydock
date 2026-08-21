@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "96c01dd6-7637-4ce1-b445-5c885878977f",
+  "id": "68e15ac5-7f36-4b7d-9877-410cc2837dc4",
   "prevId": "3e6e53aa-9934-48a5-b804-47b2723d0387",
   "tables": {
     "account": {
@@ -796,11 +796,12 @@
           ],
           "isUnique": false
         },
-        "npm_connections_validation_status_idx": {
-          "name": "npm_connections_validation_status_idx",
+        "npm_connections_discovery_cursor_idx": {
+          "name": "npm_connections_discovery_cursor_idx",
           "columns": [
+            "id",
             "validation_status",
-            "id"
+            "organization_id"
           ],
           "isUnique": false
         }
