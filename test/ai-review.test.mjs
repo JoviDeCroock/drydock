@@ -1028,6 +1028,45 @@ describe("anchored findings and inline comments", () => {
     expect(ai.comments).toEqual([]);
   });
 
+  test("drops a comment on an unchanged evidence file hidden from the default diff", async () => {
+    const contextText = "export const context = true;\n";
+    const options = {
+      ...ANCHOR_OPTIONS,
+      files: [
+        ...ANCHOR_OPTIONS.files,
+        {
+          path: "context.js",
+          size: contextText.length,
+          sha256: "context",
+          textSample: contextText,
+          flags: [],
+        },
+      ],
+      diff: [...ANCHOR_OPTIONS.diff, { path: "context.js", status: "unchanged", flags: [] }],
+      ruleFindings: [aiFinding("high", "context.js")],
+    };
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      options,
+      readingThenSubmittingModel(
+        {
+          ...VALID_REVIEW,
+          comments: [
+            {
+              file: "context.js",
+              anchor: "export const context = true;",
+              note: "Package context, not a changed file.",
+            },
+          ],
+        },
+        { path: "context.js" },
+      ),
+    );
+
+    expect(ai.comments).toEqual([]);
+  });
+
   test("caps comments at MAX_AI_COMMENTS", async () => {
     const ai = await reviewWith({
       comments: Array.from({ length: MAX_AI_COMMENTS + 2 }, (_, index) => ({

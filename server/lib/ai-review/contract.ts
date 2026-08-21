@@ -6,7 +6,7 @@ export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 // or model-routing policy changes in a way that can alter reviewer behavior.
 // Persisting this with each review keeps analytics and recorded eval cases from
 // silently comparing different reviewer contracts as though they were one.
-export const AI_REVIEWER_VERSION = "1.3.0";
+export const AI_REVIEWER_VERSION = "1.3.1";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
@@ -129,6 +129,7 @@ Inline comments (\`comments\`, optional, at most ${MAX_AI_COMMENTS}):
 - Short notes pinned next to a line of the diff for the maintainer reading that file: what a changed hunk actually does, why an alarming-looking construct is ordinary here, or what a reader should verify themselves.
 - Each needs \`file\`, \`anchor\` (as above), and \`note\` — one or two sentences of plain prose, no markdown.
 - Advisory only. They never change risk and never stand in for a finding: critical/high concern belongs in \`findings\`, everything else that changes the verdict belongs in \`summary\`.
+- Comment only on changed files. Unchanged package context is hidden from the default diff view, so explain any relevant context in \`summary\` instead.
 - Comment only where the note adds something the diff does not already say. Zero comments is a fine answer for an ordinary release; never narrate routine edits line by line.
 
 Summary style:

@@ -435,13 +435,16 @@ function normalizeParsedReview(model: string, value: unknown, anchors: AnchorRes
       const resolved = anchors(finding.file, anchor);
       return { ...rest, file: resolved?.file ?? finding.file, line: resolved?.line ?? null };
     }),
-    // A comment is only meaningful next to the line it annotates, so unlike a
-    // finding it is dropped outright when its file is not one this review could
-    // see. An unpinned comment on a real file is kept: the diff surfaces it in
-    // the same banner it uses for unpinnable findings.
+    // A comment is only meaningful next to the release diff, so unlike a finding
+    // it is dropped outright when its file is unavailable or unchanged. Unchanged
+    // evidence can inform the summary, but the workbench hides package-context
+    // files by default and comments intentionally have no tree count to reveal
+    // them. An unpinned comment on a changed file is kept in that file's banner.
     comments: selectReportedComments(review.comments).flatMap((comment) => {
       const resolved = anchors(comment.file, comment.anchor);
-      return resolved ? [{ file: resolved.file, note: comment.note, line: resolved.line }] : [];
+      return resolved?.changed
+        ? [{ file: resolved.file, note: comment.note, line: resolved.line }]
+        : [];
     }),
     requiresManualReview: review.requiresManualReview,
     model,

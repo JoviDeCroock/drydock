@@ -60,7 +60,9 @@ for the lifecycle behavior behind it.
   advisory notes pinned to a line, persisted in `scans.ai_json` and rendered in the
   diff. They are context for the maintainer reading the hunk, never signals — they
   are not `scan_findings` rows, do not count into `finding_count`, and cannot move
-  risk. A comment naming a file the review could not see is dropped.
+  risk. A comment naming a file the review could not see, or an unchanged file
+  hidden from the default diff view, is dropped; unchanged context belongs in the
+  summary instead.
 
 ## Operational observability
 

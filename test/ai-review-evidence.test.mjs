@@ -160,12 +160,14 @@ describe("AI review evidence tools", () => {
     // The path is tool-readable, but its source has not been returned yet.
     expect(resolveAnchor("scripts/install.js", "process.env.NPM_TOKEN")).toEqual({
       file: "scripts/install.js",
+      changed: false,
       line: null,
     });
 
     await tools.search_files.execute({ queries: ["NPM_TOKEN"], maxResults: 1 });
     expect(resolveAnchor("scripts/install.js", "process.env.NPM_TOKEN")).toEqual({
       file: "scripts/install.js",
+      changed: false,
       line: 1,
     });
 

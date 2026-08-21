@@ -25,9 +25,14 @@ describe("resolveAnchorLine", () => {
     expect(resolveAnchorLine(SOURCE, "+  const token = process.env.NPM_TOKEN;")).toBe(4);
   });
 
-  test("prefers a literal match over the marker-stripped reading", () => {
+  test("keeps a literal marker reading when the stripped form identifies the same line", () => {
+    expect(resolveAnchorLine("- value", "- value")).toBe(1);
+  });
+
+  test("refuses conflicting literal and marker-stripped readings", () => {
     const text = ["  args.push('-force');", "  args.push('force');"].join("\n");
-    expect(resolveAnchorLine(text, "-force');")).toBe(1);
+    expect(resolveAnchorLine(text, "-force');")).toBeNull();
+    expect(resolveAnchorLine(["+value", "value"].join("\n"), "+value")).toBeNull();
   });
 
   test("matches a clipped anchor by containment", () => {
@@ -44,9 +49,9 @@ describe("resolveAnchorLine", () => {
     expect(resolveAnchorLine(text, "- value")).toBeNull();
   });
 
-  test("prefers a literal partial match over a marker-stripped exact match", () => {
+  test("refuses a literal partial match that conflicts with a stripped exact match", () => {
     const text = ['args.push("- value");', "value"].join("\n");
-    expect(resolveAnchorLine(text, "- value")).toBe(1);
+    expect(resolveAnchorLine(text, "- value")).toBeNull();
   });
 
   test("refuses an anchor with no identity of its own", () => {

@@ -26,10 +26,10 @@ const MIN_ANCHOR_SIGNAL_CHARS = 4;
  * For each candidate, two passes over the whole file require a unique match:
  * line equality first (what a correctly copied anchor hits), then
  * line-contains-anchor (what an anchor clipped by the length bound hits).
- * Ambiguity is terminal before a weaker candidate is tried. Comparison is on
- * trimmed lines, because the reviewer reads text that has already been through
- * diff rendering and per-call truncation, so leading indentation is not
- * reliably preserved.
+ * Every viable candidate must resolve to the same line. Comparison is on trimmed
+ * lines, because the reviewer reads text that has already been through diff
+ * rendering and per-call truncation, so leading indentation is not reliably
+ * preserved.
  *
  * Candidates try the anchor as given and, when it starts with a unified-diff
  * marker, the marker-stripped form: `read` serves changed files as `+`/`-`/space
@@ -37,7 +37,8 @@ const MIN_ANCHOR_SIGNAL_CHARS = 4;
  * appears nowhere in the file — while a line of source that genuinely begins
  * with `-` (a shell flag, a YAML list item) must still match itself. Trying the
  * literal form first keeps the genuine case exact and treats marker-stripping as
- * the fallback it is.
+ * the fallback it is. When the literal and marker-stripped readings identify
+ * different lines, the anchor is ambiguous and must not pin either one.
  */
 export function resolveAnchorLine(
   text: string | null | undefined,
@@ -47,20 +48,18 @@ export function resolveAnchorLine(
   if (!candidates.length || !text) return null;
 
   const lines = text.split("\n").map((line) => line.trim());
+  let resolvedLine: number | null = null;
   for (const candidate of candidates) {
-    // Keep the most literal interpretation authoritative. If it is ambiguous,
-    // trying a weaker marker-stripped or containment match can only manufacture
-    // confidence: two `- value` lines plus one `value` line must not pin the
-    // former anchor to the latter.
     const exact = matchLine(lines, (line) => line === candidate);
-    if (exact.kind === "unique") return exact.line;
     if (exact.kind === "ambiguous") return null;
-
-    const partial = matchLine(lines, (line) => line.includes(candidate));
-    if (partial.kind === "unique") return partial.line;
-    if (partial.kind === "ambiguous") return null;
+    const match =
+      exact.kind === "unique" ? exact : matchLine(lines, (line) => line.includes(candidate));
+    if (match.kind === "ambiguous") return null;
+    if (match.kind === "none") continue;
+    if (resolvedLine !== null && resolvedLine !== match.line) return null;
+    resolvedLine = match.line;
   }
-  return null;
+  return resolvedLine;
 }
 
 /**

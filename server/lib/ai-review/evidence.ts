@@ -318,6 +318,8 @@ export function createAiReviewTools(
 export interface ResolvedAnchor {
   /** The package-relative path as the diff and the file tree spell it. */
   file: string;
+  /** Whether this file is part of the release delta rather than package context. */
+  changed: boolean;
   /** 1-based line in the staged text, or null when the anchor did not pin. */
   line: number | null;
 }
@@ -345,6 +347,7 @@ export function createAnchorResolver(index: EvidenceIndex, evidenceAccess: Evide
     const observedAnchor = firstObservedAnchor(evidenceAccess, file, anchor);
     return {
       file,
+      changed: index.changedPaths.has(file),
       line: observedAnchor ? resolveAnchorLine(record?.textSample, observedAnchor) : null,
     };
   };
