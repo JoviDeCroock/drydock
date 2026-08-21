@@ -74,7 +74,10 @@ them nowhere would hide something real.
 
 The same distinction governs coverage: a reusable workflow that was already
 unreadable at the approved baseline is a standing limitation, while coverage
-that _regressed_ against a complete baseline is a change.
+that _regressed_ against a complete baseline is a change. If the newest
+approved persisted snapshot itself cannot be decoded, Drydock preserves its
+identity and reports a high-significance change requiring approval instead of
+treating the release as though it had no history.
 
 ## What is captured
 
@@ -119,8 +122,9 @@ A snapshot records:
   and whether the call inherits secrets; every action call carries a digest of
   its `with:` inputs and explicit `secrets:` map, while local actions also carry
   a bounded digest of their complete directory tree at the workflow's resolved
-  commit, so source, credential, target, or protected-subject changes are
-  detected without persisting those values;
+  commit. Both GitHub same-repository forms (`./path` and `$/path`) are
+  normalized and hashed, so source, credential, target, or protected-subject
+  changes are detected without persisting those values;
 - detected publish steps (known publishing actions and publish commands);
 - detected release safeguards (attestation, signing, provenance — including
   `with: attestations`/`provenance` inputs);

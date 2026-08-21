@@ -136,6 +136,23 @@ describe("computeReleaseAuthorityDelta", () => {
     expect(delta.baseline).toBeNull();
   });
 
+  it("fails closed when the newest approved baseline is unreadable", async () => {
+    const current = await makeSnapshot();
+    const delta = computeReleaseAuthorityDelta(current, null, {
+      unreadableBaseline: BASELINE_REF,
+    });
+
+    expect(delta).toMatchObject({
+      status: "changed",
+      baseline: BASELINE_REF,
+      highestSignificance: "high",
+      requiresApproval: true,
+    });
+    expect(delta.changes).toEqual([
+      expect.objectContaining({ kind: "baseline_unreadable", significance: "high" }),
+    ]);
+  });
+
   it("reports unchanged when the authority is identical", async () => {
     const delta = await deltaBetween(BASE_WORKFLOW, BASE_WORKFLOW);
     expect(delta.status).toBe("unchanged");
@@ -1039,6 +1056,38 @@ jobs:
         subject: "./actions/publish",
       });
       expect(delta.status).toBe("changed");
+    });
+
+    it("treats GitHub's same-repository local-action path forms as pinned equivalents", async () => {
+      const priorWorkflow = workflow.replace("./actions/publish", "./.github/actions/publish");
+      const prior = await makeSnapshot({
+        workflows: [
+          {
+            path: ENTRY,
+            content: priorWorkflow,
+            localActionDigests: { "./.github/actions/publish": "a" },
+          },
+        ],
+      });
+      const currentWorkflow = priorWorkflow.replace("./.github", "$/.github");
+      const current = await makeSnapshot({
+        workflows: [
+          {
+            path: ENTRY,
+            content: currentWorkflow,
+            localActionDigests: { "$/.github/actions/publish": "a" },
+          },
+        ],
+      });
+
+      const delta = computeReleaseAuthorityDelta(current, { snapshot: prior, ref: BASELINE_REF });
+
+      expect(current.actions).toEqual([
+        expect.objectContaining({ uses: "$/.github/actions/publish", ref: null, pinned: true }),
+      ]);
+      expect(delta.standing.mutableRefs).toEqual([]);
+      expect(delta.status).toBe("cosmetic");
+      expect(delta.requiresApproval).toBe(false);
     });
 
     it("flags changed local-action inputs with an unchanged directory", async () => {

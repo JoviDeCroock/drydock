@@ -842,10 +842,7 @@ async function readActionRef(
   localActionDigest: string | null = null,
 ): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
-  const local =
-    trimmed.startsWith("./") ||
-    trimmed.startsWith("../") ||
-    trimmed.startsWith("$/.github/workflows/");
+  const local = trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("$/");
   const separator = trimmed.lastIndexOf("@");
   const ref = !local && separator > 0 ? trimmed.slice(separator + 1) : null;
   const inputMap = asRecord(inputs);
@@ -882,7 +879,10 @@ function isCommitSha(ref: string | null): boolean {
 /** `owner/name` for a marketplace action, lowercased; local paths keep their path. */
 function actionIdentity(uses: string): string {
   const trimmed = uses.trim().toLowerCase();
-  const withoutRef = trimmed.includes("@") ? trimmed.slice(0, trimmed.lastIndexOf("@")) : trimmed;
+  const canonical = trimmed.startsWith("$/") ? `.${trimmed.slice(1)}` : trimmed;
+  const withoutRef = canonical.includes("@")
+    ? canonical.slice(0, canonical.lastIndexOf("@"))
+    : canonical;
   const segments = withoutRef.split("/");
   if (withoutRef.startsWith("./") || withoutRef.startsWith("../")) return withoutRef;
   return segments.length > 2 ? segments.slice(0, 2).join("/") : withoutRef;
@@ -980,7 +980,7 @@ function shellLogicalLines(run: string): string[] {
 
 function canonicalActionUses(uses: string): string {
   const trimmed = uses.trim();
-  return trimmed.startsWith("$/.github/workflows/") ? `.${trimmed.slice(1)}` : trimmed;
+  return trimmed.startsWith("$/") ? `.${trimmed.slice(1)}` : trimmed;
 }
 
 function artifactFlowForAction(

@@ -94,37 +94,41 @@ describe("fetchReleaseAuthoritySources", () => {
     expect(contents?.url).toContain(`ref=${"a".repeat(40)}`);
   });
 
-  it("binds a local action to its complete directory tree at the run commit", async () => {
-    const workflow = `on: push
+  it.each([
+    ["./actions/publish", "actions/publish"],
+    ["$/.github/actions/publish", ".github/actions/publish"],
+  ])(
+    "binds local action %s to its complete directory tree at the run commit",
+    async (uses, actionPath) => {
+      const workflow = `on: push
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: ./actions/publish
+      - uses: ${uses}
 `;
-    const seen = mockGithub((url) => {
-      if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
-      if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
-        return new Response(workflow);
-      }
-      if (url.pathname.endsWith("/contents/actions/publish")) {
-        return Response.json([
-          { path: "actions/publish/action.yml", sha: "b".repeat(40), type: "file" },
-          { path: "actions/publish/dist", sha: "c".repeat(40), type: "dir" },
-        ]);
-      }
-      throw new Error(`unexpected ${url}`);
-    });
+      const seen = mockGithub((url) => {
+        if (url.pathname.endsWith("/actions/runs/4242")) return runResponse();
+        if (url.pathname.endsWith("/contents/.github/workflows/release.yml")) {
+          return new Response(workflow);
+        }
+        if (url.pathname.endsWith(`/contents/${actionPath}`)) {
+          return Response.json([
+            { path: `${actionPath}/action.yml`, sha: "b".repeat(40), type: "file" },
+            { path: `${actionPath}/dist`, sha: "c".repeat(40), type: "dir" },
+          ]);
+        }
+        throw new Error(`unexpected ${url}`);
+      });
 
-    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+      const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
 
-    expect(sources.unresolved).toEqual([]);
-    expect(sources.workflows[0].localActionDigests?.["./actions/publish"]).toMatch(
-      /^[0-9a-f]{64}$/,
-    );
-    const actionRequest = seen.find((entry) => entry.url.includes("/contents/actions/publish"));
-    expect(actionRequest?.url).toContain(`ref=${"a".repeat(40)}`);
-  });
+      expect(sources.unresolved).toEqual([]);
+      expect(sources.workflows[0].localActionDigests?.[uses]).toMatch(/^[0-9a-f]{64}$/);
+      const actionRequest = seen.find((entry) => entry.url.includes(`/contents/${actionPath}`));
+      expect(actionRequest?.url).toContain(`ref=${"a".repeat(40)}`);
+    },
+  );
 
   it("marks local-action coverage incomplete when its directory cannot be read", async () => {
     const workflow = `on: push

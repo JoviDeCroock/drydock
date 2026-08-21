@@ -45,6 +45,7 @@ export type AuthorityDeltaStatus = "no_baseline" | "unchanged" | "cosmetic" | "c
 export type AuthoritySignificance = "low" | "medium" | "high";
 
 export type AuthorityChangeKind =
+  | "baseline_unreadable"
   | "release_path_changed"
   | "workflow_added"
   | "workflow_removed"
@@ -160,6 +161,11 @@ export const AUTHORITY_CHANGES_CAP = 16_384;
  */
 export interface DeltaContext {
   /**
+   * The newest approved row exists but its persisted snapshot cannot be read.
+   * Treating that as no history would silently reset the authority boundary.
+   */
+  unreadableBaseline?: AuthorityBaselineRef;
+  /**
    * Entry-workflow paths this release target has already published through
    * under an approved authority, other than the one this release used. Only
    * consulted when there is no baseline for the current path — see
@@ -181,6 +187,26 @@ export function computeReleaseAuthorityDelta(
   context: DeltaContext = {},
 ): ReleaseAuthorityDelta {
   const standing = readStanding(current);
+  if (!baseline && context.unreadableBaseline) {
+    const change: AuthorityChange = {
+      kind: "baseline_unreadable",
+      significance: "high",
+      scope: current.run.workflowPath ?? "release workflow",
+      subject: "approved release authority",
+      before: "approved snapshot",
+      after: "unreadable",
+    };
+    return {
+      schema: RELEASE_AUTHORITY_DELTA_SCHEMA,
+      status: "changed",
+      baseline: context.unreadableBaseline,
+      changes: [change],
+      changeCount: 1,
+      highestSignificance: "high",
+      standing,
+      requiresApproval: true,
+    };
+  }
   if (!baseline) {
     const newPath = newReleasePathChange(current, context.approvedReleasePaths ?? []);
     return {
@@ -978,7 +1004,7 @@ function compareCoverage(
 
 function actionIdentity(uses: string): string {
   const trimmed = uses.trim();
-  const canonical = trimmed.startsWith("$/.github/workflows/") ? `.${trimmed.slice(1)}` : trimmed;
+  const canonical = trimmed.startsWith("$/") ? `.${trimmed.slice(1)}` : trimmed;
   const separator = canonical.lastIndexOf("@");
   return separator > 0 ? canonical.slice(0, separator) : canonical;
 }

@@ -134,6 +134,9 @@ export async function refreshReleaseAuthorityDeltaForGate(
     workflowPath: record.snapshot.run.workflowPath,
     excludeGateId: gateId,
   });
+  const readableBaseline = baseline?.snapshot
+    ? { snapshot: baseline.snapshot, ref: baseline.ref }
+    : null;
   const approvedReleasePaths = baseline
     ? []
     : await listApprovedReleasePaths(db, {
@@ -142,7 +145,10 @@ export async function refreshReleaseAuthorityDeltaForGate(
         excludeGateId: gateId,
         excludeWorkflowPath: record.snapshot.run.workflowPath,
       });
-  const delta = computeReleaseAuthorityDelta(record.snapshot, baseline, { approvedReleasePaths });
+  const delta = computeReleaseAuthorityDelta(record.snapshot, readableBaseline, {
+    approvedReleasePaths,
+    unreadableBaseline: baseline?.snapshot ? undefined : baseline?.ref,
+  });
   if (stableJson(delta) !== stableJson(record.delta)) {
     const updated = await db
       .update(releaseAuthoritySnapshots)
@@ -188,6 +194,12 @@ export interface BaselineLookupInput {
   excludeGateId: string;
 }
 
+export interface ApprovedAuthorityBaseline {
+  /** Null means the approved row exists but its persisted snapshot is unreadable. */
+  snapshot: ReleaseAuthoritySnapshot | null;
+  ref: AuthorityBaselineRef;
+}
+
 /**
  * Revision of the approved authority state for one release target. Read before
  * refreshing a pending delta, then checked again by the atomic gate-finalize
@@ -216,7 +228,9 @@ export async function findLatestApprovedAuthoritySnapshotId(
 }
 
 /**
- * The most recently approved snapshot for the same release boundary, or null.
+ * The most recently approved row for the same release boundary, or null. The
+ * row's snapshot remains null when persisted data cannot be decoded so callers
+ * can hold the release instead of mistaking unreadable history for no history.
  *
  * Only approved snapshots are eligible. A release that was reviewed but never
  * decided — or one that was rejected — must not become the thing the next
@@ -226,7 +240,7 @@ export async function findLatestApprovedAuthoritySnapshotId(
 export async function findApprovedAuthorityBaseline(
   db: AppDb,
   input: BaselineLookupInput,
-): Promise<{ snapshot: ReleaseAuthoritySnapshot; ref: AuthorityBaselineRef } | null> {
+): Promise<ApprovedAuthorityBaseline | null> {
   const [row] = await db
     .select()
     .from(releaseAuthoritySnapshots)
@@ -246,7 +260,6 @@ export async function findApprovedAuthorityBaseline(
     .limit(1);
   if (!row) return null;
   const record = readRow(row);
-  if (!record.snapshot) return null;
   return {
     snapshot: record.snapshot,
     ref: {

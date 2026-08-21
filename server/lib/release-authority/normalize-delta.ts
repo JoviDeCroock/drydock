@@ -22,6 +22,7 @@ const STATUSES = new Set<AuthorityDeltaStatus>(["no_baseline", "unchanged", "cos
 const SIGNIFICANCES = new Set<AuthoritySignificance>(["low", "medium", "high"]);
 
 const CHANGE_KINDS = new Set<AuthorityChangeKind>([
+  "baseline_unreadable",
   "release_path_changed",
   "workflow_added",
   "workflow_removed",

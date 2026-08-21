@@ -30,6 +30,7 @@ const SIGNIFICANCE_TONE: Record<AuthoritySignificance, BadgeTone> = {
 // Plain-language subject for each change kind. The `subject`/`before`/`after`
 // fields carry the specifics; this is the sentence that frames them.
 const CHANGE_LABEL: Record<AuthorityChangeKind, string> = {
+  baseline_unreadable: "Approved authority baseline could not be read",
   release_path_changed: "Release workflow has no approved history",
   workflow_added: "Workflow added to the release graph",
   workflow_removed: "Workflow dropped from the release graph",

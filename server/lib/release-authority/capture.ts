@@ -77,6 +77,9 @@ export async function captureReleaseAuthority(
       workflowPath: snapshot.run.workflowPath,
       excludeGateId: gate.id,
     });
+    const readableBaseline = baseline?.snapshot
+      ? { snapshot: baseline.snapshot, ref: baseline.ref }
+      : null;
 
     // Only asked when this release path has no baseline of its own: the answer
     // separates a target's genuine first release from a target with approved
@@ -90,7 +93,10 @@ export async function captureReleaseAuthority(
           excludeWorkflowPath: snapshot.run.workflowPath,
         });
 
-    const delta = computeReleaseAuthorityDelta(snapshot, baseline, { approvedReleasePaths });
+    const delta = computeReleaseAuthorityDelta(snapshot, readableBaseline, {
+      approvedReleasePaths,
+      unreadableBaseline: baseline?.snapshot ? undefined : baseline?.ref,
+    });
 
     await recordReleaseAuthoritySnapshot(db, {
       organizationId: gate.organizationId,

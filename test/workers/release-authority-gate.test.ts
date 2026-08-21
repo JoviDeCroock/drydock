@@ -554,6 +554,49 @@ describe("release-authority baseline", () => {
     expect(delta?.requiresApproval).toBe(false);
   });
 
+  test("requires approval when the newest approved baseline is unreadable", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const first = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, first.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: first.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+    await db
+      .update(schema.releaseAuthoritySnapshots)
+      .set({ snapshotJson: { schema: "drydock.release-authority.future" } })
+      .where(eq(schema.releaseAuthoritySnapshots.gateId, first.gate.id));
+
+    const second = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    const delta = await capture(fixture, second.gate);
+
+    expect(delta).toMatchObject({
+      status: "changed",
+      baseline: { gateId: first.gate.id },
+      highestSignificance: "high",
+      requiresApproval: true,
+    });
+    expect(delta?.changes).toEqual([
+      expect.objectContaining({ kind: "baseline_unreadable", significance: "high" }),
+    ]);
+  });
+
   test("an unapproved snapshot never becomes the baseline", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);

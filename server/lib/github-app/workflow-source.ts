@@ -251,7 +251,7 @@ function collectLocalActionUses(document: WorkflowSource["document"]): string[] 
     for (const rawStep of steps) {
       const step = asRecord(rawStep);
       const value = step && asString(step.uses)?.trim();
-      if (value?.startsWith("./")) uses.add(value);
+      if (value && normalizeLocalActionPath(value)) uses.add(value);
     }
   }
   return [...uses].sort();
@@ -501,7 +501,7 @@ function isSafeWorkflowPath(path: string): boolean {
 }
 
 function normalizeLocalActionPath(uses: string): string | null {
-  if (!uses.startsWith("./")) return null;
+  if (!uses.startsWith("./") && !uses.startsWith("$/")) return null;
   const path = uses.slice(2).replace(/\/+$/, "");
   return isSafeRepositoryPath(path) ? path : null;
 }
