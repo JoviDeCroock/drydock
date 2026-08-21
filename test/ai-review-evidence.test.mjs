@@ -238,6 +238,52 @@ describe("AI review evidence tools", () => {
     expect(entry.content.length).toBeLessThanOrEqual(2_000);
   });
 
+  test("a capped baseline sample carries the note that its diff tail is phantom additions", async () => {
+    // The sandbox retains a baseline body only up to its cap, so everything past
+    // that point diffs as an addition even where the two versions are identical.
+    // The note on the rendered diff is what stops the model from reading those
+    // phantom `+` lines as this release's changes.
+    const cappedPrevious = "const shared = true;\n";
+    const stagedText = `${cappedPrevious}const pastTheCap = 'unchanged in both versions';\n`;
+    const buildOptions = (previousFlags) => ({
+      ecosystem: "npm",
+      files: [file("dist/big.js", stagedText)],
+      previousFiles: [{ ...file("dist/big.js", cappedPrevious), flags: previousFlags }],
+      diff: [
+        {
+          path: "dist/big.js",
+          status: "modified",
+          previousSize: cappedPrevious.length,
+          stagedSize: stagedText.length,
+          previousSha256: "sha-prev",
+          stagedSha256: "sha-staged",
+          flags: [],
+        },
+      ],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    });
+    const tools = createAiReviewTools(buildOptions(["baseline-truncated"]), () => {});
+
+    const reads = await tools.read.execute({ paths: ["dist/big.js"], maxChars: 2_000 });
+    const entry = reads.results[0];
+    expect(entry.ok).toBe(true);
+    expect(entry.kind).toBe("diff");
+    // The tail really does render as an addition — that is what the note disarms.
+    expect(entry.content).toContain("+const pastTheCap");
+    expect(entry.truncated).toBe(true);
+    expect(entry.note).toContain(`capped at ${cappedPrevious.length} characters`);
+    expect(entry.note).toContain("Judge them against the staged file");
+
+    // The same diff without the retention flag is an ordinary modification: the
+    // additions are real and must not be hedged.
+    const uncapped = createAiReviewTools(buildOptions([]), () => {});
+    const plainReads = await uncapped.read.execute({ paths: ["dist/big.js"], maxChars: 2_000 });
+    expect(plainReads.results[0].note).toBeUndefined();
+    expect(plainReads.results[0].truncated).toBe(false);
+  });
+
   test("reports the total changed-file count when the manifest is capped", () => {
     const options = reviewOptions();
     options.diff = [
