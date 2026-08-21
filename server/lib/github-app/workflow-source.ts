@@ -125,10 +125,10 @@ export async function fetchReleaseAuthoritySourcesWithToken(
     role: "entry" | "referenced";
   }> = [];
 
-  if (runContext.workflowPath) {
+  if (runContext.entryWorkflow) {
     requests.push({
-      path: runContext.workflowPath,
-      repositoryFullName: input.repositoryFullName,
+      path: runContext.entryWorkflow.path,
+      repositoryFullName: runContext.entryWorkflow.repositoryFullName,
       // The entry workflow is read at the commit the run used, not at the tip
       // of the default branch: a later edit must not rewrite the history of
       // what this release was authorized by.
@@ -164,7 +164,9 @@ export async function fetchReleaseAuthoritySourcesWithToken(
     // Referenced workflows are keyed repo-qualified so two repositories that
     // both ship `.github/workflows/publish.yml` stay distinct in the snapshot.
     const qualifiedPath =
-      request.role === "entry" ? request.path : `${request.repositoryFullName}/${request.path}`;
+      request.role === "entry" && request.repositoryFullName === input.repositoryFullName
+        ? request.path
+        : `${request.repositoryFullName}/${request.path}`;
     const fetched = await fetchWorkflowContent(
       token,
       request.repositoryFullName,
@@ -270,6 +272,10 @@ interface ReferencedWorkflowRef {
 interface WorkflowRunContext {
   headSha: string | null;
   workflowPath: string | null;
+  entryWorkflow: {
+    path: string;
+    repositoryFullName: string;
+  } | null;
   runAttempt: number | null;
   event: string | null;
   actor: string | null;
@@ -307,12 +313,14 @@ async function fetchWorkflowRun(
   } | null;
   if (!data) return null;
 
+  const entryWorkflow = parseEntryWorkflow(str(data.path), repositoryFullName);
   return {
     headSha: str(data.head_sha),
     // GitHub reports `path` as `.github/workflows/x.yml` for a run in this
     // repository, and as `owner/repo/.github/workflows/x.yml@ref` when the run
     // entered through a workflow owned elsewhere.
-    workflowPath: normalizeEntryPath(str(data.path)),
+    workflowPath: entryWorkflow?.qualifiedPath ?? null,
+    entryWorkflow,
     runAttempt: int(data.run_attempt),
     event: str(data.event),
     ref: str(data.head_branch),
@@ -322,10 +330,27 @@ async function fetchWorkflowRun(
   };
 }
 
-function normalizeEntryPath(path: string | null): string | null {
+function parseEntryWorkflow(
+  path: string | null,
+  runRepositoryFullName: string,
+): { path: string; repositoryFullName: string; qualifiedPath: string } | null {
   if (!path) return null;
   const withoutRef = path.includes("@") ? path.slice(0, path.lastIndexOf("@")) : path;
-  return withoutRef || null;
+  if (!withoutRef) return null;
+  if (withoutRef.startsWith(".github/workflows/")) {
+    return {
+      path: withoutRef,
+      repositoryFullName: runRepositoryFullName,
+      qualifiedPath: withoutRef,
+    };
+  }
+  const segments = withoutRef.split("/");
+  if (segments.length < 3) return null;
+  return {
+    path: segments.slice(2).join("/"),
+    repositoryFullName: segments.slice(0, 2).join("/"),
+    qualifiedPath: withoutRef,
+  };
 }
 
 /**

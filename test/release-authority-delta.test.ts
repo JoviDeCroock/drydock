@@ -180,8 +180,36 @@ describe("computeReleaseAuthorityDelta", () => {
     expect(delta.requiresApproval).toBe(true);
     expect(find(delta.changes, "publish_step_added")).toMatchObject({
       significance: "high",
-      after: "npm publish",
+      after: expect.stringMatching(/^npm publish \[sha256:[0-9a-f]{64}\]$/),
     });
+  });
+
+  it("never persists raw publish or safeguard command text", async () => {
+    const token = `npm_${"a".repeat(32)}`;
+    const workflow = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      `      - run: npm publish --provenance --//registry.npmjs.org/:_authToken=${token}\n`,
+    );
+
+    const snapshot = await makeSnapshot({ workflows: [{ path: ENTRY, content: workflow }] });
+    const serialized = JSON.stringify(snapshot);
+
+    expect(snapshot.publishSteps).toEqual([
+      expect.objectContaining({
+        kind: "run",
+        detail: expect.stringMatching(/^npm publish \[sha256:[0-9a-f]{64}\]$/),
+      }),
+    ]);
+    expect(snapshot.safeguards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "provenance",
+          detail: expect.stringMatching(/^provenance flag \[sha256:[0-9a-f]{64}\]$/),
+        }),
+      ]),
+    );
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain("_authToken");
   });
 
   it("treats GitHub's same-repository reusable-workflow path forms as pinned equivalents", async () => {

@@ -36,10 +36,13 @@ function mockGithub(
   return seen;
 }
 
-function runResponse(referenced: Array<{ path: string; sha: string; ref: string }> = []) {
+function runResponse(
+  referenced: Array<{ path: string; sha: string; ref: string }> = [],
+  path = ".github/workflows/release.yml",
+) {
   return Response.json({
     head_sha: "a".repeat(40),
-    path: ".github/workflows/release.yml",
+    path,
     run_attempt: 2,
     event: "push",
     head_branch: "refs/tags/v1.0.0",
@@ -91,6 +94,34 @@ describe("fetchReleaseAuthoritySources", () => {
     // Pinned to the run's commit, not to the tip of the default branch: a later
     // edit must not rewrite what this release was authorized by.
     const contents = seen.find((entry) => entry.url.includes("/contents/"));
+    expect(contents?.url).toContain(`ref=${"a".repeat(40)}`);
+  });
+
+  it("reads a repository-qualified entry workflow from its owning repository", async () => {
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) {
+        return runResponse([], "octo/shared/.github/workflows/release.yml@refs/heads/main");
+      }
+      if (url.pathname === "/repos/octo/shared/contents/.github/workflows/release.yml") {
+        return new Response(WORKFLOW);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.run.workflowPath).toBe("octo/shared/.github/workflows/release.yml");
+    expect(sources.unresolved).toEqual([]);
+    expect(sources.workflows).toEqual([
+      expect.objectContaining({
+        path: "octo/shared/.github/workflows/release.yml",
+        repositoryFullName: "octo/shared",
+        role: "entry",
+        sha: "a".repeat(40),
+      }),
+    ]);
+    const contents = seen.find((entry) => entry.url.includes("/contents/"));
+    expect(contents?.url).toContain("/repos/octo/shared/contents/.github/workflows/release.yml");
     expect(contents?.url).toContain(`ref=${"a".repeat(40)}`);
   });
 

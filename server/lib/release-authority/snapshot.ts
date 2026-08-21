@@ -108,13 +108,9 @@ export interface AuthorityPublishStep {
   job: string;
   kind: "action" | "run";
   /**
-   * The publish action reference, or the matched command line, truncated.
-   *
-   * A `run:` line is stored as written, which means an expression such as
-   * `${{ secrets.PYPI_TOKEN }}` is retained as that literal template text —
-   * never as a resolved value, because nothing here evaluates expressions. That
-   * is the point: which credential a publish step reaches for is exactly the
-   * kind of authority a maintainer needs to see change.
+   * The publish action reference, or a safe command category plus a digest of
+   * the matched command. Raw `run:` text is never persisted because workflow
+   * definitions can contain literal credentials.
    */
   detail: string;
 }
@@ -675,10 +671,20 @@ async function readStep(
 
   if (run) {
     for (const command of publishCommands(run)) {
-      projection.publishSteps.push({ workflow, job, kind: "run", detail: command });
+      projection.publishSteps.push({
+        workflow,
+        job,
+        kind: "run",
+        detail: await commandEvidence(command.label, command.raw),
+      });
     }
     for (const safeguard of safeguardCommands(run)) {
-      projection.safeguards.push({ workflow, job, ...safeguard });
+      projection.safeguards.push({
+        workflow,
+        job,
+        kind: safeguard.kind,
+        detail: await commandEvidence(safeguard.label, safeguard.raw),
+      });
     }
   }
 }
@@ -903,13 +909,24 @@ const PUBLISH_ACTIONS = new Set([
   "rust-lang/crates-io-auth-action",
 ]);
 
-const PUBLISH_COMMAND_PATTERNS: RegExp[] = [
-  /\b(?:npm|pnpm|yarn|bun)\b[^;&|\n]*\bpublish\b/,
-  /\b(?:(?:python(?:3(?:\.\d+)*)?)\s+-m\s+)?twine\s+upload\b/,
-  /\b(?:uv|poetry|flit|hatch|maturin)\s+publish\b/,
-  /\bcargo\s+publish\b/,
-  /\b(?:npx\s+)?(?:vsce|ovsx)\s+publish\b/,
-  /\bgem\s+push\b/,
+const PUBLISH_COMMAND_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bnpm\b[^;&|\n]*\bpublish\b/, label: "npm publish" },
+  { pattern: /\bpnpm\b[^;&|\n]*\bpublish\b/, label: "pnpm publish" },
+  { pattern: /\byarn\b[^;&|\n]*\bpublish\b/, label: "yarn publish" },
+  { pattern: /\bbun\b[^;&|\n]*\bpublish\b/, label: "bun publish" },
+  {
+    pattern: /\b(?:(?:python(?:3(?:\.\d+)*)?)\s+-m\s+)?twine\s+upload\b/,
+    label: "twine upload",
+  },
+  { pattern: /\buv\s+publish\b/, label: "uv publish" },
+  { pattern: /\bpoetry\s+publish\b/, label: "poetry publish" },
+  { pattern: /\bflit\s+publish\b/, label: "flit publish" },
+  { pattern: /\bhatch\s+publish\b/, label: "hatch publish" },
+  { pattern: /\bmaturin\s+publish\b/, label: "maturin publish" },
+  { pattern: /\bcargo\s+publish\b/, label: "cargo publish" },
+  { pattern: /\b(?:npx\s+)?vsce\s+publish\b/, label: "vsce publish" },
+  { pattern: /\b(?:npx\s+)?ovsx\s+publish\b/, label: "ovsx publish" },
+  { pattern: /\bgem\s+push\b/, label: "gem push" },
 ];
 
 const SAFEGUARD_ACTIONS = new Map<string, AuthoritySafeguard["kind"]>([
@@ -920,12 +937,20 @@ const SAFEGUARD_ACTIONS = new Map<string, AuthoritySafeguard["kind"]>([
   ["slsa-framework/slsa-github-generator", "provenance"],
 ]);
 
-const SAFEGUARD_COMMAND_PATTERNS: Array<{ pattern: RegExp; kind: AuthoritySafeguard["kind"] }> = [
-  { pattern: /--provenance\b/, kind: "provenance" },
-  { pattern: /\bcosign\s+sign\b/, kind: "signing" },
-  { pattern: /\bgpg\s+--detach-sig/, kind: "signing" },
-  { pattern: /\bpython\s+-m\s+sigstore\b/, kind: "signing" },
-  { pattern: /\bgh\s+attestation\s+verify\b/, kind: "attestation" },
+const SAFEGUARD_COMMAND_PATTERNS: Array<{
+  pattern: RegExp;
+  kind: AuthoritySafeguard["kind"];
+  label: string;
+}> = [
+  { pattern: /--provenance\b/, kind: "provenance", label: "provenance flag" },
+  { pattern: /\bcosign\s+sign\b/, kind: "signing", label: "cosign sign" },
+  { pattern: /\bgpg\s+--detach-sig/, kind: "signing", label: "gpg detached signature" },
+  { pattern: /\bpython\s+-m\s+sigstore\b/, kind: "signing", label: "sigstore sign" },
+  {
+    pattern: /\bgh\s+attestation\s+verify\b/,
+    kind: "attestation",
+    label: "GitHub attestation verify",
+  },
 ];
 
 function isPublishAction(actionName: string): boolean {
@@ -936,28 +961,34 @@ function safeguardForAction(actionName: string): AuthoritySafeguard["kind"] | nu
   return SAFEGUARD_ACTIONS.get(actionName) ?? null;
 }
 
-function publishCommands(run: string): string[] {
-  const found: string[] = [];
+function publishCommands(run: string): Array<{ label: string; raw: string }> {
+  const found: Array<{ label: string; raw: string }> = [];
   for (const line of shellLogicalLines(run)) {
     const command = line.trim();
     if (!command || command.startsWith("#")) continue;
-    if (PUBLISH_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) found.push(command);
+    for (const { pattern, label } of PUBLISH_COMMAND_PATTERNS) {
+      if (pattern.test(command)) found.push({ label, raw: command });
+    }
   }
   return found;
 }
 
 function safeguardCommands(
   run: string,
-): Array<{ kind: AuthoritySafeguard["kind"]; detail: string }> {
-  const found: Array<{ kind: AuthoritySafeguard["kind"]; detail: string }> = [];
+): Array<{ kind: AuthoritySafeguard["kind"]; label: string; raw: string }> {
+  const found: Array<{ kind: AuthoritySafeguard["kind"]; label: string; raw: string }> = [];
   for (const line of shellLogicalLines(run)) {
     const command = line.trim();
     if (!command || command.startsWith("#")) continue;
-    for (const { pattern, kind } of SAFEGUARD_COMMAND_PATTERNS) {
-      if (pattern.test(command)) found.push({ kind, detail: command });
+    for (const { pattern, kind, label } of SAFEGUARD_COMMAND_PATTERNS) {
+      if (pattern.test(command)) found.push({ kind, label, raw: command });
     }
   }
   return found;
+}
+
+async function commandEvidence(label: string, command: string): Promise<string> {
+  return `${label} [sha256:${await sha256Hex(command)}]`;
 }
 
 /** Join shell lines whose final unescaped backslash continues the command. */

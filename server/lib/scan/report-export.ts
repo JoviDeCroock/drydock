@@ -242,18 +242,58 @@ function exportReleaseAuthorityDelta(delta: NonNullable<ScanDetail["releaseAutho
   if (!delta) return null;
   return {
     ...delta,
+    changes: delta.changes.map((change) => {
+      if (change.subject === "publish command") {
+        return {
+          ...change,
+          before: exportCommandEvidence(change.before, "publish command [redacted]"),
+          after: exportCommandEvidence(change.after, "publish command [redacted]"),
+        };
+      }
+      if (change.kind === "safeguard_added" || change.kind === "safeguard_removed") {
+        const fallback = `${change.subject} safeguard`;
+        return {
+          ...change,
+          before: exportCommandEvidence(change.before, fallback),
+          after: exportCommandEvidence(change.after, fallback),
+        };
+      }
+      return change;
+    }),
     baseline: delta.baseline ? { present: true as const } : null,
   };
 }
 
-// Drop the GitHub logins from the exported run context. Everything else in the
-// snapshot describes the release path itself; `actor` and `triggeringActor`
-// name people.
+// Drop GitHub logins and scrub legacy raw command evidence on export. Snapshots
+// captured by current code already persist only command fingerprints, but the
+// report boundary must also protect rows written before that invariant existed.
 function withoutRunIdentity(
   snapshot: ReleaseAuthoritySnapshot | null,
 ): ReleaseAuthoritySnapshot | null {
   if (!snapshot) return null;
-  return { ...snapshot, run: { ...snapshot.run, actor: null, triggeringActor: null } };
+  return {
+    ...snapshot,
+    run: { ...snapshot.run, actor: null, triggeringActor: null },
+    publishSteps: snapshot.publishSteps.map((step) => ({
+      ...step,
+      detail:
+        step.kind === "run"
+          ? exportCommandEvidence(step.detail, "publish command [redacted]")!
+          : step.detail,
+    })),
+    safeguards: snapshot.safeguards.map((safeguard) => ({
+      ...safeguard,
+      detail: exportCommandEvidence(safeguard.detail, `${safeguard.kind} safeguard`)!,
+    })),
+  };
+}
+
+const COMMAND_EVIDENCE_RE =
+  /^(?:npm publish|pnpm publish|yarn publish|bun publish|twine upload|uv publish|poetry publish|flit publish|hatch publish|maturin publish|cargo publish|vsce publish|ovsx publish|gem push|provenance flag|cosign sign|gpg detached signature|sigstore sign|GitHub attestation verify) \[sha256:[0-9a-f]{64}\]$/;
+
+function exportCommandEvidence(value: string | null, fallback: string): string | null {
+  if (value === null) return null;
+  return COMMAND_EVIDENCE_RE.test(value) ? value : fallback;
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not

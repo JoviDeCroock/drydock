@@ -112,7 +112,7 @@ A snapshot records:
   and `workflow_call` output mappings;
 - authority-sensitive execution controls: job and step conditions, job
   dependencies, runner selection, containers and services, job output mappings,
-  job strategy matrices, `continue-on-error`, command bodies, step shells and working directories,
+  job strategy matrices, `continue-on-error`, command-body digests, step shells and working directories,
   workflow/job run defaults, and digests of workflow/job/step environment
   mappings (the values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
@@ -125,7 +125,9 @@ A snapshot records:
   commit. Both GitHub same-repository forms (`./path` and `$/path`) are
   normalized and hashed, so source, credential, target, or protected-subject
   changes are detected without persisting those values;
-- detected publish steps (known publishing actions and publish commands);
+- detected publish steps (known publishing actions and publish commands); shell
+  commands are stored as a safe category plus a digest, never as raw text that
+  could contain a literal credential;
 - detected release safeguards (attestation, signing, provenance — including
   `with: attestations`/`provenance` inputs);
 - artifact producer/consumer paths (`upload-artifact` / `download-artifact`);
@@ -255,7 +257,7 @@ authorized, and the delta never modifies risk levels or deterministic findings.
   snapshot, the delta, the binding digest, and the approval time. The delta
   keeps a `baseline: { present: true }` marker when a comparison occurred, but
   strips the prior private gate's snapshot id, gate id, run/commit coordinates,
-  and approval time. Null for
+  approval time, and any legacy raw shell-command evidence. Null for
   staged-publish scans and for gates with no record; null means _not assessed_.
   Identity is scrubbed on the way out: the export has one serialization, shared
   by the authenticated download, the `/public/reports/:token` body, and the

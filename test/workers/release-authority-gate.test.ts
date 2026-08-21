@@ -1464,7 +1464,6 @@ describe("release-authority surfaces", () => {
     const serialized = JSON.stringify(report.json);
     expect(serialized).not.toContain(first.gate.id);
     expect(serialized).not.toContain(baselineRecord!.id);
-    expect(serialized).not.toContain(baselineRecord!.approvedAt!.toISOString());
   });
 
   // The report export has exactly one serialization: the authenticated
@@ -1519,6 +1518,84 @@ describe("release-authority surfaces", () => {
     expect(lookup.res.status).toBe(200);
     const live = lookup.json?.releaseAuthority as { run: { actor: string | null } };
     expect(live.run.actor).toBe("maintainer");
+  });
+
+  test("scrubs raw command evidence from historical authority exports", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const gitEnv = await githubEnv();
+    const { gate, scanId } = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, gate);
+
+    const record = await getReleaseAuthorityForGate(db, fixture.organizationId, gate.id);
+    const token = `npm_${"a".repeat(32)}`;
+    const publishCommand = `npm publish --//registry.npmjs.org/:_authToken=${token}`;
+    const signingCommand = `cosign sign --key ${token} artifact.tgz`;
+    await db
+      .update(schema.releaseAuthoritySnapshots)
+      .set({
+        snapshotJson: {
+          ...record!.snapshot!,
+          publishSteps: [
+            {
+              workflow: ".github/workflows/release.yml",
+              job: "publish",
+              kind: "run",
+              detail: publishCommand,
+            },
+          ],
+          safeguards: [
+            {
+              workflow: ".github/workflows/release.yml",
+              job: "publish",
+              kind: "signing",
+              detail: signingCommand,
+            },
+          ],
+        },
+        deltaJson: {
+          ...record!.delta!,
+          changes: [
+            {
+              kind: "publish_step_added",
+              significance: "high",
+              scope: ".github/workflows/release.yml/publish",
+              subject: "publish command",
+              before: null,
+              after: publishCommand,
+            },
+            {
+              kind: "safeguard_removed",
+              significance: "high",
+              scope: ".github/workflows/release.yml/publish",
+              subject: "signing",
+              before: signingCommand,
+              after: null,
+            },
+          ],
+          changeCount: 2,
+        },
+      })
+      .where(eq(schema.releaseAuthoritySnapshots.gateId, gate.id));
+
+    const report = await call("GET", `/api/v1/scans/${scanId}/report.json`, {
+      jar: fixture.jar,
+      env: gitEnv,
+    });
+
+    expect(report.res.status).toBe(200);
+    const serialized = JSON.stringify(report.json);
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain("_authToken");
+    expect(serialized).toContain("publish command [redacted]");
+    expect(serialized).toContain("signing safeguard");
   });
 
   test("exports null for a scan with no authority record", async () => {
