@@ -25,36 +25,20 @@ export {
   discardScanAttempt,
   listExistingScanStageIds,
   markScanFailed,
-  type CreateScanJobInput,
-  type DeleteFailedScanResult,
   type ScanSource,
 } from "./scan-jobs";
 
-export { persistScan, type PersistedScanInput } from "./scan-persist";
+export { persistScan } from "./scan-persist";
 
-export {
-  LIST_SCANS_DEFAULT_LIMIT,
-  LIST_SCANS_MAX_LIMIT,
-  listScans,
-  type ListScansOptions,
-  type ListScansResult,
-} from "./scan-list";
+export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT, listScans } from "./scan-list";
 
-export {
-  getScan,
-  getScanCompareData,
-  getScanFile,
-  getScanStatus,
-  type ScanDetailFileMode,
-} from "./scan-detail";
+export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
 export {
   recordGatePackageDecision,
   recordScanDecision,
   SCAN_DECISION_FILTERS,
   SCAN_DECISIONS,
-  type RecordGatePackageDecisionInput,
-  type RecordScanDecisionInput,
   type ScanDecision,
   type ScanDecisionFilter,
 } from "./scan-decisions";
