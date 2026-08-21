@@ -3,7 +3,8 @@
   "plugins": ["typescript", "unicorn", "oxc", "import", "react", "promise"],
   "jsPlugins": [
     "@preact/eslint-plugin-signals",
-    { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" }
+    { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" },
+    { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" }
   ],
   "categories": {
     "correctness": "error"
@@ -46,6 +47,7 @@
     "@preact/signals/no-signal-in-component-body": "error",
     "@preact/signals/no-conditional-value-read": "error",
     "signals-local/no-signal-conditional-jsx": "error",
+    "boundaries-local/no-cross-page-import": "error",
     "react-hooks/exhaustive-deps": "off"
   },
   "ignorePatterns": [
@@ -55,6 +57,7 @@
     "node_modules/**",
     "worker-configuration.d.ts",
     "**/*.d.ts",
-    "test/fixtures/oxlint-signals/**"
+    "test/fixtures/oxlint-signals/**",
+    "test/fixtures/oxlint-boundaries/**"
   ]
 }

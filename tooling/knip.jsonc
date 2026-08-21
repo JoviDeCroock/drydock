@@ -5,7 +5,8 @@
     // bytes at runtime; they are never part of the module graph.
     "test/e2e-fixtures/**",
     // Lint-rule fixtures deliberately hold "bad" code to exercise the rule.
-    "test/fixtures/oxlint-signals/**"
+    "test/fixtures/oxlint-signals/**",
+    "test/fixtures/oxlint-boundaries/**"
   ],
   "ignoreDependencies": [
     // `cloudflare:workers` / `cloudflare:test` / `cloudflare:email` are Workers

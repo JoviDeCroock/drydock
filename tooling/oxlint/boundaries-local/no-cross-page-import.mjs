@@ -1,0 +1,139 @@
+/**
+ * Enforce the AGENTS.md page-isolation rule mechanically: a file inside one
+ * page's directory (`src/pages/<X>/…`) must never import from another page's
+ * directory (`src/pages/<Y>/…`). Code shared by two or more pages belongs in
+ * `src/features/` (or `src/components/`), not in either page's folder.
+ *
+ *   src/pages/Dashboard/Scan.tsx:  import { x } from "../Diff/helpers";  // flagged
+ *   src/pages/Dashboard/Scan.tsx:  import("../Diff/Lazy");              // flagged
+ *   src/pages/Dashboard/Scan.tsx:  export { x } from "../Diff/helpers"; // flagged
+ *   src/pages/Dashboard/Scan.tsx:  import { u } from "../useAuthedSession"; // ok (pages-root file)
+ *   src/index.tsx:                 import { Diff } from "./pages/Diff";  // ok (router is not a page)
+ *
+ * Scope and limitations:
+ *   - Only files *inside* a page directory are constrained. The router and
+ *     pages-root shared files (`src/pages/*.tsx?`) may import any page.
+ *   - Only static string specifiers are resolved (imports, re-exports, and
+ *     `import("…")` with a literal). A dynamic import built from a variable
+ *     cannot be resolved without executing code, so it is not checked.
+ *   - Only relative specifiers are resolved; the project has no path alias
+ *     that maps into `src/`.
+ *   - A bare `../<Name>` specifier is ambiguous between a pages-root file
+ *     (`src/pages/<Name>.tsx`) and a page directory (`src/pages/<Name>/index`),
+ *     so it is disambiguated against the real filesystem; when that lookup
+ *     fails the specifier is conservatively left unflagged.
+ */
+
+import { statSync } from "node:fs";
+import path from "node:path";
+
+const PAGES_SEGMENT = "/src/pages/";
+
+// Page-directory lookups repeat per specifier; cache stat results for the run.
+const pageDirCache = new Map();
+
+function isPageDirectory(pagesRoot, name) {
+  const key = `${pagesRoot}\u0000${name}`;
+  const cached = pageDirCache.get(key);
+  if (cached !== undefined) return cached;
+  let result = false;
+  try {
+    result = statSync(path.join(pagesRoot, name)).isDirectory();
+  } catch {
+    result = false;
+  }
+  pageDirCache.set(key, result);
+  return result;
+}
+
+function normalize(filename) {
+  return String(filename ?? "").replaceAll("\\", "/");
+}
+
+/** @type {import("eslint").Rule.RuleModule} */
+const rule = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "A page must never import from another page's directory; shared code belongs in src/features/",
+      recommended: true,
+    },
+    messages: {
+      crossPageImport:
+        'Page "{{fromPage}}" imports from page "{{toPage}}"\'s directory. A page must never import from another page\'s directory — move code shared by two or more pages to src/features/ (see AGENTS.md).',
+    },
+    schema: [],
+  },
+
+  create(context) {
+    const rawFilename =
+      context.physicalFilename ??
+      context.getPhysicalFilename?.() ??
+      context.filename ??
+      context.getFilename?.();
+    // Resolve against the lint process cwd so relative and absolute invocation
+    // paths behave identically.
+    const filename = path.posix.resolve(normalize(rawFilename));
+    const pagesIndex = filename.lastIndexOf(PAGES_SEGMENT);
+    if (pagesIndex === -1) return {};
+
+    const pagesRoot = filename.slice(0, pagesIndex + PAGES_SEGMENT.length);
+    const ownPath = filename.slice(pagesRoot.length);
+    // Files directly in src/pages/ (router-level shared files) are not inside
+    // any page directory, so the rule does not constrain them.
+    if (!ownPath.includes("/")) return {};
+    const ownPage = ownPath.slice(0, ownPath.indexOf("/"));
+    const fileDir = filename.slice(0, filename.lastIndexOf("/"));
+
+    function checkSpecifier(node, specifier) {
+      if (typeof specifier !== "string") return;
+      if (!specifier.startsWith("./") && !specifier.startsWith("../")) return;
+
+      const resolved = path.posix.resolve(fileDir, specifier);
+      if (!resolved.startsWith(pagesRoot)) return;
+
+      const targetPath = resolved.slice(pagesRoot.length);
+      const separator = targetPath.indexOf("/");
+      const targetPage = separator === -1 ? targetPath : targetPath.slice(0, separator);
+      if (!targetPage || targetPage === ownPage) return;
+      // `../<Name>` without a trailing segment may be a pages-root shared file
+      // rather than a page directory; only a real directory counts as a page.
+      if (separator === -1 && !isPageDirectory(pagesRoot, targetPage)) return;
+
+      context.report({
+        node,
+        messageId: "crossPageImport",
+        data: { fromPage: ownPage, toPage: targetPage },
+      });
+    }
+
+    function sourceOf(node) {
+      const source = node.source;
+      if (!source) return undefined;
+      if (typeof source.value === "string") return source.value;
+      // import(`…`) with a constant template literal.
+      if (source.type === "TemplateLiteral" && source.expressions.length === 0) {
+        return source.quasis[0]?.value?.cooked;
+      }
+      return undefined;
+    }
+
+    return {
+      ImportDeclaration(node) {
+        checkSpecifier(node.source, sourceOf(node));
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) checkSpecifier(node.source, sourceOf(node));
+      },
+      ExportAllDeclaration(node) {
+        checkSpecifier(node.source, sourceOf(node));
+      },
+      ImportExpression(node) {
+        checkSpecifier(node.source ?? node, sourceOf(node));
+      },
+    };
+  },
+};
+
+export default rule;
