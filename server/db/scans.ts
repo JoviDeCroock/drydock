@@ -990,7 +990,7 @@ function recordDecisionEvent(
  *   are byte-identical to `samples`) while skipping the file-samples artifact
  *   entirely. For callers that serialize the report and never read `files`.
  */
-export type ScanDetailFileMode = "samples" | "list" | "omit";
+type ScanDetailFileMode = "samples" | "list" | "omit";
 
 export interface GetScanOptions {
   files?: ScanDetailFileMode;
