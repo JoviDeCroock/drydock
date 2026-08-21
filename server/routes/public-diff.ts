@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { escapeHtmlText } from "../lib/platform/html-escape";
 import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
@@ -277,20 +278,12 @@ function stagePlaceholder(message: string, candidateGone: boolean): string {
     : "Could not read that release";
   const detail = candidateGone
     ? "atpm removes a staged record once it is approved or withdrawn, so this link stops resolving as soon as the release is published. If it was published, the release itself can still be diffed."
-    : escapeHtml(message);
+    : escapeHtmlText(message);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(headline)} · Drydock</title><meta name="robots" content="noindex"></head>
-<body><main><h1>${escapeHtml(headline)}</h1><p>${detail}</p>
+<title>${escapeHtmlText(headline)} · Drydock</title><meta name="robots" content="noindex"></head>
+<body><main><h1>${escapeHtmlText(headline)}</h1><p>${detail}</p>
 <p><a href="/diff">Diff a published release</a></p></main></body></html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (char) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
-  );
 }
 
 publicDiffRoutes.get("/versions", async (c) => {
