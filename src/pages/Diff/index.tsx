@@ -18,6 +18,7 @@ import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { cn } from "../../components/cn";
 import { type DiffFinding, DiffView } from "../../components/DiffView";
 import { FileTree } from "../../components/FileTree";
 import { Input } from "../../components/Input";
@@ -431,8 +432,6 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
-        {diff?.provenance?.length ? <ResolutionTrail steps={diff.provenance} /> : null}
-        {diff?.attestation ? <BuildProvenance attestation={diff.attestation} /> : null}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}
@@ -464,8 +463,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               ))}
             </Alert>
           ) : null}
+
+          {diff.provenance?.length || diff.attestation ? (
+            <TrustEvidence provenance={diff.provenance ?? []} attestation={diff.attestation} />
+          ) : null}
           <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
-            <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
+            <Card as="aside" class="p-5 flex flex-col gap-3 lg:max-h-[720px] overflow-hidden">
               <SectionLabel as="h2">Release tree</SectionLabel>
               <Input
                 type="search"
@@ -500,7 +503,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               </div>
             </Card>
 
-            <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
+            <Card class="p-5 flex flex-col gap-3">
               <SectionLabel as="h2">File diff</SectionLabel>
               <PublicDiffWorkbench
                 entry={selectedEntry.value}
@@ -626,29 +629,99 @@ interface VersionOption {
   label?: string;
 }
 
+// The two independent trust claims a release carries, side by side: where the
+// reviewed bytes were found, and who built them. They are deliberately not
+// collapsed into one verdict — resolution is a chain of authorities the reader
+// can re-walk, provenance is a signature check — so each keeps its own column,
+// its own heading, and its own caveat line.
+function TrustEvidence({
+  provenance,
+  attestation,
+}: {
+  provenance: PublicDiffResponse["provenance"];
+  attestation: PublicDiffAttestation | null;
+}) {
+  const twoUp = Boolean(provenance.length && attestation);
+  return (
+    <Card padding="none" class="overflow-hidden">
+      <div
+        class={cn(
+          "grid grid-cols-1 divide-y divide-border lg:divide-y-0 lg:divide-x",
+          twoUp ? "lg:grid-cols-2" : "lg:grid-cols-1",
+        )}
+      >
+        {provenance.length ? <ResolutionTrail steps={provenance} /> : null}
+        {attestation ? <BuildProvenance attestation={attestation} /> : null}
+      </div>
+    </Card>
+  );
+}
+
+// A label/value row whose value column is stable: a long run URL wraps inside
+// its own column instead of dropping to the gutter and breaking the alignment
+// of every row around it. Labels sit above the value on narrow screens, where a
+// fixed label column would squeeze DIDs into a two-character ribbon.
+function EvidenceRow({
+  label,
+  value,
+  detail,
+  detailPrefix,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+  detailPrefix: string;
+}) {
+  return (
+    <div class="grid grid-cols-1 gap-x-3 sm:grid-cols-[76px_minmax(0,1fr)] sm:items-baseline">
+      <MonoLabel as="dt">{label}</MonoLabel>
+      {/* break-words, not break-all: a DID has no break opportunity and splits
+          anyway, but readable text like `via plc.directory` stays whole. */}
+      <dd class="font-mono text-[12px] text-ink-muted m-0 break-words">
+        {value}
+        {detail ? (
+          <span class="text-ink-subtle">
+            {" "}
+            {detailPrefix} {detail}
+          </span>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
 // How the reviewed bytes were located, for ecosystems that resolve a release
 // through a chain of independent authorities instead of one registry. On an
 // atpm diff this is the substance of the page's claim — a handle proved through
-// DNS, a DID through a directory, bytes from the publisher's own server — so it
-// sits in the header next to the version pair rather than in a footnote.
+// DNS, a DID through a directory, bytes from the publisher's own server.
 //
 // Rendered as text, never as links: every value here comes from data the
 // publisher under review controls.
 function ResolutionTrail({ steps }: { steps: PublicDiffResponse["provenance"] }) {
   return (
-    <dl class="flex flex-col gap-1 m-0 max-w-[680px]">
-      {steps.map((step) => (
-        <div key={`${step.label}:${step.value}`} class="flex flex-wrap items-baseline gap-x-2">
-          <MonoLabel as="dt" class="min-w-[64px]">
-            {step.label}
-          </MonoLabel>
-          <dd class="font-mono text-[12px] text-ink-muted m-0 break-all">
-            {step.value}
-            {step.detail ? <span class="text-ink-subtle"> via {step.detail}</span> : null}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <div class="p-5 flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-2 min-h-[22px]">
+        <MonoLabel as="p">Resolution</MonoLabel>
+      </div>
+      <dl class="flex flex-col gap-1.5 m-0">
+        {steps.map((step) => (
+          <EvidenceRow
+            key={`${step.label}:${step.value}`}
+            label={step.label}
+            value={step.value}
+            detail={step.detail}
+            detailPrefix="via"
+          />
+        ))}
+      </dl>
+      {/* mt-auto: the two columns rarely have the same number of rows, so the
+          caveat lines sit on the card's bottom edge together instead of leaving
+          the shorter column trailing into blank space. */}
+      <Muted class="m-0 mt-auto text-[12px] leading-[1.6]">
+        Each step was resolved independently, and every value here is published by the party under
+        review — shown as text, never as a link.
+      </Muted>
+    </div>
   );
 }
 
@@ -667,14 +740,17 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
   const mismatch = isTrustedPublisherMismatch(attestation);
 
   return (
-    <div class="flex flex-col gap-2 max-w-[680px]">
-      <div class="flex flex-wrap items-center gap-2">
-        <MonoLabel>Build provenance</MonoLabel>
+    <div class="p-5 flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-2 min-h-[22px]">
+        <MonoLabel as="p">Build provenance</MonoLabel>
         <Badge tone={buildProvenanceTone(attestation)}>{buildProvenanceLabel(attestation)}</Badge>
         {declared?.allowPublish ? <Badge tone="medium">CI publishes unattended</Badge> : null}
       </div>
+      {/* Proven and declared are one list with a rule between them: the reader
+          compares the two halves, and the rule is what says they are different
+          kinds of claim rather than one continuous record. */}
       {build ? (
-        <dl class="flex flex-col gap-1 m-0">
+        <dl class="flex flex-col gap-1.5 m-0">
           <ProvenanceRow label="Repo" value={build.repository} />
           {build.workflow ? <ProvenanceRow label="Workflow" value={build.workflow} /> : null}
           {build.ref ? <ProvenanceRow label="Ref" value={build.ref} /> : null}
@@ -687,11 +763,11 @@ function BuildProvenance({ attestation }: { attestation: PublicDiffAttestation }
         </dl>
       ) : null}
       {declared ? (
-        <dl class="flex flex-col gap-1 m-0">
+        <dl class={cn("flex flex-col gap-1.5 m-0", build && "border-t border-border pt-3")}>
           <ProvenanceRow label="Declared" value={declared.repository} detail={declared.workflow} />
         </dl>
       ) : null}
-      <Muted class="m-0 text-[12px] leading-[1.6]">
+      <Muted class="m-0 mt-auto text-[12px] leading-[1.6]">
         {buildProvenanceExplanation(attestation, mismatch)}
       </Muted>
     </div>
@@ -707,17 +783,7 @@ function ProvenanceRow({
   value: string;
   detail?: string;
 }) {
-  return (
-    <div class="flex flex-wrap items-baseline gap-x-2">
-      <MonoLabel as="dt" class="min-w-[64px]">
-        {label}
-      </MonoLabel>
-      <dd class="font-mono text-[12px] text-ink-muted m-0 break-all">
-        {value}
-        {detail ? <span class="text-ink-subtle"> · {detail}</span> : null}
-      </dd>
-    </div>
-  );
+  return <EvidenceRow label={label} value={value} detail={detail} detailPrefix="·" />;
 }
 
 function buildProvenanceTone(attestation: PublicDiffAttestation) {

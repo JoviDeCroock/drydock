@@ -84,6 +84,8 @@ Computed atpm pairs have a five-minute lifetime rather than the registry-backed 
 
 A version's Sigstore bundle and its package's trusted-publisher record are both read here, and both are re-verified rather than taken from the record. The page renders what was proven (repository, workflow, commit, run) separately from what the publisher declared, and the deltas between two releases produce their own findings. That is a surface of its own; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
+Resolution and build provenance share one full-width card below the header, split into a `Resolution` column and a `Build provenance` column with a divider between them (stacked on narrow screens, and rendered as a single full-width column when a package has only one of the two). Keeping them adjacent but separated is the point: resolution is a chain of authorities a reader can re-walk, provenance is a signature check against Sigstore's root, and each column closes with its own caveat line rather than the two collapsing into one verdict. Every row is a label/value pair on a fixed label column, so a long run URL wraps inside its own column instead of dropping to the gutter and breaking the alignment of the rows around it.
+
 ## What is not built
 
 - **No dependency diff links.** An atpm dependency spelled `@handle/name` resolves on npm to a scope someone else owns, so the manifest diff links nothing rather than something confidently wrong.
