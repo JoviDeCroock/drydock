@@ -81,7 +81,9 @@ during the scan, every staged, detail, and baseline request fails closed instead
 of reviewing the same stage ID from another registry. If the best-effort
 pre-queue detail read was unavailable but the worker later recovers the stage
 record, it fills the missing control-plane coordinates and reconciles release
-ownership before persisting the completed report. Within one registry, only
+ownership before persisting the completed report. If recovered coordinates
+disagree with the identity captured before queueing, the scan fails instead of
+combining a report for one release with lifecycle status for another. Within one registry, only
 the newest scan for a package/version is eligible: duplicate manual reviews get
 one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on

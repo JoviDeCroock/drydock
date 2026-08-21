@@ -397,6 +397,102 @@ describe("ScanListModel registry status refreshes", () => {
     expect(model.nextCursor.value).toBe("cursor-after-refresh");
   });
 
+  test("ignores pagination that an overlapping refresh superseded", async () => {
+    const loadMoreResponse = deferred<Response>();
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(loadMoreResponse.promise)
+      .mockReturnValueOnce(refreshResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = [
+      { ...scanDetail(null).scan, id: "scan-a" },
+      { ...scanDetail(null).scan, id: "scan-b" },
+      { ...scanDetail(null).scan, id: "scan-c" },
+    ];
+    model.nextCursor.value = "cursor-c";
+
+    const loadingMore = model.loadMore();
+    const refreshing = model.refresh({ preserveLoaded: true });
+    refreshResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-new" },
+          { ...scanDetail(null).scan, id: "scan-a" },
+          { ...scanDetail(null).scan, id: "scan-b" },
+        ],
+        nextCursor: "cursor-b",
+      }),
+    );
+    await refreshing;
+    loadMoreResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-d" },
+          { ...scanDetail(null).scan, id: "scan-e" },
+        ],
+        nextCursor: null,
+      }),
+    );
+    await loadingMore;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-new", "scan-a", "scan-b"]);
+    expect(model.nextCursor.value).toBe("cursor-b");
+  });
+
+  test("ignores a preserved refresh when pagination starts later", async () => {
+    const refreshResponse = deferred<Response>();
+    const loadMoreResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshResponse.promise)
+      .mockReturnValueOnce(loadMoreResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = [
+      { ...scanDetail(null).scan, id: "scan-a" },
+      { ...scanDetail(null).scan, id: "scan-b" },
+      { ...scanDetail(null).scan, id: "scan-c" },
+    ];
+    model.nextCursor.value = "cursor-c";
+
+    const refreshing = model.refresh({ preserveLoaded: true });
+    const loadingMore = model.loadMore();
+    loadMoreResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-d" },
+          { ...scanDetail(null).scan, id: "scan-e" },
+        ],
+        nextCursor: "cursor-e",
+      }),
+    );
+    await loadingMore;
+    refreshResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-new" },
+          { ...scanDetail(null).scan, id: "scan-a" },
+          { ...scanDetail(null).scan, id: "scan-b" },
+        ],
+        nextCursor: "cursor-b",
+      }),
+    );
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual([
+      "scan-a",
+      "scan-b",
+      "scan-c",
+      "scan-d",
+      "scan-e",
+    ]);
+    expect(model.nextCursor.value).toBe("cursor-e");
+  });
+
   test("cancels pending refreshes when the model is disposed", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
