@@ -98,6 +98,27 @@ describe("ScanListModel decisions", () => {
     expect(model.scans.value[0]?.decision).toBe("no_publish");
     expect(model.scans.value[0]?.riskSummary?.releaseRisk).toBe("none");
   });
+
+  test("does not let an older refresh restore a decided scan", async () => {
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshResponse.promise)
+      .mockResolvedValueOnce(jsonResponse(scanDetail("publish")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+
+    const refreshing = model.refresh();
+    await model.setDecision("scan-1", "publish", "reviewed");
+    expect(model.scans.value).toEqual([]);
+
+    refreshResponse.resolve(jsonResponse({ scans: [scanDetail(null).scan], nextCursor: null }));
+    await refreshing;
+
+    expect(model.scans.value).toEqual([]);
+  });
 });
 
 describe("ScanListModel deletion", () => {
@@ -145,6 +166,32 @@ describe("ScanListModel deletion", () => {
     expect(model.deleteStatus.value).toBe("error");
     expect(model.deleteError.value).toBe("only failed scans can be deleted");
     expect(model.scans.value).toHaveLength(1);
+  });
+
+  test("does not let an older refresh restore a deleted scan", async () => {
+    const refreshResponse = deferred<Response>();
+    const remainingScan = { ...scanDetail(null).scan, id: "scan-2" };
+    const deletedScan = { ...scanDetail(null).scan, status: "failed" as const };
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshResponse.promise)
+      .mockResolvedValueOnce(jsonResponse({ ok: true, id: "scan-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = [deletedScan, remainingScan];
+
+    const refreshing = model.refresh();
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(true);
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
+
+    refreshResponse.resolve(
+      jsonResponse({ scans: [deletedScan, remainingScan], nextCursor: null }),
+    );
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
   });
 });
 
