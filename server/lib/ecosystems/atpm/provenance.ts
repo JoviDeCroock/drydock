@@ -49,7 +49,7 @@ import {
  * verdict can change, so a cached result cannot outlive the rules that produced
  * it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "6";
+export const ATPM_PROVENANCE_RULES_VERSION = "7";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -155,6 +155,9 @@ const IN_TOTO_STATEMENT_TYPES = new Set([
  */
 const MAX_PAYLOAD_BASE64_LENGTH = 512 * 1024;
 const MAX_TLOG_BODY_BASE64_LENGTH = 1024 * 1024;
+// Matches Sigstore's client-side bundle limit. The record body is already byte-
+// bounded, but each candidate entry can still trigger signature verification.
+const MAX_TLOG_ENTRIES = 32;
 
 /** Verified build facts, small enough to cache alongside the pruned record. */
 export interface AtpmProvenance {
@@ -330,20 +333,26 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
   );
   if (!verified) return invalid("bundle signature does not verify");
 
-  const transparencyLog = await verifiedTransparencyLogEntry(material, envelope, certificateBase64);
-  if (transparencyLog === false) {
+  const transparencyLog = await selectVerifiedTransparencyLogEntry(
+    material,
+    envelope,
+    certificateBase64,
+    leaf,
+  );
+  if (transparencyLog.status === "too-many") {
+    return invalid("bundle carries too many transparency-log entries");
+  }
+  if (transparencyLog.status === "unverified") {
     return invalid("transparency-log inclusion promise does not verify");
   }
-  const signedAt = transparencyLog.signedAt;
+  if (transparencyLog.status === "outside-certificate-window") {
+    return invalid("signing certificate was not valid when the signature was made");
+  }
+  const signedAt = transparencyLog.entry.signedAt;
   // Fulcio leaves live about ten minutes, so a release staged and approved days
   // apart is normally verified long after its certificate expired. The window
   // is therefore evaluated only at the timestamp authenticated by the
   // transparency log. A bundle with no authenticated entry is not verified.
-  const reference = signedAt;
-  if (reference < leaf.notBefore || reference > leaf.notAfter) {
-    return invalid("signing certificate was not valid when the signature was made");
-  }
-
   const statement = parseStatement(payload);
   if (!statement) return invalid("attested statement is not a readable in-toto statement");
 
@@ -375,7 +384,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       repositoryVisibility,
       subjectName: statement.subjectName,
       subjectSha512: statement.subjectSha512,
-      logIndex: transparencyLog.logIndex,
+      logIndex: transparencyLog.entry.logIndex,
       signedAt: signedAt.toISOString(),
     },
   };
@@ -483,11 +492,6 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-function transparencyLogEntry(material: Record<string, unknown>): Record<string, unknown> | null {
-  const entries = Array.isArray(material.tlogEntries) ? material.tlogEntries : [];
-  return asObject(entries[0]);
-}
-
 function protobufUint64(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -515,19 +519,52 @@ interface VerifiedTransparencyLogEntry {
   logIndex: string;
 }
 
+type TransparencyLogSelection =
+  | { status: "verified"; entry: VerifiedTransparencyLogEntry }
+  | { status: "outside-certificate-window" }
+  | { status: "unverified" }
+  | { status: "too-many" };
+
+/**
+ * Select one authenticated log entry whose timestamp falls inside the leaf's
+ * validity window. Bundles may carry entries from multiple logs, so an unknown
+ * or malformed entry must not hide a later entry from a pinned log.
+ */
+async function selectVerifiedTransparencyLogEntry(
+  material: Record<string, unknown>,
+  envelope: Record<string, unknown>,
+  certificateBase64: string,
+  leaf: X509Certificate,
+): Promise<TransparencyLogSelection> {
+  const rawEntries = Array.isArray(material.tlogEntries) ? material.tlogEntries : [];
+  if (rawEntries.length > MAX_TLOG_ENTRIES) return { status: "too-many" };
+
+  let authenticatedOutsideWindow = false;
+  for (const rawEntry of rawEntries) {
+    const entry = asObject(rawEntry);
+    if (!entry) continue;
+    const verified = await verifyTransparencyLogEntry(entry, envelope, certificateBase64);
+    if (!verified) continue;
+    if (verified.signedAt >= leaf.notBefore && verified.signedAt <= leaf.notAfter) {
+      return { status: "verified", entry: verified };
+    }
+    authenticatedOutsideWindow = true;
+  }
+  return authenticatedOutsideWindow
+    ? { status: "outside-certificate-window" }
+    : { status: "unverified" };
+}
+
 /**
  * Verify Rekor's Signed Entry Timestamp (SET), also called an inclusion
  * promise. Every verified bundle needs an authenticated entry: without one,
  * there is no trustworthy timestamp at which to evaluate the short-lived leaf.
  */
-async function verifiedTransparencyLogEntry(
-  material: Record<string, unknown>,
+async function verifyTransparencyLogEntry(
+  entry: Record<string, unknown>,
   envelope: Record<string, unknown>,
   certificateBase64: string,
 ): Promise<VerifiedTransparencyLogEntry | false> {
-  const entry = transparencyLogEntry(material);
-  if (!entry) return false;
-
   const signedAt = transparencyLogTime(entry);
   const logIndex = transparencyLogIndex(entry);
   const logId = asObject(entry.logId)?.keyId;

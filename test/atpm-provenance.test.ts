@@ -260,6 +260,25 @@ describe("verifyAtpmProvenance", () => {
     });
   });
 
+  test("accepts a trusted transparency-log entry after an unsupported entry", async () => {
+    const bundle = clone(BUNDLE) as any;
+    bundle.verificationMaterial.tlogEntries.unshift({
+      logId: { keyId: "not-a-trusted-log" },
+    });
+
+    expect((await verifyAtpmProvenance(bundle)).status).toBe("verified");
+  });
+
+  test("bounds the number of transparency-log entries it will inspect", async () => {
+    const bundle = clone(BUNDLE) as any;
+    bundle.verificationMaterial.tlogEntries = Array.from({ length: 33 }, () => ({}));
+
+    expect(await verifyAtpmProvenance(bundle)).toEqual({
+      status: "invalid",
+      reason: "bundle carries too many transparency-log entries",
+    });
+  });
+
   test("binds a Rekor dsse v0.0.1 entry to the bundle's signing certificate", async () => {
     const bundle = clone(BUNDLE) as any;
     const envelope = bundle.dsseEnvelope;
