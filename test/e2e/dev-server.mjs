@@ -156,10 +156,10 @@ async function writeWranglerConfig() {
   await writeFile(wranglerConfigPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function run(command, args, env = {}) {
+function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
-    env: { ...process.env, CI: process.env.CI ?? "true", ...env },
+    env: { ...process.env, CI: process.env.CI ?? "true" },
     stdio: "inherit",
   });
   if (result.status !== 0) {
