@@ -242,7 +242,11 @@ export default function PublicReportPage() {
       ) : (
         <section class="flex flex-col gap-3">
           <SectionLabel as="h2">Risk signals</SectionLabel>
-          <EmptyLine>No deterministic findings in this release.</EmptyLine>
+          <EmptyLine>
+            {diffTruncated
+              ? "Stored evidence could not be read, so deterministic findings are unavailable in this report."
+              : "No deterministic findings in this release."}
+          </EmptyLine>
         </section>
       )}
 
@@ -264,7 +268,8 @@ export default function PublicReportPage() {
           {diffTruncated ? (
             <EmptyLine>
               This report carries a partial file list — {changes.length} of {totalChanged} changed
-              files in the release. The findings and risk verdict above cover the whole release.
+              files in the release. The persisted risk verdict above still covers the whole release;
+              file and finding details are incomplete.
             </EmptyLine>
           ) : totalChanged > MAX_LISTED_CHANGES ? (
             <EmptyLine>
