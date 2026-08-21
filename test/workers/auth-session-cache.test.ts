@@ -157,11 +157,14 @@ describe("session secondary storage", () => {
 
   test("an empty KV namespace falls back to the durable D1 session", async () => {
     const jar = await signUp();
+    const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
+    expect(token).toBeTruthy();
     await clearSessionKv();
     jar.delete(SESSION_DATA_COOKIE);
 
     const res = await call("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
+    expect(await env.AUTH_SESSIONS?.get(token)).toBeTruthy();
   });
 
   test("a KV write failure does not fail session creation after the D1 write", async () => {

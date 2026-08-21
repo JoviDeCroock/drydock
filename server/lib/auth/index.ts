@@ -273,6 +273,35 @@ function createSessionSecondaryStorage(
     return JSON.stringify(active);
   }
 
+  async function getAuthoritativeSession(key: string): Promise<string | null> {
+    const cached = await readCacheValue(key);
+    if (cached.value !== null) return cached.value;
+
+    // Better Auth falls back to D1 after a secondary-storage miss, but it does
+    // not fill secondary storage from that result. Hydrate the same payload it
+    // expects here so a newly bound, cleared, or recovered KV namespace stops
+    // sending this session back to D1 after every cookie-cache expiry.
+    const [session] = await db
+      .select()
+      .from(schema.session)
+      .where(eq(schema.session.token, key))
+      .limit(1);
+    if (!session) return null;
+
+    const [user] = await db
+      .select()
+      .from(schema.user)
+      .where(eq(schema.user.id, session.userId))
+      .limit(1);
+    if (!user) return null;
+
+    const value = JSON.stringify({ session, user });
+    hydratedSessionValues.set(key, value);
+    const ttl = Math.ceil((session.expiresAt.getTime() - Date.now()) / 1000);
+    if (ttl > 0) await setWithSafeTtl(key, value, ttl);
+    return value;
+  }
+
   async function prepareUserDeletion(userId: string): Promise<void> {
     const sessions = await db
       .select({ token: schema.session.token, expiresAt: schema.session.expiresAt })
@@ -301,7 +330,7 @@ function createSessionSecondaryStorage(
         }
         const hydrated = hydratedSessionValues.get(key);
         if (hydrated !== undefined) return hydrated;
-        return (await readCacheValue(key)).value;
+        return getAuthoritativeSession(key);
       },
       set: async (key: string, value: string, ttl?: number) => {
         if (!isSessionStoreKeyAllowed(key)) return;
