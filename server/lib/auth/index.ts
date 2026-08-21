@@ -1,7 +1,7 @@
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { twoFactor } from "better-auth/plugins";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
@@ -146,6 +146,7 @@ interface SessionSecondaryStorage {
     set(key: string, value: string, ttl?: number): Promise<void>;
     delete(key: string): Promise<void>;
   };
+  prepareSessionDeletion(sessionToken: string): Promise<void>;
   prepareUserDeletion(userId: string): Promise<void>;
 }
 
@@ -316,6 +317,37 @@ function createSessionSecondaryStorage(
     for (const key of keys) preparedDeletionKeys.add(key);
   }
 
+  async function prepareSessionDeletion(sessionToken: string): Promise<void> {
+    const [session] = await db
+      .select({ userId: schema.session.userId })
+      .from(schema.session)
+      .where(eq(schema.session.token, sessionToken))
+      .limit(1);
+
+    // Better Auth's sign-out endpoint catches deleteSession failures and still
+    // returns success after clearing the cookies. Evict the authorizing token
+    // before that endpoint runs so a KV outage fails while the caller still has
+    // the cookie needed to retry, instead of leaving a replayable session behind.
+    try {
+      await store.delete(sessionToken);
+    } catch (err) {
+      reportSessionCacheFailure("delete", err);
+      throw err;
+    }
+    preparedDeletionKeys.add(sessionToken);
+
+    if (!session) return;
+    const indexKey = `active-sessions-${session.userId}`;
+    try {
+      await store.delete(indexKey);
+    } catch (err) {
+      // The index only supports session listing; the token entry above is the
+      // authorization boundary. Better Auth can rebuild this index from D1.
+      reportSessionCacheFailure("delete", err);
+    }
+    preparedDeletionKeys.add(indexKey);
+  }
+
   return {
     storage: {
       get: async (key: string) => {
@@ -336,7 +368,30 @@ function createSessionSecondaryStorage(
         await store.delete(key);
       },
     },
+    prepareSessionDeletion,
     prepareUserDeletion,
+  };
+}
+
+function createSessionDeletionPreflightPlugin(
+  sessionCache: SessionSecondaryStorage,
+): BetterAuthPlugin {
+  return {
+    id: "drydock-session-deletion-preflight",
+    hooks: {
+      before: [
+        {
+          matcher: (ctx) => ctx.path === "/sign-out",
+          handler: createAuthMiddleware(async (ctx) => {
+            const token = await ctx.getSignedCookie(
+              ctx.context.authCookies.sessionToken.name,
+              ctx.context.secret,
+            );
+            if (token) await sessionCache.prepareSessionDeletion(token);
+          }),
+        },
+      ],
+    },
   };
 }
 
@@ -474,7 +529,10 @@ export function createAuth(env: Cloudflare.Env) {
         },
       },
     },
-    plugins: [twoFactor({ issuer: "Drydock" })],
+    plugins: [
+      ...(sessionCache ? [createSessionDeletionPreflightPlugin(sessionCache)] : []),
+      twoFactor({ issuer: "Drydock" }),
+    ],
     advanced: {
       cookiePrefix: "spr",
       ipAddress: {

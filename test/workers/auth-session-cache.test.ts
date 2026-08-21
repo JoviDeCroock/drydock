@@ -429,6 +429,32 @@ describe("a session that outlives its user", () => {
 });
 
 describe("sign-out", () => {
+  test("fails before clearing cookies when KV eviction is unavailable", async () => {
+    const jar = await signUp();
+    const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
+
+    const signOut = await call("POST", "/api/auth/sign-out", {
+      jar,
+      requestEnv: envWithFailingSessionStore(["delete"]),
+    });
+    expect(signOut.status).toBe(500);
+
+    // Better Auth normally catches a deleteSession failure, clears both cookies,
+    // and returns 200. The preflight must fail before that happens so the user
+    // can retry rather than being told a replayable session was revoked.
+    expect(jar.get(SESSION_DATA_COOKIE)).toBeTruthy();
+    expect(jar.get(SESSION_TOKEN_COOKIE)).toBeTruthy();
+    expect(await env.AUTH_SESSIONS?.get(token)).toBeTruthy();
+    const rows = await createDb(env.DB).select().from(schema.session);
+    expect(rows.some((row) => row.token === token)).toBe(true);
+
+    const retry = await call("POST", "/api/auth/sign-out", { jar });
+    expect(retry.status).toBe(200);
+    expect(jar.get(SESSION_DATA_COOKIE)).toBeUndefined();
+    expect(jar.get(SESSION_TOKEN_COOKIE)).toBeUndefined();
+    expect(await env.AUTH_SESSIONS?.get(token)).toBeNull();
+  });
+
   test("clears the cached cookie and removes the session from both stores", async () => {
     const jar = await signUp();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
