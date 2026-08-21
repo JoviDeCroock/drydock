@@ -35,7 +35,7 @@ export interface ScanCompareFileResponse {
 }
 
 export interface ScanStatusResponse {
-  scan: PersistedScanDetail["scan"];
+  scan: Pick<ScanListItem, "id" | "status" | "aiStatus" | "updatedAt">;
 }
 
 export interface ScanFileResponse {
@@ -567,18 +567,13 @@ export const ScanDetailModel = createModel((id: string) => {
         // scan whose R2 read degraded legitimately has no files, and keying off
         // that would re-fetch (and re-read R2) on every single poll.
         (data.scan.aiStatus === "pending" && fullDetailLoaded.peek());
-      if (metadataOnly) {
-        detail.value = current
-          ? {
-              ...current,
-              scan: data.scan,
-            }
-          : {
-              scan: data.scan,
-              files: [],
-              findings: [],
-              events: [],
-            };
+      if (metadataOnly && current) {
+        detail.value = {
+          ...current,
+          // The status endpoint deliberately returns only lifecycle fields.
+          // Preserve the already-loaded package/report metadata around them.
+          scan: { ...current.scan, ...data.scan },
+        };
       } else {
         detail.value = await getScan(id, { poll: true });
         fullDetailLoaded.value = true;

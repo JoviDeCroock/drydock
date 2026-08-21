@@ -172,11 +172,24 @@ describe("ScanDetailModel polling", () => {
   });
 
   test("keeps polling a complete scan while its review is pending, without the stalled warning", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scan: aiPendingDetail().scan })));
+    const pending = aiPendingDetail();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/status")) return Promise.resolve(jsonResponse(pending));
+      return Promise.resolve(
+        jsonResponse({
+          scan: {
+            id: pending.scan.id,
+            status: pending.scan.status,
+            aiStatus: pending.scan.aiStatus,
+            updatedAt: pending.scan.updatedAt,
+          },
+        }),
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     model = new ScanDetailModel("scan-1");
-    model.detail.value = aiPendingDetail();
+    await model.load();
 
     // Past the window that would have latched a *running* scan as stalled. The
     // report is complete and rendered, so "automatic refresh stopped without the
@@ -185,6 +198,9 @@ describe("ScanDetailModel polling", () => {
     expect(model.pollingStalled.value).toBe(false);
     expect(model.aiPollingStopped.value).toBe(false);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    // The lightweight status response must not erase report metadata already
+    // loaded by GET /scans/:id.
+    expect(model.detail.value?.scan.packageName).toBe("left-pad");
   });
 
   test("fetches the completed report after the initial load returns a running scan", async () => {

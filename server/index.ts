@@ -742,10 +742,36 @@ export default {
               error: describeOperationalError(err),
             });
           } else {
+            // `executeAiReviewJob` settles expected final-attempt failures, but
+            // infrastructure around that path can still throw (Flagship, D1,
+            // or an unexpected patch failure). This is the last delivery, so
+            // close the pending review now instead of acknowledging it and
+            // waiting for the cron reaper's running timeout.
+            let settled = false;
+            try {
+              settled = await closeAbandonedAiReview(
+                env,
+                createDb(env.DB),
+                aiMessage.scanId,
+                aiMessage.organizationId,
+              );
+            } catch (settleErr) {
+              emitOperationalEvent("error", "scan.ai_review.queue.settle_failed", {
+                scanId: aiMessage.scanId,
+                organizationId: aiMessage.organizationId,
+                attempt: message.attempts,
+                error: describeOperationalError(settleErr),
+              });
+              // Preserve the failure for the DLQ when even the fail-safe D1
+              // patch cannot land. Silently acknowledging it would leave no
+              // queue-side evidence or retry path at all.
+              throw err;
+            }
             emitOperationalEvent("error", "scan.ai_review.queue.message_failed", {
               scanId: aiMessage.scanId,
               organizationId: aiMessage.organizationId,
               attempt: message.attempts,
+              settled,
               durationMs: durationMsSince(messageStartedAtMs),
               error: describeOperationalError(err),
             });

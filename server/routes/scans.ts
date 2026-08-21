@@ -16,6 +16,7 @@ import {
   getScan,
   getScanCompareData,
   getScanFile,
+  getScanPollStatus,
   getScanStatus,
   listScans,
   recordScanDecision,
@@ -455,7 +456,7 @@ scansRoutes.get("/:id", async (c) => {
 scansRoutes.get("/:id/status", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
-  const scan = await getScanStatus(db, c.req.param("id"), organizationId);
+  const scan = await getScanPollStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
   return c.json({ scan });
 });

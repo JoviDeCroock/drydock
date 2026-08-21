@@ -1,11 +1,12 @@
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createScanJob,
   getScan,
+  getScanPollStatus,
   getScanStatus,
   persistScan,
   recordScanDecision,
@@ -31,6 +32,7 @@ import {
 import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
 import { DETERMINISTIC_RULES_VERSION, type Finding } from "../../server/lib/review";
 import type { AiReviewQueueMessage } from "../../server/lib/scan/job-messages";
+import worker from "../../server";
 
 interface SeededUser {
   userId: string;
@@ -599,6 +601,46 @@ describe("deferred AI review", () => {
     // grade stays the deterministic one.
     expect(detail?.scan.risk).toBe("medium");
     expect(detail?.scan.findingCount).toBe(1);
+  });
+
+  test("the final queue delivery closes a review when Flagship evaluation throws", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner, { artifactBacked: true });
+    const flagged = {
+      ...env,
+      FLAGS: {
+        getBooleanValue: async () => {
+          throw new Error("Flagship unavailable");
+        },
+      },
+    } as unknown as Cloudflare.Env;
+    const retry = vi.fn();
+    const batch = {
+      messages: [{ body: messageFor(scanId, owner), attempts: 3, retry }],
+    } as unknown as MessageBatch<import("../../server/lib/scan/job").QueueMessage>;
+
+    await worker.queue(batch, flagged, createExecutionContext());
+
+    expect(retry).not.toHaveBeenCalled();
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+    expect(scan?.aiStatus).toBe("unavailable");
+    expect((scan!.aiJson as { model?: string }).model).toBeTruthy();
+  });
+
+  test("the poll status query excludes report-sized scan columns", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner, { artifactBacked: true });
+
+    const status = await getScanPollStatus(db, scanId, owner.organizationId);
+
+    expect(status).toEqual({
+      id: scanId,
+      status: "complete",
+      aiStatus: "pending",
+      updatedAt: expect.any(Date),
+    });
+    expect(status).not.toHaveProperty("summaryJson");
+    expect(status).not.toHaveProperty("aiJson");
   });
 
   test("executeAiReviewJob skips a scan that is no longer pending", async () => {

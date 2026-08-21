@@ -1511,6 +1511,27 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
   return scan ?? null;
 }
 
+/**
+ * Lightweight lifecycle projection for the dashboard poller.
+ *
+ * A completed scan's `summary_json` can contain the full diff. Deferred-review
+ * polling only needs to know when `ai_status` stops being pending, so returning
+ * the whole row here would repeatedly serialize that report-sized payload.
+ */
+export async function getScanPollStatus(db: AppDb, id: string, organizationId: string) {
+  const [scan] = await db
+    .select({
+      id: scans.id,
+      status: scans.status,
+      aiStatus: scans.aiStatus,
+      updatedAt: scans.updatedAt,
+    })
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return scan ?? null;
+}
+
 export async function getScanCompareData(
   db: AppDb,
   id: string,
