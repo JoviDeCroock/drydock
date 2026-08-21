@@ -27,7 +27,7 @@ All three live in the publisher's repository, under the identity Drydock already
 The bundle itself is checkable, so Drydock re-verifies it (`server/lib/ecosystems/atpm/provenance.ts`) against a pinned Sigstore root:
 
 - the Fulcio certificate chain, using a bounded DER reader (`server/lib/platform/x509.ts`) rather than a general X.509 library — nothing here builds chains or consults a certificate store, because the accepted issuers are pinned constants;
-- the required Rekor signed-entry timestamp against a pinned transparency-log key before its integrated time is allowed to evaluate the short-lived Fulcio leaf's validity window; a bundle with no authenticated entry is unverifiable;
+- the required Rekor signed-entry timestamp against a pinned transparency-log key before its integrated time is allowed to evaluate every certificate in the pinned Fulcio chain; a bundle with no authenticated entry is unverifiable;
 - the DSSE signature over the in-toto statement;
 - the statement's shape: exactly one subject, a readable npm purl, a SHA-512 digest;
 - the Fulcio OIDs: issuer, source repository, ref, commit, build-config workflow, run invocation, runner environment, repository visibility. The issuer must be GitHub Actions, the runner must be `github-hosted`, and the repository must be `public`, matching atpm's own approval policy. The workflow is trusted only when Fulcio authenticated it into the certificate; publisher-controlled fields in the signed predicate are not an identity fallback.

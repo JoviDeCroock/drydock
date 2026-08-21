@@ -36,8 +36,8 @@ import {
  *    Fulcio intermediate rotation is a code change here, and fails closed
  *    (bundles read as unverifiable) until it happens.
  *  - A Rekor signed-entry timestamp is verified against a pinned transparency-
- *    log key before its integrated time may evaluate the short-lived leaf's
- *    validity window. The Merkle inclusion proof is not independently checked;
+ *    log key before its integrated time may evaluate every certificate in the
+ *    pinned chain. The Merkle inclusion proof is not independently checked;
  *    this verifies the log's signed promise that it accepted the entry.
  *  - Nothing here is bound to the reviewed bytes. Verification is intrinsic to
  *    the bundle; `./findings.ts` compares the attested subject and digest
@@ -49,7 +49,7 @@ import {
  * verdict can change, so a cached result cannot outlive the rules that produced
  * it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "7";
+export const ATPM_PROVENANCE_RULES_VERSION = "8";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -230,7 +230,12 @@ export function readAtpmAttestation(meta: unknown): unknown {
   return record.provenance === null ? PRESENT_NULL_ATTESTATION : record.provenance;
 }
 
-let pinnedAnchors: Promise<X509Certificate[]> | null = null;
+interface TrustedIssuerChain {
+  issuer: X509Certificate;
+  root: X509Certificate;
+}
+
+let pinnedIssuerChains: Promise<TrustedIssuerChain[]> | null = null;
 
 /**
  * The Fulcio intermediates that may issue a leaf, each proven against the
@@ -238,17 +243,19 @@ let pinnedAnchors: Promise<X509Certificate[]> | null = null;
  * compile-time constants, so re-deriving them per bundle would only repeat the
  * same two signature checks.
  */
-function trustedIssuers(): Promise<X509Certificate[]> {
-  pinnedAnchors ??= (async () => {
+function trustedIssuers(): Promise<TrustedIssuerChain[]> {
+  pinnedIssuerChains ??= (async () => {
     const root = parseX509(pemToDer(FULCIO_ROOT_PEM));
-    const issuers: X509Certificate[] = [];
+    const issuers: TrustedIssuerChain[] = [];
     for (const pem of FULCIO_INTERMEDIATE_PEMS) {
       const intermediate = parseX509(pemToDer(pem));
-      if (await verifyCertificateSignature(intermediate, root)) issuers.push(intermediate);
+      if (await verifyCertificateSignature(intermediate, root)) {
+        issuers.push({ issuer: intermediate, root });
+      }
     }
     return issuers;
   })();
-  return pinnedAnchors;
+  return pinnedIssuerChains;
 }
 
 /**
@@ -292,14 +299,14 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
   // Only the pinned issuers are consulted. A bundle also ships its own chain,
   // and trusting that would make the record self-certifying.
   const issuers = await trustedIssuers();
-  let issued = false;
-  for (const issuer of issuers) {
+  let certificateChain: X509Certificate[] | null = null;
+  for (const { issuer, root } of issuers) {
     if (await verifyCertificateSignature(leaf, issuer)) {
-      issued = true;
+      certificateChain = [leaf, issuer, root];
       break;
     }
   }
-  if (!issued) {
+  if (!certificateChain) {
     return invalid("signing certificate does not chain to the pinned Sigstore root");
   }
 
@@ -337,7 +344,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
     material,
     envelope,
     certificateBase64,
-    leaf,
+    certificateChain,
   );
   if (transparencyLog.status === "too-many") {
     return invalid("bundle carries too many transparency-log entries");
@@ -346,7 +353,7 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
     return invalid("transparency-log inclusion promise does not verify");
   }
   if (transparencyLog.status === "outside-certificate-window") {
-    return invalid("signing certificate was not valid when the signature was made");
+    return invalid("signing certificate chain was not valid when the signature was made");
   }
   const signedAt = transparencyLog.entry.signedAt;
   // Fulcio leaves live about ten minutes, so a release staged and approved days
@@ -526,15 +533,16 @@ type TransparencyLogSelection =
   | { status: "too-many" };
 
 /**
- * Select one authenticated log entry whose timestamp falls inside the leaf's
- * validity window. Bundles may carry entries from multiple logs, so an unknown
- * or malformed entry must not hide a later entry from a pinned log.
+ * Select one authenticated log entry whose timestamp falls inside every
+ * certificate's validity window. Bundles may carry entries from multiple logs,
+ * so an unknown or malformed entry must not hide a later entry from a pinned
+ * log.
  */
 async function selectVerifiedTransparencyLogEntry(
   material: Record<string, unknown>,
   envelope: Record<string, unknown>,
   certificateBase64: string,
-  leaf: X509Certificate,
+  certificateChain: readonly X509Certificate[],
 ): Promise<TransparencyLogSelection> {
   const rawEntries = Array.isArray(material.tlogEntries) ? material.tlogEntries : [];
   if (rawEntries.length > MAX_TLOG_ENTRIES) return { status: "too-many" };
@@ -545,7 +553,7 @@ async function selectVerifiedTransparencyLogEntry(
     if (!entry) continue;
     const verified = await verifyTransparencyLogEntry(entry, envelope, certificateBase64);
     if (!verified) continue;
-    if (verified.signedAt >= leaf.notBefore && verified.signedAt <= leaf.notAfter) {
+    if (certificateChainValidAt(certificateChain, verified.signedAt)) {
       return { status: "verified", entry: verified };
     }
     authenticatedOutsideWindow = true;
@@ -553,6 +561,19 @@ async function selectVerifiedTransparencyLogEntry(
   return authenticatedOutsideWindow
     ? { status: "outside-certificate-window" }
     : { status: "unverified" };
+}
+
+/** Every pinned chain element must have been valid at Rekor's authenticated time. */
+export function certificateChainValidAt(
+  certificates: readonly X509Certificate[],
+  signedAt: Date,
+): boolean {
+  return (
+    certificates.length > 0 &&
+    certificates.every(
+      (certificate) => signedAt >= certificate.notBefore && signedAt <= certificate.notAfter,
+    )
+  );
 }
 
 /**

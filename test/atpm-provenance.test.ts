@@ -4,6 +4,7 @@ import { atpmRecordFindings } from "../server/lib/ecosystems/atpm/findings";
 import {
   atpmGithubCredentialPolicyError,
   atpmPurl,
+  certificateChainValidAt,
   readAtpmAttestation,
   transparencyLogBodyMatches,
   verifyAtpmProvenance,
@@ -185,6 +186,23 @@ describe("x509 reader", () => {
 
   test("rejects a PEM that is not a certificate", () => {
     expect(() => parseX509(pemToDer("-----BEGIN X-----\nAAAA\n-----END X-----"))).toThrow();
+  });
+
+  test("requires the authenticated signing time to fall inside every chain certificate", () => {
+    const chain = (BUNDLE as any).verificationMaterial.x509CertificateChain.certificates;
+    const leaf = parseX509(decodeBase64(chain[0].rawBytes));
+    const intermediate = parseX509(pemToDer(FULCIO_INTERMEDIATE_PEM));
+    const afterIntermediateExpiry = new Date(intermediate.notAfter.getTime() + 1);
+    const longLivedLeaf = {
+      ...leaf,
+      notBefore: new Date(intermediate.notBefore),
+      notAfter: new Date(afterIntermediateExpiry.getTime() + 60_000),
+    };
+
+    expect(certificateChainValidAt([longLivedLeaf, intermediate], afterIntermediateExpiry)).toBe(
+      false,
+    );
+    expect(certificateChainValidAt([], afterIntermediateExpiry)).toBe(false);
   });
 });
 
