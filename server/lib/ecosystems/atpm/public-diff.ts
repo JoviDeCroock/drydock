@@ -172,7 +172,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
         packageJson: fromArchive?.packageJson ?? null,
       },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
-      provenance: resolutionTrail(ref, identity),
+      provenance: resolutionTrail(ref, identity, stagedCandidate?.uri),
       attestation: describeAttestation(to, publisher.value, toArchive.archiveSha512 ?? null),
       ...(pageNotices.length ? { notices: pageNotices } : {}),
       ...(displayName ? { displayName } : {}),
@@ -476,6 +476,7 @@ function canonicalNames(
 function resolutionTrail(
   ref: AtpmPackageRef,
   identity: AtpmRepoIdentity,
+  targetRecordUri?: string,
 ): PublicDiffProvenanceEntry[] {
   const trail: PublicDiffProvenanceEntry[] = [];
   if (identity.handle) {
@@ -492,10 +493,13 @@ function resolutionTrail(
   });
   trail.push({ label: "PDS", value: new URL(identity.pds).host });
   // The full AT-URI, so a reader can paste it into any atproto client and read
-  // the same record this diff was built from.
+  // the same target record this diff was built from. A staged target lives in
+  // its stage record, not in the published package record that may supply the
+  // baseline (and does not exist yet for a first release).
   trail.push({
     label: "Record",
-    value: `${ATPM_PROTOCOL}${identity.did}/${ATPM_PACKAGE_COLLECTION}/${ref.name}`,
+    value:
+      targetRecordUri ?? `${ATPM_PROTOCOL}${identity.did}/${ATPM_PACKAGE_COLLECTION}/${ref.name}`,
   });
   return trail;
 }

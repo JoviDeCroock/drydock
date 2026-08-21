@@ -106,5 +106,13 @@ describe("atpm staged public diff", () => {
     expect(sources.notices).toEqual(
       expect.arrayContaining([expect.stringContaining("first release")]),
     );
+    expect(sources.provenance).toEqual(
+      expect.arrayContaining([
+        {
+          label: "Record",
+          value: `at://${DID}/dev.atpm.alpha.stage/${RKEY}`,
+        },
+      ]),
+    );
   });
 });
