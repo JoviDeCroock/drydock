@@ -156,6 +156,17 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry a queued scan without a captured registry", () => {
+    expect(
+      classifyScanError(new Error("The queued scan is missing its captured npm registry.")),
+    ).toEqual({
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
+      retryable: false,
+    });
+  });
+
   test("does not retry archive file-count limit failures", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
@@ -194,7 +205,12 @@ describe("executeScanJob idempotency", () => {
       tokenFingerprint: "fp",
       validationStatus: "valid",
     });
-    dbMock.getScanReleaseIdentity.mockResolvedValue(null);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
     dbMock.recordRegistryVersionStatus.mockResolvedValue(true);
     npmConnectionMock.allowInsecureLocalRegistry.mockReturnValue(false);
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_token");
@@ -264,6 +280,30 @@ describe("executeScanJob idempotency", () => {
       code: "npm_connection_changed",
       message:
         "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
+      retryable: false,
+    });
+  });
+
+  test("fails closed when a legacy queued scan has no captured registry", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: null,
+      packageName: null,
+      stagedVersion: null,
+      registryStatusSupersededAt: null,
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("queued scan is missing its captured npm registry");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
       retryable: false,
     });
   });
