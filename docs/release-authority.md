@@ -57,9 +57,9 @@ Two distinctions carry most of the signal quality.
 digests: a `rawDigest` over its bytes, which moves on any edit at all, and an
 `authorityDigest` over its projected authority, which does not move for
 comments, key reordering, or formatting. A narrower `executionDigest` attributes
-otherwise opaque condition, dependency, environment-mapping, runner, container,
-service, output, matrix, and `continue-on-error` changes without persisting those
-values. A release where raw digests moved but authority digests did not reports
+otherwise opaque condition, dependency, environment-mapping, command, runner,
+container, service, output, matrix, and `continue-on-error` changes without
+persisting those values. A release where raw digests moved but authority digests did not reports
 `cosmetic` and never raises a high-signal warning. The authority digest covers
 the full bounded workflow projection before long values are shortened for
 storage and display, so a change beyond a visible prefix cannot be mislabeled
@@ -109,19 +109,18 @@ A snapshot records:
   and `workflow_call` output mappings;
 - authority-sensitive execution controls: job and step conditions, job
   dependencies, runner selection, containers and services, job output mappings,
-  job strategy matrices, `continue-on-error`, step shells and working directories,
+  job strategy matrices, `continue-on-error`, command bodies, step shells and working directories,
   workflow/job run defaults, and digests of workflow/job/step environment
   mappings (the values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
   shorthands and the empty-block case;
 - GitHub Environment names per job;
 - every `uses:` reference with its ref, whether it is pinned to a 40-hex commit,
-  and whether the call inherits secrets; local actions carry a bounded digest
-  of their complete directory tree and call inputs at the workflow's resolved
-  commit, while publishing actions, safeguard actions, and reusable-workflow
-  calls also carry a digest of their `with:` inputs and explicit `secrets:` map,
-  so source, credential, target, or protected-subject changes are detected
-  without persisting those values;
+  and whether the call inherits secrets; every action call carries a digest of
+  its `with:` inputs and explicit `secrets:` map, while local actions also carry
+  a bounded digest of their complete directory tree at the workflow's resolved
+  commit, so source, credential, target, or protected-subject changes are
+  detected without persisting those values;
 - detected publish steps (known publishing actions and publish commands);
 - detected release safeguards (attestation, signing, provenance — including
   `with: attestations`/`provenance` inputs);

@@ -381,7 +381,7 @@ function unexplainedAuthorityChanges(
         kind: "workflow_authority_changed",
         significance: "medium",
         scope: item.path,
-        subject: "conditions, dependencies, environment mappings, or execution controls",
+        subject: "conditions, dependencies, environment mappings, commands, or execution controls",
         before: before.executionDigest?.slice(0, 12) ?? "not captured",
         after: item.executionDigest?.slice(0, 12) ?? "not captured",
       });

@@ -13,6 +13,7 @@ import {
   findApprovedAuthorityBaseline,
   getReleaseAuthorityForGate,
   markAuthoritySnapshotApproved,
+  refreshReleaseAuthorityDeltaForGate,
 } from "../../server/db/release-authority";
 import {
   claimGatePackageDecision,
@@ -231,6 +232,51 @@ interface Fixture {
   installationExternalId: string;
   repositoryId: number;
   jar: Jar;
+}
+
+function finalizeBeforeSnapshotUpdate(
+  db: ReturnType<typeof createDb>,
+  finalize: () => Promise<void>,
+): ReturnType<typeof createDb> {
+  const update = db.update.bind(db);
+  let finalized = false;
+
+  const wrapBuilder = <T extends object>(builder: T): T =>
+    new Proxy(builder, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === "then" && typeof value === "function") {
+          return async (
+            onFulfilled: (result: unknown) => unknown,
+            onRejected: (error: unknown) => unknown,
+          ) => {
+            if (!finalized) {
+              finalized = true;
+              await finalize();
+            }
+            return Reflect.apply(value, target, [onFulfilled, onRejected]);
+          };
+        }
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const result = Reflect.apply(value, target, args);
+          return typeof result === "object" && result !== null ? wrapBuilder(result) : result;
+        };
+      },
+    });
+
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "update") {
+        return (table: unknown) => {
+          const builder = Reflect.apply(update, target, [table]);
+          return table === schema.releaseAuthoritySnapshots ? wrapBuilder(builder) : builder;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 async function seedFixture(): Promise<Fixture> {
@@ -984,6 +1030,75 @@ describe("release-authority approval policy", () => {
     expect(scan?.decision).toBeNull();
     const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
     expect(authority?.approvedAt).toBeNull();
+  });
+
+  test("does not refresh durable authority evidence after the gate finalizes", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stale = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
+
+    const moved = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "c".repeat(40),
+    });
+    await capture(fixture, moved.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: moved.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const now = new Date();
+    const racingDb = finalizeBeforeSnapshotUpdate(db, async () => {
+      await db
+        .update(schema.githubWorkflowGates)
+        .set({ status: "rejected", decision: "rejected", decidedAt: now, updatedAt: now })
+        .where(eq(schema.githubWorkflowGates.id, stale.gate.id));
+    });
+    const refreshed = await refreshReleaseAuthorityDeltaForGate(
+      racingDb,
+      fixture.organizationId,
+      stale.gate.id,
+    );
+
+    expect(await getGateForOrganization(db, fixture.organizationId, stale.gate.id)).toMatchObject({
+      status: "rejected",
+    });
+    expect(refreshed?.delta?.status).toBe("unchanged");
+    expect(
+      (await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id))?.delta?.status,
+    ).toBe("unchanged");
   });
 
   test("does not attribute authority approval when a same-millisecond gate CAS loses", async () => {

@@ -12,8 +12,8 @@
 //   - `authorityDigest` covers only the projected authority, so a cosmetic edit
 //     leaves it untouched.
 // A third, narrower `executionDigest` lets the delta attribute changes to
-// conditions, dependencies, environment mappings, and execution controls
-// without persisting their values.
+// conditions, dependencies, environment mappings, commands, and execution
+// controls without persisting their values.
 // A release where raw digests moved but authority digests did not is exactly
 // the "cosmetic change" case that must never raise a high-signal warning.
 //
@@ -58,7 +58,7 @@ export interface AuthorityWorkflowRef {
   rawDigest: string | null;
   /** sha256 of this workflow's authority projection; stable across cosmetic edits. */
   authorityDigest: string | null;
-  /** sha256 of conditions, dependencies, env mappings, and execution controls. */
+  /** sha256 of conditions, dependencies, env mappings, commands, and execution controls. */
   executionDigest: string | null;
 }
 
@@ -95,11 +95,10 @@ export interface AuthorityActionRef {
   /** `secrets: inherit` on a reusable-workflow call hands over the caller's secrets. */
   secretsInherit: boolean;
   /**
-   * Digest of authority-sensitive call configuration. Present for publishing
-   * actions, safeguards, and reusable-workflow jobs, where `with:` inputs or
-   * an explicit `secrets:` mapping can change the release target, protected
-   * subject, or credentials without moving the action reference. The values
-   * themselves are never persisted.
+   * Digest of call configuration. Present whenever a `with:` input or explicit
+   * `secrets:` mapping exists because any action can alter the eventual release
+   * authority without moving its reference. The values themselves are never
+   * persisted.
    */
   configurationDigest: string | null;
 }
@@ -364,10 +363,10 @@ interface WorkflowProjection {
 /**
  * Authority-sensitive execution controls that are hashed but not persisted for
  * display. Conditions and dependencies decide whether a publishing job/step
- * can run, env mappings and matrices can redirect an otherwise unchanged
- * publish command, and `continue-on-error` can make a failed safeguard
- * non-blocking. Hashing the values catches those edits without exposing them
- * in the stored snapshot.
+ * can run, env mappings, matrices, and preceding commands can redirect an
+ * otherwise unchanged publish command, and `continue-on-error` can make a
+ * failed safeguard non-blocking. Hashing the values catches those edits
+ * without exposing them in the stored snapshot.
  */
 interface AuthorityExecutionContext {
   workflow: string;
@@ -442,7 +441,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
     const jobUses = asString(job.uses);
     if (jobUses) {
       projection.actions.push(
-        await readActionRef(workflow, jobName, jobUses, job.secrets, job.with, true),
+        await readActionRef(workflow, jobName, jobUses, job.secrets, job.with),
       );
     }
 
@@ -459,6 +458,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         step.env,
         {
           continueOnError: step["continue-on-error"],
+          run: step.run,
           shell: step.shell,
           workingDirectory: step["working-directory"],
         },
@@ -495,6 +495,7 @@ async function readExecutionContext(
     services?: YamlValue;
     outputs?: YamlValue;
     runDefaults?: YamlValue;
+    run?: YamlValue;
     shell?: YamlValue;
     workingDirectory?: YamlValue;
   } = {},
@@ -513,6 +514,7 @@ async function readExecutionContext(
   if (controlValues.services != null) controls.services = controlValues.services;
   if (controlValues.outputs != null) controls.outputs = controlValues.outputs;
   if (controlValues.runDefaults != null) controls.runDefaults = controlValues.runDefaults;
+  if (controlValues.run != null) controls.run = controlValues.run;
   if (controlValues.shell != null) controls.shell = controlValues.shell;
   if (controlValues.workingDirectory != null) {
     controls.workingDirectory = controlValues.workingDirectory;
@@ -634,10 +636,6 @@ async function readStep(
         uses,
         step.secrets,
         step.with,
-        uses.trim().startsWith("./") ||
-          uses.trim().startsWith("../") ||
-          isPublishAction(actionName) ||
-          safeguard !== null,
         source.localActionDigests?.[uses.trim()] ?? null,
       ),
     );
@@ -841,7 +839,6 @@ async function readActionRef(
   uses: string,
   secrets: YamlValue,
   inputs: YamlValue,
-  trackConfiguration: boolean,
   localActionDigest: string | null = null,
 ): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
@@ -855,9 +852,8 @@ async function readActionRef(
   const secretMap = asRecord(secrets);
   const hasConfiguration =
     localActionDigest !== null ||
-    (trackConfiguration &&
-      ((inputMap && Object.keys(inputMap).length > 0) ||
-        (secretMap && Object.keys(secretMap).length > 0)));
+    (inputMap && Object.keys(inputMap).length > 0) ||
+    (secretMap && Object.keys(secretMap).length > 0);
   return {
     workflow,
     job,
@@ -870,8 +866,8 @@ async function readActionRef(
     configurationDigest: hasConfiguration
       ? await sha256Hex(
           stableJson({
-            inputs: trackConfiguration ? (inputMap ?? {}) : {},
-            secrets: trackConfiguration ? (secretMap ?? {}) : {},
+            inputs: inputMap ?? {},
+            secrets: secretMap ?? {},
             localActionDigest,
           }),
         )

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { type AppDb } from "./client";
 import { githubWorkflowGates, releaseAuthoritySnapshots } from "./schema";
 import {
@@ -144,7 +144,7 @@ export async function refreshReleaseAuthorityDeltaForGate(
       });
   const delta = computeReleaseAuthorityDelta(record.snapshot, baseline, { approvedReleasePaths });
   if (stableJson(delta) !== stableJson(record.delta)) {
-    await db
+    const updated = await db
       .update(releaseAuthoritySnapshots)
       .set({ deltaJson: delta, updatedAt: new Date() })
       .where(
@@ -152,8 +152,22 @@ export async function refreshReleaseAuthorityDeltaForGate(
           eq(releaseAuthoritySnapshots.id, record.id),
           eq(releaseAuthoritySnapshots.organizationId, organizationId),
           eq(releaseAuthoritySnapshots.gateId, gateId),
+          sql`exists (
+            select 1
+            from ${githubWorkflowGates}
+            where ${githubWorkflowGates.id} = ${gateId}
+              and ${githubWorkflowGates.organizationId} = ${organizationId}
+              and ${githubWorkflowGates.status} = 'pending'
+          )`,
         ),
-      );
+      )
+      .returning({ id: releaseAuthoritySnapshots.id });
+    // A decision can finalize the gate after the status read above. If that
+    // happens, keep the immutable reviewed evidence and return the durable row
+    // instead of the newly computed but unpersisted delta.
+    if (updated.length === 0) {
+      return getReleaseAuthorityForGate(db, organizationId, gateId);
+    }
   }
   return { ...record, delta };
 }

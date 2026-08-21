@@ -329,6 +329,17 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       ),
     },
     {
+      label: "preceding shell command",
+      prior: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - run: npm config set registry https://registry.npmjs.org\n      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - run: npm config set registry https://packages.example.test\n      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      ),
+    },
+    {
       label: "job strategy matrix",
       prior: BASE_WORKFLOW.replace(
         "  publish:\n    needs: build\n",
@@ -428,7 +439,7 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
     expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
       scope: ENTRY,
-      subject: "conditions, dependencies, environment mappings, or execution controls",
+      subject: "conditions, dependencies, environment mappings, commands, or execution controls",
     });
   });
 
@@ -732,6 +743,22 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       subject: "pypa/gh-action-pypi-publish",
     });
     expect(delta.status).toBe("changed");
+  });
+
+  it("flags changed inputs on an ordinary action instead of calling the edit cosmetic", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      "      - uses: actions/setup-node@v4\n        with:\n          registry-url: https://registry.npmjs.org\n      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+    );
+    const current = prior.replace("https://registry.npmjs.org", "https://packages.example.test");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+      significance: "high",
+      subject: "actions/setup-node",
+    });
+    expect(delta.status).toBe("changed");
+    expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
   });
 
   it("flags changed safeguard inputs instead of calling the edit cosmetic", async () => {
