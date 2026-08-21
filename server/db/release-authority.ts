@@ -194,6 +194,37 @@ export async function refreshReleaseAuthorityDeltaForGate(
   return { ...record, delta };
 }
 
+/**
+ * Prepare the authority evidence and revision guard for one approval attempt.
+ * The revision is read before refreshing the delta: if another gate is
+ * approved between those reads, the final CAS rejects conservatively rather
+ * than binding a fresh revision to a stale comparison.
+ *
+ * This guard is evidence integrity, not policy enforcement. It applies even
+ * when the organization does not require an explicit acknowledgement, because
+ * the durable report must still compare against the latest approved baseline.
+ */
+export async function prepareReleaseAuthorityApproval(
+  db: AppDb,
+  input: { organizationId: string; releaseTargetId: string; gateId: string },
+): Promise<{
+  record: ReleaseAuthorityRecord | null;
+  expectedLatestApprovedSnapshotId: string | null | undefined;
+}> {
+  const expectedLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
+    organizationId: input.organizationId,
+    releaseTargetId: input.releaseTargetId,
+    excludeGateId: input.gateId,
+  });
+  const record = await refreshReleaseAuthorityDeltaForGate(db, input.organizationId, input.gateId);
+  return {
+    record,
+    // A missing/unreadable delta cannot be revision-bound. The UI and report
+    // surface it as not assessed rather than pretending it was compared.
+    expectedLatestApprovedSnapshotId: record?.delta ? expectedLatestApprovedSnapshotId : undefined,
+  };
+}
+
 /** Opaque binding between a UI acknowledgement and the exact delta it showed. */
 export async function releaseAuthorityAcknowledgementToken(
   record: ReleaseAuthorityRecord | null,

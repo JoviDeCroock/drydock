@@ -811,7 +811,11 @@ export const ScanDetailModel = createModel((id: string) => {
         // audit event server-side; refresh so the workbench reflects both.
         await this.load();
       } catch (err) {
-        if (err instanceof ApiError && err.code === "authority_change_acknowledgement_required") {
+        if (
+          err instanceof ApiError &&
+          (err.code === "authority_change_acknowledgement_required" ||
+            err.code === "authority_baseline_changed")
+        ) {
           await Promise.all([this.loadGate(), this.load()]);
         }
         this.gateDecisionError.value = errorMessage(err);

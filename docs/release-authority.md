@@ -106,9 +106,10 @@ A snapshot records:
 - every workflow definition in the graph — the entry workflow plus every
   reusable workflow GitHub reports the run referenced, each with the sha GitHub
   already resolved it to, and the raw, authority, and execution digests. A
-  repository-qualified entry workflow is read at its own resolved sha (or its
-  reported `@ref` when GitHub supplies no resolved sha), never at the caller
-  repository's head commit;
+  repository-qualified entry workflow is read at its own resolved sha, never at
+  the caller repository's head commit. If GitHub supplies only a moving branch
+  or tag, the definition is left unresolved instead of letting today's ref tip
+  rewrite the historical evidence;
 - triggers with their normalized branch/tag/path/type filters,
   `workflow_run` workflow selectors, schedule expressions, and digests of
   authority-sensitive `workflow_dispatch` / `workflow_call` input configuration
@@ -241,10 +242,12 @@ recorded, so a refused approval leaves no partial state.
 
 The acknowledgement is bound to an opaque digest of the exact delta shown in
 the workbench. Before accepting an approval the route recomputes a pending
-gate's delta against the baseline that is approved at that moment. If another
-overlapping release moved the baseline, a stale acknowledgement is rejected
-with the same `409`; the workbench reloads the delta and asks the maintainer to
-review the current comparison.
+gate's delta against the baseline that is approved at that moment. Every
+captured approval uses the same atomic baseline-revision guard, even when the
+blocking policy is off, so the evidence-first default cannot persist a stale
+comparison. If another overlapping release moves the baseline, the route
+returns `409`; the workbench reloads the delta and asks the maintainer to review
+the current comparison (and, when policy is on, confirm it again).
 
 Rejection is never gated on the acknowledgement. Blocking a release stays one
 click — a maintainer who is unsure should not have to tick a box to say no.

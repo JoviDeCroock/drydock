@@ -137,21 +137,33 @@ export async function fetchReleaseAuthoritySourcesWithToken(
             workflow.filePath === entryWorkflow.path &&
             workflowRevisionMatches(entryWorkflow.ref, workflow),
         );
-    const entryRef = entryInRunRepository
-      ? runContext.headSha
-      : (resolvedEntry?.sha ?? entryWorkflow.ref);
-    requests.push({
-      path: entryWorkflow.path,
-      repositoryFullName: entryWorkflow.repositoryFullName,
-      // The entry workflow is read at the commit the run used, not at the tip
-      // of the default branch: a later edit must not rewrite the history of
-      // what this release was authorized by. A repository-qualified entry has
-      // its own revision; the run repository's head sha does not name content
-      // in that other repository.
-      ref: entryRef,
-      sha: entryInRunRepository ? runContext.headSha : (resolvedEntry?.sha ?? commitSha(entryRef)),
-      role: "entry",
-    });
+    const entrySha = entryInRunRepository
+      ? commitSha(runContext.headSha)
+      : (commitSha(resolvedEntry?.sha ?? null) ?? commitSha(entryWorkflow.ref));
+    const qualifiedPath = entryInRunRepository
+      ? entryWorkflow.path
+      : `${entryWorkflow.repositoryFullName}/${entryWorkflow.path}`;
+    if (!entrySha) {
+      // A branch or tag names today's workflow definition, not necessarily the
+      // one GitHub resolved when this run started. Without an immutable commit
+      // we cannot produce historical authority evidence, so leave explicit
+      // incomplete coverage instead of fetching a moving ref and presenting it
+      // as the workflow that actually ran.
+      unresolved.push({ path: qualifiedPath, reason: "not_accessible" });
+    } else {
+      requests.push({
+        path: entryWorkflow.path,
+        repositoryFullName: entryWorkflow.repositoryFullName,
+        // The entry workflow is read at the commit the run used, not at the tip
+        // of the default branch: a later edit must not rewrite the history of
+        // what this release was authorized by. A repository-qualified entry has
+        // its own revision; the run repository's head sha does not name content
+        // in that other repository.
+        ref: entrySha,
+        sha: entrySha,
+        role: "entry",
+      });
+    }
   } else {
     unresolved.push({ path: `run/${input.runId}`, reason: "unparseable" });
   }
@@ -167,11 +179,17 @@ export async function fetchReleaseAuthoritySourcesWithToken(
     });
   }
   for (const workflow of referenced) {
+    const qualifiedPath = `${workflow.repositoryFullName}/${workflow.filePath}`;
+    const workflowSha = commitSha(workflow.sha) ?? commitSha(workflow.ref);
+    if (!workflowSha) {
+      unresolved.push({ path: qualifiedPath, reason: "not_accessible" });
+      continue;
+    }
     requests.push({
       path: workflow.filePath,
       repositoryFullName: workflow.repositoryFullName,
-      ref: workflow.sha ?? workflow.ref,
-      sha: workflow.sha,
+      ref: workflowSha,
+      sha: workflowSha,
       role: "referenced",
     });
   }

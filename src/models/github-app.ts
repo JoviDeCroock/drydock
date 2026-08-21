@@ -184,6 +184,18 @@ export function decideWorkflowGate(
         err.code,
       );
     }
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.code === "authority_baseline_changed"
+    ) {
+      throw new ApiError(
+        "The approved release-authority baseline changed while this decision was being submitted. Review the refreshed evidence and submit again.",
+        409,
+        err.detail,
+        err.code,
+      );
+    }
     throw err;
   });
 }

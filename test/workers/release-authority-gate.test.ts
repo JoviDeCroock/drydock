@@ -13,8 +13,10 @@ import {
   findApprovedAuthorityBaseline,
   getReleaseAuthorityForGate,
   markAuthoritySnapshotApproved,
+  prepareReleaseAuthorityApproval,
   refreshReleaseAuthorityDeltaForGate,
 } from "../../server/db/release-authority";
+import * as releaseAuthorityDb from "../../server/db/release-authority";
 import {
   claimGatePackageDecision,
   createScanJob,
@@ -731,6 +733,49 @@ describe("release-authority baseline", () => {
     expect(revision).toBe(expectedId);
   });
 
+  test("prepares a baseline revision guard even when acknowledgement policy is off", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const pending = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    await capture(fixture, pending.gate);
+
+    const baselineRecord = await getReleaseAuthorityForGate(
+      db,
+      fixture.organizationId,
+      baseline.gate.id,
+    );
+    const prepared = await prepareReleaseAuthorityApproval(db, {
+      organizationId: fixture.organizationId,
+      releaseTargetId: fixture.releaseTargetId,
+      gateId: pending.gate.id,
+    });
+
+    expect(prepared.record?.delta?.status).toBe("unchanged");
+    expect(prepared.expectedLatestApprovedSnapshotId).toBe(baselineRecord?.id);
+  });
+
   // Separate baselines per release path must not turn into a quiet spot. A
   // second publish workflow appearing on a target with approved history leaves
   // the package diff clean while changing who may publish — reporting that as
@@ -1105,6 +1150,88 @@ describe("release-authority approval policy", () => {
     expect(scan?.decision).toBeNull();
     const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
     expect(authority?.approvedAt).toBeNull();
+  });
+
+  test("rejects and refreshes a stale policy-off approval when its baseline moves", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const gitEnv = await githubEnv();
+
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stale = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
+
+    const moved = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "c".repeat(40),
+    });
+    await capture(fixture, moved.gate);
+
+    const prepare = releaseAuthorityDb.prepareReleaseAuthorityApproval;
+    vi.spyOn(releaseAuthorityDb, "prepareReleaseAuthorityApproval").mockImplementationOnce(
+      async (approvalDb, input) => {
+        const prepared = await prepare(approvalDb, input);
+        // Move the baseline after the route read its revision and refreshed the
+        // pending delta, but before the aggregate approval reaches its CAS.
+        await markAuthoritySnapshotApproved(approvalDb, {
+          organizationId: fixture.organizationId,
+          gateId: moved.gate.id,
+          approvedByUserId: fixture.userId,
+        });
+        return prepared;
+      },
+    );
+
+    const blocked = await call(
+      "POST",
+      `/api/v1/github-app/workflow-gates/${stale.gate.id}/decision`,
+      {
+        body: { decision: "approved", scanId: stale.scanId },
+        jar: fixture.jar,
+        env: gitEnv,
+      },
+    );
+
+    expect(blocked.res.status).toBe(409);
+    expect(blocked.json?.code).toBe("authority_baseline_changed");
+    expect(await getGateForOrganization(db, fixture.organizationId, stale.gate.id)).toMatchObject({
+      status: "pending",
+    });
+    const [scan] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, stale.scanId));
+    expect(scan?.decision).toBeNull();
+    const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
+    expect(authority?.delta?.baseline?.gateId).toBe(moved.gate.id);
   });
 
   test("does not refresh durable authority evidence after the gate finalizes", async () => {

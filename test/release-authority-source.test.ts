@@ -37,7 +37,7 @@ function mockGithub(
 }
 
 function runResponse(
-  referenced: Array<{ path: string; sha: string; ref: string }> = [],
+  referenced: Array<{ path: string; sha?: string; ref: string }> = [],
   path = ".github/workflows/release.yml",
 ) {
   return Response.json({
@@ -137,26 +137,44 @@ describe("fetchReleaseAuthoritySources", () => {
     expect(contents?.url).not.toContain(`ref=${"a".repeat(40)}`);
   });
 
-  it("falls back to a repository-qualified entry workflow's own ref", async () => {
+  it("does not treat a repository-qualified entry's moving ref as historical evidence", async () => {
     const seen = mockGithub((url) => {
       if (url.pathname.endsWith("/actions/runs/4242")) {
         return runResponse([], "octo/shared/.github/workflows/release.yml@refs/heads/main");
-      }
-      if (url.pathname === "/repos/octo/shared/contents/.github/workflows/release.yml") {
-        return new Response(WORKFLOW);
       }
       throw new Error(`unexpected ${url}`);
     });
 
     const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
 
-    expect(sources.workflows[0]).toMatchObject({
-      ref: "refs/heads/main",
-      sha: null,
+    expect(sources.workflows).toEqual([]);
+    expect(sources.unresolved).toEqual([
+      { path: "octo/shared/.github/workflows/release.yml", reason: "not_accessible" },
+    ]);
+    expect(seen.some((entry) => entry.url.includes("/contents/"))).toBe(false);
+  });
+
+  it("does not fetch a referenced workflow without an immutable revision", async () => {
+    const seen = mockGithub((url) => {
+      if (url.pathname.endsWith("/actions/runs/4242")) {
+        return runResponse([
+          {
+            path: "octo/shared/.github/workflows/publish.yml",
+            ref: "refs/heads/main",
+          },
+        ]);
+      }
+      if (url.pathname.startsWith("/repos/octo/example/contents/")) return new Response(WORKFLOW);
+      throw new Error(`unexpected ${url}`);
     });
-    const contents = seen.find((entry) => entry.url.includes("/contents/"));
-    expect(contents?.url).toContain("ref=refs%2Fheads%2Fmain");
-    expect(contents?.url).not.toContain(`ref=${"a".repeat(40)}`);
+
+    const sources = await fetchReleaseAuthoritySourcesWithToken("ghs_token", INPUT);
+
+    expect(sources.workflows).toHaveLength(1);
+    expect(sources.unresolved).toEqual([
+      { path: "octo/shared/.github/workflows/publish.yml", reason: "not_accessible" },
+    ]);
+    expect(seen.some((entry) => entry.url.includes("/repos/octo/shared/contents/"))).toBe(false);
   });
 
   it.each([

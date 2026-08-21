@@ -6,7 +6,7 @@ import {
   organizationRequiresTwoFactorForReleaseDecisions,
 } from "../db/organizations";
 import {
-  findLatestApprovedAuthoritySnapshotId,
+  prepareReleaseAuthorityApproval,
   type ReleaseAuthorityRecord,
   refreshReleaseAuthorityDeltaForGate,
   releaseAuthorityAcknowledgementToken,
@@ -558,21 +558,13 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       db,
       organizationId,
     );
-    // Read the revision before refreshing the delta. If an overlapping approval
-    // lands between these reads, the final atomic CAS rejects conservatively;
-    // reading them in the opposite order could bind a fresh revision to a stale
-    // delta and let it through.
-    const authorityRevision = orgRequiresAuthorityApproval
-      ? await findLatestApprovedAuthoritySnapshotId(db, {
-          organizationId,
-          releaseTargetId: existing.releaseTargetId,
-          excludeGateId: gateId,
-        })
-      : undefined;
-    authorityForDecision = await refreshReleaseAuthorityDeltaForGate(db, organizationId, gateId);
-    if (orgRequiresAuthorityApproval && authorityForDecision?.delta) {
-      expectedLatestApprovedSnapshotId = authorityRevision;
-    }
+    const preparedAuthority = await prepareReleaseAuthorityApproval(db, {
+      organizationId,
+      releaseTargetId: existing.releaseTargetId,
+      gateId,
+    });
+    authorityForDecision = preparedAuthority.record;
+    expectedLatestApprovedSnapshotId = preparedAuthority.expectedLatestApprovedSnapshotId;
     const authority = authorityForDecision;
     const requiresAuthorityApproval = authority?.delta?.requiresApproval === true;
     const acknowledgementToken = await releaseAuthorityAcknowledgementToken(authority);
@@ -750,7 +742,6 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     if (
       current?.status === "pending" &&
       gateDecision === "approved" &&
-      orgRequiresAuthorityApproval &&
       authorityForDecision?.delta
     ) {
       const refreshedAuthority = await refreshReleaseAuthorityDeltaForGate(
@@ -762,9 +753,12 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       return c.json(
         {
           gate: publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor),
-          error:
-            "the approved release-authority baseline changed while this decision was being submitted — review the refreshed delta and confirm it again",
-          code: "authority_change_acknowledgement_required",
+          error: orgRequiresAuthorityApproval
+            ? "the approved release-authority baseline changed while this decision was being submitted — review the refreshed delta and confirm it again"
+            : "the approved release-authority baseline changed while this decision was being submitted — review the refreshed evidence and submit the decision again",
+          code: orgRequiresAuthorityApproval
+            ? "authority_change_acknowledgement_required"
+            : "authority_baseline_changed",
           authorityChangeCount: refreshedAuthority?.delta?.changeCount ?? 0,
         },
         409,
