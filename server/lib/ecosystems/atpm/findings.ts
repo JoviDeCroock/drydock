@@ -378,8 +378,8 @@ function normalizeSourceRepository(value: string): string {
  * of reviewing here at all: a candidate whose record and tarball already
  * disagree would publish that disagreement unchanged, and a candidate whose
  * attestation does not verify would carry the same unverifiable claim into the
- * release. There is no baseline provenance comparison, because nothing has been
- * replaced yet.
+ * release. Comparing provenance to the published baseline also lets the review
+ * warn when approving this candidate would replace a verified build trail.
  *
  * One check exists only in this direction. atpm requires a candidate's scope to
  * be the publishing account's *current* handle, so unlike a historical release
@@ -396,6 +396,8 @@ export function atpmStagedFindings(args: {
   archiveSha1: string | null;
   archiveSha512: string | null;
   trustPublisher: AtpmTrustPublisher | null;
+  baseline: AtpmVersion | null;
+  baselineArchiveSha512: string | null;
   /** The handle this resolution proved in both directions, or null. */
   verifiedHandle: string | null;
 }): Finding[] {
@@ -421,7 +423,8 @@ export function atpmStagedFindings(args: {
       entry,
       archiveSha512: args.archiveSha512,
       trustPublisher: args.trustPublisher,
-      baseline: null,
+      baseline: args.baseline,
+      baselineArchiveSha512: args.baselineArchiveSha512,
     }),
   ];
 }

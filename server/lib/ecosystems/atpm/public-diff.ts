@@ -195,6 +195,8 @@ export const atpmPublicDiff: PublicDiffAdapter = {
               archiveSha1: toArchive.archiveSha1 ?? null,
               archiveSha512: toArchive.archiveSha512 ?? null,
               trustPublisher: publisher.value,
+              baseline: from,
+              baselineArchiveSha512: fromArchive?.archiveSha512 ?? null,
               verifiedHandle: identity.handle,
             })
           : atpmRecordFindings({

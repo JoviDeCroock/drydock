@@ -4,6 +4,7 @@ import { atpmRecordFindings } from "../server/lib/ecosystems/atpm/findings";
 import {
   atpmPurl,
   readAtpmAttestation,
+  transparencyLogBodyMatches,
   verifyAtpmProvenance,
   type AtpmProvenanceState,
 } from "../server/lib/ecosystems/atpm/provenance";
@@ -225,6 +226,59 @@ describe("verifyAtpmProvenance", () => {
         reason: "transparency-log inclusion promise does not verify",
       });
     }
+  });
+
+  test("rejects a bundle with no authenticated transparency-log entry", async () => {
+    const bundle = clone(BUNDLE) as any;
+    delete bundle.verificationMaterial.tlogEntries;
+    expect(await verifyAtpmProvenance(bundle)).toEqual({
+      status: "invalid",
+      reason: "transparency-log inclusion promise does not verify",
+    });
+  });
+
+  test("binds a Rekor dsse v0.0.1 entry to the bundle's signing certificate", async () => {
+    const bundle = clone(BUNDLE) as any;
+    const envelope = bundle.dsseEnvelope;
+    const originalEntry = bundle.verificationMaterial.tlogEntries[0];
+    const originalBody = JSON.parse(atob(originalEntry.canonicalizedBody));
+    const certificatePem = atob(originalBody.spec.content.envelope.signatures[0].publicKey);
+    const payload = Uint8Array.from(atob(envelope.payload), (character) => character.charCodeAt(0));
+    const payloadDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
+    const body = {
+      kind: "dsse",
+      apiVersion: "0.0.1",
+      spec: {
+        signatures: [
+          {
+            signature: envelope.signatures[0].sig,
+            verifier: btoa(certificatePem),
+          },
+        ],
+        payloadHash: {
+          algorithm: "sha256",
+          value: Array.from(payloadDigest, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        },
+      },
+    };
+    const entry = { kindVersion: { kind: "dsse", version: "0.0.1" } };
+    const bodyBytes = new TextEncoder().encode(JSON.stringify(body));
+    const certificateBase64 =
+      bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes;
+
+    await expect(
+      transparencyLogBodyMatches(entry, bodyBytes, envelope, certificateBase64),
+    ).resolves.toBe(true);
+
+    body.spec.signatures[0].verifier = btoa(FULCIO_INTERMEDIATE_PEM);
+    await expect(
+      transparencyLogBodyMatches(
+        entry,
+        new TextEncoder().encode(JSON.stringify(body)),
+        envelope,
+        certificateBase64,
+      ),
+    ).resolves.toBe(false);
   });
 
   test("refuses a self-signed certificate that does not chain to Fulcio", async () => {

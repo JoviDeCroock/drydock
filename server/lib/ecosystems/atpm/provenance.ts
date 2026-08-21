@@ -49,7 +49,7 @@ import {
  * accepted by an older deployment would be rejected now, so a cached verdict
  * cannot outlive the rules that produced it.
  */
-export const ATPM_PROVENANCE_RULES_VERSION = "3";
+export const ATPM_PROVENANCE_RULES_VERSION = "4";
 
 /** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
 const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
@@ -314,12 +314,12 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
   if (transparencyLog === false) {
     return invalid("transparency-log inclusion promise does not verify");
   }
-  const signedAt = transparencyLog?.signedAt ?? null;
+  const signedAt = transparencyLog.signedAt;
   // Fulcio leaves live about ten minutes, so a release staged and approved days
   // apart is normally verified long after its certificate expired. The window
-  // is therefore evaluated at a timestamp authenticated by the transparency
-  // log, falling back to now when the bundle carries no log entry.
-  const reference = signedAt ?? new Date();
+  // is therefore evaluated only at the timestamp authenticated by the
+  // transparency log. A bundle with no authenticated entry is not verified.
+  const reference = signedAt;
   if (reference < leaf.notBefore || reference > leaf.notAfter) {
     return invalid("signing certificate was not valid when the signature was made");
   }
@@ -351,8 +351,8 @@ async function verifyBundle(bundle: Record<string, unknown>): Promise<AtpmProven
       repositoryVisibility: extensionString(leaf, OID_SOURCE_REPO_VISIBILITY),
       subjectName: statement.subjectName,
       subjectSha512: statement.subjectSha512,
-      logIndex: transparencyLog?.logIndex ?? null,
-      signedAt: signedAt?.toISOString() ?? null,
+      logIndex: transparencyLog.logIndex,
+      signedAt: signedAt.toISOString(),
     },
   };
 }
@@ -493,18 +493,16 @@ interface VerifiedTransparencyLogEntry {
 
 /**
  * Verify Rekor's Signed Entry Timestamp (SET), also called an inclusion
- * promise. `false` means an entry was present but untrusted; `null` means the
- * bundle carried no entry, in which case certificate validity is checked now.
+ * promise. Every verified bundle needs an authenticated entry: without one,
+ * there is no trustworthy timestamp at which to evaluate the short-lived leaf.
  */
 async function verifiedTransparencyLogEntry(
   material: Record<string, unknown>,
   envelope: Record<string, unknown>,
   certificateBase64: string,
-): Promise<VerifiedTransparencyLogEntry | null | false> {
+): Promise<VerifiedTransparencyLogEntry | false> {
   const entry = transparencyLogEntry(material);
-  if (!entry) {
-    return Array.isArray(material.tlogEntries) && material.tlogEntries.length > 0 ? false : null;
-  }
+  if (!entry) return false;
 
   const signedAt = transparencyLogTime(entry);
   const logIndex = transparencyLogIndex(entry);
@@ -567,7 +565,7 @@ function bytesToHex(bytes: Uint8Array): string {
   return value;
 }
 
-async function transparencyLogBodyMatches(
+export async function transparencyLogBodyMatches(
   entry: Record<string, unknown>,
   bodyBytes: Uint8Array,
   envelope: Record<string, unknown>,
@@ -649,11 +647,12 @@ async function transparencyLogBodyMatches(
   if (kind === "dsse" && version === "0.0.1") {
     const spec = asObject(body.spec);
     const bodySignatures = Array.isArray(spec?.signatures) ? spec.signatures : [];
-    const bodySignature = asObject(bodySignatures[0])?.signature;
+    const bodySignature = asObject(bodySignatures[0]);
     const payloadHash = asObject(spec?.payloadHash);
     if (
       bodySignatures.length !== 1 ||
-      typeof bodySignature !== "string" ||
+      typeof bodySignature?.signature !== "string" ||
+      typeof bodySignature.verifier !== "string" ||
       payloadHash?.algorithm !== "sha256" ||
       typeof payloadHash.value !== "string"
     ) {
@@ -661,8 +660,9 @@ async function transparencyLogBodyMatches(
     }
     try {
       return (
-        bytesEqual(signature, decodeBase64(bodySignature)) &&
-        bytesEqual(payloadDigest, hexToBytes(payloadHash.value))
+        bytesEqual(signature, decodeBase64(bodySignature.signature)) &&
+        bytesEqual(payloadDigest, hexToBytes(payloadHash.value)) &&
+        rekorVerifierMatchesCertificate(bodySignature.verifier, certificate)
       );
     } catch {
       return false;
@@ -697,6 +697,23 @@ async function transparencyLogBodyMatches(
   }
 
   return false;
+}
+
+function rekorVerifierMatchesCertificate(verifierBase64: string, certificate: Uint8Array): boolean {
+  let verifier: Uint8Array;
+  try {
+    verifier = decodeBase64(verifierBase64);
+  } catch {
+    return false;
+  }
+  if (bytesEqual(verifier, certificate)) return true;
+
+  try {
+    const verifierPem = new TextDecoder("utf-8", { fatal: true }).decode(verifier);
+    return bytesEqual(pemToDer(verifierPem), certificate);
+  } catch {
+    return false;
+  }
 }
 
 function decodeBase64Text(value: string): string {

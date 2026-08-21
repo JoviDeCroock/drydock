@@ -14,8 +14,9 @@ import {
   atpmRecordCid,
   type AtpmStagedVersion,
 } from "../server/lib/ecosystems/atpm/stage-record";
-import type { AtpmPackage } from "../server/lib/ecosystems/atpm/record";
+import type { AtpmPackage, AtpmVersion } from "../server/lib/ecosystems/atpm/record";
 import { atpmStagedFindings } from "../server/lib/ecosystems/atpm/findings";
+import { atpmPurl } from "../server/lib/ecosystems/atpm/provenance";
 import { diffRefLabel } from "../src/lib/pkg-pr-new";
 
 const DID = "did:plc:twegdcgytckr5cxm57gyruxa";
@@ -173,6 +174,8 @@ describe("staged candidate findings", () => {
       archiveSha1: null,
       archiveSha512: null,
       trustPublisher: null,
+      baseline: null,
+      baselineArchiveSha512: null,
       verifiedHandle,
     });
   }
@@ -204,6 +207,59 @@ describe("staged candidate findings", () => {
           ruleId: "stage.metadata-mismatch",
           severity: "critical",
           evidence: expect.stringContaining("publisher has no handle"),
+        }),
+      ]),
+    );
+  });
+
+  test("warns before approval would replace verified provenance", () => {
+    const baselineArchiveSha512 = "ab".repeat(64);
+    const baseline: AtpmVersion = {
+      version: "0.0.15",
+      cid: CID,
+      size: 604,
+      mimeType: "application/gzip",
+      createdAt: "2026-08-12T06:28:24.000Z",
+      declaredName: "@ebey.dev/counter",
+      declaredVersion: "0.0.15",
+      declaredShasum: null,
+      declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID}`,
+      declaredIntegrity: null,
+      provenance: {
+        status: "verified",
+        provenance: {
+          sourceRepository: "https://github.com/ebey/counter",
+          sourceRef: "refs/tags/v0.0.15",
+          sourceCommit: "1".repeat(40),
+          workflowPath: ".github/workflows/publish.yml",
+          runInvocation: "https://github.com/ebey/counter/actions/runs/1/attempts/1",
+          runnerEnvironment: "github-hosted",
+          repositoryVisibility: "public",
+          subjectName: atpmPurl("@ebey.dev/counter", "0.0.15"),
+          subjectSha512: baselineArchiveSha512,
+          logIndex: "1",
+          signedAt: "2026-08-12T06:28:24.000Z",
+        },
+      },
+    };
+
+    const findings = atpmStagedFindings({
+      staged: { ...staged(), shasum: null },
+      manifest: { name: "@ebey.dev/counter", version: "0.0.16" } as any,
+      archiveSha1: null,
+      archiveSha512: null,
+      trustPublisher: null,
+      baseline,
+      baselineArchiveSha512,
+      verifiedHandle: "ebey.dev",
+    });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "atpm.trusted-publishing-lost",
+          severity: "medium",
+          evidence: expect.stringContaining("previous version was built by"),
         }),
       ]),
     );
