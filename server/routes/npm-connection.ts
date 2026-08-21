@@ -23,7 +23,7 @@ import {
   validateNpmCredential,
 } from "../lib/ecosystems/npm/connection";
 import { isValidStageId } from "../lib/ecosystems/npm/stage-id";
-import { errorMessage } from "../lib/platform/errors";
+import { errorMessage, UnauthorizedError } from "../lib/platform/errors";
 import { rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
@@ -98,6 +98,7 @@ npmConnectionRoutes.post("/", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
     }
+    if (err instanceof UnauthorizedError) throw err;
     emitOperationalEvent("error", "npm_connection.upsert_failed", {
       error: describeOperationalError(err),
     });
@@ -173,6 +174,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm validation rate limit exceeded", err);
     }
+    if (err instanceof UnauthorizedError) throw err;
     emitOperationalEvent("error", "npm_connection.validation_failed", {
       error: describeOperationalError(err),
     });

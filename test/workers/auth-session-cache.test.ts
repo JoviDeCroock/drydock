@@ -66,19 +66,24 @@ async function signUp(requestEnv: Cloudflare.Env = env): Promise<Jar> {
   return jar;
 }
 
-/** An env whose session KV throws on every operation. */
-function envWithFailingSessionStore(): Cloudflare.Env {
+/** An env whose session KV throws on the selected operations. */
+function envWithFailingSessionStore(
+  operations: readonly ("read" | "write" | "delete")[] = ["read", "write", "delete"],
+): Cloudflare.Env {
+  const store = env.AUTH_SESSIONS;
+  if (!store) throw new Error("AUTH_SESSIONS is not bound in the test env");
+  const failing = new Set(operations);
   const forbidden = () => {
     throw new Error("the session store is unavailable");
   };
   return {
     ...env,
     AUTH_SESSIONS: {
-      get: forbidden,
-      put: forbidden,
-      delete: forbidden,
-      list: forbidden,
-      getWithMetadata: forbidden,
+      get: failing.has("read") ? forbidden : store.get.bind(store),
+      put: failing.has("write") ? forbidden : store.put.bind(store),
+      delete: failing.has("delete") ? forbidden : store.delete.bind(store),
+      list: failing.has("read") ? forbidden : store.list.bind(store),
+      getWithMetadata: failing.has("read") ? forbidden : store.getWithMetadata.bind(store),
     } as unknown as KVNamespace,
   };
 }
@@ -202,6 +207,70 @@ describe("session secondary storage", () => {
     expect((await call("GET", "/api/health", { jar: secondary })).status).toBe(401);
     expect((await call("GET", "/api/health", { jar: primary })).status).toBe(200);
   });
+
+  test("does not report a successful revocation when KV is unavailable", async () => {
+    const d1OnlyEnv = envWithoutSessionStore();
+    const primary = await signUp(d1OnlyEnv);
+    const session = await call("GET", "/api/auth/get-session", {
+      jar: primary,
+      requestEnv: d1OnlyEnv,
+    });
+    const email = ((await session.json()) as { user: { email: string } }).user.email;
+
+    const secondary: Jar = new Map();
+    expect(
+      (
+        await call("POST", "/api/auth/sign-in/email", {
+          body: { email, password: PASSWORD },
+          jar: secondary,
+          requestEnv: d1OnlyEnv,
+        })
+      ).status,
+    ).toBe(200);
+
+    const revoked = await call("POST", "/api/auth/revoke-other-sessions", {
+      jar: primary,
+      requestEnv: envWithFailingSessionStore(),
+    });
+    expect(revoked.status).toBe(500);
+
+    // The D1-hydrated records remain visible during the request, so Better Auth
+    // reaches the failing eviction instead of silently treating both sessions
+    // as absent and returning 200. It must leave the durable rows retryable.
+    const rows = await createDb(env.DB).select().from(schema.session);
+    const tokens = [primary, secondary].map(
+      (jar) => decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0],
+    );
+    expect(rows.filter((row) => tokens.includes(row.token))).toHaveLength(2);
+  });
+
+  test("aborts account deletion before cleanup when session eviction fails", async () => {
+    const jar = await signUp();
+    expect((await call("GET", "/api/v1/organizations", { jar })).status).toBe(200);
+    const session = await call("GET", "/api/auth/get-session", { jar });
+    const userId = ((await session.json()) as { user: { id: string } }).user.id;
+
+    const deleted = await call("POST", "/api/auth/delete-user", {
+      body: { password: PASSWORD },
+      jar,
+      requestEnv: envWithFailingSessionStore(["delete"]),
+    });
+    expect(deleted.status).toBe(500);
+
+    // KV eviction is a preflight. A failed preflight must leave both Better
+    // Auth and Drydock state intact so the user can retry safely.
+    const db = createDb(env.DB);
+    const [users, organizations, memberships, sessions] = await Promise.all([
+      db.select().from(schema.user),
+      db.select().from(schema.organizations),
+      db.select().from(schema.organizationMembers),
+      db.select().from(schema.session),
+    ]);
+    expect(users.some((row) => row.id === userId)).toBe(true);
+    expect(organizations.some((row) => row.ownerUserId === userId)).toBe(true);
+    expect(memberships.some((row) => row.userId === userId)).toBe(true);
+    expect(sessions.some((row) => row.userId === userId)).toBe(true);
+  });
 });
 
 describe("session secondary storage contents", () => {
@@ -324,6 +393,15 @@ describe("a session that outlives its user", () => {
     });
     expect(createOrganization.status).toBe(401);
     expect(await createOrganization.json()).toEqual({ error: "unauthorized" });
+
+    for (const [path, body] of [
+      ["/api/v1/npm-connection", { token: "npm_stale_session_test_token_AAAA" }],
+      ["/api/v1/npm-connection/validate", {}],
+    ] as const) {
+      const res = await call("POST", path, { body, jar: deviceB });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "unauthorized" });
+    }
 
     // And nothing was created on the way out.
     const orphans = await createDb(env.DB).select().from(schema.organizations);

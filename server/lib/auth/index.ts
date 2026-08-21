@@ -140,6 +140,15 @@ interface ActiveSessionCacheEntry {
   expiresAt: number;
 }
 
+interface SessionSecondaryStorage {
+  storage: {
+    get(key: string): Promise<string | null>;
+    set(key: string, value: string, ttl?: number): Promise<void>;
+    delete(key: string): Promise<void>;
+  };
+  prepareUserDeletion(userId: string): Promise<void>;
+}
+
 type SessionCacheOperation = "read" | "write" | "delete";
 const warnedSessionCacheOperations = new Set<SessionCacheOperation>();
 
@@ -152,9 +161,23 @@ function reportSessionCacheFailure(operation: SessionCacheOperation, err: unknow
   });
 }
 
-function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undefined) {
+function createSessionSecondaryStorage(
+  db: AppDb,
+  namespace: KVNamespace | undefined,
+): SessionSecondaryStorage | null {
   if (!namespace) return null;
   const store = namespace;
+  // Better Auth's list/revoke implementation reads the active-session index and
+  // then fetches every token through secondary storage. Keep the D1 records we
+  // just used to rebuild that index request-local so a KV miss or read outage
+  // cannot make those sessions disappear from the operation.
+  const hydratedSessionValues = new Map<string, string>();
+  // Account deletion performs irreversible Drydock cleanup in Better Auth's
+  // `beforeDelete` hook. Evict KV first, then make Better Auth's duplicate
+  // secondary-storage deletes no-ops for the rest of this request so a later KV
+  // failure cannot strand a live account after its application data is gone.
+  const preparedUserDeletions = new Map<string, string>();
+  const preparedDeletionKeys = new Set<string>();
 
   async function readCacheValue(
     key: string,
@@ -185,6 +208,9 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
 
   async function getAuthoritativeActiveSessions(key: string): Promise<string | null> {
     const userId = key.slice("active-sessions-".length);
+    const prepared = preparedUserDeletions.get(userId);
+    if (prepared !== undefined) return prepared;
+
     const now = new Date();
     const [cached, owner, sessions] = await Promise.all([
       readCacheValue(key),
@@ -220,13 +246,15 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
     }));
     if (user) {
       await Promise.all(
-        sessions.map((session) =>
-          setWithSafeTtl(
+        sessions.map((session) => {
+          const value = JSON.stringify({ session, user });
+          hydratedSessionValues.set(session.token, value);
+          return setWithSafeTtl(
             session.token,
-            JSON.stringify({ session, user }),
+            value,
             Math.ceil((session.expiresAt.getTime() - nowMs) / 1000),
-          ),
-        ),
+          );
+        }),
       );
     }
 
@@ -245,22 +273,46 @@ function createSessionSecondaryStorage(db: AppDb, namespace: KVNamespace | undef
     return JSON.stringify(active);
   }
 
+  async function prepareUserDeletion(userId: string): Promise<void> {
+    const sessions = await db
+      .select({ token: schema.session.token, expiresAt: schema.session.expiresAt })
+      .from(schema.session)
+      .where(eq(schema.session.userId, userId));
+    const active = sessions
+      .filter((session) => session.expiresAt.getTime() > Date.now())
+      .map((session) => ({ token: session.token, expiresAt: session.expiresAt.getTime() }));
+    const indexKey = `active-sessions-${userId}`;
+    const keys = [indexKey, ...sessions.map((session) => session.token)];
+
+    // Do not mark the deletion prepared until every eviction succeeds. A
+    // partial KV failure is safe to retry because the D1 account and all of its
+    // Drydock data are still intact at this point.
+    await Promise.all(keys.map((key) => store.delete(key)));
+    preparedUserDeletions.set(userId, JSON.stringify(active));
+    for (const key of keys) preparedDeletionKeys.add(key);
+  }
+
   return {
-    get: (key: string) => {
-      if (!isSessionStoreKeyAllowed(key)) return Promise.resolve(null);
-      if (key.startsWith("active-sessions-") && key.length > "active-sessions-".length) {
-        return getAuthoritativeActiveSessions(key);
-      }
-      return readCacheValue(key).then(({ value }) => value);
+    storage: {
+      get: async (key: string) => {
+        if (!isSessionStoreKeyAllowed(key)) return null;
+        if (key.startsWith("active-sessions-") && key.length > "active-sessions-".length) {
+          return getAuthoritativeActiveSessions(key);
+        }
+        const hydrated = hydratedSessionValues.get(key);
+        if (hydrated !== undefined) return hydrated;
+        return (await readCacheValue(key)).value;
+      },
+      set: async (key: string, value: string, ttl?: number) => {
+        if (!isSessionStoreKeyAllowed(key)) return;
+        await setWithSafeTtl(key, value, ttl);
+      },
+      delete: async (key: string) => {
+        if (!isSessionStoreKeyAllowed(key) || preparedDeletionKeys.has(key)) return;
+        await store.delete(key);
+      },
     },
-    set: async (key: string, value: string, ttl?: number) => {
-      if (!isSessionStoreKeyAllowed(key)) return;
-      await setWithSafeTtl(key, value, ttl);
-    },
-    delete: async (key: string) => {
-      if (!isSessionStoreKeyAllowed(key)) return;
-      await store.delete(key);
-    },
+    prepareUserDeletion,
   };
 }
 
@@ -279,7 +331,7 @@ export function createAuth(env: Cloudflare.Env) {
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
   const db = createDb(env.DB);
-  const secondaryStorage = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
+  const sessionCache = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
   return betterAuth({
@@ -293,7 +345,7 @@ export function createAuth(env: Cloudflare.Env) {
       schema,
       usePlural: false,
     }) as never,
-    ...(secondaryStorage ? { secondaryStorage } : {}),
+    ...(sessionCache ? { secondaryStorage: sessionCache.storage } : {}),
     session: {
       // Every authenticated `/api/*` request resolves a session. Without a cache
       // that is one D1 read per request (plus a refresh write on GETs) against a
@@ -318,7 +370,7 @@ export function createAuth(env: Cloudflare.Env) {
         enabled: true,
         maxAge: SESSION_COOKIE_CACHE_SECONDS,
       },
-      ...(secondaryStorage ? { storeSessionInDatabase: true } : {}),
+      ...(sessionCache ? { storeSessionInDatabase: true } : {}),
     },
     // Verification values — email-verification links, password-reset tokens, the
     // two-factor challenge and its attempt counter — must stay in D1. Better Auth
@@ -327,7 +379,7 @@ export function createAuth(env: Cloudflare.Env) {
     // `consumeVerificationValue` transactional, so a reset token or a 2FA
     // challenge cannot be redeemed twice. It does *not* stop Better Auth from
     // also writing them to KV — `isSessionStoreKeyAllowed` is what does that.
-    ...(secondaryStorage ? { verification: { storeInDatabase: true as const } } : {}),
+    ...(sessionCache ? { verification: { storeInDatabase: true as const } } : {}),
     // Better Auth's own request limiter defaults to `secondary-storage` whenever
     // `secondaryStorage` is set, which would add a KV read and write to every
     // /api/auth/* request and make the limiter depend on KV's eventual
@@ -393,6 +445,7 @@ export function createAuth(env: Cloudflare.Env) {
               } before deleting your account: ${names}`,
             });
           }
+          await sessionCache?.prepareUserDeletion(deletedUser.id);
           await deleteUserAccount(db, deletedUser.id, env.ARTIFACTS);
         },
       },
