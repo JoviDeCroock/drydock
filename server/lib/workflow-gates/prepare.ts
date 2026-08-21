@@ -123,7 +123,6 @@ export async function prepareReleaseCandidatesForGate(
   }
 
   const ecosystemLabel = releaseTarget.ecosystem ?? "auto";
-
   const { classify, artifactName, artifactNamePrefix } = resolveBundleClassifier(
     db,
     gate,
@@ -155,39 +154,24 @@ export async function prepareReleaseCandidatesForGate(
     const packages = prepareBundlePackages(bundle.artifacts);
     return { gate, packages };
   } catch (err) {
-    await markGateFailed(db, gate, ecosystemLabel, err);
+    const reason =
+      err instanceof WorkflowArtifactError
+        ? err.code
+        : err instanceof UnsupportedEcosystemError
+          ? "unsupported_ecosystem"
+          : "preparation_failed";
+    await markGateErroredSafe(db, gate.id, reason);
+    emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
+      gateId: gate.id,
+      organizationId: gate.organizationId,
+      repositoryFullName: gate.repositoryFullName,
+      runId: gate.runId,
+      ecosystem: ecosystemLabel,
+      reason,
+      error: describeOperationalError(err),
+    });
     throw err;
   }
-}
-
-/**
- * Record a preparation failure and leave the gate blocked. Shared by both
- * sources of candidates so a target-sourced gate that cannot bind a candidate
- * fails exactly the way an unreadable bundle does: errored, logged with its
- * typed reason, and never auto-approved.
- */
-async function markGateFailed(
-  db: AppDb,
-  gate: WorkflowGateRecord,
-  ecosystem: string,
-  err: unknown,
-): Promise<void> {
-  const reason =
-    err instanceof WorkflowArtifactError
-      ? err.code
-      : err instanceof UnsupportedEcosystemError
-        ? "unsupported_ecosystem"
-        : "preparation_failed";
-  await markGateErroredSafe(db, gate.id, reason);
-  emitOperationalEvent("error", "github_workflow_gate.bundle_failed", {
-    gateId: gate.id,
-    organizationId: gate.organizationId,
-    repositoryFullName: gate.repositoryFullName,
-    runId: gate.runId,
-    ecosystem,
-    reason,
-    error: describeOperationalError(err),
-  });
 }
 
 /**
