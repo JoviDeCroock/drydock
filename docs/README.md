@@ -29,6 +29,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`ui.md`](./ui.md) — compact implementation map for the Preact UI: primitives, copy density, and large-diff performance rules. `docs/design.md` remains the visual source of truth.
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
 - [`incident-content-playbook.md`](./incident-content-playbook.md) — what to publish when a public supply-chain compromise breaks, the hard rules, and the post templates.
+- [`ops-snapshot.md`](./ops-snapshot.md) — operator-only aggregate prod D1 snapshot (`pnpm run ops:snapshot`) and its unattributability rules.
 - [`test-package.md`](./test-package.md) — package fixture used for manual staged-publish checks.
 
 ## Domain docs
