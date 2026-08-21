@@ -132,6 +132,9 @@ export function selectBaselineVersion(
   const byVersion = new Set(published.versions.map((entry) => entry.version));
 
   const tagged = candidate.tag ? published.tags[candidate.tag] : null;
+  if (tagged && published.unreadableVersions.includes(tagged)) {
+    throw new PublicDiffError("tagged baseline version metadata is unreadable", 502);
+  }
   if (tagged && byVersion.has(tagged)) return tagged;
 
   const ordered = [...published.versions]

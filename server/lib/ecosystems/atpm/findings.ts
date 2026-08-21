@@ -219,7 +219,9 @@ function provenanceFindings(args: {
 
   if (state.status === "verified") {
     findings.push(...subjectBindingFindings(entry, state.provenance, args.archiveSha512));
-    findings.push(...publisherMatchFindings(entry, state.provenance, trustPublisher));
+    if (provenanceMatchesArtifact(entry, state.provenance, args.archiveSha512)) {
+      findings.push(...publisherMatchFindings(entry, state.provenance, trustPublisher));
+    }
   } else if (trustPublisher?.github && state.status === "absent") {
     findings.push({
       severity: "low",
@@ -232,7 +234,13 @@ function provenanceFindings(args: {
     });
   }
 
-  const lost = lostProvenanceEvidence(state, baseline, args.baselineArchiveSha512 ?? null);
+  const lost = lostProvenanceEvidence(
+    entry,
+    args.archiveSha512,
+    state,
+    baseline,
+    args.baselineArchiveSha512 ?? null,
+  );
   if (lost) {
     findings.push({
       severity: "medium",
@@ -287,6 +295,19 @@ function subjectBindingFindings(
   ];
 }
 
+function provenanceMatchesArtifact(
+  entry: AtpmVersion,
+  provenance: AtpmProvenance,
+  archiveSha512: string | null,
+): boolean {
+  return Boolean(
+    entry.declaredName &&
+    archiveSha512 &&
+    provenance.subjectName === atpmPurl(entry.declaredName, entry.version) &&
+    provenance.subjectSha512 === archiveSha512.toLowerCase(),
+  );
+}
+
 function publisherMatchFindings(
   entry: AtpmVersion,
   provenance: AtpmProvenance,
@@ -333,6 +354,8 @@ function publisherMatchFindings(
  * would turn an internal limit into a finding about the package.
  */
 function lostProvenanceEvidence(
+  entry: AtpmVersion,
+  archiveSha512: string | null,
   state: AtpmProvenanceState,
   baseline: AtpmVersion | null,
   baselineArchiveSha512: string | null,
@@ -356,6 +379,7 @@ function lostProvenanceEvidence(
   }
   if (
     state.status === "verified" &&
+    provenanceMatchesArtifact(entry, state.provenance, archiveSha512) &&
     normalizeSourceRepository(state.provenance.sourceRepository) !== normalizeSourceRepository(from)
   ) {
     return `previous version was built by ${from}; this version was built by ${state.provenance.sourceRepository}`;

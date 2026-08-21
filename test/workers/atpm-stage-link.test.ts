@@ -166,6 +166,17 @@ describe("/api/public/v1/package-diff/atpm-stage", () => {
     expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
   });
 
+  test("does not describe an unresolved publisher as an approved candidate", async () => {
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response("not found", { status: 404 })));
+    const response = await anonymousNavigate(
+      `/api/public/v1/package-diff/atpm-stage?publisher=@missing.dev&rkey=${RKEY}`,
+    );
+    expect(response.status).toBe(404);
+    const body = await response.text();
+    expect(body).toContain("Could not read that release");
+    expect(body).not.toContain("no longer waiting");
+  });
+
   test("refuses a publisher this deployment will not resolve", async () => {
     const response = await anonymousNavigate(
       `/api/public/v1/package-diff/atpm-stage?publisher=@localhost&rkey=${RKEY}`,

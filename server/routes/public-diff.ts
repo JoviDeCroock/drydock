@@ -260,19 +260,23 @@ publicDiffRoutes.get("/atpm-stage", async (c) => {
       const status = err instanceof PublicDiffError ? err.status : 502;
       const message =
         err instanceof PublicDiffError ? err.message : "could not read that staged release";
-      return c.html(stagePlaceholder(message, status), status === 404 ? 404 : 502);
+      const candidateGone =
+        err instanceof PublicDiffError &&
+        err.status === 404 &&
+        err.message === "staged release not found";
+      return c.html(stagePlaceholder(message, candidateGone), status === 404 ? 404 : 502);
     }
     return publicDiffErrorResponse(c, err);
   }
 });
 
-function stagePlaceholder(message: string, status: number): string {
-  const headline =
-    status === 404 ? "That staged release is no longer waiting" : "Could not read that release";
-  const detail =
-    status === 404
-      ? "atpm removes a staged record once it is approved or withdrawn, so this link stops resolving as soon as the release is published. If it was published, the release itself can still be diffed."
-      : escapeHtml(message);
+function stagePlaceholder(message: string, candidateGone: boolean): string {
+  const headline = candidateGone
+    ? "That staged release is no longer waiting"
+    : "Could not read that release";
+  const detail = candidateGone
+    ? "atpm removes a staged record once it is approved or withdrawn, so this link stops resolving as soon as the release is published. If it was published, the release itself can still be diffed."
+    : escapeHtml(message);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(headline)} · Drydock</title><meta name="robots" content="noindex"></head>

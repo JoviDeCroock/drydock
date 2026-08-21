@@ -550,9 +550,13 @@ describe("provenance findings", () => {
       provenance: state,
       archiveSha512: SUBJECT_SHA512,
       declaredName: "@ebey.dev/counter",
+      trustPublisher: publisher({
+        github: { username: "attacker", repository: "fork", workflow: "release.yml" },
+      }),
     });
     const mismatch = found.find((f) => f.ruleId === "atpm.provenance-subject-mismatch");
     expect(mismatch?.evidence).toContain(atpmPurl("@ebey.dev/counter", "3.0.0"));
+    expect(found.map((f) => f.ruleId)).not.toContain("atpm.provenance-publisher-mismatch");
   });
 
   test("stays silent when the sandbox never computed a digest", async () => {
@@ -630,6 +634,26 @@ describe("provenance findings", () => {
         baselineArchiveSha512: SUBJECT_SHA512,
       }).map((finding) => finding.ruleId),
     ).not.toContain("atpm.trusted-publishing-lost");
+  });
+
+  test("does not attribute a copied target attestation to its source repository", async () => {
+    const state = await verifiedFixture();
+    if (state.status !== "verified") throw new Error("fixture must verify");
+    const found = findings({
+      provenance: {
+        status: "verified",
+        provenance: {
+          ...state.provenance,
+          sourceRepository: "https://github.com/attacker/fork",
+        },
+      },
+      archiveSha512: SUBJECT_SHA512,
+      declaredName: "@ebey.dev/counter",
+      baseline: version({ declaredName: "sigstore", provenance: state }),
+      baselineArchiveSha512: SUBJECT_SHA512,
+    });
+    expect(found.map((f) => f.ruleId)).toContain("atpm.provenance-subject-mismatch");
+    expect(found.map((f) => f.ruleId)).not.toContain("atpm.trusted-publishing-lost");
   });
 
   test("does not trust baseline provenance copied from another artifact", async () => {

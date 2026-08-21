@@ -399,6 +399,15 @@ describe("selectBaselineVersion", () => {
     ).toBe("0.0.14");
   });
 
+  test("fails closed when the tag points to unreadable version metadata", () => {
+    const record = published(["0.0.15"], { latest: "0.0.14" });
+    record.unreadableVersions = ["0.0.14"];
+
+    expect(() => selectBaselineVersion(record, { version: "0.0.16", tag: "latest" })).toThrowError(
+      expect.objectContaining({ status: 502 }),
+    );
+  });
+
   test("uses a published __proto__ tag rather than falling back by semver", () => {
     const tags = JSON.parse('{"__proto__":"0.0.14"}') as Record<string, string>;
     const record = parseAtpmPackageRecord(packageRecord(["0.0.14", "0.0.15"], tags));
