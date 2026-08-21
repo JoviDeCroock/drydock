@@ -337,6 +337,41 @@ describe("deferred AI review", () => {
     expect(rows).toHaveLength(0);
   });
 
+  test("republishes a feed-listed scan when the deferred review changes it", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    // A future cursor models same-millisecond writes and clock skew: the
+    // republished row still has to sort ahead of the cursor consumers saw.
+    const listedAt = new Date("2100-07-31T00:00:00.000Z");
+    await db
+      .update(schema.scans)
+      .set({
+        publicShareToken: `share_${crypto.randomUUID()}`,
+        publicSharedAt: listedAt,
+        publicFeedListedAt: listedAt,
+      })
+      .where(eq(schema.scans.id, scanId));
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+
+    await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+
+    const updated = await getScanStatus(db, scanId, owner.organizationId);
+    expect(updated?.publicFeedListedAt?.getTime()).toBe(listedAt.getTime() + 1);
+    expect(updated?.risk).toBe("critical");
+    expect(updated?.findingCount).toBe(2);
+  });
+
+  test("does not publish an unlisted scan when its deferred review completes", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedPendingScan(owner);
+    const scan = await getScanStatus(db, scanId, owner.organizationId);
+
+    await applyAiReviewToScan(applyArgs(owner, scan!, criticalReview));
+
+    const updated = await getScanStatus(db, scanId, owner.organizationId);
+    expect(updated?.publicFeedListedAt).toBeNull();
+  });
+
   test("refuses to patch a scan that is not artifact-backed", async () => {
     const owner = await seedUser();
     const { db, scanId, reportDigest } = await seedPendingScan(owner, { artifactBacked: false });

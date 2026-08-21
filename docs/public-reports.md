@@ -191,6 +191,13 @@ releases. A poller that reads only page one after such a burst silently misses
 them. Read until you reach a listing you have already seen, not until the first
 response ends.
 
+`listedAt` is the feed publication cursor, not necessarily the time of the
+first listing. If a listed scan's deferred AI review later reaches a terminal
+state, Drydock republishes the entry with a newer `listedAt` because its risk or
+`totalFindingCount` may have changed. That puts the update ahead of a poller's
+previous cursor; as with any feed change, a colo may continue serving its
+cached page for up to 300 seconds.
+
 Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
 share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):
 holding a link is capability, appearing in an index is publication, and the two

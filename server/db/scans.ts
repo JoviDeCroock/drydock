@@ -552,7 +552,11 @@ export interface AiReviewPatchInput {
  * content-addressed key) before this runs — flipping the D1 references last is
  * what makes the swap atomic for readers. Findings are not written here: the
  * caller refuses to patch a scan that is not artifact-backed, so the rewritten
- * report is the only place a deferred review's findings live.
+ * report is the only place a deferred review's findings live. A scan that was
+ * already published to the threat feed is republished in this same statement:
+ * its risk and finding count changed, so advancing the feed cursor is what lets
+ * incremental consumers observe the terminal review without ever listing a
+ * scan that its owner left private.
  */
 export async function applyAiReviewPatch(
   db: AppDb,
@@ -582,6 +586,11 @@ export async function applyAiReviewPatch(
       riskSummaryJson: input.riskSummary,
       findingCount: input.findingCount,
       summaryJson: input.summary,
+      publicFeedListedAt: sql`case
+        when ${scans.publicFeedListedAt} is not null
+          then max(${scans.publicFeedListedAt} + 1, ${now.getTime()})
+        else null
+      end`,
       ...(input.report
         ? {
             reportDigest: input.report.reportDigest,
