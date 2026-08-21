@@ -195,6 +195,17 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       ),
     },
     {
+      label: "workflow environment mapping",
+      prior: BASE_WORKFLOW.replace(
+        "permissions:\n",
+        "env:\n  NPM_CONFIG_REGISTRY: https://registry.npmjs.org\n\npermissions:\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "permissions:\n",
+        "env:\n  NPM_CONFIG_REGISTRY: https://packages.example.test\n\npermissions:\n",
+      ),
+    },
+    {
       label: "publish-step condition",
       prior: BASE_WORKFLOW.replace(
         "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
@@ -242,11 +253,12 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
   });
 
   it("flags removing the permissions block as a widening to the repository default", async () => {
-    const withoutBlock = BASE_WORKFLOW.replace(
+    const withJobPermissionsOnly = BASE_WORKFLOW.replace("permissions:\n  contents: read\n\n", "");
+    const withoutBlock = withJobPermissionsOnly.replace(
       "    permissions:\n      id-token: write\n      contents: read\n",
       "",
     );
-    const delta = await deltaBetween(BASE_WORKFLOW, withoutBlock);
+    const delta = await deltaBetween(withJobPermissionsOnly, withoutBlock);
     expect(find(delta.changes, "permission_block_removed")).toMatchObject({
       significance: "high",
       scope: `${ENTRY}/publish`,
@@ -254,6 +266,41 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
     // The individual scopes inside a removed block are not re-reported.
     expect(kinds(delta.changes)).not.toContain("permission_removed");
+  });
+
+  it("compares a removed job block with inherited workflow permissions", async () => {
+    const inherited = BASE_WORKFLOW.replace(
+      "    permissions:\n      id-token: write\n      contents: read\n",
+      "",
+    );
+
+    const delta = await deltaBetween(BASE_WORKFLOW, inherited);
+
+    expect(find(delta.changes, "permission_removed")).toMatchObject({
+      significance: "low",
+      scope: `${ENTRY}/publish`,
+      subject: "id-token",
+      before: "write",
+      after: null,
+    });
+    expect(kinds(delta.changes)).not.toContain("permission_block_removed");
+  });
+
+  it("treats removing a job block identical to workflow permissions as cosmetic", async () => {
+    const redundant = BASE_WORKFLOW.replace(
+      "permissions:\n  contents: read\n",
+      "permissions:\n  id-token: write\n  contents: read\n",
+    );
+    const inherited = redundant.replace(
+      "    permissions:\n      id-token: write\n      contents: read\n",
+      "",
+    );
+
+    const delta = await deltaBetween(redundant, inherited);
+
+    expect(delta.status).toBe("cosmetic");
+    expect(delta.requiresApproval).toBe(false);
+    expect(kinds(delta.changes)).toEqual(["workflow_content_changed"]);
   });
 
   it("treats an explicit permissions allowlist becoming read-all as a widening", async () => {
@@ -359,6 +406,45 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       significance: "medium",
       subject: "publish action",
     });
+  });
+
+  it.each([
+    {
+      label: "python module twine",
+      prior: "python -m twine upload --repository-url https://upload.pypi.org/legacy/ dist/*",
+      current: "python -m twine upload --repository-url https://packages.example.test/ dist/*",
+    },
+    {
+      label: "npm workspace",
+      prior: "npm --workspace packages/public publish",
+      current: "npm --workspace packages/internal publish",
+    },
+    {
+      label: "pnpm filter",
+      prior: "pnpm --filter @acme/public publish",
+      current: "pnpm --filter @acme/internal publish",
+    },
+    {
+      label: "npx VS Code publisher",
+      prior: "npx vsce publish --pre-release",
+      current: "npx vsce publish --target linux-x64",
+    },
+  ])("captures changed $label publish commands", async ({ prior, current }) => {
+    const priorWorkflow = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1",
+      `      - run: ${prior}`,
+    );
+    const currentWorkflow = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1",
+      `      - run: ${current}`,
+    );
+
+    const delta = await deltaBetween(priorWorkflow, currentWorkflow);
+
+    expect(delta.status).toBe("changed");
+    expect(kinds(delta.changes)).toContain("publish_step_added");
+    expect(kinds(delta.changes)).toContain("publish_step_removed");
+    expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
   });
 
   it("flags changed publish-action inputs instead of calling the edit cosmetic", async () => {

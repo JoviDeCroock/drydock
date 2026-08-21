@@ -102,8 +102,8 @@ A snapshot records:
   already resolved it to, and both digests;
 - triggers with their normalized branch/tag/path/type filters;
 - authority-sensitive execution controls: job and step conditions, job
-  dependencies, and digests of job/step environment mappings (the environment
-  values themselves are not persisted);
+  dependencies, and digests of workflow/job/step environment mappings (the
+  environment values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
   shorthands and the empty-block case;
 - GitHub Environment names per job;
@@ -136,8 +136,9 @@ never claim that its authority graph is complete.
 
 Detected deterministically, ordered here by significance:
 
-**High** — permission widened; permissions block removed (the job falls back to
-the repository default, which is usually broader than any explicit block);
+**High** — permission widened; permissions block removed when no workflow-level
+block remains to inherit (the job falls back to the repository default, which is
+usually broader than an explicit block);
 environment changed or removed; publish step added; release safeguard removed;
 an action reference that stopped being pinned; a reusable call that started
 inheriting secrets; a dangerous trigger added (`workflow_dispatch`,

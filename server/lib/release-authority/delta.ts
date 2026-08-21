@@ -437,67 +437,84 @@ function comparePermissions(
   current: AuthorityPermission[],
 ): AuthorityChange[] {
   const blockKey = (item: AuthorityPermission) => `${item.workflow}\u0000${item.job ?? ""}`;
-  const scopeKey = (item: AuthorityPermission) => `${blockKey(item)}\u0000${item.scope}`;
-  const priorByScope = keyBy(prior, scopeKey);
-  const currentByScope = keyBy(current, scopeKey);
-  const priorBlocks = keyBy(prior, blockKey);
-  const currentBlocks = keyBy(current, blockKey);
+  const priorBlocks = groupBy(prior, blockKey);
+  const currentBlocks = groupBy(current, blockKey);
+  const keys = new Set([...priorBlocks.keys(), ...currentBlocks.keys()]);
   const changes: AuthorityChange[] = [];
-  const shorthandBlocks = new Set<string>();
 
-  // Dropping the `permissions:` block entirely is not a narrowing — the job
-  // falls back to the repository default, which is usually broader than any
-  // explicit block. This is the widening that looks like a deletion.
-  for (const [key, item] of priorBlocks) {
-    if (currentBlocks.has(key)) continue;
-    changes.push({
-      kind: "permission_block_removed",
-      significance: "high",
-      scope: scopeLabel(item.workflow, item.job),
-      subject: "permissions block",
-      before: "explicit",
-      after: "repository default",
-    });
-  }
-  for (const [key, item] of currentBlocks) {
-    if (priorBlocks.has(key)) continue;
-    changes.push({
-      kind: "permission_block_added",
-      significance: "low",
-      scope: scopeLabel(item.workflow, item.job),
-      subject: "permissions block",
-      before: "repository default",
-      after: "explicit",
-    });
-  }
+  for (const key of keys) {
+    const explicitPrior = priorBlocks.get(key) ?? null;
+    const explicitCurrent = currentBlocks.get(key) ?? null;
+    const representative = explicitCurrent?.[0] ?? explicitPrior?.[0];
+    if (!representative) continue;
 
-  // `read-all` / `write-all` / `{}` are stored as the synthetic `*` scope.
-  // Compare those blocks semantically instead of treating `*` as an ordinary
-  // newly added scope: moving from an explicit allowlist to read-all widens
-  // every unlisted permission, even when the explicit scopes themselves did
-  // not change level.
-  for (const key of priorBlocks.keys()) {
-    if (!currentBlocks.has(key)) continue;
-    const priorItems = prior.filter((item) => blockKey(item) === key);
-    const currentItems = current.filter((item) => blockKey(item) === key);
-    if (
-      !priorItems.some((item) => item.scope === "*") &&
-      !currentItems.some((item) => item.scope === "*")
-    ) {
+    // A missing job-level block inherits the workflow-level block when one
+    // exists. Only a workflow block (or a job with no workflow block to inherit)
+    // actually falls back to the repository default.
+    const effectivePrior =
+      explicitPrior ?? inheritedWorkflowPermissions(priorBlocks, representative);
+    const effectiveCurrent =
+      explicitCurrent ?? inheritedWorkflowPermissions(currentBlocks, representative);
+    const scope = scopeLabel(representative.workflow, representative.job);
+
+    if (!effectivePrior && !effectiveCurrent) continue;
+    if (!effectivePrior && effectiveCurrent) {
+      changes.push({
+        kind: "permission_block_added",
+        significance: "low",
+        scope,
+        subject: "permissions block",
+        before: "repository default",
+        after: "explicit",
+      });
       continue;
     }
-    shorthandBlocks.add(key);
-    changes.push(...comparePermissionShorthandBlock(priorItems, currentItems));
+    if (effectivePrior && !effectiveCurrent) {
+      changes.push({
+        kind: "permission_block_removed",
+        significance: "high",
+        scope,
+        subject: "permissions block",
+        before: "explicit",
+        after: "repository default",
+      });
+      continue;
+    }
+    if (!effectivePrior || !effectiveCurrent) continue;
+    changes.push(...comparePermissionBlockContents(effectivePrior, effectiveCurrent));
   }
 
-  for (const [key, item] of currentByScope) {
-    if (shorthandBlocks.has(blockKey(item))) continue;
-    const before = priorByScope.get(key);
-    const scope = scopeLabel(item.workflow, item.job);
+  return changes;
+}
+
+function inheritedWorkflowPermissions(
+  blocks: Map<string, AuthorityPermission[]>,
+  representative: AuthorityPermission,
+): AuthorityPermission[] | null {
+  if (representative.job === null) return null;
+  const inherited = blocks.get(`${representative.workflow}\u0000`);
+  if (!inherited) return null;
+  return inherited.map((item) => ({ ...item, job: representative.job }));
+}
+
+function comparePermissionBlockContents(
+  prior: AuthorityPermission[],
+  current: AuthorityPermission[],
+): AuthorityChange[] {
+  if (prior.some((item) => item.scope === "*") || current.some((item) => item.scope === "*")) {
+    return comparePermissionShorthandBlock(prior, current);
+  }
+
+  const priorByScope = keyBy(prior, (item) => item.scope);
+  const currentByScope = keyBy(current, (item) => item.scope);
+  const representative = current[0] ?? prior[0];
+  if (!representative) return [];
+  const scope = scopeLabel(representative.workflow, representative.job);
+  const changes: AuthorityChange[] = [];
+
+  for (const [permissionScope, item] of currentByScope) {
+    const before = priorByScope.get(permissionScope);
     if (!before) {
-      // A scope appearing inside a block that already existed is an addition;
-      // a whole new block is reported once, above, so skip its scopes.
-      if (!priorBlocks.has(blockKey(item))) continue;
       changes.push({
         kind: "permission_added",
         significance: PERMISSION_RANK[item.level] >= PERMISSION_RANK.write ? "high" : "medium",
@@ -508,32 +525,21 @@ function comparePermissions(
       });
       continue;
     }
-    if (before.level === item.level) continue;
-    const widened = PERMISSION_RANK[item.level] > PERMISSION_RANK[before.level];
-    changes.push({
-      kind: widened ? "permission_widened" : "permission_narrowed",
-      significance: widened ? "high" : "low",
-      scope,
-      subject: item.scope,
-      before: before.level,
-      after: item.level,
-    });
+    const change = permissionLevelChange(scope, item.scope, before.level, item.level);
+    if (change) changes.push(change);
   }
 
-  for (const [key, item] of priorByScope) {
-    if (shorthandBlocks.has(blockKey(item))) continue;
-    if (currentByScope.has(key)) continue;
-    if (!currentBlocks.has(blockKey(item))) continue;
+  for (const [permissionScope, item] of priorByScope) {
+    if (currentByScope.has(permissionScope)) continue;
     changes.push({
       kind: "permission_removed",
       significance: "low",
-      scope: scopeLabel(item.workflow, item.job),
+      scope,
       subject: item.scope,
       before: item.level,
       after: null,
     });
   }
-
   return changes;
 }
 
@@ -929,6 +935,16 @@ function keyBy<T>(items: T[], key: (item: T) => string): Map<string, T> {
   const map = new Map<string, T>();
   for (const item of items) {
     if (!map.has(key(item))) map.set(key(item), item);
+  }
+  return map;
+}
+
+function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const group = map.get(key(item)) ?? [];
+    group.push(item);
+    map.set(key(item), group);
   }
   return map;
 }

@@ -246,7 +246,7 @@ export async function buildReleaseAuthoritySnapshot(
       ref: source.ref,
       role: source.role,
       rawDigest: await sha256Hex(source.content),
-      authorityDigest: await sha256Hex(stableJson(projection)),
+      authorityDigest: await sha256Hex(stableJson(canonicalizeProjectionForDigest(projection))),
     });
   }
 
@@ -357,7 +357,8 @@ interface WorkflowProjection {
  */
 interface AuthorityExecutionContext {
   workflow: string;
-  job: string;
+  /** Null for workflow-level environment mappings. */
+  job: string | null;
   step: number | null;
   condition: string | null;
   needs: string[];
@@ -381,6 +382,15 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
 
   projection.triggers.push(...readTriggers(workflow, doc.on));
   projection.permissions.push(...readPermissions(workflow, null, doc.permissions));
+  const workflowExecutionContext = await readExecutionContext(
+    workflow,
+    null,
+    null,
+    null,
+    null,
+    doc.env,
+  );
+  if (workflowExecutionContext) projection.executionContext.push(workflowExecutionContext);
 
   const jobs = asRecord(doc.jobs);
   if (!jobs) return projection;
@@ -431,7 +441,9 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
   projection.executionContext.sort(
     byKey(
       (item) =>
-        `${item.workflow}\u0000${item.job}\u0000${item.step === null ? "job" : `step:${item.step}`}`,
+        `${item.workflow}\u0000${item.job ?? ""}\u0000${
+          item.job === null ? "workflow" : item.step === null ? "job" : `step:${item.step}`
+        }`,
     ),
   );
 
@@ -440,7 +452,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
 
 async function readExecutionContext(
   workflow: string,
-  job: string,
+  job: string | null,
   step: number | null,
   conditionValue: YamlValue,
   needsValue: YamlValue,
@@ -452,6 +464,56 @@ async function readExecutionContext(
   const envDigest = env && Object.keys(env).length > 0 ? await sha256Hex(stableJson(env)) : null;
   if (!condition && needs.length === 0 && !envDigest) return null;
   return { workflow, job, step, condition, needs, envDigest };
+}
+
+/**
+ * Hash effective authority rather than redundant syntax. A job-level
+ * permissions block identical to the workflow-level block changes no job's
+ * effective permissions, so adding or removing that duplicate must remain a
+ * cosmetic edit. The explicit blocks stay in the persisted projection for
+ * display and delta explanations; only the authority digest is canonicalized.
+ */
+function canonicalizeProjectionForDigest(projection: WorkflowProjection): WorkflowProjection {
+  const workflowPermissions = new Map<string, AuthorityPermission[]>();
+  const jobPermissions = new Map<string, AuthorityPermission[]>();
+  for (const permission of projection.permissions) {
+    if (permission.job === null) {
+      const items = workflowPermissions.get(permission.workflow) ?? [];
+      items.push(permission);
+      workflowPermissions.set(permission.workflow, items);
+      continue;
+    }
+    const key = `${permission.workflow}\u0000${permission.job}`;
+    const items = jobPermissions.get(key) ?? [];
+    items.push(permission);
+    jobPermissions.set(key, items);
+  }
+
+  const redundantJobBlocks = new Set<string>();
+  for (const [key, items] of jobPermissions) {
+    const separator = key.indexOf("\u0000");
+    const workflow = key.slice(0, separator);
+    const inherited = workflowPermissions.get(workflow);
+    if (inherited && permissionBlocksEqual(items, inherited)) redundantJobBlocks.add(key);
+  }
+
+  return {
+    ...projection,
+    permissions: projection.permissions.filter(
+      (permission) =>
+        permission.job === null ||
+        !redundantJobBlocks.has(`${permission.workflow}\u0000${permission.job}`),
+    ),
+  };
+}
+
+function permissionBlocksEqual(left: AuthorityPermission[], right: AuthorityPermission[]): boolean {
+  const canonical = (items: AuthorityPermission[]) =>
+    items
+      .map((item) => `${item.scope}\u0000${item.level}`)
+      .sort()
+      .join("\u0001");
+  return canonical(left) === canonical(right);
 }
 
 async function readStep(
@@ -662,11 +724,11 @@ const PUBLISH_ACTIONS = new Set([
 ]);
 
 const PUBLISH_COMMAND_PATTERNS: RegExp[] = [
-  /\b(?:npm|pnpm|yarn|bun)\s+publish\b/,
-  /\btwine\s+upload\b/,
+  /\b(?:npm|pnpm|yarn|bun)\b[^;&|\n]*\bpublish\b/,
+  /\b(?:(?:python(?:3(?:\.\d+)*)?)\s+-m\s+)?twine\s+upload\b/,
   /\b(?:uv|poetry|flit|hatch|maturin)\s+publish\b/,
   /\bcargo\s+publish\b/,
-  /\b(?:vsce|ovsx)\s+publish\b/,
+  /\b(?:npx\s+)?(?:vsce|ovsx)\s+publish\b/,
   /\bgem\s+push\b/,
 ];
 

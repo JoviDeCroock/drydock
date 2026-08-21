@@ -186,9 +186,16 @@ describe("incident replay: compromised publishing workflow", () => {
     expect(kinds).toContain("publish_step_added");
     expect(kinds).toContain("publish_step_removed");
 
-    // The job-level permissions block is gone, so the job inherits the
-    // repository default instead of the narrow set it declared.
-    expect(kinds).toContain("permission_block_removed");
+    // The job-level block is gone, so the publish job inherits the wider
+    // workflow-level contents permission.
+    expect(
+      byKind(delta.changes, "permission_added").some(
+        (change) =>
+          change.scope === `${ENTRY}/publish` &&
+          change.subject === "contents" &&
+          change.after === "write",
+      ),
+    ).toBe(true);
 
     // The workflow-level token gained write scopes.
     expect(byKind(delta.changes, "permission_added").map((change) => change.subject)).toContain(
