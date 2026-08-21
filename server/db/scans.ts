@@ -26,7 +26,10 @@ import {
 } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { recordScanEvent, redactScanEventForClient } from "./events";
-import { refreshReleaseAuthorityDeltaForGate } from "./release-authority";
+import {
+  getReleaseAuthorityForGate,
+  refreshReleaseAuthorityDeltaForGate,
+} from "./release-authority";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
 export interface PersistedScanInput {
@@ -989,12 +992,18 @@ function recordDecisionEvent(
  */
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
+export interface GetScanOptions {
+  files?: ScanDetailFileMode;
+  /** Exports use the persisted snapshot so a read cannot mutate canonical bytes. */
+  releaseAuthority?: "refresh" | "stored";
+}
+
 export async function getScan(
   db: AppDb,
   id: string,
   organizationId: string,
   artifactBucket?: R2Bucket,
-  options: { files?: ScanDetailFileMode } = {},
+  options: GetScanOptions = {},
 ) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
@@ -1047,7 +1056,9 @@ export async function getScan(
     // Null for staged-publish scans and for gates captured before this existed;
     // consumers must read that as "not assessed", not as "no change".
     releaseAuthority: scan.gateId
-      ? await refreshReleaseAuthorityDeltaForGate(db, organizationId, scan.gateId)
+      ? options.releaseAuthority === "stored"
+        ? await getReleaseAuthorityForGate(db, organizationId, scan.gateId)
+        : await refreshReleaseAuthorityDeltaForGate(db, organizationId, scan.gateId)
       : null,
     events: events.map(redactScanEventForClient),
   };

@@ -144,6 +144,54 @@ describe("computeReleaseAuthorityDelta", () => {
     expect(delta.baseline).toEqual(BASELINE_REF);
   });
 
+  it("detects a publish command split across shell continuation lines", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      "      - run: echo safe\n",
+    );
+    const current = BASE_WORKFLOW.replace(
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+      `      - run: |
+          npm \\
+            publish
+`,
+    );
+
+    const delta = await deltaBetween(prior, current);
+
+    expect(delta.status).toBe("changed");
+    expect(delta.requiresApproval).toBe(true);
+    expect(find(delta.changes, "publish_step_added")).toMatchObject({
+      significance: "high",
+      after: "npm publish",
+    });
+  });
+
+  it("treats GitHub's same-repository reusable-workflow path forms as pinned equivalents", async () => {
+    const priorWorkflow = `
+on: workflow_dispatch
+jobs:
+  release:
+    uses: ./.github/workflows/reusable.yml
+`;
+    const currentWorkflow = priorWorkflow.replace("./.github", "$/.github");
+    const current = await makeSnapshot({
+      workflows: [{ path: ENTRY, content: currentWorkflow }],
+    });
+    const delta = await deltaBetween(priorWorkflow, currentWorkflow);
+
+    expect(current.actions).toEqual([
+      expect.objectContaining({
+        uses: "$/.github/workflows/reusable.yml",
+        ref: null,
+        pinned: true,
+      }),
+    ]);
+    expect(delta.standing.mutableRefs).toEqual([]);
+    expect(delta.status).toBe("cosmetic");
+    expect(delta.requiresApproval).toBe(false);
+  });
+
   it("treats comment, ordering and formatting edits as cosmetic", async () => {
     const edited = `# Release pipeline, rewritten for clarity.
 ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
@@ -317,6 +365,17 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       current: BASE_WORKFLOW.replace(
         "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
         "      - run: npm publish\n        working-directory: packages/internal\n",
+      ),
+    },
+    {
+      label: "publish step shell",
+      prior: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - shell: bash\n        run: npm publish\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - shell: bash {0}\n        run: npm publish\n",
       ),
     },
     {

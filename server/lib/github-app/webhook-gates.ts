@@ -460,6 +460,9 @@ export async function markGateDecidedForPackageAggregate(
       and(
         eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
         eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        // D1 executes batch statements in order. Only the batch whose preceding
+        // pending -> approved CAS changed the gate may attribute the approval.
+        sql`changes() = 1`,
         sql`exists (
           select 1
           from ${githubWorkflowGates}

@@ -14,7 +14,12 @@ import {
   getReleaseAuthorityForGate,
   markAuthoritySnapshotApproved,
 } from "../../server/db/release-authority";
-import { claimGatePackageDecision, createScanJob, persistScan } from "../../server/db/scans";
+import {
+  claimGatePackageDecision,
+  createScanJob,
+  getScan,
+  persistScan,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
@@ -342,6 +347,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -978,6 +984,139 @@ describe("release-authority approval policy", () => {
     expect(scan?.decision).toBeNull();
     const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id);
     expect(authority?.approvedAt).toBeNull();
+  });
+
+  test("does not attribute authority approval when a same-millisecond gate CAS loses", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const seeded = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, seeded.gate);
+
+    const competingUserId = `user_${crypto.randomUUID()}`;
+    const fixedNow = new Date("2026-08-21T12:00:00.000Z");
+    await db.insert(schema.user).values({
+      id: competingUserId,
+      name: "Competing Maintainer",
+      email: `${competingUserId}@example.test`,
+      emailVerified: true,
+      createdAt: fixedNow,
+      updatedAt: fixedNow,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    const claimed = await claimGatePackageDecision(db, {
+      scanId: seeded.scanId,
+      organizationId: fixture.organizationId,
+      gateId: seeded.gate.id,
+      actorUserId: fixture.userId,
+      decision: "publish",
+      reason: null,
+    });
+    expect(claimed).not.toBeNull();
+    const packageClaim = {
+      scanId: seeded.scanId,
+      actorUserId: fixture.userId,
+      decidedAt: claimed!.decidedAt,
+      decision: "publish" as const,
+    };
+
+    const won = await markGateDecidedForPackageAggregate(db, {
+      gateId: seeded.gate.id,
+      organizationId: fixture.organizationId,
+      decision: "approved",
+      comment: "first approval",
+      packageClaim,
+      authorityApproval: {
+        approvedByUserId: fixture.userId,
+        releaseTargetId: fixture.releaseTargetId,
+      },
+    });
+    expect(won?.status).toBe("approved");
+
+    const lost = await markGateDecidedForPackageAggregate(db, {
+      gateId: seeded.gate.id,
+      organizationId: fixture.organizationId,
+      decision: "approved",
+      comment: "competing approval",
+      packageClaim,
+      authorityApproval: {
+        approvedByUserId: competingUserId,
+        releaseTargetId: fixture.releaseTargetId,
+      },
+    });
+    expect(lost).toBeNull();
+
+    const authority = await getReleaseAuthorityForGate(db, fixture.organizationId, seeded.gate.id);
+    expect(authority?.approvedByUserId).toBe(fixture.userId);
+  });
+
+  test("can read stored release authority without refreshing persisted export evidence", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+    const baseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW });
+    await capture(fixture, baseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: baseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stale = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
+    expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
+
+    const moved = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "c".repeat(40),
+    });
+    await capture(fixture, moved.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: moved.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+
+    const stored = await getScan(db, stale.scanId, fixture.organizationId, undefined, {
+      files: "omit",
+      releaseAuthority: "stored",
+    });
+    expect(stored?.releaseAuthority?.delta?.status).toBe("unchanged");
+    expect(
+      (await getReleaseAuthorityForGate(db, fixture.organizationId, stale.gate.id))?.delta?.status,
+    ).toBe("unchanged");
+
+    const refreshed = await getScan(db, stale.scanId, fixture.organizationId, undefined, {
+      files: "omit",
+    });
+    expect(refreshed?.releaseAuthority?.delta?.status).toBe("changed");
   });
 
   test("never blocks a rejection on an unacknowledged authority change", async () => {

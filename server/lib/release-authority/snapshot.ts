@@ -459,6 +459,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         step.env,
         {
           continueOnError: step["continue-on-error"],
+          shell: step.shell,
           workingDirectory: step["working-directory"],
         },
       );
@@ -494,6 +495,7 @@ async function readExecutionContext(
     services?: YamlValue;
     outputs?: YamlValue;
     runDefaults?: YamlValue;
+    shell?: YamlValue;
     workingDirectory?: YamlValue;
   } = {},
 ): Promise<AuthorityExecutionContext | null> {
@@ -511,6 +513,7 @@ async function readExecutionContext(
   if (controlValues.services != null) controls.services = controlValues.services;
   if (controlValues.outputs != null) controls.outputs = controlValues.outputs;
   if (controlValues.runDefaults != null) controls.runDefaults = controlValues.runDefaults;
+  if (controlValues.shell != null) controls.shell = controlValues.shell;
   if (controlValues.workingDirectory != null) {
     controls.workingDirectory = controlValues.workingDirectory;
   }
@@ -572,7 +575,12 @@ function canonicalizeProjectionForDigest(projection: WorkflowProjection): Workfl
     ),
     // Job-map key order is cosmetic, while step order inside one job is not.
     // Sort the job groups and preserve their original intra-job order.
-    actions: sortJobGroups(projection.actions),
+    actions: sortJobGroups(
+      projection.actions.map((action) => ({
+        ...action,
+        uses: canonicalActionUses(action.uses),
+      })),
+    ),
     publishSteps: sortJobGroups(projection.publishSteps),
     safeguards: sortJobGroups(projection.safeguards),
     artifactFlow: sortJobGroups(projection.artifactFlow),
@@ -837,7 +845,10 @@ async function readActionRef(
   localActionDigest: string | null = null,
 ): Promise<AuthorityActionRef> {
   const trimmed = uses.trim();
-  const local = trimmed.startsWith("./") || trimmed.startsWith("../");
+  const local =
+    trimmed.startsWith("./") ||
+    trimmed.startsWith("../") ||
+    trimmed.startsWith("$/.github/workflows/");
   const separator = trimmed.lastIndexOf("@");
   const ref = !local && separator > 0 ? trimmed.slice(separator + 1) : null;
   const inputMap = asRecord(inputs);
@@ -931,7 +942,7 @@ function safeguardForAction(actionName: string): AuthoritySafeguard["kind"] | nu
 
 function publishCommands(run: string): string[] {
   const found: string[] = [];
-  for (const line of run.split("\n")) {
+  for (const line of shellLogicalLines(run)) {
     const command = line.trim();
     if (!command || command.startsWith("#")) continue;
     if (PUBLISH_COMMAND_PATTERNS.some((pattern) => pattern.test(command))) found.push(command);
@@ -943,7 +954,7 @@ function safeguardCommands(
   run: string,
 ): Array<{ kind: AuthoritySafeguard["kind"]; detail: string }> {
   const found: Array<{ kind: AuthoritySafeguard["kind"]; detail: string }> = [];
-  for (const line of run.split("\n")) {
+  for (const line of shellLogicalLines(run)) {
     const command = line.trim();
     if (!command || command.startsWith("#")) continue;
     for (const { pattern, kind } of SAFEGUARD_COMMAND_PATTERNS) {
@@ -951,6 +962,29 @@ function safeguardCommands(
     }
   }
   return found;
+}
+
+/** Join shell lines whose final unescaped backslash continues the command. */
+function shellLogicalLines(run: string): string[] {
+  const logical: string[] = [];
+  let current = "";
+  for (const physicalLine of run.split("\n")) {
+    const combined = current ? `${current}${physicalLine.trimStart()}` : physicalLine;
+    const trailingBackslashes = combined.match(/\\+$/)?.[0].length ?? 0;
+    if (trailingBackslashes % 2 === 1) {
+      current = combined.slice(0, -1);
+      continue;
+    }
+    logical.push(combined);
+    current = "";
+  }
+  if (current) logical.push(current);
+  return logical;
+}
+
+function canonicalActionUses(uses: string): string {
+  const trimmed = uses.trim();
+  return trimmed.startsWith("$/.github/workflows/") ? `.${trimmed.slice(1)}` : trimmed;
 }
 
 function artifactFlowForAction(

@@ -977,8 +977,10 @@ function compareCoverage(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function actionIdentity(uses: string): string {
-  const separator = uses.lastIndexOf("@");
-  return separator > 0 ? uses.slice(0, separator) : uses;
+  const trimmed = uses.trim();
+  const canonical = trimmed.startsWith("$/.github/workflows/") ? `.${trimmed.slice(1)}` : trimmed;
+  const separator = canonical.lastIndexOf("@");
+  return separator > 0 ? canonical.slice(0, separator) : canonical;
 }
 
 function scopeLabel(workflow: string, job: string | null): string {

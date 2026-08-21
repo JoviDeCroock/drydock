@@ -109,7 +109,7 @@ A snapshot records:
   and `workflow_call` output mappings;
 - authority-sensitive execution controls: job and step conditions, job
   dependencies, runner selection, containers and services, job output mappings,
-  job strategy matrices, `continue-on-error`, step working directories,
+  job strategy matrices, `continue-on-error`, step shells and working directories,
   workflow/job run defaults, and digests of workflow/job/step environment
   mappings (the values themselves are not persisted);
 - workflow- and job-level permissions, including the `read-all` / `write-all`
