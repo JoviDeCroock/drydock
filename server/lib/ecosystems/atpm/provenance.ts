@@ -1,3 +1,4 @@
+import { hexEncode } from "../../platform/crypto-utils";
 import {
   decodeBase64,
   decodeDerString,
@@ -639,7 +640,7 @@ async function verifyTransparencyLogEntry(
     JSON.stringify({
       body,
       integratedTime: Math.floor(signedAt.getTime() / 1000),
-      logID: bytesToHex(keyIdBytes),
+      logID: hexEncode(keyIdBytes),
       logIndex,
     }),
   );
@@ -647,12 +648,6 @@ async function verifyTransparencyLogEntry(
   return verified
     ? { signedAt, logIndex: String(logIndex), logBaseUrl: trustedKey.baseUrl }
     : false;
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  let value = "";
-  for (const byte of bytes) value += byte.toString(16).padStart(2, "0");
-  return value;
 }
 
 export async function transparencyLogBodyMatches(

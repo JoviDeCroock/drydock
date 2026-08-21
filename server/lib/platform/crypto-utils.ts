@@ -39,6 +39,13 @@ export function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Lowercase hex for a byte array. The inverse of `hexDecode`. */
+export function hexEncode(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
+  return out;
+}
+
 export function hexDecode(value: string): Uint8Array | null {
   if (value.length === 0 || value.length % 2 !== 0) return null;
   if (!/^[0-9a-fA-F]+$/.test(value)) return null;
@@ -61,4 +68,15 @@ export async function sha256Hex(value: string | ArrayBuffer | Uint8Array): Promi
   const bytes = typeof value === "string" ? SHA256_ENCODER.encode(value) : value;
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * SHA-256 as unpadded base64url. Distinct from `sha256Hex` by output encoding
+ * only — the name carries the encoding because these digests get stored and
+ * compared, and hex vs base64url of the same bytes is a silent mismatch.
+ */
+export async function sha256Base64Url(value: string | ArrayBuffer | Uint8Array): Promise<string> {
+  const bytes = typeof value === "string" ? SHA256_ENCODER.encode(value) : value;
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return base64UrlEncode(new Uint8Array(digest));
 }

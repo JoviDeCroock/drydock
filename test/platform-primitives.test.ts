@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { mapWithConcurrency } from "../server/lib/platform/concurrency";
+import {
+  hexDecode,
+  hexEncode,
+  sha256Base64Url,
+  sha256Hex,
+} from "../server/lib/platform/crypto-utils";
 import { isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import { isSafeManifestPath } from "../server/lib/platform/path-safety";
@@ -168,5 +174,42 @@ describe("markup escaping", () => {
 
   test("escapeXml uses &apos;, which is defined in XML but not HTML4", () => {
     expect(escapeXml(`<a href="x">&'`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&apos;");
+  });
+});
+
+describe("digest and encoding primitives", () => {
+  // These are compared against each other across layers — a report digest
+  // written by the pipeline is re-checked when the artifact is read back — so
+  // the exact encoding is the contract, not an implementation detail.
+  const KNOWN = "abc";
+  const KNOWN_SHA256_HEX = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+  test("sha256Hex matches the published digest for a known input", async () => {
+    expect(await sha256Hex(KNOWN)).toBe(KNOWN_SHA256_HEX);
+  });
+
+  test("sha256Hex agrees across string, Uint8Array and ArrayBuffer input", async () => {
+    const bytes = new TextEncoder().encode(KNOWN);
+    expect(await sha256Hex(bytes)).toBe(KNOWN_SHA256_HEX);
+    expect(await sha256Hex(bytes.buffer as ArrayBuffer)).toBe(KNOWN_SHA256_HEX);
+  });
+
+  test("sha256Base64Url is the same digest in a different encoding", async () => {
+    const b64 = await sha256Base64Url(KNOWN);
+    expect(b64).not.toContain("=");
+    expect(b64).not.toMatch(/[+/]/);
+    expect(hexEncode(hexDecode(KNOWN_SHA256_HEX)!)).toBe(KNOWN_SHA256_HEX);
+  });
+
+  test("hexEncode round-trips through hexDecode", () => {
+    const bytes = new Uint8Array([0x00, 0x0f, 0x10, 0xff]);
+    expect(hexEncode(bytes)).toBe("000f10ff");
+    expect(hexDecode("000f10ff")).toEqual(bytes);
+  });
+
+  test("hexEncode zero-pads single-digit bytes", () => {
+    // The padStart is the whole point: without it 0x0f encodes as "f" and the
+    // string silently shortens.
+    expect(hexEncode(new Uint8Array([1, 2, 3]))).toBe("010203");
   });
 });

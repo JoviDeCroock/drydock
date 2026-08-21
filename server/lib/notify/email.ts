@@ -1,3 +1,4 @@
+import { hexEncode } from "../platform/crypto-utils";
 import { errorMessage } from "../platform/errors";
 
 export interface SendEmailInput {
@@ -118,8 +119,5 @@ function encodeHeader(value: string): string {
 }
 
 function randomBoundary(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  let out = "";
-  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
-  return out;
+  return hexEncode(crypto.getRandomValues(new Uint8Array(12)));
 }

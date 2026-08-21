@@ -1,6 +1,6 @@
 import { type AppDb } from "../../../db/client";
 import { getNpmConnection, markNpmConnectionUsedIfStale } from "../../../db/npm-connections";
-import { base64UrlDecode, base64UrlEncode } from "../../platform/crypto-utils";
+import { base64UrlDecode, base64UrlEncode, sha256Base64Url } from "../../platform/crypto-utils";
 import { errorMessage } from "../../platform/errors";
 import { reliableFetch } from "../../platform/reliable-fetch";
 
@@ -376,6 +376,5 @@ async function encryptionKey(env: Cloudflare.Env, version: "v0" | "v1") {
 }
 
 async function tokenFingerprint(token: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  return base64UrlEncode(new Uint8Array(digest));
+  return sha256Base64Url(token);
 }
