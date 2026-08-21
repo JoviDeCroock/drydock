@@ -110,6 +110,28 @@ async function request(
   return res;
 }
 
+const PUBLIC_REPORT_RATE_LIMIT = 120;
+const PUBLIC_REPORT_RATE_WINDOW_MS = 60 * 1000;
+
+async function seedPublicReportRateLimit(ip: string) {
+  const db = createDb(env.DB);
+  const nowMs = Date.now();
+  const bucket = Math.floor(nowMs / PUBLIC_REPORT_RATE_WINDOW_MS);
+  const now = new Date(nowMs);
+  // Seed the adjacent bucket too so the request stays limited if setup lands on
+  // the fixed-window boundary. Brute-forcing 120 requests here was slow enough
+  // under CI load to cross that boundary and intermittently receive a fresh
+  // budget instead of the expected 429.
+  await db.insert(schema.rateLimits).values(
+    [bucket, bucket + 1].map((activeBucket) => ({
+      key: `public-report:${ip}:${activeBucket}`,
+      count: PUBLIC_REPORT_RATE_LIMIT,
+      expiresAt: new Date((activeBucket + 1) * PUBLIC_REPORT_RATE_WINDOW_MS),
+      updatedAt: now,
+    })),
+  );
+}
+
 // `withAiReview` seeds a completed AI review alongside the rule finding. The
 // export routes AI findings through `aiReview.findings` and keeps them out of
 // `findings[]`, so this is the shape where a naive finding count disagrees with
@@ -418,26 +440,15 @@ describe("public report sharing", () => {
 
     // retry-after has to be reachable from script, or a throttled verifier
     // cannot back off and just hot-loops.
-    let throttled: Response | null = null;
-    // The limiter uses fixed wall-clock buckets. If this loop straddles the
-    // minute boundary, retry from a fresh address just after that boundary so
-    // the next attempt gets a complete window; a broken limiter still fails
-    // after the bounded attempts rather than being retried forever.
-    for (let attempt = 0; attempt < 5 && !throttled; attempt += 1) {
-      const ip = `10.1.${attempt}.${Math.floor(Math.random() * 200) + 1}`;
-      const headers = { "cf-connecting-ip": ip };
-      for (let i = 0; i <= 120; i += 1) {
-        const res = await request(app, `/public/reports/${"D".repeat(43)}`, { headers });
-        if (res.status === 429) {
-          throttled = res;
-          break;
-        }
-      }
-    }
-    expect(throttled).not.toBeNull();
-    expect(throttled?.headers.get("access-control-allow-origin")).toBe("*");
-    expect(throttled?.headers.get("access-control-expose-headers")).toContain("retry-after");
-    expect(throttled?.headers.get("retry-after")).toBeTruthy();
+    const ip = "10.1.0.1";
+    await seedPublicReportRateLimit(ip);
+    const throttled = await request(app, `/public/reports/${"D".repeat(43)}`, {
+      headers: { "cf-connecting-ip": ip },
+    });
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers.get("access-control-allow-origin")).toBe("*");
+    expect(throttled.headers.get("access-control-expose-headers")).toContain("retry-after");
+    expect(throttled.headers.get("retry-after")).toBeTruthy();
   });
 
   test("concurrent enables settle on a single token", async () => {
@@ -512,18 +523,15 @@ describe("public report sharing", () => {
 
   test("public reads are rate limited per IP", async () => {
     const app = buildTestApp(null);
-    const ip = `10.0.0.${Math.floor(Math.random() * 200) + 1}`;
-    const headers = { "cf-connecting-ip": ip };
-    let limited = false;
-    for (let i = 0; i < 125; i += 1) {
-      const res = await request(app, `/public/reports/${"B".repeat(43)}`, { headers });
-      if (res.status === 429) {
-        limited = true;
-        break;
-      }
-      expect(res.status).toBe(404);
-    }
-    expect(limited).toBe(true);
+    const ip = "10.0.0.250";
+    await seedPublicReportRateLimit(ip);
+
+    const res = await request(app, `/public/reports/${"B".repeat(43)}`, {
+      headers: { "cf-connecting-ip": ip },
+    });
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: "too many public report requests" });
   });
 });
 
