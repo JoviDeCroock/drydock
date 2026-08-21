@@ -8,7 +8,6 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../../db/client";
 import { getOrganizationRole } from "../../db/invitations";
-import {} from "../../lib/platform/rate-limit";
 import { getScan, getScanStatus } from "../../db/scans";
 import {
   requireActiveOrganization,
@@ -24,9 +23,6 @@ import {
   revokePublicShare,
   setThreatFeedListing,
 } from "../../db/scan-share";
-import {} from "../../lib/ecosystems/npm/connection";
-import {} from "../../lib/ecosystems/npm/staged-publishes";
-import {} from "../../lib/review";
 import { reportExportFilename, serializeReportExport } from "../../lib/scan/report-export";
 import { roleCanManagePublicShares } from "../../lib/auth/roles";
 import type { Bindings, Variables } from "../../types";

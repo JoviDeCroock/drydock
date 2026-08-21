@@ -6,8 +6,6 @@ import { SCAN_ARTIFACT_STORAGE_VERSION } from "./types";
  * construction rather than by a check the caller has to remember. Every
  * segment is sanitized: an id is never interpolated into a key raw.
  */
-import {} from "../../review";
-
 export function artifactKeys(organizationId: string, scanId: string) {
   const base = `orgs/${safeSegment(organizationId)}/scans/${safeSegment(scanId)}/v${SCAN_ARTIFACT_STORAGE_VERSION}`;
   return {
@@ -32,7 +30,3 @@ export function organizationArtifactPrefix(organizationId: string): string {
 export function scanArtifactPrefix(organizationId: string, scanId: string): string {
   return `orgs/${safeSegment(organizationId)}/scans/${safeSegment(scanId)}/`;
 }
-
-// R2 caps list() and delete() at 1000 keys per call, so we page until the prefix
-// is drained. Caller-supplied logFields identify the scope (org vs scan) for the
-// emitted event.

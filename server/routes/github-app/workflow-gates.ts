@@ -29,10 +29,6 @@ import {
   buildReportUrl,
   executeWorkflowGateJob,
 } from "../../lib/workflow-gate-job";
-import {} from "../../lib/github-app/api";
-import {} from "../../lib/github-app/config";
-import {} from "../../lib/github-app/oauth";
-import {} from "../../lib/github-app/persistence";
 import {
   type GatePackageScan,
   type WorkflowGateRecord,

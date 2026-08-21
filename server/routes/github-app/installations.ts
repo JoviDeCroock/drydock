@@ -16,9 +16,7 @@ import {
 } from "../../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { rateLimitResponse } from "../../lib/platform/http";
-import {} from "../../lib/platform/execution-context";
 import { recordProductEvent } from "../../lib/platform/analytics";
-import {} from "../../lib/workflow-gate-job";
 import {
   fetchInstallationMetadata,
   listInstallationRepositories,
@@ -40,7 +38,6 @@ import {
   listInstallationsForOrganization,
   upsertInstallation,
 } from "../../lib/github-app/persistence";
-import {} from "../../lib/github-app/webhook-gates";
 import type { Bindings, Variables } from "../../types";
 import { ensureInstallationOwnedBy, configErrorResponse, validationErrorResponse } from "./shared";
 

@@ -35,13 +35,11 @@ import { backfillScanArtifactsBatch } from "../../lib/scan/artifact-backfill";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, rateLimitResponse } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
-import {} from "../../db/scan-share";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../lib/ecosystems/npm/connection";
 import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
 } from "../../lib/ecosystems/npm/staged-publishes";
-import {} from "../../lib/review";
 import { parseScanInput } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";

@@ -3,8 +3,6 @@ import { organizationArtifactPrefix, scanArtifactPrefix } from "./keys";
 /**
  * Artifact deletion, by scan or by organization.
  */
-import {} from "../../review";
-
 export async function deleteOrganizationArtifacts(
   bucket: R2Bucket | undefined,
   organizationId: string,

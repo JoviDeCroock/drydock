@@ -14,9 +14,7 @@ import {
  * per-row decide/delete actions.
  */
 import { createModel, effect, signal } from "@preact/signals";
-import type {} from "../../server/lib/review";
 import { errorMessage } from "./api";
-import {} from "./github-app";
 
 export const ScanListModel = createModel(() => {
   const scans = signal<ScanListItem[]>([]);
@@ -170,8 +168,3 @@ export const ScanListModel = createModel(() => {
     },
   };
 });
-
-// Polling cadence for scans still in pending/running. The base delay doubles
-// per consecutive poll failure (so an unreachable API isn't hammered at a
-// fixed rate) up to the max, and resets on success. A scan that never reaches
-// a terminal status stops polling entirely after the stall window; the UI

@@ -34,6 +34,10 @@ import {
   type WorkflowGateDecision,
 } from "./github-app";
 
+// Polling cadence for scans still in pending/running. The base delay doubles
+// per consecutive poll failure (so an unreachable API isn't hammered at a
+// fixed rate) up to the max, and resets on success. A scan that never reaches
+// a terminal status stops polling entirely after the stall window; the UI
 // offers a manual resume via `resumePolling()`.
 export const SCAN_POLL_BASE_DELAY_MS = 10_000;
 export const SCAN_POLL_MAX_DELAY_MS = 30_000;

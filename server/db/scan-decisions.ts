@@ -218,15 +218,3 @@ function recordDecisionEvent(
     reviewerVersion: aiReview.reviewerVersion ?? "legacy",
   });
 }
-
-/**
- * How much of the file table a `getScan` caller needs:
- * - `samples` (default) — every artifact, file rows carry their redacted text
- *   samples. The workbench detail view.
- * - `list` — metadata only, and the artifacts are read only when D1 alone is
- *   short (`needsArtifactMetadataFallback`). The cheapest mode; note it can
- *   leave `findings` sourced from D1 rather than report.json.
- * - `omit` — full report/diff fidelity (so `findings` and their `diffStatus`
- *   are byte-identical to `samples`) while skipping the file-samples artifact
- *   entirely. For callers that serialize the report and never read `files`.
- */

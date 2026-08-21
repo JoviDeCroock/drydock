@@ -10,8 +10,6 @@ import {
   requireActiveOrganizationContext,
 } from "../../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
-import {} from "../../lib/platform/execution-context";
-import {} from "../../lib/workflow-gate-job";
 import { fetchRepository } from "../../lib/github-app/api";
 import {
   type GithubAppConfig,
@@ -19,14 +17,12 @@ import {
   type SupportedEcosystem,
   readGithubAppConfig,
 } from "../../lib/github-app/config";
-import {} from "../../lib/github-app/oauth";
 import {
   type ReleaseTargetRecord,
   createReleaseTarget,
   deleteReleaseTarget,
   listReleaseTargetsForOrganization,
 } from "../../lib/github-app/persistence";
-import {} from "../../lib/github-app/webhook-gates";
 import type { Bindings, Variables } from "../../types";
 import { ensureInstallationOwnedBy, configErrorResponse, validationErrorResponse } from "./shared";
 

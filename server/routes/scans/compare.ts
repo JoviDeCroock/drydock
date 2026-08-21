@@ -14,12 +14,10 @@ import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { loadCompare, stripTextSamples } from "../../lib/compare-cache";
 import { rateLimitResponse } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
-import {} from "../../db/scan-share";
 import {
   allowInsecureLocalRegistry,
   getOrganizationNpmToken,
 } from "../../lib/ecosystems/npm/connection";
-import {} from "../../lib/ecosystems/npm/staged-publishes";
 import { isPublishedTarballUrlAllowed } from "../../lib/ecosystems/npm/published-tarball";
 import { compareSemver, pickPreviousVersion } from "../../lib/ecosystems/npm/registry";
 import { fetchPackageMetadataCached } from "../../lib/ecosystems/npm/registry-cache";

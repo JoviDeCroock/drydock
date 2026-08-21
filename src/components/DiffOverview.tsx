@@ -78,8 +78,3 @@ function markerClass(marker: DiffOverviewMarker): string {
   if (marker.tone === "warn") return "bg-warn";
   return "bg-info";
 }
-
-// Severity-tinted fills and left bars for a pinned finding. The fill uses the
-// soft severity token at reduced opacity so it reads as a callout over the
-// green/red row backgrounds; the bar uses the saturated token (shapes, per
-// docs/design.md "color = signal"). Both are static class strings so Tailwind keeps

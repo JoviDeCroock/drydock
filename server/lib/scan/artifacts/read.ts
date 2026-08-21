@@ -16,7 +16,6 @@ import {
 /**
  * Reading a scan body back, with the D1 fallback.
  */
-import {} from "../../review";
 import { describeOperationalError } from "../../platform/observability";
 
 export function scanArtifactReadBucket(

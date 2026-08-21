@@ -12,7 +12,6 @@ import {
  * swapped object therefore fails closed rather than being handed to a reviewer
  * as if it were the reviewed release.
  */
-import {} from "../../review";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { sha256Hex } from "../../platform/crypto-utils";
 import { utf8Size } from "../../platform/stable-json";
@@ -92,6 +91,9 @@ export async function readVerifiedJsonText(
   return new TextDecoder().decode(bytes);
 }
 
+// R2 caps list() and delete() at 1000 keys per call, so we page until the prefix
+// is drained. Caller-supplied logFields identify the scope (org vs scan) for the
+// emitted event.
 const ARTIFACT_LIST_PAGE = 1000;
 
 export async function deleteArtifactsByPrefix(

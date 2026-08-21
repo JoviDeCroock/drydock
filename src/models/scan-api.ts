@@ -12,7 +12,6 @@ import type {
   PackageJsonSummary,
 } from "../../server/lib/review";
 import { apiFetch, apiJson } from "./api";
-import {} from "./github-app";
 
 export interface ScanVersionsResponse {
   packageName: string | null;
