@@ -85,14 +85,7 @@ function stagePlaceholder(message: string, status: number): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(headline)} · Drydock</title>
 <meta name="robots" content="noindex">
-<style>
-  :root { color-scheme: light dark; }
-  body { font: 15px/1.6 ui-sans-serif, system-ui, sans-serif; margin: 0; display: grid; place-items: center; min-height: 100vh; padding: 24px; }
-  main { max-width: 46ch; }
-  h1 { font-size: 18px; margin: 0 0 8px; }
-  p { margin: 0 0 16px; opacity: .75; }
-  a { color: inherit; }
-</style></head>
+<link rel="stylesheet" href="/stage.css"></head>
 <body><main>
   <h1>${escapeHtml(headline)}</h1>
   <p>${detail}</p>

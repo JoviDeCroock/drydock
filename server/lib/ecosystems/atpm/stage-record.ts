@@ -130,7 +130,7 @@ export async function fetchAtpmStagedVersion(
  * published path must also be able to read. Returns null for a record that does
  * not describe a reviewable candidate.
  */
-export async function parseStageRecord(
+async function parseStageRecord(
   identity: AtpmRepoIdentity,
   record: RawStageRecord,
   verifyProvenance = true,

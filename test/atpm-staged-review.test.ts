@@ -163,14 +163,17 @@ describe("staged candidate findings", () => {
     };
   }
 
-  function metadataFindings(candidate: AtpmStagedVersion) {
+  function metadataFindings(
+    candidate: AtpmStagedVersion,
+    verifiedHandle: string | null = "ebey.dev",
+  ) {
     return atpmStagedFindings({
       staged: { ...candidate, shasum: candidate.declaredShasum },
       manifest: { name: candidate.declaredName, version: candidate.version } as any,
       archiveSha1: null,
       archiveSha512: null,
       trustPublisher: null,
-      verifiedHandle: "ebey.dev",
+      verifiedHandle,
     });
   }
 
@@ -191,6 +194,19 @@ describe("staged candidate findings", () => {
       }),
     );
     expect(findings[0]?.evidence).toContain("is not the publisher's handle @ebey.dev");
+  });
+
+  test("fails closed when a candidate's publisher has no verified handle", () => {
+    const findings = metadataFindings(staged(), null);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "stage.metadata-mismatch",
+          severity: "critical",
+          evidence: expect.stringContaining("publisher has no handle"),
+        }),
+      ]),
+    );
   });
 });
 

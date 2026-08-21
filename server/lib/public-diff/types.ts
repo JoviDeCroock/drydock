@@ -31,7 +31,7 @@ export interface PublicDiffProvenanceEntry {
  * One verified build, as a Sigstore bundle records it. Every field here came out
  * of a signature check, not out of the package's own metadata.
  */
-export interface PublicDiffAttestationBuild {
+interface PublicDiffAttestationBuild {
   /** Source repository, e.g. `https://github.com/owner/repo`. */
   repository: string;
   /** Ref the build ran from, e.g. `refs/tags/v1.2.3`. */

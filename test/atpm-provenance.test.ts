@@ -405,6 +405,7 @@ describe("provenance findings", () => {
     archiveSha512?: string | null;
     trustPublisher?: AtpmTrustPublisher | null;
     baseline?: AtpmVersion | null;
+    baselineArchiveSha512?: string | null;
     declaredName?: string;
   }) {
     return atpmRecordFindings({
@@ -416,6 +417,7 @@ describe("provenance findings", () => {
       archiveSha512: args.archiveSha512 ?? null,
       trustPublisher: args.trustPublisher ?? null,
       baseline: args.baseline ?? null,
+      baselineArchiveSha512: args.baselineArchiveSha512 ?? null,
     }).filter((finding) => finding.ruleId?.startsWith("atpm."));
   }
 
@@ -498,7 +500,8 @@ describe("provenance findings", () => {
     const state = await verifiedFixture();
     const [finding] = findings({
       provenance: { status: "absent" },
-      baseline: version({ provenance: state }),
+      baseline: version({ declaredName: "sigstore", provenance: state }),
+      baselineArchiveSha512: SUBJECT_SHA512,
     });
     expect(finding.ruleId).toBe("atpm.trusted-publishing-lost");
     expect(finding.severity).toBe("medium");
@@ -519,7 +522,30 @@ describe("provenance findings", () => {
         },
         archiveSha512: SUBJECT_SHA512,
         declaredName: "sigstore",
-        baseline: version({ provenance: state }),
+        baseline: version({ declaredName: "sigstore", provenance: state }),
+        baselineArchiveSha512: SUBJECT_SHA512,
+      }).map((finding) => finding.ruleId),
+    ).not.toContain("atpm.trusted-publishing-lost");
+  });
+
+  test("does not trust baseline provenance copied from another artifact", async () => {
+    const state = await verifiedFixture();
+    expect(
+      findings({
+        provenance: { status: "absent" },
+        baseline: version({ declaredName: "@ebey.dev/counter", provenance: state }),
+        baselineArchiveSha512: SUBJECT_SHA512,
+      }).map((finding) => finding.ruleId),
+    ).not.toContain("atpm.trusted-publishing-lost");
+  });
+
+  test("does not trust baseline provenance without its archive digest", async () => {
+    const state = await verifiedFixture();
+    expect(
+      findings({
+        provenance: { status: "absent" },
+        baseline: version({ declaredName: "sigstore", provenance: state }),
+        baselineArchiveSha512: null,
       }).map((finding) => finding.ruleId),
     ).not.toContain("atpm.trusted-publishing-lost");
   });

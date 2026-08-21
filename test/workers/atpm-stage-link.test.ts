@@ -140,6 +140,9 @@ describe("/stage/atpm/:publisher/:rkey", () => {
     const body = await response.text();
     expect(body).toContain("no longer waiting");
     expect(body).toContain("/diff");
+    expect(body).toContain('<link rel="stylesheet" href="/stage.css">');
+    expect(body).not.toContain("<style>");
+    expect(response.headers.get("Content-Security-Policy")).toContain("style-src-elem 'self'");
   });
 
   test("refuses a publisher this deployment will not resolve", async () => {

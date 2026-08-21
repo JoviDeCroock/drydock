@@ -26,7 +26,7 @@ import { PublicDiffError } from "../../public-diff/error";
  * (`./provenance.ts`), and this record says which repository was supposed to.
  * The finding is in the disagreement.
  */
-export const ATPM_TRUST_PUBLISHER_COLLECTION = "dev.atpm.alpha.trustPublisher";
+const ATPM_TRUST_PUBLISHER_COLLECTION = "dev.atpm.alpha.trustPublisher";
 
 /**
  * Cache-identity segment for reading and validating a trusted-publisher record.

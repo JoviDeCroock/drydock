@@ -12,7 +12,9 @@
     "test/e2e-fixtures/**",
     // Lint-rule fixtures deliberately hold "bad" code to exercise the rule.
     "test/fixtures/oxlint-signals/**",
-    "test/fixtures/oxlint-boundaries/**"
+    "test/fixtures/oxlint-boundaries/**",
+    // The Worker-rendered staged-release placeholder links this static asset at runtime.
+    "public/stage.css"
   ],
   "ignoreDependencies": [
     // `cloudflare:workers` / `cloudflare:test` / `cloudflare:email` are Workers

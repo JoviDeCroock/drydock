@@ -91,7 +91,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // v7 let a staged candidate stand in the `to` slot. v8 authenticates that
   // candidate's record CID and applies the staged-only metadata invariants;
   // cached v7 reviews may have accepted an echoed CID or historical scope.
-  payloadVersion: "v8",
+  // v9 binds baseline provenance to its tarball and fails closed when a staged
+  // candidate's publisher has no currently verified handle.
+  payloadVersion: "v9",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -202,6 +204,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
               recordName: ref.name,
               trustPublisher: publisher.value,
               baseline: from,
+              baselineArchiveSha512: fromArchive?.archiveSha512 ?? null,
             })),
       ],
     } satisfies PublicDiffAcquiredSources;
@@ -444,7 +447,7 @@ async function loadTrustPublisherCached(
  * produced them. Showing both lets a reader see the agreement — or the absence
  * of one — rather than being handed a single verdict to trust.
  */
-export function describeAttestation(
+function describeAttestation(
   entry: AtpmVersion,
   publisher: AtpmTrustPublisher | null,
   archiveSha512: string | null,

@@ -33,7 +33,7 @@ const TAG_SEQUENCE = 0x30;
 /** Context-specific constructed `[3] EXPLICIT extensions` in a TBSCertificate. */
 const TAG_EXTENSIONS = 0xa3;
 
-export interface DerNode {
+interface DerNode {
   tag: number;
   /** Offset of the identifier octet. */
   start: number;
@@ -43,7 +43,7 @@ export interface DerNode {
   contentEnd: number;
 }
 
-export class DerError extends Error {
+class DerError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "DerError";
@@ -51,7 +51,7 @@ export class DerError extends Error {
 }
 
 /** Read one TLV at `offset`, bounded by `limit`. */
-export function readDer(bytes: Uint8Array, offset: number, limit = bytes.length): DerNode {
+function readDer(bytes: Uint8Array, offset: number, limit = bytes.length): DerNode {
   if (offset >= limit) throw new DerError("truncated DER value");
   const tag = bytes[offset];
   // Multi-byte tags (low five bits all set) do not appear anywhere in the
@@ -82,7 +82,7 @@ export function readDer(bytes: Uint8Array, offset: number, limit = bytes.length)
 }
 
 /** Every direct child of a constructed value, in order. */
-export function derChildren(bytes: Uint8Array, node: DerNode): DerNode[] {
+function derChildren(bytes: Uint8Array, node: DerNode): DerNode[] {
   const children: DerNode[] = [];
   let offset = node.contentStart;
   while (offset < node.contentEnd) {
@@ -98,7 +98,7 @@ function content(bytes: Uint8Array, node: DerNode): Uint8Array {
 }
 
 /** Decode an OBJECT IDENTIFIER to its dotted form. */
-export function decodeOid(bytes: Uint8Array, node: DerNode): string {
+function decodeOid(bytes: Uint8Array, node: DerNode): string {
   if (node.tag !== TAG_OID) throw new DerError("expected an OBJECT IDENTIFIER");
   const value = content(bytes, node);
   if (!value.length) throw new DerError("empty OBJECT IDENTIFIER");
@@ -161,7 +161,7 @@ export interface X509Certificate {
   extensions: Map<string, Uint8Array>;
 }
 
-export type EcCurve = "P-256" | "P-384" | "P-521";
+type EcCurve = "P-256" | "P-384" | "P-521";
 
 const EC_PUBLIC_KEY_OID = "1.2.840.10045.2.1";
 const CURVE_OIDS: Record<string, EcCurve> = {
@@ -307,7 +307,7 @@ function parseX509Time(bytes: Uint8Array, node: DerNode): Date {
  * fixed-width `r‖s` form WebCrypto requires. Returns null when the value is not
  * a well-formed signature for `curve`.
  */
-export function derEcdsaSignatureToRaw(signature: Uint8Array, curve: EcCurve): Uint8Array | null {
+function derEcdsaSignatureToRaw(signature: Uint8Array, curve: EcCurve): Uint8Array | null {
   const width = CURVE_COORDINATE_BYTES[curve];
   let node: DerNode;
   try {

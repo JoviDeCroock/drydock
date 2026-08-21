@@ -40,6 +40,8 @@ export function atpmRecordFindings(args: {
   trustPublisher: AtpmTrustPublisher | null;
   /** The version being compared against, so a lost attestation is visible. */
   baseline: AtpmVersion | null;
+  /** SHA-512 over the baseline tarball, required before its provenance can be trusted. */
+  baselineArchiveSha512?: string | null;
 }): Finding[] {
   return [
     ...digestFindings(args.entry, args.archiveSha1),
@@ -197,6 +199,7 @@ function provenanceFindings(args: {
   archiveSha512: string | null;
   trustPublisher: AtpmTrustPublisher | null;
   baseline: AtpmVersion | null;
+  baselineArchiveSha512?: string | null;
 }): Finding[] {
   const { entry, trustPublisher, baseline } = args;
   const state = entry.provenance;
@@ -229,7 +232,7 @@ function provenanceFindings(args: {
     });
   }
 
-  const lost = lostProvenanceEvidence(state, baseline);
+  const lost = lostProvenanceEvidence(state, baseline, args.baselineArchiveSha512 ?? null);
   if (lost) {
     findings.push({
       severity: "medium",
@@ -332,9 +335,18 @@ function publisherMatchFindings(
 function lostProvenanceEvidence(
   state: AtpmProvenanceState,
   baseline: AtpmVersion | null,
+  baselineArchiveSha512: string | null,
 ): string | null {
   const previous = baseline?.provenance;
-  if (previous?.status !== "verified") return null;
+  if (
+    previous?.status !== "verified" ||
+    !baseline?.declaredName ||
+    !baselineArchiveSha512 ||
+    previous.provenance.subjectName !== atpmPurl(baseline.declaredName, baseline.version) ||
+    previous.provenance.subjectSha512 !== baselineArchiveSha512.toLowerCase()
+  ) {
+    return null;
+  }
   const from = previous.provenance.sourceRepository;
   if (state.status === "absent") {
     return `previous version was built by ${from}; this version carries no attestation`;
@@ -454,7 +466,11 @@ function stagedMismatches(args: {
   const scope = scopeOf(staged.declaredName);
   if (!scope) {
     mismatches.push(`staged name ${staged.declaredName} is not a scoped atpm package name`);
-  } else if (args.verifiedHandle && scope !== args.verifiedHandle) {
+  } else if (!args.verifiedHandle) {
+    mismatches.push(
+      `staged scope @${scope} cannot be verified because the publisher has no handle`,
+    );
+  } else if (scope !== args.verifiedHandle) {
     // atpm's own stage endpoint rejects a scope that is not the publishing
     // account's handle, so a candidate that carries someone else's scope could
     // not have been staged through it.
