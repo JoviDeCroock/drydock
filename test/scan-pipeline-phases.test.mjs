@@ -759,14 +759,14 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,
       riskSummary: scoreRisk(findings.annotatedFindings, disabledAi),
       releaseConsistency: noneConsistency,
+      intentEnvelope: absentIntentEnvelope,
     });
 
     const persistArg = dbMock.persistScan.mock.calls[0][1];
@@ -790,14 +790,14 @@ describe("persistResults", () => {
       db: {},
       session: { userId: "user-1" },
       adapter,
-      adapterInput: { stageId: "stage-1" },
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      resolved,
+      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
       diff,
       findings,
       aiFindings: disabledAi,
       riskSummary: scoreRisk(findings.annotatedFindings, disabledAi),
       releaseConsistency: noneConsistency,
+      intentEnvelope: absentIntentEnvelope,
     });
 
     const persistArg = dbMock.persistScan.mock.calls[0][1];
