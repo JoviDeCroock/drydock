@@ -12,6 +12,7 @@ import {
   type DiffFinding,
   type SeverityGroup,
 } from "./diff-annotations";
+import { isAnnotationScrollTarget } from "./diff-scroll";
 import { Muted } from "./Typography";
 import { cn } from "./cn";
 
@@ -92,7 +93,12 @@ export function AnnotationRows({
   return (
     <>
       {findings.map((finding) => (
-        <tr key={finding.id} data-diff-scroll-target={scrollTarget ? "true" : undefined}>
+        <tr
+          key={finding.id}
+          data-diff-scroll-target={
+            isAnnotationScrollTarget(scrollTarget, finding) ? "true" : undefined
+          }
+        >
           <td colSpan={colSpan} class="p-0">
             <FindingAnnotationBody finding={finding} />
           </td>
