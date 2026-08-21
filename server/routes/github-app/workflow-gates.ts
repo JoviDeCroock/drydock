@@ -169,7 +169,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // enrolled members step up and others decide as before. This runs only after
   // the decision is confirmed actionable above, so a maintainer is never
   // prompted for a code (or blocked for enrollment) on a decision that would 409
-  // anyway. (The staged-publish decision in scans.ts is an audit record only —
+  // anyway. (The staged-publish decision in scans/decisions.ts is an audit record only —
   // it never publishes or cancels anything — and deliberately never requires
   // this.)
   let twoFactorVerified = false;

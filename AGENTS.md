@@ -3,7 +3,7 @@
 ## Layout
 
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
-  - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
+  - `routes/scans/` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`. Split by what the caller is doing with a scan: `lifecycle` / `decisions` / `sharing` / `compare`, mounted by `index.ts`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
   - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
