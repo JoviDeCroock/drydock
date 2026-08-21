@@ -115,13 +115,18 @@ export async function resolveNpmReleaseOutcomes(
     reminded: 0,
   };
 
-  const currentStages = new Map(
-    input.stagedItems?.flatMap((item) =>
-      item.packageName && item.version
-        ? [[releaseCoordinateKey(item.packageName, item.version), item] as const]
-        : [],
-    ),
-  );
+  // npm returns the staged listing newest-first. Preserve the first stage for
+  // each coordinate so an older duplicate later in the response cannot retire
+  // the current incarnation or make its historical scan eligible again.
+  const currentStages = new Map<
+    string,
+    NonNullable<ResolveReleaseOutcomesInput["stagedItems"]>[number]
+  >();
+  for (const item of input.stagedItems ?? []) {
+    if (!item.packageName || !item.version) continue;
+    const key = releaseCoordinateKey(item.packageName, item.version);
+    if (!currentStages.has(key)) currentStages.set(key, item);
+  }
   if (currentStages.size) {
     await supersedeRegistryReleaseIncarnations(db, {
       organizationId,

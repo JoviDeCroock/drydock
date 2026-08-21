@@ -500,6 +500,32 @@ describe("registry version status resolution", () => {
     expect((await readScan(newer.scanId)).registryVersionStatus).toBe("published");
   });
 
+  test("keeps the first newest-first stage when the listing repeats release coordinates", async () => {
+    const org = await seedOrg();
+    const older = await seedCompletedScan(org, { stageId: "stage-original" });
+    const newer = await seedCompletedScan(org, { stageId: "stage-restaged" });
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      stagedItems: [
+        { id: newer.stageId, packageName: PACKAGE, version: VERSION },
+        { id: older.stageId, packageName: PACKAGE, version: VERSION },
+      ],
+    });
+
+    expect(result).toMatchObject({ checked: 1, resolved: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+    const newestScan = await readScan(newer.scanId);
+    expect(newestScan.registryStatusSupersededAt).toBeNull();
+    expect(newestScan.registryVersionStatus).toBe("published");
+  });
+
   test("exposes supersession in scan lists and refuses decisions on the obsolete stage", async () => {
     const org = await seedOrg();
     const older = await seedCompletedScan(org, { stageId: "stage-original" });

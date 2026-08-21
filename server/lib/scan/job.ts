@@ -101,7 +101,10 @@ export async function executeScanJob(
       message.scanId,
       message.organizationId,
     );
-    if (releaseIdentity?.registryUrl && npmConnection.registryUrl !== releaseIdentity.registryUrl) {
+    if (!releaseIdentity?.registryUrl) {
+      throw new Error("The queued scan is missing its captured npm registry.");
+    }
+    if (npmConnection.registryUrl !== releaseIdentity.registryUrl) {
       throw new Error("The organization npm registry changed after this scan was queued.");
     }
 
@@ -118,7 +121,7 @@ export async function executeScanJob(
         maxFiles: message.maxFiles,
         organizationId: message.organizationId,
         source: message.source ?? "manual",
-        registryUrl: releaseIdentity?.registryUrl ?? null,
+        registryUrl: releaseIdentity.registryUrl,
       },
     );
     emitOperationalEvent("info", "scan.job.completed", {
@@ -323,6 +326,14 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "staged_tarball_unavailable",
       message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    };
+  }
+  if (message.includes("queued scan is missing its captured npm registry")) {
+    return {
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
       retryable: false,
     };
   }
