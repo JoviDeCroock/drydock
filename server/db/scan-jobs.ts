@@ -1,0 +1,193 @@
+/**
+ * Scan job lifecycle.
+ *
+ * Creating, claiming, failing and discarding scan rows — everything that moves
+ * a scan between pending/running/failed without writing results. Ownership is
+ * organization-scoped on every statement; a scan is only ever claimed by the
+ * organization that created it.
+ */
+import { and, eq, inArray } from "drizzle-orm";
+import { deleteScanArtifacts } from "../lib/scan/artifacts";
+import type { AppDb } from "./client";
+import { chunkForD1 } from "./d1-chunk";
+import { getScan } from "./scan-detail";
+import { scans } from "./schema";
+
+export interface CreateScanJobInput {
+  id: string;
+  stageId: string;
+  organizationId: string;
+  ownerUserId: string;
+  source?: ScanSource;
+  /** Links a workflow-gate review scan back to its gate. */
+  gateId?: string | null;
+  /**
+   * Package identity known before the tarball is inspected (from the staged
+   * publishes listing or the gate bundle). Lets failed scans — including ones
+   * whose tarball never parsed — still carry a display label; the pipeline
+   * overwrites both with tarball-derived values when it completes.
+   */
+  packageName?: string | null;
+  stagedVersion?: string | null;
+}
+
+const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
+export type ScanSource = (typeof SCAN_SOURCES)[number];
+
+export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
+  const now = new Date();
+  await db.insert(scans).values({
+    id: input.id,
+    stageId: input.stageId,
+    organizationId: input.organizationId,
+    ownerUserId: input.ownerUserId,
+    gateId: input.gateId ?? null,
+    packageName: input.packageName ?? null,
+    stagedVersion: input.stagedVersion ?? null,
+    risk: "unknown",
+    status: "pending",
+    source: input.source ?? "manual",
+    createdAt: now,
+    updatedAt: now,
+  });
+  return getScan(db, input.id, input.organizationId);
+}
+
+export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {
+  await db
+    .delete(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "pending"),
+      ),
+    );
+}
+
+export type DeleteFailedScanResult =
+  | { outcome: "deleted"; source: string }
+  | { outcome: "not_found" }
+  | { outcome: "not_failed" };
+
+/**
+ * Delete one user-visible failed scan. The status predicate belongs on the
+ * mutation itself so a stale client can never delete a scan that is still
+ * running or has since completed.
+ */
+export async function deleteFailedScan(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+): Promise<DeleteFailedScanResult> {
+  const deleted = await db
+    .delete(scans)
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.status, "failed"),
+      ),
+    )
+    .returning({ source: scans.source });
+  if (deleted[0]) return { outcome: "deleted", source: deleted[0].source };
+
+  const [existing] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return existing ? { outcome: "not_failed" } : { outcome: "not_found" };
+}
+
+export async function listExistingScanStageIds(
+  db: AppDb,
+  organizationId: string,
+  stageIds: string[],
+) {
+  if (!stageIds.length) return new Set<string>();
+  // Discovery passes every staged publish it saw, which is unbounded; each id
+  // is one bound parameter, so chunk below D1's cap (reserving a slot for the
+  // organizationId parameter) or the sweep throws "too many SQL variables"
+  // once an org stages ~100 items.
+  const known = new Set<string>();
+  for (const chunk of chunkForD1([...new Set(stageIds)], 1, 1)) {
+    const rows = await db
+      .select({ stageId: scans.stageId })
+      .from(scans)
+      .where(and(inArray(scans.stageId, chunk), eq(scans.organizationId, organizationId)));
+    for (const row of rows) known.add(row.stageId);
+  }
+  return known;
+}
+
+export const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
+
+export async function claimScanForRun(db: AppDb, scanId: string, organizationId: string) {
+  const now = new Date();
+  const claimed = await db
+    .update(scans)
+    .set({ status: "running", startedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    )
+    .returning({ id: scans.id, status: scans.status });
+  return claimed.length > 0;
+}
+
+export async function markScanFailed(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  error: { message: string; code?: string; detail?: string },
+) {
+  await db
+    .update(scans)
+    .set({
+      status: "failed",
+      risk: "unknown",
+      errorJson: error,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        inArray(scans.status, [...NON_TERMINAL_STATUSES]),
+      ),
+    );
+}
+
+export async function discardScanAttempt(db: AppDb, scanId: string, organizationId: string) {
+  await db.delete(scans).where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)));
+}
+
+/**
+ * Remove every scan attached to a gate. Used to discard a partially-completed
+ * review batch before it is re-run, so a retry does not leave orphaned
+ * per-package scans behind (cascades to scan_files / scan_findings). Safe only
+ * once the caller holds the gate's review claim and no representative scan is
+ * attached. A prior attempt may have completed some packages and written their
+ * R2 artifacts, so pass the ARTIFACTS bucket to tear those down too — the scan
+ * ids are read before the D1 delete so the per-scan artifact prefixes are known.
+ */
+export async function discardGateScans(
+  db: AppDb,
+  gateId: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+) {
+  const condition = and(eq(scans.gateId, gateId), eq(scans.organizationId, organizationId));
+  const discarded = artifactBucket
+    ? await db.select({ id: scans.id }).from(scans).where(condition)
+    : [];
+  await db.delete(scans).where(condition);
+  await Promise.all(
+    discarded.map(({ id }) => deleteScanArtifacts(artifactBucket, organizationId, id)),
+  );
+}
