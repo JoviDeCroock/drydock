@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
 import { recordProductEvent } from "../lib/platform/analytics";
@@ -233,7 +233,7 @@ function recordPublicDiffView(
  * self-describing, and the review itself stays one surface rather than two.
  */
 publicDiffRoutes.get("/atpm-stage", async (c) => {
-  const limited = await enforcePublicRateLimit(c, "versions", 30);
+  const limited = await enforcePublicRateLimit(c, "stage-link", 30);
   if (limited) return limited;
 
   const publisher = c.req.query("publisher")?.trim() ?? "";
@@ -242,16 +242,51 @@ publicDiffRoutes.get("/atpm-stage", async (c) => {
     return c.json({ error: "publisher and rkey are required" }, 400);
   }
 
+  const wantsHtml = c.req.header("accept")?.includes("text/html") ?? false;
+  c.header("Vary", "Accept");
   try {
     const resolved = await resolveAtpmStagedReview(c.env, workerExecutionContext(c.executionCtx), {
       publisher,
       rkey,
     });
+    if (wantsHtml) {
+      // Temporary candidates are mutable and short-lived. A permanent redirect
+      // would let a browser retain a stale record revision after it is replaced.
+      return c.redirect(new URL(resolved.reviewPath, canonicalOrigin(c)).toString(), 302);
+    }
     return c.json(resolved);
   } catch (err) {
+    if (wantsHtml) {
+      const status = err instanceof PublicDiffError ? err.status : 502;
+      const message =
+        err instanceof PublicDiffError ? err.message : "could not read that staged release";
+      return c.html(stagePlaceholder(message, status), status === 404 ? 404 : 502);
+    }
     return publicDiffErrorResponse(c, err);
   }
 });
+
+function stagePlaceholder(message: string, status: number): string {
+  const headline =
+    status === 404 ? "That staged release is no longer waiting" : "Could not read that release";
+  const detail =
+    status === 404
+      ? "atpm removes a staged record once it is approved or withdrawn, so this link stops resolving as soon as the release is published. If it was published, the release itself can still be diffed."
+      : escapeHtml(message);
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(headline)} · Drydock</title><meta name="robots" content="noindex"></head>
+<body><main><h1>${escapeHtml(headline)}</h1><p>${detail}</p>
+<p><a href="/diff">Diff a published release</a></p></main></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
+  );
+}
 
 publicDiffRoutes.get("/versions", async (c) => {
   const limited = await enforcePublicRateLimit(c, "versions", 30);

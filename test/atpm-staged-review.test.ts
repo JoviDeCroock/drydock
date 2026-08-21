@@ -14,7 +14,11 @@ import {
   atpmRecordCid,
   type AtpmStagedVersion,
 } from "../server/lib/ecosystems/atpm/stage-record";
-import type { AtpmPackage, AtpmVersion } from "../server/lib/ecosystems/atpm/record";
+import {
+  parseAtpmPackageRecord,
+  type AtpmPackage,
+  type AtpmVersion,
+} from "../server/lib/ecosystems/atpm/record";
 import { atpmStagedFindings } from "../server/lib/ecosystems/atpm/findings";
 import { atpmPurl } from "../server/lib/ecosystems/atpm/provenance";
 import { diffRefLabel } from "../src/lib/pkg-pr-new";
@@ -391,6 +395,18 @@ describe("selectBaselineVersion", () => {
       selectBaselineVersion(published(["0.0.14", "0.0.15"], { latest: "0.0.14" }), {
         version: "0.0.16",
         tag: "latest",
+      }),
+    ).toBe("0.0.14");
+  });
+
+  test("uses a published __proto__ tag rather than falling back by semver", () => {
+    const tags = JSON.parse('{"__proto__":"0.0.14"}') as Record<string, string>;
+    const record = parseAtpmPackageRecord(packageRecord(["0.0.14", "0.0.15"], tags));
+
+    expect(
+      selectBaselineVersion(record!, {
+        version: "0.0.16",
+        tag: "__proto__",
       }),
     ).toBe("0.0.14");
   });

@@ -214,16 +214,6 @@ export type AnalyticsEvent =
       cache: string;
       risk: string;
       durationMs: number;
-    }
-  | {
-      name: "atpm_stage_link.resolved";
-      ecosystem: string;
-      /**
-       * Public package name, already in the request URL. This event is how the
-       * pre-publish link is measured at all: it is anonymous by construction,
-       * so there is no session to attribute a visit to.
-       */
-      packageName: string;
     };
 
 /**
@@ -245,7 +235,6 @@ export const ANALYTICS_EVENT_NAMES = [
   "ai_review.decided",
   "npm_connection.validated",
   "public_diff.viewed",
-  "atpm_stage_link.resolved",
   "user.signed_up",
   "organization.created",
   "integration.connected",
@@ -398,7 +387,5 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [event.packageName, event.cache, event.risk],
         [event.durationMs],
       );
-    case "atpm_stage_link.resolved":
-      return base("", event.ecosystem, [event.packageName], [1]);
   }
 }

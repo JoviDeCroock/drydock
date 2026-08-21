@@ -195,6 +195,17 @@ describe("parseAtpmPackageRecord", () => {
     expect(JSON.stringify(parsed)).not.toContain("yyyy");
   });
 
+  test("preserves dist-tags named __proto__ without changing the tag map prototype", () => {
+    const record = JSON.parse(JSON.stringify(RECORD)) as typeof RECORD;
+    record.tags = JSON.parse('{"__proto__":"0.0.15"}') as typeof RECORD.tags;
+
+    const parsed = parseAtpmPackageRecord(record);
+
+    expect(Object.getPrototypeOf(parsed?.tags)).toBeNull();
+    expect(Object.keys(parsed?.tags ?? {})).toEqual(["__proto__"]);
+    expect(parsed?.tags["__proto__"]).toBe("0.0.15");
+  });
+
   test("drops unusable version entries without hiding the rest of the package", () => {
     const parsed = parseAtpmPackageRecord({
       ...RECORD,

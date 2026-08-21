@@ -64,14 +64,14 @@ A `dev.atpm.alpha.stage` record is a release candidate: uploaded, not yet publis
 ### The link
 
 ```
-https://drydock.org/stage/atpm/@handle.example/<rkey>
+https://drydock.org/api/public/v1/package-diff/atpm-stage?publisher=@handle.example&rkey=<rkey>
 ```
 
 That is what atpm's staged dashboard puts beside a candidate, before anyone clicks publish. The contract is one-directional on purpose: atpm can write the URL from what it already has — the publishing account and the record key of the record it just created — with no API call, no id exchange, and no registration. Everything that needs resolving happens on Drydock's side, and the visitor lands on the ordinary `/diff` page for the result.
 
-No account, on either side. A staged candidate is public data and the review is a deterministic diff of public bytes; a sign-in there would ask a maintainer to open an account with a third party to read something they could already fetch themselves, at the one moment the review is worth reading. It is the third anonymous surface alongside `/api/public/v1/package-diff` and `/public/reports/*`: IP rate-limited, nothing persisted, no session read or created.
+No account, on either side. A staged candidate is public data and the review is a deterministic diff of public bytes; a sign-in there would ask a maintainer to open an account with a third party to read something they could already fetch themselves, at the one moment the review is worth reading. The link stays inside the existing anonymous `/api/public/v1/package-diff` surface: IP rate-limited, no staged record or link resolution is persisted, and no session is read or created. Once the browser reaches the ordinary `/diff` review, its existing aggregate analytics may record the public package name but nothing about the visitor, as disclosed in [`security-model.md`](./security-model.md).
 
-`GET /api/public/v1/package-diff/atpm-stage?publisher=&rkey=` is the same resolution as JSON, for a caller that wants the review URL and the resolved baseline without following a redirect.
+The endpoint uses content negotiation: a browser navigation (`Accept: text/html`) redirects to the review, while an API request receives the review URL and resolved baseline as JSON.
 
 A link stops resolving once the candidate is approved — atpm deletes the record then — so that 404 is the expected end state of every one of these links rather than a broken one, and the page says so.
 

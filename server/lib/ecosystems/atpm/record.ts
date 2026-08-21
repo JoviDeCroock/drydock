@@ -36,7 +36,7 @@ const ATPM_PACKAGE_VERSION_TYPE = `${ATPM_PACKAGE_COLLECTION}#package`;
  * metadata checks change, so a cached diff computed under the old rules cannot
  * be served.
  */
-export const ATPM_RULES_VERSION = "12";
+export const ATPM_RULES_VERSION = "13";
 
 const RECORD_TIMEOUT_MS = 10_000;
 
@@ -224,7 +224,10 @@ function reduceAtpmPackageRecord(
     if (parsed.attestation !== null) attestations.set(parsed.version.version, parsed.attestation);
   }
 
-  const tags: Record<string, string> = {};
+  // Dist-tags are attacker-controlled npm tag names. A normal object would
+  // interpret `__proto__` as its legacy prototype setter and silently drop a
+  // valid tag, which can change staged-review baseline selection.
+  const tags = Object.create(null) as Record<string, string>;
   for (const [tag, target] of Object.entries(record.tags)) {
     if (typeof target === "string" && target) tags[tag] = target;
   }

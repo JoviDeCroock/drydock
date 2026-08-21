@@ -83,11 +83,22 @@ async function anonymousGet(path: string): Promise<Response> {
   return anonymousGetWithEnv(path, env);
 }
 
-async function anonymousGetWithEnv(path: string, requestEnv: Cloudflare.Env): Promise<Response> {
+async function anonymousNavigate(path: string): Promise<Response> {
+  return anonymousGetWithEnv(path, env, { accept: "text/html" });
+}
+
+async function anonymousGetWithEnv(
+  path: string,
+  requestEnv: Cloudflare.Env,
+  headers: Record<string, string> = {},
+): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(
     new Request(`https://drydock.org${path}`, {
-      headers: { "cf-connecting-ip": `203.0.113.${Math.floor(Math.random() * 200) + 1}` },
+      headers: {
+        "cf-connecting-ip": `203.0.113.${Math.floor(Math.random() * 200) + 1}`,
+        ...headers,
+      },
     }),
     requestEnv,
     ctx,
@@ -96,15 +107,18 @@ async function anonymousGetWithEnv(path: string, requestEnv: Cloudflare.Env): Pr
   return response;
 }
 
-describe("/stage/atpm/:publisher/:rkey", () => {
+describe("/api/public/v1/package-diff/atpm-stage", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   test("resolves to the review with no session at all", async () => {
     // The whole premise of this route: a maintainer looking at atpm's staged
     // dashboard clicks through to the review without holding a Drydock account.
     stubNetwork();
-    const response = await anonymousGet(`/stage/atpm/@ebey.dev/${RKEY}`);
+    const response = await anonymousNavigate(
+      `/api/public/v1/package-diff/atpm-stage?publisher=@ebey.dev&rkey=${RKEY}`,
+    );
     expect(response.status).toBe(302);
+    expect(response.headers.get("vary")).toContain("Accept");
     // Built against the deployment's canonical origin rather than the request
     // host, so a forged Host header cannot bend the destination.
     expect(new URL(response.headers.get("location")!).pathname).toBe(
@@ -115,17 +129,23 @@ describe("/stage/atpm/:publisher/:rkey", () => {
   test("is disabled with the rest of public diff on custom-registry deployments", async () => {
     const network = vi.fn();
     vi.stubGlobal("fetch", network);
-    const response = await anonymousGetWithEnv(`/stage/atpm/@ebey.dev/${RKEY}`, {
-      ...env,
-      NPM_REGISTRY: "https://registry.example.test",
-    });
+    const response = await anonymousGetWithEnv(
+      `/api/public/v1/package-diff/atpm-stage?publisher=@ebey.dev&rkey=${RKEY}`,
+      {
+        ...env,
+        NPM_REGISTRY: "https://registry.example.test",
+      },
+      { accept: "text/html" },
+    );
     expect(response.status).toBe(404);
     expect(network).not.toHaveBeenCalled();
   });
 
   test("does not send the visitor to a login", async () => {
     stubNetwork();
-    const response = await anonymousGet(`/stage/atpm/${DID}/${RKEY}`);
+    const response = await anonymousNavigate(
+      `/api/public/v1/package-diff/atpm-stage?publisher=${DID}&rkey=${RKEY}`,
+    );
     expect(response.headers.get("location")).not.toContain("/login");
     expect(response.status).not.toBe(401);
     expect(response.status).not.toBe(403);
@@ -135,18 +155,21 @@ describe("/stage/atpm/:publisher/:rkey", () => {
     // atpm deletes the staged record on approval, so this is where every one of
     // these links ends up — it should read as an outcome, not a broken link.
     stubNetwork({ staged: null });
-    const response = await anonymousGet(`/stage/atpm/@ebey.dev/${RKEY}`);
+    const response = await anonymousNavigate(
+      `/api/public/v1/package-diff/atpm-stage?publisher=@ebey.dev&rkey=${RKEY}`,
+    );
     expect(response.status).toBe(404);
     const body = await response.text();
     expect(body).toContain("no longer waiting");
     expect(body).toContain("/diff");
-    expect(body).toContain('<link rel="stylesheet" href="/stage.css">');
     expect(body).not.toContain("<style>");
-    expect(response.headers.get("Content-Security-Policy")).toContain("style-src-elem 'self'");
+    expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
   });
 
   test("refuses a publisher this deployment will not resolve", async () => {
-    const response = await anonymousGet(`/stage/atpm/@localhost/${RKEY}`);
+    const response = await anonymousNavigate(
+      `/api/public/v1/package-diff/atpm-stage?publisher=@localhost&rkey=${RKEY}`,
+    );
     expect(response.status).toBe(502);
   });
 

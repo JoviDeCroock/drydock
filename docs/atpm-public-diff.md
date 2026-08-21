@@ -96,7 +96,7 @@ Linking a value does not vouch for it. Almost nothing here is signed — a publi
 - **No package-only `/diff/atpm/<name>` form.** Nothing links it.
 - **No approval, and no gate.** Drydock reviews staged candidates and stops there; approving is a write to the publisher's own repository, done in atpm.
 
-Staged candidates are diffed on this same surface: `/stage/atpm/<publisher>/<rkey>` redirects to an ordinary `/diff` URL whose `to` version names the staged record, so a pre-publish review is anonymous, shareable, and identical to a published one. See [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
+Staged candidates are diffed on this same surface: browser navigation to `/api/public/v1/package-diff/atpm-stage?publisher=<publisher>&rkey=<rkey>` redirects to an ordinary `/diff` URL whose `to` version names the staged record, so a pre-publish review is anonymous, shareable, and identical to a published one. See [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
 ## Records for reference
 
