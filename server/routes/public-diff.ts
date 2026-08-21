@@ -1,6 +1,5 @@
 import { Hono, type Context } from "hono";
-import { createDb } from "../db/client";
-import { enforceRateLimit, RateLimitError } from "../db/rate-limit";
+import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { rateLimitResponse } from "../lib/platform/http";
@@ -73,7 +72,7 @@ async function enforcePublicRateLimit(
   limit: number,
 ): Promise<Response | null> {
   try {
-    await enforceRateLimit(createDb(c.env.DB), {
+    await enforceRateLimit(c.env, {
       key: `public-diff:${bucket}:${clientIp(c)}`,
       limit,
       windowMs: 60 * 1000,

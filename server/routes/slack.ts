@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   type SlackConnection,
   deleteSlackConnection,
@@ -67,7 +67,7 @@ slackRoutes.post("/connect", async (c) => {
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `slack:connect:${organizationId}`,
       limit: 20,
       windowMs: 60 * 60 * 1000,
@@ -161,7 +161,7 @@ slackRoutes.get("/channels", async (c) => {
   }
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `slack:channels:${organizationId}`,
       limit: 30,
       windowMs: 60 * 1000,
@@ -269,7 +269,7 @@ slackRoutes.post("/test", async (c) => {
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `slack:test:${organizationId}`,
       limit: 10,
       windowMs: 60 * 60 * 1000,

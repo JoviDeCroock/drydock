@@ -142,6 +142,29 @@ async function writeWranglerConfig() {
         binding: "COMPARE_CACHE",
         id: "000000000000000000000000000000e2",
       },
+      {
+        binding: "AUTH_SESSIONS",
+        id: "000000000000000000000000000000e3",
+      },
+    ],
+    // Mirrors the `ratelimits` tiers in wrangler.jsonc so the browser flows run
+    // against the native limiter rather than the D1 fallback. Keep in sync with
+    // NATIVE_TIERS in server/lib/platform/rate-limit.ts.
+    ratelimits: [
+      { name: "RATE_LIMIT_10_PER_MINUTE", namespace_id: "1001", simple: { limit: 10, period: 60 } },
+      { name: "RATE_LIMIT_20_PER_MINUTE", namespace_id: "1002", simple: { limit: 20, period: 60 } },
+      { name: "RATE_LIMIT_30_PER_MINUTE", namespace_id: "1003", simple: { limit: 30, period: 60 } },
+      { name: "RATE_LIMIT_60_PER_MINUTE", namespace_id: "1004", simple: { limit: 60, period: 60 } },
+      {
+        name: "RATE_LIMIT_120_PER_MINUTE",
+        namespace_id: "1005",
+        simple: { limit: 120, period: 60 },
+      },
+      {
+        name: "RATE_LIMIT_240_PER_MINUTE",
+        namespace_id: "1006",
+        simple: { limit: 240, period: 60 },
+      },
     ],
     vars: {
       BETTER_AUTH_SECRET: "e2e-better-auth-secret-that-is-long-enough",

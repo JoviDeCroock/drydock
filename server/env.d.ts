@@ -9,6 +9,19 @@ declare global {
       ARTIFACTS?: R2Bucket;
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
+      // Better Auth session cache. Optional: without it Better Auth reads and
+      // writes sessions in D1 only. See server/lib/auth/index.ts.
+      AUTH_SESSIONS?: KVNamespace;
+      // Native Rate Limiting bindings, one per per-minute limit the app
+      // enforces (see NATIVE_TIERS in server/lib/platform/rate-limit.ts and
+      // `ratelimits` in wrangler.jsonc). Optional: a deployment without them
+      // degrades to the D1 `rate_limits` counter.
+      RATE_LIMIT_10_PER_MINUTE?: RateLimit;
+      RATE_LIMIT_20_PER_MINUTE?: RateLimit;
+      RATE_LIMIT_30_PER_MINUTE?: RateLimit;
+      RATE_LIMIT_60_PER_MINUTE?: RateLimit;
+      RATE_LIMIT_120_PER_MINUTE?: RateLimit;
+      RATE_LIMIT_240_PER_MINUTE?: RateLimit;
       // Aggregate product counters. Optional: every call site is a no-op
       // without it, so local dev, tests, and self-hosted deployments that omit
       // the binding behave exactly as before. See

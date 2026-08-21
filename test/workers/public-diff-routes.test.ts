@@ -1,6 +1,36 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
+import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
+import {
+  computePublicDiffCacheKey,
+  writePublicDiffCache,
+  type PublicPackageDiff,
+} from "../../server/lib/public-diff";
+import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
+
+function cachedPayload(packageName: string): PublicPackageDiff {
+  const textSample = "export const value = 1;\n";
+  return {
+    ecosystem: "npm",
+    packageName,
+    fromVersion: "1.0.0",
+    toVersion: "1.0.1",
+    fromPackageJson: null,
+    toPackageJson: null,
+    fromFiles: [
+      { path: "index.js", size: textSample.length, sha256: "before", flags: [], textSample },
+    ],
+    toFiles: [
+      { path: "index.js", size: textSample.length, sha256: "after", flags: [], textSample },
+    ],
+    diff: [{ path: "index.js", status: "modified", flags: [] }],
+    packageJsonDiff: {},
+    findings: [],
+    risk: { artifactRisk: "low", releaseRisk: "low", contextRisk: "low", aiRisk: "low" },
+    cachedAt: "2026-07-15T00:00:00.000Z",
+  };
+}
 
 // The public package-diff endpoints are deliberately anonymous: they must be
 // reachable without a session (mounted before the auth middleware), validate
@@ -29,7 +59,7 @@ async function publicDiffFetchWithEnv(
   return res;
 }
 
-// server/db/rate-limit.ts counts into fixed wall-clock buckets (`Math.floor(now
+// server/lib/platform/rate-limit.ts counts into fixed wall-clock buckets (`Math.floor(now
 // / windowMs)`), so a request sequence that straddles a bucket boundary gets a
 // fresh budget partway through and the request that should have been rejected is
 // allowed instead. 31 requests against a 60s window cross a boundary roughly once
@@ -263,5 +293,99 @@ describe("public package-diff routes", () => {
     );
     expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
     expect(limited.status).toBe(429);
+  });
+
+  test("the anonymous surface reaches D1 on no request path", async () => {
+    // Rate limiting used to be an unconditional D1 upsert plus select on every
+    // request — ahead of the cache read, so a cache hit still cost two writes to
+    // the single D1 writer. The native Rate Limiting binding removed the last
+    // reason for these routes to hold a D1 handle at all; a binding that throws
+    // on use keeps it that way.
+    const forbidden = () => {
+      throw new Error("the anonymous package-diff surface must not use D1");
+    };
+    const noD1Env = {
+      ...env,
+      DB: {
+        prepare: forbidden,
+        batch: forbidden,
+        exec: forbidden,
+        dump: forbidden,
+        withSession: forbidden,
+      } as unknown as D1Database,
+    } satisfies Cloudflare.Env;
+
+    const ip = "10.99.3.1";
+    for (const path of [
+      "/api/public/v1/package-diff?package=!x!",
+      "/api/public/v1/package-diff/versions?package=!x!",
+      "/api/public/v1/package-diff/file?package=!x!&from=1.0.0&to=1.0.1&path=index.js",
+    ]) {
+      const res = await publicDiffFetchWithEnv(path, noD1Env, ip);
+      expect(res.status).toBe(400);
+    }
+
+    // Blocked requests must not fall back to D1 either.
+    const { overrides } = exhaustedRateLimitBindings();
+    const limited = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
+      { ...noD1Env, ...overrides },
+      ip,
+    );
+    expect(limited.status).toBe(429);
+
+    // The paths above all reject early. The one that matters most is the one
+    // that succeeds: serve a real cached pair and assert it renders a 200
+    // without D1 either.
+    const packageName = `no-d1-${crypto.randomUUID()}`;
+    const payload = cachedPayload(packageName);
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "npm",
+        registryUrl: PUBLIC_NPM_REGISTRY,
+        packageName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+
+    const served = await publicDiffFetchWithEnv(
+      `/api/public/v1/package-diff?package=${packageName}&from=1.0.0&to=1.0.1`,
+      noD1Env,
+      "10.99.3.2",
+    );
+    expect(served.status).toBe(200);
+    expect(await served.json()).toMatchObject({ packageName, toVersion: "1.0.1" });
+
+    const servedFile = await publicDiffFetchWithEnv(
+      `/api/public/v1/package-diff/file?package=${packageName}&from=1.0.0&to=1.0.1&path=index.js`,
+      noD1Env,
+      "10.99.3.2",
+    );
+    expect(servedFile.status).toBe(200);
+    expect(await servedFile.json()).toMatchObject({ path: "index.js" });
+  });
+
+  test("fails closed when the rate limiter itself is broken", async () => {
+    // A limiter that throws must never read as "allowed". The route has no
+    // fallback that could quietly serve the request, so the only correct answer
+    // is a 5xx.
+    const throwing = {
+      limit: () => Promise.reject(new Error("rate limiter unavailable")),
+    } as unknown as RateLimit;
+    const brokenEnv = {
+      ...env,
+      RATE_LIMIT_10_PER_MINUTE: throwing,
+    } satisfies Cloudflare.Env;
+
+    const res = await publicDiffFetchWithEnv(
+      "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1",
+      brokenEnv,
+      "10.99.4.1",
+    );
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal error" });
   });
 });

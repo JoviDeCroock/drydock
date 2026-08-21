@@ -59,8 +59,18 @@ blocks from your self-host config:
 pnpm exec wrangler queues create staged-publish-review-scans
 pnpm exec wrangler queues create staged-publish-review-scans-dlq
 pnpm exec wrangler kv namespace create COMPARE_CACHE
+pnpm exec wrangler kv namespace create AUTH_SESSIONS
 pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
 ```
+
+`AUTH_SESSIONS` is Better Auth's secondary session store: it keeps the
+per-request session lookup off D1 while D1 stays the durable record. It is
+optional — drop the binding to read and write sessions in D1 only. The
+`ratelimits` bindings in the template need no provisioning; replace each
+`namespace_id` with a positive integer that is unique across your Cloudflare
+account. Dropping them makes every rate limit fall back to the D1 `rate_limits`
+counter. See
+[`security-model.md`](./security-model.md#rate-limiting).
 
 The checked-in `wrangler.jsonc` targets the maintainers' production deployment.
 Do not deploy from it. Copy the public template to the gitignored self-host path
@@ -77,7 +87,8 @@ replace the upstream production configuration in a pull request.
 `docs/examples/wrangler.self-host.jsonc` keeps the default resource names and marks every
 account-owned value with a `REPLACE_*` placeholder. Replace at least:
 
-- `d1_databases[].database_id` and `kv_namespaces[].id`;
+- `d1_databases[].database_id`, every `kv_namespaces[].id`, and every
+  `ratelimits[].namespace_id`;
 - custom `routes` with your own custom domain, or remove `routes` and use the
   generated `workers_dev` subdomain instead;
 - the `flagship` app id to wire the `ai-review` killswitch (with Flagship wired,

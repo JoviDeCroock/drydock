@@ -1,5 +1,5 @@
 import { type AppDb } from "../../../db/client";
-import { getNpmConnection, markNpmConnectionUsed } from "../../../db/npm-connections";
+import { getNpmConnection, markNpmConnectionUsedIfStale } from "../../../db/npm-connections";
 import { base64UrlDecode, base64UrlEncode } from "../../platform/crypto-utils";
 import { errorMessage } from "../../platform/errors";
 import { reliableFetch } from "../../platform/reliable-fetch";
@@ -158,6 +158,30 @@ function splitCiphertext(value: string): { version: "v0" | "v1"; payload: string
   return { version: "v0", payload: value };
 }
 
+/**
+ * `last_used_at` is a "when did we last touch npm for this org" display field in
+ * the settings UI, not an audit record — the audit log covers that. Writing it on
+ * every token read made one D1 row the hottest write in the app: a reviewer
+ * paging through a diff can issue hundreds of `compare-file` requests a minute,
+ * each of which needs the token. Skipping the write while the stored value is
+ * still recent keeps the surfaced timestamp accurate to within this window at one
+ * write per window instead of one per request.
+ */
+export const NPM_CONNECTION_USE_DEBOUNCE_MS = 5 * 60_000;
+
+export function npmConnectionUseIsStale(
+  lastUsedAt: Date | string | number | null | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (lastUsedAt === null || lastUsedAt === undefined) return true;
+  const lastUsedMs =
+    lastUsedAt instanceof Date ? lastUsedAt.getTime() : new Date(lastUsedAt).getTime();
+  if (Number.isNaN(lastUsedMs)) return true;
+  // A timestamp in the future (clock skew, or a colo running behind the writer)
+  // is still "recent" — never spend a write to correct it.
+  return nowMs - lastUsedMs >= NPM_CONNECTION_USE_DEBOUNCE_MS;
+}
+
 export async function getOrganizationNpmToken(
   db: AppDb,
   env: Cloudflare.Env,
@@ -166,7 +190,19 @@ export async function getOrganizationNpmToken(
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) return null;
   const token = await decryptNpmToken(env, connection);
-  await markNpmConnectionUsed(db, organizationId);
+  const nowMs = Date.now();
+  // The row we just read already carries `lastUsedAt`, so the debounce costs no
+  // extra query on the common path. The update repeats the cutoff in its WHERE
+  // clause so concurrent requests that all observed a stale value cannot all
+  // mutate the row.
+  if (npmConnectionUseIsStale(connection.lastUsedAt, nowMs)) {
+    await markNpmConnectionUsedIfStale(
+      db,
+      organizationId,
+      new Date(nowMs - NPM_CONNECTION_USE_DEBOUNCE_MS),
+      new Date(nowMs),
+    );
+  }
   return { token, registryUrl: connection.registryUrl };
 }
 

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { organizationRequiresTwoFactorForReleaseDecisions } from "../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { getScan, recordGatePackageDecision } from "../db/scans";
 import { badgeLookupKey } from "../db/scan-share";
 import {
@@ -95,7 +95,7 @@ githubAppRoutes.post("/install", async (c) => {
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `github-app:install:${organizationId}`,
       limit: 20,
       windowMs: 60 * 60 * 1000,
@@ -224,7 +224,7 @@ githubAppRoutes.get("/installations/:installationRowId/repositories", async (c) 
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
     try {
-      await enforceRateLimit(db, {
+      await enforceRateLimit(c.env, {
         key: `github-app:repositories:${organizationId}:${installation.id}`,
         limit: GITHUB_APP_PROXY_LIMIT,
         windowMs: GITHUB_APP_PROXY_WINDOW_MS,
@@ -268,7 +268,7 @@ githubAppRoutes.get(
     try {
       const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
       try {
-        await enforceRateLimit(db, {
+        await enforceRateLimit(c.env, {
           key: `github-app:environments:${organizationId}:${installation.id}:${owner}/${repo}`,
           limit: GITHUB_APP_PROXY_LIMIT,
           windowMs: GITHUB_APP_PROXY_WINDOW_MS,
@@ -344,7 +344,7 @@ githubAppRoutes.post("/release-targets", async (c) => {
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `github-app:release-target:${organizationId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,
@@ -468,7 +468,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `github-app:gate-decision:${organizationId}`,
       limit: 60,
       windowMs: 60 * 1000,
@@ -550,7 +550,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   }
   if (orgRequiresTwoFactor || userEnrolledInTwoFactor) {
     try {
-      await enforceRateLimit(db, {
+      await enforceRateLimit(c.env, {
         key: `github-app:gate-decision-2fa:${session.userId}`,
         limit: 10,
         windowMs: 15 * 60 * 1000,
@@ -720,7 +720,7 @@ githubAppRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `github-app:gate-retry:${organizationId}`,
       limit: 20,
       windowMs: 60 * 1000,

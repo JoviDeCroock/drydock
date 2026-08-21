@@ -14,7 +14,7 @@
   - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
-  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability.
+  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, rate limiting, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability. `rate-limit.ts` is the only rate limiter: native Cloudflare Rate Limiting bindings first, D1 buckets only for windows the binding cannot express.
   - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
 - `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory — machine-checked by the `boundaries-local/no-cross-page-import` lint rule).
 - `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
@@ -27,6 +27,7 @@
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
 - The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
 - D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Two anonymous exceptions, both credential-free and IP rate-limited (see `docs/security-model.md`): the `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data; and `/public/reports/*`, where an unguessable share token minted by an owner/admin is the capability and the response is the scan's canonical report export and nothing else.
+- New Cloudflare bindings are hand-declared in `server/env.d.ts` (`cf-typegen` output is not used by typecheck) and must be added to `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and — when tests need them — `test/config/wrangler.jsonc`.
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
 
 ## UI and frontend conventions

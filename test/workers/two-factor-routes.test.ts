@@ -2,6 +2,8 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
 import worker from "../../server";
+import { createDb } from "../../server/db/client";
+import * as schema from "../../server/db/schema";
 
 const ORIGIN = "http://example.com";
 const PASSWORD = "correct horse battery staple";
@@ -108,6 +110,12 @@ describe("two-factor routes", () => {
       // No authenticated session until the second factor is provided.
       const pending = await call("GET", "/api/auth/get-session", { jar: freshJar });
       expect(pending.json?.user).toBeFalsy();
+
+      // The challenge lives in D1, not only in KV secondary storage: single-use
+      // consumption and the attempt counter must stay transactional even with a
+      // KV session store configured (`verification.storeInDatabase`).
+      const verifications = await createDb(env.DB).select().from(schema.verification);
+      expect(verifications.length).toBeGreaterThan(0);
 
       // Complete sign-in with a backup code.
       const backup = await call("POST", "/api/auth/two-factor/verify-backup-code", {

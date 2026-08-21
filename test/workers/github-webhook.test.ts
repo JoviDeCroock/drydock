@@ -13,6 +13,7 @@ import {
   markGateErrored,
 } from "../../server/lib/github-app/webhook-gates";
 import { githubWebhookRoutes } from "../../server/routes/github-webhooks";
+import { exhaustedRateLimitBindings, rateLimiterDouble } from "./rate-limit-doubles";
 import type { Bindings, Variables } from "../../server/types";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
@@ -91,6 +92,7 @@ interface SendArgs {
   deliveryId?: string;
   signOverride?: string | null;
   headers?: Record<string, string>;
+  envOverrides?: Partial<Bindings>;
 }
 
 async function sendWebhook(args: SendArgs) {
@@ -120,6 +122,7 @@ async function sendWebhook(args: SendArgs) {
     GITHUB_APP_WEBHOOK_SECRET: WEBHOOK_SECRET,
     GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
     BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+    ...args.envOverrides,
   };
   const app = buildApp();
   const res = await app.fetch(
@@ -153,6 +156,79 @@ function buildRequestedPayload(opts: {
 }
 
 describe("POST /webhooks/github", () => {
+  test("rate-limits per GitHub App installation, not per delivery", async () => {
+    // The old key was the first eight characters of the delivery UUID, which is
+    // effectively random per delivery and so bounded nothing. The budget must be
+    // scoped to the installation whose repositories deliver here.
+    const { overrides, limiter } = exhaustedRateLimitBindings();
+    const { res } = await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({ installationId: "9090", repositoryId: 5151 }),
+      envOverrides: overrides,
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBeTruthy();
+    expect(limiter.keys).toEqual(["github-webhook:deployment_protection_rule:9090"]);
+  });
+
+  test("gate deliveries and installation lifecycle events use separate buckets", async () => {
+    // GitHub does not retry a delivery we 429, so a rejection loses the event.
+    // A monorepo's gate fan-out must not be able to starve the (rare) lifecycle
+    // events that keep installation records accurate.
+    const { overrides, limiter } = exhaustedRateLimitBindings();
+    await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({ installationId: "9191", repositoryId: 5252 }),
+      envOverrides: overrides,
+    });
+    await sendWebhook({
+      eventName: "installation",
+      body: { action: "suspend", installation: { id: 9191 } },
+      envOverrides: overrides,
+    });
+
+    expect(limiter.keys).toEqual([
+      "github-webhook:deployment_protection_rule:9191",
+      "github-webhook:installation:9191",
+    ]);
+  });
+
+  test("the gate budget is sized above realistic monorepo fan-out", async () => {
+    // 60/min was low enough for a busy release matrix to hit, and every rejected
+    // delivery is a workflow left hanging on its gate.
+    const limiter = rateLimiterDouble(true);
+    const seen: number[] = [];
+    const counting = {
+      limit: async ({ key }: { key: string }) => {
+        seen.push(key.length);
+        return limiter.limit({ key });
+      },
+    };
+    await sendWebhook({
+      eventName: "deployment_protection_rule",
+      body: buildRequestedPayload({ installationId: "9292", repositoryId: 5353 }),
+      // Only the 240/min tier may be consulted for a gate delivery.
+      envOverrides: { RATE_LIMIT_240_PER_MINUTE: counting as never },
+    });
+
+    expect(limiter.keys).toEqual(["github-webhook:deployment_protection_rule:9292"]);
+    expect(seen).toHaveLength(1);
+  });
+
+  test("an event we do not act on is ignored before any rate-limit or D1 work", async () => {
+    const { overrides, limiter } = exhaustedRateLimitBindings();
+    const { res } = await sendWebhook({
+      eventName: "push",
+      body: { ref: "refs/heads/main" },
+      envOverrides: overrides,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, ignored: "unsupported_event" });
+    expect(limiter.keys).toEqual([]);
+  });
+
   test("creates a pending gate when the mapping resolves", async () => {
     const { organizationId, installation, releaseTarget } = await seedMappedRepository({
       installationExternalId: "1010",

@@ -7,7 +7,7 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
@@ -23,7 +23,7 @@ import {
   validateNpmCredential,
 } from "../lib/ecosystems/npm/connection";
 import { isValidStageId } from "../lib/ecosystems/npm/stage-id";
-import { errorMessage } from "../lib/platform/errors";
+import { errorMessage, UnauthorizedError } from "../lib/platform/errors";
 import { rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
@@ -66,7 +66,7 @@ npmConnectionRoutes.post("/", async (c) => {
     const { organizationId, role } = await requireActiveOrganizationContext(c, db);
     if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
     const [, encrypted] = await Promise.all([
-      enforceRateLimit(db, {
+      enforceRateLimit(c.env, {
         key: `npm-connection:save:${organizationId}`,
         limit: 20,
         windowMs: 60 * 60 * 1000,
@@ -98,6 +98,7 @@ npmConnectionRoutes.post("/", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
     }
+    if (err instanceof UnauthorizedError) throw err;
     emitOperationalEvent("error", "npm_connection.upsert_failed", {
       error: describeOperationalError(err),
     });
@@ -116,7 +117,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
     const session = c.get("authSession");
     const { organizationId, role } = await requireActiveOrganizationContext(c, db);
     if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `npm-connection:validate:${organizationId}`,
       limit: 12,
       windowMs: 10 * 60 * 1000,
@@ -173,6 +174,7 @@ npmConnectionRoutes.post("/validate", async (c) => {
     if (err instanceof RateLimitError) {
       return rateLimitResponse(c, "npm validation rate limit exceeded", err);
     }
+    if (err instanceof UnauthorizedError) throw err;
     emitOperationalEvent("error", "npm_connection.validation_failed", {
       error: describeOperationalError(err),
     });

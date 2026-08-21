@@ -10,13 +10,14 @@ import {
   deleteNotificationRecipient,
   deleteOrganization,
   ensurePersonalOrganization,
+  getUserContact,
   isOrganizationOwner,
   listNotificationRecipients,
   listUserOrganizations,
   renameOrganization,
   setRequireTwoFactorForReleaseDecisions,
 } from "../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../db/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/notify/email";
 import { rateLimitResponse } from "../lib/platform/http";
@@ -35,7 +36,9 @@ export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Var
 organizationsRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const session = c.get("authSession");
-  await ensurePersonalOrganization(db, session);
+  if (!(await ensurePersonalOrganization(db, session))) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
   const organizations = await listUserOrganizations(db, session.userId);
   return c.json({ organizations });
 });
@@ -49,7 +52,10 @@ organizationsRoutes.post("/", async (c) => {
   try {
     const db = createDb(c.env.DB);
     const session = c.get("authSession");
-    await enforceRateLimit(db, {
+    if (!(await getUserContact(db, session.userId))) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    await enforceRateLimit(c.env, {
       key: `organizations:create:${session.userId}`,
       limit: 10,
       windowMs: 60 * 60 * 1000,
@@ -129,7 +135,7 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
   if (!owner) return c.json({ error: "not found" }, 404);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `organizations:release-two-factor:${session.userId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,
@@ -195,7 +201,7 @@ organizationsRoutes.delete("/:id", async (c) => {
   }
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `organizations:delete:${session.userId}`,
       limit: 10,
       windowMs: 60 * 60 * 1000,
@@ -237,7 +243,7 @@ organizationsRoutes.post("/:id/notification-recipients", async (c) => {
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
   try {
-    await enforceRateLimit(db, {
+    await enforceRateLimit(c.env, {
       key: `organizations:recipients:add:${session.userId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,
