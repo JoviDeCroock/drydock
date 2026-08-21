@@ -358,7 +358,6 @@ function clampString(value: unknown, max: number): unknown {
 
 export type AiReviewSubmission = z.infer<typeof aiReviewSubmissionSchema>;
 export type AiReviewSubmissionFinding = z.infer<typeof aiFindingSchema>;
-export type AiReviewSubmissionComment = z.infer<typeof aiCommentSchema>;
 
 const SEVERITY_RANK: Record<AiReviewSubmissionFinding["severity"], number> = {
   critical: 0,
