@@ -6,6 +6,7 @@ import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { PublicDiffError } from "../lib/public-diff/error";
 import { recordProductEvent } from "../lib/platform/analytics";
+import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import type { Bindings, Variables } from "../types";
 
 /**
@@ -31,6 +32,9 @@ import type { Bindings, Variables } from "../types";
 export const atpmStageLinkRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 atpmStageLinkRoutes.get("/atpm/:publisher/:rkey", async (c) => {
+  const configuredRegistry = (c.env.NPM_REGISTRY || PUBLIC_NPM_REGISTRY).replace(/\/+$/, "");
+  if (configuredRegistry !== PUBLIC_NPM_REGISTRY) return c.notFound();
+
   const db = createDb(c.env.DB);
   const ip =
     c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();

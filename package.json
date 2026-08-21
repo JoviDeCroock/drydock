@@ -43,6 +43,7 @@
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@ipld/dag-cbor": "10.0.2",
     "@preact/signals": "^2.11.1",
     "@resvg/resvg-wasm": "^2.6.2",
     "agents": "^0.20.1",
@@ -52,6 +53,7 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.2",
     "hoofd": "^1.7.3",
+    "multiformats": "14.0.5",
     "preact": "^10.29.8",
     "preact-iso": "^2.12.2",
     "qrcode": "^1.5.4",

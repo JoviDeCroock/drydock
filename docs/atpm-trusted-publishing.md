@@ -36,7 +36,7 @@ Verification is _intrinsic_ to the bundle — it does not depend on the reviewed
 Two limits, stated because they bound what a page may claim:
 
 - **The chain is pinned, not built.** A Fulcio intermediate rotation is a code change (`FULCIO_INTERMEDIATE_PEMS`), and until it lands, bundles issued under the new intermediate read as unverifiable rather than as verified.
-- **Rekor inclusion is not verified.** The transparency-log entry supplies only the signing timestamp used to evaluate the short-lived leaf's validity window, and that timestamp comes from the record. It cannot manufacture a signature — a Fulcio leaf is issued to one repository and its private key is ephemeral — so a forged timestamp buys nothing beyond skipping an expiry check. Verification is capped at the newest 64 published versions per package record and the newest 64 staged records per listing so fabricated records cannot turn one anonymous request into unbounded cryptographic work. A staged PDS page is also rejected if it exceeds the requested 100-record limit.
+- **Rekor inclusion is not verified.** The transparency-log entry supplies only the signing timestamp used to evaluate the short-lived leaf's validity window, and that timestamp comes from the record. It cannot manufacture a signature — a Fulcio leaf is issued to one repository and its private key is ephemeral — so a forged timestamp buys nothing beyond skipping an expiry check. Verification is capped at the newest 64 published versions per package record so a fabricated record cannot turn one anonymous request into unbounded cryptographic work; a staged review fetches and verifies only the one candidate its link names.
 
 ### Findings
 
@@ -87,6 +87,8 @@ Rather than a second review surface that would drift from the published one, a s
 - `staged.<rkey>.<record-cid>` in the `to` slot. The record CID is in the token because a staged record is mutable: without it, a rewritten candidate would be served from the cache entry of the bytes it replaced — on a page whose whole claim is "these are the bytes", the one kind of staleness that must not be possible. A rewritten candidate gets a different URL and the old one 404s.
 - `staged.none` in the `from` slot, for a first release with nothing published to compare against. Every file reads as added and a notice says why.
 
+Drydock does not trust the PDS merely to echo that record CID. It re-encodes the returned value as DAG-CBOR and recomputes the CID locally before the value can become a review or cache entry.
+
 Baseline selection prefers the published version behind the dist-tag the candidate would move — approving moves that tag, so it is the sharpest answer to "what changes for someone who installs this?" — then the immediate semver predecessor, then the highest published version.
 
 ### What a candidate is checked for
@@ -101,6 +103,8 @@ Plus every provenance finding above, which is where a pre-publish review earns m
 ## Host and credential policy
 
 Unchanged from the public diff, and it applies to the staged path too: `assertPublicHttpsUrl` gates every host, redirects are resolved manually and re-checked per hop, identity documents read under 256 KiB and records under 4 MiB, and nothing on this path holds a credential of any kind. See [`security-model.md`](./security-model.md).
+
+Deployments configured with a custom `NPM_REGISTRY` disable the staged link as well as the rest of the anonymous public-diff surface, before any identity or PDS fetch occurs.
 
 ## Not built
 

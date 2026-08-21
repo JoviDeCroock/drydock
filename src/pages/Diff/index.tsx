@@ -544,14 +544,18 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               {hasPreview ? "This is the review that matters." : "This diff is after the fact."}
             </h2>
             <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-              {hasPreview
-                ? "One side of this diff is a pkg.pr.new preview build that has not been " +
-                  "published yet. Drydock runs this same review automatically on staged npm " +
-                  "publishes and GitHub-gated releases — while there is still time to say no. " +
-                  "The maintainer keeps the final decision."
-                : "Both of these versions are already public. Drydock runs this same review on " +
-                  "the release candidate — an npm staged publish or a GitHub-gated release — " +
-                  "while there is still time to say no. The maintainer keeps the final decision."}
+              {isStagedReview
+                ? "This is an atpm release candidate that has not been published yet. Drydock " +
+                  "reviews the candidate's content-addressed bytes from the publisher's public " +
+                  "repository; approving or withdrawing it still happens in atpm."
+                : hasPreview
+                  ? "One side of this diff is a pkg.pr.new preview build that has not been " +
+                    "published yet. Drydock runs this same review automatically on staged npm " +
+                    "publishes and GitHub-gated releases — while there is still time to say no. " +
+                    "The maintainer keeps the final decision."
+                  : "Both of these versions are already public. Drydock runs this same review on " +
+                    "the release candidate — an npm staged publish or a GitHub-gated release — " +
+                    "while there is still time to say no. The maintainer keeps the final decision."}
             </Muted>
             <div class="flex gap-3 mt-1">
               <LinkButton href="/register">Create account</LinkButton>

@@ -1,3 +1,6 @@
+import * as dagCbor from "@ipld/dag-cbor";
+import { CID } from "multiformats/cid";
+import { sha256 } from "multiformats/hashes/sha2";
 import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
@@ -146,6 +149,7 @@ export async function parseStageRecord(
 
   const value = asObject(record.value);
   if (!value) return null;
+  await assertAtpmRecordCid(value, recordCid);
   if (value.$type !== undefined && value.$type !== ATPM_STAGE_COLLECTION) return null;
   if (!isDatetime(value.createdAt)) return null;
 
@@ -193,6 +197,88 @@ export async function parseStageRecord(
         ? ATPM_PROVENANCE_ABSENT
         : ATPM_PROVENANCE_NOT_EVALUATED,
   };
+}
+
+/**
+ * Authenticate the staged value against the CID the PDS returned for it.
+ *
+ * `getRecord` is served by the publisher's PDS, so its `cid` field is only a
+ * claim until the record value is encoded and hashed locally. The staged review
+ * URL uses this CID as its immutable revision pin and cache identity; accepting
+ * an echoed-but-unverified string would let one URL describe different values.
+ */
+export async function assertAtpmRecordCid(value: unknown, recordCid: string): Promise<void> {
+  let declared: CID;
+  try {
+    declared = CID.parse(recordCid);
+  } catch {
+    throw new PublicDiffError("staged record has an invalid content address", 502);
+  }
+  if (
+    declared.version !== 1 ||
+    declared.code !== dagCbor.code ||
+    declared.multihash.code !== sha256.code ||
+    declared.multihash.digest.length !== 32
+  ) {
+    throw new PublicDiffError("staged record has an invalid content address", 502);
+  }
+
+  let computed: CID;
+  try {
+    const bytes = dagCbor.encode(atprotoJsonToIpld(value));
+    computed = CID.createV1(dagCbor.code, await sha256.digest(bytes));
+  } catch {
+    throw new PublicDiffError("staged record cannot be content-addressed", 502);
+  }
+  if (!computed.equals(declared)) {
+    throw new PublicDiffError("staged record content address does not match its value", 502);
+  }
+}
+
+/** Compute the canonical record CID for trusted fixtures and protocol tooling. */
+export async function atpmRecordCid(value: unknown): Promise<string> {
+  const bytes = dagCbor.encode(atprotoJsonToIpld(value));
+  return CID.createV1(dagCbor.code, await sha256.digest(bytes)).toString();
+}
+
+type IpldValue =
+  | null
+  | boolean
+  | string
+  | number
+  | Uint8Array
+  | CID
+  | IpldValue[]
+  | { [key: string]: IpldValue };
+
+/** Convert AT Protocol's JSON wrappers back to the IPLD values DAG-CBOR hashes. */
+function atprotoJsonToIpld(value: unknown): IpldValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) throw new Error("AT Protocol records contain integers only");
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(atprotoJsonToIpld);
+  if (!value || typeof value !== "object") throw new Error("unsupported AT Protocol value");
+
+  const object = value as Record<string, unknown>;
+  const keys = Object.keys(object);
+  if (keys.length === 1 && typeof object.$link === "string") return CID.parse(object.$link);
+  if (keys.length === 1 && typeof object.$bytes === "string") {
+    return decodeAtprotoBytes(object.$bytes);
+  }
+
+  const converted: Record<string, IpldValue> = {};
+  for (const [key, entry] of Object.entries(object)) converted[key] = atprotoJsonToIpld(entry);
+  return converted;
+}
+
+function decodeAtprotoBytes(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 !== 0) {
+    throw new Error("invalid AT Protocol bytes");
+  }
+  const decoded = atob(value);
+  return Uint8Array.from(decoded, (char) => char.charCodeAt(0));
 }
 
 /**

@@ -9,13 +9,19 @@ import {
   isAtpmStagedVersion,
   parseAtpmStagedVersion,
 } from "../server/lib/ecosystems/atpm/stage-ref";
+import {
+  assertAtpmRecordCid,
+  atpmRecordCid,
+  type AtpmStagedVersion,
+} from "../server/lib/ecosystems/atpm/stage-record";
 import type { AtpmPackage } from "../server/lib/ecosystems/atpm/record";
+import { atpmStagedFindings } from "../server/lib/ecosystems/atpm/findings";
 import { diffRefLabel } from "../src/lib/pkg-pr-new";
 
 const DID = "did:plc:twegdcgytckr5cxm57gyruxa";
 const PDS = "https://shiitake.us-east.host.bsky.network";
 const CID = "bafkreibrz4xmz6sbraw6h2mtchh5xq7jqghrjhr3yyyub3wbyrvmyjg2bm";
-const RECORD_CID = "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi";
+const RECORD_CID = "bafyreid6s3kc6vqdqr3q32chwtumycvyd2zrzuc4p2ftcoztimngtpst6u";
 const RKEY = "3lmabcdefghij";
 
 function stageRecord(version = "0.0.16") {
@@ -120,6 +126,71 @@ describe("staged version tokens", () => {
     expect(diffRefLabel(formatAtpmStagedVersion(RKEY, RECORD_CID))).toBe("staged candidate");
     expect(diffRefLabel(ATPM_NO_BASELINE_VERSION)).toBe("no published release");
     expect(diffRefLabel("0.0.15")).toBe("0.0.15");
+  });
+});
+
+describe("staged record content address", () => {
+  test("re-derives the DAG-CBOR CID instead of trusting the PDS echo", async () => {
+    const record = stageRecord();
+    expect(await atpmRecordCid(record.value)).toBe(RECORD_CID);
+    await expect(assertAtpmRecordCid(record.value, RECORD_CID)).resolves.toBeUndefined();
+
+    await expect(
+      assertAtpmRecordCid({ ...record.value, version: "9.9.9" }, RECORD_CID),
+    ).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe("staged candidate findings", () => {
+  function staged(overrides: Partial<AtpmStagedVersion> = {}): AtpmStagedVersion {
+    return {
+      rkey: RKEY,
+      uri: `at://${DID}/dev.atpm.alpha.stage/${RKEY}`,
+      recordCid: RECORD_CID,
+      declaredName: "@ebey.dev/counter",
+      version: "0.0.16",
+      declaredManifestName: "@ebey.dev/counter",
+      declaredVersion: "0.0.16",
+      tag: "latest",
+      createdAt: "2026-08-13T06:28:24.000Z",
+      cid: CID,
+      size: 604,
+      declaredShasum: null,
+      declaredIntegrity: null,
+      declaredTarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID}`,
+      provenance: { status: "absent" },
+      ...overrides,
+    };
+  }
+
+  function metadataFindings(candidate: AtpmStagedVersion) {
+    return atpmStagedFindings({
+      staged: { ...candidate, shasum: candidate.declaredShasum },
+      manifest: { name: candidate.declaredName, version: candidate.version } as any,
+      archiveSha1: null,
+      archiveSha512: null,
+      trustPublisher: null,
+      verifiedHandle: "ebey.dev",
+    });
+  }
+
+  test("checks the staged meta name that the published projection cannot carry", () => {
+    const findings = metadataFindings(staged({ declaredManifestName: "@attacker.dev/counter" }));
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "stage.metadata-mismatch", severity: "critical" }),
+      ]),
+    );
+  });
+
+  test("checks a candidate's scope against the currently verified publisher handle", () => {
+    const findings = metadataFindings(
+      staged({
+        declaredName: "@attacker.dev/counter",
+        declaredManifestName: "@attacker.dev/counter",
+      }),
+    );
+    expect(findings[0]?.evidence).toContain("is not the publisher's handle @ebey.dev");
   });
 });
 

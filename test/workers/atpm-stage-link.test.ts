@@ -5,7 +5,7 @@ import worker from "../../server";
 const DID = "did:plc:twegdcgytckr5cxm57gyruxa";
 const PDS = "https://shiitake.us-east.host.bsky.network";
 const CID = "bafkreibrz4xmz6sbraw6h2mtchh5xq7jqghrjhr3yyyub3wbyrvmyjg2bm";
-const RECORD_CID = "bafyreih5wqzfvyjyw2djzp2zaqf2wmn3tjq4vg6nxbwjqz6c5xkxq6snqi";
+const RECORD_CID = "bafyreid6s3kc6vqdqr3q32chwtumycvyd2zrzuc4p2ftcoztimngtpst6u";
 const RKEY = "3lmabcdefghij";
 
 function stageRecord() {
@@ -80,12 +80,16 @@ function stubNetwork(options: { staged?: unknown } = {}) {
 
 /** No cookie, no Authorization header — exactly what a link click sends. */
 async function anonymousGet(path: string): Promise<Response> {
+  return anonymousGetWithEnv(path, env);
+}
+
+async function anonymousGetWithEnv(path: string, requestEnv: Cloudflare.Env): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(
     new Request(`https://drydock.org${path}`, {
       headers: { "cf-connecting-ip": `203.0.113.${Math.floor(Math.random() * 200) + 1}` },
     }),
-    env,
+    requestEnv,
     ctx,
   );
   await waitOnExecutionContext(ctx);
@@ -106,6 +110,17 @@ describe("/stage/atpm/:publisher/:rkey", () => {
     expect(new URL(response.headers.get("location")!).pathname).toBe(
       `/diff/atpm/${DID}/counter/0.0.15/staged.${RKEY}.${RECORD_CID}`,
     );
+  });
+
+  test("is disabled with the rest of public diff on custom-registry deployments", async () => {
+    const network = vi.fn();
+    vi.stubGlobal("fetch", network);
+    const response = await anonymousGetWithEnv(`/stage/atpm/@ebey.dev/${RKEY}`, {
+      ...env,
+      NPM_REGISTRY: "https://registry.example.test",
+    });
+    expect(response.status).toBe(404);
+    expect(network).not.toHaveBeenCalled();
   });
 
   test("does not send the visitor to a login", async () => {

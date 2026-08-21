@@ -1,6 +1,6 @@
 # Architecture
 
-Drydock reviews release artifacts before a maintainer approves publication. The same scan pipeline handles npm registry-staged tarballs, atpm staged records, and GitHub workflow-gated artifacts by delegating ecosystem details to package adapters.
+Drydock reviews release artifacts before a maintainer approves publication. The authenticated scan pipeline handles npm registry-staged tarballs and GitHub workflow-gated artifacts through package adapters; the anonymous public-diff pipeline reviews atpm's public published and staged records without persisting them.
 
 ## Runtime components
 
@@ -13,7 +13,7 @@ Hono Worker
   ├─ D1 persistence and R2 report/artifact storage
   ├─ Queue-backed scan/gate orchestration
   ├─ Dynamic Worker loader for untrusted archive parsing
-  ├─ npm / PyPI / VS Code / atpm adapters and workflow-gate adapters
+  ├─ npm / PyPI / VS Code / atpm adapters, plus npm / PyPI / VS Code workflow gates
   └─ constrained brokers/gateways for registry/artifact downloads
         │
         ▼

@@ -1,4 +1,4 @@
-import { assertAtpmBaselineMetadata, atpmRecordFindings } from "./findings";
+import { assertAtpmBaselineMetadata, atpmRecordFindings, atpmStagedFindings } from "./findings";
 import {
   ATPM_IDENTITY_RULES_VERSION,
   isValidAtpmPackageName,
@@ -88,9 +88,10 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // that is bound to the release. v5 added the verified build attestation. v4 carried the
   // metadata resolution's absolute expiry through every cache layer; old v3
   // values could restart their five-minute TTL when re-warmed.
-  // v7 lets a staged candidate stand in the `to` slot, which is how the
-  // anonymous staged review reuses this whole surface.
-  payloadVersion: "v7",
+  // v7 let a staged candidate stand in the `to` slot. v8 authenticates that
+  // candidate's record CID and applies the staged-only metadata invariants;
+  // cached v7 reviews may have accepted an echoed CID or historical scope.
+  payloadVersion: "v8",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -107,27 +108,34 @@ export const atpmPublicDiff: PublicDiffAdapter = {
 
   async listVersions(env, ctx, packageName) {
     const { ref, identity, pkg, cacheExpiresAt } = await loadAtpmPackage(env, ctx, packageName);
-    const { versions, suggested } = listAtpmVersions(pkg);
+    const { versions, suggested } = listAtpmVersions(requirePublishedRecord(pkg));
     return { ...canonicalNames(ref, identity), versions, suggested, cacheExpiresAt };
   },
 
   async acquire(env, ctx, input) {
+    const staged = parseAtpmStagedVersion(input.toVersion);
     const { ref, identity, pkg, cacheExpiresAt } = await loadAtpmPackage(
       env,
       ctx,
       input.packageName,
+      { allowMissingRecord: staged !== null && input.fromVersion === ATPM_NO_BASELINE_VERSION },
     );
-    const staged = parseAtpmStagedVersion(input.toVersion);
-    const to = staged
-      ? await resolveStagedEntry(identity, ref, staged)
-      : requireAtpmVersion(pkg, input.toVersion);
+    const stagedCandidate = staged ? await resolveStagedEntry(identity, ref, staged) : null;
+    const to = stagedCandidate
+      ? stagedAsVersion(stagedCandidate)
+      : requireAtpmVersion(requirePublishedRecord(pkg), input.toVersion);
     // A first release has nothing published to compare against. That is a real
     // state of the world rather than an error, so it renders as an empty left
     // side — every file added — with a notice saying why.
-    const from =
-      input.fromVersion === ATPM_NO_BASELINE_VERSION
-        ? null
-        : requireAtpmVersion(pkg, input.fromVersion);
+    let from: AtpmVersion | null;
+    if (input.fromVersion === ATPM_NO_BASELINE_VERSION) {
+      if (!stagedCandidate || (pkg && pkg.versions.length > 0)) {
+        throw new PublicDiffError("no-baseline is only valid for a first staged release", 400);
+      }
+      from = null;
+    } else {
+      from = requireAtpmVersion(requirePublishedRecord(pkg), input.fromVersion);
+    }
 
     const [fromArchive, toArchive, publisher] = await Promise.all([
       from ? downloadAtpmBlob(env, ctx, identity, from) : Promise.resolve(null),
@@ -177,15 +185,24 @@ export const atpmPublicDiff: PublicDiffAdapter = {
           stagedManifestText:
             toArchive.files.find((file) => file.path === "package.json")?.textSample ?? null,
         }),
-        ...atpmRecordFindings({
-          entry: to,
-          manifest: toArchive.packageJson ?? null,
-          archiveSha1: toArchive.archiveSha1 ?? null,
-          archiveSha512: toArchive.archiveSha512 ?? null,
-          recordName: ref.name,
-          trustPublisher: publisher.value,
-          baseline: from,
-        }),
+        ...(stagedCandidate
+          ? atpmStagedFindings({
+              staged: { ...stagedCandidate, shasum: stagedCandidate.declaredShasum },
+              manifest: toArchive.packageJson ?? null,
+              archiveSha1: toArchive.archiveSha1 ?? null,
+              archiveSha512: toArchive.archiveSha512 ?? null,
+              trustPublisher: publisher.value,
+              verifiedHandle: identity.handle,
+            })
+          : atpmRecordFindings({
+              entry: to,
+              manifest: toArchive.packageJson ?? null,
+              archiveSha1: toArchive.archiveSha1 ?? null,
+              archiveSha512: toArchive.archiveSha512 ?? null,
+              recordName: ref.name,
+              trustPublisher: publisher.value,
+              baseline: from,
+            })),
       ],
     } satisfies PublicDiffAcquiredSources;
   },
@@ -204,7 +221,7 @@ async function resolveStagedEntry(
   identity: AtpmRepoIdentity,
   ref: AtpmPackageRef,
   staged: AtpmStagedVersionRef,
-): Promise<AtpmVersion> {
+): Promise<AtpmStagedVersion> {
   const candidate = await fetchAtpmStagedVersion(identity, staged.rkey);
   if (candidate.recordCid !== staged.recordCid) {
     throw new PublicDiffError("this staged release has been replaced", 404);
@@ -214,7 +231,7 @@ async function resolveStagedEntry(
   if (recordNameOf(candidate.declaredName) !== ref.name) {
     throw new PublicDiffError("staged release is for a different package", 404);
   }
-  return stagedAsVersion(candidate);
+  return candidate;
 }
 
 function recordNameOf(packageName: string): string | null {
@@ -269,7 +286,7 @@ function reviewNotices(args: {
 interface LoadedAtpmPackage {
   ref: AtpmPackageRef;
   identity: AtpmRepoIdentity;
-  pkg: AtpmPackage;
+  pkg: AtpmPackage | null;
   cacheExpiresAt: string;
 }
 
@@ -292,18 +309,33 @@ async function loadAtpmPackage(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   packageName: string,
+  options: { allowMissingRecord?: boolean } = {},
 ): Promise<LoadedAtpmPackage> {
   const ref = parseAtpmPackageName(packageName);
   if (!ref) throw new PublicDiffError("invalid package name", 400);
 
   const identity = await resolveIdentityCached(env, ctx, ref);
-  const pkg = await fetchRecordCached(env, ctx, ref, identity.value);
+  let pkg: AtpmCacheEnvelope<AtpmPackage> | null;
+  try {
+    pkg = await fetchRecordCached(env, ctx, ref, identity.value);
+  } catch (err) {
+    if (options.allowMissingRecord && err instanceof PublicDiffError && err.status === 404) {
+      pkg = null;
+    } else {
+      throw err;
+    }
+  }
   return {
     ref,
     identity: identity.value,
-    pkg: pkg.value,
-    cacheExpiresAt: earliestExpiry(identity.expiresAt, pkg.expiresAt),
+    pkg: pkg?.value ?? null,
+    cacheExpiresAt: pkg ? earliestExpiry(identity.expiresAt, pkg.expiresAt) : identity.expiresAt,
   };
+}
+
+function requirePublishedRecord(pkg: AtpmPackage | null): AtpmPackage {
+  if (!pkg) throw new PublicDiffError("package not found", 404);
+  return pkg;
 }
 
 async function resolveIdentityCached(
