@@ -179,6 +179,12 @@ two numbers differ by design and the field is named for what it counts. (The
 attestation's `predicate.findingCount` is the other one — it is read off the
 attested document, so it always equals that document's `findings.length`.)
 
+A completed scan whose deferred AI review is still `pending` may already have a
+public capability link, but it is withheld from the discoverable threat feed and
+badge queries until that review reaches a terminal state. The public report page
+labels the deterministic-only snapshot and polls its no-store report endpoint so
+an open link replaces it when the advisory result lands.
+
 **Page one is not the whole feed.** The response carries `nextCursor` whenever
 more listings exist behind it; pass it back as `?after=<cursor>` to continue.
 `?limit=` shrinks the page (capped at 100); a malformed `after` or `limit` is
@@ -191,12 +197,13 @@ releases. A poller that reads only page one after such a burst silently misses
 them. Read until you reach a listing you have already seen, not until the first
 response ends.
 
-`listedAt` is the feed publication cursor, not necessarily the time of the
-first listing. If a listed scan's deferred AI review later reaches a terminal
-state, Drydock republishes the entry with a newer `listedAt` because its risk or
-`totalFindingCount` may have changed. That puts the update ahead of a poller's
-previous cursor; as with any feed change, a colo may continue serving its
-cached page for up to 300 seconds.
+`listedAt` is the feed publication cursor, not necessarily the time the
+maintainer requested listing. If that request happens while the deferred AI
+review is pending, the entry first becomes discoverable when the review reaches
+a terminal state, with a newer `listedAt` because its risk or
+`totalFindingCount` may have changed. That puts the completed result ahead of a
+poller's previous cursor; as with any feed change, a colo may continue serving
+its cached page for up to 300 seconds.
 
 Listing is a **second explicit opt-in** on top of sharing (the checkbox in the
 share dialog, or `POST /api/v1/scans/:id/share { "threatFeed": true|false }`):

@@ -15,6 +15,7 @@ import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typ
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
+import { PUBLIC_REPORT_POLL_INTERVAL_MS, publicReportPollDelay } from "./polling";
 
 // The canonical report export served at /public/reports/:token — the same
 // document `serializeReportExport` produces (schema drydock.report.v3).
@@ -39,6 +40,10 @@ interface PublicReport {
     contextRisk: string;
     releaseFindingCount: number;
     contextFindingCount: number;
+  } | null;
+  aiReview: {
+    status: string;
+    summary: string;
   } | null;
   diff: Array<{ path: string; status: string }> | null;
   findings: Array<{
@@ -70,12 +75,18 @@ export default function PublicReportPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let loadedOnce = false;
+    let timer: number | undefined;
     report.value = null;
     errorState.value = "none";
-    void (async () => {
-      const keyRequest = fetch("/public/attestation-key", {
-        headers: { accept: "application/json" },
-      }).catch(() => null);
+    const keyRequest = fetch("/public/attestation-key", {
+      headers: { accept: "application/json" },
+    }).catch(() => null);
+
+    const schedulePoll = () => {
+      timer = window.setTimeout(() => void loadReport(), PUBLIC_REPORT_POLL_INTERVAL_MS);
+    };
+    const loadReport = async () => {
       try {
         const res = await fetch(`/public/reports/${encodeURIComponent(token)}`, {
           headers: { accept: "application/json" },
@@ -86,20 +97,30 @@ export default function PublicReportPage() {
           return;
         }
         if (!res.ok) {
-          errorState.value = "failed";
+          if (loadedOnce) schedulePoll();
+          else errorState.value = "failed";
           return;
         }
         const data = (await res.json()) as PublicReport;
         const keyResponse = await keyRequest;
         if (!cancelled) {
+          loadedOnce = true;
+          errorState.value = "none";
           report.value = { data, attestationAvailable: keyResponse?.ok ?? false };
+          if (publicReportPollDelay(data) !== null) schedulePoll();
         }
       } catch {
-        if (!cancelled) errorState.value = "failed";
+        if (!cancelled) {
+          if (loadedOnce) schedulePoll();
+          else errorState.value = "failed";
+        }
       }
-    })();
+    };
+
+    void loadReport();
     return () => {
       cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [token]);
 
@@ -186,6 +207,13 @@ export default function PublicReportPage() {
           ) : null}
         </div>
       </header>
+
+      {data.aiReview?.status === "pending" ? (
+        <Alert tone="info">
+          Assistant review is still running. The deterministic findings are final, but the release
+          risk can still rise; this page will refresh automatically when the review reports back.
+        </Alert>
+      ) : null}
 
       <Card class="flex flex-col gap-3">
         <SectionLabel as="h2">Verdict</SectionLabel>

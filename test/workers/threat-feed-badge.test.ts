@@ -1,4 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
@@ -6,6 +7,7 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { pendingAiReview } from "../../server/lib/ai-review/types";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
@@ -78,6 +80,7 @@ async function seedCompletedScan(
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
+    aiPending?: boolean;
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -129,7 +132,7 @@ async function seedCompletedScan(
           }
         : {}),
     },
-    ai: null,
+    ai: options.aiPending ? pendingAiReview() : null,
     files: [],
     diff: [],
     findings: [],
@@ -915,6 +918,48 @@ describe("shields badge endpoint", () => {
 });
 
 describe("public threat feed", () => {
+  test("pending AI reviews stay out of the feed and badges until the review is terminal", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.0",
+      aiPending: true,
+    });
+
+    const listed = await share(app, scanId, { threatFeed: true });
+    expect(listed.share.threatFeedListedAt).not.toBeNull();
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
+      false,
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        aiStatus: "unavailable",
+        aiJson: {
+          status: "unavailable",
+          risk: "low",
+          releaseAssessment: "not_assessed",
+          summary: "Assistant review was unavailable.",
+          findings: [],
+          requiresManualReview: false,
+          model: null,
+          reviewerVersion: null,
+        },
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
+      true,
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "3.0.0 reviewed · low risk",
+    );
+  });
+
   test("sharing alone does not list; the feed opt-in does", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);

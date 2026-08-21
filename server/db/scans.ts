@@ -329,6 +329,7 @@ export interface StalledScanSweep {
 
 interface ReapedStalledScan {
   id: string;
+  stageId: string;
   organizationId: string | null;
   ownerUserId: string | null;
   source: string;
@@ -416,6 +417,7 @@ export async function failStalledScans(
         .where(and(inArray(scans.id, chunk), eq(scans.status, status), stillStalled))
         .returning({
           id: scans.id,
+          stageId: scans.stageId,
           organizationId: scans.organizationId,
           ownerUserId: scans.ownerUserId,
           source: scans.source,

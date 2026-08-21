@@ -13,6 +13,7 @@ import { createAuth, getAuthSession } from "./lib/auth";
 import { UnauthorizedError } from "./lib/platform/errors";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
+import { isEcosystemId } from "./lib/ecosystems/labels";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
@@ -585,7 +586,7 @@ async function reapStalledScans(env: Cloudflare.Env, ctx: ExecutionContext) {
       recordProductEvent(env, {
         name: "scan.failed",
         organizationId: scan.organizationId,
-        ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+        ecosystem: reapedScanEcosystem(scan.source, scan.stageId),
         source: scan.source,
         code: scan.error.code,
         durationMs: Math.max(0, Date.now() - scan.createdAt.getTime()),
@@ -649,6 +650,16 @@ async function reapStalledScans(env: Cloudflare.Env, ctx: ExecutionContext) {
       error: describeOperationalError(err),
     });
   }
+}
+
+function reapedScanEcosystem(source: string, stageId: string): string {
+  if (source !== "workflow_gate") return "npm";
+  // Workflow package scans are created as
+  // `workflow-gate:<gate id>:<ecosystem>:<package>`. They can stall before the
+  // pipeline persists its provenance snapshot, so the stage id is the only
+  // durable ecosystem identity available to the reaper.
+  const ecosystem = stageId.split(":", 4)[2];
+  return ecosystem && isEcosystemId(ecosystem) ? ecosystem : "unknown";
 }
 
 export default {

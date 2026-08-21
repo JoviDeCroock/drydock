@@ -61,15 +61,24 @@ async function ageAiReviewStart(scanId: string, minutes: number) {
     .where(eq(schema.scans.id, scanId));
 }
 
-async function newScan(owner: SeededUser, suffix: string) {
+async function newScan(
+  owner: SeededUser,
+  suffix: string,
+  options: { source?: "auto_discovery" | "workflow_gate"; ecosystem?: string } = {},
+) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
+  const source = options.source ?? "auto_discovery";
+  const stageId =
+    source === "workflow_gate"
+      ? `workflow-gate:gate-${suffix}:${options.ecosystem ?? "npm"}:pkg-${suffix}`
+      : `stage-${suffix}-${scanId.slice(-8)}`;
   await createScanJob(db, {
     id: scanId,
-    stageId: `stage-${suffix}-${scanId.slice(-8)}`,
+    stageId,
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
-    source: "auto_discovery",
+    source,
   });
   return scanId;
 }
@@ -288,6 +297,44 @@ describe("stalled scan reaper", () => {
     expect(points).toContainEqual(
       expect.objectContaining({
         blobs: expect.arrayContaining(["scan.failed", "auto_discovery", "scan_never_started"]),
+      }),
+    );
+  });
+
+  test("the scheduled reaper attributes workflow-gate failures to their ecosystem", async () => {
+    const owner = await seedUser();
+    const stranded = await newScan(owner, "pypi-gate", {
+      source: "workflow_gate",
+      ecosystem: "pypi",
+    });
+    await ageScan(stranded, 8 * 60);
+
+    const points: Array<{ blobs?: string[] }> = [];
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      {
+        scheduledTime: Date.now(),
+        cron: "*/15 * * * *",
+        noRetry() {},
+      } as unknown as ScheduledController,
+      {
+        ...env,
+        PRODUCT_ANALYTICS: { writeDataPoint: (point: { blobs?: string[] }) => points.push(point) },
+      } as unknown as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(points).toContainEqual(
+      expect.objectContaining({
+        blobs: [
+          "1",
+          "scan.failed",
+          owner.organizationId,
+          "pypi",
+          "workflow_gate",
+          "scan_never_started",
+        ],
       }),
     );
   });

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
 import {
   DEFAULT_BADGE_TAG,
@@ -319,6 +319,14 @@ const SHARED_SCAN_COLUMNS = {
   completedAt: scans.completedAt,
 } as const;
 
+// A completed scan can still have its advisory review in flight. Sharing the
+// capability URL is allowed in that state, but discoverable surfaces must not
+// advertise the deterministic-only grade as a finished review. Legacy scans
+// predate ai_status and are terminal by construction, so null remains visible.
+function hasTerminalAiReview() {
+  return or(isNull(scans.aiStatus), ne(scans.aiStatus, "pending"))!;
+}
+
 export interface ThreatFeedCursor {
   listedAtMs: number;
   scanId: string;
@@ -363,6 +371,7 @@ export async function listThreatFeedScans(
         isNotNull(scans.publicFeedListedAt),
         isNotNull(scans.publicShareToken),
         eq(scans.status, "complete"),
+        hasTerminalAiReview(),
         after
           ? or(
               sql`${scans.publicFeedListedAt} < ${after.listedAtMs}`,
@@ -437,6 +446,7 @@ export async function listBadgeCandidateScans(
         isNotNull(scans.publicShareToken),
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
+        hasTerminalAiReview(),
         ecosystemMatches,
         tagMatches,
       ),
