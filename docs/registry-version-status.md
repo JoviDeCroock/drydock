@@ -75,7 +75,13 @@ The scan captures the registry URL and immutable registry-supplied package
 coordinates separately from the inspected tarball manifest. A connection edit
 therefore cannot make an old review ask a different registry about a
 coincidentally identical name and version, and hostile package bytes cannot
-retarget the credentialed lookup. Within one registry, only
+retarget the credentialed lookup. Queued scans carry that captured registry into
+the credential broker too: if the organization's connection changes before or
+during the scan, every staged, detail, and baseline request fails closed instead
+of reviewing the same stage ID from another registry. If the best-effort
+pre-queue detail read was unavailable but the worker later recovers the stage
+record, it fills the missing control-plane coordinates and reconciles release
+ownership before persisting the completed report. Within one registry, only
 the newest scan for a package/version is eligible: duplicate manual reviews get
 one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on

@@ -7,6 +7,7 @@ import type {
   PackageAdapter,
 } from "../ecosystems/package-adapter";
 import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
+import { backfillScanRegistryReleaseIdentity } from "../../db/scans";
 import { computeIntentEnvelope, type WorkflowGateIntent } from "../intent-envelope";
 import {
   describeOperationalError,
@@ -62,7 +63,11 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const { env, executionCtx, db, session } = context;
   const adapterCtx: AdapterContext = { env, executionCtx, db, session };
   const adapterInput = adapter.parseInput(input);
-  const connectionRef: AdapterConnectionRef = { organizationId: input.organizationId };
+  const registryUrl = typeof input.registryUrl === "string" ? input.registryUrl : null;
+  const connectionRef: AdapterConnectionRef = {
+    organizationId: input.organizationId,
+    registryUrl,
+  };
   const broker = adapter.createBroker(adapterCtx, connectionRef);
   const pipelineStartedAtMs = Date.now();
 
@@ -82,7 +87,18 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterCtx,
       adapterInput,
       broker,
-      (resolved) => collectReleaseFingerprintFindings(db, identity, resolved),
+      async (resolved) => {
+        const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
+        if (input.scanId && registryUrl && registryIdentity) {
+          await backfillScanRegistryReleaseIdentity(db, {
+            scanId: input.scanId,
+            organizationId: input.organizationId,
+            registryUrl,
+            ...registryIdentity,
+          });
+        }
+        return collectReleaseFingerprintFindings(db, identity, resolved);
+      },
     );
     const aiFindings = await maybeRunAiReview({
       env,

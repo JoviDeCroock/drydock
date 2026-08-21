@@ -2,6 +2,7 @@ import { type AppDb, type WorkspaceSession, createDb } from "../../db/client";
 import { getNpmConnection, markNpmConnectionUsed } from "../../db/npm-connections";
 import {
   type ScanSource,
+  getScanReleaseIdentity,
   claimScanForRun,
   discardScanAttempt,
   markScanFailed,
@@ -95,6 +96,14 @@ export async function executeScanJob(
     if (npmConnection.validationStatus !== "valid") {
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
+    const releaseIdentity = await getScanReleaseIdentity(
+      db,
+      message.scanId,
+      message.organizationId,
+    );
+    if (releaseIdentity?.registryUrl && npmConnection.registryUrl !== releaseIdentity.registryUrl) {
+      throw new Error("The organization npm registry changed after this scan was queued.");
+    }
 
     await markNpmConnectionUsed(db, message.organizationId);
 
@@ -109,6 +118,7 @@ export async function executeScanJob(
         maxFiles: message.maxFiles,
         organizationId: message.organizationId,
         source: message.source ?? "manual",
+        registryUrl: releaseIdentity?.registryUrl ?? null,
       },
     );
     emitOperationalEvent("info", "scan.job.completed", {
@@ -313,6 +323,14 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "staged_tarball_unavailable",
       message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    };
+  }
+  if (message.includes("npm registry changed after this scan was queued")) {
+    return {
+      code: "npm_connection_changed",
+      message:
+        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
       retryable: false,
     };
   }

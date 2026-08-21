@@ -367,6 +367,36 @@ describe("ScanListModel registry status refreshes", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  test("keeps already-loaded pages during registry status refreshes", async () => {
+    vi.useFakeTimers();
+    const loadedScans = Array.from({ length: 40 }, (_, index) => ({
+      ...scanDetail(null).scan,
+      id: `scan-${index}`,
+    }));
+    const refreshedScans = loadedScans.map((scan) => ({
+      ...scan,
+      registryVersionStatus: "published",
+    }));
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ scans: refreshedScans, nextCursor: "cursor-after-refresh" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = loadedScans;
+    model.nextCursor.value = "cursor-before-refresh";
+
+    model.scheduleRegistryStatusRefreshes();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/scans?filter=all&limit=40", expect.any(Object));
+    expect(model.scans.value).toHaveLength(40);
+    expect(model.scans.value.every((scan) => scan.registryVersionStatus === "published")).toBe(
+      true,
+    );
+    expect(model.nextCursor.value).toBe("cursor-after-refresh");
+  });
+
   test("cancels pending refreshes when the model is disposed", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
