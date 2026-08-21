@@ -53,14 +53,16 @@ agreed to?" — and stays quiet when the answer is yes.
 
 Two distinctions carry most of the signal quality.
 
-**Authority vs cosmetic.** Every workflow definition carries two digests: a
-`rawDigest` over its bytes, which moves on any edit at all, and an
+**Authority vs cosmetic.** Every workflow definition carries two primary
+digests: a `rawDigest` over its bytes, which moves on any edit at all, and an
 `authorityDigest` over its projected authority, which does not move for
-comments, key reordering, or formatting. A release where raw digests moved but
-authority digests did not reports `cosmetic` and never raises a high-signal
-warning. The authority digest covers the full bounded workflow projection before
-long values are shortened for storage and display, so a change beyond a visible
-prefix cannot be mislabeled cosmetic.
+comments, key reordering, or formatting. A narrower `executionDigest` attributes
+otherwise opaque condition, dependency, and environment-mapping changes without
+persisting those values. A release where raw digests moved but authority digests
+did not reports `cosmetic` and never raises a high-signal warning. The authority
+digest covers the full bounded workflow projection before long values are
+shortened for storage and display, so a change beyond a visible prefix cannot be
+mislabeled cosmetic.
 
 **Changed vs standing.** A reference that has _always_ been mutable
 (`actions/checkout@v4`) is a standing property of this release path, not a
@@ -99,8 +101,9 @@ A snapshot records:
   head commit, ref, event, actor and triggering actor;
 - every workflow definition in the graph — the entry workflow plus every
   reusable workflow GitHub reports the run referenced, each with the sha GitHub
-  already resolved it to, and both digests;
-- triggers with their normalized branch/tag/path/type filters;
+  already resolved it to, and the raw, authority, and execution digests;
+- triggers with their normalized branch/tag/path/type filters and
+  `workflow_run` workflow selectors;
 - authority-sensitive execution controls: job and step conditions, job
   dependencies, and digests of workflow/job/step environment mappings (the
   environment values themselves are not persisted);

@@ -92,6 +92,7 @@ function normalizeWorkflowRef(value: unknown): AuthorityWorkflowRef | null {
     role,
     rawDigest: str(record.rawDigest),
     authorityDigest: str(record.authorityDigest),
+    executionDigest: str(record.executionDigest),
   };
 }
 

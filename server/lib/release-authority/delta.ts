@@ -366,6 +366,21 @@ function unexplainedAuthorityChanges(
     const before = priorByPath.get(item.path);
     if (!before || !before.authorityDigest || !item.authorityDigest) continue;
     if (before.authorityDigest === item.authorityDigest) continue;
+    // Execution controls are deliberately not persisted as values, but their
+    // dedicated digest lets us keep this signal even when another categorized
+    // change in the same workflow would otherwise make the aggregate authority
+    // digest look fully explained.
+    if (before.executionDigest !== item.executionDigest) {
+      changes.push({
+        kind: "workflow_authority_changed",
+        significance: "medium",
+        scope: item.path,
+        subject: "conditions, dependencies, or environment mappings",
+        before: before.executionDigest?.slice(0, 12) ?? "not captured",
+        after: item.executionDigest?.slice(0, 12) ?? "not captured",
+      });
+      continue;
+    }
     const explainedHere = explainedScopes.some(
       (scope) => scope === item.path || scope.startsWith(`${item.path}/`),
     );

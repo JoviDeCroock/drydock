@@ -228,6 +228,26 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(kinds(delta.changes)).not.toContain("workflow_content_changed");
   });
 
+  it("keeps an execution-control change visible beside a categorized change", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "  publish:\n    needs: build\n",
+      "  publish:\n    if: github.ref_type == 'tag'\n    needs: build\n",
+    );
+    const current = prior
+      .replace("github.ref_type == 'tag'", "always()")
+      .replace("permissions:\n  contents: read", "permissions:\n  contents: write");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "permission_widened")).toMatchObject({
+      scope: ENTRY,
+      subject: "contents",
+    });
+    expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
+      scope: ENTRY,
+      subject: "conditions, dependencies, or environment mappings",
+    });
+  });
+
   it("flags a widened permission", async () => {
     const delta = await deltaBetween(
       BASE_WORKFLOW,
@@ -352,6 +372,41 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
       before: "tags=[v*]",
       after: "(unfiltered)",
     });
+  });
+
+  it("preserves order-sensitive positive and negative trigger patterns", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      '    tags:\n      - "v*"\n',
+      '    branches:\n      - "releases/**"\n      - "!releases/**-alpha"\n',
+    );
+    const current = prior.replace(
+      '      - "releases/**"\n      - "!releases/**-alpha"\n',
+      '      - "!releases/**-alpha"\n      - "releases/**"\n',
+    );
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "trigger_filter_changed")).toMatchObject({
+      subject: "push",
+      before: "branches=[releases/**,!releases/**-alpha]",
+      after: "branches=[!releases/**-alpha,releases/**]",
+    });
+    expect(delta.requiresApproval).toBe(true);
+  });
+
+  it("flags a changed workflow_run workflow selector", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      '  push:\n    tags:\n      - "v*"\n',
+      '  workflow_run:\n    workflows: ["Trusted build"]\n    types: [completed]\n',
+    );
+    const current = prior.replace("Trusted build", "Untrusted build");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "trigger_filter_changed")).toMatchObject({
+      subject: "workflow_run",
+      before: "types=[completed];workflows=[Trusted build]",
+      after: "types=[completed];workflows=[Untrusted build]",
+    });
+    expect(delta.requiresApproval).toBe(true);
   });
 
   it("flags removing the environment boundary", async () => {

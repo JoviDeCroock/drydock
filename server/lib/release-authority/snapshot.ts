@@ -7,10 +7,13 @@
 // snapshot captures that graph so a later release can be compared against the
 // last one a maintainer approved (see `delta.ts`).
 //
-// Two digests per workflow make the comparison honest in both directions:
+// Two primary digests per workflow make the comparison honest in both directions:
 //   - `rawDigest` changes on any edit at all, including comments and reordering;
 //   - `authorityDigest` covers only the projected authority, so a cosmetic edit
 //     leaves it untouched.
+// A third, narrower `executionDigest` lets the delta attribute changes to
+// conditions, dependencies, and environment mappings without persisting their
+// values.
 // A release where raw digests moved but authority digests did not is exactly
 // the "cosmetic change" case that must never raise a high-signal warning.
 //
@@ -55,6 +58,8 @@ export interface AuthorityWorkflowRef {
   rawDigest: string | null;
   /** sha256 of this workflow's authority projection; stable across cosmetic edits. */
   authorityDigest: string | null;
+  /** sha256 of conditions, dependencies, and env mappings; values stay private. */
+  executionDigest: string | null;
 }
 
 export interface AuthorityTrigger {
@@ -247,6 +252,7 @@ export async function buildReleaseAuthoritySnapshot(
       role: source.role,
       rawDigest: await sha256Hex(source.content),
       authorityDigest: await sha256Hex(stableJson(canonicalizeProjectionForDigest(projection))),
+      executionDigest: await sha256Hex(stableJson(projection.executionContext)),
     });
   }
 
@@ -593,7 +599,10 @@ const TRIGGER_FILTER_KEYS = [
   "tags",
   "tags-ignore",
   "types",
+  "workflows",
 ];
+
+const ORDER_SENSITIVE_TRIGGER_FILTER_KEYS = new Set(["branches", "paths", "tags"]);
 
 function readTriggers(workflow: string, value: YamlValue): AuthorityTrigger[] {
   if (typeof value === "string") return [{ workflow, event: value, filter: "" }];
@@ -618,7 +627,15 @@ function normalizeTriggerFilter(config: YamlValue): string {
   for (const key of TRIGGER_FILTER_KEYS) {
     const values = asStringList(record[key]);
     if (values.length === 0) continue;
-    parts.push(`${key}=[${[...values].sort().join(",")}]`);
+    // Positive and negative branch/tag/path globs are evaluated in order: a
+    // later positive can re-include something a preceding `!` excluded. Keep
+    // that order when a list contains a negative pattern; lists whose order is
+    // semantically irrelevant remain sorted so reformatting stays cosmetic.
+    const canonicalValues =
+      ORDER_SENSITIVE_TRIGGER_FILTER_KEYS.has(key) && values.some((value) => value.startsWith("!"))
+        ? values
+        : [...values].sort();
+    parts.push(`${key}=[${canonicalValues.join(",")}]`);
   }
   return parts.join(";");
 }
