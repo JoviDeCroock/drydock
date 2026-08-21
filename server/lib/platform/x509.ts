@@ -161,7 +161,7 @@ export interface X509Certificate {
   extensions: Map<string, Uint8Array>;
 }
 
-export type EcCurve = "P-256" | "P-384" | "P-521";
+type EcCurve = "P-256" | "P-384" | "P-521";
 
 const EC_PUBLIC_KEY_OID = "1.2.840.10045.2.1";
 const CURVE_OIDS: Record<string, EcCurve> = {
