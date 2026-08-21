@@ -12,8 +12,8 @@
 //   - `authorityDigest` covers only the projected authority, so a cosmetic edit
 //     leaves it untouched.
 // A third, narrower `executionDigest` lets the delta attribute changes to
-// conditions, dependencies, and environment mappings without persisting their
-// values.
+// conditions, dependencies, environment mappings, and execution controls
+// without persisting their values.
 // A release where raw digests moved but authority digests did not is exactly
 // the "cosmetic change" case that must never raise a high-signal warning.
 //
@@ -58,7 +58,7 @@ export interface AuthorityWorkflowRef {
   rawDigest: string | null;
   /** sha256 of this workflow's authority projection; stable across cosmetic edits. */
   authorityDigest: string | null;
-  /** sha256 of conditions, dependencies, and env mappings; values stay private. */
+  /** sha256 of conditions, dependencies, env mappings, and execution controls. */
   executionDigest: string | null;
 }
 
@@ -96,9 +96,10 @@ export interface AuthorityActionRef {
   secretsInherit: boolean;
   /**
    * Digest of authority-sensitive call configuration. Present for publishing
-   * actions and reusable-workflow jobs, where `with:` inputs or an explicit
-   * `secrets:` mapping can change the release target or credentials without
-   * moving the action reference. The values themselves are never persisted.
+   * actions, safeguards, and reusable-workflow jobs, where `with:` inputs or
+   * an explicit `secrets:` mapping can change the release target, protected
+   * subject, or credentials without moving the action reference. The values
+   * themselves are never persisted.
    */
   configurationDigest: string | null;
 }
@@ -357,9 +358,10 @@ interface WorkflowProjection {
 /**
  * Authority-sensitive execution controls that are hashed but not persisted for
  * display. Conditions and dependencies decide whether a publishing job/step
- * can run, while env mappings can redirect an otherwise unchanged publish
- * command or select a different credential. Hashing the values catches those
- * edits without exposing them in the stored snapshot.
+ * can run, env mappings and matrices can redirect an otherwise unchanged
+ * publish command, and `continue-on-error` can make a failed safeguard
+ * non-blocking. Hashing the values catches those edits without exposing them
+ * in the stored snapshot.
  */
 interface AuthorityExecutionContext {
   workflow: string;
@@ -369,6 +371,7 @@ interface AuthorityExecutionContext {
   condition: string | null;
   needs: string[];
   envDigest: string | null;
+  controlsDigest: string | null;
 }
 
 async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjection> {
@@ -386,7 +389,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
   if (!doc) return projection;
   const workflow = source.path;
 
-  projection.triggers.push(...readTriggers(workflow, doc.on));
+  projection.triggers.push(...(await readTriggers(workflow, doc.on)));
   projection.permissions.push(...readPermissions(workflow, null, doc.permissions));
   const workflowExecutionContext = await readExecutionContext(
     workflow,
@@ -414,6 +417,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
       job.if,
       job.needs,
       job.env,
+      { strategy: job.strategy, continueOnError: job["continue-on-error"] },
     );
     if (jobExecutionContext) projection.executionContext.push(jobExecutionContext);
 
@@ -438,6 +442,7 @@ async function projectWorkflow(source: WorkflowSource): Promise<WorkflowProjecti
         step.if,
         null,
         step.env,
+        { continueOnError: step["continue-on-error"] },
       );
       if (stepExecutionContext) projection.executionContext.push(stepExecutionContext);
       await readStep(projection, workflow, jobName, step);
@@ -463,13 +468,21 @@ async function readExecutionContext(
   conditionValue: YamlValue,
   needsValue: YamlValue,
   envValue: YamlValue,
+  controlValues: { strategy?: YamlValue; continueOnError?: YamlValue } = {},
 ): Promise<AuthorityExecutionContext | null> {
   const condition = asString(conditionValue)?.trim() || null;
   const needs = [...asStringList(needsValue)].sort();
   const env = asRecord(envValue);
   const envDigest = env && Object.keys(env).length > 0 ? await sha256Hex(stableJson(env)) : null;
-  if (!condition && needs.length === 0 && !envDigest) return null;
-  return { workflow, job, step, condition, needs, envDigest };
+  const controls: { [key: string]: YamlValue } = {};
+  if (controlValues.strategy != null) controls.strategy = controlValues.strategy;
+  if (controlValues.continueOnError != null) {
+    controls.continueOnError = controlValues.continueOnError;
+  }
+  const controlsDigest =
+    Object.keys(controls).length > 0 ? await sha256Hex(stableJson(controls)) : null;
+  if (!condition && needs.length === 0 && !envDigest && !controlsDigest) return null;
+  return { workflow, job, step, condition, needs, envDigest, controlsDigest };
 }
 
 /**
@@ -534,6 +547,7 @@ async function readStep(
 
   if (uses) {
     const actionName = actionIdentity(uses);
+    const safeguard = safeguardForAction(actionName);
     projection.actions.push(
       await readActionRef(
         workflow,
@@ -541,13 +555,12 @@ async function readStep(
         uses,
         step.secrets,
         step.with,
-        isPublishAction(actionName),
+        isPublishAction(actionName) || safeguard !== null,
       ),
     );
     if (isPublishAction(actionName)) {
       projection.publishSteps.push({ workflow, job, kind: "action", detail: uses });
     }
-    const safeguard = safeguardForAction(actionName);
     if (safeguard) {
       projection.safeguards.push({ workflow, job, kind: safeguard, detail: uses });
     }
@@ -604,7 +617,7 @@ const TRIGGER_FILTER_KEYS = [
 
 const ORDER_SENSITIVE_TRIGGER_FILTER_KEYS = new Set(["branches", "paths", "tags"]);
 
-function readTriggers(workflow: string, value: YamlValue): AuthorityTrigger[] {
+async function readTriggers(workflow: string, value: YamlValue): Promise<AuthorityTrigger[]> {
   if (typeof value === "string") return [{ workflow, event: value, filter: "" }];
   if (Array.isArray(value)) {
     return value
@@ -613,14 +626,17 @@ function readTriggers(workflow: string, value: YamlValue): AuthorityTrigger[] {
   }
   const record = asRecord(value);
   if (!record) return [];
-  return Object.entries(record).map(([event, config]) => ({
-    workflow,
-    event,
-    filter: normalizeTriggerFilter(config),
-  }));
+  return Promise.all(
+    Object.entries(record).map(async ([event, config]) => ({
+      workflow,
+      event,
+      filter: await normalizeTriggerFilter(event, config),
+    })),
+  );
 }
 
-function normalizeTriggerFilter(config: YamlValue): string {
+async function normalizeTriggerFilter(event: string, config: YamlValue): Promise<string> {
+  if (event === "schedule") return normalizeScheduleFilter(config);
   const record = asRecord(config);
   if (!record) return "";
   const parts: string[] = [];
@@ -637,7 +653,62 @@ function normalizeTriggerFilter(config: YamlValue): string {
         : [...values].sort();
     parts.push(`${key}=[${canonicalValues.join(",")}]`);
   }
+  const configuration = triggerInputConfiguration(event, record);
+  if (configuration) {
+    parts.push(`configuration-sha256=${await sha256Hex(stableJson(configuration))}`);
+  }
   return parts.join(";");
+}
+
+function normalizeScheduleFilter(config: YamlValue): string {
+  if (!Array.isArray(config)) return "";
+  const crons = config
+    .map((item) => asRecord(item))
+    .map((item) => (item ? asString(item.cron)?.trim() : null))
+    .filter((cron): cron is string => Boolean(cron));
+  return crons.length > 0 ? `cron=[${[...new Set(crons)].sort().join(",")}]` : "";
+}
+
+function triggerInputConfiguration(
+  event: string,
+  config: { [key: string]: YamlValue },
+): { [key: string]: YamlValue } | null {
+  if (event !== "workflow_dispatch" && event !== "workflow_call") return null;
+  const projection: { [key: string]: YamlValue } = {};
+  const inputs = projectNamedTriggerConfiguration(config.inputs, [
+    "default",
+    "required",
+    "type",
+    "options",
+  ]);
+  if (inputs) projection.inputs = inputs;
+  if (event === "workflow_call") {
+    const secrets = projectNamedTriggerConfiguration(config.secrets, ["required"]);
+    if (secrets) projection.secrets = secrets;
+  }
+  return Object.keys(projection).length > 0 ? projection : null;
+}
+
+function projectNamedTriggerConfiguration(
+  value: YamlValue,
+  authorityKeys: string[],
+): { [key: string]: YamlValue } | null {
+  const definitions = asRecord(value);
+  if (!definitions) return null;
+  const projection: { [key: string]: YamlValue } = {};
+  for (const [name, rawDefinition] of Object.entries(definitions)) {
+    const definition = asRecord(rawDefinition);
+    if (!definition) continue;
+    const fields: { [key: string]: YamlValue } = {};
+    for (const key of authorityKeys) {
+      if (definition[key] != null) fields[key] = definition[key];
+    }
+    // The existence of an accepted input or secret is itself authority even
+    // when GitHub supplies every option's default. Descriptions are omitted so
+    // editing help text remains cosmetic.
+    projection[name] = fields;
+  }
+  return Object.keys(projection).length > 0 ? projection : null;
 }
 
 function readPermissions(

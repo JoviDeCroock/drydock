@@ -216,6 +216,34 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
         "      - if: always()\n        uses: pypa/gh-action-pypi-publish@release/v1\n",
       ),
     },
+    {
+      label: "job strategy matrix",
+      prior: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    needs: build\n    strategy:\n      matrix:\n        registry: [https://registry.npmjs.org]\n",
+      ).replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: ${{ matrix.registry }}\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "  publish:\n    needs: build\n",
+        "  publish:\n    needs: build\n    strategy:\n      matrix:\n        registry: [https://packages.example.test]\n",
+      ).replace(
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n",
+        "      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          repository-url: ${{ matrix.registry }}\n",
+      ),
+    },
+    {
+      label: "non-blocking safeguard",
+      prior: BASE_WORKFLOW.replace(
+        "      - uses: actions/attest-build-provenance@v2\n",
+        "      - uses: actions/attest-build-provenance@v2\n        continue-on-error: false\n",
+      ),
+      current: BASE_WORKFLOW.replace(
+        "      - uses: actions/attest-build-provenance@v2\n",
+        "      - uses: actions/attest-build-provenance@v2\n        continue-on-error: true\n",
+      ),
+    },
   ])("does not call a changed $label cosmetic", async ({ prior, current }) => {
     const delta = await deltaBetween(prior, current);
 
@@ -244,7 +272,7 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     });
     expect(find(delta.changes, "workflow_authority_changed")).toMatchObject({
       scope: ENTRY,
-      subject: "conditions, dependencies, or environment mappings",
+      subject: "conditions, dependencies, environment mappings, or execution controls",
     });
   });
 
@@ -409,6 +437,36 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(delta.requiresApproval).toBe(true);
   });
 
+  it("flags a changed release schedule", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      '  push:\n    tags:\n      - "v*"\n',
+      "  schedule:\n    - cron: '0 0 * * 1'\n",
+    );
+    const current = prior.replace("0 0 * * 1", "0 0 * * 2");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "trigger_filter_changed")).toMatchObject({
+      subject: "schedule",
+      before: "cron=[0 0 * * 1]",
+      after: "cron=[0 0 * * 2]",
+    });
+    expect(delta.requiresApproval).toBe(true);
+  });
+
+  it("flags changed workflow_dispatch input authority", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      '  push:\n    tags:\n      - "v*"\n',
+      "  workflow_dispatch:\n    inputs:\n      registry:\n        type: choice\n        options: [npm, internal]\n        default: npm\n",
+    );
+    const current = prior.replace("default: npm", "default: internal");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "trigger_filter_changed")).toMatchObject({
+      subject: "workflow_dispatch",
+    });
+    expect(delta.requiresApproval).toBe(true);
+  });
+
   it("flags removing the environment boundary", async () => {
     const delta = await deltaBetween(
       BASE_WORKFLOW,
@@ -516,6 +574,21 @@ ${BASE_WORKFLOW.replace("name: Release", 'name: "Release"').replace(
     expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
       significance: "high",
       subject: "pypa/gh-action-pypi-publish",
+    });
+    expect(delta.status).toBe("changed");
+  });
+
+  it("flags changed safeguard inputs instead of calling the edit cosmetic", async () => {
+    const prior = BASE_WORKFLOW.replace(
+      "      - uses: actions/attest-build-provenance@v2\n",
+      "      - uses: actions/attest-build-provenance@v2\n        with:\n          subject-path: dist/**\n",
+    );
+    const current = prior.replace("subject-path: dist/**", "subject-path: unrelated/**");
+    const delta = await deltaBetween(prior, current);
+
+    expect(find(delta.changes, "action_configuration_changed")).toMatchObject({
+      significance: "high",
+      subject: "actions/attest-build-provenance",
     });
     expect(delta.status).toBe("changed");
   });
