@@ -37,10 +37,12 @@ interface EvidenceIndex {
 /** Source text actually returned to one model attempt, keyed by canonical path. */
 export interface EvidenceAccessLog {
   observedTextByPath: Map<string, string[]>;
+  /** Baseline-only diff text served beside a staged target, used to reject ambiguous anchors. */
+  observedNonTargetTextByPath: Map<string, string[]>;
 }
 
 export function createEvidenceAccessLog(): EvidenceAccessLog {
-  return { observedTextByPath: new Map() };
+  return { observedTextByPath: new Map(), observedNonTargetTextByPath: new Map() };
 }
 
 export function buildAiReviewPayload(
@@ -438,10 +440,7 @@ function resolveToolPath(
 }
 
 function recordObservedText(access: EvidenceAccessLog, path: string, text: string): void {
-  if (!text) return;
-  const observed = access.observedTextByPath.get(path);
-  if (observed) observed.push(text);
-  else access.observedTextByPath.set(path, [text]);
+  recordObservedTextInMap(access.observedTextByPath, path, text);
 }
 
 // Unified-diff output contains baseline-only `-` lines that cannot map to a
@@ -456,12 +455,20 @@ function recordObservedDiffText(
   hasPreviousText: boolean,
 ): void {
   const acceptedMarkers = hasStagedText ? new Set(["+", " "]) : new Set(["-"]);
+  // A modified file's removed lines are visible to the reviewer but cannot map
+  // to a staged coordinate. Retain them separately so marker stripping cannot
+  // authenticate a removed-line anchor merely because the same substring also
+  // appears on an unrelated staged line.
+  const nonTargetMarkers = hasStagedText && hasPreviousText ? new Set(["-"]) : new Set<string>();
   if (!hasStagedText && !hasPreviousText) return;
 
   for (const part of text.split(/(?<=\n)/)) {
     const marker = part[0];
-    if (!acceptedMarkers.has(marker)) continue;
-    recordObservedText(access, path, part.slice(1));
+    if (acceptedMarkers.has(marker)) {
+      recordObservedText(access, path, part.slice(1));
+    } else if (nonTargetMarkers.has(marker)) {
+      recordObservedTextInMap(access.observedNonTargetTextByPath, path, part.slice(1));
+    }
   }
 }
 
@@ -471,10 +478,25 @@ function firstObservedAnchor(
   anchor: string | null | undefined,
 ): string | null {
   const observed = access.observedTextByPath.get(path) ?? [];
+  const observedNonTarget = access.observedNonTargetTextByPath.get(path) ?? [];
   for (const candidate of anchorCandidates(anchor)) {
-    if (observed.some((text) => text.includes(candidate))) return candidate;
+    const matchesTarget = observed.some((text) => text.includes(candidate));
+    const matchesNonTarget = observedNonTarget.some((text) => text.includes(candidate));
+    // Once a candidate also identifies served baseline-only text, do not fall
+    // through to a weaker marker-stripped interpretation. The model may have
+    // copied the removed line, and pinning it to staged code would be a false
+    // coordinate even when that code happens to contain the same substring.
+    if (matchesNonTarget) return null;
+    if (matchesTarget) return candidate;
   }
   return null;
+}
+
+function recordObservedTextInMap(map: Map<string, string[]>, path: string, text: string): void {
+  if (!text) return;
+  const observed = map.get(path);
+  if (observed) observed.push(text);
+  else map.set(path, [text]);
 }
 
 function resolveKnownPath(

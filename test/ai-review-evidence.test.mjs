@@ -196,6 +196,27 @@ describe("AI review evidence tools", () => {
     expect(resolveAnchor("index.js", "export const secret = true;")?.line).toBeNull();
   });
 
+  test("does not strip a removed-line marker into an unrelated staged substring", async () => {
+    const options = {
+      ecosystem: "npm",
+      files: [file("index.js", 'const label = "dangerous()";\n')],
+      previousFiles: [file("index.js", "dangerous()\n")],
+      diff: [{ path: "index.js", status: "modified", flags: [] }],
+      packageJsonDiff: EMPTY_PACKAGE_JSON_DIFF,
+      ruleFindings: [],
+      previousVersionAvailable: true,
+    };
+    const index = buildEvidenceIndex(options);
+    const access = createEvidenceAccessLog();
+    const tools = createAiReviewTools(options, () => {}, index, access);
+    const resolveAnchor = createAnchorResolver(index, access);
+
+    await tools.read.execute({ paths: ["index.js"], maxChars: 1_000 });
+
+    expect(resolveAnchor("index.js", "-dangerous()")?.line).toBeNull();
+    expect(resolveAnchor("index.js", "dangerous()")?.line).toBeNull();
+  });
+
   test("divides the read budget fairly so later batched paths are not starved", async () => {
     const paths = ["a.js", "b.js", "c.js", "d.js"];
     const files = paths.map((path) => file(path, `${path}:`.padEnd(10_000, "x") + "\n"));
