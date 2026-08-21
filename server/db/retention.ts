@@ -6,7 +6,7 @@
 // rows remain for the next tick. The orchestration (windows, env gating,
 // structured events, R2 teardown) lives in `server/lib/retention.ts`.
 
-import { and, eq, gt, gte, isNotNull, lt, notExists, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { githubWorkflowGates, scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
@@ -65,9 +65,9 @@ export interface ExpiredScanCursor {
  * the prefix is derived from (organizationId, scanId), which is only knowable
  * while the row still exists.
  *
- * Two rows are excluded rather than deferred, because a permanently-deferred row
- * at the head of a fixed-size oldest-first page would starve every deletable row
- * behind it:
+ * Three rows are excluded rather than deferred, because a permanently-deferred
+ * row at the head of a fixed-size oldest-first page would starve every deletable
+ * row behind it:
  *
  * - **No organization.** `scans.organization_id` is nullable (the org was
  *   deleted, which already swept its artifacts), so there is no prefix to sweep
@@ -77,6 +77,13 @@ export interface ExpiredScanCursor {
  *   `scans.gate_id`, while the gate's `scan_id` points only at the representative
  *   package. Deleting either would make the pending gate's package aggregate
  *   incomplete. Once the gate is decided the scans become eligible again.
+ * - **Publicly shared.** docs/public-reports.md promises that revocation is the
+ *   owner's action, and the share token is the only thing keeping a public
+ *   report, its threat-feed listing, and its badge alive (feed listing and
+ *   badge key are cleared with the token, so the token check covers all
+ *   three). A background sweep silently unpublishing a link the owner handed
+ *   out would break that promise; revoking the share makes the scan eligible
+ *   again on the next tick.
  *
  * `cursor` pages past rows the caller deferred for a transient reason (an R2
  * sweep that failed), so one stuck scan cannot block the rest of the backlog.
@@ -87,7 +94,11 @@ export async function listScansOlderThan(
   limit: number,
   cursor?: ExpiredScanCursor | null,
 ): Promise<ExpiredScanRow[]> {
-  const conditions = [lt(scans.createdAt, cutoff), isNotNull(scans.organizationId)];
+  const conditions = [
+    lt(scans.createdAt, cutoff),
+    isNotNull(scans.organizationId),
+    isNull(scans.publicShareToken),
+  ];
   if (cursor) {
     const cursorDate = new Date(cursor.createdAtMs);
     conditions.push(

@@ -6,6 +6,7 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { AUTH_ROW_RETENTION_GRACE_MS, pruneExpiredAuthRows } from "../../server/db/auth-retention";
 import { listScansOlderThan } from "../../server/db/retention";
+import { enablePublicShare, revokePublicShare } from "../../server/db/scan-share";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
@@ -630,6 +631,45 @@ describe("scan retention", () => {
       SCAN_RETENTION_DAYS: "365",
     } as unknown as Cloudflare.Env);
     expect(decided.scans).toMatchObject({ candidates: 2, deleted: 2 });
+  });
+
+  test("never deletes a scan whose public share link is still live", async () => {
+    const owner = await seedUser();
+    const shared = await seedAgedScan(owner, 400);
+    await seedAgedScan(owner, 400);
+    const share = await enablePublicShare(owner.db, {
+      scanId: shared,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+    });
+    expect(share?.publicShareToken).toBeTruthy();
+
+    // docs/public-reports.md promises revocation is the owner's action: the
+    // sweep must not silently unpublish a distributed link — and the feed
+    // listing and badge that hang off its token — because the scan aged out.
+    // Like the org-less and pending-gate rows, a shared scan is excluded from
+    // the candidate query rather than deferred, so it costs no page slot.
+    const first = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+    expect(first.scans).toMatchObject({ candidates: 1, deleted: 1, deferred: 0 });
+    const remaining = await owner.db.select({ id: schema.scans.id }).from(schema.scans);
+    expect(remaining.map((row) => row.id)).toEqual([shared]);
+    expect(await scanKeys(owner.organizationId, shared)).toHaveLength(4);
+
+    // Revoking the share is what returns the scan to the retention window.
+    await revokePublicShare(owner.db, {
+      scanId: shared,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+    });
+    const second = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+    expect(second.scans).toMatchObject({ candidates: 1, deleted: 1 });
+    expect(await countRows("scans")).toBe(0);
   });
 
   test("a misconfigured window is reported once, not on every tick", async () => {
