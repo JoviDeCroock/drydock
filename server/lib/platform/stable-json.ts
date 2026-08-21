@@ -12,9 +12,3 @@ export function stableJson(value: unknown): string {
 export function utf8Size(value: string): number {
   return ENCODER.encode(value).byteLength;
 }
-
-export async function sha256Hex(value: string | ArrayBuffer): Promise<string> {
-  const bytes = typeof value === "string" ? ENCODER.encode(value) : value;
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}

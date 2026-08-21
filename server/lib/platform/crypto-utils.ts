@@ -48,3 +48,17 @@ export function hexDecode(value: string): Uint8Array | null {
   }
   return out;
 }
+const SHA256_ENCODER = new TextEncoder();
+
+/**
+ * Lowercase hex SHA-256 of a string, byte array or buffer.
+ *
+ * Single definition on purpose: report digests, artifact digests and
+ * attestation subjects are compared against each other across layers, so they
+ * must agree on encoding down to the last nibble.
+ */
+export async function sha256Hex(value: string | ArrayBuffer | Uint8Array): Promise<string> {
+  const bytes = typeof value === "string" ? SHA256_ENCODER.encode(value) : value;
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}

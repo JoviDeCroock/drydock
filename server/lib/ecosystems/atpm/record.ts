@@ -1,3 +1,4 @@
+import { isRecord } from "../../platform/guards";
 import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
@@ -289,10 +290,6 @@ function parseVersionEntry(entry: unknown): { version: AtpmVersion; attestation:
       provenance: ATPM_PROVENANCE_NOT_EVALUATED,
     },
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function isAtpmDatetime(value: unknown): value is string {

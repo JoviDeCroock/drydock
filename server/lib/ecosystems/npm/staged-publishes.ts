@@ -1,3 +1,4 @@
+import { isRecord } from "../../platform/guards";
 import { errorMessage } from "../../platform/errors";
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
@@ -210,10 +211,6 @@ function parseStagedPublishItem(value: unknown, fallbackId?: string): StagedPubl
     createdAt: readString(value.createdAt) ?? readString(value.created_at),
     shasum: readString(value.shasum),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | null {

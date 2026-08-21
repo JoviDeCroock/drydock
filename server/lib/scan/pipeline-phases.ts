@@ -49,7 +49,8 @@ import {
   projectAiReviewFindings,
   scanArtifactReadBucket,
 } from "./artifacts";
-import { sha256Hex, stableJson } from "../platform/stable-json";
+import { sha256Hex } from "../platform/crypto-utils";
+import { stableJson } from "../platform/stable-json";
 import type { ScanResult } from "../../types";
 
 export interface PipelineIdentity {

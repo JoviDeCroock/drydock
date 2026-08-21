@@ -1,3 +1,4 @@
+import { isRecord } from "../../platform/guards";
 import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 
@@ -214,8 +215,4 @@ function parseTimestamp(value: string | null): number {
   if (!value) return 0;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

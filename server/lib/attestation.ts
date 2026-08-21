@@ -144,10 +144,3 @@ export async function signAttestation(
     signatures: [{ keyid: key.keyId, sig: base64Encode(new Uint8Array(signature)) }],
   };
 }
-
-export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  let hex = "";
-  for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
-  return hex;
-}

@@ -1,4 +1,5 @@
 import { readStreamBounded } from "../tar-parser.js";
+import { sha256Hex } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
@@ -511,11 +512,6 @@ async function downloadArtifactZip(
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 function parseContentLength(value: string | null): number | null {
   if (!value) return null;

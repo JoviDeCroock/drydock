@@ -28,12 +28,8 @@ import {
 } from "../lib/public-feed";
 import { coloCacheMatch, coloCachePut } from "../lib/platform/colo-cache";
 import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
-import {
-  buildAttestationStatement,
-  loadAttestationKey,
-  sha256Hex,
-  signAttestation,
-} from "../lib/attestation";
+import { buildAttestationStatement, loadAttestationKey, signAttestation } from "../lib/attestation";
+import { sha256Hex } from "../lib/platform/crypto-utils";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
 import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";

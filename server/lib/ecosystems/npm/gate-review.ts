@@ -12,10 +12,10 @@ import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
 import {
   buildNpmReleaseManifest,
-  isRecord,
   parseNpmReleaseManifest,
   type NpmReleaseManifest,
 } from "./manifest";
+import { isRecord } from "../../platform/guards";
 
 /**
  * One npm tarball that the shared workflow-gate router already downloaded,

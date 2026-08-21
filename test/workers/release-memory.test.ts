@@ -13,7 +13,8 @@ import {
 } from "../../server/lib/scan/release-memory";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { resolveReleaseConsistency } from "../../server/lib/scan/pipeline-phases";
-import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";

@@ -10,7 +10,8 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../ai-review/types";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { SCAN_FILE_SAMPLE_LIMIT } from "../sample-retention";
-import { sha256Hex, stableJson, utf8Size } from "../platform/stable-json";
+import { sha256Hex } from "../platform/crypto-utils";
+import { stableJson, utf8Size } from "../platform/stable-json";
 
 const SCAN_ARTIFACT_STORAGE_VERSION = 1;
 export const SCAN_ARTIFACT_WRITE_ATTEMPTS = 3;
