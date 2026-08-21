@@ -200,7 +200,6 @@ export default function ScanDetailPage() {
               // Index-based: comments have no persisted identity of their own,
               // and the array is stable for a given scan.
               id: `ai-comment-${index}`,
-              severity: "info",
               line: comment.line ?? null,
               reason: comment.note,
               source: "ai",

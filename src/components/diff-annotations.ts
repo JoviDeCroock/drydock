@@ -5,7 +5,9 @@
 
 export interface DiffFinding {
   id: string;
-  severity: string;
+  // Advisory comments deliberately carry no severity. Findings always do;
+  // consumers fall back defensively when handed a malformed annotation.
+  severity?: string | null;
   line?: number | null;
   // Set only while the reformat view is on (`remapFindingLines`): `line` then
   // holds the row in the reformatted view, and this holds the line the rule

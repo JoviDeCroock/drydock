@@ -38,13 +38,13 @@ const ANNOTATION_BAR: Record<SeverityGroup, string> = {
 // the reason, and (when present) the triggering evidence in mono. Mirrors the
 // landing page's review-preview annotation so what we advertise matches the app.
 //
-// An assistant comment reuses the same callout with two differences: a neutral
-// "assistant note" badge instead of a severity one, and the info group's quiet
-// blue fill. Both are deliberate — a note is not a signal, and giving it a
-// severity colour would spend the diff's loudest affordance on prose.
+// An assistant comment reuses the same callout structure, but its neutral badge,
+// surface, and border keep it outside the severity palette. A note is not a
+// signal, so it must not spend the diff's loudest affordance on prose.
 function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
   const isComment = finding.kind === "comment";
-  const group = isComment ? "info" : severityGroup(finding.severity);
+  const severity = finding.severity ?? "info";
+  const group = severityGroup(severity);
   const label = annotationLabel(finding);
   return (
     <div
@@ -53,15 +53,15 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
         // is body copy and must not inherit Geist Mono (label/evidence set their
         // own mono explicitly).
         "border-l-2 px-3 py-2.5 flex flex-col gap-1.5 font-sans",
-        ANNOTATION_FILL[group],
-        ANNOTATION_BAR[group],
+        isComment ? "bg-surface-2 border-border-strong" : ANNOTATION_FILL[group],
+        isComment ? null : ANNOTATION_BAR[group],
       )}
     >
       <div class="flex flex-wrap items-center gap-2">
         {isComment ? (
           <Badge tone="neutral">assistant note</Badge>
         ) : (
-          <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+          <Badge tone={severityTone(severity)}>{severity}</Badge>
         )}
         {label ? (
           <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">

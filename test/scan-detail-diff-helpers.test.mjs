@@ -60,7 +60,6 @@ describe("unpinAssistantAnnotationsForComparison", () => {
     { id: "ai", severity: "high", line: 4, reason: "assistant", source: "ai" },
     {
       id: "comment",
-      severity: "info",
       line: 6,
       reason: "comment",
       source: "ai",

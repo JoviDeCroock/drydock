@@ -39,6 +39,11 @@ describe("resolveAnchorLine", () => {
     expect(resolveAnchorLine(SOURCE, "https.request('https://collector.example")).toBe(5);
   });
 
+  test("refuses an exact line when the served substring also occurs on another line", () => {
+    const text = ["dangerous()", "if (dangerous()) {"].join("\n");
+    expect(resolveAnchorLine(text, "dangerous()")).toBeNull();
+  });
+
   test("refuses an anchor that matches more than one line", () => {
     const text = ["value = 1;", "value = 1;"].join("\n");
     expect(resolveAnchorLine(text, "value = 1;")).toBeNull();

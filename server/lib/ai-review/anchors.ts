@@ -23,13 +23,14 @@ const MIN_ANCHOR_SIGNAL_CHARS = 4;
  * Resolve `anchor` to a 1-based line number in `text`, or null when it cannot
  * be pinned unambiguously.
  *
- * For each candidate, two passes over the whole file require a unique match:
- * line equality first (what a correctly copied anchor hits), then
- * line-contains-anchor (what an anchor clipped by the length bound hits).
- * Every viable candidate must resolve to the same line. Comparison is on trimmed
- * lines, because the reviewer reads text that has already been through diff
- * rendering and per-call truncation, so leading indentation is not reliably
- * preserved.
+ * Each candidate must occur on exactly one line in the whole file. A full-line
+ * match does not outrank another line that merely contains the candidate: the
+ * evidence tool may have served that longer line while an unseen exact line
+ * exists elsewhere, so preferring equality could pin to code the reviewer never
+ * saw. Every viable candidate must resolve to the same line. Comparison is on
+ * trimmed lines, because the reviewer reads text that has already been through
+ * diff rendering and per-call truncation, so leading indentation is not
+ * reliably preserved.
  *
  * Candidates try the anchor as given and, when it starts with a unified-diff
  * marker, the marker-stripped form: `read` serves changed files as `+`/`-`/space
@@ -50,10 +51,7 @@ export function resolveAnchorLine(
   const lines = text.split("\n").map((line) => line.trim());
   let resolvedLine: number | null = null;
   for (const candidate of candidates) {
-    const exact = matchLine(lines, (line) => line === candidate);
-    if (exact.kind === "ambiguous") return null;
-    const match =
-      exact.kind === "unique" ? exact : matchLine(lines, (line) => line.includes(candidate));
+    const match = matchLine(lines, (line) => line.includes(candidate));
     if (match.kind === "ambiguous") return null;
     if (match.kind === "none") continue;
     if (resolvedLine !== null && resolvedLine !== match.line) return null;
