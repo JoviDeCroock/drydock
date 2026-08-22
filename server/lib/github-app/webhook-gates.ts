@@ -1,5 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
+import { latestApprovedAuthorityRevisionCondition } from "../../db/release-authority";
 import { githubWorkflowGates, releaseAuthoritySnapshots, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
@@ -418,25 +419,13 @@ export async function markGateDecidedForPackageAggregate(
     input.decision !== "approved" ||
     input.authorityApproval?.expectedLatestApprovedSnapshotId === undefined
       ? sql`1 = 1`
-      : input.authorityApproval.expectedLatestApprovedSnapshotId === null
-        ? sql`not exists (
-            select 1
-            from ${releaseAuthoritySnapshots}
-            where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
-              and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.authorityApproval.releaseTargetId}
-              and ${releaseAuthoritySnapshots.gateId} <> ${input.gateId}
-              and ${releaseAuthoritySnapshots.approvedAt} is not null
-          )`
-        : sql`${input.authorityApproval.expectedLatestApprovedSnapshotId} = (
-            select ${releaseAuthoritySnapshots.id}
-            from ${releaseAuthoritySnapshots}
-            where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
-              and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.authorityApproval.releaseTargetId}
-              and ${releaseAuthoritySnapshots.gateId} <> ${input.gateId}
-              and ${releaseAuthoritySnapshots.approvedAt} is not null
-            order by ${releaseAuthoritySnapshots.approvedAt} desc, ${releaseAuthoritySnapshots.id} desc
-            limit 1
-          )`;
+      : latestApprovedAuthorityRevisionCondition({
+          organizationId: input.organizationId,
+          releaseTargetId: input.authorityApproval.releaseTargetId,
+          excludeGateId: input.gateId,
+          expectedLatestApprovedSnapshotId:
+            input.authorityApproval.expectedLatestApprovedSnapshotId,
+        });
   const finalizeGate = db
     .update(githubWorkflowGates)
     .set({

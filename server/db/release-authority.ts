@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { type AppDb } from "./client";
 import { githubWorkflowGates, releaseAuthoritySnapshots } from "./schema";
 import {
@@ -131,42 +131,69 @@ export async function refreshReleaseAuthorityDeltaForGate(
   organizationId: string,
   gateId: string,
 ): Promise<ReleaseAuthorityRecord | null> {
-  const record = await getReleaseAuthorityForGate(db, organizationId, gateId);
-  if (!record?.snapshot) return record;
-  const [gate] = await db
-    .select({ status: githubWorkflowGates.status })
-    .from(githubWorkflowGates)
-    .where(
-      and(
-        eq(githubWorkflowGates.id, gateId),
-        eq(githubWorkflowGates.organizationId, organizationId),
-      ),
-    )
-    .limit(1);
-  if (gate?.status !== "pending") return record;
+  // A revision can move between any two D1 reads. Retry a bounded number of
+  // times when the write fence loses; an approval caller also carries its own
+  // outer revision guard, so sustained churn still fails closed at finalization.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const record = await getReleaseAuthorityForGate(db, organizationId, gateId);
+    if (!record?.snapshot) return record;
+    const [gate] = await db
+      .select({ status: githubWorkflowGates.status })
+      .from(githubWorkflowGates)
+      .where(
+        and(
+          eq(githubWorkflowGates.id, gateId),
+          eq(githubWorkflowGates.organizationId, organizationId),
+        ),
+      )
+      .limit(1);
+    if (gate?.status !== "pending") return record;
 
-  const baseline = await findApprovedAuthorityBaseline(db, {
-    organizationId,
-    releaseTargetId: record.releaseTargetId,
-    workflowPath: record.snapshot.run.workflowPath,
-    excludeGateId: gateId,
-  });
-  const readableBaseline = baseline?.snapshot
-    ? { snapshot: baseline.snapshot, ref: baseline.ref }
-    : null;
-  const approvedReleasePaths = baseline
-    ? []
-    : await listApprovedReleasePaths(db, {
+    const expectedLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      excludeGateId: gateId,
+    });
+    const baseline = await findApprovedAuthorityBaseline(db, {
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      workflowPath: record.snapshot.run.workflowPath,
+      excludeGateId: gateId,
+    });
+    const readableBaseline = baseline?.snapshot
+      ? { snapshot: baseline.snapshot, ref: baseline.ref }
+      : null;
+    const approvedReleasePaths = baseline
+      ? []
+      : await listApprovedReleasePaths(db, {
+          organizationId,
+          releaseTargetId: record.releaseTargetId,
+          excludeGateId: gateId,
+          excludeWorkflowPath: record.snapshot.run.workflowPath,
+        });
+    const delta = computeReleaseAuthorityDelta(record.snapshot, readableBaseline, {
+      approvedReleasePaths,
+      unreadableBaseline: baseline?.snapshot ? undefined : baseline?.ref,
+    });
+    const revisionCondition = latestApprovedAuthorityRevisionCondition({
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      excludeGateId: gateId,
+      expectedLatestApprovedSnapshotId,
+    });
+
+    if (stableJson(delta) === stableJson(record.delta)) {
+      const currentLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
         organizationId,
         releaseTargetId: record.releaseTargetId,
         excludeGateId: gateId,
-        excludeWorkflowPath: record.snapshot.run.workflowPath,
       });
-  const delta = computeReleaseAuthorityDelta(record.snapshot, readableBaseline, {
-    approvedReleasePaths,
-    unreadableBaseline: baseline?.snapshot ? undefined : baseline?.ref,
-  });
-  if (stableJson(delta) !== stableJson(record.delta)) {
+      if (currentLatestApprovedSnapshotId === expectedLatestApprovedSnapshotId) {
+        return { ...record, delta };
+      }
+      continue;
+    }
+
     const updated = await db
       .update(releaseAuthoritySnapshots)
       .set({ deltaJson: delta, updatedAt: new Date() })
@@ -175,6 +202,7 @@ export async function refreshReleaseAuthorityDeltaForGate(
           eq(releaseAuthoritySnapshots.id, record.id),
           eq(releaseAuthoritySnapshots.organizationId, organizationId),
           eq(releaseAuthoritySnapshots.gateId, gateId),
+          revisionCondition,
           sql`exists (
             select 1
             from ${githubWorkflowGates}
@@ -185,14 +213,13 @@ export async function refreshReleaseAuthorityDeltaForGate(
         ),
       )
       .returning({ id: releaseAuthoritySnapshots.id });
-    // A decision can finalize the gate after the status read above. If that
-    // happens, keep the immutable reviewed evidence and return the durable row
-    // instead of the newly computed but unpersisted delta.
-    if (updated.length === 0) {
-      return getReleaseAuthorityForGate(db, organizationId, gateId);
-    }
+    if (updated.length > 0) return { ...record, delta };
   }
-  return { ...record, delta };
+
+  // The gate finalized, the evidence row disappeared, or approvals kept moving
+  // through every retry. Return only what is durable; approval finalization's
+  // independent revision guard rejects the latter case conservatively.
+  return getReleaseAuthorityForGate(db, organizationId, gateId);
 }
 
 /**
@@ -246,6 +273,43 @@ export interface ApprovedAuthorityBaseline {
   /** Null means the approved row exists but its persisted snapshot is unreadable. */
   snapshot: ReleaseAuthoritySnapshot | null;
   ref: AuthorityBaselineRef;
+}
+
+interface LatestApprovedAuthorityRevisionConditionInput {
+  organizationId: string;
+  releaseTargetId: string;
+  excludeGateId: string;
+  expectedLatestApprovedSnapshotId: string | null;
+}
+
+/**
+ * SQL predicate that fences a write to the latest approved authority revision
+ * its caller already read. Both pending-delta refreshes and final gate approval
+ * use this exact ordering so neither can commit evidence computed against a
+ * baseline another overlapping release has since replaced.
+ */
+export function latestApprovedAuthorityRevisionCondition(
+  input: LatestApprovedAuthorityRevisionConditionInput,
+): SQL {
+  return input.expectedLatestApprovedSnapshotId === null
+    ? sql`not exists (
+        select 1
+        from ${releaseAuthoritySnapshots}
+        where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
+          and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.releaseTargetId}
+          and ${releaseAuthoritySnapshots.gateId} <> ${input.excludeGateId}
+          and ${releaseAuthoritySnapshots.approvedAt} is not null
+      )`
+    : sql`${input.expectedLatestApprovedSnapshotId} = (
+        select ${releaseAuthoritySnapshots.id}
+        from ${releaseAuthoritySnapshots}
+        where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
+          and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.releaseTargetId}
+          and ${releaseAuthoritySnapshots.gateId} <> ${input.excludeGateId}
+          and ${releaseAuthoritySnapshots.approvedAt} is not null
+        order by ${releaseAuthoritySnapshots.approvedAt} desc, ${releaseAuthoritySnapshots.id} desc
+        limit 1
+      )`;
 }
 
 /**

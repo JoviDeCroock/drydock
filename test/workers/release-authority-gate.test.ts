@@ -12,6 +12,7 @@ import {
   findLatestApprovedAuthoritySnapshotId,
   findApprovedAuthorityBaseline,
   getReleaseAuthorityForGate,
+  latestApprovedAuthorityRevisionCondition,
   markAuthoritySnapshotApproved,
   prepareReleaseAuthorityApproval,
   refreshReleaseAuthorityDeltaForGate,
@@ -731,6 +732,105 @@ describe("release-authority baseline", () => {
 
     expect(baseline?.ref.snapshotId).toBe(expectedId);
     expect(revision).toBe(expectedId);
+
+    const [matching] = await db
+      .select({
+        value: latestApprovedAuthorityRevisionCondition({
+          organizationId: fixture.organizationId,
+          releaseTargetId: fixture.releaseTargetId,
+          excludeGateId: "pending-gate",
+          expectedLatestApprovedSnapshotId: expectedId,
+        }),
+      })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, fixture.organizationId))
+      .limit(1);
+    const [stale] = await db
+      .select({
+        value: latestApprovedAuthorityRevisionCondition({
+          organizationId: fixture.organizationId,
+          releaseTargetId: fixture.releaseTargetId,
+          excludeGateId: "pending-gate",
+          expectedLatestApprovedSnapshotId: "stale-revision",
+        }),
+      })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, fixture.organizationId))
+      .limit(1);
+    expect(Boolean(matching?.value)).toBe(true);
+    expect(Boolean(stale?.value)).toBe(false);
+  });
+
+  test("fences a stale refresh write when another gate moves the baseline", async () => {
+    const fixture = await seedFixture();
+    const db = createDb(env.DB);
+
+    const pending = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "a".repeat(40) });
+    expect((await capture(fixture, pending.gate))?.status).toBe("no_baseline");
+
+    const firstBaseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({
+      workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
+      headSha: "b".repeat(40),
+    });
+    await capture(fixture, firstBaseline.gate);
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: fixture.organizationId,
+      gateId: firstBaseline.gate.id,
+      approvedByUserId: fixture.userId,
+    });
+    await db
+      .update(schema.releaseAuthoritySnapshots)
+      .set({ approvedAt: new Date("2026-08-20T00:00:00.000Z") })
+      .where(eq(schema.releaseAuthoritySnapshots.gateId, firstBaseline.gate.id));
+
+    const movedBaseline = await seedGate(
+      fixture.organizationId,
+      fixture.userId,
+      fixture.releaseTargetId,
+      fixture.installationRowId,
+      fixture.repositoryId,
+    );
+    mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "c".repeat(40) });
+    await capture(fixture, movedBaseline.gate);
+
+    const racingDb = finalizeBeforeSnapshotUpdate(db, async () => {
+      await markAuthoritySnapshotApproved(db, {
+        organizationId: fixture.organizationId,
+        gateId: movedBaseline.gate.id,
+        approvedByUserId: fixture.userId,
+      });
+    });
+    const refreshed = await refreshReleaseAuthorityDeltaForGate(
+      racingDb,
+      fixture.organizationId,
+      pending.gate.id,
+    );
+    const movedRecord = await getReleaseAuthorityForGate(
+      db,
+      fixture.organizationId,
+      movedBaseline.gate.id,
+    );
+
+    expect(refreshed?.delta?.status).toBe("unchanged");
+    expect(refreshed?.delta?.baseline?.snapshotId).toBe(movedRecord?.id);
+    expect(
+      (await getReleaseAuthorityForGate(db, fixture.organizationId, pending.gate.id))?.delta
+        ?.baseline?.snapshotId,
+    ).toBe(movedRecord?.id);
   });
 
   test("prepares a baseline revision guard even when acknowledgement policy is off", async () => {
