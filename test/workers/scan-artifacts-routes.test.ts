@@ -18,6 +18,9 @@ import {
   maybeWriteScanArtifacts,
   writeScanArtifacts,
 } from "../../server/lib/scan/artifacts";
+import { scanArtifactPrefix } from "../../server/lib/scan/artifacts/keys";
+import { backfillScanArtifactsBatch } from "../../server/lib/scan/artifact-backfill";
+import { runRetentionSweep } from "../../server/lib/retention";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
 import { stableJson } from "../../server/lib/platform/stable-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
@@ -573,6 +576,66 @@ describe("scan artifact backfill route", () => {
     });
     expect(second.status).toBe(200);
     await expect(second.json()).resolves.toMatchObject({ scanned: 0, backfilled: 0 });
+  });
+
+  test("cleans a backfill write when retention deletes the D1-only scan first", async () => {
+    const owner = await seedUser();
+    const { db, scanId } = await seedDigestMatchedLegacyScan(owner);
+    await db
+      .update(schema.scans)
+      .set({ createdAt: new Date(Date.now() - 400 * 24 * 60 * 60 * 1000) })
+      .where(eq(schema.scans.id, scanId));
+
+    let releaseFirstPut!: () => void;
+    const firstPutReleased = new Promise<void>((resolve) => {
+      releaseFirstPut = resolve;
+    });
+    let markFirstPutStarted!: () => void;
+    const firstPutStarted = new Promise<void>((resolve) => {
+      markFirstPutStarted = resolve;
+    });
+    let blocked = false;
+    const blockingBucket = {
+      async put(key: string, value: string, options?: R2PutOptions) {
+        if (!blocked) {
+          blocked = true;
+          markFirstPutStarted();
+          await firstPutReleased;
+        }
+        return env.ARTIFACTS.put(key, value, options);
+      },
+      get: env.ARTIFACTS.get.bind(env.ARTIFACTS),
+      list: env.ARTIFACTS.list.bind(env.ARTIFACTS),
+      delete: env.ARTIFACTS.delete.bind(env.ARTIFACTS),
+    } as unknown as R2Bucket;
+
+    const backfill = backfillScanArtifactsBatch(db, blockingBucket, owner.organizationId, {
+      limit: 1,
+    });
+    await firstPutStarted;
+
+    // Backfill has reconstructed the row but has not created its first object.
+    // Let retention sweep the empty prefix and delete the scan in that window.
+    await expect(
+      runRetentionSweep({
+        ...env,
+        ARTIFACTS: blockingBucket,
+        SCAN_RETENTION_DAYS: "365",
+      } as unknown as Cloudflare.Env),
+    ).resolves.toMatchObject({ scans: { deleted: 1 } });
+
+    releaseFirstPut();
+    await expect(backfill).resolves.toMatchObject({
+      scanned: 1,
+      backfilled: 0,
+      alreadyBacked: 1,
+      failed: 0,
+    });
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.id, scanId))).toHaveLength(0);
+    const listed = await env.ARTIFACTS.list({
+      prefix: scanArtifactPrefix(owner.organizationId, scanId),
+    });
+    expect(listed.objects).toHaveLength(0);
   });
 
   test("skips legacy rows whose reconstructed report digest does not match", async () => {

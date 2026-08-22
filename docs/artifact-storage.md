@@ -90,7 +90,7 @@ Content-Type: application/json
 { "limit": 10, "cursor": null }
 ```
 
-The route processes small idempotent batches and returns counts for `scanned`, `backfilled`, `alreadyBacked`, `digestMismatch`, `failed`, and `nextCursor`. A legacy row is marked artifact-backed only after the reconstructed canonical report digest equals the persisted `report_digest`; rows that cannot be reconstructed exactly stay D1-backed.
+The route processes small idempotent batches and returns counts for `scanned`, `backfilled`, `alreadyBacked`, `digestMismatch`, `failed`, and `nextCursor`. A legacy row is marked artifact-backed only after the reconstructed canonical report digest equals the persisted `report_digest`; rows that cannot be reconstructed exactly stay D1-backed. That final metadata update also refuses a concurrent retention claim. If retention deleted or kept the row D1-only while backfill was writing, backfill sweeps its unowned R2 prefix; if another backfill already installed artifact metadata, the deterministic winning objects are left intact.
 
 Production operators should use the repo-local runner instead of browser cookies. It uses the same Cloudflare credentials as Wrangler, reads from D1 with `wrangler d1 execute --json`, writes verified R2 objects with `wrangler r2 object put/get`, then updates D1 artifact metadata:
 
