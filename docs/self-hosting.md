@@ -140,6 +140,41 @@ Optional integrations:
 - GitHub App: `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
   `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`,
   and optional `GITHUB_APP_STATE_SECRET` (otherwise `BETTER_AUTH_SECRET` is used)
+- GitHub sign-in: `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
+  Register `${BETTER_AUTH_URL}/api/auth/callback/github` as the OAuth app's
+  **Authorization callback URL** before copying its credentials into Drydock.
+  When both are set, the login and register pages offer "Continue with GitHub"
+  (`GET /api/auth/config` reports availability). This is identity-only OAuth —
+  the grant shares the user's profile and verified email, requests no repo
+  scopes, and never installs the GitHub App; workflow-gate installation stays a
+  separate step. **Use a plain OAuth app, not the workflow-gate GitHub App.**
+  GitHub App client IDs (the `Iv` prefix across legacy and current formats) are
+  rejected even when a secret is present: GitHub Apps ignore OAuth scopes, their
+  user-to-server tokens can carry installation permissions, and Better Auth
+  exposes authenticated token retrieval endpoints. A classic OAuth app with
+  `read:user user:email` mints the profile-and-email-only token this integration
+  promises. Drydock does not use that token after the callback, and
+  `account.encryptOAuthTokens` keeps what Better Auth stores encrypted at rest.
+  Request-level OAuth scope overrides are rejected server-side so callers cannot
+  widen the grant beyond `read:user` and `user:email`.
+
+  Social sign-ins are never asked for email verification (the wall applies to
+  the email sign-in route only), and a provider-verified email also satisfies
+  the verified-email checks elsewhere (e.g. accepting an invitation). Implicit
+  account linking is disabled, including Better Auth's explicit link endpoint:
+  a GitHub sign-in whose email already belongs to a password account fails back
+  to the login page instead of attaching to that account, because the Drydock
+  TOTP challenge guards only password sign-ins and a linked social method would
+  bypass it. The TOTP step-up on release decisions is unaffected by sign-in
+  method.
+
+  One adoption limit to weigh before enabling this: a GitHub-only account cannot
+  enrol in Drydock two-factor at all, because every two-factor endpoint
+  reauthenticates with a password it does not have and no password-reset email
+  is wired. Do not offer GitHub sign-in on a deployment whose organizations
+  require two-factor for release decisions — see
+  [`two-factor-auth.md`](./two-factor-auth.md).
+
 - Slack: `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`
 
 Do not commit `.dev.vars`, private keys, tokens, or generated credential

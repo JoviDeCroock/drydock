@@ -109,6 +109,32 @@ describe("account deletion", () => {
     ).toBe(0);
   });
 
+  test("deletes a GitHub-only account through fresh-session reauthentication", async () => {
+    const { jar, userId } = await newAccount();
+    const now = Date.now();
+
+    // Keep the fresh session created by sign-up, but replace the credential
+    // account with the shape Better Auth creates after GitHub OAuth.
+    await env.DB.prepare("DELETE FROM account WHERE user_id = ?").bind(userId).run();
+    await env.DB.prepare(
+      "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) VALUES (?, ?, 'github', ?, ?, ?)",
+    )
+      .bind(`github:${userId}`, `github-${userId}`, userId, now, now)
+      .run();
+
+    const accounts = await call("GET", "/api/auth/list-accounts", { jar });
+    expect(accounts.res.status).toBe(200);
+    expect(JSON.parse(accounts.text)).toEqual([
+      expect.objectContaining({ providerId: "github", userId }),
+    ]);
+
+    const del = await call("POST", "/api/auth/delete-user", { body: {}, jar });
+    expect(del.res.status).toBe(200);
+    expect(await countRows("SELECT count(*) AS n FROM user WHERE id = ?", userId)).toBe(0);
+    expect(await countRows("SELECT count(*) AS n FROM session WHERE user_id = ?", userId)).toBe(0);
+    expect(await countRows("SELECT count(*) AS n FROM account WHERE user_id = ?", userId)).toBe(0);
+  });
+
   test("refuses to delete an account that still owns a shared organization", async () => {
     const { jar, userId, email } = await newAccount();
 
