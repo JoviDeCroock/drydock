@@ -8,7 +8,8 @@ import * as schema from "../../server/db/schema";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { buildReportExport } from "../../server/lib/scan/report-export";
 import { compactSummaryDiff, fullSummaryDiff } from "../../server/lib/scan/summary-diff";
-import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { stableJson } from "../../server/lib/platform/stable-json";
 import type { DiffEntry, FileRecord, Finding } from "../../server/lib/review";
 
 interface SeededUser {
