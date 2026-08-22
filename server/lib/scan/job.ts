@@ -5,6 +5,7 @@ import {
   claimScanForRun,
   discardScanAttempt,
   markScanFailed,
+  scanExists,
 } from "../../db/scans";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
@@ -40,8 +41,35 @@ export interface WorkflowGateQueueMessage {
 
 export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
 
-export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
-  return "kind" in message && message.kind === "workflow_gate";
+export function isWorkflowGateMessage(message: unknown): message is WorkflowGateQueueMessage {
+  if (typeof message !== "object" || message === null) return false;
+  const candidate = message as Partial<WorkflowGateQueueMessage>;
+  return (
+    candidate.kind === "workflow_gate" &&
+    typeof candidate.organizationId === "string" &&
+    candidate.organizationId.length > 0 &&
+    typeof candidate.gateId === "string" &&
+    candidate.gateId.length > 0
+  );
+}
+
+/**
+ * Whether a queue body is a scan job. Scan messages are the one shape with no
+ * `kind` discriminator, so this is a positive shape check rather than "whatever
+ * is left": without it, a body with an unrecognized `kind` — a future message
+ * type, a rolled-back deploy, a hand-published message — would fall through to
+ * `executeScanJob` and run it with undefined ids.
+ */
+export function isScanQueueMessage(message: unknown): message is ScanQueueMessage {
+  if (typeof message !== "object" || message === null) return false;
+  if ("kind" in message) return false;
+  const candidate = message as Partial<ScanQueueMessage>;
+  return (
+    typeof candidate.scanId === "string" &&
+    typeof candidate.organizationId === "string" &&
+    typeof candidate.stageId === "string" &&
+    typeof candidate.actorUserId === "string"
+  );
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -69,13 +97,19 @@ export async function executeScanJob(
   const session: WorkspaceSession = { userId: message.actorUserId };
   const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
   if (!claimed) {
+    // The claim can fail two ways, and conflating them hides a real path: the
+    // scan finished (or failed) already, or the row is gone because discovery
+    // rolled it back after a `sendBatch` that was rejected on the response path
+    // yet still delivered. One bounded read tells them apart so the log does not
+    // report a deleted row as "already terminal".
+    const stillExists = await scanExists(db, message.scanId, message.organizationId);
     emitOperationalEvent("warn", "scan.job.skipped", {
       scanId: message.scanId,
       organizationId: message.organizationId,
       stageId: message.stageId,
       source: message.source ?? "manual",
       attempt,
-      reason: "already_terminal",
+      reason: stillExists ? "already_terminal" : "scan_row_missing",
       durationMs: durationMsSince(startedAtMs),
     });
     return null;

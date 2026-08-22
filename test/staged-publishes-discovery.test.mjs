@@ -6,7 +6,7 @@ vi.mock("cloudflare:workers", () => ({
 
 const dbMock = vi.hoisted(() => ({
   createScanJob: vi.fn(),
-  deletePendingScanJob: vi.fn(),
+  deletePendingScanJobs: vi.fn(),
   listExistingScanStageIds: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   recordScanEvent: vi.fn(),
@@ -31,15 +31,24 @@ vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishe
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 
 const {
-  createStageStartCoordinator,
   ensureUsableNpmConnection,
   discoverAndQueueStagedPublishes,
+  queueStagedPublishCandidates,
   InvalidNpmConnectionError,
   isNpmConnectionAuthFailure,
   isTransientSweepFailure,
 } = await import("../server/lib/ecosystems/npm/staged-publishes-discovery.ts");
 
-const env = { DB: {}, SCAN_QUEUE: { send: vi.fn() } };
+const env = {
+  DB: {},
+  SCAN_QUEUE: { sendBatch: vi.fn() },
+  DISCOVERY_QUEUE: { send: vi.fn() },
+};
+
+/** Every message body handed to SCAN_QUEUE.sendBatch, flattened across batches. */
+function sentScanMessages() {
+  return env.SCAN_QUEUE.sendBatch.mock.calls.flatMap(([batch]) => batch.map((entry) => entry.body));
+}
 const ctx = { waitUntil: vi.fn() };
 const db = {};
 
@@ -66,7 +75,8 @@ afterEach(() => {
   ]) {
     if (typeof fn?.mockReset === "function") fn.mockReset();
   }
-  env.SCAN_QUEUE.send.mockReset();
+  env.SCAN_QUEUE.sendBatch.mockReset();
+  env.DISCOVERY_QUEUE.send.mockReset();
   ctx.waitUntil.mockReset();
 });
 
@@ -291,10 +301,11 @@ describe("discoverAndQueueStagedPublishes", () => {
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
     );
 
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
+    // One batched send carrying the single new stage, not one send per scan.
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(sentScanMessages()).toEqual([
       expect.objectContaining({ source: "auto_discovery", stageId: "stage-new-1" }),
-    );
+    ]);
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith(db, "org_a");
   });
 
@@ -333,10 +344,8 @@ describe("discoverAndQueueStagedPublishes", () => {
       db,
       expect.objectContaining({ stageId: "stage-allowed" }),
     );
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
-      expect.objectContaining({ stageId: "stage-allowed" }),
-    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(sentScanMessages()).toEqual([expect.objectContaining({ stageId: "stage-allowed" })]);
   });
 
   test("fetches additional staged publish pages before deduping", async () => {
@@ -448,66 +457,49 @@ describe("discoverAndQueueStagedPublishes", () => {
     expect(result).toEqual(
       expect.objectContaining({ found: 6, created: 6, skipped: 0, queued: true }),
     );
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(6);
+    // Six new stages, still a single batched send.
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(sentScanMessages()).toHaveLength(6);
   });
 
-  test("serializes duplicate stage starts across organizations", async () => {
+  // Cross-org stage coordination was removed with the per-org discovery queue:
+  // two organizations that can both see one staged publish now sweep in separate
+  // invocations, so nothing could serialize their starts anyway. Duplicate
+  // cross-org scans of the same stage id are intended — each org owns its own
+  // scan row and decision.
+  test("lets two organizations start the same stage id independently", async () => {
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: [{ id: "stage-shared", packageName: "pkg-a", version: "1.0.0" }],
     });
     dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
     dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
 
-    let activeAccessChecks = 0;
-    let maxActiveAccessChecks = 0;
-    const releases = [];
-    stagedPublishesMock.checkStagedPublishAccess.mockImplementation(async () => {
-      activeAccessChecks++;
-      maxActiveAccessChecks = Math.max(maxActiveAccessChecks, activeAccessChecks);
-      await new Promise((resolve) => releases.push(resolve));
-      activeAccessChecks--;
-      return { allowed: true, status: 206, detail: null };
-    });
-
-    const stageStartCoordinator = createStageStartCoordinator();
-    const first = discoverAndQueueStagedPublishes(
-      {
-        db,
-        env,
-        executionCtx: ctx,
-        organizationId: "org_a",
-        actorUserId: "user_a",
-        source: "auto_discovery",
-        eventSource: "staged_publishes.cron",
-        stageStartCoordinator,
-      },
-      { token: "npm_secret_token_a", registryUrl: "https://registry.npmjs.org" },
-    );
-    const second = discoverAndQueueStagedPublishes(
-      {
-        db,
-        env,
-        executionCtx: ctx,
-        organizationId: "org_b",
-        actorUserId: "user_b",
-        source: "auto_discovery",
-        eventSource: "staged_publishes.cron",
-        stageStartCoordinator,
-      },
-      { token: "npm_secret_token_b", registryUrl: "https://registry.npmjs.org" },
-    );
-    await flushPromises();
-
-    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(1);
-    expect(maxActiveAccessChecks).toBe(1);
-
-    releases.shift()?.();
-    await flushPromises();
-    expect(stagedPublishesMock.checkStagedPublishAccess).toHaveBeenCalledTimes(2);
-    expect(maxActiveAccessChecks).toBe(1);
-
-    for (const release of releases) release();
-    const results = await Promise.all([first, second]);
+    const results = await Promise.all([
+      discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: "org_a",
+          actorUserId: "user_a",
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+        },
+        { token: "npm_secret_token_a", registryUrl: "https://registry.npmjs.org" },
+      ),
+      discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: "org_b",
+          actorUserId: "user_b",
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+        },
+        { token: "npm_secret_token_b", registryUrl: "https://registry.npmjs.org" },
+      ),
+    ]);
 
     expect(results).toEqual([
       expect.objectContaining({ created: 1, skipped: 0 }),
@@ -521,7 +513,184 @@ describe("discoverAndQueueStagedPublishes", () => {
       db,
       expect.objectContaining({ organizationId: "org_b", stageId: "stage-shared" }),
     );
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(2);
+    expect(sentScanMessages()).toEqual([
+      expect.objectContaining({ organizationId: "org_a", stageId: "stage-shared" }),
+      expect.objectContaining({ organizationId: "org_b", stageId: "stage-shared" }),
+    ]);
+  });
+
+  test("dispatches large discovery in bounded preparation batches", async () => {
+    // Each bounded slice reaches SCAN_QUEUE before the next one is prepared, so
+    // a later failure cannot strand every row the invocation created.
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 140 }, (_, index) => ({
+        id: `stage-${index}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ found: 140, created: 140 }));
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(3);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(50);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[1][0]).toHaveLength(50);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[2][0]).toHaveLength(40);
+    expect(sentScanMessages()).toHaveLength(140);
+  });
+
+  test("hands off each candidate immediately without a discovery queue", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 3 }, (_, index) => ({
+        id: `stage-${index}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+    const fallbackEnv = { DB: {}, SCAN_QUEUE: env.SCAN_QUEUE };
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env: fallbackEnv,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ created: 3, deferred: 0 }));
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(3);
+    for (const [batch] of env.SCAN_QUEUE.sendBatch.mock.calls) expect(batch).toHaveLength(1);
+  });
+
+  test("lists once and fans remaining candidates into independent bounded work", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 60 }, (_, index) => ({
+        id: `stage-${String(index).padStart(2, "0")}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+      total: 60,
+      perPage: 60,
+      page: 0,
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+    const scheduleCandidateBatches = vi.fn();
+
+    const first = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        scheduleCandidateBatches,
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(first).toEqual(
+      expect.objectContaining({ found: 60, created: 50, skipped: 0, deferred: 10 }),
+    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(50);
+    expect(scheduleCandidateBatches).toHaveBeenCalledTimes(1);
+    const deferredCandidates = scheduleCandidateBatches.mock.calls[0][0];
+    expect(deferredCandidates.map((candidate) => candidate.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `stage-${index + 50}`),
+    );
+
+    env.SCAN_QUEUE.sendBatch.mockClear();
+    const continuation = await queueStagedPublishCandidates(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+      deferredCandidates,
+    );
+
+    expect(continuation).toEqual(
+      expect.objectContaining({ found: 10, created: 10, skipped: 0, deferred: 0 }),
+    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(10);
+    expect(stagedPublishesMock.listStagedPublishes).toHaveBeenCalledTimes(1);
+  });
+
+  test("rolls back every scan row a failed batch left off the queue", async () => {
+    // The second bounded slice fails: the 50 scans already accepted keep
+    // running, and the next 50 rows are deleted so the next sweep
+    // rediscovers them instead of seeing a permanently pending scan.
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 140 }, (_, index) => ({
+        id: `stage-${index}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+    env.SCAN_QUEUE.sendBatch
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("queue unavailable"));
+
+    await expect(
+      discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: "org_a",
+          actorUserId: "user_a",
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+        },
+        { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+      ),
+    ).rejects.toThrow("queue unavailable");
+
+    // One batched delete, not 50 sequential ones. Only the accepted slice's scan
+    // rows survive; the rejected slice's 50 are exactly the deleted ones.
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledTimes(1);
+    const acceptedScanIds = new Set(
+      env.SCAN_QUEUE.sendBatch.mock.calls[0][0].map((entry) => entry.body.scanId),
+    );
+    const rejectedScanIds = env.SCAN_QUEUE.sendBatch.mock.calls[1][0].map(
+      (entry) => entry.body.scanId,
+    );
+    const [, deletedScanIds, deletedOrganizationId] = dbMock.deletePendingScanJobs.mock.calls[0];
+    expect(deletedScanIds).toEqual(rejectedScanIds);
+    expect(deletedOrganizationId).toBe("org_a");
+    for (const scanId of deletedScanIds) expect(acceptedScanIds.has(scanId)).toBe(false);
   });
 
   test("removes the pending scan when queue dispatch fails", async () => {
@@ -531,7 +700,7 @@ describe("discoverAndQueueStagedPublishes", () => {
     });
     dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
     dbMock.createScanJob.mockResolvedValue({ id: "scan-new-1" });
-    env.SCAN_QUEUE.send.mockRejectedValueOnce(queueError);
+    env.SCAN_QUEUE.sendBatch.mockRejectedValueOnce(queueError);
 
     await expect(
       discoverAndQueueStagedPublishes(
@@ -549,7 +718,44 @@ describe("discoverAndQueueStagedPublishes", () => {
     ).rejects.toThrow("queue unavailable");
 
     const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
-    expect(dbMock.deletePendingScanJob).toHaveBeenCalledWith(db, createdScanId, "org_a");
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledWith(db, [createdScanId], "org_a");
+  });
+
+  test("removes rows already created when a later candidate fails before dispatch", async () => {
+    // Rows are created for every candidate before anything is sent, so a
+    // candidate that throws mid-sweep must not leave the earlier rows pending
+    // with no queue message behind them: nothing is dispatched, and every row
+    // this sweep wrote is deleted.
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: [
+        { id: "stage-ok", packageName: "pkg-a", version: "1.0.0" },
+        { id: "stage-boom", packageName: "pkg-b", version: "1.0.0" },
+      ],
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob
+      .mockResolvedValueOnce({ id: "scan-ok" })
+      .mockRejectedValueOnce(new Error("D1_ERROR: write failed"));
+
+    await expect(
+      discoverAndQueueStagedPublishes(
+        {
+          db,
+          env,
+          executionCtx: ctx,
+          organizationId: "org_a",
+          actorUserId: "user_a",
+          source: "auto_discovery",
+          eventSource: "staged_publishes.cron",
+        },
+        { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+      ),
+    ).rejects.toThrow("D1_ERROR: write failed");
+
+    expect(env.SCAN_QUEUE.sendBatch).not.toHaveBeenCalled();
+    const createdScanId = dbMock.createScanJob.mock.calls[0]?.[1]?.id;
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledTimes(1);
+    expect(dbMock.deletePendingScanJobs).toHaveBeenCalledWith(db, [createdScanId], "org_a");
   });
 
   test("starts nothing when every discovered stage is already known", async () => {
@@ -573,7 +779,7 @@ describe("discoverAndQueueStagedPublishes", () => {
 
     expect(result).toEqual(expect.objectContaining({ found: 1, created: 0, skipped: 1 }));
     expect(dbMock.createScanJob).not.toHaveBeenCalled();
-    expect(env.SCAN_QUEUE.send).not.toHaveBeenCalled();
+    expect(env.SCAN_QUEUE.sendBatch).not.toHaveBeenCalled();
   });
 
   test("starts a scan for each newly discovered stage", async () => {
@@ -605,10 +811,8 @@ describe("discoverAndQueueStagedPublishes", () => {
       db,
       expect.objectContaining({ stageId: "stage-new" }),
     );
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledTimes(1);
-    expect(env.SCAN_QUEUE.send).toHaveBeenCalledWith(
-      expect.objectContaining({ stageId: "stage-new" }),
-    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(sentScanMessages()).toEqual([expect.objectContaining({ stageId: "stage-new" })]);
   });
 });
 

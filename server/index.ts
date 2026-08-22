@@ -2,8 +2,6 @@ import { Hono } from "hono";
 import { createDb } from "./db/client";
 import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "./db/audit-log";
 import { pruneExpiredAuthRows } from "./db/auth-retention";
-import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
-import { getOrganizationOwnerUserId } from "./db/organizations";
 import {
   RateLimitError,
   enforceRateLimit,
@@ -12,7 +10,6 @@ import {
 import { createAuth, getAuthSession } from "./lib/auth";
 import { UnauthorizedError } from "./lib/platform/errors";
 import { rateLimitResponse } from "./lib/platform/http";
-import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
   API_CSP,
@@ -28,6 +25,7 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isScanQueueMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
@@ -35,14 +33,12 @@ import {
 } from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
-  createStageStartCoordinator,
-  discoverAndQueueStagedPublishes,
-  ensureUsableNpmConnection,
-  isNpmConnectionAuthFailure,
-  isTransientSweepFailure,
-  recordExpiredNpmConnection,
-  StagedPublishesFetchError,
-} from "./lib/ecosystems/npm/staged-publishes-discovery";
+  DISCOVERY_SWEEP_QUEUE_NAME,
+  enqueueDiscoverySweeps,
+  isDiscoveryQueueMessage,
+  runDiscoverySweep,
+  type DiscoveryQueueMessage,
+} from "./lib/discovery/sweep-queue";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
 import { githubWebhookRoutes } from "./routes/github-webhooks";
@@ -352,130 +348,6 @@ app.onError((err, c) => {
   return c.json({ error: "internal error" }, 500);
 });
 
-// A scheduled invocation gets a bounded CPU budget. Sweeping organizations
-// sequentially is fine at ~10 orgs but approaches that budget around 50-100,
-// after which the tick can be cut off and cycles drop silently. Five sweeps in
-// flight keeps us comfortably under budget while still draining a large org
-// count within a single 15-minute cycle. Raise only after measuring CPU time.
-const DISCOVERY_CRON_CONCURRENCY = 5;
-
-async function runWithConcurrency<T>(
-  items: readonly T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const item = items[cursor++];
-      if (item !== undefined) await worker(item);
-    }
-  });
-  await Promise.all(runners);
-}
-
-async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: ExecutionContext) {
-  const startedAtMs = Date.now();
-  const db = createDb(env.DB);
-  const connections = await listAutoDiscoveryNpmConnections(db);
-  const stageStartCoordinator = createStageStartCoordinator();
-  emitOperationalEvent("info", "staged_publishes.cron.started", {
-    organizations: connections.length,
-  });
-  const allowInsecureLocalhost = allowInsecureLocalRegistry(env);
-
-  let orgsProcessed = 0;
-  const sweepConnection = async (connection: (typeof connections)[number]) => {
-    try {
-      const notificationOwnerUserId = await getOrganizationOwnerUserId(
-        db,
-        connection.organizationId,
-      );
-      const actorUserId = connection.createdByUserId ?? notificationOwnerUserId;
-      if (!notificationOwnerUserId || !actorUserId) {
-        emitOperationalEvent("error", "staged_publishes.cron.skipped", {
-          organizationId: connection.organizationId,
-          reason: "organization_owner_missing",
-        });
-        return;
-      }
-      try {
-        const usable = await ensureUsableNpmConnection({
-          db,
-          env,
-          connection,
-          actorUserId,
-          allowInsecureLocalhost,
-        });
-        const result = await discoverAndQueueStagedPublishes(
-          {
-            db,
-            env,
-            executionCtx: ctx,
-            organizationId: connection.organizationId,
-            actorUserId,
-            source: "auto_discovery",
-            eventSource: "staged_publishes.cron",
-            allowInsecureLocalhost,
-            stageStartCoordinator,
-          },
-          usable,
-        );
-        emitOperationalEvent("info", "staged_publishes.cron.org_completed", {
-          organizationId: connection.organizationId,
-          ...result,
-        });
-      } catch (err) {
-        if (isNpmConnectionAuthFailure(err)) {
-          // The token can no longer reach the staging registry. Mark the
-          // connection invalid, record it, and email the maintainer so reviews
-          // don't silently stop. Never let the alerting itself break the sweep.
-          try {
-            await recordExpiredNpmConnection({
-              db,
-              env,
-              connection,
-              actorUserId,
-              notificationOwnerUserId,
-              error: err,
-            });
-          } catch (alertErr) {
-            emitOperationalEvent("error", "npm_connection.token_expired_alert_failed", {
-              organizationId: connection.organizationId,
-              error: describeOperationalError(alertErr),
-            });
-          }
-          return;
-        }
-        const detail =
-          err instanceof StagedPublishesFetchError
-            ? { status: err.status, detail: err.detail }
-            : describeOperationalError(err);
-        // Registry timeouts and 5xx are upstream weather, not a broken sweep;
-        // logging them at error made every npm hiccup indistinguishable from a
-        // real failure. `transient` is emitted either way so a query can select
-        // on the field rather than on the level.
-        const transient = isTransientSweepFailure(err);
-        emitOperationalEvent(transient ? "warn" : "error", "staged_publishes.cron.org_failed", {
-          organizationId: connection.organizationId,
-          transient,
-          error: detail,
-        });
-      }
-    } finally {
-      orgsProcessed++;
-    }
-  };
-
-  await runWithConcurrency(connections, DISCOVERY_CRON_CONCURRENCY, sweepConnection);
-
-  emitOperationalEvent("info", "staged_publishes.cron.swept", {
-    orgsProcessed,
-    durationMs: durationMsSince(startedAtMs),
-    concurrencyLimit: DISCOVERY_CRON_CONCURRENCY,
-  });
-}
-
 // Flat-window retention for the organization audit log. Runs each tick; a
 // bounded DELETE keeps the sweep cheap. Never let pruning failures abort the
 // discovery cron.
@@ -531,12 +403,13 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Cloudflare.Env, ctx: ExecutionContext) {
-    // The discovery sweep's first D1 read runs before the per-organization
-    // try/catch, so a transient D1 failure here used to surface as an uncaught
-    // exception and skip audit pruning. The sweep is idempotent and the next
-    // tick is 15 minutes away — log and move on instead of throwing.
+    // The tick is a producer: it enumerates sweep-eligible organizations and
+    // fans one message per organization onto DISCOVERY_QUEUE, so its CPU cost
+    // no longer scales with the number of organizations swept. Its D1
+    // enumeration still runs outside any per-organization handler, so a
+    // transient D1 failure here must not skip audit pruning — log and move on.
     try {
-      await runStagedPublishesDiscoveryCron(env, ctx);
+      await enqueueDiscoverySweeps(env, ctx);
     } catch (err) {
       emitOperationalEvent("error", "staged_publishes.cron.failed", {
         error: describeOperationalError(err),
@@ -546,9 +419,73 @@ export default {
     await pruneStaleAuthRows(env);
     await pruneStaleRateLimitBuckets(env);
   },
-  async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
+  async queue(
+    batch: MessageBatch<QueueMessage | DiscoveryQueueMessage>,
+    env: Cloudflare.Env,
+    ctx: ExecutionContext,
+  ) {
+    // Discovery work has its own queue so a discovery burst cannot starve scan
+    // execution. The pairing is enforced in both directions: a discovery body
+    // is only honored on the discovery queue, and the discovery queue only
+    // carries discovery bodies. Anything else — including a body with an
+    // unrecognized `kind` from a future or rolled-back deploy — is dropped by
+    // the guard below instead of falling through to the scan handler, which
+    // would run `executeScanJob` with undefined ids.
+    const isDiscoveryQueue = batch.queue === DISCOVERY_SWEEP_QUEUE_NAME;
+    const dropUnroutableMessage = (
+      body: unknown,
+      attempts: number,
+      startedAtMs: number,
+      reason: string,
+    ) => {
+      emitOperationalEvent("error", "queue.message.unknown_kind", {
+        queue: batch.queue ?? null,
+        kind:
+          typeof body === "object" && body !== null && "kind" in body
+            ? String((body as { kind: unknown }).kind)
+            : null,
+        reason,
+        attempt: attempts,
+        durationMs: durationMsSince(startedAtMs),
+      });
+      // Acked, not retried: redelivering a message no handler claims only burns
+      // the consumer, and on the discovery queue (no dead-letter queue) it would
+      // be dropped anyway — with no record of why.
+    };
+
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isDiscoveryQueueMessage(message.body)) {
+        if (!isDiscoveryQueue) {
+          dropUnroutableMessage(
+            message.body,
+            message.attempts,
+            messageStartedAtMs,
+            "sweep_off_discovery_queue",
+          );
+          continue;
+        }
+        const sweepMessage = message.body;
+        // runDiscoverySweep classifies and logs every failure itself, so the
+        // message always acks: a broken token or a flaky registry is re-swept
+        // by the next tick, not by a queue retry.
+        await runDiscoverySweep(env, ctx, sweepMessage);
+        emitOperationalEvent("info", "staged_publishes.sweep.queue.message.completed", {
+          organizationId: sweepMessage.organizationId,
+          attempt: message.attempts,
+          durationMs: durationMsSince(messageStartedAtMs),
+        });
+        continue;
+      }
+      if (isDiscoveryQueue) {
+        dropUnroutableMessage(
+          message.body,
+          message.attempts,
+          messageStartedAtMs,
+          "non_sweep_on_discovery_queue",
+        );
+        continue;
+      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {
@@ -583,16 +520,26 @@ export default {
         }
         continue;
       }
+      if (!isScanQueueMessage(message.body)) {
+        dropUnroutableMessage(
+          message.body,
+          message.attempts,
+          messageStartedAtMs,
+          "unrecognized_body",
+        );
+        continue;
+      }
+      const scanMessage = message.body;
       try {
-        await executeScanJob(env, ctx, message.body, undefined, {
+        await executeScanJob(env, ctx, scanMessage, undefined, {
           attempt: message.attempts,
           finalAttempt: message.attempts >= MAX_SCAN_JOB_ATTEMPTS,
         });
         emitOperationalEvent("info", "scan.queue.message.completed", {
-          scanId: message.body.scanId,
-          organizationId: message.body.organizationId,
-          stageId: message.body.stageId,
-          source: message.body.source ?? "manual",
+          scanId: scanMessage.scanId,
+          organizationId: scanMessage.organizationId,
+          stageId: scanMessage.stageId,
+          source: scanMessage.source ?? "manual",
           attempt: message.attempts,
           durationMs: durationMsSince(messageStartedAtMs),
         });
@@ -601,10 +548,10 @@ export default {
         if (safe.retryable && message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
           message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
           emitOperationalEvent("warn", "scan.queue.retry_scheduled", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
+            scanId: scanMessage.scanId,
+            organizationId: scanMessage.organizationId,
+            stageId: scanMessage.stageId,
+            source: scanMessage.source ?? "manual",
             attempt: message.attempts,
             nextDelaySeconds: retryDelaySeconds(message.attempts),
             durationMs: durationMsSince(messageStartedAtMs),
@@ -612,10 +559,10 @@ export default {
           });
         } else {
           emitOperationalEvent("error", "scan.queue.message_failed", {
-            scanId: message.body.scanId,
-            organizationId: message.body.organizationId,
-            stageId: message.body.stageId,
-            source: message.body.source ?? "manual",
+            scanId: scanMessage.scanId,
+            organizationId: scanMessage.organizationId,
+            stageId: scanMessage.stageId,
+            source: scanMessage.source ?? "manual",
             attempt: message.attempts,
             exhausted: safe.retryable,
             durationMs: durationMsSince(messageStartedAtMs),

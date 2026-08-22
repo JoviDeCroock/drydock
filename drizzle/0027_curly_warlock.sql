@@ -1,0 +1,1 @@
+CREATE INDEX `npm_connections_discovery_cursor_idx` ON `npm_connections` (`id`,`organization_id`) WHERE "npm_connections"."validation_status" in ('valid', 'unvalidated');

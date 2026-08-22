@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -71,11 +71,45 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
-export async function listAutoDiscoveryNpmConnections(db: AppDb) {
+/**
+ * A connection eligible for a scheduled discovery sweep. Only identifiers are
+ * selected: the sweep consumer re-reads the full row (including the encrypted
+ * token) from D1 when it runs, so no credential material has to travel through
+ * a queue message.
+ */
+export interface AutoDiscoveryNpmConnectionRef {
+  id: string;
+  organizationId: string;
+}
+
+/**
+ * One page of sweep-eligible connections, ordered by immutable connection id so
+ * the caller can resume safely even while consumers change a connection's
+ * validation status. `npm_connections_discovery_cursor_idx` covers the filter,
+ * ordering, and selected columns without a temporary sort or table lookup.
+ *
+ * There is no separate auto-discovery flag: a connection is eligible while its
+ * validation status is `valid` or `unvalidated`. `invalid` (expired/revoked
+ * token, or discovery deliberately switched off) drops out of the sweep.
+ */
+export async function listAutoDiscoveryNpmConnectionRefs(
+  db: AppDb,
+  options: { limit: number; afterId?: string | null },
+): Promise<AutoDiscoveryNpmConnectionRef[]> {
+  // Keep this literal predicate aligned with the partial discovery index in
+  // schema.ts. Bound IN values cannot prove that a SQLite partial index applies,
+  // so using inArray() here would fall back to scanning the primary-key index.
+  const eligible = sql`${npmConnections.validationStatus} in ('valid', 'unvalidated')`;
+  const afterCursor = options.afterId ? gt(npmConnections.id, options.afterId) : undefined;
   return db
-    .select()
+    .select({
+      id: npmConnections.id,
+      organizationId: npmConnections.organizationId,
+    })
     .from(npmConnections)
-    .where(inArray(npmConnections.validationStatus, ["valid", "unvalidated"]));
+    .where(afterCursor ? and(eligible, afterCursor) : eligible)
+    .orderBy(npmConnections.id)
+    .limit(options.limit);
 }
 
 export async function updateNpmConnectionValidation(

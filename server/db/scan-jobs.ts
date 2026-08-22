@@ -53,16 +53,41 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   return getScan(db, input.id, input.organizationId);
 }
 
-export async function deletePendingScanJob(db: AppDb, scanId: string, organizationId: string) {
-  await db
-    .delete(scans)
-    .where(
-      and(
-        eq(scans.id, scanId),
-        eq(scans.organizationId, organizationId),
-        eq(scans.status, "pending"),
-      ),
-    );
+/** Whether an organization-owned scan row still exists, without loading it. */
+export async function scanExists(db: AppDb, scanId: string, organizationId: string) {
+  const [row] = await db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * Delete several still-pending scan rows in one statement per D1 parameter
+ * chunk. Discovery uses this to roll back rows it created but never handed to
+ * the scan queue; a sweep can prepare well over a hundred of them, and one
+ * DELETE per row would turn a failure path into a hundred round trips.
+ */
+export async function deletePendingScanJobs(
+  db: AppDb,
+  scanIds: readonly string[],
+  organizationId: string,
+) {
+  const ids = [...new Set(scanIds)];
+  if (!ids.length) return;
+  // One parameter per id, plus the organizationId and status predicates.
+  for (const chunk of chunkForD1(ids, 1, 2)) {
+    await db
+      .delete(scans)
+      .where(
+        and(
+          inArray(scans.id, chunk),
+          eq(scans.organizationId, organizationId),
+          eq(scans.status, "pending"),
+        ),
+      );
+  }
 }
 
 export type DeleteFailedScanResult =
