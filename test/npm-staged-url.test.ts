@@ -61,4 +61,18 @@ describe("npm staged packages urls", () => {
       }),
     ).toBeNull();
   });
+
+  test.each(["published", "blocked", "deleted"])(
+    "does not link to npm's staged page after npm reports the stage as %s",
+    (registryVersionStatus) => {
+      expect(
+        npmStagedPackagesUrlFor({
+          source: "manual",
+          packageName: "left-pad",
+          registryUrl: "https://registry.npmjs.org",
+          registryVersionStatus,
+        }),
+      ).toBeNull();
+    },
+  );
 });
