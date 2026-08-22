@@ -171,7 +171,9 @@ rule that keeps regressing by eye: `SectionLabel` draws its own trailing hairlin
 reads as a double border. The rule reports the label's own class, the class of the
 element that directly wraps it (a top border for a leading label or a bottom border
 for a trailing label), and an immediately adjacent JSX sibling that draws a rule on
-the touching edge. JSX comments do not interrupt visual adjacency. Only non-zero
+the touching edge. When a label touches its wrapper edge, that wrapper's touching
+sibling is checked too, covering summary/header wrappers around the label. JSX
+comments do not interrupt visual adjacency. Only non-zero
 border-width utilities count — directional color utilities do not create a line, an
 all-sides `border` is a box outline, and zero-width utilities remove rather than draw a rule — and class names are read
 from static strings, including the string arguments of a `cn(...)` call. A rule two
@@ -200,14 +202,16 @@ regexes via the non-executing JS lexer before scanning (see
   order, so an `app.route("/api/…")` placed above the `app.use("/api/*")` session guard
   in `server/index.ts` ships anonymous with nothing in the route file to show it; an
   `app.use()` handler can do the same by returning without `next()`. This pins the
-  guard's existence and the exact API registrations allowed above it.
+  guard's existence and the exact API registrations allowed above it. Commented-out
+  registrations and guards are blanked before the structural scan.
 - `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
   file that exists. Prose here navigates by path, and a rename silently breaks the
   reference, sending the next reader to a file that is gone. A path may be written
   from any root that resolves to exactly one tracked file (`routes/scans.ts` and
-  `server/routes/scans.ts` both resolve today); source comments are identified by the
-  non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
+  `server/routes/scans.ts` both resolve today); relative paths in source comments are
+  resolved from the source file. JavaScript and TypeScript comments are identified by
+  the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
   package under review, inside a dependency, or in a gitignored output directory —
   are listed in the test's explicit non-repository exceptions.
 

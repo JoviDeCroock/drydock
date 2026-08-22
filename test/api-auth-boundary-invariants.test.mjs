@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { sanitizeJsSource } from "./helpers/sanitized-source.mjs";
 
 // AGENTS.md: "D1/Better Auth are required for every non-auth `/api/*` endpoint."
 // That is enforced structurally rather than per-handler — a single
@@ -14,6 +15,15 @@ const indexSource = readFileSync(
   fileURLToPath(new URL("../server/index.ts", import.meta.url)),
   "utf8",
 );
+
+// Preserve route and error-message strings while removing comments, templates,
+// and regex literals. A disabled guard left inside a block comment must not
+// satisfy the same structural check that is meant to prove it is executable.
+function sanitizeApiSource(source) {
+  return sanitizeJsSource(source, () => true);
+}
+
+const structuralIndexSource = sanitizeApiSource(indexSource);
 
 // The Better Auth handler must remain reachable without an existing session.
 // docs/security-model.md documents the one non-auth exception under `/api/*`:
@@ -61,7 +71,7 @@ function apiRegistrations(source) {
 }
 
 describe("/api/* auth boundary", () => {
-  const lines = indexSource.split("\n");
+  const lines = structuralIndexSource.split("\n");
   const guardLine = sessionGuardLine(lines);
 
   test("a session guard covers /api/*", () => {
@@ -72,7 +82,7 @@ describe("/api/* auth boundary", () => {
   });
 
   test("only auth and the documented public exception mount above the session guard", () => {
-    const registrations = apiRegistrations(indexSource);
+    const registrations = apiRegistrations(structuralIndexSource);
     expect(registrations.length).toBeGreaterThan(5);
 
     const anonymous = registrations
@@ -88,7 +98,7 @@ describe("/api/* auth boundary", () => {
   });
 
   test("every registration allowed above the guard is actually present", () => {
-    const registrations = apiRegistrations(indexSource).map(({ method, path }) => ({
+    const registrations = apiRegistrations(structuralIndexSource).map(({ method, path }) => ({
       method,
       path,
     }));
@@ -119,6 +129,25 @@ describe("/api/* auth boundary", () => {
       { method: "query", path: "/api/queried" },
       { method: "use", path: "/api/middleware" },
       { method: "on", path: "/api/method-list" },
+    ]);
+  });
+
+  test("ignores API registrations and session guards inside comments", () => {
+    const source = sanitizeApiSource(
+      [
+        "/*",
+        'app.use("/api/*", async (c, next) => {',
+        '  if (!session) return c.json({ error: "unauthorized" }, 401);',
+        "});",
+        'app.get("/api/commented-out", handler);',
+        "*/",
+        'app.get("/api/real", handler);',
+      ].join("\n"),
+    );
+
+    expect(sessionGuardLine(source.split("\n"))).toBe(-1);
+    expect(apiRegistrations(source).map(({ method, path }) => ({ method, path }))).toEqual([
+      { method: "get", path: "/api/real" },
     ]);
   });
 });

@@ -54,19 +54,38 @@ function buildResolver(files) {
       suffixCounts.set(suffix, (suffixCounts.get(suffix) ?? 0) + 1);
     }
   }
-  return (reference) =>
-    exactFiles.has(reference) ||
-    existsSync(path.join(repoRoot, reference)) ||
-    suffixCounts.get(reference) === 1;
+  return (reference, fromFile) => {
+    if (reference.startsWith("./") || reference.startsWith("../")) {
+      if (!fromFile) return false;
+      const resolved = path.posix.normalize(
+        path.posix.join(path.posix.dirname(fromFile), reference),
+      );
+      if (resolved === ".." || resolved.startsWith("../") || path.posix.isAbsolute(resolved)) {
+        return false;
+      }
+      return exactFiles.has(resolved) || existsSync(path.join(repoRoot, resolved));
+    }
+    return (
+      exactFiles.has(reference) ||
+      existsSync(path.join(repoRoot, reference)) ||
+      suffixCounts.get(reference) === 1
+    );
+  };
 }
 
-function isCheckable(reference) {
+function isCheckable(reference, { commentsOnly }) {
   if (!reference.includes("/")) return false;
-  // URLs, package specifiers, and explicit relative links (already resolved by
-  // the markdown link checker's own conventions) are not repo-root paths.
+  // URLs and package specifiers are not repository paths. Explicit relative
+  // Markdown links already use Markdown's own resolution conventions; relative
+  // paths in source comments are checked against the source file instead.
   // Dot-directories such as `.claude/` and `.github/` are repository paths.
-  if (/^(https?:|@|\.\.?\/)/.test(reference)) return false;
+  if (/^(https?:|@)/.test(reference)) return false;
+  if (/^\.\.?\//.test(reference)) return commentsOnly;
   return !NON_REPO_PREFIXES.some((prefix) => reference.startsWith(prefix));
+}
+
+function isSourceFile(file) {
+  return /^(server|src|scripts|tooling|test)\/.*\.(?:[cm]?js|tsx?)$/.test(file);
 }
 
 function pathReferences(text, { commentsOnly }) {
@@ -90,8 +109,8 @@ async function staleReferences(files, resolve, { commentsOnly }) {
     files.map(async (file) => {
       const text = await readFile(path.join(repoRoot, file), "utf8");
       for (const { reference, line } of pathReferences(text, { commentsOnly })) {
-        if (!isCheckable(reference)) continue;
-        if (resolve(reference)) continue;
+        if (!isCheckable(reference, { commentsOnly })) continue;
+        if (resolve(reference, file)) continue;
         stale.push(`${file}:${line}: \`${reference}\``);
       }
     }),
@@ -117,9 +136,7 @@ describe("prose path references", () => {
   });
 
   test("every path named in a source comment points at a file that exists", async () => {
-    const source = files.filter((file) =>
-      /^(server|src|scripts|tooling|test)\/.*\.(ts|tsx|mjs)$/.test(file),
-    );
+    const source = files.filter(isSourceFile);
     expect(source.length).toBeGreaterThan(50);
 
     const stale = await staleReferences(source, resolve, { commentsOnly: true });
@@ -131,13 +148,35 @@ describe("prose path references", () => {
     const references = [...prose.matchAll(PATH_REFERENCE)].map((match) => match[1]);
 
     expect(references).toEqual(["docs/security-model.md", ".claude/skills/pre-pr/SKILL.md"]);
-    expect(references.every(isCheckable)).toBe(true);
+    expect(references.every((reference) => isCheckable(reference, { commentsOnly: false }))).toBe(
+      true,
+    );
   });
 
   test("requires shorthand paths to identify exactly one tracked file", () => {
     const resolve = buildResolver(["server/routes/scans.ts", "test/routes/scans.ts"]);
     expect(resolve("server/routes/scans.ts")).toBe(true);
     expect(resolve("routes/scans.ts")).toBe(false);
+  });
+
+  test("resolves relative source-comment paths from the containing file", () => {
+    const resolve = buildResolver([
+      "server/lib/ecosystems/record.ts",
+      "server/lib/ecosystems/stage-record.ts",
+    ]);
+
+    expect(isCheckable("./record.ts", { commentsOnly: true })).toBe(true);
+    expect(isCheckable("./record.ts", { commentsOnly: false })).toBe(false);
+    expect(resolve("./record.ts", "server/lib/ecosystems/stage-record.ts")).toBe(true);
+    expect(resolve("./missing.ts", "server/lib/ecosystems/stage-record.ts")).toBe(false);
+  });
+
+  test("includes JavaScript and TypeScript source files in the comment scan", () => {
+    expect(
+      ["server/parser.js", "scripts/check.cjs", "tooling/rule.mjs", "src/view.tsx"].every(
+        isSourceFile,
+      ),
+    ).toBe(true);
   });
 
   test("extracts inline and JSX comments without treating strings as comments", () => {

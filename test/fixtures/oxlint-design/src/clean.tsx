@@ -118,3 +118,15 @@ export function ZeroWidthBorder() {
     </SectionLabel>
   );
 }
+
+export function RuleOutsideANonTouchingWrapperEdge() {
+  return (
+    <section>
+      <header>
+        <SectionLabel as="h2">Findings</SectionLabel>
+        <p>content between the label and wrapper edge</p>
+      </header>
+      <div class="border-t border-border">separate boundary</div>
+    </section>
+  );
+}

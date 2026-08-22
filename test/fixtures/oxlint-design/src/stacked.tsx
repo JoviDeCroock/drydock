@@ -97,3 +97,25 @@ export function OnTrailingWrapperEdge() {
     </section>
   );
 }
+
+export function OnSiblingOutsideTrailingWrapper() {
+  return (
+    <details>
+      <summary>
+        <SectionLabel as="h2">Findings</SectionLabel>
+      </summary>
+      <div class="border-t border-border">body</div>
+    </details>
+  );
+}
+
+export function OnSiblingOutsideLeadingWrapper() {
+  return (
+    <section>
+      <div class="border-b border-border">intro</div>
+      <header>
+        <SectionLabel as="h2">Findings</SectionLabel>
+      </header>
+    </section>
+  );
+}

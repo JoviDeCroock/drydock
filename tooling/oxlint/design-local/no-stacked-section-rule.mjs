@@ -24,8 +24,11 @@
  *     which is a different element, not a stacked rule.
  *   - Only adjacent boundaries are reported: the label's own class, the class
  *     of the element that directly wraps it, and the immediately preceding /
- *     following JSX sibling. A rule two elements away is a spacing question,
- *     not a doubled hairline, and reporting it would be guesswork.
+ *     following JSX sibling. When the label touches a wrapper edge, the
+ *     wrapper's touching sibling is adjacent too (`<summary><SectionLabel />
+ *     </summary><div class="border-t">`). A rule beyond either boundary is a
+ *     spacing question, not a doubled hairline, and reporting it would be
+ *     guesswork.
  *   - Class names are read from static string literals (`class="…"`, and the
  *     string arguments of a `cn(…)` call). A class assembled at runtime is not
  *     resolved.
@@ -178,6 +181,16 @@ const rule = {
   },
 
   create(context) {
+    function reportSibling(neighbour, side) {
+      if (neighbour?.type !== "JSXElement") return;
+      if (!drawsDirectionalRule(neighbour, side)) return;
+      context.report({
+        node: neighbour,
+        messageId: "onSibling",
+        data: { what: elementName(neighbour) === "hr" ? "<hr>" : "border-t/border-b" },
+      });
+    }
+
     function checkElement(node) {
       if (elementName(node) !== SECTION_LABEL) return;
 
@@ -214,13 +227,23 @@ const rule = {
         [siblings[index - 1], "bottom"],
         [siblings[index + 1], "top"],
       ]) {
-        if (neighbour?.type !== "JSXElement") continue;
-        if (!drawsDirectionalRule(neighbour, side)) continue;
-        context.report({
-          node: neighbour,
-          messageId: "onSibling",
-          data: { what: elementName(neighbour) === "hr" ? "<hr>" : "border-t/border-b" },
-        });
+        reportSibling(neighbour, side);
+      }
+
+      // A wrapper does not make its outer boundary non-adjacent. This is the
+      // CollapsibleCard shape: the label is the summary's trailing child and a
+      // border-t on the following content div still doubles the label's rule.
+      if (parent.type === "JSXElement") {
+        const grandparent = parent.parent;
+        if (grandparent?.type !== "JSXElement" && grandparent?.type !== "JSXFragment") return;
+        const outerSiblings = meaningfulChildren(grandparent);
+        const parentIndex = outerSiblings.indexOf(parent);
+        if (siblings[0] === node) {
+          reportSibling(outerSiblings[parentIndex - 1], "bottom");
+        }
+        if (siblings[siblings.length - 1] === node) {
+          reportSibling(outerSiblings[parentIndex + 1], "top");
+        }
       }
     }
 
