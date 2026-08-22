@@ -27,7 +27,10 @@ export interface NpmBroker extends AdapterBroker {
    * moving range or dist-tag is assessed against the registry's current
    * version snapshot.
    */
-  fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null>;
+  fetchAnonymousPackageMetadata(
+    name: string,
+    opts?: NpmBrokerAnonymousFetchOptions,
+  ): Promise<RegistryMetadata | null>;
   /**
    * Credential-free tarball fetch + credentials-free sandbox parse for a
    * dependency artifact. Same origin policy as the baseline download; no
@@ -48,12 +51,19 @@ export interface NpmBroker extends AdapterBroker {
 
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
+  /** Remaining dependency-review deadline, enforced inside the broker. */
+  timeoutMs?: number;
   /**
    * Per-file text-sample cap the sandbox applies before the parsed files cross
    * the wire. Only the baseline download sets it (see
    * BASELINE_TEXT_SAMPLE_LIMIT); the staged side is always unbounded.
    */
   maxTextSampleChars?: number;
+}
+
+export interface NpmBrokerAnonymousFetchOptions {
+  /** Remaining dependency-review deadline, enforced inside the broker. */
+  timeoutMs?: number;
 }
 
 interface NpmBrokerProps {
@@ -120,18 +130,23 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     );
   }
 
-  async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
+  async fetchAnonymousPackageMetadata(
+    name: string,
+    opts?: NpmBrokerAnonymousFetchOptions,
+  ): Promise<RegistryMetadata | null> {
+    const signal = timeoutSignal(opts?.timeoutMs);
     const registry = await this.registryUrl();
-    return fetchAnonymousPackageMetadata(this.env, registry, name);
+    return fetchAnonymousPackageMetadata(this.env, registry, name, signal);
   }
 
   async downloadAnonymousTarball(
     tarballUrl: string,
     opts: NpmBrokerDownloadOptions,
   ): Promise<DownloadResult> {
+    const signal = timeoutSignal(opts.timeoutMs);
     const registry = await this.registryUrl();
     return runRpcSafe(() =>
-      downloadAnonymousTarball(this.env, this.ctx, registry, tarballUrl, opts),
+      downloadAnonymousTarball(this.env, this.ctx, registry, tarballUrl, opts, signal),
     );
   }
 
@@ -156,10 +171,12 @@ async function fetchAnonymousPackageMetadata(
   env: Cloudflare.Env,
   registry: string,
   name: string,
+  signal?: AbortSignal,
 ): Promise<RegistryMetadata | null> {
   return fetchPackageMetadata(env, name, {
     npmRegistry: registry,
     abbreviated: true,
+    signal,
   }).catch(() => null);
 }
 
@@ -169,18 +186,26 @@ async function downloadAnonymousTarball(
   registry: string,
   tarballUrl: string,
   opts: NpmBrokerDownloadOptions,
+  signal?: AbortSignal,
 ): Promise<DownloadResult> {
   return downloadPublishedTarball(env, ctx, tarballUrl, {
     registryUrl: registry,
     allowInsecureLocalhost: allowInsecureLocalRegistry(env),
     maxFiles: opts.maxFiles,
     maxTextSampleChars: opts.maxTextSampleChars,
+    signal,
     // SHA-512 matches the SRI npm publishes as `dist.integrity`, so the digest
     // Drydock recomputes is directly comparable to the one the registry
     // advertised. SHA-1 rides along for versions old enough to carry only
     // `dist.shasum`.
     archiveDigestAlgorithms: ["SHA-512", "SHA-1"],
   });
+}
+
+function timeoutSignal(timeoutMs: number | undefined): AbortSignal | undefined {
+  return timeoutMs === undefined
+    ? undefined
+    : AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs)));
 }
 
 /**
@@ -288,15 +313,20 @@ class LocalNpmBroker implements NpmBroker {
     });
   }
 
-  async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
+  async fetchAnonymousPackageMetadata(
+    name: string,
+    opts?: NpmBrokerAnonymousFetchOptions,
+  ): Promise<RegistryMetadata | null> {
+    const signal = timeoutSignal(opts?.timeoutMs);
     const registry = await this.registryUrl();
-    return fetchAnonymousPackageMetadata(this.ctx.env, registry, name);
+    return fetchAnonymousPackageMetadata(this.ctx.env, registry, name, signal);
   }
 
   async downloadAnonymousTarball(
     tarballUrl: string,
     opts: NpmBrokerDownloadOptions,
   ): Promise<DownloadResult> {
+    const signal = timeoutSignal(opts.timeoutMs);
     const registry = await this.registryUrl();
     return downloadAnonymousTarball(
       this.ctx.env,
@@ -304,6 +334,7 @@ class LocalNpmBroker implements NpmBroker {
       registry,
       tarballUrl,
       opts,
+      signal,
     );
   }
 
