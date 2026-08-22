@@ -10,6 +10,10 @@ const authStatePath = path.join(artifactsDir, "auth-state.json");
 const journalPath = path.resolve(".context/e2e-registry/requests.jsonl");
 const scenariosRoot = path.resolve("test/e2e-fixtures/scenarios");
 const uiStageId = "stage-implicit-node-gyp-000001";
+// The third-party package the `added-dependency` scenario's staged release
+// starts depending on. It is published to the fake registry with no stage
+// record, and the organization's npm token has no business reaching it.
+const DEPENDENCY_PACKAGE_NAME = "e2e-install-dropper";
 
 interface RegistryScenario {
   name: string;
@@ -215,10 +219,6 @@ test("registry journal limits credential forwarding", async () => {
     true,
   );
 
-  for (const entry of journal.filter((item) => item.path !== "/__health")) {
-    expect(entry.authorization, entry.path).toBe("present");
-  }
-
   // Credentialed paths are allowlisted, not merely observed: this is what fails
   // when a new npm call starts forwarding the token somewhere unreviewed. The
   // version-status branch matches the escaping npm's spec requires — scoped
@@ -231,6 +231,37 @@ test("registry journal limits credential forwarding", async () => {
       /^\/(?:-\/(?:whoami|stage(?:\?|\/)|package\/[^/]+\/version\/[^/]+\/status)|@drydock(?:%2F|\/)[^/]+(?:$|\/-\/))/i,
     );
   }
+
+  // The dependency-artifact review is the one path that reaches a package the
+  // organization does not own, and it must do so with no credential at all —
+  // both the packument read and the tarball download. A regression here would
+  // send an org's npm token to a third party's package on the registry.
+  const dependencyRequests = journal.filter((entry) =>
+    entry.path.includes(DEPENDENCY_PACKAGE_NAME),
+  );
+  expect(dependencyRequests.length).toBeGreaterThanOrEqual(2);
+  expect(dependencyRequests.some((entry) => entry.path.endsWith(".tgz"))).toBe(true);
+
+  // The converse of the rule above, and the part that would actually catch a
+  // leak: every anonymous request must be a plain package read for a package
+  // outside the organization's own scope. A credential-free hit on the staging
+  // API or on an @drydock package would mean the broker stopped attaching the
+  // token; a credentialed hit on anything else is the leak.
+  for (const entry of journal.filter(
+    (item) => item.authorization === "absent" && item.path !== "/__health",
+  )) {
+    expect(entry.path, "anonymous read outside the org's own packages").not.toMatch(
+      /^\/(?:-\/|@drydock(?:%2F|\/))/i,
+    );
+  }
+
+  // Every fixture's staged release that adds a dependency produces at least one
+  // of those anonymous reads, so their absence means the pass silently stopped
+  // running rather than that nothing needed reviewing.
+  expect(
+    journal.filter((entry) => entry.authorization === "absent" && entry.path !== "/__health")
+      .length,
+  ).toBeGreaterThan(0);
 });
 
 async function registerAndConnect(page: Page) {

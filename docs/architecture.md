@@ -35,7 +35,7 @@ The Worker is the trusted control plane; the sandbox treats package bytes as hos
 
 | Directory         | Holds                                                                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `review/`         | Deterministic rules (`rules/`), package and manifest diffing, redaction, serialization, risk. `index.ts` is the entry.                                |
+| `review/`         | Deterministic rules (`rules/`), package and manifest diffing, redaction, serialization, risk, dependency-artifact evidence. `index.ts` is the entry.  |
 | `ai-review/`      | Versioned Workers AI advisory reviewer: prompt contract, evidence assembly, response types, traces, and eval contract.                                |
 | `scan/`           | Scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.                                   |
 | `public-diff/`    | Anonymous `/diff` orchestration, the `PublicDiffAdapter` contract, cache and error helpers.                                                           |
@@ -58,6 +58,8 @@ Files that sit at `server/lib/` root are the ones no single group owns: the sand
 | Workflow Gate — enforced    | `gate`       | `WorkflowGateAdapter`                   | A configured protected GitHub publish job is held for Drydock's approve/reject decision.   |
 | Public diff                 | `publicDiff` | `PublicDiffAdapter`                     | Two published versions diff anonymously on `/diff`, credential-free.                       |
 | Published-pair review       | `published`  | `PublishedPairAdapter`                  | An organization runs the full authenticated pipeline over two published versions.          |
+
+`PackageAdapter.inspectAddedDependencies` is a finer-grained capability: it is an optional method rather than a registry field, because it refines a release path an ecosystem already has instead of adding one. npm implements it on both its staged and gate adapters; an ecosystem that does not simply omits the method and the pipeline records no dependency review. See [`dependency-review.md`](./dependency-review.md).
 
 Today: npm has all four, PyPI has gate + public diff + published-pair review (the registry cannot stage a candidate), VS Code is gate-only, and atpm is public-diff-only (releases live in the publisher's own AT Protocol repository, which Drydock reads but neither stages nor gates — see [`atpm-public-diff.md`](./atpm-public-diff.md)). Capability presence is data, not convention — `getStagedAdapter` / `getWorkflowGateAdapter` fail closed with `UnsupportedEcosystemError` rather than falling back to another ecosystem's reviewer, and `test/workers/ecosystem-registry.test.ts` pins the matrix so a change to it is deliberate.
 
@@ -109,6 +111,8 @@ Registry packument reads on this path are cached for 5 minutes in `COMPARE_CACHE
 The UI polls `GET /api/v1/scans/:id/status` — one indexed row read, projected to the lifecycle columns and excluding `summary_json`/`ai_json`/`error_json` — and fetches the full `GET /api/v1/scans/:id` detail once, on the transition to a terminal status.
 
 Baseline selection is tag-aware rather than simply highest-semver; see [`diff-baseline.md`](./diff-baseline.md).
+
+`analyzeRelease` also runs the dependency-artifact pass, deliberately **after** `releaseResolvedArtifacts`: it makes bounded network calls (up to a 20 s budget) and needs only the redacted manifest diff, so holding both unredacted package sides alive for their duration would raise peak memory for the whole scan. Its findings are folded back into the same `DeterministicFindings` arrays afterwards (`applyDependencyReview`), so they still ride the same redaction, annotation, risk, and persistence path as any other rule finding. The pass reaches the adapter's broker for credential-free registry reads, is bounded per release, and degrades to an empty review on failure — the release's own report never depends on it. See [`dependency-review.md`](./dependency-review.md).
 
 ## Workflow gates
 

@@ -1,0 +1,30 @@
+{
+  "stageId": "stage-added-dependency-000001",
+  "packageName": "@drydock/e2e-dependency-parent",
+  "tag": "latest",
+  "access": "public",
+  "actor": "e2e-bot",
+  "actorType": "automation",
+  "createdAt": "2026-08-21T00:00:00.000Z",
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-08-14T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "dependencies": [{ "directory": "dependencies/e2e-install-dropper", "tag": "latest" }],
+  "expected": {
+    "releaseRisk": "critical",
+    "packageName": "@drydock/e2e-dependency-parent",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": ["dependency.added", "dependency-artifact.install-risk"],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "dist-tag",
+      "tag": "latest"
+    }
+  }
+}

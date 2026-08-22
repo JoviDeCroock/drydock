@@ -17,6 +17,7 @@
 - AI review is advisory and on by default. The organization `ai-review` flag is a killswitch; AI review cannot downgrade deterministic findings.
 - Every non-auth `/api/*` endpoint requires a Better Auth session and organization-scoped ownership; UI state is never an authority. `docs/security-model.md` enumerates the anonymous surfaces — adding one is a security decision.
 - Never log raw tokens, headers, package contents, or unredacted errors. Server logging goes through `emitOperationalEvent`, which redacts the fields it is handed.
+- Dependency-artifact fetches are credential-free. The org npm token is resolved only for its registry URL and never attached to a request for a package the org does not own; an unreachable dependency is recorded as an uninspected gap, never retried with the token. See `docs/dependency-review.md`.
 - Declare Cloudflare bindings by hand in `server/env.d.ts` (`cf-typegen` is not used by typecheck), `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and, when tests need them, `test/config/wrangler.jsonc`.
 
 ## Architecture invariants

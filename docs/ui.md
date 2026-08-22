@@ -44,6 +44,13 @@ What they use lives in `src/features/review/`:
   filter box re-renders the tree and not the page body (which on the scan
   detail also renders the per-finding risk index). The diff panel itself is the
   caller's `children`, because what a "previous side" is differs per surface.
+- `DependencyReviewSection.tsx` — the dependencies a release newly introduces and
+  what Drydock found in their artifacts. Rendered by the scan workbench and the
+  public report from the same re-validated persisted blob, so a shared report
+  and the maintainer's own view cannot disagree about what a release ships. Its
+  copy carries the resolution-honesty labelling (exact version vs review-time
+  snapshot vs dist-tag), which is the part reviewers act on — see
+  [`dependency-review.md`](./dependency-review.md).
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,

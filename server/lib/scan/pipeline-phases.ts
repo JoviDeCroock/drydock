@@ -31,12 +31,16 @@ import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
   projectReleaseRuleFindings,
+  dependencyEvidenceFindings,
+  EMPTY_DEPENDENCY_REVIEW,
+  failedDependencyReview,
   redactFileRecords,
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
   type CodePatternSet,
+  type DependencyReview,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -105,6 +109,12 @@ export interface ArtifactFacts {
 
 export interface DeterministicFindings {
   ruleFindings: Finding[];
+  /**
+   * Durable record of the dependencies this release newly introduces. Empty
+   * (`not-applicable`) for adapters without the capability and for releases
+   * that added none.
+   */
+  dependencyReview: DependencyReview;
   redactedStagedFiles: FileRecord[];
   redactedPreviousFiles: FileRecord[];
   redactedStagedManifest: PackageJsonSummary | null;
@@ -185,6 +195,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 
   return {
     ruleFindings,
+    dependencyReview: EMPTY_DEPENDENCY_REVIEW,
     redactedStagedFiles,
     redactedPreviousFiles,
     redactedStagedManifest,
@@ -279,6 +290,7 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   ctx: AdapterContext,
   adapterInput: TInput,
   broker: TBroker,
+  identity: PipelineIdentity,
   extraFindings: (resolved: ResolvedArtifacts) => Promise<Finding[]> = async () => [],
 ): Promise<ReleaseAnalysis> {
   const resolved = await resolveBaseline(adapter, ctx, adapterInput, broker);
@@ -289,7 +301,99 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   // Raw manifest text; only `adapter.runFindings` reads it, and it has run.
   // `findings.redactedStagedManifest` is the redacted form later phases persist.
   diff.stagedManifestText = null;
+
+  // Deliberately AFTER the release. The dependency pass makes bounded network
+  // calls (up to a 20s budget), and it needs only the redacted manifest diff —
+  // holding both unredacted package sides alive for the length of those fetches
+  // would raise peak memory for the whole scan, which is what caps reviewable
+  // package size. Its findings are folded back in here so they still ride the
+  // same redaction, annotation, risk, and persistence path as any other rule
+  // finding.
+  applyDependencyReview(
+    findings,
+    await reviewAddedDependencies(adapter, ctx, broker, diff, identity),
+    facts.packageSummary,
+    { adapter, diff, baselineComparisonSkipped: facts.baselineComparisonSkipped },
+  );
   return { diff, findings, facts };
+}
+
+/**
+ * Fold a completed dependency review into an existing `DeterministicFindings`.
+ *
+ * Mutates rather than rebuilds because the arrays it appends to are the exact
+ * ones every later phase reads (`ruleFindings` is persisted, `annotatedFindings`
+ * is scored, `releaseRuleFindings` feeds the AI reviewer). Dependency findings
+ * are release-scoped by rule ID, so annotation resolves them to
+ * `unknown` diff status + `releaseDelta: true` — there is no file in the
+ * artifact diff to pin them to, and the whole family is about what this release
+ * starts shipping.
+ */
+function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
+  findings: DeterministicFindings,
+  review: DependencyReview,
+  parent: AdapterPackageSummary,
+  context: {
+    adapter: PackageAdapter<TInput, TBroker>;
+    diff: ComputedDiff;
+    baselineComparisonSkipped: boolean;
+  },
+): void {
+  findings.dependencyReview = review;
+  const dependencyFindings = redactFindings(
+    dependencyEvidenceFindings(review, {
+      name: parent.name,
+      version: parent.stagedVersion,
+    }),
+  );
+  if (!dependencyFindings.length) return;
+
+  const annotated = annotateFindingsWithDiffStatus(dependencyFindings, context.diff.fileDiff, {
+    previousFiles: findings.redactedPreviousFiles,
+    stagedFiles: findings.redactedStagedFiles,
+    codePatternSet: context.adapter.codePatternSet,
+    baselineComparisonSkipped: context.baselineComparisonSkipped,
+  });
+  findings.ruleFindings.push(...dependencyFindings);
+  findings.annotatedFindings.push(...annotated);
+  findings.releaseRuleFindings.push(
+    ...stripFindingAnnotations(annotated.filter((finding) => finding.releaseDelta)),
+  );
+}
+
+/**
+ * Ask the adapter to review the dependency artifacts this release newly
+ * introduces, if it can.
+ *
+ * The dependency pass is additive evidence about the release, never a reason
+ * to discard its own review: an adapter without the capability yields an empty
+ * review, while an unexpected throw becomes a bounded `review-failed` gap for
+ * every selected dependency. The adapter is expected to record ordinary
+ * per-dependency failures itself; this catch is the fail-visible backstop.
+ */
+async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  ctx: AdapterContext,
+  broker: TBroker,
+  diff: ComputedDiff,
+  identity: PipelineIdentity,
+): Promise<DependencyReview> {
+  if (!adapter.inspectAddedDependencies) return EMPTY_DEPENDENCY_REVIEW;
+  try {
+    return await adapter.inspectAddedDependencies(ctx, broker, {
+      manifestDiff: diff.manifestDiff,
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.dependency_review.failed", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      adapterId: adapter.id,
+      error: describeOperationalError(err),
+    });
+    return failedDependencyReview(diff.manifestDiff);
+  }
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context
@@ -438,6 +542,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    dependencyReview: findings.dependencyReview,
     safety,
   };
 
@@ -472,6 +577,10 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    // Persisted so the review survives the dependency version being
+    // unpublished: the declaration, the review-time resolution, both digests,
+    // and the verdict are all here even once the artifact is gone.
+    dependencyReview: findings.dependencyReview,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -511,6 +620,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      dependencyReview: findings.dependencyReview,
       safety: result.safety,
     },
     ai: args.aiFindings,

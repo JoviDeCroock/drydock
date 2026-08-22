@@ -67,6 +67,19 @@ export function installReachablePaths(
   return javascriptReachableFrom(files, seeds);
 }
 
+/**
+ * JavaScript dependency-artifact spelling for the automatic install/build
+ * reachability set. Dependency artifacts are npm packages, while the shared
+ * install helper also supports Python sdists for top-level review rules.
+ */
+export function lifecycleReachablePaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): Set<string> {
+  return installReachablePaths(files, scripts, implicitScripts, "javascript");
+}
+
 function javascriptReachableFrom(files: FileRecord[], seedCandidates: string[]): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {

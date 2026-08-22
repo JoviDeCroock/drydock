@@ -107,6 +107,11 @@ function isReleaseScopedFinding(finding: {
     // fingerprints), so they are always release-scoped even though their
     // synthetic file label never appears in the artifact diff.
     finding.ruleId?.startsWith("release.") ||
+    // dependency-artifact.* describes third-party code THIS release starts
+    // pulling into consumer installs. There is no such file in the artifact
+    // diff, and the whole point of the family is the delta, so it is always
+    // release-scoped — which is what puts it in front of the workflow gate.
+    finding.ruleId?.startsWith("dependency-artifact.") ||
     finding.ruleId?.startsWith("pypi.") ||
     finding.ruleId?.startsWith("vscode.") ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||

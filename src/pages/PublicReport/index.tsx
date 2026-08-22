@@ -18,12 +18,14 @@ import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { DependencyReviewSection } from "../../features/review/DependencyReviewSection";
 import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ReportDiffPanel } from "./ReportDiffPanel";
+import { normalizeDependencyReview } from "../../../server/lib/review/dependency-evidence";
 
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
@@ -196,6 +198,7 @@ export default function PublicReportPage() {
   const changedCount = model.diffEntries.value.filter(
     (entry) => entry.status !== "unchanged",
   ).length;
+  const dependencyReview = normalizeDependencyReview(data.dependencyReview);
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
@@ -285,6 +288,8 @@ export default function PublicReportPage() {
           </>
         )}
       </Show>
+
+      {dependencyReview ? <DependencyReviewSection review={dependencyReview} /> : null}
 
       <section class="flex flex-col gap-3">
         <SectionLabel as="h2">Verify this report</SectionLabel>

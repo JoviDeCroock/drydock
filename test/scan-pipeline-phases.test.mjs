@@ -25,6 +25,8 @@ const {
 
 const NPM_TOKEN = "npm_abcdefghijklmnopqrstuvwxyz0123";
 
+const identity = { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" };
+
 const baselineArtifact = {
   files: [
     {
@@ -370,7 +372,13 @@ describe("analyzeRelease", () => {
     });
     const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
 
-    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
 
     // Order invariant: rules see the unredacted body, redaction happens after.
     expect(scannedStagedSample).toContain(NPM_TOKEN);
@@ -405,7 +413,13 @@ describe("analyzeRelease", () => {
     });
     const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
 
-    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
 
     // Rules get the raw manifest; nothing downstream does — the redacted
     // summary on `findings` is what persistence uses.
@@ -425,7 +439,13 @@ describe("analyzeRelease", () => {
     });
     const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
 
-    const out = await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} });
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
 
     // Both inputs the extraction needs are dead by the time `analyzeRelease`
     // returns, so the fact has to be projected inside the boundary. Reading it
@@ -433,6 +453,165 @@ describe("analyzeRelease", () => {
     expect(out.diff.stagedManifestText).toBeNull();
     expect(acquired.staged.artifact.files).toEqual([]);
     expect(out.facts.declaredRepository).toBe("https://github.com/acme/pkg");
+  });
+
+  test("dependency evidence rides the same redaction and annotation path as any rule finding", async () => {
+    const acquired = clonedResolved();
+    const inspectAddedDependencies = vi.fn(async () => ({
+      status: "complete",
+      selectedCount: 1,
+      inspectedCount: 1,
+      uninspectableCount: 0,
+      dependencies: [
+        {
+          name: "proc-macro1",
+          section: "dependencies",
+          declaredSpec: "0.1.0",
+          declarationKind: "exact",
+          status: "inspected",
+          reason: null,
+          resolvedVersion: "0.1.0",
+          registryHost: "registry.npmjs.org",
+          artifactUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+          declaredDigest: null,
+          reviewedDigest: null,
+          digestVerified: null,
+          fileCount: 2,
+          automaticExecution: [{ kind: "script", name: "postinstall" }],
+          capabilities: ["code.remote-shell"],
+          installReachableCapabilities: ["code.remote-shell"],
+          verdict: "install-risk",
+        },
+      ],
+    }));
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      inspectAddedDependencies,
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
+
+    expect(inspectAddedDependencies).toHaveBeenCalledWith(
+      ctx,
+      expect.anything(),
+      expect.objectContaining({ scanId: "scan-1", organizationId: "org-1" }),
+    );
+    const finding = out.findings.ruleFindings.find(
+      (entry) => entry.ruleId === "dependency-artifact.install-risk",
+    );
+    expect(finding.severity).toBe("critical");
+    // Release-scoped: the whole point of the family is what THIS release starts
+    // shipping, so it has to reach `releaseRisk` and therefore the gate.
+    const annotated = out.findings.annotatedFindings.find(
+      (entry) => entry.ruleId === "dependency-artifact.install-risk",
+    );
+    expect(annotated.releaseDelta).toBe(true);
+    expect(out.findings.releaseRuleFindings.map((entry) => entry.ruleId)).toContain(
+      "dependency-artifact.install-risk",
+    );
+    expect(out.findings.dependencyReview.dependencies).toHaveLength(1);
+  });
+
+  test("the dependency pass runs after both package sides' raw files are released", async () => {
+    // Ordering invariant, not a detail: the pass makes bounded network calls,
+    // and holding two unredacted package sides alive for their duration is
+    // exactly the peak memory that caps reviewable package size.
+    const acquired = clonedResolved();
+    let stagedFilesAtInspection = null;
+    let baselineFilesAtInspection = null;
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      inspectAddedDependencies: vi.fn(async () => {
+        stagedFilesAtInspection = acquired.staged.artifact.files.length;
+        baselineFilesAtInspection = acquired.baseline.artifact.files.length;
+        return {
+          status: "not-applicable",
+          selectedCount: 0,
+          inspectedCount: 0,
+          uninspectableCount: 0,
+          dependencies: [],
+        };
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} }, identity);
+
+    expect(stagedFilesAtInspection).toBe(0);
+    expect(baselineFilesAtInspection).toBe(0);
+  });
+
+  test("a dependency pass that throws remains a visible gap without failing the scan", async () => {
+    const acquired = clonedResolved();
+    acquired.staged.artifact.manifest.dependencies = { added: "1.0.0" };
+    acquired.staged.artifact.files[0].textSample = JSON.stringify({
+      name: "pkg",
+      version: "1.0.1",
+      dependencies: { added: "1.0.0" },
+    });
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      inspectAddedDependencies: vi.fn(async () => {
+        throw new Error("registry unreachable");
+      }),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
+
+    expect(out.findings.dependencyReview).toMatchObject({
+      status: "partial",
+      selectedCount: 1,
+      inspectedCount: 0,
+      uninspectableCount: 1,
+      dependencies: [{ name: "added", reason: "review-failed" }],
+    });
+    const dependencyFinding = out.findings.ruleFindings.find(
+      (entry) => entry.ruleId === "dependency-artifact.uninspectable",
+    );
+    expect(dependencyFinding).toMatchObject({ severity: "medium" });
+  });
+
+  test("an adapter without the capability records an empty review", async () => {
+    const acquired = clonedResolved();
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
+
+    expect(out.findings.dependencyReview).toEqual({
+      status: "not-applicable",
+      selectedCount: 0,
+      inspectedCount: 0,
+      uninspectableCount: 0,
+      omittedCount: 0,
+      dependencies: [],
+    });
   });
 
   test("releaseResolvedArtifacts tolerates a scan with no baseline artifact", () => {
