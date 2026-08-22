@@ -26,6 +26,7 @@ export interface ListScansResult {
     ownerUserId: string | null;
     packageName: string | null;
     stagedVersion: string | null;
+    registryUrl: string | null;
     previousVersion: string | null;
     risk: string;
     status: string;
@@ -38,6 +39,9 @@ export interface ListScansResult {
     riskSummary: ScanRiskSummary | null;
     reportVersion: number | null;
     reportDigest: string | null;
+    registryVersionStatus: string | null;
+    registryVersionStatusAt: Date | null;
+    registryStatusSupersededAt: Date | null;
     startedAt: Date | null;
     completedAt: Date | null;
     createdAt: Date;
@@ -84,6 +88,7 @@ export async function listScans(
       ownerUserId: scans.ownerUserId,
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
+      registryUrl: scans.registryUrl,
       previousVersion: scans.previousVersion,
       risk: scans.risk,
       status: scans.status,
@@ -96,6 +101,9 @@ export async function listScans(
       riskSummaryJson: scans.riskSummaryJson,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
+      registryVersionStatus: scans.registryVersionStatus,
+      registryVersionStatusAt: scans.registryVersionStatusAt,
+      registryStatusSupersededAt: scans.registryStatusSupersededAt,
       startedAt: scans.startedAt,
       completedAt: scans.completedAt,
       createdAt: scans.createdAt,
@@ -123,6 +131,7 @@ export async function listScans(
       ownerUserId: row.ownerUserId,
       packageName: row.packageName,
       stagedVersion: row.stagedVersion,
+      registryUrl: row.registryUrl,
       previousVersion: row.previousVersion,
       risk: row.risk,
       status: row.status,
@@ -135,6 +144,9 @@ export async function listScans(
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
       reportVersion: row.reportVersion,
       reportDigest: row.reportDigest,
+      registryVersionStatus: row.registryVersionStatus,
+      registryVersionStatusAt: row.registryVersionStatusAt,
+      registryStatusSupersededAt: row.registryStatusSupersededAt,
       startedAt: row.startedAt,
       completedAt: row.completedAt,
       createdAt: row.createdAt,

@@ -57,6 +57,11 @@ for (const name of scenarioNames) {
     createdAt: scenario.createdAt ?? null,
     expected: scenario.expected ?? {},
     failure: scenario.failure ?? null,
+    // npm's lifecycle status for the staged version, served by the fake
+    // registry's version-status endpoint. Null means the endpoint 404s, which
+    // is the realistic default: npm answers the same way for a version it does
+    // not know and one the token may not ask about.
+    versionStatus: scenario.versionStatus ?? null,
     staged: {
       version: stagedManifest.version,
       manifest: stagedManifest,

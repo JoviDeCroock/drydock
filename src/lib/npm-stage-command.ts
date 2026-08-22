@@ -1,9 +1,10 @@
 import { isValidStageId } from "../../server/lib/ecosystems/npm/stage-id";
 import type { ScanDecision } from "../models/scan";
+import { canOfferNpmStageFollowUp, type NpmStageFollowUpScan } from "./npm-stage-follow-up";
 
-export type NpmStagedCommandScan = {
-  source?: string | null;
+export type NpmStagedCommandScan = NpmStageFollowUpScan & {
   stageId?: string | null;
+  registryUrl?: string | null;
 };
 
 /**
@@ -20,9 +21,31 @@ export function npmStageCommandFor(
   decision: ScanDecision,
   scan: NpmStagedCommandScan,
 ): string | null {
-  if (scan.source === "workflow_gate") return null;
+  if (!canOfferNpmStageFollowUp(scan)) return null;
   const stageId = scan.stageId?.trim();
   if (!isValidStageId(stageId)) return null;
+  const command = `npm stage ${decision === "publish" ? "approve" : "reject"} ${stageId}`;
+  const registryUrl = scan.registryUrl?.trim();
+  if (!registryUrl) return command;
+  if (!isSafeRegistryUrl(registryUrl)) return null;
+  return `${command} --registry ${shellSingleQuote(registryUrl)}`;
+}
 
-  return `npm stage ${decision === "publish" ? "approve" : "reject"} ${stageId}`;
+function isSafeRegistryUrl(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) return false;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

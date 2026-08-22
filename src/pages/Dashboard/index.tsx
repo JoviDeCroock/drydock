@@ -18,6 +18,7 @@ import {
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
+import { registryStatusBadge } from "../../features/registry-status";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
@@ -174,8 +175,9 @@ async function discoverStagedPublishes(
   stagedPublishes: ReturnType<typeof useModel<typeof StagedPublishesModel.prototype>>,
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
 ) {
-  await stagedPublishes.discover();
-  await scans.refresh();
+  const result = await stagedPublishes.discover();
+  await scans.refresh({ preserveLoaded: true });
+  if (result) scans.scheduleRegistryStatusRefreshes();
 }
 
 function RecentReviewsSection({
@@ -305,7 +307,7 @@ function RecentReviewsSection({
             variant="secondary"
             size="sm"
             onClick={() => void scans.loadMore()}
-            disabled={scans.loadingMore.value}
+            disabled={scans.loadingMore.value || scans.refreshing.value}
           >
             {scans.loadingMore.value ? "Loading…" : "Load more"}
           </Button>
@@ -493,7 +495,10 @@ function ScanTable({
                 <ScanStatusBadge status={scan.status} />
               </Td>
               <Td>
-                <DecisionBadge decision={scan.decision} />
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <DecisionBadge decision={scan.decision} />
+                  <RegistryStatusBadge scan={scan} />
+                </div>
               </Td>
               <Td>
                 <div class="flex items-center gap-2">
@@ -542,7 +547,11 @@ function ScanTable({
 }
 
 function canQuickDecide(scan: ScanListItem): boolean {
-  return scan.status === "complete" && scan.source !== "workflow_gate";
+  return (
+    scan.status === "complete" &&
+    scan.source !== "workflow_gate" &&
+    scan.registryStatusSupersededAt == null
+  );
 }
 
 function ScanRiskCell({ scan }: { scan: ScanListItem }) {
@@ -563,6 +572,16 @@ function ScanChangedCell({ scan }: { scan: ScanListItem }) {
       {changedFiles} {pluralize("file", changedFiles)}
     </span>
   );
+}
+
+// Shares the Decision cell rather than taking a column of its own: the pair
+// "what we decided / what npm did with it" is one thought, and the two only
+// ever disagree in ways worth reading together. Absent for most rows — a
+// release npm has merely staged says nothing this page does not already show.
+function RegistryStatusBadge({ scan }: { scan: ScanListItem }) {
+  const badge = registryStatusBadge(scan);
+  if (!badge) return null;
+  return <Badge tone={badge.tone}>{badge.label}</Badge>;
 }
 
 function DecisionBadge({ decision }: { decision?: string | null }) {

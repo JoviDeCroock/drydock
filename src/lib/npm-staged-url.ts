@@ -1,8 +1,11 @@
-const NPM_WEB_ORIGIN = "https://www.npmjs.com";
+import { canOfferNpmStageFollowUp, type NpmStageFollowUpScan } from "./npm-stage-follow-up";
 
-export type NpmStagedScan = {
-  source?: string | null;
+const NPM_WEB_ORIGIN = "https://www.npmjs.com";
+const PUBLIC_NPM_REGISTRY_URL = "https://registry.npmjs.org";
+
+export type NpmStagedScan = NpmStageFollowUpScan & {
   packageName?: string | null;
+  registryUrl?: string | null;
 };
 
 export function buildNpmStagedPackagesUrl(packageName: string | null | undefined): string | null {
@@ -17,6 +20,27 @@ export function buildNpmStagedPackagesUrl(packageName: string | null | undefined
 }
 
 export function npmStagedPackagesUrlFor(scan: NpmStagedScan): string | null {
-  if (scan.source === "workflow_gate" || !scan.packageName) return null;
+  if (
+    !canOfferNpmStageFollowUp(scan) ||
+    !scan.packageName ||
+    !usesPublicNpmRegistry(scan.registryUrl)
+  ) {
+    return null;
+  }
   return buildNpmStagedPackagesUrl(scan.packageName);
+}
+
+function usesPublicNpmRegistry(value: string | null | undefined): boolean {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === PUBLIC_NPM_REGISTRY_URL &&
+      (url.pathname === "/" || url.pathname === "") &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
 }

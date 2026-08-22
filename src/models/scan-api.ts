@@ -75,6 +75,13 @@ export interface ScanListItem {
   riskSummary?: ScanRiskSummary | null;
   reportVersion?: number | null;
   reportDigest?: string | null;
+  /** Registry captured when the staged release was submitted. */
+  registryUrl?: string | null;
+  /** npm's lifecycle status for this exact staged version, or null if unknown. */
+  registryVersionStatus?: string | null;
+  registryVersionStatusAt?: string | number | Date | null;
+  /** Set when a newer stage reused this registry package and version. */
+  registryStatusSupersededAt?: string | number | Date | null;
   startedAt?: string | number | Date | null;
   completedAt?: string | number | Date | null;
   createdAt: string | number | Date;

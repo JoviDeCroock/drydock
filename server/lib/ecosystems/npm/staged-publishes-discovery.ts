@@ -13,6 +13,7 @@ import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
+import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -31,6 +32,8 @@ export interface DiscoverStagedPublishesInput {
   eventSource: string;
   allowInsecureLocalhost?: boolean;
   stageStartCoordinator?: StageStartCoordinator;
+  /** Cron awaits this work so organization concurrency also bounds outcome lookups. */
+  awaitReleaseOutcomes?: boolean;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -224,6 +227,7 @@ export async function discoverAndQueueStagedPublishes(
     source,
     allowInsecureLocalhost,
     stageStartCoordinator = createStageStartCoordinator(),
+    awaitReleaseOutcomes = false,
   } = input;
 
   const stagedItems = await listAllStagedPublishes(connection, {
@@ -258,6 +262,7 @@ export async function discoverAndQueueStagedPublishes(
           source,
           packageName: item.packageName,
           stagedVersion: item.version,
+          registryUrl: connection.registryUrl,
         });
         if (!detail) return null;
         recordProductEvent(env, {
@@ -298,6 +303,41 @@ export async function discoverAndQueueStagedPublishes(
       }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+
+  // Resolving npm's own state for already-reviewed releases is advisory
+  // annotation. Start it only after newly discovered scan rows exist, so a
+  // restaged version's new incarnation can supersede its historical review
+  // before any status is written. HTTP discovery detaches it; cron awaits it
+  // so the outer organization cap also bounds these lookups.
+  const releaseOutcome = resolveNpmReleaseOutcomes({
+    db,
+    env,
+    organizationId,
+    ownerUserId: actorUserId,
+    connection,
+    stagedItems,
+    allowInsecureLocalhost,
+    // Five cron organization workers share one Worker invocation. Serial
+    // lookups within each organization keep that invocation at five status
+    // requests, while eight candidates still drain a 100-org worst-case
+    // timeout sweep inside the 15-minute cron wall-time ceiling.
+    ...(awaitReleaseOutcomes ? { lookupLimit: 8, lookupConcurrency: 1 } : {}),
+  })
+    .then((outcome) => {
+      if (!outcome.checked) return;
+      emitOperationalEvent("info", "npm.release_outcome.resolved", {
+        organizationId,
+        ...outcome,
+      });
+    })
+    .catch((err) => {
+      emitOperationalEvent("warn", "npm.release_outcome.failed", {
+        organizationId,
+        error: describeOperationalError(err),
+      });
+    });
+  if (awaitReleaseOutcomes) await releaseOutcome;
+  else executionCtx.waitUntil(releaseOutcome);
 
   return {
     found: stageIds.length,

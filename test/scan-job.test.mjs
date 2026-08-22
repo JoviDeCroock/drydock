@@ -9,12 +9,18 @@ const dbMock = vi.hoisted(() => ({
   createDb: vi.fn(() => ({})),
   discardScanAttempt: vi.fn(),
   getNpmConnection: vi.fn(),
+  getScanReleaseIdentity: vi.fn(),
   markNpmConnectionUsed: vi.fn(),
   markScanFailed: vi.fn(),
+  recordRegistryVersionStatus: vi.fn(),
   recordScanEvent: vi.fn(),
 }));
 const pipelineMock = vi.hoisted(() => ({ runScanPipeline: vi.fn() }));
-const npmConnectionMock = vi.hoisted(() => ({ decryptNpmToken: vi.fn() }));
+const npmConnectionMock = vi.hoisted(() => ({
+  allowInsecureLocalRegistry: vi.fn(),
+  decryptNpmToken: vi.fn(),
+  normalizeRegistryUrl: vi.fn((value) => value.replace(/\/+$/, "")),
+}));
 const notifyMock = vi.hoisted(() => ({
   notifyScanCompletion: vi.fn().mockResolvedValue(undefined),
 }));
@@ -137,6 +143,30 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("does not retry a staged release identity mismatch", () => {
+    expect(
+      classifyScanError(
+        new Error("The staged release identity changed after this scan was queued."),
+      ),
+    ).toEqual({
+      code: "staged_release_identity_changed",
+      message:
+        "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
+      retryable: false,
+    });
+  });
+
+  test("does not retry a queued scan without a captured registry", () => {
+    expect(
+      classifyScanError(new Error("The queued scan is missing its captured npm registry.")),
+    ).toEqual({
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
+      retryable: false,
+    });
+  });
+
   test("does not retry archive file-count limit failures", () => {
     const safe = classifyScanError(
       new SandboxError(JSON.stringify({ error: "archive contains too many files", status: 413 })),
@@ -175,6 +205,14 @@ describe("executeScanJob idempotency", () => {
       tokenFingerprint: "fp",
       validationStatus: "valid",
     });
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
+    dbMock.recordRegistryVersionStatus.mockResolvedValue(true);
+    npmConnectionMock.allowInsecureLocalRegistry.mockReturnValue(false);
     npmConnectionMock.decryptNpmToken.mockResolvedValue("npm_token");
     pipelineMock.runScanPipeline.mockResolvedValue({
       id: message.scanId,
@@ -187,8 +225,10 @@ describe("executeScanJob idempotency", () => {
   afterEach(() => {
     for (const fn of Object.values(dbMock)) if (typeof fn?.mockReset === "function") fn.mockReset();
     pipelineMock.runScanPipeline.mockReset();
+    npmConnectionMock.allowInsecureLocalRegistry.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
     notifyMock.notifyScanCompletion.mockClear();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -205,11 +245,67 @@ describe("executeScanJob idempotency", () => {
 
   test("runs the pipeline exactly once after a successful claim", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.npmjs.org",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
 
     await executeScanJob(env, ctx, message, {}, { attempt: 1 });
 
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
+    expect(pipelineMock.runScanPipeline.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ registryUrl: "https://registry.npmjs.org" }),
+    );
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith({}, message.organizationId);
+  });
+
+  test("fails closed when the queued scan belongs to a previous registry connection", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: "https://registry.example.test",
+      packageName: "pkg",
+      stagedVersion: "1.0.0",
+      registryStatusSupersededAt: null,
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("npm registry changed after this scan was queued");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_connection_changed",
+      message:
+        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
+      retryable: false,
+    });
+  });
+
+  test("fails closed when a legacy queued scan has no captured registry", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getScanReleaseIdentity.mockResolvedValue({
+      registryUrl: null,
+      packageName: null,
+      stagedVersion: null,
+      registryStatusSupersededAt: null,
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("queued scan is missing its captured npm registry");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).toHaveBeenCalledWith({}, message.scanId, message.organizationId, {
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
+      retryable: false,
+    });
   });
 
   test("emits a structured completion log without token material", async () => {
@@ -281,6 +377,51 @@ describe("executeScanJob idempotency", () => {
       }),
     );
   });
+
+  test.each([
+    ["published", "staged_release_published", false],
+    ["deleted", "staged_release_deleted", true],
+  ])(
+    "persists failed-scan status %s only if it cannot change",
+    async (status, failureCode, persisted) => {
+      dbMock.claimScanForRun.mockResolvedValue(true);
+      dbMock.getScanReleaseIdentity.mockResolvedValue({
+        packageName: "pkg",
+        stagedVersion: "1.0.0",
+        registryUrl: "https://registry.npmjs.org",
+      });
+      pipelineMock.runScanPipeline.mockRejectedValue(
+        new SandboxError(JSON.stringify({ error: "denied", status: 403 })),
+      );
+      const fetchMock = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ packageName: "pkg", version: "1.0.0", status }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(
+        executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+      ).rejects.toBeInstanceOf(SandboxError);
+
+      expect(dbMock.getScanReleaseIdentity).toHaveBeenCalledWith(
+        {},
+        message.scanId,
+        message.organizationId,
+      );
+      expect(npmConnectionMock.decryptNpmToken).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(dbMock.markScanFailed).toHaveBeenCalledWith(
+        {},
+        message.scanId,
+        message.organizationId,
+        expect.objectContaining({ code: failureCode }),
+      );
+      expect(dbMock.recordRegistryVersionStatus).toHaveBeenCalledTimes(persisted ? 1 : 0);
+    },
+  );
 
   test("fails before decrypting when the queued job sees an unvalidated rotated connection", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);

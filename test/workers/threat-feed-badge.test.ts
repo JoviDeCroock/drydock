@@ -1,4 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
@@ -72,6 +73,7 @@ async function seedCompletedScan(
     releaseRisk?: string;
     ecosystem?: "npm" | "pypi" | "vscode";
     source?: "manual" | "workflow_gate";
+    registryUrl?: string;
     // The dist-tag the release was staged under. Only npm staged-publish scans
     // carry one; omitted means a review that was never staged under a tag.
     tag?: string;
@@ -94,12 +96,16 @@ async function seedCompletedScan(
       : options.source === "workflow_gate"
         ? "npm"
         : null;
+  const source = options.source ?? (gateEcosystem ? "workflow_gate" : "manual");
   await createScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
-    source: options.source ?? (gateEcosystem ? "workflow_gate" : "manual"),
+    source,
+    packageName: source !== "workflow_gate" && options.registryUrl ? packageName : null,
+    stagedVersion: source !== "workflow_gate" && options.registryUrl ? version : null,
+    registryUrl: source !== "workflow_gate" ? (options.registryUrl ?? null) : null,
   });
   await persistScan(db, {
     id: scanId,
@@ -267,6 +273,71 @@ describe("shields badge endpoint", () => {
     // Unlisting removes the badge again even though the link stays live.
     await share(app, scanId, { threatFeed: false });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("restaging retires the obsolete public report, badge, and feed entry", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const version = "2.0.0";
+    const registryUrl = "https://registry.npmjs.org";
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version,
+      registryUrl,
+    });
+    const decision = await request(app, `/api/v1/scans/${scanId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "publish", reason: "intended changes" }),
+    });
+    expect(decision.status).toBe(200);
+    const { share: publicShare } = await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(`${version} approved`);
+
+    const db = createDb(env.DB);
+    await createScanJob(db, {
+      id: `scan_${crypto.randomUUID()}`,
+      stageId: `stage-${crypto.randomUUID()}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageName,
+      stagedVersion: version,
+      registryUrl,
+    });
+
+    const [superseded] = await db
+      .select({
+        registryStatusSupersededAt: schema.scans.registryStatusSupersededAt,
+        publicShareToken: schema.scans.publicShareToken,
+        publicSharedAt: schema.scans.publicSharedAt,
+        publicSharedByUserId: schema.scans.publicSharedByUserId,
+        publicFeedListedAt: schema.scans.publicFeedListedAt,
+        publicPackageKey: schema.scans.publicPackageKey,
+      })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId))
+      .limit(1);
+    expect(superseded).toMatchObject({
+      registryStatusSupersededAt: expect.any(Date),
+      publicShareToken: null,
+      publicSharedAt: null,
+      publicSharedByUserId: null,
+      publicFeedListedAt: null,
+      publicPackageKey: null,
+    });
+    expect((await request(app, `/public/reports/${publicShare.token}`)).status).toBe(404);
+    expect(
+      (
+        await request(app, `/api/v1/scans/${scanId}/share`, {
+          method: "POST",
+          body: "{}",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
+      false,
+    );
   });
 
   test("registry-verified reviews outrank newer manifest-claimed gate scans", async () => {

@@ -73,6 +73,11 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       artifactIntegrity: d.artifactIntegrity ?? null,
     };
   },
+
+  registryReleaseIdentity(details) {
+    const d = details as NpmStagedDetails | null;
+    return d?.packageName && d.version ? { packageName: d.packageName, version: d.version } : null;
+  },
 };
 
 export type { NpmAdapterInput, NpmBroker };

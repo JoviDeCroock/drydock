@@ -51,6 +51,7 @@ export async function recordScanDecision(
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
       ),
     )
     .returning({

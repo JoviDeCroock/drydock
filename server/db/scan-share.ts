@@ -58,7 +58,13 @@ export async function readPublicShare(
       summaryJson: scans.summaryJson,
     })
     .from(scans)
-    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        isNull(scans.registryStatusSupersededAt),
+      ),
+    )
     .limit(1);
   if (!row?.publicShareToken || !row.publicSharedAt) return null;
   return {
@@ -71,7 +77,7 @@ export async function readPublicShare(
 }
 
 /**
- * Enable (or return the existing) public share link for a completed scan.
+ * Enable (or return the existing) public share link for an active completed scan.
  * Idempotent: re-sharing an already-shared scan returns the current token so
  * the UI never rotates a link that may already be distributed.
  */
@@ -90,7 +96,13 @@ export async function enablePublicShare(
         stagedVersion: scans.stagedVersion,
       })
       .from(scans)
-      .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+      .where(
+        and(
+          eq(scans.id, input.scanId),
+          eq(scans.organizationId, input.organizationId),
+          isNull(scans.registryStatusSupersededAt),
+        ),
+      )
       .limit(1);
 
   const [existing] = await readShareState();
@@ -119,6 +131,7 @@ export async function enablePublicShare(
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
         // Guards the idempotency promise under concurrency: two racing enables
         // must never rotate a token one of them already returned.
         isNull(scans.publicShareToken),
@@ -222,7 +235,7 @@ export function badgeLookupKey(row: {
  * Toggle the threat-feed listing for an already-shared scan. Listing requires
  * an active share link (the feed entry links to the public report); unlisting
  * keeps the link itself intact. Returns the new state, or null when the scan
- * is missing, not complete, or (for listing) not currently shared.
+ * is missing, not complete, superseded, or (for listing) not currently shared.
  */
 export async function setThreatFeedListing(
   db: AppDb,
@@ -233,6 +246,7 @@ export async function setThreatFeedListing(
     eq(scans.id, input.scanId),
     eq(scans.organizationId, input.organizationId),
     eq(scans.status, "complete"),
+    isNull(scans.registryStatusSupersededAt),
     isNotNull(scans.publicShareToken),
   );
   const [candidate] = await db
@@ -363,6 +377,7 @@ export async function listThreatFeedScans(
         isNotNull(scans.publicFeedListedAt),
         isNotNull(scans.publicShareToken),
         eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
         after
           ? or(
               sql`${scans.publicFeedListedAt} < ${after.listedAtMs}`,
@@ -437,6 +452,7 @@ export async function listBadgeCandidateScans(
         isNotNull(scans.publicShareToken),
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
         ecosystemMatches,
         tagMatches,
       ),
@@ -459,7 +475,7 @@ export async function resolvePublicShareToken(
   const [row] = await db
     .select({ scanId: scans.id, organizationId: scans.organizationId, status: scans.status })
     .from(scans)
-    .where(eq(scans.publicShareToken, token))
+    .where(and(eq(scans.publicShareToken, token), isNull(scans.registryStatusSupersededAt)))
     .limit(1);
   if (!row || row.status !== "complete" || !row.organizationId) return null;
   return { scanId: row.scanId, organizationId: row.organizationId };
