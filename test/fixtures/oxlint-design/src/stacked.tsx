@@ -119,3 +119,21 @@ export function OnSiblingOutsideLeadingWrapper() {
     </section>
   );
 }
+
+export function OnConditionalFollowingSibling({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show && <div class="border-t border-border">body</div>}
+    </section>
+  );
+}
+
+export function OnConditionalPrecedingSibling({ show }: { show: boolean }) {
+  return (
+    <section>
+      {show ? <hr /> : <div class="border-b border-border">intro</div>}
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}

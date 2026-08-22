@@ -26,9 +26,9 @@
  *     of the element that directly wraps it, and the immediately preceding /
  *     following JSX sibling. When the label touches a wrapper edge, the
  *     wrapper's touching sibling is adjacent too (`<summary><SectionLabel />
- *     </summary><div class="border-t">`). A rule beyond either boundary is a
- *     spacing question, not a doubled hairline, and reporting it would be
- *     guesswork.
+ *     </summary><div class="border-t">`). Logical and conditional JSX siblings
+ *     are inspected branch-by-branch. A rule beyond either boundary is a spacing
+ *     question, not a doubled hairline, and reporting it would be guesswork.
  *   - Class names are read from static string literals (`class="…"`, and the
  *     string arguments of a `cn(…)` call). A class assembled at runtime is not
  *     resolved.
@@ -181,13 +181,39 @@ const rule = {
   },
 
   create(context) {
+    function boundaryElements(node, side) {
+      if (!node) return [];
+      if (node.type === "JSXElement") return [node];
+      if (node.type === "JSXExpressionContainer") {
+        return boundaryElements(node.expression, side);
+      }
+      if (node.type === "LogicalExpression") {
+        if (node.operator === "&&") return boundaryElements(node.right, side);
+        return [...boundaryElements(node.left, side), ...boundaryElements(node.right, side)];
+      }
+      if (node.type === "ConditionalExpression") {
+        return [
+          ...boundaryElements(node.consequent, side),
+          ...boundaryElements(node.alternate, side),
+        ];
+      }
+      if (node.type === "JSXFragment") {
+        const children = meaningfulChildren(node);
+        const boundary = side === "top" ? children[0] : children[children.length - 1];
+        return boundaryElements(boundary, side);
+      }
+      return [];
+    }
+
     function reportSibling(neighbour, side) {
-      if (neighbour?.type !== "JSXElement") return;
-      if (!drawsDirectionalRule(neighbour, side)) return;
+      const ruleElement = boundaryElements(neighbour, side).find((element) =>
+        drawsDirectionalRule(element, side),
+      );
+      if (!ruleElement) return;
       context.report({
         node: neighbour,
         messageId: "onSibling",
-        data: { what: elementName(neighbour) === "hr" ? "<hr>" : "border-t/border-b" },
+        data: { what: elementName(ruleElement) === "hr" ? "<hr>" : "border-t/border-b" },
       });
     }
 

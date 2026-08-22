@@ -130,3 +130,12 @@ export function RuleOutsideANonTouchingWrapperEdge() {
     </section>
   );
 }
+
+export function JsxUsedAsALogicalCondition() {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {<div class="border-t border-border">condition only</div> && <p>body</p>}
+    </section>
+  );
+}

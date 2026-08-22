@@ -73,14 +73,12 @@ function buildResolver(files) {
   };
 }
 
-function isCheckable(reference, { commentsOnly }) {
+function isCheckable(reference) {
   if (!reference.includes("/")) return false;
-  // URLs and package specifiers are not repository paths. Explicit relative
-  // Markdown links already use Markdown's own resolution conventions; relative
-  // paths in source comments are checked against the source file instead.
+  // URLs and package specifiers are not repository paths. Relative paths in
+  // Markdown and source comments are resolved against the containing file.
   // Dot-directories such as `.claude/` and `.github/` are repository paths.
   if (/^(https?:|@)/.test(reference)) return false;
-  if (/^\.\.?\//.test(reference)) return commentsOnly;
   return !NON_REPO_PREFIXES.some((prefix) => reference.startsWith(prefix));
 }
 
@@ -109,7 +107,7 @@ async function staleReferences(files, resolve, { commentsOnly }) {
     files.map(async (file) => {
       const text = await readFile(path.join(repoRoot, file), "utf8");
       for (const { reference, line } of pathReferences(text, { commentsOnly })) {
-        if (!isCheckable(reference, { commentsOnly })) continue;
+        if (!isCheckable(reference)) continue;
         if (resolve(reference, file)) continue;
         stale.push(`${file}:${line}: \`${reference}\``);
       }
@@ -148,9 +146,7 @@ describe("prose path references", () => {
     const references = [...prose.matchAll(PATH_REFERENCE)].map((match) => match[1]);
 
     expect(references).toEqual(["docs/security-model.md", ".claude/skills/pre-pr/SKILL.md"]);
-    expect(references.every((reference) => isCheckable(reference, { commentsOnly: false }))).toBe(
-      true,
-    );
+    expect(references.every(isCheckable)).toBe(true);
   });
 
   test("requires shorthand paths to identify exactly one tracked file", () => {
@@ -159,14 +155,18 @@ describe("prose path references", () => {
     expect(resolve("routes/scans/index.ts")).toBe(false);
   });
 
-  test("resolves relative source-comment paths from the containing file", () => {
+  test("resolves relative Markdown and source-comment paths from the containing file", () => {
     const resolve = buildResolver([
+      "docs/README.md",
+      "src/pages/Docs/index.tsx",
       "server/lib/ecosystems/record.ts",
       "server/lib/ecosystems/stage-record.ts",
     ]);
 
-    expect(isCheckable("./record.ts", { commentsOnly: true })).toBe(true);
-    expect(isCheckable("./record.ts", { commentsOnly: false })).toBe(false);
+    expect(isCheckable("./record.ts")).toBe(true);
+    expect(isCheckable("../src/pages/Docs/index.tsx")).toBe(true);
+    expect(resolve("../src/pages/Docs/index.tsx", "docs/README.md")).toBe(true);
+    expect(resolve("../src/pages/Docs/missing.tsx", "docs/README.md")).toBe(false);
     expect(resolve("./record.ts", "server/lib/ecosystems/stage-record.ts")).toBe(true);
     expect(resolve("./missing.ts", "server/lib/ecosystems/stage-record.ts")).toBe(false);
   });

@@ -52,20 +52,25 @@ function sessionGuardLine(lines) {
 
 function apiRegistrations(source) {
   const registrationsFound = [];
-  const registrations = [
-    /^[\t ]*app\.(all|delete|get|head|mount|options|patch|post|put|query|route|use)\s*\(\s*["'](\/api(?:\/[^"']*)?)["']/gm,
-    /^[\t ]*app\.on\s*\(\s*(?:\[[^\]]*\]|[^,]+),\s*["'](\/api(?:\/[^"']*)?)["']/gm,
-  ];
+  const registration =
+    /^[\t ]*app\.(all|basePath|delete|get|head|mount|on|options|patch|post|put|query|route|use)\s*\(/gm;
 
-  for (const [registrationIndex, registration] of registrations.entries()) {
-    for (const match of source.matchAll(registration)) {
-      const before = source.slice(0, match.index);
-      registrationsFound.push({
-        method: registrationIndex === 0 ? match[1] : "on",
-        path: registrationIndex === 0 ? match[2] : match[1],
-        line: before.split("\n").length,
-      });
-    }
+  for (const match of source.matchAll(registration)) {
+    const method = match[1];
+    const argumentsSource = source.slice(match.index + match[0].length);
+    const pathMatch =
+      method === "on"
+        ? argumentsSource.match(/^\s*(?:\[[^\]]*\]|[^,]+),\s*["']([^"']*)["']/)
+        : argumentsSource.match(/^\s*["']([^"']*)["']/);
+    const before = source.slice(0, match.index);
+    registrationsFound.push({
+      method,
+      // A registration above the guard whose path is not a string literal is
+      // security-relevant but cannot be classified statically, so keep it as
+      // unresolved and make the boundary assertion fail closed below.
+      path: pathMatch?.[1] ?? null,
+      line: before.split("\n").length,
+    });
   }
   return registrationsFound.sort((a, b) => a.line - b.line);
 }
@@ -86,14 +91,19 @@ describe("/api/* auth boundary", () => {
     expect(registrations.length).toBeGreaterThan(5);
 
     const anonymous = registrations
-      .filter((registration) => registration.line < guardLine)
+      .filter(
+        (registration) =>
+          registration.line < guardLine &&
+          (registration.path === null || registration.path.startsWith("/api")),
+      )
       .map(({ method, path }) => ({ method, path }));
     expect(
       anonymous,
       "An API registration above the session guard can serve anonymously — Hono runs handlers " +
         "and middleware in registration order, and app.use() may return without calling next(). " +
-        "Move it below the guard, or review it as auth/bootstrap middleware or a genuinely " +
-        "credential-free rate-limited public endpoint and pin it here.",
+        "Use a string-literal path so this check can classify it, move it below the guard, or " +
+        "review it as auth/bootstrap middleware or a genuinely credential-free rate-limited " +
+        "public endpoint and pin it here.",
     ).toEqual(API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD);
   });
 
@@ -129,6 +139,25 @@ describe("/api/* auth boundary", () => {
       { method: "query", path: "/api/queried" },
       { method: "use", path: "/api/middleware" },
       { method: "on", path: "/api/method-list" },
+    ]);
+  });
+
+  test("fails closed on API registrations whose paths cannot be resolved", () => {
+    const source = [
+      'const apiPrefix = "/api/private";',
+      "app.route(apiPrefix, handler);",
+      "app.route(`/api/template`, handler);",
+      'app.on("GET", ["/api/one", "/api/two"], handler);',
+      'app.basePath("/api").get("/private", handler);',
+    ].join("\n");
+
+    expect(
+      apiRegistrations(sanitizeApiSource(source)).map(({ method, path }) => ({ method, path })),
+    ).toEqual([
+      { method: "route", path: null },
+      { method: "route", path: null },
+      { method: "on", path: null },
+      { method: "basePath", path: "/api" },
     ]);
   });
 
