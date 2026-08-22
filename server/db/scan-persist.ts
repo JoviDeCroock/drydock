@@ -19,7 +19,7 @@ import {
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import { scanFileRowsForArtifacts, type ScanArtifactMetadata } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
-import { chunkForD1 } from "./d1-chunk";
+import { chunkForD1CompoundSelect } from "./d1-chunk";
 import { NON_TERMINAL_STATUSES } from "./scan-jobs";
 import {
   computeRiskSummary,
@@ -212,10 +212,10 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     // each row's columns plus the claim guard. Without this, packages with more
     // than ~12 files silently drop their scan_files rows and the scan-detail view
     // renders as "No file content available." for every entry.
-    for (const chunk of chunkForD1(fileRows, 11)) {
+    for (const chunk of chunkForD1CompoundSelect(fileRows, 11)) {
       batch.push(insertScanFilesWhenClaimed(db, chunk, input.organizationId, claimToken));
     }
-    for (const chunk of chunkForD1(findingRows, 13)) {
+    for (const chunk of chunkForD1CompoundSelect(findingRows, 13)) {
       batch.push(insertScanFindingsWhenClaimed(db, chunk, input.organizationId, claimToken));
     }
   }
