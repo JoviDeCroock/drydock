@@ -40,8 +40,8 @@ function trackedFiles() {
 
 /**
  * Prose cites paths at whatever root reads best in context — AGENTS.md's
- * `server/` section writes `routes/scans.ts`, docs/ usually writes the full
- * `server/routes/scans.ts`. Both are unambiguous, so a reference resolves if it
+ * `server/` section writes `routes/scans/index.ts`, docs/ usually writes the full
+ * `server/routes/scans/index.ts`. Both are unambiguous, so a reference resolves if it
  * is a real path *or* a trailing path segment of exactly one tracked file.
  */
 function buildResolver(files) {
@@ -154,9 +154,9 @@ describe("prose path references", () => {
   });
 
   test("requires shorthand paths to identify exactly one tracked file", () => {
-    const resolve = buildResolver(["server/routes/scans.ts", "test/routes/scans.ts"]);
-    expect(resolve("server/routes/scans.ts")).toBe(true);
-    expect(resolve("routes/scans.ts")).toBe(false);
+    const resolve = buildResolver(["server/routes/scans/index.ts", "test/routes/scans/index.ts"]);
+    expect(resolve("server/routes/scans/index.ts")).toBe(true);
+    expect(resolve("routes/scans/index.ts")).toBe(false);
   });
 
   test("resolves relative source-comment paths from the containing file", () => {
@@ -182,12 +182,12 @@ describe("prose path references", () => {
   test("extracts inline and JSX comments without treating strings as comments", () => {
     const source = [
       'const prose = "Read `server/routes/missing.ts`.";',
-      "run(); // Read `server/routes/scans.ts`.",
+      "run(); // Read `server/routes/scans/index.ts`.",
       "const view = <div>{/* Read `src/components/Card.tsx`. */}</div>;",
     ].join("\n");
 
     expect(pathReferences(source, { commentsOnly: true })).toEqual([
-      { reference: "server/routes/scans.ts", line: 2 },
+      { reference: "server/routes/scans/index.ts", line: 2 },
       { reference: "src/components/Card.tsx", line: 3 },
     ]);
   });

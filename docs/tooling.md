@@ -208,8 +208,8 @@ regexes via the non-executing JS lexer before scanning (see
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
   file that exists. Prose here navigates by path, and a rename silently breaks the
   reference, sending the next reader to a file that is gone. A path may be written
-  from any root that resolves to exactly one tracked file (`routes/scans.ts` and
-  `server/routes/scans.ts` both resolve today); relative paths in source comments are
+  from any root that resolves to exactly one tracked file (`routes/scans/index.ts` and
+  `server/routes/scans/index.ts` both resolve today); relative paths in source comments are
   resolved from the source file. JavaScript and TypeScript comments are identified by
   the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
   package under review, inside a dependency, or in a gitignored output directory —

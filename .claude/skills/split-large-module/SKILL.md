@@ -15,7 +15,7 @@ Not by caller, not by "these look related", not by file size.
 
 Seams that have worked here:
 
-- **Route file → directory, one module per resource.** `server/routes/github-app.ts` (932 lines) became `server/routes/github-app/` — `installations.ts`, `release-targets.ts`, `workflow-gates.ts`, `shared.ts` for the org-scoping helpers every resource needs, and `index.ts` mounting them.
+- **Route file → directory, one module per resource.** The 932-line GitHub App route became `server/routes/github-app/` — `installations.ts`, `release-targets.ts`, `workflow-gates.ts`, `shared.ts` for the org-scoping helpers every resource needs, and `index.ts` mounting them.
 - **Component → pull the DOM-free part out first.** `src/components/DiffView.tsx` (1642 → 1062) yielded `diff-rows.ts` (line pairing, word diff, and their give-up budgets), `diff-scroll.ts` (scroll geometry), `DiffOverview.tsx` (the rail), `DiffAnnotations.tsx` (finding annotations). The row model is the part worth extracting because it is the part worth testing without rendering.
 - **Page → data, primitives, prose.** `src/pages/Docs/` split into `index.tsx` / `toc.ts` / `primitives.tsx`; `src/pages/Diff/` gave up `TrustEvidence.tsx` and its off-site link builders.
 
