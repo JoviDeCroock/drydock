@@ -9,7 +9,8 @@ import {
 import { normalizeReleaseAuthorityDelta } from "../lib/release-authority/normalize-delta";
 import { normalizeReleaseAuthoritySnapshot } from "../lib/release-authority/normalize";
 import type { ReleaseAuthoritySnapshot } from "../lib/release-authority/snapshot";
-import { sha256Hex, stableJson } from "../lib/platform/stable-json";
+import { sha256Hex } from "../lib/platform/crypto-utils";
+import { stableJson } from "../lib/platform/stable-json";
 
 export interface ReleaseAuthorityRecord {
   id: string;

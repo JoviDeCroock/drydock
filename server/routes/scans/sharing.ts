@@ -148,6 +148,7 @@ scanSharingRoutes.get("/:id/report.json", async (c) => {
     scanArtifactReadBucket(c.env),
     {
       files: "omit",
+      releaseAuthority: "stored",
     },
   );
   if (!detail) return c.json({ error: "not found" }, 404);

@@ -30,6 +30,7 @@ import {
   decideWorkflowGate,
   getWorkflowGateByScan,
   retryWorkflowGate,
+  type GateReleaseAuthority,
   type PublicWorkflowGate,
   type WorkflowGateDecision,
 } from "./github-app";
@@ -70,6 +71,8 @@ export const ScanDetailModel = createModel((id: string) => {
   const shareError = signal<string | null>(null);
   const attestationAvailable = signal<boolean | null>(null);
   const gate = signal<PublicWorkflowGate | null>(null);
+  const gateAuthority = signal<GateReleaseAuthority | null>(null);
+  const gateRequiresAuthorityApproval = signal(false);
   const gateLoaded = signal(false);
   const gateDecisionStatus = signal<DecisionStatus>("idle");
   const gateDecisionError = signal<string | null>(null);
@@ -206,6 +209,8 @@ export const ScanDetailModel = createModel((id: string) => {
     shareError,
     attestationAvailable,
     gate,
+    gateAuthority,
+    gateRequiresAuthorityApproval,
     gateLoaded,
     gateDecisionStatus,
     gateDecisionError,
@@ -360,9 +365,12 @@ export const ScanDetailModel = createModel((id: string) => {
       }
       const id = this.scanId.peek();
       try {
-        const gate = await getWorkflowGateByScan(id);
-        this.gate.value = gate;
-        this.gateLoaded.value = gate !== null;
+        const loaded = await getWorkflowGateByScan(id);
+        this.gate.value = loaded?.gate ?? null;
+        this.gateAuthority.value = loaded?.releaseAuthority ?? null;
+        this.gateRequiresAuthorityApproval.value =
+          loaded?.organizationRequiresAuthorityApproval ?? false;
+        this.gateLoaded.value = loaded !== null;
       } catch (err) {
         this.gateDecisionError.value = errorMessage(err);
         this.gateLoaded.value = false;
@@ -377,6 +385,7 @@ export const ScanDetailModel = createModel((id: string) => {
       decision: WorkflowGateDecision,
       comment: string | null,
       totpCode: string | null = null,
+      acknowledgeAuthorityChange = false,
     ): Promise<void> {
       const current = this.gate.peek();
       if (!current) return;
@@ -390,6 +399,10 @@ export const ScanDetailModel = createModel((id: string) => {
           decision,
           comment,
           totpCode,
+          acknowledgeAuthorityChange,
+          acknowledgeAuthorityChange
+            ? (this.gateAuthority.peek()?.acknowledgementToken ?? null)
+            : null,
         );
         this.gate.value = updated;
         this.gateDecisionStatus.value = "idle";
@@ -397,6 +410,13 @@ export const ScanDetailModel = createModel((id: string) => {
         // audit event server-side; refresh so the workbench reflects both.
         await this.load();
       } catch (err) {
+        if (
+          err instanceof ApiError &&
+          (err.code === "authority_change_acknowledgement_required" ||
+            err.code === "authority_baseline_changed")
+        ) {
+          await Promise.all([this.loadGate(), this.load()]);
+        }
         this.gateDecisionError.value = errorMessage(err);
         this.gateDecisionStatus.value = "error";
       }

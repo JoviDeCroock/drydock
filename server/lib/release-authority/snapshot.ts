@@ -20,7 +20,8 @@
 // Workflow definitions are repository content and are treated as hostile
 // evidence: read and projected, never evaluated.
 
-import { sha256Hex, stableJson, utf8Size } from "../platform/stable-json";
+import { sha256Hex } from "../platform/crypto-utils";
+import { stableJson, utf8Size } from "../platform/stable-json";
 import { type YamlValue, asRecord, asString, asStringList } from "./yaml";
 
 export const RELEASE_AUTHORITY_SCHEMA = "drydock.release-authority.v1";

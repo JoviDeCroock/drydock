@@ -20,6 +20,10 @@ import {
 } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
+import {
+  getReleaseAuthorityForGate,
+  refreshReleaseAuthorityDeltaForGate,
+} from "./release-authority";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
@@ -34,14 +38,20 @@ import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
  *   are byte-identical to `samples`) while skipping the file-samples artifact
  *   entirely. For callers that serialize the report and never read `files`.
  */
-export type ScanDetailFileMode = "samples" | "list" | "omit";
+type ScanDetailFileMode = "samples" | "list" | "omit";
+
+interface GetScanOptions {
+  files?: ScanDetailFileMode;
+  /** Exports use the persisted snapshot so a read cannot mutate canonical bytes. */
+  releaseAuthority?: "refresh" | "stored";
+}
 
 export async function getScan(
   db: AppDb,
   id: string,
   organizationId: string,
   artifactBucket?: R2Bucket,
-  options: { files?: ScanDetailFileMode } = {},
+  options: GetScanOptions = {},
 ) {
   const [scanRows, files, findings, events] = await Promise.all([
     db
@@ -90,6 +100,14 @@ export async function getScan(
             readPersistedRiskBreakdown(scan.summaryJson),
           )
         : null,
+    // Gate-level evidence, shared by every package scan of a monorepo gate.
+    // Null for staged-publish scans and for gates captured before this existed;
+    // consumers must read that as "not assessed", not as "no change".
+    releaseAuthority: scan.gateId
+      ? options.releaseAuthority === "stored"
+        ? await getReleaseAuthorityForGate(db, organizationId, scan.gateId)
+        : await refreshReleaseAuthorityDeltaForGate(db, organizationId, scan.gateId)
+      : null,
     events: events.map(redactScanEventForClient),
   };
 }

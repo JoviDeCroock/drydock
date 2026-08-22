@@ -27,7 +27,9 @@ import {
 } from "../release-authority/yaml";
 import { readStreamBounded } from "../tar-parser.js";
 import { reliableFetch } from "../platform/reliable-fetch";
-import { sha256Hex, stableJson } from "../platform/stable-json";
+import { sha256Hex } from "../platform/crypto-utils";
+import { isSafeManifestPath } from "../platform/path-safety";
+import { stableJson } from "../platform/stable-json";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
 import { githubInstallationHeaders } from "./http";
@@ -695,8 +697,7 @@ async function fetchWorkflowContent(
 // general-purpose repository file reader.
 function isSafeWorkflowPath(path: string): boolean {
   if (!path.startsWith(".github/workflows/")) return false;
-  if (path.includes("..") || path.includes("//")) return false;
-  return path.length <= 512 && /^[A-Za-z0-9._/-]+$/.test(path);
+  return !path.includes("..") && isSafeManifestPath(path) && /^[A-Za-z0-9._/-]+$/.test(path);
 }
 
 function normalizeLocalActionPath(uses: string): string | null {
@@ -706,10 +707,7 @@ function normalizeLocalActionPath(uses: string): string | null {
 }
 
 function isSafeRepositoryPath(path: string): boolean {
-  if (!path || path.length > 512 || path.includes("//")) return false;
-  const segments = path.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return false;
-  return /^[A-Za-z0-9._@+/-]+$/.test(path);
+  return isSafeManifestPath(path) && /^[A-Za-z0-9._@+/-]+$/.test(path);
 }
 
 function str(value: unknown): string | null {

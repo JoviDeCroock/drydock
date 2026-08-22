@@ -4,6 +4,8 @@
 // malformed one, reads as null rather than throwing. A null delta renders as
 // "not assessed", which is neutral — it never reads as "no change found".
 
+import { isRecord } from "../platform/guards";
+
 import {
   AUTHORITY_CHANGES_CAP,
   type AuthorityBaselineRef,
@@ -162,9 +164,7 @@ function normalizeUnresolved(value: unknown): AuthorityUnresolved[] {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return isRecord(value) ? value : null;
 }
 
 function str(value: unknown): string | null {
