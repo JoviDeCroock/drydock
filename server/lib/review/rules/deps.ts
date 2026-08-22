@@ -1,5 +1,10 @@
 import type { Finding, PackageJsonDiff } from "..";
-import type { DependencySection, PackageJsonDiffEntry } from "../serialize";
+import {
+  dependencySpecsEqual,
+  dependencyWasInstalledAtStagedSpec,
+  type DependencySection,
+  type PackageJsonDiffEntry,
+} from "../serialize";
 import {
   majorRangesAreSubset,
   specMajorRanges,
@@ -111,7 +116,14 @@ function keyFinding(
 
   const addedEntries = entries.filter((entry) => entry.status === "added");
   const addsInstallingSection = addedEntries.some((entry) => isInstallingSection(entry.section));
-  const wasPreviouslyInstalled = addedEntries.some((entry) => entry.previouslyInstalled);
+  const wasPreviouslyInstalled = addedEntries.some(
+    (entry) =>
+      // Keep the established optional-override calibration: a changed effective
+      // optional spec is handled by dependency.major-bump below, not as a newly
+      // introduced optional dependency.
+      (entry.section === "optionalDependencies" && entry.previouslyInstalled) ||
+      dependencyWasInstalledAtStagedSpec(entry),
+  );
   // Legacy/manually-created diffs may not carry the cross-section flags, so
   // preserve the removed-row relocation fallback for those payloads.
   const relocation = (removedInstallingSpecs?.length ?? 0) > 0;
@@ -127,8 +139,13 @@ function keyFinding(
       !entry.stagedPeerOptional,
   );
   const addsNewPeerRequirement =
-    Boolean(requiredPeerTransition) ||
-    Boolean(addedRequiredPeer && !addedRequiredPeer.previouslyDeclared && !relocation);
+    Boolean(
+      requiredPeerTransition &&
+      !dependencySpecsEqual(
+        requiredPeerTransition.previousInstalledSpec,
+        requiredPeerTransition.staged,
+      ),
+    ) || Boolean(addedRequiredPeer && !addedRequiredPeer.previouslyDeclared && !relocation);
 
   const addedOptional = addedEntries.find((entry) => entry.section === "optionalDependencies");
   if (installsNewCode && addedOptional?.staged !== undefined) {
