@@ -60,3 +60,36 @@ export function BorderXOnLabel() {
     </SectionLabel>
   );
 }
+
+export function OppositeWrapperEdges() {
+  return (
+    <>
+      <section class="border-b border-border">
+        <SectionLabel as="h2">Leading label</SectionLabel>
+        <p>body before the wrapper's bottom edge</p>
+      </section>
+      <section class="border-t border-border">
+        <p>body after the wrapper's top edge</p>
+        <SectionLabel as="h2">Trailing label</SectionLabel>
+      </section>
+    </>
+  );
+}
+
+export function OppositeSiblingEdges() {
+  return (
+    <section>
+      <div class="border-t border-border">preceding element</div>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      <div class="border-b border-border">following element</div>
+    </section>
+  );
+}
+
+export function ZeroWidthBorder() {
+  return (
+    <SectionLabel as="h2" class="border-t-0 border-b-0">
+      Findings
+    </SectionLabel>
+  );
+}

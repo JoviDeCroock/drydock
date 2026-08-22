@@ -15,11 +15,11 @@ const indexSource = readFileSync(
   "utf8",
 );
 
-// docs/security-model.md: exactly two anonymous exceptions, both credential-free
-// and IP rate-limited. Only the first is under `/api/*`; `/public/reports/*` is
-// mounted outside it. Adding an entry here is a security decision, not a
-// formality — it must be credential-free, rate-limited, and documented there.
-const ANONYMOUS_API_MOUNTS = ["/api/public/v1/package-diff"];
+// The Better Auth handler must remain reachable without an existing session.
+// docs/security-model.md documents the one non-auth exception under `/api/*`:
+// public package diff is credential-free and IP rate-limited. Adding another
+// entry here is a security decision, not a test-maintenance formality.
+const API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD = ["/api/auth/*", "/api/public/v1/package-diff"];
 
 /** Line number (1-based) of the `app.use("/api/*")` that requires a session. */
 function sessionGuardLine(lines) {
@@ -34,13 +34,20 @@ function sessionGuardLine(lines) {
   return guard === -1 ? -1 : guard + 1;
 }
 
-function apiMounts(lines) {
+function apiMounts(source) {
   const mounts = [];
-  lines.forEach((line, index) => {
-    const match = line.match(/^app\.route\("(\/api\/[^"]*)"/);
-    if (match) mounts.push({ path: match[1], line: index + 1 });
-  });
-  return mounts;
+  const registrations = [
+    /^[\t ]*app\.(?:all|delete|get|head|mount|options|patch|post|put|query|route)\s*\(\s*["'](\/api(?:\/[^"']*)?)["']/gm,
+    /^[\t ]*app\.on\s*\(\s*(?:\[[^\]]*\]|[^,]+),\s*["'](\/api(?:\/[^"']*)?)["']/gm,
+  ];
+
+  for (const registration of registrations) {
+    for (const match of source.matchAll(registration)) {
+      const before = source.slice(0, match.index);
+      mounts.push({ path: match[1], line: before.split("\n").length });
+    }
+  }
+  return mounts.sort((a, b) => a.line - b.line);
 }
 
 describe("/api/* auth boundary", () => {
@@ -54,8 +61,8 @@ describe("/api/* auth boundary", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("only the documented anonymous exceptions mount above the session guard", () => {
-    const mounts = apiMounts(lines);
+  test("only auth and the documented public exception mount above the session guard", () => {
+    const mounts = apiMounts(indexSource);
     expect(mounts.length).toBeGreaterThan(5);
 
     const anonymous = mounts.filter((mount) => mount.line < guardLine).map((mount) => mount.path);
@@ -63,18 +70,38 @@ describe("/api/* auth boundary", () => {
       anonymous.sort(),
       "A route mounted above the session guard is served anonymously — Hono runs middleware in " +
         "registration order, so the guard never runs for it. Move the mount below the guard, or, " +
-        "if it is genuinely a credential-free rate-limited public endpoint, document it in " +
-        "docs/security-model.md and add it to ANONYMOUS_API_MOUNTS here.",
-    ).toEqual([...ANONYMOUS_API_MOUNTS].sort());
+        "if it is an auth handler or genuinely credential-free rate-limited public endpoint, " +
+        "document it and add it to API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD here.",
+    ).toEqual([...API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD].sort());
   });
 
-  test("every documented anonymous mount is actually mounted", () => {
-    const mounts = apiMounts(lines).map((mount) => mount.path);
-    for (const allowed of ANONYMOUS_API_MOUNTS) {
+  test("every route allowed above the guard is actually mounted", () => {
+    const mounts = apiMounts(indexSource).map((mount) => mount.path);
+    for (const allowed of API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD) {
       expect(
         mounts,
         `${allowed} is allowlisted as anonymous but no longer mounted — drop the stale entry.`,
       ).toContain(allowed);
     }
+  });
+
+  test("recognizes direct and method-list API handlers", () => {
+    const source = [
+      'app.get("/api/direct", handler);',
+      'app.post("/api/direct", handler);',
+      'app.all("/api/auth/*", handler);',
+      'app.mount("/api/mounted", handler);',
+      'app.query("/api/queried", handler);',
+      'app.on(["PUT", "PATCH"], "/api/method-list", handler);',
+    ].join("\n");
+
+    expect(apiMounts(source).map((mount) => mount.path)).toEqual([
+      "/api/direct",
+      "/api/direct",
+      "/api/auth/*",
+      "/api/mounted",
+      "/api/queried",
+      "/api/method-list",
+    ]);
   });
 });

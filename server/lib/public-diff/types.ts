@@ -37,7 +37,7 @@ interface PublicDiffAttestationBuild {
   /** Ref the build ran from, e.g. `refs/tags/v1.2.3`. */
   ref: string | null;
   commit: string | null;
-  /** Workflow file, e.g. `.github/workflows/publish.yml`. */
+  /** Workflow file in the source repository, e.g. .github/workflows/publish.yml. */
   workflow: string | null;
   /** CI run the signing certificate was issued to. */
   runUrl: string | null;

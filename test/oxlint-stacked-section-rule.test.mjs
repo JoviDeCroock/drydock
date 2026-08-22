@@ -43,17 +43,18 @@ describe("design-local/no-stacked-section-rule", () => {
       .sort((a, b) => a - b);
     // The label's own class (8), the same via cn() (16), the wrapper's
     // border-b (24), a trailing <hr> (34), a trailing border-t sibling (43),
-    // and a leading border-b sibling (51).
+    // a leading border-b sibling (51), the same <hr> across a JSX comment (62),
+    // a leading wrapper's border-t (69), and a trailing wrapper's border-b (78).
     assert.deepEqual(
       lines,
-      [8, 16, 24, 34, 43, 51],
-      `expected the six stacked rules to be flagged, got:\n${JSON.stringify(flagged, null, 2)}`,
+      [8, 16, 24, 34, 43, 51, 62, 69, 78],
+      `expected the nine stacked rules to be flagged, got:\n${JSON.stringify(flagged, null, 2)}`,
     );
   });
 
   it("leaves boxes, spacing, distant rules, and mid-stack labels alone", () => {
     const other = flagged.filter((d) => d.filename !== "src/stacked.tsx");
     assert.deepEqual(other, [], `unexpected violations:\n${JSON.stringify(other, null, 2)}`);
-    assert.equal(flagged.length, 6);
+    assert.equal(flagged.length, 9);
   });
 });

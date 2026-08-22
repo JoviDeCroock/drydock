@@ -169,12 +169,14 @@ A third local oxlint plugin, `tooling/oxlint/design-local/`, pins the one `docs/
 rule that keeps regressing by eye: `SectionLabel` draws its own trailing hairline, so a
 `border-t`, `border-b`, or `<hr>` on the same boundary stacks a second 1px line and
 reads as a double border. The rule reports the label's own class, the class of the
-element that directly wraps it (only when the label is that wrapper's leading or
-trailing child), and an immediately adjacent JSX sibling that draws a rule. Only the
-_directional_ border utilities count — an all-sides `border` is a box outline, not a
-stacked rule — and class names are read from static strings, including the string
-arguments of a `cn(...)` call. A rule two elements away is a spacing question and is
-not reported. Fixture and test: `test/fixtures/oxlint-design/` and
+element that directly wraps it (a top border for a leading label or a bottom border
+for a trailing label), and an immediately adjacent JSX sibling that draws a rule on
+the touching edge. JSX comments do not interrupt visual adjacency. Only non-zero
+_directional_ border utilities count — an all-sides `border` is a box outline, and
+`border-t-0` / `border-b-0` remove rather than draw a rule — and class names are read
+from static strings, including the string arguments of a `cn(...)` call. A rule two
+elements away is a spacing question and is not reported. Fixture and test:
+`test/fixtures/oxlint-design/` and
 `test/oxlint-stacked-section-rule.test.mjs`.
 
 The rule ships as `error` with no existing violations, so every infraction fails lint.
@@ -205,7 +207,7 @@ regexes via the non-executing JS lexer before scanning (see
   from any unambiguous root (`routes/scans.ts` and `server/routes/scans.ts` both
   resolve). Paths that intentionally name something outside the repo — inside a
   package under review, inside a dependency, or in a gitignored output directory —
-  are listed in the test's `NON_REPO_PREFIXES`.
+  are listed in the test's explicit non-repository exceptions.
 
 ## Client API helpers
 

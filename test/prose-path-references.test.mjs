@@ -17,7 +17,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 // Backtick-quoted, extension-bearing, contains a separator. A bare `index.ts`
 // is a name, not a location, so it is not checked.
-const PATH_REFERENCE = /`([A-Za-z0-9_./@-]+\.(?:ts|tsx|mjs|cjs|js|json|jsonc|sql|css|ya?ml))`/g;
+const PATH_REFERENCE = /`([A-Za-z0-9_./@-]+\.(?:ts|tsx|mjs|cjs|js|json|jsonc|md|sql|css|ya?ml))`/g;
 
 // Paths that are deliberately not repo files. Each names bytes that live
 // somewhere else: inside a package under review, inside a dependency, or in a
@@ -56,9 +56,10 @@ function buildResolver(files) {
 
 function isCheckable(reference) {
   if (!reference.includes("/")) return false;
-  // URLs, package specifiers, and relative links (already resolved by the
-  // markdown link checker's own conventions) are not repo-root paths.
-  if (/^(https?:|@|\.)/.test(reference)) return false;
+  // URLs, package specifiers, and explicit relative links (already resolved by
+  // the markdown link checker's own conventions) are not repo-root paths.
+  // Dot-directories such as `.claude/` and `.github/` are repository paths.
+  if (/^(https?:|@|\.\.?\/)/.test(reference)) return false;
   return !NON_REPO_PREFIXES.some((prefix) => reference.startsWith(prefix));
 }
 
@@ -99,7 +100,7 @@ describe("prose path references", () => {
       stale,
       "Markdown names files that no longer exist. Update the reference to the file's new home, " +
         "or — if it names something outside the repo (a path inside a reviewed package, a " +
-        "dependency, or a gitignored output dir) — add its prefix to NON_REPO_PREFIXES here.",
+        "dependency, or a gitignored output dir) — add a narrow non-repository exception here.",
     ).toEqual([]);
   });
 
@@ -111,5 +112,13 @@ describe("prose path references", () => {
 
     const stale = await staleReferences(source, resolve, { commentsOnly: true });
     expect(stale, "Source comments name files that no longer exist.").toEqual([]);
+  });
+
+  test("recognizes Markdown and dot-directory repository paths", () => {
+    const prose = "Read `docs/security-model.md` and `.claude/skills/pre-pr/SKILL.md`.";
+    const references = [...prose.matchAll(PATH_REFERENCE)].map((match) => match[1]);
+
+    expect(references).toEqual(["docs/security-model.md", ".claude/skills/pre-pr/SKILL.md"]);
+    expect(references.every(isCheckable)).toBe(true);
   });
 });

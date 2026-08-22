@@ -32,10 +32,12 @@
 
 const SECTION_LABEL = "SectionLabel";
 
-// `border-t`, `border-b`, and their width/color/variant spellings:
+// `border-t`, `border-b`, and their non-zero width/color/variant spellings:
 // `border-t-2`, `border-b-border`, `md:border-t`, `dark:border-b-ink`. Not
-// `border`, `border-x`, `border-border` (all-sides color), or `border-2`.
-const DIRECTIONAL_RULE = /(?:^|\s|:)border-[tb](?:-|\s|$)/;
+// `border`, `border-x`, `border-border` (all-sides color), `border-2`, or the
+// zero-width removals `border-t-0` / `border-b-0`.
+const TOP_RULE = /(?:^|\s|:)border-t(?:-(?!0(?:\s|$))|\s|$)/;
+const BOTTOM_RULE = /(?:^|\s|:)border-b(?:-(?!0(?:\s|$))|\s|$)/;
 
 function classStringsFrom(node, out) {
   if (!node) return out;
@@ -79,17 +81,20 @@ function classAttribute(node) {
   );
 }
 
-function drawsDirectionalRule(node) {
+function drawsDirectionalRule(node, side) {
   if (elementName(node) === "hr") return true;
   const attribute = classAttribute(node);
   if (!attribute) return false;
-  return classStringsFrom(attribute.value, []).some((value) => DIRECTIONAL_RULE.test(value));
+  const pattern = side === "top" ? TOP_RULE : BOTTOM_RULE;
+  return classStringsFrom(attribute.value, []).some((value) => pattern.test(value));
 }
 
 /** JSX children with whitespace-only text dropped, so "adjacent" means visually adjacent. */
 function meaningfulChildren(node) {
   return (node?.children ?? []).filter(
-    (child) => !(child.type === "JSXText" && child.value.trim() === ""),
+    (child) =>
+      !(child.type === "JSXText" && child.value.trim() === "") &&
+      !(child.type === "JSXExpressionContainer" && child.expression?.type === "JSXEmptyExpression"),
   );
 }
 
@@ -121,7 +126,7 @@ const rule = {
       const attribute = classAttribute(node);
       if (
         attribute &&
-        classStringsFrom(attribute.value, []).some((value) => DIRECTIONAL_RULE.test(value))
+        (drawsDirectionalRule(node, "top") || drawsDirectionalRule(node, "bottom"))
       ) {
         context.report({ node: attribute, messageId: "onLabel" });
       }
@@ -134,12 +139,11 @@ const rule = {
       // label is the wrapper's leading or trailing child: a label in the middle
       // of a stack is not on the wrapper's top or bottom edge.
       if (parent.type === "JSXElement") {
-        const isEdgeChild = siblings[0] === node || siblings[siblings.length - 1] === node;
         const wrapperClass = classAttribute(parent);
         if (
-          isEdgeChild &&
           wrapperClass &&
-          classStringsFrom(wrapperClass.value, []).some((value) => DIRECTIONAL_RULE.test(value))
+          ((siblings[0] === node && drawsDirectionalRule(parent, "top")) ||
+            (siblings[siblings.length - 1] === node && drawsDirectionalRule(parent, "bottom")))
         ) {
           context.report({ node: wrapperClass, messageId: "onWrapper" });
         }
@@ -147,9 +151,12 @@ const rule = {
 
       // Immediate siblings on either side.
       const index = siblings.indexOf(node);
-      for (const neighbour of [siblings[index - 1], siblings[index + 1]]) {
+      for (const [neighbour, side] of [
+        [siblings[index - 1], "bottom"],
+        [siblings[index + 1], "top"],
+      ]) {
         if (neighbour?.type !== "JSXElement") continue;
-        if (!drawsDirectionalRule(neighbour)) continue;
+        if (!drawsDirectionalRule(neighbour, side)) continue;
         context.report({
           node: neighbour,
           messageId: "onSibling",
