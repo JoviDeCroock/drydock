@@ -17,7 +17,8 @@ import {
   SCAN_RETENTION_MIN_DAYS,
 } from "../../server/lib/retention";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { stableJson } from "../../server/lib/platform/stable-json";
 import type { DiffEntry, FileRecord, Finding } from "../../server/lib/review";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
