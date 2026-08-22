@@ -40,6 +40,7 @@ import {
   emitOperationalEvent,
 } from "../../platform/observability";
 import { parseSandboxErrorDetail } from "../../sandbox";
+import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import { isValidNpmPackageName, type RegistryMetadata } from "./registry";
 import { maxSatisfyingVersion } from "./semver";
 import type { NpmBroker } from "./broker";
@@ -350,7 +351,35 @@ async function inspectOne(
     );
   }
 
-  const assessment = assessDependencyArtifact(download.files, download.packageJson ?? null, {
+  if (download.suspiciousEntries?.some(isAmbiguousDependencyArchiveEntry)) {
+    return uninspectable(
+      dependency,
+      registryHost,
+      "artifact-ambiguous",
+      resolved,
+      tarballUrl,
+      declared,
+      reviewedDigest,
+      download.archiveSha1,
+      download.files.length,
+    );
+  }
+
+  if (!download.packageJson) {
+    return uninspectable(
+      dependency,
+      registryHost,
+      "manifest-unavailable",
+      resolved,
+      tarballUrl,
+      declared,
+      reviewedDigest,
+      download.archiveSha1,
+      download.files.length,
+    );
+  }
+
+  const assessment = assessDependencyArtifact(download.files, download.packageJson, {
     codePatternSet: "javascript",
     entrypointResolution: "npm",
   });
@@ -374,6 +403,11 @@ async function inspectOne(
     installReachableCapabilities: assessment.installReachableCapabilities,
     verdict: assessment.verdict,
   };
+}
+
+function isAmbiguousDependencyArchiveEntry(entry: TarSuspiciousEntry): boolean {
+  if (entry.kind === "duplicate" || entry.kind === "unicode-confusable") return true;
+  return entry.kind === "non-regular" && !entry.detail.includes("(directory)");
 }
 
 /**
