@@ -1,9 +1,9 @@
 /**
  * Reading one scan back out.
  *
- * Scan bodies live in two places: recent scans keep files/findings in D1,
- * while older ones have been offloaded to R2 artifacts. These readers hide
- * that split — callers ask for a scan detail and get the same shape either
+ * Scan bodies live in two places: new artifact-backed scans keep files/findings
+ * in R2, while legacy or degraded scans can retain them in D1. These readers
+ * hide that split — callers ask for a scan detail and get the same shape either
  * way, with artifact rows merged over whatever D1 still holds.
  */
 import { and, asc, eq } from "drizzle-orm";

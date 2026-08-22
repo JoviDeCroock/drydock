@@ -1,9 +1,10 @@
 /**
  * Scan artifacts: the scan body offloaded to R2.
  *
- * Recent scans keep files/findings in D1; older ones live here and are read
- * back digest-verified. This stays the import path for all consumers; the
- * implementation is split by what it does to an artifact set:
+ * New artifact-backed scans keep files/findings here; legacy or degraded scans
+ * can retain them in D1. R2 reads are digest-verified. This stays the import
+ * path for all consumers; the implementation is split by what it does to an
+ * artifact set:
  *
  * - `types`    stored shapes and caps
  * - `keys`     org-scoped R2 key layout
