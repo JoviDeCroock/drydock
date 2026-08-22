@@ -130,6 +130,29 @@ describe("published tarball colo cache", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  test("an anonymous evidence fetch can bypass both cache reads and warming", async () => {
+    const url = `${PUBLIC_REGISTRY}/pkg-f/-/pkg-f-1.0.0.tgz`;
+    await caches.default.put(
+      url,
+      new Response("stale-bytes-f", {
+        status: 200,
+        headers: { "content-length": String("stale-bytes-f".length) },
+      }),
+    );
+    const { fetchSpy } = stubFetch("live-bytes-f");
+    const pending: Promise<unknown>[] = [];
+
+    const stream = await fetchPublishedTarballStream(url, {
+      registryUrl: PUBLIC_REGISTRY,
+      cacheMode: "bypass",
+      waitUntil: (promise) => pending.push(promise),
+    });
+
+    expect(await readAll(stream)).toBe("live-bytes-f");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(pending).toHaveLength(0);
+  });
+
   test("insecure localhost registries (fake-registry e2e) bypass the cache", async () => {
     const registry = "http://localhost:4873";
     const url = `${registry}/pkg-e/-/pkg-e-1.0.0.tgz`;

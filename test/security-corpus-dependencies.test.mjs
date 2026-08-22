@@ -51,6 +51,10 @@ function buildReview(fixture) {
         reason: "artifact-truncated",
         resolvedVersion: resolved.version,
         registryHost: "registry.npmjs.org",
+        declaredDigest: resolved.declaredDigest ?? null,
+        reviewedDigest: resolved.reviewedDigest ?? null,
+        digestVerified:
+          typeof resolved.digestVerified === "boolean" ? resolved.digestVerified : null,
         fileCount: resolved.files.length,
       };
     }

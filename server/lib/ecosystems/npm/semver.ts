@@ -134,7 +134,20 @@ function parseComparator(token: string): Comparator[] | null {
   const parsedPatch = numericPart(rawPatch);
   const parts = [major, parsedMinor, parsedPatch];
   const wildcardIndex = parts.findIndex((part) => part === null);
-  // npm ignores components after the first wildcard (`1.x.2` is `1.x`).
+  // npm's bare/comparator grammar rejects a numeric component after a
+  // wildcard (`1.x.2`, `<1.x.2`) instead of silently broadening it to `1.x`.
+  // Caret and tilde ranges deliberately retain npm's permissive partial-range
+  // behavior (`^1.x.2` is equivalent to `^1.x`).
+  if (
+    parsedMinor === null &&
+    rawMinor !== undefined &&
+    parsedPatch !== null &&
+    operator !== "^" &&
+    operator !== "~" &&
+    operator !== "~>"
+  ) {
+    return null;
+  }
   const minor = parsedMinor;
   const patch = wildcardIndex === 1 ? null : parsedPatch;
   const pre = prerelease ? prerelease.split(".") : [];

@@ -94,6 +94,39 @@ describe("selectAddedDependencies", () => {
     expect(selected).toEqual([]);
   });
 
+  test("a required peer duplicated into dependencies was already installed", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        { name: "p", peerDependencies: { react: "^19.0.0" } },
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([]);
+  });
+
+  test("an optional peer duplicated into dependencies starts installing code", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        {
+          name: "p",
+          peerDependencies: { react: "^19.0.0" },
+          peerDependenciesMeta: { react: { optional: true } },
+        },
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+          peerDependenciesMeta: { react: { optional: true } },
+        },
+      ),
+    );
+    expect(selected.map((entry) => entry.name)).toEqual(["react"]);
+  });
+
   test("a first-ever release selects nothing — everything diffs as added", () => {
     // Without a baseline manifest the whole dependency list reads as new, which
     // would describe the package rather than the release.
@@ -352,6 +385,26 @@ describe("dependencyEvidenceFindings", () => {
     expect(computeRisk(findings)).toBe("critical");
   });
 
+  test("a truncated artifact cannot hide its registry digest mismatch", () => {
+    const findings = dependencyEvidenceFindings(
+      review([
+        evidence({
+          status: "uninspectable",
+          reason: "artifact-truncated",
+          declaredDigest: { algorithm: "sha512", value: "aa".repeat(64) },
+          reviewedDigest: { algorithm: "sha512", value: "bb".repeat(64) },
+          digestVerified: false,
+        }),
+      ]),
+      parent,
+    );
+    expect(findings.map((finding) => finding.ruleId)).toEqual([
+      "dependency-artifact.integrity-mismatch",
+      "dependency-artifact.uninspectable",
+    ]);
+    expect(computeRisk(findings)).toBe("critical");
+  });
+
   test("an install-time download is a tier below a remote-shell dropper", () => {
     // `critical` has to keep meaning "no benign reading". prebuild-install
     // fetching a platform binary and a dropper fetching a payload look
@@ -520,6 +573,22 @@ describe("normalizeDependencyReview", () => {
     });
     expect(review.dependencies[0].status).toBe("uninspectable");
     expect(review.dependencies[0].reason).toBeNull();
+  });
+
+  test("removes credentials and signed parameters from persisted artifact URLs", () => {
+    const review = normalizeDependencyReview({
+      status: "complete",
+      dependencies: [
+        {
+          name: "x",
+          declaredSpec: "1.0.0",
+          status: "inspected",
+          artifactUrl:
+            "https://reader:secret@registry.example.com/x/-/x-1.0.0.tgz?token=signed#fragment",
+        },
+      ],
+    });
+    expect(review.dependencies[0].artifactUrl).toBe("https://registry.example.com/x/-/x-1.0.0.tgz");
   });
 
   test("bounds persisted evidence and accounts for omitted records", () => {

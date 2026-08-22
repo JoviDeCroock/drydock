@@ -223,6 +223,8 @@ A PyPI review runs two rule families over the staged artifacts:
 
 `DETERMINISTIC_RULES_VERSION` (currently `1.33.0`).
 
+`DETERMINISTIC_RULES_VERSION` (currently `1.34.0`).
+
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
 fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_VERSION` in the adapter,
@@ -711,6 +713,13 @@ sandbox's full-text body budget now make the dependency visibly uninspectable, p
 late metadata response from starting a tarball parse. The bounded npm range resolver now follows npm's
 strict major-wildcard behavior and SemVer's ASCII prerelease ordering so the reviewed version matches
 the version a consumer install selects.
+
+`1.34.0` preserves the critical dependency integrity signal even when the same artifact is also
+uninspectable, pinned by `added-dependency-truncated-integrity-mismatch`. It also treats a required peer
+that npm 7+ already auto-installed as previously installed when the staged release duplicates or moves
+it under `dependencies`, pinned by `required-peer-runtime-relocation` and the
+`legit-required-peer-runtime-relocation` eval hard-negative. Optional peers remain excluded from that
+calibration because consumers do not inherit them automatically.
 
 ### Fixture format
 

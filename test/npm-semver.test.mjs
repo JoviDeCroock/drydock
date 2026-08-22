@@ -33,9 +33,10 @@ describe("npm range satisfaction", () => {
     expect(matches("1.9.9", "1.x")).toBe(true);
     expect(matches("2.0.0", "1.x")).toBe(false);
     expect(matches("9.9.9", "*")).toBe(true);
-    expect(matches("1.0.0", "1.x.2")).toBe(true);
-    expect(matches("0.9.9", "<1.x.2")).toBe(true);
-    expect(matches("1.0.0", "<1.x.2")).toBe(false);
+    expect(parseRange("1.x.2")).toBeNull();
+    expect(parseRange("<1.x.2")).toBeNull();
+    expect(matches("1.4.0", "^1.x.2")).toBe(true);
+    expect(matches("2.0.0", "^1.x.2")).toBe(false);
   });
 
   test("strict major wildcards match nothing while inclusive ones match anything", () => {

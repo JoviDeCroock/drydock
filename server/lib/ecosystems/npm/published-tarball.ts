@@ -36,6 +36,8 @@ export interface PublishedTarballFetchOptions {
   maxBytes?: number;
   waitUntil?: (promise: Promise<unknown>) => void;
   signal?: AbortSignal;
+  /** Bypass the shared byte cache when evidence must reflect a fresh registry read. */
+  cacheMode?: "default" | "bypass";
 }
 
 // Published tarball URLs are version-pinned and immutable, so the TTL bounds
@@ -68,6 +70,7 @@ function publishedTarballCacheEligible(
   tarballUrl: string,
   options: PublishedTarballFetchOptions,
 ): boolean {
+  if (options.cacheMode === "bypass") return false;
   if (options.allowInsecureLocalhost) return false;
   try {
     const url = new URL(tarballUrl);

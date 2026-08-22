@@ -24,9 +24,10 @@ export function DependencyReviewSection({ review }: { review: DependencyReview }
         New dependencies
       </SectionLabel>
       <p class="m-0 text-[13px] leading-[1.55] text-ink-muted max-w-[760px]">
-        Dependencies this release adds to consumer installs. Drydock fetched and scanned each one's
-        published artifact without installing or running it. Versions below are what a consumer
-        install would resolve at review time, not a permanent record of what they will get.
+        Dependencies this release adds to consumer installs. Drydock attempts to fetch and scan each
+        published artifact without installing or running it; rows marked not reviewed need a manual
+        look. Versions below are what a consumer install would resolve at review time, not a
+        permanent record of what they will get.
       </p>
       <ul class="list-none p-0 m-0 border border-border rounded-lg overflow-hidden divide-y divide-border">
         {review.dependencies.map((dependency) => (
@@ -42,7 +43,7 @@ function partialReviewCopy(review: DependencyReview): string {
   if (review.dependencies.some((dependency) => dependency.reason === "review-failed")) {
     return "Dependency review did not complete. The dependencies marked not reviewed need a manual look before approving.";
   }
-  return "This release adds more dependencies than one review fetches. The ones marked not reviewed need a manual look before approving.";
+  return "Dependency review did not cover every selected dependency. The ones marked not reviewed need a manual look before approving.";
 }
 
 function DependencyRow(dependency: DependencyEvidence) {
@@ -109,27 +110,27 @@ function countLabel(review: DependencyReview): string {
 }
 
 function verdictTone(dependency: DependencyEvidence): BadgeTone {
-  if (dependency.status === "uninspectable") return "medium";
   if (dependency.digestVerified === false) return "critical";
+  if (dependency.status === "uninspectable") return "medium";
   if (dependency.verdict === "install-risk") return "critical";
   if (dependency.verdict === "install-execution") return "medium";
   return "ok";
 }
 
 function verdictLabel(dependency: DependencyEvidence): string {
-  if (dependency.status === "uninspectable") return "not reviewed";
   if (dependency.digestVerified === false) return "integrity mismatch";
+  if (dependency.status === "uninspectable") return "not reviewed";
   if (dependency.verdict === "install-risk") return "install-time risk";
   if (dependency.verdict === "install-execution") return "runs on install";
   return "reviewed";
 }
 
 function describeDependency(dependency: DependencyEvidence): string {
-  if (dependency.status === "uninspectable")
-    return UNINSPECTABLE_COPY[dependency.reason ?? "other"];
   if (dependency.digestVerified === false) {
     return "The fetched artifact does not match the digest advertised by the registry. Treat this review as invalid until the integrity failure is resolved.";
   }
+  if (dependency.status === "uninspectable")
+    return UNINSPECTABLE_COPY[dependency.reason ?? "other"];
   if (dependency.verdict === "install-risk") {
     return "Installing this package runs code that downloads, evaluates, or reads credentials. Review it directly before approving the release.";
   }
@@ -154,7 +155,7 @@ const UNINSPECTABLE_COPY: Record<string, string> = {
   "artifact-truncated":
     "At least one dependency file exceeded the retained detection sample, so Drydock did not treat the partial bytes as a complete review.",
   "budget-exhausted":
-    "This release adds more dependencies than one review fetches, so this one was recorded but not read.",
+    "The dependency review budget expired before this package could be read, or the release exceeded the per-review dependency limit.",
   "review-failed":
     "The dependency review failed before Drydock could inspect this package. Review it by hand before approving.",
   other: "Drydock could not review this dependency's own bytes.",

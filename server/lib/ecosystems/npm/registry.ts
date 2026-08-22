@@ -50,6 +50,12 @@ export function isValidNpmPackageName(name: string): boolean {
 const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
+// Packuments are package-controlled input read in the trusted parent isolate.
+// Keep enough room for long-lived packages while preventing an unbounded body
+// from consuming the Worker's 128 MiB memory budget.
+const MAX_PACKUMENT_BYTES = 32 * 1024 * 1024;
+const PACKUMENT_BODY_TIMEOUT_MS = 15_000;
+
 export interface FetchPackageMetadataOptions {
   npmToken?: string;
   npmRegistry?: string;
@@ -90,10 +96,63 @@ export async function fetchPackageMetadata(
     // scan its baseline: the broker maps a metadata failure to "no baseline",
     // which reports every file as added. Custom registries are a supported
     // deployment, so fall back to the plain document once before giving up.
+    await res.body?.cancel();
     res = await fetchWith("application/json");
   }
-  if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  return projectRegistryMetadata(await res.json());
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`metadata fetch failed: ${res.status}`);
+  }
+  return projectRegistryMetadata(await readPackumentJson(res, options.signal));
+}
+
+async function readPackumentJson(response: Response, callerSignal?: AbortSignal): Promise<unknown> {
+  const advertisedLength = Number(response.headers.get("content-length") || "0");
+  if (Number.isFinite(advertisedLength) && advertisedLength > MAX_PACKUMENT_BYTES) {
+    await response.body?.cancel();
+    throw new Error("metadata body too large");
+  }
+  if (!response.body) throw new Error("metadata response has no body");
+
+  // reliableFetch's per-attempt timer ends when headers arrive. Keep a body
+  // deadline here as well, and preserve the dependency review's earlier
+  // whole-pass deadline when the caller supplied one.
+  const bodyTimeout = AbortSignal.timeout(PACKUMENT_BODY_TIMEOUT_MS);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, bodyTimeout]) : bodyTimeout;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let complete = false;
+  const cancelOnAbort = () => {
+    void reader.cancel(signal.reason).catch(() => undefined);
+  };
+  if (signal.aborted) cancelOnAbort();
+  else signal.addEventListener("abort", cancelOnAbort, { once: true });
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason ?? new Error("metadata body read aborted");
+      if (done) {
+        complete = true;
+        break;
+      }
+      byteLength += value.byteLength;
+      if (byteLength > MAX_PACKUMENT_BYTES) throw new Error("metadata body too large");
+      chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener("abort", cancelOnAbort);
+    if (!complete) await reader.cancel().catch(() => undefined);
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 // Statuses a registry might answer with when it does not understand
