@@ -609,4 +609,76 @@ describe("inspectAddedNpmDependencies", () => {
       expect(review.dependencies[0].automaticExecution).toEqual([]);
     },
   );
+
+  test.each([
+    ["duplicate", "duplicate path; later entry replaced earlier entry"],
+    ["unicode-confusable", "path contained visually-confusable characters"],
+    ["non-regular", "symbolic link (symlink)"],
+  ])("a dependency archive with a %s entry is uninspectable", async (kind, detail) => {
+    const url = "https://registry.npmjs.org/ambiguous/-/ambiguous-1.0.0.tgz";
+    const archive = {
+      files: [file("package.json", JSON.stringify({ name: "ambiguous", version: "1.0.0" }))],
+      packageJson: { name: "ambiguous", version: "1.0.0" },
+      suspiciousEntries: [{ kind, path: "install.js", detail }],
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { ambiguous: packument("ambiguous", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { ambiguous: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-ambiguous",
+      reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
+    });
+  });
+
+  test("an explicit directory entry does not invalidate an otherwise complete archive", async () => {
+    const url = "https://registry.npmjs.org/directory/-/directory-1.0.0.tgz";
+    const archive = {
+      files: [file("package.json", JSON.stringify({ name: "directory", version: "1.0.0" }))],
+      packageJson: { name: "directory", version: "1.0.0" },
+      suspiciousEntries: [{ kind: "non-regular", path: "lib", detail: "type 5 (directory)" }],
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { directory: packument("directory", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { directory: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({ status: "inspected", reason: null });
+  });
+
+  test("a dependency without a readable root manifest is uninspectable", async () => {
+    const url = "https://registry.npmjs.org/broken/-/broken-1.0.0.tgz";
+    const malformed = '{"name":"broken","scripts":{"postinstall":"node install.js",}}';
+    const archive = {
+      files: [file("package.json", malformed), file("install.js", "console.log('install')")],
+      packageJson: null,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { broken: packument("broken", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { broken: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "manifest-unavailable",
+      reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
+      automaticExecution: [],
+    });
+  });
 });

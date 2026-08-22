@@ -77,7 +77,9 @@ export type DependencyUninspectableReason =
   | "artifact-unavailable"
   | "artifact-too-large"
   | "artifact-unparseable"
+  | "artifact-ambiguous"
   | "artifact-truncated"
+  | "manifest-unavailable"
   | "budget-exhausted"
   | "review-failed";
 
@@ -414,20 +416,20 @@ export function assessDependencyArtifact(
   ].sort();
 
   const reachable = lifecycleReachablePaths(files, scripts, implicitScripts);
-  // The manifest itself counts as install-reachable: `postinstall: "curl … | sh"`
-  // is a dropper that never touches a packaged file, and its finding is filed
-  // against package.json.
+  // Inline install-hook commands need their own scan: the whole manifest is one
+  // file, so a package.json finding alone cannot distinguish `postinstall` from
+  // an unrelated `test` or `dev` script.
+  const inlineInstallCapabilities = installScriptCapabilities(scripts, implicitScripts, options);
   const installReachable = (finding: Finding) =>
-    finding.file === "package.json" ||
-    finding.file.endsWith("/package.json") ||
     reachable.has(normalizeReachabilityPath(finding.file));
 
   const installReachableCapabilities = [
-    ...new Set(
-      findings.flatMap((finding) =>
+    ...new Set([
+      ...findings.flatMap((finding) =>
         finding.ruleId && installReachable(finding) ? [finding.ruleId] : [],
       ),
-    ),
+      ...inlineInstallCapabilities,
+    ]),
   ].sort();
 
   const hasAutomaticExecution = automaticExecution.length > 0;
@@ -451,6 +453,47 @@ export function assessDependencyArtifact(
     installReachUnproven: hasAutomaticExecution && anyDanger && !reachableDanger,
     findings,
   };
+}
+
+/**
+ * Capabilities present directly in an explicit install-hook command.
+ *
+ * The ordinary deterministic pass scans the whole package.json text, so a
+ * capability finding filed against that path may come from `scripts.test`,
+ * `scripts.dev`, or another field that npm never executes during a consumer
+ * install. Re-scan only the three install-hook values as synthetic source
+ * records instead of treating every package.json finding as reachable.
+ */
+function installScriptCapabilities(
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+  options: DeterministicFindingOptions,
+): string[] {
+  const capabilities = new Set<string>();
+  for (const script of ["preinstall", "install", "postinstall"]) {
+    const command = scripts[script];
+    if (!command || implicitScripts[script] === command) continue;
+    const findings = deterministicFindings(
+      [
+        {
+          path: `<install-script>/${script}.js`,
+          size: command.length,
+          sha256: "",
+          textSample: command,
+          flags: [],
+        },
+      ],
+      [],
+      null,
+      options,
+    );
+    for (const finding of findings) {
+      if (finding.ruleId && INSTALL_TIME_DANGER_RULE_IDS.has(finding.ruleId)) {
+        capabilities.add(finding.ruleId);
+      }
+    }
+  }
+  return [...capabilities];
 }
 
 // A native artifact is only an install-time execution concern when something
@@ -579,7 +622,9 @@ export function dependencyEvidenceFindings(
         ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallRisk,
         evidence: `${path} → ${behaviors}`,
         reason: !strong
-          ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"
+          ? proven
+            ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"
+            : "this release introduces a dependency that runs automatically on install and also contains network-capable code; Drydock could not statically prove the install hook reaches that code, so confirm whether it is an install-time download or unrelated package behavior before approving"
           : proven
             ? "this release introduces a dependency that runs automatically on install and whose install-time code path pipes remote code into a shell, evaluates assembled code, or reads credentials — the arrayref/proc-macro1 shape, where a compromised parent added a dependency whose build step fetched the payload; the dependency's own bytes were reviewed and are recorded with this scan"
             : "this release introduces a dependency that runs automatically on install and also carries remote-shell, credential-access, or dynamic-evaluation code; Drydock could not statically prove the install hook reaches it, so this is reported one step below a proven install-time path rather than dismissed",
@@ -670,8 +715,12 @@ const UNINSPECTABLE_EVIDENCE: Record<DependencyUninspectableReason, string> = {
   "artifact-unavailable": "the dependency artifact could not be downloaded",
   "artifact-too-large": "the dependency artifact exceeded the scanner's size or entry limits",
   "artifact-unparseable": "the dependency artifact could not be parsed as a package archive",
+  "artifact-ambiguous":
+    "the dependency archive contains links, duplicate paths, or visually-confusable paths whose extraction cannot be represented as ordinary reviewed files",
   "artifact-truncated":
     "the dependency artifact contained a clipped or hash-only file body, so its bytes were not assessed as complete",
+  "manifest-unavailable":
+    "the dependency artifact has no readable root package.json, so install lifecycle behavior could not be assessed",
   "budget-exhausted":
     "this release adds more dependencies than one review fetches, so this one was recorded but not inspected",
   "review-failed":

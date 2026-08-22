@@ -1,0 +1,55 @@
+{
+  "id": "added-dependency-invalid-artifacts",
+  "title": "Unreadable dependency manifests and ambiguous archives fail visibly",
+  "category": "dependency-introduction",
+  "intent": "A valid download is not necessarily complete review evidence. A dependency with no readable root package.json cannot be assessed for lifecycle execution, while links, duplicate paths, and confusable paths make extraction semantics ambiguous. Both cases must stay uninspectable instead of reading as clean.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": {
+      "ambiguous-artifact": "1.0.0",
+      "missing-manifest": "1.0.0"
+    }
+  },
+  "dependencyArtifacts": {},
+  "uninspectableReasons": {
+    "ambiguous-artifact": "artifact-ambiguous",
+    "missing-manifest": "manifest-unavailable"
+  },
+  "expectedDependencies": [
+    {
+      "name": "ambiguous-artifact",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-ambiguous",
+      "resolvedVersion": null
+    },
+    {
+      "name": "missing-manifest",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "manifest-unavailable",
+      "resolvedVersion": null
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>ambiguous-artifact"
+    },
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>missing-manifest"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

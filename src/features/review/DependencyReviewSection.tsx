@@ -152,8 +152,12 @@ const UNINSPECTABLE_COPY: Record<string, string> = {
   "artifact-unavailable": "The dependency's artifact could not be downloaded, so it was not read.",
   "artifact-too-large": "The dependency's artifact is past the scanner's size limits.",
   "artifact-unparseable": "The dependency's artifact could not be parsed as a package archive.",
+  "artifact-ambiguous":
+    "The dependency archive contains links, duplicate paths, or visually-confusable paths that cannot be represented as ordinary reviewed files.",
   "artifact-truncated":
     "At least one dependency file exceeded the retained detection sample, so Drydock did not treat the partial bytes as a complete review.",
+  "manifest-unavailable":
+    "The dependency artifact has no readable root package.json, so Drydock could not determine what it runs during install.",
   "budget-exhausted":
     "The dependency review budget expired before this package could be read, or the release exceeded the per-review dependency limit.",
   "review-failed":
