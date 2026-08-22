@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { tokenizeJs } from "../server/lib/platform/js-lexer";
 import { sanitizeJsSource } from "./helpers/sanitized-source.mjs";
 
 // AGENTS.md: "D1/Better Auth are required for every non-auth `/api/*` endpoint."
@@ -51,26 +52,94 @@ function sessionGuardLine(lines) {
 }
 
 function apiRegistrations(source) {
+  const registrationMethods = new Set([
+    "all",
+    "basePath",
+    "delete",
+    "get",
+    "head",
+    "mount",
+    "on",
+    "options",
+    "patch",
+    "post",
+    "put",
+    "query",
+    "route",
+    "use",
+  ]);
+  const tokens = tokenizeJs(source, { sourceGoal: "module" }).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
   const registrationsFound = [];
-  const registration =
-    /^[\t ]*app\.(all|basePath|delete|get|head|mount|on|options|patch|post|put|query|route|use)\s*\(/gm;
 
-  for (const match of source.matchAll(registration)) {
-    const method = match[1];
-    const argumentsSource = source.slice(match.index + match[0].length);
-    const pathMatch =
-      method === "on"
-        ? argumentsSource.match(/^\s*(?:\[[^\]]*\]|[^,]+),\s*["']([^"']*)["']/)
-        : argumentsSource.match(/^\s*["']([^"']*)["']/);
-    const before = source.slice(0, match.index);
-    registrationsFound.push({
-      method,
-      // A registration above the guard whose path is not a string literal is
-      // security-relevant but cannot be classified statically, so keep it as
-      // unresolved and make the boundary assertion fail closed below.
-      path: pathMatch?.[1] ?? null,
-      line: before.split("\n").length,
-    });
+  const tokenText = (token) => (token ? source.slice(token.start, token.end) : "");
+
+  function callAt(methodIndex) {
+    const openIndex = methodIndex + 1;
+    if (tokenText(tokens[openIndex]) !== "(") return null;
+
+    const args = [[]];
+    const delimiters = ["("];
+    const matchingOpen = { ")": "(", "]": "[", "}": "{" };
+    for (let index = openIndex + 1; index < tokens.length; index++) {
+      const token = tokens[index];
+      const text = tokenText(token);
+      if (text === "(" || text === "[" || text === "{") {
+        delimiters.push(text);
+        args[args.length - 1].push(token);
+        continue;
+      }
+      if (text === ")" || text === "]" || text === "}") {
+        if (delimiters[delimiters.length - 1] !== matchingOpen[text]) return null;
+        delimiters.pop();
+        if (delimiters.length === 0) return { args, endIndex: index };
+        args[args.length - 1].push(token);
+        continue;
+      }
+      if (text === "," && delimiters.length === 1) {
+        args.push([]);
+        continue;
+      }
+      args[args.length - 1].push(token);
+    }
+    return null;
+  }
+
+  for (let index = 0; index < tokens.length - 3; index++) {
+    if (
+      tokens[index].type !== "ident" ||
+      tokenText(tokens[index]) !== "app" ||
+      tokenText(tokens[index + 1]) !== "."
+    ) {
+      continue;
+    }
+
+    let methodIndex = index + 2;
+    while (methodIndex < tokens.length) {
+      const method = tokenText(tokens[methodIndex]);
+      if (tokens[methodIndex].type !== "ident" || !registrationMethods.has(method)) break;
+      const call = callAt(methodIndex);
+      if (!call) break;
+
+      const pathArgument = call.args[method === "on" ? 1 : 0] ?? [];
+      const pathToken = pathArgument.length === 1 ? pathArgument[0] : undefined;
+      registrationsFound.push({
+        method,
+        // A registration above the guard whose path is not a string literal is
+        // security-relevant but cannot be classified statically, so keep it as
+        // unresolved and make the boundary assertion fail closed below.
+        path: pathToken?.type === "string" ? pathToken.value : null,
+        line: source.slice(0, tokens[methodIndex].start).split("\n").length,
+      });
+
+      const dot = tokens[call.endIndex + 1];
+      if (tokenText(dot) !== ".") {
+        index = call.endIndex;
+        break;
+      }
+      methodIndex = call.endIndex + 2;
+    }
   }
   return registrationsFound.sort((a, b) => a.line - b.line);
 }
@@ -129,6 +198,7 @@ describe("/api/* auth boundary", () => {
       'app.query("/api/queried", handler);',
       'app.use("/api/middleware", handler);',
       'app.on(["PUT", "PATCH"], "/api/method-list", handler);',
+      'app.use("*", handler).get("/api/chained", handler);',
     ].join("\n");
 
     expect(apiRegistrations(source).map(({ method, path }) => ({ method, path }))).toEqual([
@@ -139,6 +209,8 @@ describe("/api/* auth boundary", () => {
       { method: "query", path: "/api/queried" },
       { method: "use", path: "/api/middleware" },
       { method: "on", path: "/api/method-list" },
+      { method: "use", path: "*" },
+      { method: "get", path: "/api/chained" },
     ]);
   });
 
@@ -158,6 +230,7 @@ describe("/api/* auth boundary", () => {
       { method: "route", path: null },
       { method: "on", path: null },
       { method: "basePath", path: "/api" },
+      { method: "get", path: "/private" },
     ]);
   });
 

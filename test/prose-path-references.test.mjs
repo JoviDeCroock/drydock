@@ -44,14 +44,15 @@ function trackedFiles() {
  * `server/routes/scans/index.ts`. Both are unambiguous, so a reference resolves if it
  * is a real path *or* a trailing path segment of exactly one tracked file.
  */
-function buildResolver(files) {
-  const exactFiles = new Set(files);
+function buildResolver(files, fileExists = (file) => existsSync(path.join(repoRoot, file))) {
   const suffixCounts = new Map();
+  const suffixTargets = new Map();
   for (const file of files) {
     const segments = file.split("/");
     for (let i = 0; i < segments.length; i++) {
       const suffix = segments.slice(i).join("/");
       suffixCounts.set(suffix, (suffixCounts.get(suffix) ?? 0) + 1);
+      suffixTargets.set(suffix, file);
     }
   }
   return (reference, fromFile) => {
@@ -63,12 +64,12 @@ function buildResolver(files) {
       if (resolved === ".." || resolved.startsWith("../") || path.posix.isAbsolute(resolved)) {
         return false;
       }
-      return exactFiles.has(resolved) || existsSync(path.join(repoRoot, resolved));
+      return fileExists(resolved);
     }
+    const suffixTarget = suffixCounts.get(reference) === 1 ? suffixTargets.get(reference) : null;
     return (
-      exactFiles.has(reference) ||
-      existsSync(path.join(repoRoot, reference)) ||
-      suffixCounts.get(reference) === 1
+      fileExists(reference) ||
+      (suffixTarget !== null && suffixTarget !== undefined && fileExists(suffixTarget))
     );
   };
 }
@@ -150,18 +151,28 @@ describe("prose path references", () => {
   });
 
   test("requires shorthand paths to identify exactly one tracked file", () => {
-    const resolve = buildResolver(["server/routes/scans/index.ts", "test/routes/scans/index.ts"]);
+    const files = ["server/routes/scans/index.ts", "test/routes/scans/index.ts"];
+    const resolve = buildResolver(files, (file) => files.includes(file));
     expect(resolve("server/routes/scans/index.ts")).toBe(true);
     expect(resolve("routes/scans/index.ts")).toBe(false);
   });
 
+  test("does not resolve tracked paths that have been deleted from the worktree", () => {
+    const files = ["docs/deleted.md"];
+    const resolve = buildResolver(files, () => false);
+
+    expect(resolve("docs/deleted.md")).toBe(false);
+    expect(resolve("deleted.md")).toBe(false);
+  });
+
   test("resolves relative Markdown and source-comment paths from the containing file", () => {
-    const resolve = buildResolver([
+    const files = [
       "docs/README.md",
       "src/pages/Docs/index.tsx",
       "server/lib/ecosystems/record.ts",
       "server/lib/ecosystems/stage-record.ts",
-    ]);
+    ];
+    const resolve = buildResolver(files, (file) => files.includes(file));
 
     expect(isCheckable("./record.ts")).toBe(true);
     expect(isCheckable("../src/pages/Docs/index.tsx")).toBe(true);

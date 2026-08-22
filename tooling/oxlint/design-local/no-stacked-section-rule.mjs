@@ -105,7 +105,11 @@ function classStringsFrom(node, out) {
     for (const quasi of node.quasis) out.push(quasi.value.cooked ?? "");
   } else if (node.type === "JSXExpressionContainer") {
     classStringsFrom(node.expression, out);
-  } else if (node.type === "CallExpression") {
+  } else if (
+    node.type === "CallExpression" &&
+    node.callee?.type === "Identifier" &&
+    node.callee.name === "cn"
+  ) {
     // cn("…", cond && "…", …) — read every static string argument.
     for (const argument of node.arguments) classStringsFrom(argument, out);
   } else if (node.type === "LogicalExpression") {

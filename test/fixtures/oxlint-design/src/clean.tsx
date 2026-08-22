@@ -139,3 +139,15 @@ export function JsxUsedAsALogicalCondition() {
     </section>
   );
 }
+
+export function StringArgumentToAnUnrelatedCall() {
+  function stripClass(_className: string) {
+    return "";
+  }
+
+  return (
+    <SectionLabel as="h2" class={stripClass("border-t")}>
+      Findings
+    </SectionLabel>
+  );
+}
