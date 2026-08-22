@@ -193,6 +193,31 @@ describe("inspectAddedNpmDependencies", () => {
     expect(review.dependencies[0].digestVerified).toBe(true);
   });
 
+  test("persisted artifact provenance drops registry-controlled URL secrets", async () => {
+    const safeUrl = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
+    const fetchedUrl = `${safeUrl}?X-Amz-Credential=fake#fragment`;
+    const broker = brokerStub({
+      metadata: {
+        "proc-macro1": {
+          versions: {
+            "0.1.0": { dist: { tarball: fetchedUrl, integrity: DROPPER_SRI } },
+          },
+          "dist-tags": { latest: "0.1.0" },
+        },
+      },
+      downloads: { [fetchedUrl]: DROPPER_TARBALL },
+    });
+
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
+    );
+
+    expect(broker.calls.downloads[0].url).toBe(fetchedUrl);
+    expect(review.dependencies[0].artifactUrl).toBe(safeUrl);
+  });
+
   test("a digest the registry and the bytes disagree on is recorded as unverified-false", async () => {
     const url = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
     const broker = brokerStub({

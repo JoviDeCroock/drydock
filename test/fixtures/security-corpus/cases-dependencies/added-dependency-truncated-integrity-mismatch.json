@@ -1,0 +1,62 @@
+{
+  "id": "added-dependency-truncated-integrity-mismatch",
+  "title": "A truncated dependency still exposes its registry digest mismatch",
+  "category": "dependency-introduction",
+  "intent": "The sandbox recomputed the archive digest before discovering that one file body was retained only as a hash. The artifact is incomplete evidence, but that coverage gap must not hide the stronger fact that the fetched bytes disagree with the registry digest.",
+  "previousPackageJson": { "name": "parent-lib", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "parent-lib",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "mutated-and-truncated": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "mutated-and-truncated": {
+      "version": "1.0.0",
+      "declaredDigest": { "algorithm": "sha512", "value": "aaaaaaaaaaaaaaaa" },
+      "reviewedDigest": { "algorithm": "sha512", "value": "bbbbbbbbbbbbbbbb" },
+      "digestVerified": false,
+      "packageJson": { "name": "mutated-and-truncated", "version": "1.0.0" },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 51,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flags": [],
+          "textSample": "{\"name\":\"mutated-and-truncated\",\"version\":\"1.0.0\"}"
+        },
+        {
+          "path": "large.js",
+          "size": 4096,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flags": ["content-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "mutated-and-truncated",
+      "section": "dependencies",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "digestVerified": false,
+      "fileCount": 2
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.integrity-mismatch",
+      "severity": "critical",
+      "file": "<dependency>mutated-and-truncated@1.0.0"
+    },
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>mutated-and-truncated@1.0.0"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

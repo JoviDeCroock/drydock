@@ -194,6 +194,10 @@ async function downloadAnonymousTarball(
     maxFiles: opts.maxFiles,
     maxTextSampleChars: opts.maxTextSampleChars,
     signal,
+    // Custom registries may mutate version-pinned URLs. Dependency evidence
+    // must bind to the registry's current metadata snapshot and bytes, never a
+    // seven-day shared cache entry left by an earlier review.
+    cacheMode: "bypass",
     // SHA-512 matches the SRI npm publishes as `dist.integrity`, so the digest
     // Drydock recomputes is directly comparable to the one the registry
     // advertised. SHA-1 rides along for versions old enough to carry only

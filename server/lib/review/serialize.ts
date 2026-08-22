@@ -116,9 +116,12 @@ function diffDependencySections(
       const previouslyDeclared = DEPENDENCY_SECTIONS.some(
         (candidate) => entry.key in (previousPkg?.[candidate] || {}),
       );
-      const previouslyInstalled = INSTALLING_DEPENDENCY_SECTIONS.some(
-        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
-      );
+      const previouslyInstalled =
+        INSTALLING_DEPENDENCY_SECTIONS.some(
+          (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+        ) ||
+        (entry.key in (previousPkg?.peerDependencies || {}) &&
+          !isOptionalPeer(previousPkg, entry.key));
       const previousInstalledSpec =
         section === "optionalDependencies"
           ? (previousPkg?.optionalDependencies?.[entry.key] ??

@@ -1436,15 +1436,13 @@ describe("review", () => {
     );
     expect(packageJsonDiffFindings(moveIntoOptional)).toEqual([]);
 
-    // peerDependencies do not install, so moving a peer requirement into
-    // dependencies genuinely starts shipping code and is a real addition.
+    // npm 7+ auto-installs required peers, so moving a required peer into
+    // dependencies does not start shipping code that was absent before.
     const peerToRuntime = summarizePackageJsonDiff(
       { name: "pkg", version: "1.0.0", peerDependencies: { lodash: "^4.0.0" } },
       { name: "pkg", version: "1.0.1", dependencies: { lodash: "^4.0.0" } },
     );
-    expect(packageJsonDiffFindings(peerToRuntime)).toEqual([
-      expect.objectContaining({ ruleId: "dependency.added", evidence: "lodash: ^4.0.0" }),
-    ]);
+    expect(packageJsonDiffFindings(peerToRuntime)).toEqual([]);
   });
 
   test("emits one finding per dependency key across sections", () => {
@@ -1554,8 +1552,8 @@ describe("review", () => {
       }),
     ]);
 
-    // A peer-only requirement becoming an installed dependency still ships
-    // code from the package, even if the peer declaration remains in place.
+    // A required peer was already installed by npm 7+, even if the package
+    // now duplicates the declaration under dependencies.
     const existingPeerGetsRuntime = summarizePackageJsonDiff(
       { name: "pkg", version: "1.0.0", peerDependencies: { react: "^18.0.0" } },
       {
@@ -1565,7 +1563,34 @@ describe("review", () => {
         peerDependencies: { react: "^18.0.0" },
       },
     );
-    expect(packageJsonDiffFindings(existingPeerGetsRuntime)).toEqual([
+    expect(existingPeerGetsRuntime.dependencies).toEqual([
+      {
+        key: "react",
+        status: "added",
+        staged: "^18.0.0",
+        section: "dependencies",
+        previouslyDeclared: true,
+        previouslyInstalled: true,
+      },
+    ]);
+    expect(packageJsonDiffFindings(existingPeerGetsRuntime)).toEqual([]);
+
+    const optionalPeerGetsRuntime = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        peerDependencies: { react: "^18.0.0" },
+        peerDependenciesMeta: { react: { optional: true } },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { react: "^18.0.0" },
+        peerDependencies: { react: "^18.0.0" },
+        peerDependenciesMeta: { react: { optional: true } },
+      },
+    );
+    expect(packageJsonDiffFindings(optionalPeerGetsRuntime)).toEqual([
       expect.objectContaining({ ruleId: "dependency.added", evidence: "react: ^18.0.0" }),
     ]);
   });
