@@ -44,19 +44,39 @@ export function normalizeReleaseAuthoritySnapshot(value: unknown): ReleaseAuthor
   if (record.schema !== RELEASE_AUTHORITY_SCHEMA) return null;
   const run = normalizeRun(record.run);
   if (!run) return null;
+  const workflows = normalizeEntries(record.workflows, normalizeWorkflowRef);
+  const triggers = normalizeEntries(record.triggers, normalizeTrigger);
+  const permissions = normalizeEntries(record.permissions, normalizePermission);
+  const environments = normalizeEntries(record.environments, normalizeEnvironment);
+  const actions = normalizeEntries(record.actions, normalizeActionRef);
+  const publishSteps = normalizeEntries(record.publishSteps, normalizePublishStep);
+  const safeguards = normalizeEntries(record.safeguards, normalizeSafeguard);
+  const artifactFlow = normalizeEntries(record.artifactFlow, normalizeArtifactFlow);
+  const artifacts = normalizeEntries(record.artifacts, normalizeArtifact);
+  const evidenceComplete = [
+    workflows,
+    triggers,
+    permissions,
+    environments,
+    actions,
+    publishSteps,
+    safeguards,
+    artifactFlow,
+    artifacts,
+  ].every((list) => list.complete);
   return {
     schema: RELEASE_AUTHORITY_SCHEMA,
     run,
-    workflows: mapEntries(record.workflows, normalizeWorkflowRef),
-    triggers: mapEntries(record.triggers, normalizeTrigger),
-    permissions: mapEntries(record.permissions, normalizePermission),
-    environments: mapEntries(record.environments, normalizeEnvironment),
-    actions: mapEntries(record.actions, normalizeActionRef),
-    publishSteps: mapEntries(record.publishSteps, normalizePublishStep),
-    safeguards: mapEntries(record.safeguards, normalizeSafeguard),
-    artifactFlow: mapEntries(record.artifactFlow, normalizeArtifactFlow),
-    artifacts: mapEntries(record.artifacts, normalizeArtifact),
-    coverage: normalizeCoverage(record.coverage),
+    workflows: workflows.entries,
+    triggers: triggers.entries,
+    permissions: permissions.entries,
+    environments: environments.entries,
+    actions: actions.entries,
+    publishSteps: publishSteps.entries,
+    safeguards: safeguards.entries,
+    artifactFlow: artifactFlow.entries,
+    artifacts: artifacts.entries,
+    coverage: normalizeCoverage(record.coverage, evidenceComplete),
   };
 }
 
@@ -190,11 +210,18 @@ function normalizeArtifact(value: unknown): AuthorityArtifact | null {
   return { name, kind: str(record.kind) ?? "", sha256: sha256.toLowerCase() };
 }
 
-function normalizeCoverage(value: unknown): AuthorityCoverage {
+function normalizeCoverage(value: unknown, evidenceComplete: boolean): AuthorityCoverage {
   const record = asRecord(value);
   if (!record) return { complete: false, unresolved: [] };
-  const unresolved = mapEntries(record.unresolved, normalizeUnresolved);
-  return { complete: record.complete === true && unresolved.length === 0, unresolved };
+  const unresolved = normalizeEntries(record.unresolved, normalizeUnresolved);
+  return {
+    complete:
+      evidenceComplete &&
+      unresolved.complete &&
+      record.complete === true &&
+      unresolved.entries.length === 0,
+    unresolved: unresolved.entries,
+  };
 }
 
 function normalizeUnresolved(value: unknown): AuthorityUnresolved | null {
@@ -211,14 +238,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
 
-function mapEntries<T>(value: unknown, read: (entry: unknown) => T | null): T[] {
-  if (!Array.isArray(value)) return [];
+function normalizeEntries<T>(
+  value: unknown,
+  read: (entry: unknown) => T | null,
+): { entries: T[]; complete: boolean } {
+  if (!Array.isArray(value)) return { entries: [], complete: false };
   const entries: T[] = [];
+  let complete = true;
   for (const entry of value) {
     const normalized = read(entry);
-    if (normalized) entries.push(normalized);
+    if (normalized) {
+      entries.push(normalized);
+    } else {
+      complete = false;
+    }
   }
-  return entries;
+  return { entries, complete };
 }
 
 function str(value: unknown): string | null {

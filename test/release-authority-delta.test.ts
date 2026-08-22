@@ -1125,6 +1125,53 @@ jobs:
         subject: "reusable workflow",
       });
     });
+
+    it("keeps repeated reusable-workflow paths distinct", async () => {
+      const repeatedGraph = [
+        { path: ENTRY, content: CALLER, role: "entry" as const },
+        {
+          path: REUSED_PATH,
+          content: REUSED,
+          role: "referenced" as const,
+          sha: "a".repeat(40),
+        },
+        {
+          path: REUSED_PATH,
+          content: REUSED.replace("    environment: pypi", "    environment: npm"),
+          role: "referenced" as const,
+          sha: "b".repeat(40),
+        },
+      ];
+      const snapshot = await makeSnapshot({ workflows: repeatedGraph });
+      const delta = computeReleaseAuthorityDelta(snapshot, {
+        snapshot,
+        ref: BASELINE_REF,
+      });
+
+      expect(delta.status).toBe("unchanged");
+      expect(delta.changes).toEqual([]);
+      expect(delta.requiresApproval).toBe(false);
+
+      const changed = await makeSnapshot({
+        workflows: [
+          repeatedGraph[0],
+          repeatedGraph[1],
+          {
+            ...repeatedGraph[2],
+            content: repeatedGraph[2].content.replace("ubuntu-latest", "windows-latest"),
+          },
+        ],
+      });
+      const changedDelta = computeReleaseAuthorityDelta(changed, {
+        snapshot,
+        ref: BASELINE_REF,
+      });
+
+      expect(
+        changedDelta.changes.filter((change) => change.kind === "workflow_authority_changed"),
+      ).toHaveLength(1);
+      expect(changedDelta.status).toBe("changed");
+    });
   });
 
   describe("local actions", () => {

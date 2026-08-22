@@ -224,8 +224,9 @@ export function computeReleaseAuthorityDelta(
   }
 
   const prior = baseline.snapshot;
+  const workflowPairs = pairWorkflows(prior.workflows, current.workflows);
   const changes: AuthorityChange[] = [
-    ...compareWorkflows(prior.workflows, current.workflows),
+    ...compareWorkflows(workflowPairs),
     ...compareTriggers(prior.triggers, current.triggers),
     ...comparePermissions(prior.permissions, current.permissions),
     ...compareEnvironments(prior.environments, current.environments),
@@ -241,7 +242,7 @@ export function computeReleaseAuthorityDelta(
   // means the projection carries something the category comparisons do not
   // read. Say so rather than reporting "unchanged" — a silent gap here is the
   // exact failure this feature exists to prevent.
-  changes.push(...unexplainedAuthorityChanges(prior.workflows, current.workflows, changes));
+  changes.push(...unexplainedAuthorityChanges(workflowPairs, changes));
 
   const substantive = changes.filter((change) => change.kind !== "workflow_content_changed");
   const cosmetic = changes.filter((change) => change.kind === "workflow_content_changed");
@@ -323,24 +324,35 @@ function readStanding(snapshot: ReleaseAuthoritySnapshot): AuthorityStanding {
 
 // ── Category comparisons ─────────────────────────────────────────────────────
 
-function compareWorkflows(
-  prior: AuthorityWorkflowRef[],
-  current: AuthorityWorkflowRef[],
-): AuthorityChange[] {
-  const priorByPath = keyBy(prior, (item) => item.path);
-  const currentByPath = keyBy(current, (item) => item.path);
+interface WorkflowPair {
+  before: AuthorityWorkflowRef | null;
+  after: AuthorityWorkflowRef | null;
+}
+
+function compareWorkflows(pairs: WorkflowPair[]): AuthorityChange[] {
   const changes: AuthorityChange[] = [];
 
-  for (const [path, item] of currentByPath) {
-    const before = priorByPath.get(path);
+  for (const { before, after: item } of pairs) {
+    if (!item && before) {
+      changes.push({
+        kind: "workflow_removed",
+        significance: "medium",
+        scope: before.path,
+        subject: before.role === "referenced" ? "reusable workflow" : "workflow",
+        before: before.sha ?? before.ref ?? before.path,
+        after: null,
+      });
+      continue;
+    }
+    if (!item) continue;
     if (!before) {
       changes.push({
         kind: "workflow_added",
         significance: "medium",
-        scope: path,
+        scope: item.path,
         subject: item.role === "referenced" ? "reusable workflow" : "workflow",
         before: null,
-        after: item.sha ?? item.ref ?? path,
+        after: item.sha ?? item.ref ?? item.path,
       });
       continue;
     }
@@ -358,7 +370,7 @@ function compareWorkflows(
       changes.push({
         kind: "workflow_content_changed",
         significance: "low",
-        scope: path,
+        scope: item.path,
         subject: "cosmetic edit",
         before: before.sha,
         after: item.sha,
@@ -366,27 +378,13 @@ function compareWorkflows(
     }
   }
 
-  for (const [path, item] of priorByPath) {
-    if (currentByPath.has(path)) continue;
-    changes.push({
-      kind: "workflow_removed",
-      significance: "medium",
-      scope: path,
-      subject: item.role === "referenced" ? "reusable workflow" : "workflow",
-      before: item.sha ?? item.ref ?? path,
-      after: null,
-    });
-  }
-
   return changes;
 }
 
 function unexplainedAuthorityChanges(
-  prior: AuthorityWorkflowRef[],
-  current: AuthorityWorkflowRef[],
+  pairs: WorkflowPair[],
   explained: AuthorityChange[],
 ): AuthorityChange[] {
-  const priorByPath = keyBy(prior, (item) => item.path);
   // A change's scope is either the workflow path or `<workflow path>/<job>`,
   // and workflow paths themselves contain slashes — so this matches on the
   // prefix rather than splitting.
@@ -394,9 +392,8 @@ function unexplainedAuthorityChanges(
     .filter((change) => change.kind !== "workflow_content_changed")
     .map((change) => change.scope);
   const changes: AuthorityChange[] = [];
-  for (const item of current) {
-    const before = priorByPath.get(item.path);
-    if (!before || !before.authorityDigest || !item.authorityDigest) continue;
+  for (const { before, after: item } of pairs) {
+    if (!before || !item || !before.authorityDigest || !item.authorityDigest) continue;
     if (before.authorityDigest === item.authorityDigest) continue;
     // Execution controls are deliberately not persisted as values, but their
     // dedicated digest lets us keep this signal even when another categorized
@@ -429,6 +426,76 @@ function unexplainedAuthorityChanges(
     });
   }
   return changes;
+}
+
+/**
+ * Match workflow occurrences without collapsing repeated paths. GitHub can
+ * report the same reusable-workflow file more than once when callers resolve
+ * it at different revisions. Exact matches come first, then cosmetic matches;
+ * the remaining occurrences are paired deterministically for comparison.
+ */
+function pairWorkflows(
+  prior: AuthorityWorkflowRef[],
+  current: AuthorityWorkflowRef[],
+): WorkflowPair[] {
+  const priorByPath = groupBy(prior, (item) => item.path);
+  const currentByPath = groupBy(current, (item) => item.path);
+  const paths = [...new Set([...priorByPath.keys(), ...currentByPath.keys()])].sort();
+  const pairs: WorkflowPair[] = [];
+
+  for (const path of paths) {
+    const before = [...(priorByPath.get(path) ?? [])].sort(compareWorkflowRefs);
+    const after = [...(currentByPath.get(path) ?? [])].sort(compareWorkflowRefs);
+    matchWorkflowRefs(before, after, workflowRefKey, pairs);
+    matchWorkflowRefs(before, after, workflowAuthorityKey, pairs);
+    while (before.length > 0 && after.length > 0) {
+      pairs.push({ before: before.shift() ?? null, after: after.shift() ?? null });
+    }
+    pairs.push(...before.map((item) => ({ before: item, after: null })));
+    pairs.push(...after.map((item) => ({ before: null, after: item })));
+  }
+  return pairs;
+}
+
+function matchWorkflowRefs(
+  prior: AuthorityWorkflowRef[],
+  current: AuthorityWorkflowRef[],
+  key: (item: AuthorityWorkflowRef) => string,
+  pairs: WorkflowPair[],
+): void {
+  for (let priorIndex = prior.length - 1; priorIndex >= 0; priorIndex -= 1) {
+    const currentIndex = current.findIndex((item) => key(item) === key(prior[priorIndex]));
+    if (currentIndex < 0) continue;
+    pairs.push({
+      before: prior.splice(priorIndex, 1)[0],
+      after: current.splice(currentIndex, 1)[0],
+    });
+  }
+}
+
+function workflowRefKey(item: AuthorityWorkflowRef): string {
+  return [
+    item.role,
+    item.repositoryFullName,
+    item.sha ?? "",
+    item.ref ?? "",
+    item.rawDigest ?? "",
+    item.authorityDigest ?? "",
+    item.executionDigest ?? "",
+  ].join("\u0000");
+}
+
+function workflowAuthorityKey(item: AuthorityWorkflowRef): string {
+  return [
+    item.role,
+    item.repositoryFullName,
+    item.authorityDigest ?? "",
+    item.executionDigest ?? "",
+  ].join("\u0000");
+}
+
+function compareWorkflowRefs(a: AuthorityWorkflowRef, b: AuthorityWorkflowRef): number {
+  return cmp(workflowRefKey(a), workflowRefKey(b));
 }
 
 function compareTriggers(

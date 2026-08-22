@@ -161,6 +161,8 @@ applies after full-value authority digests are computed; if the persisted
 projection would exceed it, lower-priority list entries are omitted with the
 same `limit_reached` coverage marker. This leaves D1 headroom for the derived
 delta without letting database limits turn the capture into `not assessed`.
+Tolerant readers preserve valid evidence from a partially malformed persisted
+snapshot, but any entry they cannot decode forces coverage to incomplete.
 
 ## What counts as a change
 

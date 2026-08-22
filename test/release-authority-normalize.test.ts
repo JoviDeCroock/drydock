@@ -99,6 +99,7 @@ describe("normalizeReleaseAuthoritySnapshot", () => {
       // it can never read as a narrowing.
       { workflow: "w", job: null, scope: "id-token", level: "unknown" },
     ]);
+    expect(restored?.coverage.complete).toBe(false);
   });
 
   it("treats coverage as incomplete when unresolved entries survive", async () => {
@@ -110,6 +111,15 @@ describe("normalizeReleaseAuthoritySnapshot", () => {
     // A blob that claims completeness while carrying unresolved entries is not
     // trusted: the conservative reading wins.
     expect(restored?.coverage.complete).toBe(false);
+  });
+
+  it("treats coverage as incomplete when malformed unresolved entries are dropped", async () => {
+    const original = await snapshot();
+    const restored = normalizeReleaseAuthoritySnapshot({
+      ...JSON.parse(JSON.stringify(original)),
+      coverage: { complete: true, unresolved: ["garbage"] },
+    });
+    expect(restored?.coverage).toEqual({ complete: false, unresolved: [] });
   });
 });
 
