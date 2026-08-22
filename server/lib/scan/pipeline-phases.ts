@@ -329,12 +329,20 @@ export function mergeAiFindings(
   // hold byte-identical rows; it returns [] for a review that did not complete.
   const records = projectAiReviewFindings(aiReview);
   if (records.length === 0) return { records: [], annotatedRecords: [] };
-  const annotatedRecords = annotateFindingsWithDiffStatus(records, diff.fileDiff, {
-    previousFiles: findings.redactedPreviousFiles,
-    stagedFiles: findings.redactedStagedFiles,
-    codePatternSet,
-    baselineComparisonSkipped,
-  });
+  // Annotated as `source: "ai"` — the same marker the persisted rows carry — so
+  // the annotator scopes these by file rather than by their anchor-resolved
+  // line. Without it a whole-file concern pinned to an untouched line would fall
+  // out of the release bucket `releaseRisk` and the workflow gate read.
+  const annotatedRecords = annotateFindingsWithDiffStatus(
+    records.map((record) => ({ ...record, source: "ai" as const })),
+    diff.fileDiff,
+    {
+      previousFiles: findings.redactedPreviousFiles,
+      stagedFiles: findings.redactedStagedFiles,
+      codePatternSet,
+      baselineComparisonSkipped,
+    },
+  );
   return { records, annotatedRecords };
 }
 

@@ -55,6 +55,17 @@ describe("annotationLabel", () => {
   test("returns null when neither part is present", () => {
     expect(annotationLabel({ ruleId: null, line: null })).toBeNull();
   });
+
+  test("captions an assistant finding by origin, since it has no ruleId", () => {
+    expect(annotationLabel({ ruleId: null, line: 9, source: "ai" })).toBe("assistant · line 9");
+  });
+
+  test("leaves an assistant comment's origin to its badge", () => {
+    expect(annotationLabel({ ruleId: null, line: 9, source: "ai", kind: "comment" })).toBe(
+      "line 9",
+    );
+    expect(annotationLabel({ ruleId: null, line: null, source: "ai", kind: "comment" })).toBeNull();
+  });
 });
 
 describe("partitionFindingsByLine", () => {

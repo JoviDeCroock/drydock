@@ -1020,6 +1020,14 @@ describe("remapFindingLines", () => {
     expect(remapFindingLines([{ id: "a", line: 1 }], oneLiner)).toEqual([{ id: "a", line: 1 }]);
   });
 
+  test("unpins an assistant annotation when reformatting splits its source line", () => {
+    const oneLiner = formatJs("var a=1;var b=2;var c=3;");
+
+    expect(remapFindingLines([{ id: "a", line: 1, source: "ai" }], oneLiner)).toEqual([
+      { id: "a", line: null, source: "ai", sourceLine: 1 },
+    ]);
+  });
+
   test("keeps a finding on its own source line when that line splits into many", () => {
     // Line 2 becomes four rows. A finding on line 2 must not drift onto a row
     // carved out of line 1 or line 3 — that would point the reviewer at code the
