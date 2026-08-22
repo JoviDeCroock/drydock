@@ -35,6 +35,16 @@ export const organizations = sqliteTable(
     })
       .notNull()
       .default(false),
+    // When true, a gate whose release authority changed since the last approved
+    // baseline cannot be approved until the maintainer explicitly accepts that
+    // change. Off by default: the delta ships as evidence first, so an
+    // organization can watch its own false-positive rate before letting it hold
+    // a release.
+    requireAuthorityChangeApproval: integer("require_authority_change_approval", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -477,6 +487,62 @@ export const githubWorkflowGates = sqliteTable(
     ),
     releaseTargetIdx: index("github_workflow_gates_release_target_idx").on(table.releaseTargetId),
     scanIdx: index("github_workflow_gates_scan_idx").on(table.scanId),
+  }),
+);
+
+// The release-authority record for one workflow gate: what was authorized to
+// publish this release, and how it compared to the last approved baseline.
+//
+// The baseline boundary is (organization, release target, entry workflow path).
+// A release target is already (installation, repository, environment), so this
+// is exactly the "same repository / environment / release path" comparison —
+// two different release workflows publishing from one environment keep
+// separate baselines instead of flapping against each other. A release
+// arriving on a path with no baseline is not automatically quiet, though:
+// see `listApprovedReleasePaths`, which separates a target's genuine first
+// release from one that just gained a second way to publish.
+export const releaseAuthoritySnapshots = sqliteTable(
+  "release_authority_snapshots",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    releaseTargetId: text("release_target_id")
+      .notNull()
+      .references(() => githubReleaseTargets.id, { onDelete: "cascade" }),
+    gateId: text("gate_id")
+      .notNull()
+      .references(() => githubWorkflowGates.id, { onDelete: "cascade" }),
+    runId: integer("run_id").notNull(),
+    // Empty string when the run did not report an entry workflow path, so the
+    // baseline boundary stays a total key rather than dropping such rows.
+    workflowPath: text("workflow_path").notNull().default(""),
+    headSha: text("head_sha"),
+    snapshotJson: text("snapshot_json", { mode: "json" }).notNull(),
+    deltaJson: text("delta_json", { mode: "json" }),
+    // Durable approval record. `approvedAt` is what makes a snapshot eligible
+    // to become the next release's baseline: an unreviewed or rejected release
+    // must never silently become the thing future releases are compared to.
+    approvedAt: integer("approved_at", { mode: "timestamp_ms" }),
+    approvedByUserId: text("approved_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    // sha256 over the sorted artifact digests this approval accepted. Binds the
+    // accepted authority to the exact bytes that were reviewed, so an approval
+    // can be shown to belong to one specific release and not merely to a run id.
+    artifactBindingDigest: text("artifact_binding_digest"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    gateUniqueIdx: uniqueIndex("release_authority_snapshots_gate_unique_idx").on(table.gateId),
+    baselineIdx: index("release_authority_snapshots_baseline_idx").on(
+      table.organizationId,
+      table.releaseTargetId,
+      table.workflowPath,
+      table.approvedAt,
+    ),
   }),
 );
 

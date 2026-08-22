@@ -12,6 +12,7 @@ import {
   organizationNotificationRecipients,
   organizationSlackConnections,
   organizations,
+  releaseAuthoritySnapshots,
   scanEvents,
   scanFiles,
   scanFindings,
@@ -119,6 +120,7 @@ export interface OrganizationListEntry {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  requireAuthorityChangeApproval: boolean;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }
@@ -135,6 +137,7 @@ export async function listUserOrganizations(
       ownerUserId: organizations.ownerUserId,
       role: organizationMembers.role,
       requireTwoFactorForReleaseDecisions: organizations.requireTwoFactorForReleaseDecisions,
+      requireAuthorityChangeApproval: organizations.requireAuthorityChangeApproval,
       createdAt: organizations.createdAt,
       updatedAt: organizations.updatedAt,
       npmConnectionConfigured: sql<boolean>`exists (
@@ -156,6 +159,7 @@ export async function listUserOrganizations(
       isPersonal: row.id === personalId,
       npmConnectionConfigured: Boolean(row.npmConnectionConfigured),
       requireTwoFactorForReleaseDecisions: Boolean(row.requireTwoFactorForReleaseDecisions),
+      requireAuthorityChangeApproval: Boolean(row.requireAuthorityChangeApproval),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }))
@@ -244,6 +248,34 @@ export async function setRequireTwoFactorForReleaseDecisions(
 }
 
 /**
+ * Whether this org holds a release gate when the release authority changed
+ * since the last approved baseline. Off by default, so the delta ships as
+ * evidence first and an org opts in once it trusts its own signal rate.
+ */
+export async function organizationRequiresAuthorityChangeApproval(
+  db: AppDb,
+  organizationId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: organizations.requireAuthorityChangeApproval })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  return Boolean(row?.enabled);
+}
+
+export async function setRequireAuthorityChangeApproval(
+  db: AppDb,
+  organizationId: string,
+  enabled: boolean,
+) {
+  await db
+    .update(organizations)
+    .set({ requireAuthorityChangeApproval: enabled, updatedAt: new Date() })
+    .where(eq(organizations.id, organizationId));
+}
+
+/**
  * Permanently delete an organization and every row scoped to it. We delete the
  * children explicitly (in dependency order) rather than relying on
  * `ON DELETE CASCADE`, because D1 does not enforce foreign keys by default and a
@@ -268,6 +300,9 @@ export async function deleteOrganization(
     db.delete(scanFindings).where(inArray(scanFindings.scanId, orgScans)),
     db.delete(scanFiles).where(inArray(scanFiles.scanId, orgScans)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
+    db
+      .delete(releaseAuthoritySnapshots)
+      .where(eq(releaseAuthoritySnapshots.organizationId, organizationId)),
     db.delete(scans).where(eq(scans.organizationId, organizationId)),
     db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),
     db.delete(githubReleaseTargets).where(eq(githubReleaseTargets.organizationId, organizationId)),
@@ -393,6 +428,10 @@ export async function deleteUserAccount(
       .update(githubReleaseTargets)
       .set({ createdByUserId: null })
       .where(eq(githubReleaseTargets.createdByUserId, userId)),
+    db
+      .update(releaseAuthoritySnapshots)
+      .set({ approvedByUserId: null })
+      .where(eq(releaseAuthoritySnapshots.approvedByUserId, userId)),
     db
       .update(organizationNotificationRecipients)
       .set({ createdByUserId: null })

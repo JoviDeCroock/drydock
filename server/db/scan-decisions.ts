@@ -72,7 +72,7 @@ export async function recordScanDecision(
   });
 
   // Always npm here: this is the staged-publish decision route. Gated releases
-  // decide through `recordGatePackageDecision` below and report `gate`.
+  // decide through `claimGatePackageDecision` below and report `gate`.
   recordDecisionEvent(env, updated[0], {
     organizationId: input.organizationId,
     decision: input.decision,
@@ -102,8 +102,18 @@ function readRiskSummaryValue(value: unknown): unknown {
   }
 }
 
-export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
+interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
   gateId: string;
+}
+
+interface ClaimedGatePackageDecision {
+  id: string;
+  createdAt: Date | number | string;
+  risk: string;
+  riskSummaryJson: unknown;
+  aiJson: unknown;
+  decisionReason: string | null;
+  decidedAt: Date;
 }
 
 /**
@@ -111,12 +121,10 @@ export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput 
  * still pending. This keeps stale concurrent submits from mutating package state
  * after the aggregate gate decision has already released or blocked GitHub.
  */
-export async function recordGatePackageDecision(
+export async function claimGatePackageDecision(
   db: AppDb,
   input: RecordGatePackageDecisionInput,
-  artifactBucket?: R2Bucket,
-  env?: Cloudflare.Env,
-) {
+): Promise<ClaimedGatePackageDecision | null> {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   const updated = await db
@@ -150,29 +158,44 @@ export async function recordGatePackageDecision(
       risk: scans.risk,
       riskSummaryJson: scans.riskSummaryJson,
       aiJson: scans.aiJson,
+      decisionReason: scans.decisionReason,
+      decidedAt: scans.decidedAt,
     });
 
   if (updated.length === 0) return null;
 
+  return updated[0] as ClaimedGatePackageDecision;
+}
+
+/**
+ * Emit the audit and product events for a package decision after its durable
+ * outcome is known. Finalizing decisions delay this until the gate/baseline
+ * batch commits, so a stale authority acknowledgement that is rolled back does
+ * not leave behind a false `scan.decided` event.
+ */
+export async function recordClaimedGatePackageDecision(
+  db: AppDb,
+  input: RecordGatePackageDecisionInput,
+  claimed: ClaimedGatePackageDecision,
+  env?: Cloudflare.Env,
+): Promise<void> {
   await recordScanEvent(db, {
     organizationId: input.organizationId,
     actorUserId: input.actorUserId,
     scanId: input.scanId,
     type: "scan.decided",
-    metadata: { decision: input.decision, reason },
+    metadata: { decision: input.decision, reason: claimed.decisionReason },
   });
 
   // Gated releases decide here rather than through `recordScanDecision`, so
   // without this the decision counter saw only the npm staged path — the
   // ecosystems that release exclusively through a gate were invisible.
-  recordDecisionEvent(env, updated[0], {
+  recordDecisionEvent(env, claimed, {
     organizationId: input.organizationId,
     decision: input.decision,
     ecosystem: "gate",
-    now,
+    now: claimed.decidedAt,
   });
-
-  return getScan(db, input.scanId, input.organizationId, artifactBucket);
 }
 
 /**

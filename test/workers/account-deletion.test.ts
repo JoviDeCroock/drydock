@@ -166,6 +166,52 @@ describe("account deletion", () => {
       .bind(scanId, "stage-1", orgId, member.userId, member.userId, now, now)
       .run();
 
+    // An authority approval in an organization owned by someone else survives
+    // the member's account deletion, but its user reference must not dangle.
+    const installationRowId = `installation-${crypto.randomUUID()}`;
+    const releaseTargetId = `target-${crypto.randomUUID()}`;
+    const gateId = `gate-${crypto.randomUUID()}`;
+    const authorityId = `authority-${crypto.randomUUID()}`;
+    const repositoryId = Number.parseInt(crypto.randomUUID().slice(0, 8), 16);
+    await env.DB.prepare(
+      "INSERT INTO github_app_installations (id, organization_id, installation_id, account_login, account_type, created_by_user_id, installed_at, created_at, updated_at) VALUES (?, ?, ?, 'owner', 'Organization', ?, ?, ?, ?)",
+    )
+      .bind(
+        installationRowId,
+        orgId,
+        `external-${crypto.randomUUID()}`,
+        member.userId,
+        now,
+        now,
+        now,
+      )
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO github_release_targets (id, organization_id, installation_row_id, repository_id, repository_full_name, environment, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'owner/package', 'release', ?, ?, ?)",
+    )
+      .bind(releaseTargetId, orgId, installationRowId, repositoryId, member.userId, now, now)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO github_workflow_gates (id, organization_id, installation_row_id, release_target_id, delivery_id, repository_id, repository_full_name, environment, run_id, deployment_callback_url, event_action, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'owner/package', 'release', 1, 'https://api.github.com/repos/owner/package/actions/runs/1', 'requested', ?, ?, ?)",
+    )
+      .bind(
+        gateId,
+        orgId,
+        installationRowId,
+        releaseTargetId,
+        `delivery-${crypto.randomUUID()}`,
+        repositoryId,
+        now,
+        now,
+        now,
+      )
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO release_authority_snapshots (id, organization_id, release_target_id, gate_id, run_id, workflow_path, snapshot_json, delta_json, approved_at, approved_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, '.github/workflows/release.yml', '{}', '{}', ?, ?, ?, ?)",
+    )
+      .bind(authorityId, orgId, releaseTargetId, gateId, now, member.userId, now, now)
+      .run();
+
     const del = await call("POST", "/api/auth/delete-user", {
       body: { password: PASSWORD },
       jar: member.jar,
@@ -194,6 +240,12 @@ describe("account deletion", () => {
       await countRows(
         "SELECT count(*) AS n FROM scans WHERE id = ? AND owner_user_id IS NULL AND public_shared_by_user_id IS NULL",
         scanId,
+      ),
+    ).toBe(1);
+    expect(
+      await countRows(
+        "SELECT count(*) AS n FROM release_authority_snapshots WHERE id = ? AND approved_by_user_id IS NULL",
+        authorityId,
       ),
     ).toBe(1);
   });

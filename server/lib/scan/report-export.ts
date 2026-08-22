@@ -4,6 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
+import type { ReleaseAuthoritySnapshot } from "../release-authority/snapshot";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -73,6 +74,11 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory release-memory signal. Additive + optional: scans that predate
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
+    // Release authority: what was authorized to publish this release, how it
+    // differs from the last approved baseline, and the binding between the
+    // accepted authority and the exact artifact digests. Workflow-gate reviews
+    // only; null everywhere else, and null must be read as "not assessed".
+    releaseAuthority: extractReleaseAuthority(detail.releaseAuthority),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
@@ -199,6 +205,95 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
 function extractArtifactIntegrity(stagedPublish: unknown) {
   if (!isRecord(stagedPublish)) return null;
   return parseStagedArtifactIntegrity(stagedPublish.artifactIntegrity);
+}
+
+// The archivable form of the release-authority record. The full snapshot is
+// carried, not just the delta: a report has to stand on its own later, and the
+// delta is only meaningful next to the authority it was computed from. Both
+// halves are re-validated by the tolerant readers on the way in, so a
+// pre-feature or malformed row exports as null rather than partial data.
+//
+// Identity is stripped on the way out. This document has exactly one
+// serialization — the authenticated download, the shared `/public/reports/:token`
+// body, and the attestation subject digest are all the same bytes — so anything
+// in it is public the moment an owner mints a share token, and
+// `docs/security-model.md` states that surface carries no org/user identifiers.
+// Who approved the release and who triggered the run are answers the dashboard
+// gives to an authenticated member; they are not part of the release's evidence.
+function extractReleaseAuthority(record: ScanDetail["releaseAuthority"]) {
+  if (!record) return null;
+  return {
+    capturedAt: toIso(record.createdAt),
+    runId: record.runId,
+    workflowPath: record.workflowPath || null,
+    headSha: record.headSha,
+    // The link between this approval and the exact bytes it accepted.
+    artifactBindingDigest: record.artifactBindingDigest,
+    approvedAt: toIso(record.approvedAt),
+    snapshot: withoutRunIdentity(record.snapshot),
+    delta: exportReleaseAuthorityDelta(record.delta),
+  };
+}
+
+// The delta's baseline reference points at a different gate the organization
+// may never have shared. Keep the fact that a comparison happened, but do not
+// export that private gate's ids, run/commit coordinates, or approval time.
+function exportReleaseAuthorityDelta(delta: NonNullable<ScanDetail["releaseAuthority"]>["delta"]) {
+  if (!delta) return null;
+  return {
+    ...delta,
+    changes: delta.changes.map((change) => {
+      if (change.subject === "publish command") {
+        return {
+          ...change,
+          before: exportCommandEvidence(change.before, "publish command [redacted]"),
+          after: exportCommandEvidence(change.after, "publish command [redacted]"),
+        };
+      }
+      if (change.kind === "safeguard_added" || change.kind === "safeguard_removed") {
+        const fallback = `${change.subject} safeguard`;
+        return {
+          ...change,
+          before: exportCommandEvidence(change.before, fallback),
+          after: exportCommandEvidence(change.after, fallback),
+        };
+      }
+      return change;
+    }),
+    baseline: delta.baseline ? { present: true as const } : null,
+  };
+}
+
+// Drop GitHub logins and scrub legacy raw command evidence on export. Snapshots
+// captured by current code already persist only command fingerprints, but the
+// report boundary must also protect rows written before that invariant existed.
+function withoutRunIdentity(
+  snapshot: ReleaseAuthoritySnapshot | null,
+): ReleaseAuthoritySnapshot | null {
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    run: { ...snapshot.run, actor: null, triggeringActor: null },
+    publishSteps: snapshot.publishSteps.map((step) => ({
+      ...step,
+      detail:
+        step.kind === "run"
+          ? exportCommandEvidence(step.detail, "publish command [redacted]")!
+          : step.detail,
+    })),
+    safeguards: snapshot.safeguards.map((safeguard) => ({
+      ...safeguard,
+      detail: exportCommandEvidence(safeguard.detail, `${safeguard.kind} safeguard`)!,
+    })),
+  };
+}
+
+const COMMAND_EVIDENCE_RE =
+  /^(?:npm publish|pnpm publish|yarn publish|bun publish|twine upload|uv publish|poetry publish|flit publish|hatch publish|maturin publish|cargo publish|vsce publish|ovsx publish|gem push|provenance flag|cosign sign|gpg detached signature|sigstore sign|GitHub attestation verify) \[sha256:[0-9a-f]{64}\]$/;
+
+function exportCommandEvidence(value: string | null, fallback: string): string | null {
+  if (value === null) return null;
+  return COMMAND_EVIDENCE_RE.test(value) ? value : fallback;
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not

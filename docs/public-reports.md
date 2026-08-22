@@ -305,6 +305,10 @@ issued with.
   chose to share — `decidedAt` most sharply, being a precise timestamp of an
   internal review decision on an unshared release. The remaining release-memory
   fields describe this scan's delta against that history.
+- Release-authority deltas apply the same boundary to their prior baseline. A
+  public export retains `baseline: { present: true }` so consumers know a
+  comparison happened, but omits the prior snapshot/gate ids, run and commit,
+  and precise approval time. The deterministic change evidence remains.
 - Serving a report reads the report and diff artifacts but not the file-samples
   artifact (`getScan`'s `files: "omit"` mode). The authenticated `report.json`
   export takes the same path, so the two cannot diverge: byte-identity is by

@@ -35,7 +35,8 @@ export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT, listScans } from "./sca
 export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
 export {
-  recordGatePackageDecision,
+  claimGatePackageDecision,
+  recordClaimedGatePackageDecision,
   recordScanDecision,
   SCAN_DECISION_FILTERS,
   SCAN_DECISIONS,

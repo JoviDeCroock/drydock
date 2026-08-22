@@ -33,14 +33,16 @@ of it cascades on its own (the same reason `deleteOrganization` deletes children
 1. **Owned organizations** — deletes every org the user owns outright via `deleteOrganization`:
    the personal workspace (always sole-owned), plus any non-personal org where they are the only
    member. That clears the org's scans, findings, npm connection, GitHub install/targets/gates,
-   Slack connection, invitations, notification recipients, and membership rows.
+   release-authority snapshots, Slack connection, invitations, notification recipients, and
+   membership rows.
 2. **References in surviving orgs** — in organizations owned by _other_ people, the departing user
    may have created, decided on, or publicly shared rows (`scans.owner_user_id` /
    `decided_by_user_id` / `public_shared_by_user_id`,
    `scan_events.actor_user_id`, `npm_connections.created_by_user_id`, the GitHub/Slack/notification
    `created_by_user_id` columns, and `organization_invitations.invited_by_user_id` /
-   `accepted_by_user_id`). These are all `ON DELETE SET NULL`, so we null them by hand — otherwise a
-   join to the now-deleted user would dangle.
+   `accepted_by_user_id`, plus `release_authority_snapshots.approved_by_user_id`). These are all
+   `ON DELETE SET NULL`, so we null them by hand — otherwise a join to the now-deleted user would
+   dangle.
 3. **Remaining memberships + 2FA** — deletes the user's `organization_members` rows in surviving
    orgs and their `two_factor` secret.
 

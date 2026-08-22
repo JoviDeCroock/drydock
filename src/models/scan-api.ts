@@ -11,6 +11,8 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import type { ReleaseAuthorityDelta } from "../../server/lib/release-authority/delta";
+import type { ReleaseAuthoritySnapshot } from "../../server/lib/release-authority/snapshot";
 import { apiFetch, apiJson } from "./api";
 
 export interface ScanVersionsResponse {
@@ -81,6 +83,20 @@ export interface ScanListItem {
   updatedAt: string | number | Date;
 }
 
+export interface PersistedReleaseAuthority {
+  id: string;
+  gateId: string;
+  runId: number;
+  workflowPath: string;
+  headSha: string | null;
+  snapshot: ReleaseAuthoritySnapshot | null;
+  delta: ReleaseAuthorityDelta | null;
+  approvedAt: string | number | Date | null;
+  approvedByUserId: string | null;
+  artifactBindingDigest: string | null;
+  createdAt: string | number | Date;
+}
+
 export interface PersistedScanDetail {
   scan: ScanListItem & {
     summaryJson?: unknown;
@@ -96,6 +112,7 @@ export interface PersistedScanDetail {
     completedAt?: string | number | Date | null;
   };
   riskSummary?: ScanRiskSummary | null;
+  releaseAuthority?: PersistedReleaseAuthority | null;
   files: Array<{
     id: string;
     scanId: string;

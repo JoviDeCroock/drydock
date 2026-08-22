@@ -1,6 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubWorkflowGates, scans } from "../../db/schema";
+import { latestApprovedAuthorityRevisionCondition } from "../../db/release-authority";
+import { githubWorkflowGates, releaseAuthoritySnapshots, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -211,7 +212,7 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
  */
 export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<boolean> {
   const now = new Date();
-  const updated = await db
+  const claim = db
     .update(githubWorkflowGates)
     .set({ reviewStartedAt: now, updatedAt: now })
     .where(
@@ -222,6 +223,19 @@ export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<b
       ),
     )
     .returning({ id: githubWorkflowGates.id });
+  // A retry must never expose the snapshot from its failed predecessor. Keep
+  // invalidation in the same batch as the winning claim so a concurrent loser
+  // cannot clear evidence captured by the winner.
+  const clearPriorAuthority = db
+    .delete(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.gateId, gateId),
+        isNull(releaseAuthoritySnapshots.approvedAt),
+        sql`changes() = 1`,
+      ),
+    );
+  const [updated] = await db.batch([claim, clearPriorAuthority]);
   return updated.length > 0;
 }
 
@@ -354,6 +368,18 @@ export async function markGateDecided(
 
 interface DecideGateWithPackageAggregateInput extends DecideGateInput {
   organizationId: string;
+  packageClaim: {
+    scanId: string;
+    actorUserId: string;
+    decidedAt: Date;
+    decision: "publish" | "no_publish";
+  };
+  authorityApproval?: {
+    approvedByUserId: string | null;
+    releaseTargetId: string;
+    /** Undefined when policy is off; null means no approval existed at refresh. */
+    expectedLatestApprovedSnapshotId?: string | null;
+  };
 }
 
 /**
@@ -389,7 +415,18 @@ export async function markGateDecidedForPackageAggregate(
             and ${scans.organizationId} = ${input.organizationId}
             and ${scans.decision} = 'no_publish'
         )`;
-  const updated = await db
+  const authorityRevisionCondition =
+    input.decision !== "approved" ||
+    input.authorityApproval?.expectedLatestApprovedSnapshotId === undefined
+      ? sql`1 = 1`
+      : latestApprovedAuthorityRevisionCondition({
+          organizationId: input.organizationId,
+          releaseTargetId: input.authorityApproval.releaseTargetId,
+          excludeGateId: input.gateId,
+          expectedLatestApprovedSnapshotId:
+            input.authorityApproval.expectedLatestApprovedSnapshotId,
+        });
+  const finalizeGate = db
     .update(githubWorkflowGates)
     .set({
       status: input.decision,
@@ -406,9 +443,71 @@ export async function markGateDecidedForPackageAggregate(
         eq(githubWorkflowGates.status, "pending"),
         input.decision === "approved" ? sql`${githubWorkflowGates.scanId} is not null` : sql`1 = 1`,
         packageDecisionCondition,
+        authorityRevisionCondition,
       ),
     )
     .returning({ id: githubWorkflowGates.id });
+
+  // D1 applies a batch atomically. The authority approval therefore becomes
+  // visible in the same serialization point as the pending -> approved CAS; a
+  // second gate checking the revision cannot slip between those writes.
+  const approveAuthority = db
+    .update(releaseAuthoritySnapshots)
+    .set({
+      approvedAt: now,
+      approvedByUserId: input.authorityApproval?.approvedByUserId ?? null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        // D1 executes batch statements in order. Only the batch whose preceding
+        // pending -> approved CAS changed the gate may attribute the approval.
+        sql`changes() = 1`,
+        sql`exists (
+          select 1
+          from ${githubWorkflowGates}
+          where ${githubWorkflowGates.id} = ${input.gateId}
+            and ${githubWorkflowGates.organizationId} = ${input.organizationId}
+            and ${githubWorkflowGates.status} = 'approved'
+            and ${githubWorkflowGates.decidedAt} = ${now.getTime()}
+        )`,
+      ),
+    );
+
+  // The package decision was claimed just before this batch. If the gate CAS
+  // loses because the authority revision moved (or another aggregate condition
+  // no longer holds), restore that one claim while the gate is still pending so
+  // the maintainer can reload the current delta and submit again cleanly.
+  const releasePackageClaim = db
+    .update(scans)
+    .set({
+      decision: null,
+      decisionReason: null,
+      decidedByUserId: null,
+      decidedAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(scans.id, input.packageClaim.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.gateId, input.gateId),
+        eq(scans.decision, input.packageClaim.decision),
+        eq(scans.decidedByUserId, input.packageClaim.actorUserId),
+        eq(scans.decidedAt, input.packageClaim.decidedAt),
+        sql`exists (
+          select 1
+          from ${githubWorkflowGates}
+          where ${githubWorkflowGates.id} = ${input.gateId}
+            and ${githubWorkflowGates.organizationId} = ${input.organizationId}
+            and ${githubWorkflowGates.status} = 'pending'
+        )`,
+      ),
+    );
+
+  const [updated] = await db.batch([finalizeGate, approveAuthority, releasePackageClaim]);
   if (updated.length === 0) return null;
   const [row] = await db
     .select()
