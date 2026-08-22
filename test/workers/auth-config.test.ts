@@ -127,6 +127,31 @@ describe("auth config", () => {
     expect(await res.json()).toEqual(expect.objectContaining({ code: "OAUTH_SCOPES_NOT_ALLOWED" }));
   });
 
+  test("rejects scope overrides through the explicit linking route", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/api/auth/link-social`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          origin: ORIGIN,
+        },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL: "/dashboard/account",
+          scopes: ["repo"],
+        }),
+      }),
+      githubEnv,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(expect.objectContaining({ code: "OAUTH_SCOPES_NOT_ALLOWED" }));
+  });
+
   test("social sign-in stores provider tokens encrypted and disables every linking path", async () => {
     const options = (
       createAuth(githubEnv as unknown as Cloudflare.Env) as unknown as {

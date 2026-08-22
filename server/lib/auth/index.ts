@@ -512,7 +512,7 @@ export function createAuth(env: Cloudflare.Env) {
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         if (
-          ctx.path === "/sign-in/social" &&
+          (ctx.path === "/sign-in/social" || ctx.path === "/link-social") &&
           ctx.body &&
           typeof ctx.body === "object" &&
           Object.hasOwn(ctx.body, "scopes")
