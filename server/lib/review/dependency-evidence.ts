@@ -547,12 +547,15 @@ export function dependencyEvidenceFindings(
   }
   for (const evidence of review.dependencies) {
     if (evidence.reason === "budget-exhausted" || evidence.reason === "review-failed") continue;
+    // Integrity binds the review to the bytes the registry advertised. A
+    // later parse/retention gap must not hide that critical failure merely
+    // because the same evidence record is also uninspectable.
+    if (evidence.digestVerified === false) {
+      findings.push(integrityMismatchFinding(evidence, parent));
+    }
     if (evidence.status === "uninspectable") {
       findings.push(uninspectableFinding(evidence, parent));
       continue;
-    }
-    if (evidence.digestVerified === false) {
-      findings.push(integrityMismatchFinding(evidence, parent));
     }
     const entrypoint = evidence.automaticExecution[0];
     const path = dependencyPathLabel(parent, evidence, entrypoint);
@@ -781,6 +784,29 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
   };
 }
 
+/**
+ * Persistable provenance for a fetched dependency artifact.
+ *
+ * Registry-controlled tarball URLs may carry basic-auth userinfo, signed
+ * query parameters, or fragments. None are needed to identify the artifact
+ * in a report, and retaining them would turn a public export into a credential
+ * disclosure. Keep only the HTTP(S) origin and path.
+ */
+export function sanitizeDependencyArtifactUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return boundedText(url.toString(), 2_048);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null {
   if (!isRecord(value)) return null;
   const { name, declaredSpec } = value;
@@ -795,7 +821,7 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
     reason: reasonOf(value.reason),
     resolvedVersion: boundedStringOrNull(value.resolvedVersion, 256),
     registryHost: boundedStringOrNull(value.registryHost, 256),
-    artifactUrl: boundedStringOrNull(value.artifactUrl, 2_048),
+    artifactUrl: sanitizeDependencyArtifactUrl(value.artifactUrl),
     declaredDigest: digestOf(value.declaredDigest),
     reviewedDigest: digestOf(value.reviewedDigest),
     digestVerified: typeof value.digestVerified === "boolean" ? value.digestVerified : null,

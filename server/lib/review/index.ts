@@ -68,6 +68,7 @@ export {
   MAX_RECORDED_DEPENDENCIES,
   type DependencySelectionOptions,
   normalizeDependencyReview,
+  sanitizeDependencyArtifactUrl,
   selectAddedDependencies,
 } from "./dependency-evidence";
 export type {
