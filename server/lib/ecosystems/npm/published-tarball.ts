@@ -35,6 +35,7 @@ export interface PublishedTarballFetchOptions {
   allowInsecureLocalhost?: boolean;
   maxBytes?: number;
   waitUntil?: (promise: Promise<unknown>) => void;
+  signal?: AbortSignal;
 }
 
 // Published tarball URLs are version-pinned and immutable, so the TTL bounds
@@ -161,7 +162,7 @@ export async function fetchPublishedTarballStream(
   const cacheEligible = publishedTarballCacheEligible(tarballUrl, options);
   if (cacheEligible) {
     const cachedBody = await matchPublishedTarballCache(tarballUrl, maxBytes);
-    if (cachedBody) return capByteStream(cachedBody, maxBytes);
+    if (cachedBody) return capByteStream(cachedBody, maxBytes, options.signal);
   }
 
   const headers = tarballRequestHeaders();
@@ -169,7 +170,11 @@ export async function fetchPublishedTarballStream(
 
   let response: Response;
   try {
-    response = await reliableFetch(tarballUrl, { headers, timeoutMs: 60_000 });
+    response = await reliableFetch(tarballUrl, {
+      headers,
+      timeoutMs: 60_000,
+      signal: options.signal,
+    });
   } catch {
     throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
   }
@@ -184,7 +189,7 @@ export async function fetchPublishedTarballStream(
     throw new SandboxError(JSON.stringify({ error: "archive download failed", status: 502 }));
   }
   if (cacheEligible) options.waitUntil?.(warmPublishedTarballCache(tarballUrl));
-  return capByteStream(response.body, maxBytes);
+  return capByteStream(response.body, maxBytes, options.signal);
 }
 
 // Backstop, not enforcement. The sandbox bounds the compressed wire bytes
@@ -199,6 +204,7 @@ export async function fetchPublishedTarballStream(
 function capByteStream(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
+  signal?: AbortSignal,
 ): ReadableStream<Uint8Array> {
   const backstop = 2 * maxBytes;
   let total = 0;
@@ -213,6 +219,7 @@ function capByteStream(
         controller.enqueue(chunk);
       },
     }),
+    { signal },
   );
 }
 

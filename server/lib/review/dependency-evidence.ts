@@ -668,7 +668,7 @@ const UNINSPECTABLE_EVIDENCE: Record<DependencyUninspectableReason, string> = {
   "artifact-too-large": "the dependency artifact exceeded the scanner's size or entry limits",
   "artifact-unparseable": "the dependency artifact could not be parsed as a package archive",
   "artifact-truncated":
-    "the dependency artifact contained a file larger than the retained detection sample, so its bytes were not assessed as complete",
+    "the dependency artifact contained a clipped or hash-only file body, so its bytes were not assessed as complete",
   "budget-exhausted":
     "this release adds more dependencies than one review fetches, so this one was recorded but not inspected",
   "review-failed":

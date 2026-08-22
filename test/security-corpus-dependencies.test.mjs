@@ -39,6 +39,21 @@ function buildReview(fixture) {
         reason: fixture.uninspectableReasons?.[dependency.name] ?? "metadata-unavailable",
       };
     }
+    if (
+      resolved.files.some(
+        (file) =>
+          file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
+      )
+    ) {
+      return {
+        ...emptyEvidence(dependency),
+        status: "uninspectable",
+        reason: "artifact-truncated",
+        resolvedVersion: resolved.version,
+        registryHost: "registry.npmjs.org",
+        fileCount: resolved.files.length,
+      };
+    }
     const assessment = assessDependencyArtifact(resolved.files, resolved.packageJson, {
       codePatternSet: "javascript",
       entrypointResolution: "npm",

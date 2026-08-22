@@ -53,6 +53,7 @@ const ABBREVIATED_PACKUMENT_ACCEPT =
 export interface FetchPackageMetadataOptions {
   npmToken?: string;
   npmRegistry?: string;
+  signal?: AbortSignal;
   /**
    * Ask for the abbreviated packument. Safe wherever only tarball URLs and
    * dist-tags are needed (the scan pipeline). Leave off when per-version
@@ -78,7 +79,7 @@ export async function fetchPackageMetadata(
   const fetchWith = (accept: string) => {
     const headers = new Headers({ accept });
     if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
-    return reliableFetch(url, { headers });
+    return reliableFetch(url, { headers, signal: options.signal });
   };
 
   let res = await fetchWith(

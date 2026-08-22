@@ -148,7 +148,19 @@ async function inspectAddedNpmDependenciesInternal(
       dependencies.push(uninspectable(dependency, registryHost, "budget-exhausted"));
       continue;
     }
-    const inspected = await settleWithin(inspectOne(args, dependency, registryHost), remainingMs);
+    let cancelled = false;
+    const operationStartedAt = Date.now();
+    const deadline: DependencyInspectionDeadline = {
+      cancelled: () => cancelled,
+      remainingMs: () => Math.max(0, remainingMs - (Date.now() - operationStartedAt)),
+    };
+    const inspected = await settleWithin(
+      inspectOne(args, dependency, registryHost, deadline),
+      remainingMs,
+      () => {
+        cancelled = true;
+      },
+    );
     if (inspected.timedOut) {
       deadlineSpent = true;
       dependencies.push(uninspectable(dependency, registryHost, "budget-exhausted"));
@@ -209,10 +221,17 @@ function selectionOptions(args: InspectDependenciesArgs) {
 async function settleWithin<T>(
   promise: Promise<T>,
   timeoutMs: number,
+  onTimeout?: () => void,
 ): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<{ timedOut: true }>((resolve) => {
-    timer = setTimeout(() => resolve({ timedOut: true }), Math.max(1, timeoutMs));
+    timer = setTimeout(
+      () => {
+        onTimeout?.();
+        resolve({ timedOut: true });
+      },
+      Math.max(1, timeoutMs),
+    );
   });
   try {
     return await Promise.race([
@@ -224,10 +243,16 @@ async function settleWithin<T>(
   }
 }
 
+interface DependencyInspectionDeadline {
+  cancelled: () => boolean;
+  remainingMs: () => number;
+}
+
 async function inspectOne(
   args: InspectDependenciesArgs,
   dependency: AddedDependency,
   registryHost: string | null,
+  deadline: DependencyInspectionDeadline,
 ): Promise<DependencyEvidence> {
   // A spec that does not name a registry package cannot be resolved to bytes
   // at all: git/URL/workspace specs, and names npm itself would reject. Both
@@ -238,7 +263,19 @@ async function inspectOne(
     return uninspectable(dependency, registryHost, "unresolvable-spec");
   }
 
-  const metadata = await args.broker.fetchAnonymousPackageMetadata(dependency.name);
+  if (deadline.cancelled() || deadline.remainingMs() <= 0) {
+    return uninspectable(dependency, registryHost, "budget-exhausted");
+  }
+  const metadata = await args.broker.fetchAnonymousPackageMetadata(dependency.name, {
+    timeoutMs: deadline.remainingMs(),
+  });
+  // `Promise.race` cannot cancel an arbitrary broker stub. This fence ensures
+  // a metadata request that settles after the pass deadline cannot start the
+  // much more expensive tarball download. The production broker also applies
+  // the same remaining deadline to the underlying network request.
+  if (deadline.cancelled() || deadline.remainingMs() <= 0) {
+    return uninspectable(dependency, registryHost, "budget-exhausted");
+  }
   if (!metadata) return uninspectable(dependency, registryHost, "metadata-unavailable");
 
   const resolved = resolveDependencyVersion(metadata, dependency.spec);
@@ -261,6 +298,7 @@ async function inspectOne(
     download = await args.broker.downloadAnonymousTarball(tarballUrl, {
       maxFiles: DEPENDENCY_ARTIFACT_MAX_FILES,
       maxTextSampleChars: DEPENDENCY_TEXT_SAMPLE_LIMIT,
+      timeoutMs: deadline.remainingMs(),
     });
   } catch (err) {
     const detail = parseSandboxErrorDetail(err);
@@ -282,6 +320,10 @@ async function inspectOne(
     );
   }
 
+  if (deadline.cancelled() || deadline.remainingMs() <= 0) {
+    return uninspectable(dependency, registryHost, "budget-exhausted");
+  }
+
   const reviewedDigest: DependencyDigest | null = download.archiveSha512
     ? { algorithm: "sha512", value: download.archiveSha512.toLowerCase() }
     : download.archiveSha1
@@ -289,7 +331,11 @@ async function inspectOne(
       : null;
   const declared = declaredDigest(dist);
 
-  if (download.files.some((file) => file.flags.includes("baseline-truncated"))) {
+  if (
+    download.files.some(
+      (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
+    )
+  ) {
     return uninspectable(
       dependency,
       registryHost,

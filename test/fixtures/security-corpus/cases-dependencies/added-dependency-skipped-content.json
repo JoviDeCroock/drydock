@@ -1,0 +1,60 @@
+{
+  "id": "added-dependency-skipped-content",
+  "title": "A dependency with a hash-only file body fails visibly into manual review",
+  "category": "dependency-introduction",
+  "intent": "A dependency archive can exceed the sandbox's full-text retention budget before it exceeds its entry cap. Those later files retain hashes but no body, so Drydock must report an uninspectable artifact rather than assess the incomplete evidence as clean.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "skipped-body": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "skipped-body": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "skipped-body",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 98,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "textSample": "{\"name\":\"skipped-body\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 4096,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flags": ["content-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "skipped-body",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 2,
+      "automaticExecution": []
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>skipped-body@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

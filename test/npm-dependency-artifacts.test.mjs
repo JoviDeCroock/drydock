@@ -348,6 +348,28 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
+  test("metadata settling after the deadline cannot start an artifact download", async () => {
+    const broker = brokerStub();
+    let resolveMetadata;
+    broker.fetchAnonymousPackageMetadata = async () =>
+      new Promise((resolve) => {
+        resolveMetadata = resolve;
+      });
+    const reviewPromise = inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { late: "1.0.0" } },
+      { budgetMs: 10 },
+    );
+
+    const review = await reviewPromise;
+    resolveMetadata(packument("late", { "1.0.0": {} }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(review.dependencies[0]).toMatchObject({ reason: "budget-exhausted" });
+    expect(broker.calls.downloads).toEqual([]);
+  });
+
   test("the wall-clock budget includes resolving the registry connection", async () => {
     const broker = brokerStub();
     broker.registryUrl = async () => new Promise(() => {});
@@ -524,37 +546,42 @@ describe("inspectAddedNpmDependencies", () => {
       { name: "p", version: "1.0.0" },
       { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
     );
-    expect(broker.calls.downloads[0].opts).toEqual({
+    expect(broker.calls.downloads[0].opts).toMatchObject({
       maxFiles: 600,
       maxTextSampleChars: 256 * 1024,
     });
+    expect(broker.calls.downloads[0].opts.timeoutMs).toBeGreaterThan(0);
+    expect(broker.calls.downloads[0].opts.timeoutMs).toBeLessThanOrEqual(20_000);
   });
 
-  test("a clipped dependency file is uninspectable instead of assessed from a prefix", async () => {
-    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
-    const clipped = {
-      files: [
-        file("package.json", JSON.stringify({ name: "clipped", version: "1.0.0" })),
-        { ...file("install.js", "console.log('prefix')"), flags: ["baseline-truncated"] },
-      ],
-      packageJson: { name: "clipped", version: "1.0.0" },
-      archiveSha512: "ab".repeat(64),
-    };
-    const broker = brokerStub({
-      metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
-      downloads: { [url]: clipped },
-    });
-    const review = await inspect(
-      broker,
-      { name: "p", version: "1.0.0" },
-      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
-    );
-    expect(review.dependencies[0]).toMatchObject({
-      status: "uninspectable",
-      reason: "artifact-truncated",
-      fileCount: 2,
-      reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
-    });
-    expect(review.dependencies[0].automaticExecution).toEqual([]);
-  });
+  test.each(["baseline-truncated", "content-skipped"])(
+    "a dependency file flagged %s is uninspectable instead of partially assessed",
+    async (flag) => {
+      const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+      const clipped = {
+        files: [
+          file("package.json", JSON.stringify({ name: "clipped", version: "1.0.0" })),
+          { ...file("install.js", "console.log('prefix')"), flags: [flag] },
+        ],
+        packageJson: { name: "clipped", version: "1.0.0" },
+        archiveSha512: "ab".repeat(64),
+      };
+      const broker = brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: clipped },
+      });
+      const review = await inspect(
+        broker,
+        { name: "p", version: "1.0.0" },
+        { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+      );
+      expect(review.dependencies[0]).toMatchObject({
+        status: "uninspectable",
+        reason: "artifact-truncated",
+        fileCount: 2,
+        reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
+      });
+      expect(review.dependencies[0].automaticExecution).toEqual([]);
+    },
+  );
 });

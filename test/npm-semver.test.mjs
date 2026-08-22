@@ -33,6 +33,16 @@ describe("npm range satisfaction", () => {
     expect(matches("1.9.9", "1.x")).toBe(true);
     expect(matches("2.0.0", "1.x")).toBe(false);
     expect(matches("9.9.9", "*")).toBe(true);
+    expect(matches("1.0.0", "1.x.2")).toBe(true);
+    expect(matches("0.9.9", "<1.x.2")).toBe(true);
+    expect(matches("1.0.0", "<1.x.2")).toBe(false);
+  });
+
+  test("strict major wildcards match nothing while inclusive ones match anything", () => {
+    expect(matches("9.9.9", ">x")).toBe(false);
+    expect(matches("9.9.9", "<*")).toBe(false);
+    expect(matches("9.9.9", ">=x")).toBe(true);
+    expect(matches("9.9.9", "<=*")).toBe(true);
   });
 
   test("comparator sets intersect and unions branch", () => {
@@ -83,5 +93,9 @@ describe("maxSatisfyingVersion", () => {
 
   test("ignores unparseable published version keys", () => {
     expect(maxSatisfyingVersion(["1.0.0", "not-a-version"], "*")).toBe("1.0.0");
+  });
+
+  test("orders non-numeric prerelease identifiers by ASCII code point", () => {
+    expect(maxSatisfyingVersion(["1.0.0-A", "1.0.0-a"], ">=1.0.0-0 <1.0.0")).toBe("1.0.0-a");
   });
 });
