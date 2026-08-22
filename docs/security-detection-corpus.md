@@ -145,7 +145,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.33.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -418,6 +418,13 @@ that npm 7+ already auto-installed as previously installed when the staged relea
 it under `dependencies`, pinned by `required-peer-runtime-relocation` and the
 `legit-required-peer-runtime-relocation` eval hard-negative. Optional peers remain excluded from that
 calibration because consumers do not inherit them automatically.
+
+`1.33.0` closes dependency-artifact completeness and attribution gaps. A missing or unreadable root
+manifest and active non-regular, duplicate, or visually-confusable archive paths now fail visibly rather
+than producing a clean inspected record, pinned by `added-dependency-invalid-artifacts`. Inline lifecycle
+commands are scanned separately from the rest of `package.json`, so network-capable test tooling is no
+longer presented as a proven install-time request; `added-dependency-non-install-network-script` pins the
+unproven medium tier while the existing install-downloader fixtures keep proven paths blocking.
 
 ### Fixture format
 

