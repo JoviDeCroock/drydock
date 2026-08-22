@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { LinkButton } from "../../components/Button";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, SectionLabel } from "../../components/Typography";
+import { Eyebrow, Prose, SectionLabel } from "../../components/Typography";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
 const EFFECTIVE_DATE = "2026-07-28";
@@ -197,10 +197,6 @@ function Section({
       {children}
     </section>
   );
-}
-
-function Prose({ children }: { children: ComponentChildren }) {
-  return <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">{children}</p>;
 }
 
 function Strong({ children }: { children: ComponentChildren }) {

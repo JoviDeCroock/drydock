@@ -1,12 +1,11 @@
 import { describe, expect, test } from "vitest";
+import { diffHashLines, nativeBadge } from "../src/components/DiffView";
+import { buildRows } from "../src/components/diff-rows";
 import {
-  buildRows,
-  diffHashLines,
   initialScrollResetKey,
   isDiffScrollTarget,
-  nativeBadge,
   shouldSeekInitialDiffTarget,
-} from "../src/components/DiffView";
+} from "../src/components/diff-scroll";
 
 describe("buildRows", () => {
   test("marks changed word spans inside paired changed lines", () => {

@@ -1,3 +1,4 @@
+import { sha256Hex } from "../platform/crypto-utils";
 import type { AiReview } from "../ai-review/types";
 import { getPublicDiffAdapter } from "../ecosystems";
 import { coloCache } from "../platform/http";
@@ -205,11 +206,9 @@ export async function computePublicDiffCacheKey(input: {
   // Names the ecosystem treats as equivalent must share one cache entry (PyPI
   // is case- and separator-insensitive, so "Django" and "django" are one key).
   const packageName = adapter.normalizePackageName(input.packageName);
-  const data = new TextEncoder().encode(
+  const hex = await sha256Hex(
     `${input.ecosystem}|${input.registryUrl}|${packageName}|${input.fromVersion}|${input.toVersion}`,
   );
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `${publicDiffCachePrefix(adapter)}${hex}`;
 }
 

@@ -1,4 +1,4 @@
-import { base64Encode, base64UrlEncode } from "./platform/crypto-utils";
+import { base64Encode, sha256Base64Url } from "./platform/crypto-utils";
 
 // Signed attestations for publicly shared scan reports.
 //
@@ -92,8 +92,7 @@ function publicJwkFromPrivate(jwk: JsonWebKey): JsonWebKey {
 /** RFC 7638 JWK thumbprint (OKP members, lexicographic order), base64url. */
 async function jwkThumbprint(publicJwk: JsonWebKey): Promise<string> {
   const canonical = JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x });
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  return base64UrlEncode(new Uint8Array(digest));
+  return sha256Base64Url(canonical);
 }
 
 export function buildAttestationStatement(
@@ -143,11 +142,4 @@ export async function signAttestation(
     payload: base64Encode(payload),
     signatures: [{ keyid: key.keyId, sig: base64Encode(new Uint8Array(signature)) }],
   };
-}
-
-export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  let hex = "";
-  for (const byte of digest) hex += byte.toString(16).padStart(2, "0");
-  return hex;
 }

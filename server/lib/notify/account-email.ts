@@ -1,3 +1,4 @@
+import { escapeHtmlAttribute, escapeHtmlText } from "../platform/html-escape";
 import { sendNotificationEmail, type EmailSendResult } from "./email";
 
 export interface AccountVerificationEmailContent {
@@ -15,7 +16,7 @@ export interface AccountVerificationEmailContent {
  */
 export function buildAccountVerificationEmail(url: string): AccountVerificationEmailContent {
   const safeHref = escapeHtmlAttribute(url);
-  const safeText = escapeHtml(url);
+  const safeText = escapeHtmlText(url);
   return {
     subject: "Verify your email for Drydock",
     text: [
@@ -55,12 +56,4 @@ export async function sendAccountVerificationEmail(
     text: content.text,
     html: content.html,
   });
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }

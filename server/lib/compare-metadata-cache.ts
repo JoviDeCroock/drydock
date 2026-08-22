@@ -1,3 +1,4 @@
+import { sha256Hex } from "./platform/crypto-utils";
 import type { RegistryMetadata } from "./ecosystems/npm/registry";
 
 const METADATA_CACHE_PREFIX = "compare-metadata:v1:";
@@ -11,11 +12,7 @@ export async function computeCompareMetadataCacheKey(input: {
   packageName: string;
   cacheScope: string;
 }): Promise<string> {
-  const data = new TextEncoder().encode(
-    `${input.cacheScope}|${input.registryUrl}|${input.packageName}`,
-  );
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = await sha256Hex(`${input.cacheScope}|${input.registryUrl}|${input.packageName}`);
   return `${METADATA_CACHE_PREFIX}${hex}`;
 }
 

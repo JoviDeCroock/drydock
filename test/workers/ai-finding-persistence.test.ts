@@ -8,7 +8,8 @@ import { createScanJob, getScan, persistScan, recordScanDecision } from "../../s
 import * as schema from "../../server/db/schema";
 import { buildReportExport } from "../../server/lib/scan/report-export";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
 
 interface SeededUser {

@@ -1,3 +1,4 @@
+import { hexEncode } from "../platform/crypto-utils";
 import { scrypt as nodeScrypt, scryptSync } from "node:crypto";
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -18,12 +19,6 @@ export interface AuthSession {
 }
 
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24 hours
-
-function toHex(bytes: Uint8Array): string {
-  let out = "";
-  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
-  return out;
-}
 
 // Better Auth's password KDF is scrypt with these parameters. On the Workers
 // runtime it resolves to the pure-JS `@noble/hashes` scrypt, which runs
@@ -49,17 +44,17 @@ export function scryptKeyHex(password: string, salt: string): Promise<string> {
       salt,
       SCRYPT_DKLEN,
       { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM },
-      // `toHex` rather than `key.toString("hex")`: @cloudflare/workers-types
+      // `hexEncode` rather than `key.toString("hex")`: @cloudflare/workers-types
       // declares a global `Buffer: any`, which clobbers the @types/node `Buffer`
       // interface merge and leaves only the `Uint8Array` members visible.
-      (err, key) => (err ? reject(err) : resolve(toHex(key))),
+      (err, key) => (err ? reject(err) : resolve(hexEncode(key))),
     );
   });
 }
 
 export const nativeScryptPassword = {
   hash: async (password: string): Promise<string> => {
-    const salt = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    const salt = hexEncode(crypto.getRandomValues(new Uint8Array(16)));
     return `${salt}:${await scryptKeyHex(password, salt)}`;
   },
   verify: async ({ hash, password }: { hash: string; password: string }): Promise<boolean> => {

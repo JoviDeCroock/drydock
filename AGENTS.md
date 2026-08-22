@@ -3,7 +3,7 @@
 ## Layout
 
 - `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
-  - `routes/scans.ts` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`.
+  - `routes/scans/` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`. Split by what the caller is doing with a scan: `lifecycle` / `decisions` / `sharing` / `compare`, mounted by `index.ts`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
   - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
@@ -14,8 +14,8 @@
   - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
   - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
   - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
-  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, rate limiting, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability. `rate-limit.ts` is the only rate limiter: native Cloudflare Rate Limiting bindings first, D1 buckets only for windows the binding cannot express.
-  - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth.
+  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, rate limiting, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability, plus the shared primitives every layer narrows or fans out with (`guards.ts`, `path-safety.ts`, `concurrency.ts`). Reach for one of those before writing a local copy — each previously existed as three to seven divergent duplicates. See `.claude/skills/shared-primitives` for where a helper belongs and how to name it, and `.claude/skills/split-large-module` before breaking up an oversized file. `rate-limit.ts` is the only rate limiter: native Cloudflare Rate Limiting bindings first, D1 buckets only for windows the binding cannot express.
+  - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth. `scans.ts` is a barrel: the implementations live in `scan-jobs` / `scan-persist` / `scan-list` / `scan-detail` / `scan-decisions` / `scan-risk`, split by what they do to a scan. `lib/scan/artifacts/` and `src/models/scan.ts` follow the same barrel pattern.
 - `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory — machine-checked by the `boundaries-local/no-cross-page-import` lint rule).
 - `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
 - `docs/` — reference docs. Start with `docs/README.md` and read only the relevant layer.

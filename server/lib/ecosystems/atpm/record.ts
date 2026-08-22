@@ -1,3 +1,5 @@
+import { hexEncode } from "../../platform/crypto-utils";
+import { isRecord } from "../../platform/guards";
 import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
@@ -291,10 +293,6 @@ function parseVersionEntry(entry: unknown): { version: AtpmVersion; attestation:
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function isAtpmDatetime(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -396,7 +394,7 @@ function sha512HexFromIntegrityToken(token: string): string | null {
       char.charCodeAt(0),
     );
     if (bytes.length !== 64) return null;
-    return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    return hexEncode(bytes);
   } catch {
     return null;
   }
@@ -415,7 +413,7 @@ function rawSha256FromCid(cid: string): string | null {
   ) {
     return null;
   }
-  return [...bytes.subarray(4)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hexEncode(bytes.subarray(4));
 }
 
 function decodeBase32(value: string): Uint8Array | null {

@@ -18,7 +18,8 @@ import {
   maybeWriteScanArtifacts,
   writeScanArtifacts,
 } from "../../server/lib/scan/artifacts";
-import { sha256Hex, stableJson } from "../../server/lib/platform/stable-json";
+import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { stableJson } from "../../server/lib/platform/stable-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";

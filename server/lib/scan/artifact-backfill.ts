@@ -4,7 +4,8 @@ import { scanFiles, scanFindings, scans } from "../../db/schema";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { redactJson, type DiffEntry, type Finding, type PackageJsonSummary } from "../review";
 import { writeScanArtifacts } from "./artifacts";
-import { sha256Hex, stableJson } from "../platform/stable-json";
+import { sha256Hex } from "../platform/crypto-utils";
+import { stableJson } from "../platform/stable-json";
 import { parsePackageJson, type ParsedFile } from "../tar-parser.js";
 
 export interface ScanArtifactsBackfillResult {

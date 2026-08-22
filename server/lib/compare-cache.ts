@@ -1,3 +1,4 @@
+import { sha256Hex } from "./platform/crypto-utils";
 import { downloadPublishedTarball } from "./ecosystems/npm/published-tarball";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
 
@@ -29,9 +30,7 @@ export async function computeCompareCacheKey(
   tarballUrl: string,
   cacheScope: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(`${cacheScope}|${registryUrl}|${tarballUrl}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const hex = await sha256Hex(`${cacheScope}|${registryUrl}|${tarballUrl}`);
   return `${CACHE_PREFIX}${hex}`;
 }
 

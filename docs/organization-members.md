@@ -41,7 +41,7 @@ and return `403 { error: "forbidden" }` when the guard fails:
 - member management — `server/routes/organization-members.ts`
 - npm connections — `server/routes/npm-connection.ts` (POST, POST `/validate`,
   DELETE)
-- GitHub App install + release targets — `server/routes/github-app.ts`
+- GitHub App install + release targets — `server/routes/github-app/`
 - notification recipients — `server/routes/organizations.ts` lets any member
   list recipients for an org path they belong to, while owner/admin are required
   for add/remove. Each organization can configure up to five recipient emails.

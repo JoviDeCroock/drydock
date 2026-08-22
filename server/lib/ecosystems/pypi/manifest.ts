@@ -1,3 +1,5 @@
+import { isRecord } from "../../platform/guards";
+import { isSafeManifestPath } from "../../platform/path-safety";
 import type { FileRecord } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
@@ -163,17 +165,6 @@ function parseFileRecord(
     flags,
     ...(typeof raw.textSample === "string" ? { textSample: raw.textSample } : {}),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isSafeManifestPath(path: string): boolean {
-  if (!path || path.length > 512 || path.includes("\0") || path.includes("\\")) return false;
-  if (path.startsWith("/") || path.startsWith("../") || path.includes("/../")) return false;
-  if (/^[A-Za-z]:/.test(path)) return false;
-  return path.split("/").every((part) => part && part !== "." && part !== "..");
 }
 
 function isSafeHttpsUrl(url: string): boolean {

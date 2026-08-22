@@ -1,3 +1,4 @@
+import { isRecord } from "../platform/guards";
 import type { getScan } from "../../db/scans";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
@@ -153,10 +154,6 @@ function toIso(value: unknown): string | null {
   if (typeof value === "number") return new Date(value).toISOString();
   if (typeof value === "string") return value;
   return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // The export drops `priorScanId` and `decidedAt`: both describe a *prior* scan

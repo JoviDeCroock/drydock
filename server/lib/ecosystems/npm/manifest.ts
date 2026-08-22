@@ -11,6 +11,8 @@
  * The shape is shared with PyPI (`drydock.release-artifacts.v1`) so the report
  * and UI can render a digest + package/version uniformly across ecosystems.
  */
+import { isRecord } from "../../platform/guards";
+import { isSafeManifestPath } from "../../platform/path-safety";
 export const NPM_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
 
 // npm versions are semver; keep the charset tight so a hostile version string
@@ -96,17 +98,6 @@ export function parseNpmReleaseManifest(value: unknown): NpmReleaseManifest {
   };
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isSafeManifestPackageName(name: string): boolean {
   return name.length >= 1 && name.length <= 214 && SAFE_PACKAGE_NAME_RE.test(name);
-}
-
-function isSafeManifestPath(path: string): boolean {
-  if (!path || path.length > 512 || path.includes("\0") || path.includes("\\")) return false;
-  if (path.startsWith("/") || path.startsWith("../") || path.includes("/../")) return false;
-  if (/^[A-Za-z]:/.test(path)) return false;
-  return path.split("/").every((part) => part && part !== "." && part !== "..");
 }

@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { mapWithConcurrency } from "./platform/concurrency";
 import { type AppDb, createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationOwnerUserId } from "../db/organizations";
@@ -526,25 +527,6 @@ async function reviewGatePackages(
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
-
-async function mapWithConcurrency<T, U>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<U>,
-): Promise<U[]> {
-  const results = new Map<number, U>();
-  let next = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    for (;;) {
-      const index = next;
-      next += 1;
-      if (index >= items.length) return;
-      results.set(index, await worker(items[index]));
-    }
-  });
-  await Promise.all(workers);
-  return items.map((_, index) => results.get(index)!);
-}
 
 async function rejectGateForArtifactError(
   env: Cloudflare.Env,

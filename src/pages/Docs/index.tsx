@@ -1,70 +1,29 @@
-import type { ComponentChildren } from "preact";
-import { useEffect, useMemo } from "preact/hooks";
-import { type Signal, useComputed, useSignal } from "@preact/signals";
-import { Badge, type BadgeTone } from "../../components/Badge";
+import { useEffect } from "preact/hooks";
+import { useSignal } from "@preact/signals";
+import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
-import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, MonoLabel, SectionLabel } from "../../components/Typography";
-import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
+import { Eyebrow, InlineCode, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
-
-const TOC: Array<{ id: string; label: string; children: Array<{ id: string; label: string }> }> = [
-  {
-    id: "start-here",
-    label: "Start here",
-    children: [
-      { id: "artifact-gap", label: "The artifact gap" },
-      { id: "review-loop", label: "The review loop" },
-      { id: "inside-report", label: "Inside a report" },
-      { id: "safety-model", label: "Safety model" },
-    ],
-  },
-  {
-    id: "choose-path",
-    label: "Choose a release path",
-    children: [{ id: "path-comparison", label: "Compare the paths" }],
-  },
-  {
-    id: "staged-publishing",
-    label: "npm stage publish",
-    children: [
-      { id: "staged-setup", label: "Connect npm" },
-      { id: "staged-lifecycle", label: "Run a review" },
-    ],
-  },
-  {
-    id: "atpm-publishing",
-    label: "atpm trusted publishing",
-    children: [
-      { id: "atpm-setup", label: "Set the publisher policy" },
-      { id: "atpm-review", label: "Review before publishing" },
-    ],
-  },
-  {
-    id: "workflow-gating",
-    label: "GitHub workflow gates",
-    children: [
-      { id: "gate-setup", label: "Connect GitHub" },
-      { id: "gate-bundle", label: "Prepare the artifacts" },
-      { id: "gate-workflow", label: "Workflow examples" },
-      { id: "gate-decision", label: "Approve or reject" },
-    ],
-  },
-  {
-    id: "dependency-updates",
-    label: "Diffs in dependency PRs",
-    children: [
-      { id: "renovate-diff-links", label: "Renovate" },
-      { id: "dependabot-diff-links", label: "Dependabot" },
-    ],
-  },
-];
-
-const TOC_IDS = TOC.flatMap((section) => [section.id, ...section.children.map((c) => c.id)]);
+import {
+  Callout,
+  CodeBlock,
+  JourneyCard,
+  PathCard,
+  Requirement,
+  ReportRow,
+  ReviewAnswer,
+  ReviewStep,
+  SafetyItem,
+  Steps,
+  Subsection,
+  TocList,
+  WorkflowExample,
+} from "./primitives";
+import { TOC_IDS } from "./toc";
 
 export default function DocsPage() {
   const authed = useAuthedSession();
@@ -390,21 +349,23 @@ export default function DocsPage() {
                   <>Create a Drydock organization for the team that publishes the package.</>,
                   <>
                     On npmjs.com, generate a granular access token with{" "}
-                    <Code>Packages and scopes: Read-only</Code> on the packages you stage and{" "}
-                    <Code>Organizations: No access</Code>. A scoped package like{" "}
-                    <Code>@nanostores/i18n</Code> is covered by selecting the{" "}
-                    <Code>@nanostores</Code> scope there; the Organizations permission is for member
-                    and settings management, which Drydock never reads.
+                    <InlineCode>Packages and scopes: Read-only</InlineCode> on the packages you
+                    stage and <InlineCode>Organizations: No access</InlineCode>. A scoped package
+                    like <InlineCode>@nanostores/i18n</InlineCode> is covered by selecting the{" "}
+                    <InlineCode>@nanostores</InlineCode> scope there; the Organizations permission
+                    is for member and settings management, which Drydock never reads.
                   </>,
                   <>
-                    Open <Code>Organization settings → npm access</Code> and paste the token.
+                    Open <InlineCode>Organization settings → npm access</InlineCode> and paste the
+                    token.
                   </>,
                   <>
                     Save. Drydock encrypts the token and checks it against the registry right away.
                   </>,
                   <>
                     Drydock now discovers packages in npm stage publish automatically. Use{" "}
-                    <Code>Check npm</Code> on the dashboard when you want an immediate refresh.
+                    <InlineCode>Check npm</InlineCode> on the dashboard when you want an immediate
+                    refresh.
                   </>,
                 ]}
               />
@@ -419,12 +380,12 @@ export default function DocsPage() {
               <Steps
                 items={[
                   <>
-                    From the package directory, run <Code>npm stage publish</Code>. npm uploads the
-                    candidate but does not make it public.
+                    From the package directory, run <InlineCode>npm stage publish</InlineCode>. npm
+                    uploads the candidate but does not make it public.
                   </>,
                   <>
                     Drydock discovers the stage and queues a scan. You can also trigger discovery
-                    with <Code>Check npm</Code>.
+                    with <InlineCode>Check npm</InlineCode>.
                   </>,
                   <>
                     Open the report. Start with the recommendation, then inspect release-delta
@@ -434,8 +395,9 @@ export default function DocsPage() {
                   <>
                     Record your decision and reason in Drydock. Then finish on npm with your normal
                     2FA — either on npm's staged-packages page, or with the{" "}
-                    <Code>npm stage approve</Code> / <Code>npm stage reject</Code> command Drydock
-                    shows you after saving.
+                    <InlineCode>npm stage approve</InlineCode> /{" "}
+                    <InlineCode>npm stage reject</InlineCode> command Drydock shows you after
+                    saving.
                   </>,
                 ]}
               />
@@ -471,18 +433,19 @@ export default function DocsPage() {
                 items={[
                   <>
                     In the publisher's AT Protocol repository, configure the package's{" "}
-                    <Code>dev.atpm.alpha.trustPublisher</Code> record with the GitHub owner,
-                    repository, and workflow allowed to stage it.
+                    <InlineCode>dev.atpm.alpha.trustPublisher</InlineCode> record with the GitHub
+                    owner, repository, and workflow allowed to stage it.
                   </>,
                   <>
-                    Set <Code>allowStage: true</Code> and <Code>allowPublish: false</Code>. The
-                    workflow may upload a candidate, but it cannot make that candidate public — so
-                    the release is already paused before anyone reviews it.
+                    Set <InlineCode>allowStage: true</InlineCode> and{" "}
+                    <InlineCode>allowPublish: false</InlineCode>. The workflow may upload a
+                    candidate, but it cannot make that candidate public — so the release is already
+                    paused before anyone reviews it.
                   </>,
                   <>
-                    Publish with <Code>--provenance</Code>. The Sigstore attestation is what lets a
-                    review say where the release was built, and whether that matches the record
-                    above.
+                    Publish with <InlineCode>--provenance</InlineCode>. The Sigstore attestation is
+                    what lets a review say where the release was built, and whether that matches the
+                    record above.
                   </>,
                 ]}
               />
@@ -492,8 +455,9 @@ export default function DocsPage() {
               <Steps
                 items={[
                   <>
-                    From the package directory, run <Code>npm stage publish --provenance</Code>.
-                    atpm stores the candidate without publishing it.
+                    From the package directory, run{" "}
+                    <InlineCode>npm stage publish --provenance</InlineCode>. atpm stores the
+                    candidate without publishing it.
                   </>,
                   <>
                     Open the Drydock link beside the candidate on your staged dashboard. No account
@@ -504,9 +468,10 @@ export default function DocsPage() {
                     verified build repository and workflow, package identity, and SHA-512 binding.
                   </>,
                   <>
-                    Approve or withdraw in atpm, with <Code>npm stage approve &lt;id&gt;</Code> or{" "}
-                    <Code>npm stage reject &lt;id&gt;</Code>. Drydock takes no part in that
-                    decision.
+                    Approve or withdraw in atpm, with{" "}
+                    <InlineCode>npm stage approve &lt;id&gt;</InlineCode> or{" "}
+                    <InlineCode>npm stage reject &lt;id&gt;</InlineCode>. Drydock takes no part in
+                    that decision.
                   </>,
                 ]}
               />
@@ -542,12 +507,13 @@ export default function DocsPage() {
                 items={[
                   <>Create or choose the Drydock organization that owns the release.</>,
                   <>
-                    Open <Code>Organization settings → GitHub App</Code> and install the Drydock
-                    GitHub App on the account that hosts your repository.
+                    Open <InlineCode>Organization settings → GitHub App</InlineCode> and install the
+                    Drydock GitHub App on the account that hosts your repository.
                   </>,
                   <>
-                    In the repository, create a GitHub Environment such as <Code>production</Code>{" "}
-                    and enable Drydock as a custom deployment protection rule.
+                    In the repository, create a GitHub Environment such as{" "}
+                    <InlineCode>production</InlineCode> and enable Drydock as a custom deployment
+                    protection rule.
                   </>,
                   <>
                     Back in Drydock settings, map that repository and environment to the
@@ -569,22 +535,23 @@ export default function DocsPage() {
             <Subsection id="gate-bundle" title="Prepare the release artifacts">
               <Prose>
                 For npm, PyPI, and VS Code, there is no Drydock manifest to maintain. Upload built{" "}
-                <Code>.whl</Code>, <Code>.tar.gz</Code>, <Code>.tgz</Code>, or <Code>.vsix</Code>{" "}
-                files before the protected job starts. Drydock derives the ecosystem, package name,
-                and version from metadata inside each archive.
+                <InlineCode>.whl</InlineCode>, <InlineCode>.tar.gz</InlineCode>,{" "}
+                <InlineCode>.tgz</InlineCode>, or <InlineCode>.vsix</InlineCode> files before the
+                protected job starts. Drydock derives the ecosystem, package name, and version from
+                metadata inside each archive.
               </Prose>
               <Prose>
-                Generate <Code>SHA256SUMS</Code> beside the artifacts during the build, upload it
-                with them, and verify it in the publish job. The digests in the Drydock report
-                should match. Most importantly: download and publish the uploaded files—never
+                Generate <InlineCode>SHA256SUMS</InlineCode> beside the artifacts during the build,
+                upload it with them, and verify it in the publish job. The digests in the Drydock
+                report should match. Most importantly: download and publish the uploaded files—never
                 rebuild after approval.
               </Prose>
               <Prose>
                 Large compiled PyPI releases can upload one bounded artifact per wheel or sdist.
-                Name the shards <Code>pypi-release-candidate-*</Code> and set the release target's
-                ecosystem to PyPI; Drydock then processes them one at a time while keeping every
-                distribution in the review and provenance. A target left on auto-detect has no name
-                to match, so it keeps the smaller single-upload limits.
+                Name the shards <InlineCode>pypi-release-candidate-*</InlineCode> and set the
+                release target's ecosystem to PyPI; Drydock then processes them one at a time while
+                keeping every distribution in the review and provenance. A target left on
+                auto-detect has no name to match, so it keeps the smaller single-upload limits.
               </Prose>
               <Callout label="Monorepos work as one gate">
                 Drydock groups uploaded files by package and opens a separate report for each one.
@@ -696,8 +663,8 @@ export default function DocsPage() {
               <Steps
                 items={[
                   <>
-                    The publish job reaches <Code>environment: production</Code>. GitHub pauses it
-                    and sends Drydock a signed protection-rule request.
+                    The publish job reaches <InlineCode>environment: production</InlineCode>. GitHub
+                    pauses it and sends Drydock a signed protection-rule request.
                   </>,
                   <>
                     Drydock fetches the uploaded artifacts, verifies identity and digests, and
@@ -709,8 +676,8 @@ export default function DocsPage() {
                   </>,
                   <>
                     After every package is approved, Drydock releases the GitHub job, which verifies{" "}
-                    <Code>SHA256SUMS</Code> and publishes the downloaded files. Any rejection stops
-                    the whole release.
+                    <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded files. Any
+                    rejection stops the whole release.
                   </>,
                 ]}
               />
@@ -912,368 +879,5 @@ jobs:
         </div>
       </div>
     </PageShell>
-  );
-}
-
-function TocList({ activeId }: { activeId: Signal<string> }) {
-  return (
-    <ul class="m-0 flex list-none flex-col border-l border-border p-0">
-      {TOC.map((section) => (
-        <li key={section.id}>
-          <TocLink id={section.id} activeId={activeId}>
-            {section.label}
-          </TocLink>
-          <ul class="m-0 flex list-none flex-col p-0">
-            {section.children.map((child) => (
-              <li key={child.id}>
-                <TocLink id={child.id} activeId={activeId} depth={1}>
-                  {child.label}
-                </TocLink>
-              </li>
-            ))}
-          </ul>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function TocLink({
-  id,
-  activeId,
-  depth = 0,
-  children,
-}: {
-  id: string;
-  activeId: Signal<string>;
-  depth?: 0 | 1;
-  children: ComponentChildren;
-}) {
-  const linkClass = useComputed(() =>
-    cn(
-      "-ml-px block border-l-2 py-1 text-[13px] leading-[1.5] no-underline transition-colors",
-      depth === 1 ? "pl-6" : "pl-3.5 font-medium",
-      activeId.value === id
-        ? "border-accent text-accent"
-        : "border-transparent text-ink-muted hover:text-ink",
-    ),
-  );
-  const ariaCurrent = useComputed(() => (activeId.value === id ? "location" : undefined));
-  return (
-    <a
-      href={`#${id}`}
-      class={linkClass}
-      aria-current={ariaCurrent}
-      onClick={() => {
-        activeId.value = id;
-      }}
-    >
-      {children}
-    </a>
-  );
-}
-
-function JourneyCard({
-  number,
-  href,
-  title,
-  children,
-}: {
-  number: string;
-  href: string;
-  title: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <a href={href} class="no-underline group">
-      <Card
-        as="div"
-        padding="none"
-        class="p-4 h-full grid grid-cols-[2rem_minmax(0,1fr)] gap-2 transition-colors group-hover:border-border-strong"
-      >
-        <span class="font-mono text-[11px] font-medium text-accent pt-[3px]">{number}</span>
-        <div class="flex flex-col gap-1.5">
-          <h2 class="text-[14px] font-medium tracking-[-0.005em] m-0 text-ink">{title}</h2>
-          <p class="m-0 text-[12px] text-ink-muted leading-[1.55]">{children}</p>
-        </div>
-      </Card>
-    </a>
-  );
-}
-
-function Callout({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div class="border-l-2 border-accent bg-accent-soft px-4 py-3 flex flex-col gap-1.5 max-w-[680px]">
-      <span class="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-accent">
-        {label}
-      </span>
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{children}</p>
-    </div>
-  );
-}
-
-function ReviewStep({
-  number,
-  label,
-  children,
-}: {
-  number: string;
-  label: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <li class="p-5 flex flex-col gap-2 min-w-0">
-      <div class="flex items-baseline gap-2.5">
-        <span class="font-mono text-[11px] text-accent">{number}</span>
-        <span class="font-medium text-[15px] tracking-[-0.005em]">{label}</span>
-      </div>
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{children}</p>
-    </li>
-  );
-}
-
-function ReviewAnswer({
-  label,
-  question,
-  children,
-}: {
-  label: string;
-  question: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <div class="px-5 py-3.5 grid grid-cols-1 sm:grid-cols-[120px_180px_minmax(0,1fr)] gap-1.5 sm:gap-4 sm:items-baseline">
-      <MonoLabel as="dt">{label}</MonoLabel>
-      <dd class="m-0 text-[13px] font-medium text-ink">{question}</dd>
-      <dd class="m-0 text-[13px] leading-[1.55] text-ink-muted">{children}</dd>
-    </div>
-  );
-}
-
-function ReportRow({
-  label,
-  value,
-  tone = "neutral",
-  children,
-}: {
-  label: string;
-  value: string;
-  tone?: BadgeTone;
-  children: ComponentChildren;
-}) {
-  return (
-    <div class="grid grid-cols-1 sm:grid-cols-[140px_minmax(0,1fr)] gap-2 sm:gap-4 px-5 py-4">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle pt-0.5">
-        {label}
-      </span>
-      <div class="flex flex-col items-start gap-1.5">
-        <Badge tone={tone}>{value}</Badge>
-        <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">{children}</p>
-      </div>
-    </div>
-  );
-}
-
-function SafetyItem({ title, children }: { title: string; children: ComponentChildren }) {
-  return (
-    <div class="border-t border-border pt-3 flex flex-col gap-1.5">
-      <h4 class="m-0 text-[13px] font-medium tracking-[-0.005em]">{title}</h4>
-      <p class="m-0 text-[12px] text-ink-muted leading-[1.6]">{children}</p>
-    </div>
-  );
-}
-
-function PathCard({
-  title,
-  badge,
-  href,
-  command,
-  bestFor,
-  heldBy,
-  decision,
-}: {
-  title: string;
-  badge: string;
-  href: string;
-  command: string;
-  bestFor: string;
-  heldBy: string;
-  decision: string;
-}) {
-  return (
-    <Card as="article" padding="none" class="p-5 flex flex-col gap-4">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h4 class="m-0 text-base font-medium tracking-[-0.005em]">{title}</h4>
-        <Badge tone={badge === "Preview" ? "info" : "neutral"}>{badge}</Badge>
-      </div>
-      <code class="font-mono text-[12px] text-ink bg-surface-2 border border-border rounded px-2.5 py-2 overflow-x-auto">
-        {command}
-      </code>
-      <dl class="m-0 flex flex-col gap-3">
-        <Definition label="Best for">{bestFor}</Definition>
-        <Definition label="Held by">{heldBy}</Definition>
-        <Definition label="Decision">{decision}</Definition>
-      </dl>
-      <a href={href} class="mt-auto text-[13px] font-medium no-underline">
-        Follow this setup →
-      </a>
-    </Card>
-  );
-}
-
-function Definition({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div class="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
-      <MonoLabel as="dt">{label}</MonoLabel>
-      <dd class="m-0 text-[12px] leading-[1.55] text-ink-muted">{children}</dd>
-    </div>
-  );
-}
-
-function Requirement({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div class="border-t border-border pt-3 flex flex-col gap-1">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">{label}</span>
-      <span class="text-[13px] font-medium text-ink">{children}</span>
-    </div>
-  );
-}
-
-function WorkflowExample({
-  title,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: string;
-}) {
-  return (
-    <details
-      open={defaultOpen}
-      class="group rounded-md border border-border bg-surface overflow-hidden"
-    >
-      <summary class="cursor-pointer list-none px-4 py-3 flex items-center gap-2.5 hover:bg-surface-2 transition-colors">
-        <span aria-hidden class="text-[10px] text-ink-subtle inline group-open:hidden">
-          ▸
-        </span>
-        <span aria-hidden class="text-[10px] text-ink-subtle hidden group-open:inline">
-          ▾
-        </span>
-        <span class="text-[13px] font-medium text-ink">{title}</span>
-      </summary>
-      <div class="border-t border-border">
-        <CodeBlock lang="yaml" embedded>
-          {children}
-        </CodeBlock>
-      </div>
-    </details>
-  );
-}
-
-function Subsection({
-  id,
-  title,
-  children,
-}: {
-  id?: string;
-  title: string;
-  children: ComponentChildren;
-}) {
-  return (
-    <div id={id} class="flex flex-col gap-3.5 scroll-mt-6">
-      <h3 class="text-base font-medium tracking-[-0.005em] text-ink m-0">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function Prose({ children }: { children: ComponentChildren }) {
-  return <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">{children}</p>;
-}
-
-function Steps({ items }: { items: ComponentChildren[] }) {
-  return (
-    <ol class="list-none p-0 m-0 flex flex-col">
-      {items.map((item, index) => (
-        <li key={index} class="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
-          <div class="flex flex-col items-center">
-            <span class="font-mono text-[11px] font-medium text-ink-subtle tabular-nums leading-none pt-px">
-              {String(index + 1).padStart(2, "0")}
-            </span>
-            {index < items.length - 1 ? (
-              <span class="w-px flex-1 bg-border mt-2" aria-hidden />
-            ) : null}
-          </div>
-          <div
-            class={`text-[13px] text-ink-muted leading-[1.6] min-w-0 ${
-              index < items.length - 1 ? "pb-5" : ""
-            }`}
-          >
-            {item}
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function Code({ children }: { children: string }) {
-  return (
-    <code class="font-mono text-[12px] text-ink bg-surface-2 px-1 py-0.5 rounded">{children}</code>
-  );
-}
-
-function CodeBlock({
-  name,
-  lang,
-  embedded = false,
-  children,
-}: {
-  name?: string;
-  lang?: string;
-  embedded?: boolean;
-  children: string;
-}) {
-  useEffect(() => {
-    if (lang) ensureHighlighter();
-  }, [lang]);
-
-  const ready = highlighterReady.value;
-  const tokens = useMemo(() => {
-    if (!lang || !ready) return null;
-    return tokenizeLines(children, lang);
-  }, [children, lang, ready]);
-
-  return (
-    <div
-      class={cn(
-        "overflow-hidden bg-surface-2",
-        embedded ? "border-0 rounded-none" : "rounded-md border border-border",
-      )}
-    >
-      {name ? (
-        <div class="px-4 py-2 border-b border-border font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-          {name}
-        </div>
-      ) : null}
-      <pre class="m-0 p-4 overflow-x-auto font-mono text-[12px] leading-[1.55] text-ink">
-        <code>
-          {tokens ? (
-            tokens.map((line, lineIndex) => (
-              <span key={lineIndex} class="block whitespace-pre">
-                {line.map((token, tokenIndex) => (
-                  <span key={tokenIndex} class={token.className}>
-                    {token.content}
-                  </span>
-                ))}
-              </span>
-            ))
-          ) : (
-            <span class="whitespace-pre">{children}</span>
-          )}
-        </code>
-      </pre>
-    </div>
   );
 }

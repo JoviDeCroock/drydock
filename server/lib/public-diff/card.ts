@@ -63,6 +63,10 @@ export interface OgCardStats {
   risk: OgRiskLevel;
 }
 
+import { escapeXml } from "../platform/html-escape";
+
+export { escapeXml };
+
 export interface OgCardInput {
   ecosystem: DiffEcosystem;
   packageName: string;
@@ -71,23 +75,6 @@ export interface OgCardInput {
   // Absent when the diff has not been computed yet: the card still names the
   // package and the version pair, it just cannot claim any numbers.
   stats?: OgCardStats;
-}
-
-export function escapeXml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      default:
-        return "&apos;";
-    }
-  });
 }
 
 // Control characters have no glyph and can confuse the SVG parser; zero-width
