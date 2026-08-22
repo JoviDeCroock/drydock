@@ -33,7 +33,7 @@ declare global {
       // burst (one message per organization) cannot starve scan execution.
       // Optional: without it the cron falls back to sweeping inline. The Worker
       // test config omits it; pnpm dev uses the binding from wrangler.jsonc.
-      DISCOVERY_QUEUE?: Queue<import("./lib/discovery/sweep-queue").DiscoverySweepQueueMessage>;
+      DISCOVERY_QUEUE?: Queue<import("./lib/discovery/sweep-queue").DiscoveryQueueMessage>;
       NPM_REGISTRY: string;
       ALLOW_INSECURE_LOCAL_REGISTRY?: string;
       // `.dev.vars`-only escape hatch (see securityHeadersDisabled). Never set in

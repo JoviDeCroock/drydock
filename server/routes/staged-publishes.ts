@@ -12,7 +12,7 @@ import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
 } from "../lib/ecosystems/npm/staged-publishes-discovery";
-import { scheduleDiscoverySweepContinuation } from "../lib/discovery/sweep-queue";
+import { scheduleDiscoveryScanBatches } from "../lib/discovery/sweep-queue";
 import type { Bindings, Variables } from "../types";
 
 export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -69,14 +69,13 @@ stagedPublishesRoutes.post("/scan", async (c) => {
         source: "manual",
         eventSource: "staged_publishes.discovery",
         allowInsecureLocalhost,
-        scheduleContinuation: c.env.DISCOVERY_QUEUE
-          ? (afterStageId) =>
-              scheduleDiscoverySweepContinuation(c.env, executionCtx, {
-                kind: "discovery_sweep",
+        scheduleCandidateBatches: c.env.DISCOVERY_QUEUE
+          ? (candidates) =>
+              scheduleDiscoveryScanBatches(c.env, executionCtx, {
                 organizationId,
-                afterStageId,
                 source: "manual",
                 actorUserId: session.userId,
+                candidates,
               })
           : undefined,
       },

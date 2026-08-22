@@ -33,6 +33,7 @@ vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 const {
   ensureUsableNpmConnection,
   discoverAndQueueStagedPublishes,
+  queueStagedPublishCandidates,
   InvalidNpmConnectionError,
   isNpmConnectionAuthFailure,
   isTransientSweepFailure,
@@ -582,17 +583,20 @@ describe("discoverAndQueueStagedPublishes", () => {
     for (const [batch] of env.SCAN_QUEUE.sendBatch.mock.calls) expect(batch).toHaveLength(1);
   });
 
-  test("defers work past the per-invocation preparation budget with a stable cursor", async () => {
+  test("lists once and fans remaining candidates into independent bounded work", async () => {
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: Array.from({ length: 60 }, (_, index) => ({
         id: `stage-${String(index).padStart(2, "0")}`,
         packageName: `pkg-${index}`,
         version: "1.0.0",
       })),
+      total: 60,
+      perPage: 60,
+      page: 0,
     });
     dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
     dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
-    const scheduleContinuation = vi.fn();
+    const scheduleCandidateBatches = vi.fn();
 
     const first = await discoverAndQueueStagedPublishes(
       {
@@ -603,7 +607,7 @@ describe("discoverAndQueueStagedPublishes", () => {
         actorUserId: "user_a",
         source: "auto_discovery",
         eventSource: "staged_publishes.cron",
-        scheduleContinuation,
+        scheduleCandidateBatches,
       },
       { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
     );
@@ -613,11 +617,14 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
     expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
     expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(50);
-    expect(scheduleContinuation).toHaveBeenCalledWith("stage-49");
+    expect(scheduleCandidateBatches).toHaveBeenCalledTimes(1);
+    const deferredCandidates = scheduleCandidateBatches.mock.calls[0][0];
+    expect(deferredCandidates.map((candidate) => candidate.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `stage-${index + 50}`),
+    );
 
     env.SCAN_QUEUE.sendBatch.mockClear();
-    scheduleContinuation.mockClear();
-    const continuation = await discoverAndQueueStagedPublishes(
+    const continuation = await queueStagedPublishCandidates(
       {
         db,
         env,
@@ -626,10 +633,9 @@ describe("discoverAndQueueStagedPublishes", () => {
         actorUserId: "user_a",
         source: "auto_discovery",
         eventSource: "staged_publishes.cron",
-        afterStageId: "stage-49",
-        scheduleContinuation,
       },
       { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+      deferredCandidates,
     );
 
     expect(continuation).toEqual(
@@ -637,7 +643,7 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
     expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
     expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(10);
-    expect(scheduleContinuation).not.toHaveBeenCalled();
+    expect(stagedPublishesMock.listStagedPublishes).toHaveBeenCalledTimes(1);
   });
 
   test("rolls back every scan row a failed batch left off the queue", async () => {

@@ -110,9 +110,9 @@ sweeps are idempotent and every tick re-enqueues them. Dropping the
 `DISCOVERY_QUEUE` producer/consumer pair is supported — the cron then sweeps
 inline inside its own invocation, which is fine for a handful of organizations
 but is what the queue exists to replace at scale.
-With the queue configured, large per-organization staged listings are also
-continued in bounded 50-candidate invocations so scan-row preparation cannot
-exhaust one Worker's subrequest budget.
+With the queue configured, large per-organization staged listings are listed
+once and fanned into independent 50-candidate messages so scan-row preparation
+cannot exhaust one Worker's subrequest budget or form a recursive queue chain.
 
 Apply migrations after the D1 database ID is configured, always passing the
 self-host config explicitly:

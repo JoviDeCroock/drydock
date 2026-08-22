@@ -8,9 +8,14 @@ import {
   ensureUsableNpmConnection,
   isNpmConnectionAuthFailure,
   isTransientSweepFailure,
+  queueStagedPublishCandidates,
   recordExpiredNpmConnection,
   StagedPublishesFetchError,
 } from "../ecosystems/npm/staged-publishes-discovery";
+import { isValidStageId } from "../ecosystems/npm/stage-id";
+import type { StagedPublishItem } from "../ecosystems/npm/staged-publishes";
+import { isRecord } from "../platform/guards";
+import { utf8Size } from "../platform/stable-json";
 import {
   describeOperationalError,
   durationMsSince,
@@ -18,23 +23,37 @@ import {
 } from "../platform/observability";
 
 /**
- * One organization's staged-publish discovery sweep. Initial messages carry
- * only the organization id; bounded continuations add a stage cursor and scan
- * attribution. The consumer re-reads the npm connection from D1, so no token
- * ciphertext or nonce is ever written to a queue.
+ * One organization's staged-publish discovery sweep. The consumer re-reads
+ * the npm connection from D1, so no token ciphertext or nonce is ever written
+ * to a queue.
  */
 export interface DiscoverySweepQueueMessage {
   kind: "discovery_sweep";
   organizationId: string;
-  /** Cursor used only by bounded continuation messages. */
+  /** @deprecated Accepted only to drain cursor messages from an older deploy. */
   afterStageId?: string;
-  /** Preserve the initiator and analytics source across a continuation. */
+  /** @deprecated Accepted only to drain cursor messages from an older deploy. */
   source?: Extract<ScanSource, "manual" | "auto_discovery">;
+  /** @deprecated Accepted only to drain cursor messages from an older deploy. */
   actorUserId?: string;
 }
 
-type DiscoverySweepContinuationMessage = DiscoverySweepQueueMessage &
-  Required<Pick<DiscoverySweepQueueMessage, "afterStageId" | "source" | "actorUserId">>;
+export interface DiscoveryScanCandidate {
+  stageId: string;
+  packageName: string | null;
+  version: string | null;
+}
+
+/** One independent bounded slice produced by the initial registry listing. */
+export interface DiscoveryScanBatchQueueMessage {
+  kind: "discovery_scan_batch";
+  organizationId: string;
+  source: Extract<ScanSource, "manual" | "auto_discovery">;
+  actorUserId: string;
+  candidates: DiscoveryScanCandidate[];
+}
+
+export type DiscoveryQueueMessage = DiscoverySweepQueueMessage | DiscoveryScanBatchQueueMessage;
 
 /**
  * The queue discovery sweeps are delivered on. The Worker refuses to run a
@@ -49,50 +68,140 @@ type DiscoverySweepContinuationMessage = DiscoverySweepQueueMessage &
  */
 export const DISCOVERY_SWEEP_QUEUE_NAME = "staged-publish-review-discovery";
 
-export function isDiscoverySweepMessage(message: unknown): message is DiscoverySweepQueueMessage {
-  if (typeof message !== "object" || message === null) return false;
-  const candidate = message as Partial<Record<keyof DiscoverySweepQueueMessage, unknown>>;
-  if (
-    candidate.kind !== "discovery_sweep" ||
-    typeof candidate.organizationId !== "string" ||
-    candidate.organizationId.length === 0
-  ) {
-    return false;
-  }
-  const hasContinuationField =
-    candidate.afterStageId !== undefined ||
-    candidate.source !== undefined ||
-    candidate.actorUserId !== undefined;
-  if (!hasContinuationField) return true;
+const DISCOVERY_CANDIDATE_BATCH_SIZE = 50;
+const DISCOVERY_CANDIDATE_HINT_MAX_JSON_BYTES = 512;
+const DISCOVERY_QUEUE_IDENTIFIER_MAX_LENGTH = 256;
+// A candidate message stays below 128 KiB when every encoded hint reaches its
+// byte cap. Two such messages also stay below sendBatch's 256 KiB cap.
+const DISCOVERY_QUEUE_SEND_BATCH_SIZE = 2;
+
+export function isDiscoveryQueueMessage(message: unknown): message is DiscoveryQueueMessage {
+  if (!isRecord(message) || !isBoundedIdentifier(message.organizationId)) return false;
+  if (message.kind === "discovery_sweep") return isDiscoverySweepBody(message);
+  if (message.kind !== "discovery_scan_batch") return false;
   return (
-    typeof candidate.afterStageId === "string" &&
-    candidate.afterStageId.length > 0 &&
-    (candidate.source === "manual" || candidate.source === "auto_discovery") &&
-    typeof candidate.actorUserId === "string" &&
-    candidate.actorUserId.length > 0
+    hasOnlyKeys(message, ["kind", "organizationId", "source", "actorUserId", "candidates"]) &&
+    isDiscoverySource(message.source) &&
+    isBoundedIdentifier(message.actorUserId) &&
+    Array.isArray(message.candidates) &&
+    message.candidates.length > 0 &&
+    message.candidates.length <= DISCOVERY_CANDIDATE_BATCH_SIZE &&
+    message.candidates.every(isDiscoveryScanCandidate)
   );
 }
 
+function isDiscoverySweepBody(message: Record<string, unknown>): boolean {
+  const hasLegacyContinuation =
+    message.afterStageId !== undefined ||
+    message.source !== undefined ||
+    message.actorUserId !== undefined;
+  if (!hasLegacyContinuation) {
+    return hasOnlyKeys(message, ["kind", "organizationId"]);
+  }
+  return (
+    hasOnlyKeys(message, ["kind", "organizationId", "afterStageId", "source", "actorUserId"]) &&
+    isValidStageId(message.afterStageId) &&
+    isDiscoverySource(message.source) &&
+    isBoundedIdentifier(message.actorUserId)
+  );
+}
+
+function isDiscoveryScanCandidate(value: unknown): value is DiscoveryScanCandidate {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["stageId", "packageName", "version"]) &&
+    isValidStageId(value.stageId) &&
+    isBoundedHint(value.packageName) &&
+    isBoundedHint(value.version)
+  );
+}
+
+function isDiscoverySource(value: unknown): value is "manual" | "auto_discovery" {
+  return value === "manual" || value === "auto_discovery";
+}
+
+function isBoundedIdentifier(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= DISCOVERY_QUEUE_IDENTIFIER_MAX_LENGTH
+  );
+}
+
+function isBoundedHint(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === "string" &&
+      utf8Size(JSON.stringify(value)) <= DISCOVERY_CANDIDATE_HINT_MAX_JSON_BYTES)
+  );
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
 /**
- * Schedule the next bounded slice without making the current sweep depend on
- * the enqueue response. A failed continuation costs one cron cycle; the scans
- * already handed to SCAN_QUEUE remain valid work.
+ * Fan every remaining candidate into sibling queue messages. No candidate
+ * message sends another candidate message, so queue delivery depth stays one.
  */
-export function scheduleDiscoverySweepContinuation(
+export function scheduleDiscoveryScanBatches(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
-  message: DiscoverySweepContinuationMessage,
+  input: {
+    organizationId: string;
+    source: Extract<ScanSource, "manual" | "auto_discovery">;
+    actorUserId: string;
+    candidates: readonly StagedPublishItem[];
+  },
 ): void {
   if (!env.DISCOVERY_QUEUE) return;
+  const messages: DiscoveryScanBatchQueueMessage[] = [];
+  for (let offset = 0; offset < input.candidates.length; offset += DISCOVERY_CANDIDATE_BATCH_SIZE) {
+    messages.push({
+      kind: "discovery_scan_batch",
+      organizationId: input.organizationId,
+      source: input.source,
+      actorUserId: input.actorUserId,
+      candidates: input.candidates
+        .slice(offset, offset + DISCOVERY_CANDIDATE_BATCH_SIZE)
+        .map(toDiscoveryScanCandidate),
+    });
+  }
+  if (!messages.length) return;
   executionCtx.waitUntil(
-    env.DISCOVERY_QUEUE.send(message).catch((err) => {
-      emitOperationalEvent("error", "staged_publishes.sweep.continuation_enqueue_failed", {
-        organizationId: message.organizationId,
-        source: message.source ?? "auto_discovery",
+    sendDiscoveryScanBatches(env.DISCOVERY_QUEUE, messages).catch((err) => {
+      emitOperationalEvent("error", "staged_publishes.sweep.candidate_batches_enqueue_failed", {
+        organizationId: input.organizationId,
+        source: input.source,
+        messages: messages.length,
+        candidates: input.candidates.length,
         error: describeOperationalError(err),
       });
     }),
   );
+}
+
+async function sendDiscoveryScanBatches(
+  queue: Queue<DiscoveryQueueMessage>,
+  messages: readonly DiscoveryScanBatchQueueMessage[],
+): Promise<void> {
+  for (let offset = 0; offset < messages.length; offset += DISCOVERY_QUEUE_SEND_BATCH_SIZE) {
+    const batch = messages.slice(offset, offset + DISCOVERY_QUEUE_SEND_BATCH_SIZE);
+    await queue.sendBatch(batch.map((body) => ({ body })));
+  }
+}
+
+function toDiscoveryScanCandidate(item: StagedPublishItem): DiscoveryScanCandidate {
+  return {
+    stageId: item.id,
+    packageName: boundedHint(item.packageName),
+    version: boundedHint(item.version),
+  };
+}
+
+function boundedHint(value: string | null): string | null {
+  return isBoundedHint(value) ? value : null;
 }
 
 // Cloudflare Queues accepts at most 100 messages per sendBatch call, so the
@@ -247,7 +356,7 @@ async function runInlineDiscoverySweeps(
 export async function runDiscoverySweep(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
-  message: DiscoverySweepQueueMessage,
+  message: DiscoveryQueueMessage,
   existingDb?: AppDb,
 ): Promise<void> {
   const db = existingDb ?? createDb(env.DB);
@@ -291,30 +400,39 @@ export async function runDiscoverySweep(
         actorUserId,
         allowInsecureLocalhost,
       });
-      const result = await discoverAndQueueStagedPublishes(
-        {
-          db,
-          env,
-          executionCtx,
-          organizationId,
-          actorUserId,
-          source: message.source ?? "auto_discovery",
-          eventSource: "staged_publishes.cron",
-          allowInsecureLocalhost,
-          afterStageId: message.afterStageId,
-          scheduleContinuation: env.DISCOVERY_QUEUE
-            ? (afterStageId) =>
-                scheduleDiscoverySweepContinuation(env, executionCtx, {
-                  kind: "discovery_sweep",
-                  organizationId,
-                  afterStageId,
-                  source: message.source ?? "auto_discovery",
-                  actorUserId,
-                })
-            : undefined,
-        },
-        usable,
-      );
+      const source = message.source ?? "auto_discovery";
+      const discoveryInput = {
+        db,
+        env,
+        executionCtx,
+        organizationId,
+        actorUserId,
+        source,
+        eventSource: "staged_publishes.cron",
+        allowInsecureLocalhost,
+      } as const;
+      const result =
+        message.kind === "discovery_scan_batch"
+          ? await queueStagedPublishCandidates(
+              discoveryInput,
+              usable,
+              message.candidates.map(fromDiscoveryScanCandidate),
+            )
+          : await discoverAndQueueStagedPublishes(
+              {
+                ...discoveryInput,
+                scheduleCandidateBatches: env.DISCOVERY_QUEUE
+                  ? (candidates: readonly StagedPublishItem[]) =>
+                      scheduleDiscoveryScanBatches(env, executionCtx, {
+                        organizationId,
+                        source,
+                        actorUserId,
+                        candidates,
+                      })
+                  : undefined,
+              },
+              usable,
+            );
       emitOperationalEvent("info", "staged_publishes.cron.org_completed", {
         organizationId,
         ...result,
@@ -365,4 +483,18 @@ export async function runDiscoverySweep(
       error: describeOperationalError(err),
     });
   }
+}
+
+function fromDiscoveryScanCandidate(candidate: DiscoveryScanCandidate): StagedPublishItem {
+  return {
+    id: candidate.stageId,
+    packageName: candidate.packageName,
+    version: candidate.version,
+    tag: null,
+    access: null,
+    actor: null,
+    actorType: null,
+    createdAt: null,
+    shasum: null,
+  };
 }

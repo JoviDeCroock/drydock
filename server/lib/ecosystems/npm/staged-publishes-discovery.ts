@@ -30,10 +30,8 @@ export interface DiscoverStagedPublishesInput {
   source: ScanSource;
   eventSource: string;
   allowInsecureLocalhost?: boolean;
-  /** Resume after a stage examined by a previous discovery-queue invocation. */
-  afterStageId?: string;
-  /** Schedule the next bounded invocation when more new stages remain. */
-  scheduleContinuation?: (afterStageId: string) => void;
+  /** Fan remaining candidates into independent bounded queue messages. */
+  scheduleCandidateBatches?: (candidates: readonly StagedPublishItem[]) => void;
 }
 
 export interface DiscoverStagedPublishesResult {
@@ -235,6 +233,23 @@ export async function discoverAndQueueStagedPublishes(
   input: DiscoverStagedPublishesInput,
   connection: TokenForDiscovery,
 ): Promise<DiscoverStagedPublishesResult> {
+  const stagedItems = await listAllStagedPublishes(connection, {
+    perPage: 50,
+    allowInsecureLocalhost: input.allowInsecureLocalhost,
+  });
+  return queueStagedPublishCandidates(input, connection, stagedItems);
+}
+
+/**
+ * Prepare scans for a bounded set of candidates already discovered by an
+ * initial sweep. Candidate-batch queue consumers call this directly: they do
+ * not re-list the registry and they cannot enqueue descendants.
+ */
+export async function queueStagedPublishCandidates(
+  input: DiscoverStagedPublishesInput,
+  connection: TokenForDiscovery,
+  stagedItems: readonly StagedPublishItem[],
+): Promise<DiscoverStagedPublishesResult> {
   const {
     db,
     env,
@@ -243,19 +258,13 @@ export async function discoverAndQueueStagedPublishes(
     actorUserId,
     source,
     allowInsecureLocalhost,
-    afterStageId,
-    scheduleContinuation,
+    scheduleCandidateBatches,
   } = input;
 
-  const stagedItems = await listAllStagedPublishes(connection, {
-    perPage: 50,
-    allowInsecureLocalhost,
-  });
   await markNpmConnectionUsed(db, organizationId);
-  const remainingItems = stagedItemsAfterCursor(stagedItems, afterStageId);
-  const stageIds = remainingItems.map((item) => item.id);
+  const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
-  const scanCandidates = filterNewStagedPublishesByStageId(remainingItems, existingStageIds);
+  const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
   // Each org sweep runs in its own invocation (one discovery-queue message), so
   // there is no cross-org start coordination here — and none is needed.
   // `listExistingScanStageIds` above suppresses duplicates within the org, and
@@ -267,7 +276,7 @@ export async function discoverAndQueueStagedPublishes(
   // error, a registry probe failure), the rows already written would otherwise
   // stay `pending` forever with no queue message behind them — invisible work
   // that also suppresses itself from the next sweep's dedup.
-  const invocationCandidates = scheduleContinuation
+  const invocationCandidates = scheduleCandidateBatches
     ? scanCandidates.slice(0, STAGED_PUBLISH_SCAN_PREPARE_BATCH_SIZE)
     : scanCandidates;
   // A dedicated discovery queue resets the subrequest budget between slices.
@@ -339,8 +348,7 @@ export async function discoverAndQueueStagedPublishes(
 
   const deferred = scanCandidates.length - invocationCandidates.length;
   if (deferred > 0) {
-    const lastExamined = invocationCandidates[invocationCandidates.length - 1];
-    if (lastExamined) scheduleContinuation?.(lastExamined.id);
+    scheduleCandidateBatches?.(scanCandidates.slice(invocationCandidates.length));
   }
 
   return {
@@ -351,15 +359,6 @@ export async function discoverAndQueueStagedPublishes(
     scans: startedScans,
     deferred,
   };
-}
-
-function stagedItemsAfterCursor(
-  stagedItems: readonly StagedPublishItem[],
-  afterStageId?: string,
-): readonly StagedPublishItem[] {
-  if (!afterStageId) return stagedItems;
-  const cursorIndex = stagedItems.findIndex((item) => item.id === afterStageId);
-  return cursorIndex < 0 ? stagedItems : stagedItems.slice(cursorIndex + 1);
 }
 
 async function listAllStagedPublishes(

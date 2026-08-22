@@ -8,8 +8,8 @@ import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import {
   enqueueDiscoverySweeps,
-  isDiscoverySweepMessage,
-  type DiscoverySweepQueueMessage,
+  isDiscoveryQueueMessage,
+  type DiscoveryQueueMessage,
 } from "../../server/lib/discovery/sweep-queue";
 import worker from "../../server";
 
@@ -84,26 +84,34 @@ function scheduledController(): ScheduledController {
 }
 
 function sweepBatch(organizationIds: string[], retry = vi.fn()) {
+  return discoveryBatch(
+    organizationIds.map(
+      (organizationId) =>
+        ({ kind: "discovery_sweep", organizationId }) satisfies DiscoveryQueueMessage,
+    ),
+    retry,
+  );
+}
+
+function discoveryBatch(messages: DiscoveryQueueMessage[], retry = vi.fn()) {
   return {
     queue: "staged-publish-review-discovery",
-    messages: organizationIds.map((organizationId, index) => ({
+    messages: messages.map((body, index) => ({
       id: `msg-${index}`,
       timestamp: new Date(),
       attempts: 1,
-      body: { kind: "discovery_sweep", organizationId } satisfies DiscoverySweepQueueMessage,
+      body,
       retry,
       ack() {},
     })),
     retryAll() {},
     ackAll() {},
-  } as unknown as MessageBatch<DiscoverySweepQueueMessage>;
+  } as unknown as MessageBatch<DiscoveryQueueMessage>;
 }
 
 function enqueuedOrganizationIds(sendBatch: ReturnType<typeof vi.fn>): string[] {
   return sendBatch.mock.calls.flatMap((call) =>
-    (call[0] as Array<{ body: DiscoverySweepQueueMessage }>).map(
-      (entry) => entry.body.organizationId,
-    ),
+    (call[0] as Array<{ body: DiscoveryQueueMessage }>).map((entry) => entry.body.organizationId),
   );
 }
 
@@ -167,7 +175,7 @@ describe("discovery sweep producer", () => {
     expect(new Set(enqueued)).toEqual(new Set([valid.organizationId, unvalidated.organizationId]));
     expect(enqueued).not.toContain(invalid.organizationId);
     for (const call of sendBatch.mock.calls) {
-      for (const entry of call[0] as Array<{ body: DiscoverySweepQueueMessage }>) {
+      for (const entry of call[0] as Array<{ body: DiscoveryQueueMessage }>) {
         expect(entry.body.kind).toBe("discovery_sweep");
         // No credential material may ride along on a queue message.
         expect(Object.keys(entry.body).sort()).toEqual(["kind", "organizationId"]);
@@ -353,6 +361,78 @@ describe("discovery sweep consumer", () => {
       found: 1,
       created: 1,
     });
+  });
+
+  test("fans large listings into sibling batches without re-listing or recursive sends", async () => {
+    const org = await seedOrg({ index: 0, validationStatus: "valid" });
+    const stagedItems = Array.from({ length: 160 }, (_, index) => ({
+      id: `stage-${String(index).padStart(3, "0")}`,
+      name: `demo-${index}`,
+      version: "1.0.0",
+    }));
+    const fetchMock = vi.fn(async (input: Request | string | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/-/stage?")) {
+        return Response.json({ items: stagedItems, total: 160, perPage: 50, page: 0 });
+      }
+      expect(url).toMatch(/\/-\/stage\/stage-\d{3}\/tarball$/);
+      return new Response("", { status: 206 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const scanQueue = { sendBatch: vi.fn(async () => undefined) };
+    const discoverySendBatch = vi.fn(async () => undefined);
+    const queueEnv = {
+      ...env,
+      SCAN_QUEUE: scanQueue,
+      DISCOVERY_QUEUE: { sendBatch: discoverySendBatch },
+    } as unknown as Cloudflare.Env;
+
+    const initialCtx = createExecutionContext();
+    await worker.queue(sweepBatch([org.organizationId]), queueEnv, initialCtx);
+    await waitOnExecutionContext(initialCtx);
+
+    expect(scanQueue.sendBatch).toHaveBeenCalledTimes(1);
+    expect(scanQueue.sendBatch.mock.calls[0]![0]).toHaveLength(50);
+    expect(discoverySendBatch).toHaveBeenCalledTimes(2);
+    const candidateMessages = discoverySendBatch.mock.calls.flatMap(
+      ([batch]) => batch as Array<{ body: DiscoveryQueueMessage }>,
+    );
+    expect(candidateMessages).toHaveLength(3);
+    expect(candidateMessages[0]!.body).toMatchObject({
+      kind: "discovery_scan_batch",
+      organizationId: org.organizationId,
+      source: "auto_discovery",
+      actorUserId: org.userId,
+    });
+    if (candidateMessages[0]!.body.kind !== "discovery_scan_batch") {
+      throw new Error("expected a discovery candidate batch");
+    }
+    expect(
+      candidateMessages.map((entry) =>
+        entry.body.kind === "discovery_scan_batch" ? entry.body.candidates.length : 0,
+      ),
+    ).toEqual([50, 50, 10]);
+
+    discoverySendBatch.mockClear();
+    for (const candidateMessage of candidateMessages) {
+      const candidateCtx = createExecutionContext();
+      await worker.queue(discoveryBatch([candidateMessage.body]), queueEnv, candidateCtx);
+      await waitOnExecutionContext(candidateCtx);
+    }
+
+    expect(scanQueue.sendBatch).toHaveBeenCalledTimes(4);
+    expect(scanQueue.sendBatch.mock.calls.map(([batch]) => batch.length)).toEqual([50, 50, 50, 10]);
+    expect(discoverySendBatch).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes("/-/stage?")),
+    ).toHaveLength(1);
+    const persisted = await createDb(env.DB)
+      .select({ id: schema.scans.id })
+      .from(schema.scans)
+      .where(eq(schema.scans.organizationId, org.organizationId));
+    expect(persisted).toHaveLength(160);
   });
 
   test("does not re-create a scan the org already has for that stage id", async () => {
@@ -568,24 +648,39 @@ describe("queue message routing guard", () => {
       ],
       retryAll() {},
       ackAll() {},
-    } as unknown as MessageBatch<DiscoverySweepQueueMessage>;
+    } as unknown as MessageBatch<DiscoveryQueueMessage>;
   }
 
-  test("accepts only complete cursor-bearing continuation messages", () => {
+  test("accepts only bounded candidate-batch messages", () => {
     expect(
-      isDiscoverySweepMessage({
-        kind: "discovery_sweep",
+      isDiscoveryQueueMessage({
+        kind: "discovery_scan_batch",
         organizationId: "org_x",
-        afterStageId: "stage_50",
         source: "manual",
         actorUserId: "user_x",
+        candidates: [{ stageId: "stage_50", packageName: "demo", version: "1.0.0" }],
       }),
     ).toBe(true);
     expect(
-      isDiscoverySweepMessage({
-        kind: "discovery_sweep",
+      isDiscoveryQueueMessage({
+        kind: "discovery_scan_batch",
         organizationId: "org_x",
-        afterStageId: "stage_50",
+        source: "manual",
+        actorUserId: "user_x",
+        candidates: Array.from({ length: 51 }, (_, index) => ({
+          stageId: `stage_${index}`,
+          packageName: "demo",
+          version: "1.0.0",
+        })),
+      }),
+    ).toBe(false);
+    expect(
+      isDiscoveryQueueMessage({
+        kind: "discovery_scan_batch",
+        organizationId: "org_x",
+        source: "manual",
+        actorUserId: "user_x",
+        candidates: [{ stageId: "stage_50", packageName: "x".repeat(513), version: "1.0.0" }],
       }),
     ).toBe(false);
   });

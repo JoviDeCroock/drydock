@@ -35,9 +35,9 @@ import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
 import {
   DISCOVERY_SWEEP_QUEUE_NAME,
   enqueueDiscoverySweeps,
-  isDiscoverySweepMessage,
+  isDiscoveryQueueMessage,
   runDiscoverySweep,
-  type DiscoverySweepQueueMessage,
+  type DiscoveryQueueMessage,
 } from "./lib/discovery/sweep-queue";
 import { auditRoutes } from "./routes/audit";
 import { githubAppRoutes } from "./routes/github-app";
@@ -420,14 +420,14 @@ export default {
     await pruneStaleRateLimitBuckets(env);
   },
   async queue(
-    batch: MessageBatch<QueueMessage | DiscoverySweepQueueMessage>,
+    batch: MessageBatch<QueueMessage | DiscoveryQueueMessage>,
     env: Cloudflare.Env,
     ctx: ExecutionContext,
   ) {
-    // Discovery sweeps have their own queue so a discovery burst cannot starve
-    // scan execution. The pairing is enforced in both directions: a sweep body
+    // Discovery work has its own queue so a discovery burst cannot starve scan
+    // execution. The pairing is enforced in both directions: a discovery body
     // is only honored on the discovery queue, and the discovery queue only
-    // carries sweep bodies. Anything else — including a body with an
+    // carries discovery bodies. Anything else — including a body with an
     // unrecognized `kind` from a future or rolled-back deploy — is dropped by
     // the guard below instead of falling through to the scan handler, which
     // would run `executeScanJob` with undefined ids.
@@ -455,7 +455,7 @@ export default {
 
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
-      if (isDiscoverySweepMessage(message.body)) {
+      if (isDiscoveryQueueMessage(message.body)) {
         if (!isDiscoveryQueue) {
           dropUnroutableMessage(
             message.body,
