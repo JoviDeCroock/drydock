@@ -4,14 +4,16 @@ The normal end-to-end loop is local and deterministic. It uses fixture packages 
 
 ## What Runs
 
-- `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `staged/` package, optional `previous/` package, and `scenario.json` expected outcome.
-- `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous and staged package directories and writes generated registry state to `.context/e2e-registry/`.
-- `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses.
+- `test/e2e-fixtures/scenarios/*` stores package scenarios. Each scenario has a `staged/` package, optional `previous/` package, optional `dependencies/` package directories, and `scenario.json` expected outcome.
+- `test/e2e/build-fixtures.mjs` runs `npm pack --json` for the previous, staged, and dependency package directories and writes generated registry state to `.context/e2e-registry/`.
+- `test/e2e/fake-registry.mjs` serves only the staged-publish, packument, and tarball endpoints the app uses. It requires a bearer token for `/-/whoami` and the whole staging API, and serves package documents and tarballs anonymously — the same split a public registry makes, which is what lets the journal prove dependency-artifact fetches carry no credential.
 - `test/e2e/dev-server.mjs` starts the fake registry and the Vite/Cloudflare Worker dev server together, after applying D1 migrations to an isolated `.context/e2e/state` persistence path that is reset on each run.
 - `test/e2e/local-registry.spec.ts` creates one authenticated browser state, runs the implicit node-gyp fixture through the UI, then runs each remaining fixture as its own Playwright test through the local Worker API. Each scenario asserts its `scenario.json` expected outcome independently, so CI points at the exact fixture that regressed.
 - `test/e2e/smoke.spec.ts` is a cheap browser smoke suite with mocked API responses. It covers the workflow-gate scan-detail surface and decision dialog without touching the fake-registry journal, so Playwright can run it across desktop, mobile, and dark-mode projects without multiplying the full scan matrix.
 
-The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal so we can verify authorization headers only appear on expected npm-like endpoints.
+The fake registry writes `.context/e2e-registry/requests.jsonl`. The browser test checks this journal in both directions: every credentialed request must be for a package the organization owns (`@drydock/*`, `/-/whoami`, the staging API), and every anonymous request must be a plain package read outside that scope. The second half is the dependency-artifact invariant — a release adding a third-party dependency must fetch that package's document and tarball with no npm token at all (see [`dependency-review.md`](./dependency-review.md)).
+
+A scenario declares dependency packages it wants published to the fake registry (with no stage record) as `"dependencies": [{ "directory": "dependencies/<name>" }]`. The `added-dependency` scenario uses this to model a legitimate parent release that starts depending on a package whose `postinstall` step pipes a remote script into a shell.
 
 Any change to npm staged-publish endpoints, registry metadata handling,
 credential forwarding, or browser-visible scan workflow should add or update a

@@ -1,0 +1,61 @@
+{
+  "id": "added-dependency-native-build",
+  "title": "A native dependency that builds on install is medium, not critical",
+  "category": "dependency-introduction",
+  "intent": "Calibration case. Prebuilt-binary and native-addon packages legitimately run node-gyp on install, so automatic execution alone must not reach the blocking tier — otherwise every release adding a native dependency becomes unapprovable and the tier stops meaning anything. Nothing in the install path downloads, evaluates, or reads credentials.",
+  "previousPackageJson": { "name": "image-tool", "version": "3.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "image-tool",
+    "version": "3.1.0",
+    "main": "index.js",
+    "dependencies": { "native-resize": "^0.9.0" }
+  },
+  "dependencyArtifacts": {
+    "native-resize": {
+      "version": "0.9.3",
+      "packageJson": {
+        "name": "native-resize",
+        "version": "0.9.3",
+        "main": "index.js",
+        "scripts": { "install": "node-gyp rebuild" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 150,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"native-resize\",\"version\":\"0.9.3\",\"main\":\"index.js\",\"scripts\":{\"install\":\"node-gyp rebuild\"}}"
+        },
+        {
+          "path": "index.js",
+          "size": 60,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = require('./build/Release/resize.node');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "native-resize",
+      "section": "dependencies",
+      "declaredSpec": "^0.9.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "0.9.3",
+      "verdict": "install-execution",
+      "automaticExecution": [{ "kind": "script", "name": "install" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-execution",
+      "severity": "medium",
+      "file": "<dependency>native-resize@0.9.3:package.json"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

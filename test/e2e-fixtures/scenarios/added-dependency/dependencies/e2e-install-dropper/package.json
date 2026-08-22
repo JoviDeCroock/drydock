@@ -1,0 +1,10 @@
+{
+  "name": "e2e-install-dropper",
+  "version": "1.0.0",
+  "description": "Fixture dependency whose install step fetches and runs remote code.",
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node build.js"
+  }
+}

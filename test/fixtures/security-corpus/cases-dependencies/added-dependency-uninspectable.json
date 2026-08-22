@@ -1,0 +1,35 @@
+{
+  "id": "added-dependency-uninspectable",
+  "title": "A dependency Drydock could not fetch fails visibly into manual review",
+  "category": "dependency-introduction",
+  "intent": "Drydock never sends the organization's npm token to fetch a dependency, so a private or internal-scope dependency returns nothing to a credential-free request. That is a coverage gap, not a pass: the release must not read as fully reviewed, and the maintainer has to look at the dependency by hand.",
+  "previousPackageJson": { "name": "internal-app", "version": "1.4.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "internal-app",
+    "version": "1.5.0",
+    "main": "index.js",
+    "dependencies": { "@acme-private/telemetry": "^2.0.0" }
+  },
+  "dependencyArtifacts": {},
+  "uninspectableReasons": { "@acme-private/telemetry": "metadata-unavailable" },
+  "expectedDependencies": [
+    {
+      "name": "@acme-private/telemetry",
+      "section": "dependencies",
+      "declaredSpec": "^2.0.0",
+      "declarationKind": "range",
+      "status": "uninspectable",
+      "reason": "metadata-unavailable",
+      "resolvedVersion": null
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>@acme-private/telemetry"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

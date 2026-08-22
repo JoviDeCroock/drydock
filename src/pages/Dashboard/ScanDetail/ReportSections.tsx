@@ -2,6 +2,8 @@ import type { ComponentChildren } from "preact";
 import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
+import { normalizeDependencyReview } from "../../../../server/lib/review/dependency-evidence";
+import { DependencyReviewSection } from "../../../features/review/DependencyReviewSection";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -9,8 +11,13 @@ import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
+  const dependencyReview = normalizeDependencyReview(summary.dependencyReview);
   return (
     <section class="flex flex-col gap-6">
+      {/* Sits above the manifest diff on purpose: the manifest shows that a
+          dependency line was added, this shows what adding it ships. */}
+      {dependencyReview ? <DependencyReviewSection review={dependencyReview} /> : null}
+
       <ReportSection title="Manifest changes">
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView

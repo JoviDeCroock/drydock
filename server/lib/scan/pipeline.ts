@@ -87,6 +87,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterCtx,
       adapterInput,
       broker,
+      identity,
       async (resolved) => {
         const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
         if (input.scanId && registryUrl && registryIdentity) {

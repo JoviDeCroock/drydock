@@ -184,6 +184,91 @@ describe("scan report JSON export", () => {
     expect(await again.text()).toBe(text);
   });
 
+  test("carries the dependency review so it survives the dependency being unpublished", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "arrayref-like", version: "0.3.10" },
+      risk: "critical",
+      status: "complete",
+      summary: {
+        report: { version: 1, digest: "dep123", digestAlgorithm: "sha256" },
+        dependencyReview: {
+          status: "complete",
+          selectedCount: 1,
+          inspectedCount: 1,
+          uninspectableCount: 0,
+          dependencies: [
+            {
+              name: "proc-macro1",
+              section: "dependencies",
+              declaredSpec: "0.1.0",
+              declarationKind: "exact",
+              status: "inspected",
+              reason: null,
+              resolvedVersion: "0.1.0",
+              registryHost: "registry.npmjs.org",
+              artifactUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+              declaredDigest: { algorithm: "sha512", value: "Zm9vYmFy" },
+              reviewedDigest: { algorithm: "sha512", value: "Zm9vYmFy" },
+              digestVerified: true,
+              fileCount: 3,
+              automaticExecution: [{ kind: "script", name: "postinstall" }],
+              capabilities: ["code.remote-shell"],
+              installReachableCapabilities: ["code.remote-shell"],
+              verdict: "install-risk",
+            },
+          ],
+        },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "dep123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      dependencyReview: {
+        status: string;
+        dependencies: Array<Record<string, unknown>>;
+      } | null;
+    };
+    // The whole point of persisting this: the version can be unpublished
+    // tomorrow and the record still says what was declared, what it resolved
+    // to, which bytes were read, and what they did.
+    expect(body.dependencyReview?.status).toBe("complete");
+    expect(body.dependencyReview?.dependencies[0]).toMatchObject({
+      name: "proc-macro1",
+      declaredSpec: "0.1.0",
+      resolvedVersion: "0.1.0",
+      digestVerified: true,
+      verdict: "install-risk",
+    });
+  });
+
+  test("a scan persisted before the dependency review exports null for it", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const res = await getReport(buildTestApp(owner), scanId);
+    const body = (await res.json()) as { dependencyReview: unknown };
+    expect(body.dependencyReview).toBeNull();
+  });
+
   test("surfaces reviewed-artifact provenance digests for a gate review", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);

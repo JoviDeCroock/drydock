@@ -220,7 +220,7 @@ export interface DownloadResult {
   archiveSha512?: string | null;
 }
 
-type ArchiveDigestAlgorithm = "SHA-1" | "SHA-256" | "SHA-512";
+export type ArchiveDigestAlgorithm = "SHA-1" | "SHA-256" | "SHA-512";
 
 const ARCHIVE_DIGEST_ALGORITHMS = new Set<ArchiveDigestAlgorithm>(["SHA-1", "SHA-256", "SHA-512"]);
 
@@ -322,6 +322,8 @@ export interface StreamDownloadOptions {
   maxTextSampleChars?: number;
   /** See `DownloadOptions.tarRootStrip`. */
   tarRootStrip?: TarRootStrip;
+  /** See `DownloadOptions.archiveDigestAlgorithms`. Defaults to SHA-1. */
+  archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
 }
 
 /**
@@ -373,6 +375,7 @@ export async function downloadInSandboxStream(
   return parseInCredentialsFreeSandbox(env, ctx, options.body, options.format, options.maxFiles, {
     maxTextSampleChars: options.maxTextSampleChars,
     tarRootStrip: options.tarRootStrip,
+    archiveDigestAlgorithms: options.archiveDigestAlgorithms,
   });
 }
 
@@ -382,7 +385,11 @@ async function parseInCredentialsFreeSandbox(
   body: ArrayBuffer | ReadableStream<Uint8Array>,
   format: "tgz" | "zip" | "vsix",
   maxFiles?: number,
-  parse: { maxTextSampleChars?: number; tarRootStrip?: TarRootStrip } = {},
+  parse: {
+    maxTextSampleChars?: number;
+    tarRootStrip?: TarRootStrip;
+    archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
+  } = {},
 ): Promise<DownloadResult> {
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
@@ -395,7 +402,9 @@ async function parseInCredentialsFreeSandbox(
       MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
-      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(),
+      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(
+        parse.archiveDigestAlgorithms,
+      ),
       MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(parse.maxTextSampleChars),
       TAR_ROOT_STRIP: normalizeTarRootStrip(parse.tarRootStrip),
     },

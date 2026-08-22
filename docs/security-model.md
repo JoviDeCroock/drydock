@@ -24,6 +24,7 @@ Drydock handles hostile package artifacts, private review evidence, and npm cred
 - **No approval automation.** Drydock must not run `npm stage approve`, collect npm 2FA codes, publish packages, or represent AI output as release approval.
 - **No package execution.** Do not execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - **No npm token in the sandbox.** The Dynamic Worker must never receive npm token material. Only `NpmStageGateway` may attach npm authorization, and only for allowlisted npm registry endpoints.
+- **No credential on a dependency fetch.** Dependency-artifact review reaches packages the organization does not own. Those requests are credential-free — packument and tarball alike — and a dependency that only a credential could reach is recorded as an uninspected coverage gap rather than retried with the token. See [`dependency-review.md`](./dependency-review.md).
 - **AI is advisory and on by default.** Workers AI runs behind the per-organization Flagship `ai-review` killswitch; set the flag to false to disable it for an organization or globally. Deterministic findings remain authoritative and cannot be downgraded by AI output.
 - **Fail closed.** Artifact acquisition, validation, parsing, report generation, workflow-gate callback, and credential checks must block/reject on uncertainty rather than silently approving.
 
@@ -49,6 +50,8 @@ Implementation requirements:
 
 Custom npm registries are supported for organization npm connections, but token use must still flow through constrained gateway code and production abuse controls.
 
+Dependency-artifact review is the one scan path that fetches a package the organization did not publish, so it is held to a stricter rule than "constrained": no credential at all. `NpmBroker` exposes `fetchAnonymousPackageMetadata` / `downloadAnonymousTarball` as methods separate from their credentialed counterparts rather than as a flag, because the two differ in exactly the property that matters. The organization's connection row is still read — a self-hosted mirror has to keep working — but only for its registry URL, and `decryptNpmToken` is never called on this path at all. Anonymous packuments cache in the shared `public` partition, never an organization-scoped one, since the response came from a request any anonymous client could make. `test/e2e/local-registry.spec.ts` asserts both directions against the fake registry's request journal: every credentialed request is for a package the organization owns, and every anonymous request is a plain package read outside that scope.
+
 ## Artifact handling and retention
 
 Do not retain raw tarballs by default. Persist redacted, reviewable evidence:
@@ -69,6 +72,7 @@ Session records carry an IP address and user agent, so they are not kept past th
 The sandbox parses untrusted bytes under archive/file/expanded-size caps and returns evidence only. Direct Internet egress is intercepted. Registry/artifact fetches go through constrained brokers:
 
 - `NpmStageGateway` for npm staged tarballs, metadata, and previous-version tarballs;
+- credential-free dependency-artifact downloads, origin-checked against the configured registry exactly like a baseline tarball and parsed in the same credentials-free sandbox;
 - PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
 - GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
 

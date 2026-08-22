@@ -40,6 +40,8 @@ export interface PublicReport {
     contextFindingCount: number;
   } | null;
   diff: PublicReportDiffEntry[] | null;
+  // Re-validated by the rendering surface because older reports omit it.
+  dependencyReview?: unknown;
   findings: PublicReportFinding[];
 }
 

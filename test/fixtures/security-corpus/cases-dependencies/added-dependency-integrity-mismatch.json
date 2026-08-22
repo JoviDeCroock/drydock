@@ -1,0 +1,64 @@
+{
+  "id": "added-dependency-integrity-mismatch",
+  "title": "A dependency artifact disagrees with the registry digest",
+  "category": "dependency-introduction",
+  "intent": "The dependency bytes fetched for review do not match the digest advertised by the registry. Even though the package contents are otherwise inert, the review cannot establish that it inspected the artifact consumers were promised, so the release must be blocked as a review-integrity failure.",
+  "previousPackageJson": { "name": "parent-lib", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "parent-lib",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "mutated-dependency": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "mutated-dependency": {
+      "version": "1.0.0",
+      "declaredDigest": { "algorithm": "sha512", "value": "aaaaaaaaaaaaaaaa" },
+      "reviewedDigest": { "algorithm": "sha512", "value": "bbbbbbbbbbbbbbbb" },
+      "digestVerified": false,
+      "packageJson": {
+        "name": "mutated-dependency",
+        "version": "1.0.0",
+        "main": "index.js"
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 75,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"mutated-dependency\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+        },
+        {
+          "path": "index.js",
+          "size": 29,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = function () {};\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "mutated-dependency",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "digestVerified": false,
+      "verdict": "clean",
+      "automaticExecution": []
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.integrity-mismatch",
+      "severity": "critical",
+      "file": "<dependency>mutated-dependency@1.0.0"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

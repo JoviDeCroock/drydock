@@ -14,6 +14,35 @@ export interface NpmBroker extends AdapterBroker {
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
   downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
+  /**
+   * Credential-free packument read for a package this organization did not
+   * publish — a dependency a release newly introduces.
+   *
+   * Deliberately a separate method from {@link NpmBroker.fetchPackageMetadata}
+   * rather than a flag on it: the two differ in exactly the property that
+   * matters (whether the org's token is attached), and a boolean parameter is
+   * the kind of thing a later refactor flips by accident. The org's connection
+   * is still resolved, but only for its registry URL — a self-hosted mirror
+   * must keep working — and the cache partition is the shared public scope
+   * because no credential shaped the response.
+   */
+  fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null>;
+  /**
+   * Credential-free tarball fetch + credentials-free sandbox parse for a
+   * dependency artifact. Same origin policy as the baseline download; no
+   * `authorization` header is ever sent.
+   */
+  downloadAnonymousTarball(
+    tarballUrl: string,
+    opts: NpmBrokerDownloadOptions,
+  ): Promise<DownloadResult>;
+  /**
+   * Registry origin this broker resolves against, for provenance labelling and
+   * for the credential-free reads' origin policy. Reads the connection row
+   * only — it never decrypts the token, so asking which registry to talk to
+   * cannot become a reason to hold a credential in scope.
+   */
+  registryUrl(): Promise<string>;
 }
 
 export interface NpmBrokerDownloadOptions {
@@ -92,6 +121,25 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
     );
   }
 
+  async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
+    const registry = await this.registryUrl();
+    return fetchAnonymousPackageMetadata(this.env, this.ctx, registry, name);
+  }
+
+  async downloadAnonymousTarball(
+    tarballUrl: string,
+    opts: NpmBrokerDownloadOptions,
+  ): Promise<DownloadResult> {
+    const registry = await this.registryUrl();
+    return runRpcSafe(() =>
+      downloadAnonymousTarball(this.env, this.ctx, registry, tarballUrl, opts),
+    );
+  }
+
+  async registryUrl(): Promise<string> {
+    return resolveNpmRegistryUrl(createDb(this.env.DB), this.ctx.props.organizationId);
+  }
+
   private async resolveCredentials(): Promise<ResolvedCredentials> {
     return resolveNpmCredentials(
       this.env,
@@ -100,6 +148,76 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
       this.ctx.props.registryUrl,
     );
   }
+}
+
+/**
+ * Shared credential-free reads used by both broker implementations.
+ *
+ * `registry` is passed in rather than read from a credential so it is obvious
+ * at the call site that the token was not: these helpers take no token
+ * parameter at all, which is the property the dependency-artifact path relies
+ * on (see `dependency-artifacts.ts`).
+ */
+async function fetchAnonymousPackageMetadata(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  registry: string,
+  name: string,
+): Promise<RegistryMetadata | null> {
+  return fetchPackageMetadataCached(env, ctx, {
+    packageName: name,
+    registryUrl: registry,
+    cacheScope: ANONYMOUS_METADATA_CACHE_SCOPE,
+    abbreviated: true,
+  }).catch(() => null);
+}
+
+async function downloadAnonymousTarball(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  registry: string,
+  tarballUrl: string,
+  opts: NpmBrokerDownloadOptions,
+): Promise<DownloadResult> {
+  return downloadPublishedTarball(env, ctx, tarballUrl, {
+    registryUrl: registry,
+    allowInsecureLocalhost: allowInsecureLocalRegistry(env),
+    maxFiles: opts.maxFiles,
+    maxTextSampleChars: opts.maxTextSampleChars,
+    // SHA-512 matches the SRI npm publishes as `dist.integrity`, so the digest
+    // Drydock recomputes is directly comparable to the one the registry
+    // advertised. SHA-1 rides along for versions old enough to carry only
+    // `dist.shasum`.
+    archiveDigestAlgorithms: ["SHA-512", "SHA-1"],
+  });
+}
+
+/**
+ * Cache partition for credential-free packuments. Shared across organizations
+ * on purpose — the response was produced by a request any anonymous client
+ * could make, so there is no private metadata to leak between tenants. It must
+ * never be used for a token-bearing read.
+ */
+const ANONYMOUS_METADATA_CACHE_SCOPE = "public";
+
+/**
+ * Which registry this organization publishes to — without decrypting anything.
+ *
+ * The credential-free dependency path needs a registry origin and nothing else,
+ * and routing it through `resolveNpmCredentials` would decrypt a token it must
+ * never send. Same connection preconditions as the credentialed path, so a
+ * scan cannot silently fall back to the public registry for an organization
+ * whose connection is missing or unvalidated.
+ */
+async function resolveNpmRegistryUrl(db: AppDb, organizationId: string): Promise<string> {
+  const connection = await getNpmConnection(db, organizationId);
+  if (!connection) {
+    throw new Error("Connect an organization npm token before scanning staged publishes.");
+  }
+  if (connection.validationStatus !== "valid") {
+    throw new Error("Validate the organization npm token before scanning staged publishes.");
+  }
+  return connection.registryUrl;
 }
 
 async function resolveNpmCredentials(
@@ -190,6 +308,29 @@ class LocalNpmBroker implements NpmBroker {
       maxFiles: opts.maxFiles,
       maxTextSampleChars: opts.maxTextSampleChars,
     });
+  }
+
+  async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
+    const registry = await this.registryUrl();
+    return fetchAnonymousPackageMetadata(this.ctx.env, this.ctx.executionCtx, registry, name);
+  }
+
+  async downloadAnonymousTarball(
+    tarballUrl: string,
+    opts: NpmBrokerDownloadOptions,
+  ): Promise<DownloadResult> {
+    const registry = await this.registryUrl();
+    return downloadAnonymousTarball(
+      this.ctx.env,
+      this.ctx.executionCtx,
+      registry,
+      tarballUrl,
+      opts,
+    );
+  }
+
+  async registryUrl(): Promise<string> {
+    return resolveNpmRegistryUrl(this.ctx.db, this.props.organizationId);
   }
 
   private async resolve(): Promise<ResolvedCredentials> {
