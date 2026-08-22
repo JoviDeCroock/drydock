@@ -49,7 +49,6 @@ export async function runBoundedSweep(
 export interface ExpiredScanRow {
   id: string;
   organizationId: string;
-  artifactStorageVersion: number | null;
   createdAt: Date;
 }
 
@@ -112,7 +111,6 @@ export async function listScansOlderThan(
     .select({
       id: scans.id,
       organizationId: scans.organizationId,
-      artifactStorageVersion: scans.artifactStorageVersion,
       createdAt: scans.createdAt,
     })
     .from(scans)
@@ -141,6 +139,112 @@ export async function listScansOlderThan(
   // organizationId is narrowed by the isNotNull predicate above; Drizzle types it
   // from the (nullable) column, so assert once here rather than at every use.
   return rows as ExpiredScanRow[];
+}
+
+export interface ClaimedExpiredScan {
+  artifactStorageVersion: number | null;
+}
+
+/**
+ * Atomically claim an expired scan before its teardown leaves D1 for R2.
+ *
+ * The candidate read is deliberately not trusted here: sharing or gate state
+ * may have changed since that read. A live claim also blocks `enablePublicShare`,
+ * making "claim wins" and "share wins" the only two outcomes. Stale claims are
+ * recoverable after `staleBefore`, so an interrupted scheduled invocation cannot
+ * pin a scan forever.
+ */
+export async function claimScanForRetention(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    claimToken: string;
+    claimedAt: Date;
+    staleBefore: Date;
+  },
+): Promise<ClaimedExpiredScan | null> {
+  const claimed = await db
+    .update(scans)
+    .set({
+      retentionClaimToken: input.claimToken,
+      retentionClaimedAt: input.claimedAt,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        isNull(scans.publicShareToken),
+        or(
+          isNull(scans.retentionClaimToken),
+          isNull(scans.retentionClaimedAt),
+          lt(scans.retentionClaimedAt, input.staleBefore),
+        ),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(githubWorkflowGates)
+            .where(
+              and(
+                eq(githubWorkflowGates.status, "pending"),
+                or(
+                  eq(githubWorkflowGates.id, scans.gateId),
+                  eq(githubWorkflowGates.scanId, scans.id),
+                ),
+              ),
+            ),
+        ),
+      ),
+    )
+    .returning({ artifactStorageVersion: scans.artifactStorageVersion });
+  return claimed[0] ?? null;
+}
+
+/** Release a failed/deferred teardown without disturbing a newer claimant. */
+export async function releaseScanRetentionClaim(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  claimToken: string,
+): Promise<boolean> {
+  const released = await db
+    .update(scans)
+    .set({ retentionClaimToken: null, retentionClaimedAt: null })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.retentionClaimToken, claimToken),
+      ),
+    )
+    .returning({ id: scans.id });
+  return released.length > 0;
+}
+
+/**
+ * Keep a post-R2 claim as a sharing tombstone, but make it immediately
+ * reclaimable by the next scheduled pass. This is distinct from release: once
+ * artifact evidence is gone, a transient D1 failure must not reopen sharing on
+ * the degraded row that remains.
+ */
+export async function expireScanRetentionClaim(
+  db: AppDb,
+  scanId: string,
+  organizationId: string,
+  claimToken: string,
+): Promise<boolean> {
+  const expired = await db
+    .update(scans)
+    .set({ retentionClaimedAt: new Date(0) })
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.retentionClaimToken, claimToken),
+      ),
+    )
+    .returning({ id: scans.id });
+  return expired.length > 0;
 }
 
 /** Cursor addressing `row`, for paging past a deferred candidate. */
@@ -185,6 +289,7 @@ export async function clearScanArtifactMetadata(
   db: AppDb,
   scanId: string,
   organizationId: string,
+  claimToken: string,
 ): Promise<boolean> {
   const updated = await db
     .update(scans)
@@ -198,7 +303,13 @@ export async function clearScanArtifactMetadata(
       diffArtifactKey: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+    .where(
+      and(
+        eq(scans.id, scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.retentionClaimToken, claimToken),
+      ),
+    )
     .returning({ id: scans.id });
   return updated.length > 0;
 }
@@ -231,10 +342,18 @@ export async function deleteScanWithChildren(
   scanId: string,
   organizationId: string,
   auditEventCutoff: Date,
+  claimToken: string,
 ): Promise<boolean> {
+  const claimExists = sql`exists (
+    select 1 from ${scans}
+    where ${scans.id} = ${scanId}
+      and ${scans.organizationId} = ${organizationId}
+      and ${scans.retentionClaimToken} = ${claimToken}
+  )`;
   const scopedToScan = and(
     eq(scanEvents.scanId, scanId),
     eq(scanEvents.organizationId, organizationId),
+    claimExists,
   );
   const [, , , , deleted] = await db.batch([
     db.delete(scanEvents).where(and(scopedToScan, lt(scanEvents.createdAt, auditEventCutoff))),
@@ -242,11 +361,17 @@ export async function deleteScanWithChildren(
       .update(scanEvents)
       .set({ scanId: null })
       .where(and(scopedToScan, gte(scanEvents.createdAt, auditEventCutoff))),
-    db.delete(scanFindings).where(eq(scanFindings.scanId, scanId)),
-    db.delete(scanFiles).where(eq(scanFiles.scanId, scanId)),
+    db.delete(scanFindings).where(and(eq(scanFindings.scanId, scanId), claimExists)),
+    db.delete(scanFiles).where(and(eq(scanFiles.scanId, scanId), claimExists)),
     db
       .delete(scans)
-      .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
+      .where(
+        and(
+          eq(scans.id, scanId),
+          eq(scans.organizationId, organizationId),
+          eq(scans.retentionClaimToken, claimToken),
+        ),
+      )
       .returning({ id: scans.id }),
   ]);
   return deleted.length > 0;

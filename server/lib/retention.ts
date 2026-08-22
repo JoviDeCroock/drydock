@@ -14,10 +14,13 @@ import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "../db/audit
 import { pruneExpiredAuthRows, type PrunedAuthRowCounts } from "../db/auth-retention";
 import { createDb, type AppDb } from "../db/client";
 import {
+  claimScanForRetention,
   clearScanArtifactMetadata,
   deleteScanWithChildren,
+  expireScanRetentionClaim,
   expiredScanCursor,
   listScansOlderThan,
+  releaseScanRetentionClaim,
   type BoundedSweepResult,
   type ExpiredScanCursor,
   type ExpiredScanRow,
@@ -53,6 +56,11 @@ const SCAN_RETENTION_MAX_PER_TICK = 50;
  * scan behind them would ever be reached.
  */
 const SCAN_RETENTION_MAX_PAGES = 4;
+
+// A scheduled pass normally finishes in seconds. An hour keeps overlapping
+// invocations from stealing a live claim while still recovering automatically
+// after an isolate is terminated between the D1 claim and its finally block.
+export const SCAN_RETENTION_CLAIM_LEASE_MS = 60 * 60 * 1000;
 
 export interface RetentionSweepResult {
   auditEvents: BoundedSweepResult | null;
@@ -233,7 +241,7 @@ async function sweepScans(env: Cloudflare.Env, now: Date): Promise<ScanRetention
       for (const candidate of candidates) {
         // Per candidate, so one bad scan cannot abort the rest of the backlog.
         try {
-          const objectsDeleted = await deleteOneExpiredScan(db, bucket, candidate, events);
+          const objectsDeleted = await deleteOneExpiredScan(db, bucket, candidate, events, now);
           if (objectsDeleted === null) {
             outcome.deferred += 1;
             deferredThisPage += 1;
@@ -282,20 +290,49 @@ async function deleteOneExpiredScan(
   bucket: R2Bucket,
   candidate: ExpiredScanRow,
   auditEvents: Date,
+  now: Date,
 ): Promise<number | null> {
-  // Order is load-bearing; see clearScanArtifactMetadata.
-  const swept = await deleteScanArtifacts(bucket, candidate.organizationId, candidate.id);
-  if (!swept.ok) return null;
-  if (candidate.artifactStorageVersion !== null) {
-    await clearScanArtifactMetadata(db, candidate.id, candidate.organizationId);
+  const claimToken = crypto.randomUUID();
+  const claimed = await claimScanForRetention(db, {
+    scanId: candidate.id,
+    organizationId: candidate.organizationId,
+    claimToken,
+    claimedAt: now,
+    staleBefore: new Date(now.getTime() - SCAN_RETENTION_CLAIM_LEASE_MS),
+  });
+  if (!claimed) return null;
+
+  let deleted = false;
+  let artifactEvidenceRemoved = false;
+  try {
+    // Order is load-bearing; see clearScanArtifactMetadata. The D1 lease above
+    // is equally load-bearing: sharing checks it before minting a capability.
+    const swept = await deleteScanArtifacts(bucket, candidate.organizationId, candidate.id);
+    if (!swept.ok) {
+      artifactEvidenceRemoved = claimed.artifactStorageVersion !== null && swept.objectsDeleted > 0;
+      return null;
+    }
+    artifactEvidenceRemoved = claimed.artifactStorageVersion !== null;
+    if (claimed.artifactStorageVersion !== null) {
+      await clearScanArtifactMetadata(db, candidate.id, candidate.organizationId, claimToken);
+    }
+    deleted = await deleteScanWithChildren(
+      db,
+      candidate.id,
+      candidate.organizationId,
+      auditEvents,
+      claimToken,
+    );
+    return deleted ? swept.objectsDeleted : null;
+  } finally {
+    if (!deleted) {
+      if (artifactEvidenceRemoved) {
+        await expireScanRetentionClaim(db, candidate.id, candidate.organizationId, claimToken);
+      } else {
+        await releaseScanRetentionClaim(db, candidate.id, candidate.organizationId, claimToken);
+      }
+    }
   }
-  const deleted = await deleteScanWithChildren(
-    db,
-    candidate.id,
-    candidate.organizationId,
-    auditEvents,
-  );
-  return deleted ? swept.objectsDeleted : null;
 }
 
 function auditEventCutoff(now: Date): Date {

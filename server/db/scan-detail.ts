@@ -23,13 +23,21 @@ import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
 
-// `finding_profile_json` is an internal release-memory lookup cache, up to 256
-// KiB. Ordinary detail/status/file/compare reads never consume it, so omit it in
-// SQL rather than reading and deserializing the blob only to strip it from the
-// response afterward. The release-memory query selects it explicitly.
-const { findingProfileJson: _findingProfileJsonColumn, ...scanReadColumns } =
-  getTableColumns(scans);
-type ScanReadRow = Omit<typeof scans.$inferSelect, "findingProfileJson">;
+// Internal scan-maintenance columns never belong in ordinary detail/file/compare
+// reads: `finding_profile_json` is a release-memory lookup cache up to 256 KiB,
+// while the retention lease is orchestration state. Omit them in SQL rather than
+// reading them only to strip them from the response afterward. Their owning
+// queries select them explicitly.
+const {
+  findingProfileJson: _findingProfileJsonColumn,
+  retentionClaimToken: _retentionClaimTokenColumn,
+  retentionClaimedAt: _retentionClaimedAtColumn,
+  ...scanReadColumns
+} = getTableColumns(scans);
+type ScanReadRow = Omit<
+  typeof scans.$inferSelect,
+  "findingProfileJson" | "retentionClaimToken" | "retentionClaimedAt"
+>;
 
 /**
  * How much of the file table a `getScan` caller needs:

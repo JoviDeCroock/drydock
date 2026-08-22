@@ -14,6 +14,7 @@ import {
   parseScanRetentionDays,
   resetRetentionMisconfigurationLatch,
   runRetentionSweep,
+  SCAN_RETENTION_CLAIM_LEASE_MS,
   SCAN_RETENTION_MIN_DAYS,
 } from "../../server/lib/retention";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
@@ -463,6 +464,24 @@ describe("scan retention", () => {
     expect(row?.artifactStorageVersion).toBeNull();
     expect(row?.reportArtifactKey).toBeNull();
     expect(row?.diffArtifactKey).toBeNull();
+    expect(row?.retentionClaimToken).toEqual(expect.any(String));
+    expect(row?.retentionClaimedAt?.getTime()).toBe(0);
+
+    // Evidence is already gone, so sharing stays fenced; the expired claim lets
+    // the next tick finish immediately instead of waiting out the normal lease.
+    await expect(
+      enablePublicShare(owner.db, {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      runRetentionSweep({
+        ...env,
+        SCAN_RETENTION_DAYS: "365",
+      } as unknown as Cloudflare.Env),
+    ).resolves.toMatchObject({ scans: { deleted: 1 } });
   });
 
   test("rolls back D1 detail and audit mutations when the parent delete fails", async () => {
@@ -673,6 +692,71 @@ describe("scan retention", () => {
     expect(await countRows("scans")).toBe(0);
   });
 
+  test("does not mint a public share after retention has claimed the scan", async () => {
+    const owner = await seedUser();
+    const scanId = await seedAgedScan(owner, 400);
+    let releaseList!: () => void;
+    const listReleased = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    let reportListStarted!: () => void;
+    const listStarted = new Promise<void>((resolve) => {
+      reportListStarted = resolve;
+    });
+    const blockingBucket = {
+      async list(options: R2ListOptions) {
+        reportListStarted();
+        await listReleased;
+        return env.ARTIFACTS.list(options);
+      },
+      delete(keys: string | string[]) {
+        return env.ARTIFACTS.delete(keys);
+      },
+    } as unknown as R2Bucket;
+
+    const sweep = runRetentionSweep({
+      ...env,
+      ARTIFACTS: blockingBucket,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+    await listStarted;
+
+    // The candidate read has completed and teardown is paused at the first R2
+    // operation. This is the exact window where sharing used to mint a token
+    // that the already-running sweep immediately deleted.
+    const share = await enablePublicShare(owner.db, {
+      scanId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+    });
+    expect(share).toBeNull();
+
+    releaseList();
+    await expect(sweep).resolves.toMatchObject({ scans: { deleted: 1 } });
+    expect(
+      await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId)),
+    ).toHaveLength(0);
+  });
+
+  test("recovers an expired retention claim after an interrupted tick", async () => {
+    const owner = await seedUser();
+    const scanId = await seedAgedScan(owner, 400);
+    await owner.db
+      .update(schema.scans)
+      .set({
+        retentionClaimToken: "abandoned-claim",
+        retentionClaimedAt: new Date(Date.now() - SCAN_RETENTION_CLAIM_LEASE_MS - 1),
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const result = await runRetentionSweep({
+      ...env,
+      SCAN_RETENTION_DAYS: "365",
+    } as unknown as Cloudflare.Env);
+
+    expect(result.scans).toMatchObject({ candidates: 1, deleted: 1, deferred: 0 });
+  });
+
   test("a misconfigured window is reported once, not on every tick", async () => {
     // beforeEach already installed a console spy for this file, and vitest hands
     // back the same one; clear it so only this test's calls are counted.
@@ -714,6 +798,18 @@ describe("scan retention", () => {
     const [row] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
     expect(row).toBeDefined();
     expect(await scanKeys(owner.organizationId, scanId)).toHaveLength(4);
+    expect(row?.retentionClaimToken).toBeNull();
+    expect(row?.retentionClaimedAt).toBeNull();
+
+    // A pre-R2 failure releases the lease, so disabling retention after an
+    // outage does not leave an otherwise-readable scan permanently unshareable.
+    await expect(
+      enablePublicShare(owner.db, {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+      }),
+    ).resolves.toMatchObject({ publicShareToken: expect.any(String) });
   });
 
   test("is skipped entirely without the ARTIFACTS binding", async () => {
