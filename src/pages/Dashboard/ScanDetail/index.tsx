@@ -268,7 +268,7 @@ export default function ScanDetailPage() {
       : undefined;
 
   const onShareClick =
-    detail?.scan.status === "complete"
+    detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
       ? () => {
           shareDialogOpen.value = true;
           void model.loadAttestationAvailability();
@@ -463,7 +463,9 @@ export default function ScanDetailPage() {
         />
       ) : null}
 
-      {detail && detail.scan.status === "complete" ? (
+      {detail &&
+      detail.scan.status === "complete" &&
+      detail.scan.registryStatusSupersededAt == null ? (
         <ShareDialogHost
           openSignal={shareDialogOpen}
           onClose={() => (shareDialogOpen.value = false)}

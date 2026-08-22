@@ -89,7 +89,9 @@ one status owner and one reminder, and a rejected version staged again under a
 new stage ID supersedes the previous incarnation. Supersession is stamped on
 the older rows and clears their displayable registry status, so historical
 reviews cannot keep presenting a live-looking verdict or command for an obsolete
-stage ID. Superseded reviews cannot accept or update decisions, and failure
+stage ID. Any public report capability, badge, or threat-feed listing attached
+to the obsolete stage is retired at the same time. Superseded reviews cannot
+accept or update decisions, and failure
 refinement rechecks ownership after its registry request so a concurrent restage
 cannot attribute the replacement stage's outcome to the older scan. The reminder
 marker remains as send-once history. Deleting a failed newer scan therefore

@@ -11,6 +11,7 @@ import { deleteScanArtifacts } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import { getScan } from "./scan-detail";
+import { registrySupersessionPatch } from "./scan-registry-status";
 import { scans } from "./schema";
 
 export interface CreateScanJobInput {
@@ -64,11 +65,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
       create,
       db
         .update(scans)
-        .set({
-          registryStatusSupersededAt: now,
-          registryVersionStatus: null,
-          registryVersionStatusAt: null,
-        })
+        .set(registrySupersessionPatch(now))
         .where(
           and(
             eq(scans.organizationId, input.organizationId),
