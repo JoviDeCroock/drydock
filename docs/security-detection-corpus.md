@@ -145,7 +145,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.33.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.34.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -425,6 +425,13 @@ than producing a clean inspected record, pinned by `added-dependency-invalid-art
 commands are scanned separately from the rest of `package.json`, so network-capable test tooling is no
 longer presented as a proven install-time request; `added-dependency-non-install-network-script` pins the
 unproven medium tier while the existing install-downloader fixtures keep proven paths blocking.
+
+`1.34.0` closes dependency-selection and install-reachability gaps. Required peers moved to a different
+runtime spec are reviewed as new bytes, while an optional peer becoming required at an already-installed
+runtime spec stays a declaration-only change. Install hooks delegated through `npm run` now carry file and
+inline capabilities into the install-reachable set, and npm comparator whitespace resolves through the
+same bounded range parser. The required-peer transition, spec-change, and delegated-downloader fixtures
+pin these boundaries.
 
 ### Fixture format
 

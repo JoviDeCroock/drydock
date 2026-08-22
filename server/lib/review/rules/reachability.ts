@@ -239,9 +239,7 @@ export function lifecycleScriptSeedPaths(
   implicitScripts: Record<string, string>,
 ): string[] {
   const tokens = new Set<string>();
-  for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
-    const command = scripts[script];
-    if (!command || implicitScripts[script] === command) continue;
+  for (const { command } of consumerInstallScriptCommands(scripts, implicitScripts)) {
     for (const token of scriptCommandTokens(command)) tokens.add(token);
   }
   if (!tokens.size) return [];
@@ -256,6 +254,50 @@ export function lifecycleScriptSeedPaths(
     }
   }
   return seeds;
+}
+
+export interface ConsumerInstallScriptCommand {
+  name: string;
+  command: string;
+}
+
+// npm lifecycle hooks frequently delegate to named scripts. Those commands
+// execute in the same install chain and must seed both file reachability and
+// inline capability detection. The queue and visited set also make cycles such
+// as `setup: npm run setup` finite.
+export function consumerInstallScriptCommands(
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): ConsumerInstallScriptCommand[] {
+  const queue = [...CONSUMER_INSTALL_LIFECYCLE_SCRIPTS].map((name) => ({ name, root: true }));
+  const seen = new Set<string>();
+  const commands: ConsumerInstallScriptCommand[] = [];
+  while (queue.length) {
+    const next = queue.shift();
+    if (!next || seen.has(next.name)) continue;
+    seen.add(next.name);
+    const command = scripts[next.name];
+    if (!command || (next.root && implicitScripts[next.name] === command)) continue;
+    commands.push({ name: next.name, command });
+    for (const name of npmRunScriptNames(command)) {
+      // `npm run setup` also invokes `presetup` and `postsetup` when declared.
+      // Queue all three explicitly; `seen` prevents cycles and repeated work.
+      queue.push(
+        { name: `pre${name}`, root: false },
+        { name, root: false },
+        { name: `post${name}`, root: false },
+      );
+    }
+  }
+  return commands;
+}
+
+function npmRunScriptNames(command: string): string[] {
+  return [
+    ...command.matchAll(/\bnpm\s+(?:run|run-script)\s+(?:"([^"\n]+)"|'([^'\n]+)'|([^\s;&|]+))/g),
+  ]
+    .map((match) => match[1] ?? match[2] ?? match[3])
+    .filter((name): name is string => Boolean(name));
 }
 
 export function scriptPathCandidates(path: string): Set<string> {

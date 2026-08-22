@@ -114,6 +114,11 @@ function parseComparatorSet(branch: string): ComparatorSet | null {
   }
   if (hyphen.length > 2) return null;
 
+  // node-semver accepts whitespace between a comparator operator and its
+  // partial version (`>= 1.2.3`, `^ 1.2.3`). Join only that grammar boundary
+  // before tokenization so comparator sets remain whitespace-delimited.
+  branch = branch.replace(/(\^|~>|~|>=|<=|>|<|=)\s+(?=v?(?:\d|x|X|\*))/g, "$1");
+
   const comparators: Comparator[] = [];
   for (const token of branch.split(/\s+/).filter(Boolean)) {
     const parsed = parseComparator(token);

