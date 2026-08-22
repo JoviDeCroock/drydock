@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { tokenizeJs } from "../server/lib/platform/js-lexer";
 
 // Prose in this repo navigates by path: AGENTS.md routes an agent to the right
 // module, docs/ names the file that owns a behavior, and .claude/skills/ steps
@@ -44,14 +45,19 @@ function trackedFiles() {
  * is a real path *or* a trailing path segment of exactly one tracked file.
  */
 function buildResolver(files) {
-  const suffixes = new Set();
+  const exactFiles = new Set(files);
+  const suffixCounts = new Map();
   for (const file of files) {
     const segments = file.split("/");
     for (let i = 0; i < segments.length; i++) {
-      suffixes.add(segments.slice(i).join("/"));
+      const suffix = segments.slice(i).join("/");
+      suffixCounts.set(suffix, (suffixCounts.get(suffix) ?? 0) + 1);
     }
   }
-  return (reference) => suffixes.has(reference) || existsSync(path.join(repoRoot, reference));
+  return (reference) =>
+    exactFiles.has(reference) ||
+    existsSync(path.join(repoRoot, reference)) ||
+    suffixCounts.get(reference) === 1;
 }
 
 function isCheckable(reference) {
@@ -63,9 +69,19 @@ function isCheckable(reference) {
   return !NON_REPO_PREFIXES.some((prefix) => reference.startsWith(prefix));
 }
 
-/** Line-level comment detection: enough to skip string literals in code. */
-function isCommentLine(line) {
-  return /^\s*(\/\/|\/\*|\*)/.test(line);
+function pathReferences(text, { commentsOnly }) {
+  const segments = commentsOnly
+    ? tokenizeJs(text, { sourceGoal: "module" })
+        .filter((token) => token.type === "comment")
+        .map((token) => ({ start: token.start, text: text.slice(token.start, token.end) }))
+    : [{ start: 0, text }];
+
+  return segments.flatMap((segment) =>
+    [...segment.text.matchAll(PATH_REFERENCE)].map((match) => ({
+      reference: match[1],
+      line: text.slice(0, segment.start + match.index).split("\n").length,
+    })),
+  );
 }
 
 async function staleReferences(files, resolve, { commentsOnly }) {
@@ -73,15 +89,11 @@ async function staleReferences(files, resolve, { commentsOnly }) {
   await Promise.all(
     files.map(async (file) => {
       const text = await readFile(path.join(repoRoot, file), "utf8");
-      text.split("\n").forEach((line, index) => {
-        if (commentsOnly && !isCommentLine(line)) return;
-        for (const match of line.matchAll(PATH_REFERENCE)) {
-          const reference = match[1];
-          if (!isCheckable(reference)) continue;
-          if (resolve(reference)) continue;
-          stale.push(`${file}:${index + 1}: \`${reference}\``);
-        }
-      });
+      for (const { reference, line } of pathReferences(text, { commentsOnly })) {
+        if (!isCheckable(reference)) continue;
+        if (resolve(reference)) continue;
+        stale.push(`${file}:${line}: \`${reference}\``);
+      }
     }),
   );
   return stale.sort();
@@ -120,5 +132,24 @@ describe("prose path references", () => {
 
     expect(references).toEqual(["docs/security-model.md", ".claude/skills/pre-pr/SKILL.md"]);
     expect(references.every(isCheckable)).toBe(true);
+  });
+
+  test("requires shorthand paths to identify exactly one tracked file", () => {
+    const resolve = buildResolver(["server/routes/scans.ts", "test/routes/scans.ts"]);
+    expect(resolve("server/routes/scans.ts")).toBe(true);
+    expect(resolve("routes/scans.ts")).toBe(false);
+  });
+
+  test("extracts inline and JSX comments without treating strings as comments", () => {
+    const source = [
+      'const prose = "Read `server/routes/missing.ts`.";',
+      "run(); // Read `server/routes/scans.ts`.",
+      "const view = <div>{/* Read `src/components/Card.tsx`. */}</div>;",
+    ].join("\n");
+
+    expect(pathReferences(source, { commentsOnly: true })).toEqual([
+      { reference: "server/routes/scans.ts", line: 2 },
+      { reference: "src/components/Card.tsx", line: 3 },
+    ]);
   });
 });

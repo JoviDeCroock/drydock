@@ -18,9 +18,10 @@
  *   <SectionLabel as="h2">…</SectionLabel><div class="mt-4">…</div>       // ok (spacing)
  *
  * Scope and limitations:
- *   - Only the *directional* border utilities (`border-t`/`border-b`, with an
- *     optional responsive/variant prefix) count. An all-sides `border` draws a
- *     box outline, which is a different element, not a stacked rule.
+ *   - Only non-zero border-width utilities (`border-t`/`border-b`/`border-y`,
+ *     with an optional responsive/variant prefix) count. Directional color-only
+ *     utilities do not create a line. An all-sides `border` draws a box outline,
+ *     which is a different element, not a stacked rule.
  *   - Only adjacent boundaries are reported: the label's own class, the class
  *     of the element that directly wraps it, and the immediately preceding /
  *     following JSX sibling. A rule two elements away is a spacing question,
@@ -32,12 +33,66 @@
 
 const SECTION_LABEL = "SectionLabel";
 
-// `border-t`, `border-b`, and their non-zero width/color/variant spellings:
-// `border-t-2`, `border-b-border`, `md:border-t`, `dark:border-b-ink`. Not
-// `border`, `border-x`, `border-border` (all-sides color), `border-2`, or the
-// zero-width removals `border-t-0` / `border-b-0`.
-const TOP_RULE = /(?:^|\s|:)border-t(?:-(?!0(?:\s|$))|\s|$)/;
-const BOTTOM_RULE = /(?:^|\s|:)border-b(?:-(?!0(?:\s|$))|\s|$)/;
+// Tailwind's directional border namespace contains both widths and colors:
+// `border-t-2` sets a width, while `border-t-border` only sets a color and does
+// not draw anything by itself. Recognize the built-in numeric/px widths and
+// arbitrary length values, plus `border-y` because it draws both horizontal
+// edges. Colons inside arbitrary variants/values are not variant separators.
+function utilityWithoutVariants(token) {
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let lastVariantSeparator = -1;
+  for (let index = 0; index < token.length; index++) {
+    const char = token[index];
+    if (char === "[") bracketDepth++;
+    else if (char === "]") bracketDepth--;
+    else if (char === "(") parenDepth++;
+    else if (char === ")") parenDepth--;
+    else if (char === ":" && bracketDepth === 0 && parenDepth === 0) {
+      lastVariantSeparator = index;
+    }
+  }
+  return token
+    .slice(lastVariantSeparator + 1)
+    .replace(/^!/, "")
+    .replace(/!$/, "");
+}
+
+function isZeroCssLength(value) {
+  return /^[-+]?(?:0+(?:\.0*)?|\.0+)(?:[A-Za-z%]+)?$/.test(value.trim());
+}
+
+function isArbitraryBorderWidth(value) {
+  const bracketed = value.startsWith("[") && value.endsWith("]");
+  const parenthesized = value.startsWith("(") && value.endsWith(")");
+  if (!bracketed && !parenthesized) return false;
+
+  const inner = value.slice(1, -1).trim();
+  if (inner.startsWith("color:")) return false;
+  if (inner.startsWith("length:")) return !isZeroCssLength(inner.slice("length:".length));
+  // Tailwind resolves untyped CSS variables as colors in the border namespace;
+  // the `(length:--name)` spelling is required to make one a width.
+  if (parenthesized || inner.startsWith("var(")) return false;
+  if (isZeroCssLength(inner)) return false;
+  return /^(?:[-+]?(?:\d+(?:\.\d*)?|\.\d+)[A-Za-z%]+|(?:calc|min|max|clamp)\()/.test(inner);
+}
+
+function borderWidthUtilitySides(token) {
+  const unprefixed = utilityWithoutVariants(token);
+  const match = unprefixed.match(/^border-(t|b|y)(?:-(.+))?$/);
+  if (!match) return [];
+
+  const value = match[2];
+  if (value !== undefined) {
+    if (value === "0") return [];
+    if (value !== "px" && !/^\d+(?:\.\d+)?$/.test(value) && !isArbitraryBorderWidth(value)) {
+      return [];
+    }
+    if (/^\d+(?:\.\d+)?$/.test(value) && Number(value) === 0) return [];
+  }
+
+  return match[1] === "y" ? ["top", "bottom"] : [match[1] === "t" ? "top" : "bottom"];
+}
 
 function classStringsFrom(node, out) {
   if (!node) return out;
@@ -85,8 +140,12 @@ function drawsDirectionalRule(node, side) {
   if (elementName(node) === "hr") return true;
   const attribute = classAttribute(node);
   if (!attribute) return false;
-  const pattern = side === "top" ? TOP_RULE : BOTTOM_RULE;
-  return classStringsFrom(attribute.value, []).some((value) => pattern.test(value));
+  return classStringsFrom(attribute.value, []).some((value) =>
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .some((token) => borderWidthUtilitySides(token).includes(side)),
+  );
 }
 
 /** JSX children with whitespace-only text dropped, so "adjacent" means visually adjacent. */

@@ -167,13 +167,13 @@ The rule ships as `error` with no existing violations, so every infraction fails
 
 A third local oxlint plugin, `tooling/oxlint/design-local/`, pins the one `docs/design.md`
 rule that keeps regressing by eye: `SectionLabel` draws its own trailing hairline, so a
-`border-t`, `border-b`, or `<hr>` on the same boundary stacks a second 1px line and
+`border-t`, `border-b`, `border-y`, or `<hr>` on the same boundary stacks a second 1px line and
 reads as a double border. The rule reports the label's own class, the class of the
 element that directly wraps it (a top border for a leading label or a bottom border
 for a trailing label), and an immediately adjacent JSX sibling that draws a rule on
 the touching edge. JSX comments do not interrupt visual adjacency. Only non-zero
-_directional_ border utilities count — an all-sides `border` is a box outline, and
-`border-t-0` / `border-b-0` remove rather than draw a rule — and class names are read
+border-width utilities count — directional color utilities do not create a line, an
+all-sides `border` is a box outline, and zero-width utilities remove rather than draw a rule — and class names are read
 from static strings, including the string arguments of a `cn(...)` call. A rule two
 elements away is a spacing question and is not reported. Fixture and test:
 `test/fixtures/oxlint-design/` and
@@ -196,16 +196,18 @@ regexes via the non-executing JS lexer before scanning (see
 - `test/sandbox-boundary-invariants.test.mjs` — the rendered sandbox worker reads
   only allowlisted config env keys and contains no credential lexemes, and the
   archive-parsing/deterministic-review layers contain no execution primitives.
-- `test/api-auth-boundary-invariants.test.mjs` — Hono runs middleware in registration
+- `test/api-auth-boundary-invariants.test.mjs` — Hono runs handlers and middleware in registration
   order, so an `app.route("/api/…")` placed above the `app.use("/api/*")` session guard
-  in `server/index.ts` ships anonymous with nothing in the route file to show it. This
-  pins the guard's existence and the exact set of mounts allowed above it.
+  in `server/index.ts` ships anonymous with nothing in the route file to show it; an
+  `app.use()` handler can do the same by returning without `next()`. This pins the
+  guard's existence and the exact API registrations allowed above it.
 - `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
   file that exists. Prose here navigates by path, and a rename silently breaks the
   reference, sending the next reader to a file that is gone. A path may be written
-  from any unambiguous root (`routes/scans.ts` and `server/routes/scans.ts` both
-  resolve). Paths that intentionally name something outside the repo — inside a
+  from any root that resolves to exactly one tracked file (`routes/scans.ts` and
+  `server/routes/scans.ts` both resolve today); source comments are identified by the
+  non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
   package under review, inside a dependency, or in a gitignored output directory —
   are listed in the test's explicit non-repository exceptions.
 

@@ -41,20 +41,21 @@ describe("design-local/no-stacked-section-rule", () => {
       .filter((d) => d.filename === "src/stacked.tsx")
       .map((d) => d.line)
       .sort((a, b) => a - b);
-    // The label's own class (8), the same via cn() (16), the wrapper's
-    // border-b (24), a trailing <hr> (34), a trailing border-t sibling (43),
-    // a leading border-b sibling (51), the same <hr> across a JSX comment (62),
-    // a leading wrapper's border-t (69), and a trailing wrapper's border-b (78).
+    // The label's own class (8), the same via cn() (16), border-y (24), an
+    // arbitrary width (32), the wrapper's border-b (40), a trailing <hr> (50),
+    // a trailing border-t sibling (59), a leading border-b sibling (67), the
+    // same <hr> across a JSX comment (78), a leading wrapper's border-t (85),
+    // and a trailing wrapper's border-b (94).
     assert.deepEqual(
       lines,
-      [8, 16, 24, 34, 43, 51, 62, 69, 78],
-      `expected the nine stacked rules to be flagged, got:\n${JSON.stringify(flagged, null, 2)}`,
+      [8, 16, 24, 32, 40, 50, 59, 67, 78, 85, 94],
+      `expected the eleven stacked rules to be flagged, got:\n${JSON.stringify(flagged, null, 2)}`,
     );
   });
 
   it("leaves boxes, spacing, distant rules, and mid-stack labels alone", () => {
     const other = flagged.filter((d) => d.filename !== "src/stacked.tsx");
     assert.deepEqual(other, [], `unexpected violations:\n${JSON.stringify(other, null, 2)}`);
-    assert.equal(flagged.length, 9);
+    assert.equal(flagged.length, 11);
   });
 });

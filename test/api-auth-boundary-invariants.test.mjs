@@ -19,7 +19,13 @@ const indexSource = readFileSync(
 // docs/security-model.md documents the one non-auth exception under `/api/*`:
 // public package diff is credential-free and IP rate-limited. Adding another
 // entry here is a security decision, not a test-maintenance formality.
-const API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD = ["/api/auth/*", "/api/public/v1/package-diff"];
+const API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
+  { method: "route", path: "/api/public/v1/package-diff" },
+  { method: "use", path: "/api/*" },
+  { method: "use", path: "/api/*" },
+  { method: "use", path: "/api/auth/*" },
+  { method: "all", path: "/api/auth/*" },
+];
 
 /** Line number (1-based) of the `app.use("/api/*")` that requires a session. */
 function sessionGuardLine(lines) {
@@ -34,20 +40,24 @@ function sessionGuardLine(lines) {
   return guard === -1 ? -1 : guard + 1;
 }
 
-function apiMounts(source) {
-  const mounts = [];
+function apiRegistrations(source) {
+  const registrationsFound = [];
   const registrations = [
-    /^[\t ]*app\.(?:all|delete|get|head|mount|options|patch|post|put|query|route)\s*\(\s*["'](\/api(?:\/[^"']*)?)["']/gm,
+    /^[\t ]*app\.(all|delete|get|head|mount|options|patch|post|put|query|route|use)\s*\(\s*["'](\/api(?:\/[^"']*)?)["']/gm,
     /^[\t ]*app\.on\s*\(\s*(?:\[[^\]]*\]|[^,]+),\s*["'](\/api(?:\/[^"']*)?)["']/gm,
   ];
 
-  for (const registration of registrations) {
+  for (const [registrationIndex, registration] of registrations.entries()) {
     for (const match of source.matchAll(registration)) {
       const before = source.slice(0, match.index);
-      mounts.push({ path: match[1], line: before.split("\n").length });
+      registrationsFound.push({
+        method: registrationIndex === 0 ? match[1] : "on",
+        path: registrationIndex === 0 ? match[2] : match[1],
+        line: before.split("\n").length,
+      });
     }
   }
-  return mounts.sort((a, b) => a.line - b.line);
+  return registrationsFound.sort((a, b) => a.line - b.line);
 }
 
 describe("/api/* auth boundary", () => {
@@ -62,26 +72,31 @@ describe("/api/* auth boundary", () => {
   });
 
   test("only auth and the documented public exception mount above the session guard", () => {
-    const mounts = apiMounts(indexSource);
-    expect(mounts.length).toBeGreaterThan(5);
+    const registrations = apiRegistrations(indexSource);
+    expect(registrations.length).toBeGreaterThan(5);
 
-    const anonymous = mounts.filter((mount) => mount.line < guardLine).map((mount) => mount.path);
+    const anonymous = registrations
+      .filter((registration) => registration.line < guardLine)
+      .map(({ method, path }) => ({ method, path }));
     expect(
-      anonymous.sort(),
-      "A route mounted above the session guard is served anonymously — Hono runs middleware in " +
-        "registration order, so the guard never runs for it. Move the mount below the guard, or, " +
-        "if it is an auth handler or genuinely credential-free rate-limited public endpoint, " +
-        "document it and add it to API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD here.",
-    ).toEqual([...API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD].sort());
+      anonymous,
+      "An API registration above the session guard can serve anonymously — Hono runs handlers " +
+        "and middleware in registration order, and app.use() may return without calling next(). " +
+        "Move it below the guard, or review it as auth/bootstrap middleware or a genuinely " +
+        "credential-free rate-limited public endpoint and pin it here.",
+    ).toEqual(API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD);
   });
 
-  test("every route allowed above the guard is actually mounted", () => {
-    const mounts = apiMounts(indexSource).map((mount) => mount.path);
-    for (const allowed of API_ROUTES_ALLOWED_ABOVE_SESSION_GUARD) {
+  test("every registration allowed above the guard is actually present", () => {
+    const registrations = apiRegistrations(indexSource).map(({ method, path }) => ({
+      method,
+      path,
+    }));
+    for (const allowed of API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD) {
       expect(
-        mounts,
-        `${allowed} is allowlisted as anonymous but no longer mounted — drop the stale entry.`,
-      ).toContain(allowed);
+        registrations,
+        `${allowed.method} ${allowed.path} is allowlisted above the guard but no longer registered — drop the stale entry.`,
+      ).toContainEqual(allowed);
     }
   });
 
@@ -92,16 +107,18 @@ describe("/api/* auth boundary", () => {
       'app.all("/api/auth/*", handler);',
       'app.mount("/api/mounted", handler);',
       'app.query("/api/queried", handler);',
+      'app.use("/api/middleware", handler);',
       'app.on(["PUT", "PATCH"], "/api/method-list", handler);',
     ].join("\n");
 
-    expect(apiMounts(source).map((mount) => mount.path)).toEqual([
-      "/api/direct",
-      "/api/direct",
-      "/api/auth/*",
-      "/api/mounted",
-      "/api/queried",
-      "/api/method-list",
+    expect(apiRegistrations(source).map(({ method, path }) => ({ method, path }))).toEqual([
+      { method: "get", path: "/api/direct" },
+      { method: "post", path: "/api/direct" },
+      { method: "all", path: "/api/auth/*" },
+      { method: "mount", path: "/api/mounted" },
+      { method: "query", path: "/api/queried" },
+      { method: "use", path: "/api/middleware" },
+      { method: "on", path: "/api/method-list" },
     ]);
   });
 });

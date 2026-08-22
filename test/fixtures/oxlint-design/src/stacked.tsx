@@ -19,6 +19,22 @@ export function OnLabelViaCn({ extra }: { extra?: string }) {
   );
 }
 
+export function OnLabelViaBorderY() {
+  return (
+    <SectionLabel as="h2" class="border-y border-border">
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function OnLabelViaArbitraryWidth() {
+  return (
+    <SectionLabel as="h2" class="hover:border-t-[3px] md:border-b-(length:--rule-width)">
+      Findings
+    </SectionLabel>
+  );
+}
+
 export function OnWrapper() {
   return (
     <div class="border-b border-border pb-2">

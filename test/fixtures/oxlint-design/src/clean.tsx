@@ -61,6 +61,28 @@ export function BorderXOnLabel() {
   );
 }
 
+export function DirectionalColorsOnly() {
+  // These utilities select a color but do not create border width.
+  return (
+    <SectionLabel
+      as="h2"
+      class="border-t-border border-b-accent border-t-[#fff] border-b-[color:var(--border)] border-t-[var(--border)]"
+    >
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function BoxWithDirectionalColor() {
+  // The all-sides border remains an intentional box; the directional utility
+  // only changes one edge's color.
+  return (
+    <SectionLabel as="h2" class="border border-b-accent">
+      Findings
+    </SectionLabel>
+  );
+}
+
 export function OppositeWrapperEdges() {
   return (
     <>
@@ -88,7 +110,10 @@ export function OppositeSiblingEdges() {
 
 export function ZeroWidthBorder() {
   return (
-    <SectionLabel as="h2" class="border-t-0 border-b-0">
+    <SectionLabel
+      as="h2"
+      class="border-t-0 border-b-0 border-y-0 border-t-[0px] border-b-[length:0rem]"
+    >
       Findings
     </SectionLabel>
   );
