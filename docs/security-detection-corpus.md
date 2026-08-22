@@ -143,7 +143,7 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 
 The corpus deliberately records some product gaps instead of hiding them:
 
-- Dependency findings stop at the manifest: an added or major-bumped dependency raises a deterministic finding, but the dependency's own tarball is not fetched or diffed, so a payload hidden inside it is only caught if the reviewer follows the finding to that dependency's own release diff. Within-major version bumps and unanchored specs (dist-tags such as `latest`, `*`, bare `>` ranges) raise nothing because they cannot prove a reviewed-range escape without registry resolution.
+- Dependency-artifact review covers newly introduced direct npm dependencies, but not their transitive closure or dependencies that only change version. Major bumps still raise the manifest-level deterministic finding without fetching the dependency artifact; within-major version bumps remain visible only in the manifest diff.
 - A newly added `bin` command raises `diff.bin-added` (medium), but `main`/`module`/`types`/`exports` retargets are intentionally not flagged: they change on almost every build (`index.js` → `dist/index.js`) and would be noise. They remain visible as the `entrypointsChanged` diff flag. A retarget that points at a path the artifact does not contain is a different question and does fire (`package-json.entrypoint-missing`).
 - Files a release stops shipping raise nothing on their own: file rules run over the staged artifact, so a dropped binary is visible only as a removed diff entry unless the manifest still declares it as an entrypoint. A `files` allowlist entry with no matching file is likewise not flagged — allowlist entries are globs whose absence can be legitimate (an optional platform build).
 - The propagation family only models the install path. A payload that republishes or rewrites its neighbours when the package is later imported or run — rather than while it is being installed — raises nothing from `propagation.*`, because separating that from ordinary release and patch tooling by pattern alone produced false positives on exactly the tools maintainers depend on. The capability rules still see its process, network, and credential use.
@@ -171,6 +171,7 @@ the rule family and its severity ladder.
 Fields, in addition to the shared `id` / `title` / `category` / `intent`:
 
 - `previousPackageJson` / `stagedPackageJson` — the parent's manifests; their diff drives selection.
+- `stagedFiles` — optional parent-artifact records used when selection must prove a declared bundled dependency is actually embedded under `node_modules/`.
 - `dependencyArtifacts` — a map of dependency name → `{ version, packageJson, files }`. This stands in
   for the registry and the sandbox, so the corpus exercises selection → assessment → findings with no
   network. Resolution itself is covered by `test/npm-dependency-artifacts.test.mjs` and
@@ -184,7 +185,7 @@ Fields, in addition to the shared `id` / `title` / `category` / `intent`:
   `getReleaseRecommendation`. "Reaches critical" and "cannot be recommended for approval" are two
   different claims, and this pins the second one.
 
-Three of the six fixtures are calibration cases and should stay that way:
+The corpus includes calibration cases that should stay that way:
 
 - `added-dependency-benign-library` — a new dependency with a network capability and no install hook must
   not make a release risky just for being new.
@@ -196,6 +197,8 @@ Three of the six fixtures are calibration cases and should stay that way:
   one most likely to be argued with, so it is written down rather than left implicit.
 - `added-dependency-integrity-mismatch` pins the fail-closed boundary: inert dependency contents still
   block when their recomputed digest disagrees with what the registry advertised.
+- `added-dependency-bundled` pins the opposite boundary: bytes genuinely embedded in the reviewed
+  parent artifact must not be replaced with a second registry snapshot.
 
 ## PyPI corpus
 
@@ -210,7 +213,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.31.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -572,6 +575,13 @@ case `npm-install-hook-worm-propagation`, and the two hard negatives that hold t
 gaps, and a critical `dependency-artifact.integrity-mismatch` when fetched bytes disagree with the
 registry's advertised digest. Fixtures under `cases-dependencies/` pin the severity ladder, including
 benign-library and native-build calibration cases and the integrity-mismatch fail-closed boundary.
+
+`1.32.0` hardens dependency-artifact coverage: clipped dependency files fail visibly instead of being
+assessed from a retained prefix, baseline acquisition gaps conservatively inspect staged install
+dependencies, anonymous range/tag resolution bypasses stale metadata caches, the wall-clock budget
+includes registry lookup, and dependencies already embedded through npm's bundled-dependency fields
+stay within the parent artifact review. The bundled calibration fixture and focused invariant tests pin
+those boundaries.
 
 ### Fixture format
 

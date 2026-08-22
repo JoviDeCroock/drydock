@@ -67,6 +67,9 @@ export function inspectAddedNpmDependenciesForAdapter(
 ): Promise<DependencyReview> {
   return inspectAddedNpmDependencies({
     manifestDiff: args.manifestDiff,
+    baselineManifestUnavailable: args.baselineManifestUnavailable,
+    stagedManifest: args.stagedManifest,
+    stagedFiles: args.stagedFiles,
     // A thunk, not a value: the overwhelming majority of releases add no
     // dependency, and resolving the registry costs a D1 read. Nothing should
     // happen at all for those scans.
@@ -79,6 +82,9 @@ export function inspectAddedNpmDependenciesForAdapter(
 
 export interface InspectDependenciesArgs {
   manifestDiff: PackageJsonDiff;
+  baselineManifestUnavailable?: boolean;
+  stagedManifest?: DependencyInspectionArgs["stagedManifest"];
+  stagedFiles?: DependencyInspectionArgs["stagedFiles"];
   /** Registry the organization's connection points at; used origin-only, never with its token. */
   resolveRegistryUrl: () => Promise<string>;
   broker: NpmBroker;
@@ -108,24 +114,31 @@ export async function inspectAddedNpmDependencies(
       organizationId: args.organizationId,
       error: describeOperationalError(err),
     });
-    return failedDependencyReview(args.manifestDiff);
+    return failedDependencyReview(args.manifestDiff, selectionOptions(args));
   }
 }
 
 async function inspectAddedNpmDependenciesInternal(
   args: InspectDependenciesArgs,
 ): Promise<DependencyReview> {
-  const selected = selectAddedDependencies(args.manifestDiff);
+  const selected = selectAddedDependencies(args.manifestDiff, selectionOptions(args));
   if (!selected.length) {
-    return failedDependencyReview(args.manifestDiff);
+    return failedDependencyReview(args.manifestDiff, selectionOptions(args));
   }
 
   const now = args.now ?? Date.now;
   const budgetMs = args.budgetMs ?? DEPENDENCY_REVIEW_BUDGET_MS;
   const startedAt = now();
-  const registryHost = hostOf(await args.resolveRegistryUrl());
   const dependencies: DependencyEvidence[] = [];
   const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
+  const registry = await settleWithin(args.resolveRegistryUrl(), budgetMs);
+  if (registry.timedOut) {
+    for (const dependency of recorded) {
+      dependencies.push(uninspectable(dependency, null, "budget-exhausted"));
+    }
+    return completeReview(args, selected, recorded, dependencies, null, startedAt, now);
+  }
+  const registryHost = hostOf(registry.value);
   let deadlineSpent = false;
 
   for (const [index, dependency] of recorded.entries()) {
@@ -144,6 +157,18 @@ async function inspectAddedNpmDependenciesInternal(
     }
   }
 
+  return completeReview(args, selected, recorded, dependencies, registryHost, startedAt, now);
+}
+
+function completeReview(
+  args: InspectDependenciesArgs,
+  selected: AddedDependency[],
+  recorded: AddedDependency[],
+  dependencies: DependencyEvidence[],
+  registryHost: string | null,
+  startedAt: number,
+  now: () => number,
+): DependencyReview {
   const inspectedCount = dependencies.filter((entry) => entry.status === "inspected").length;
   const uninspectableCount = selected.length - inspectedCount;
   const omittedCount = selected.length - recorded.length;
@@ -170,6 +195,14 @@ async function inspectAddedNpmDependenciesInternal(
     uninspectableCount,
     omittedCount,
     dependencies,
+  };
+}
+
+function selectionOptions(args: InspectDependenciesArgs) {
+  return {
+    includeWithoutBaseline: args.baselineManifestUnavailable,
+    stagedManifest: args.stagedManifest,
+    stagedFiles: args.stagedFiles,
   };
 }
 
@@ -255,6 +288,20 @@ async function inspectOne(
       ? { algorithm: "sha1", value: download.archiveSha1.toLowerCase() }
       : null;
   const declared = declaredDigest(dist);
+
+  if (download.files.some((file) => file.flags.includes("baseline-truncated"))) {
+    return uninspectable(
+      dependency,
+      registryHost,
+      "artifact-truncated",
+      resolved,
+      tarballUrl,
+      declared,
+      reviewedDigest,
+      download.archiveSha1,
+      download.files.length,
+    );
+  }
 
   const assessment = assessDependencyArtifact(download.files, download.packageJson ?? null, {
     codePatternSet: "javascript",
@@ -380,6 +427,9 @@ function uninspectable(
   resolvedVersion: string | null = null,
   artifactUrl: string | null = null,
   declared: DependencyDigest | null = null,
+  reviewed: DependencyDigest | null = null,
+  reviewedSha1: string | null | undefined = null,
+  fileCount: number | null = null,
 ): DependencyEvidence {
   return {
     name: boundedText(dependency.name, 256),
@@ -392,9 +442,9 @@ function uninspectable(
     registryHost,
     artifactUrl: artifactUrl ? boundedText(artifactUrl, 2_048) : null,
     declaredDigest: declared,
-    reviewedDigest: null,
-    digestVerified: null,
-    fileCount: null,
+    reviewedDigest: reviewed,
+    digestVerified: compareDigests(declared, reviewed, reviewedSha1),
+    fileCount,
     automaticExecution: [],
     capabilities: [],
     installReachableCapabilities: [],

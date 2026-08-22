@@ -285,6 +285,8 @@ function readPackageJsonSummary(
   const peerDependencies = normalizeStringRecord(value.peerDependencies);
   const peerDependenciesMeta = normalizePeerDependenciesMeta(value.peerDependenciesMeta);
   const optionalDependencies = normalizeStringRecord(value.optionalDependencies);
+  const bundleDependencies = readStringListOrBoolean(value.bundleDependencies);
+  const bundledDependencies = readStringListOrBoolean(value.bundledDependencies);
   const files = Array.isArray(value.files)
     ? value.files.filter((item): item is string => typeof item === "string")
     : [];
@@ -301,6 +303,8 @@ function readPackageJsonSummary(
     peerDependencies,
     ...(Object.keys(peerDependenciesMeta).length ? { peerDependenciesMeta } : {}),
     optionalDependencies,
+    ...(bundleDependencies !== undefined ? { bundleDependencies } : {}),
+    ...(bundledDependencies !== undefined ? { bundledDependencies } : {}),
     ...(files.length ? { files } : {}),
     ...(bin ? { bin } : {}),
     ...(readString(value.main) ? { main: readString(value.main)! } : {}),
@@ -316,6 +320,8 @@ function readPackageJsonSummary(
     Object.keys(peerDependencies).length ||
     Object.keys(peerDependenciesMeta).length ||
     Object.keys(optionalDependencies).length ||
+    bundleDependencies !== undefined ||
+    bundledDependencies !== undefined ||
     files.length ||
     bin ||
     summary.main ||
@@ -326,6 +332,12 @@ function readPackageJsonSummary(
     typeof summary.gypfile === "boolean",
   );
   return hasPackageData ? summary : null;
+}
+
+function readStringListOrBoolean(value: unknown): string[] | boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function readBin(value: unknown): string | Record<string, string> | undefined {
