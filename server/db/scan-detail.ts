@@ -19,10 +19,17 @@ import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scans } from "./schema";
 
-// The release-memory profile is internal maintenance data and can be large.
-// Ordinary detail/file/compare reads do not need it, so omit it in SQL.
-const { findingProfileJson: _findingProfileJsonColumn, ...scanReadColumns } =
-  getTableColumns(scans);
+// Internal scan-maintenance columns never belong in ordinary detail/file/compare
+// reads: `finding_profile_json` is a release-memory lookup cache up to 256 KiB,
+// while the retention lease is orchestration state. Omit them in SQL rather than
+// reading them only to strip them from the response afterward. Their owning
+// queries select them explicitly.
+const {
+  findingProfileJson: _findingProfileJsonColumn,
+  retentionClaimToken: _retentionClaimTokenColumn,
+  retentionClaimedAt: _retentionClaimedAtColumn,
+  ...scanReadColumns
+} = getTableColumns(scans);
 
 /**
  * How much of the scan body a `getScan` caller needs:

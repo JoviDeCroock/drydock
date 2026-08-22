@@ -19,8 +19,10 @@ a shields.io badge per package and an opt-in public threat feed.
   `SCAN_RETENTION_DAYS` sweep ([`artifact-storage.md`](./artifact-storage.md))
   excludes scans with a live share token, so a link an owner handed out — and
   the feed listing and badge that hang off it — never disappears because a
-  background job aged the scan out. Revoking the share returns the scan to the
-  retention window.
+  background job aged the scan out. Retention also takes a D1 lease before its
+  destructive R2 pass and share creation refuses that lease, closing the gap
+  between candidate selection and teardown. Revoking the share returns the scan
+  to the retention window.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
 - Restaging the same registry package/version retires the older stage identity

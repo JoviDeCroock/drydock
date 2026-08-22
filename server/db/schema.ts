@@ -182,6 +182,13 @@ export const scans = sqliteTable(
     reportArtifactKey: text("report_artifact_key"),
     fileSamplesArtifactKey: text("file_samples_artifact_key"),
     diffArtifactKey: text("diff_artifact_key"),
+    // Lease held while the scheduled retention sweep tears this scan down.
+    // Public sharing refuses a live lease, so a share cannot be minted after
+    // eligibility was checked but before the destructive R2 sweep completes.
+    // The token makes release/teardown compare-and-swap safe; claimed_at lets a
+    // later tick recover a lease left behind by an interrupted invocation.
+    retentionClaimToken: text("retention_claim_token"),
+    retentionClaimedAt: integer("retention_claimed_at", { mode: "timestamp_ms" }),
     // Public share link. A non-null token makes the completed scan's canonical
     // report export readable (unauthenticated) at /public/reports/:token.
     // Revoking or superseding the registry stage sets the token back to null;
