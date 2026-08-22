@@ -6,7 +6,7 @@
  * organization-scoped on every statement; a scan is only ever claimed by the
  * organization that created it.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { deleteScanArtifacts } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
@@ -29,6 +29,8 @@ export interface CreateScanJobInput {
    */
   packageName?: string | null;
   stagedVersion?: string | null;
+  /** Registry base URL whose namespace the package coordinates belong to. */
+  registryUrl?: string | null;
 }
 
 const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate"] as const;
@@ -36,7 +38,8 @@ export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const now = new Date();
-  await db.insert(scans).values({
+  const source = input.source ?? "manual";
+  const values = {
     id: input.id,
     stageId: input.stageId,
     organizationId: input.organizationId,
@@ -44,12 +47,43 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     gateId: input.gateId ?? null,
     packageName: input.packageName ?? null,
     stagedVersion: input.stagedVersion ?? null,
+    registryUrl: input.registryUrl ?? null,
+    registryPackageName:
+      source !== "workflow_gate" && input.registryUrl ? (input.packageName ?? null) : null,
+    registryVersion:
+      source !== "workflow_gate" && input.registryUrl ? (input.stagedVersion ?? null) : null,
     risk: "unknown",
     status: "pending",
-    source: input.source ?? "manual",
+    source,
     createdAt: now,
     updatedAt: now,
-  });
+  };
+  const create = db.insert(scans).values(values);
+  if (source !== "workflow_gate" && input.registryUrl && input.packageName && input.stagedVersion) {
+    await db.batch([
+      create,
+      db
+        .update(scans)
+        .set({
+          registryStatusSupersededAt: now,
+          registryVersionStatus: null,
+          registryVersionStatusAt: null,
+        })
+        .where(
+          and(
+            eq(scans.organizationId, input.organizationId),
+            eq(scans.registryUrl, input.registryUrl),
+            eq(scans.registryPackageName, input.packageName),
+            eq(scans.registryVersion, input.stagedVersion),
+            inArray(scans.source, ["manual", "auto_discovery"]),
+            isNull(scans.registryStatusSupersededAt),
+            ne(scans.id, input.id),
+          ),
+        ),
+    ]);
+  } else {
+    await create;
+  }
   return getScan(db, input.id, input.organizationId);
 }
 

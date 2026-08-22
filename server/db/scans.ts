@@ -11,6 +11,7 @@
  * - `scan-list`      the organization-scoped, keyset-paginated list
  * - `scan-detail`    reading one scan back, D1 rows merged with R2 artifacts
  * - `scan-decisions` publish / no-publish verdicts and their audit events
+ * - `scan-registry-status` npm lifecycle identity, refresh and supersession
  * - `scan-risk`      persisted risk-summary readers shared by the above
  */
 
@@ -29,6 +30,16 @@ export {
 } from "./scan-jobs";
 
 export { persistScan } from "./scan-persist";
+
+export {
+  backfillScanRegistryReleaseIdentity,
+  getScanReleaseIdentity,
+  listScansAwaitingRegistryStatus,
+  markRegistryPublishReminderSent,
+  recordRegistryVersionStatus,
+  supersedeRegistryReleaseIncarnations,
+  type RegistryStatusCandidate,
+} from "./scan-registry-status";
 
 export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT, listScans } from "./scan-list";
 
