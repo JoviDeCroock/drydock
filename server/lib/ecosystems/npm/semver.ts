@@ -55,8 +55,11 @@ export function compareParsedSemver(a: ParsedSemver, b: ParsedSemver): number {
     } else if (rightNumber !== null) {
       return 1;
     } else {
-      const diff = left.localeCompare(right);
-      if (diff) return diff;
+      // SemVer compares non-numeric identifiers in ASCII sort order. Locale
+      // collation can reverse case ordering (for example `A` vs `a`) and pick
+      // a different published version than npm.
+      if (left < right) return -1;
+      if (left > right) return 1;
     }
   }
   return 0;
@@ -127,14 +130,23 @@ function parseComparator(token: string): Comparator[] | null {
   const operator = rawOperator || "=";
 
   const major = numericPart(rawMajor);
-  const minor = numericPart(rawMinor);
-  const patch = numericPart(rawPatch);
-  const parts = [major, minor, patch];
+  const parsedMinor = numericPart(rawMinor);
+  const parsedPatch = numericPart(rawPatch);
+  const parts = [major, parsedMinor, parsedPatch];
   const wildcardIndex = parts.findIndex((part) => part === null);
+  // npm ignores components after the first wildcard (`1.x.2` is `1.x`).
+  const minor = parsedMinor;
+  const patch = wildcardIndex === 1 ? null : parsedPatch;
   const pre = prerelease ? prerelease.split(".") : [];
 
-  // `*`/`x` in the major position admits everything.
-  if (wildcardIndex === 0) return [];
+  // Bare, equality, and inclusive major wildcards admit everything. Strict
+  // major-wildcard comparators (`>x`, `<*`) are valid npm ranges that admit
+  // nothing, represented by a comparator below the minimum SemVer.
+  if (wildcardIndex === 0) {
+    return operator === ">" || operator === "<"
+      ? [{ operator: "<", version: { major: 0, minor: 0, patch: 0, prerelease: ["0"] } }]
+      : [];
+  }
 
   if (operator === "^" || operator === "~" || operator === "~>") {
     const floor: ParsedSemver = {

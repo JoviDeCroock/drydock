@@ -213,7 +213,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.33.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -582,6 +582,13 @@ dependencies, anonymous range/tag resolution bypasses stale metadata caches, the
 includes registry lookup, and dependencies already embedded through npm's bundled-dependency fields
 stay within the parent artifact review. The bundled calibration fixture and focused invariant tests pin
 those boundaries.
+
+`1.33.0` closes two more dependency-artifact completeness gaps. Files retained hash-only after the
+sandbox's full-text body budget now make the dependency visibly uninspectable, pinned by
+`added-dependency-skipped-content`; an expired pass also aborts anonymous registry reads and prevents a
+late metadata response from starting a tarball parse. The bounded npm range resolver now follows npm's
+strict major-wildcard behavior and SemVer's ASCII prerelease ordering so the reviewed version matches
+the version a consumer install selects.
 
 ### Fixture format
 

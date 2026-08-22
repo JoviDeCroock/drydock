@@ -86,7 +86,11 @@ describe("sandbox text-sample retention invariants", () => {
     );
     const inspection = region(source, "async function inspectOne(", "/**\n * Which version");
     expect(inspection).toContain('file.flags.includes("baseline-truncated")');
+    expect(inspection).toContain('file.flags.includes("content-skipped")');
     expect(inspection.indexOf('file.flags.includes("baseline-truncated")')).toBeLessThan(
+      inspection.indexOf("assessDependencyArtifact("),
+    );
+    expect(inspection.indexOf('file.flags.includes("content-skipped")')).toBeLessThan(
       inspection.indexOf("assessDependencyArtifact("),
     );
     expect(inspection).toContain('"artifact-truncated"');
