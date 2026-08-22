@@ -77,6 +77,7 @@ export type DependencyUninspectableReason =
   | "artifact-unavailable"
   | "artifact-too-large"
   | "artifact-unparseable"
+  | "artifact-truncated"
   | "budget-exhausted"
   | "review-failed";
 
@@ -217,6 +218,8 @@ export interface AddedDependency {
  *     opts into rather than inherits;
  *   - keys that were already installed and merely moved between sections — a
  *     relocation ships no new code;
+ *   - dependencies declared as bundled whose bytes are present in the staged
+ *     artifact, because the parent review already covers those exact bytes;
  *   - every dependency of a first-ever release (no baseline manifest), where
  *     the whole list diffs as "added" and inspecting it would describe the
  *     package rather than the release.
@@ -225,8 +228,19 @@ export interface AddedDependency {
  * rule reads are reused here on purpose: a release must not be told "no new
  * dependency" by one surface and "new dependency" by the other.
  */
-export function selectAddedDependencies(manifestDiff: PackageJsonDiff): AddedDependency[] {
-  if (!manifestDiff.hasPreviousManifest) return [];
+export interface DependencySelectionOptions {
+  /** A missing manifest is an acquisition gap rather than a true first release. */
+  includeWithoutBaseline?: boolean;
+  /** Needed to distinguish registry dependencies from bytes bundled in the parent tarball. */
+  stagedManifest?: PackageJsonSummary | null;
+  stagedFiles?: FileRecord[];
+}
+
+export function selectAddedDependencies(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions = {},
+): AddedDependency[] {
+  if (!manifestDiff.hasPreviousManifest && !options.includeWithoutBaseline) return [];
 
   const relocated = new Set<string>();
   for (const entry of manifestDiff.dependencies) {
@@ -237,6 +251,7 @@ export function selectAddedDependencies(manifestDiff: PackageJsonDiff): AddedDep
   for (const entry of manifestDiff.dependencies) {
     if (entry.staged === undefined) continue;
     if (!introducesInstalledCode(entry, relocated)) continue;
+    if (isBundledInStagedArtifact(entry, options)) continue;
     const candidate: AddedDependency = {
       name: entry.key,
       section: entry.section ?? "dependencies",
@@ -251,6 +266,24 @@ export function selectAddedDependencies(manifestDiff: PackageJsonDiff): AddedDep
     }
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function isBundledInStagedArtifact(
+  entry: PackageJsonDiffEntry,
+  options: DependencySelectionOptions,
+): boolean {
+  if (!isInstallingSection(entry.section)) return false;
+  const manifest = options.stagedManifest;
+  const declarations = [manifest?.bundleDependencies, manifest?.bundledDependencies];
+  const declared = declarations.some(
+    (value) => value === true || (Array.isArray(value) && value.includes(entry.key)),
+  );
+  if (!declared) return false;
+
+  // Do not trust the manifest alone. A dependency is excluded only when its
+  // package bytes are actually embedded in this release artifact.
+  const prefix = `node_modules/${entry.key}/`;
+  return (options.stagedFiles ?? []).some((file) => file.path.startsWith(prefix));
 }
 
 function introducesInstalledCode(entry: PackageJsonDiffEntry, relocated: Set<string>): boolean {
@@ -634,6 +667,8 @@ const UNINSPECTABLE_EVIDENCE: Record<DependencyUninspectableReason, string> = {
   "artifact-unavailable": "the dependency artifact could not be downloaded",
   "artifact-too-large": "the dependency artifact exceeded the scanner's size or entry limits",
   "artifact-unparseable": "the dependency artifact could not be parsed as a package archive",
+  "artifact-truncated":
+    "the dependency artifact contained a file larger than the retained detection sample, so its bytes were not assessed as complete",
   "budget-exhausted":
     "this release adds more dependencies than one review fetches, so this one was recorded but not inspected",
   "review-failed":
@@ -644,8 +679,11 @@ const UNINSPECTABLE_EVIDENCE: Record<DependencyUninspectableReason, string> = {
  * Fail visibly when an adapter-level dependency pass throws unexpectedly.
  * Records are capped, but selected/uninspectable counts preserve the full gap.
  */
-export function failedDependencyReview(manifestDiff: PackageJsonDiff): DependencyReview {
-  const selected = selectAddedDependencies(manifestDiff);
+export function failedDependencyReview(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions = {},
+): DependencyReview {
+  const selected = selectAddedDependencies(manifestDiff, options);
   if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
   const recorded = selected
     .slice(0, MAX_RECORDED_DEPENDENCIES)

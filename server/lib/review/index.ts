@@ -78,6 +78,7 @@ export {
   failedDependencyReview,
   MAX_INSPECTED_DEPENDENCIES,
   MAX_RECORDED_DEPENDENCIES,
+  type DependencySelectionOptions,
   normalizeDependencyReview,
   selectAddedDependencies,
 } from "./dependency-evidence";

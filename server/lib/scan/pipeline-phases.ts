@@ -311,7 +311,7 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   // finding.
   applyDependencyReview(
     findings,
-    await reviewAddedDependencies(adapter, ctx, broker, diff, identity),
+    await reviewAddedDependencies(adapter, ctx, broker, diff, findings, facts.baseline, identity),
     facts.packageSummary,
     { adapter, diff, baselineComparisonSkipped: facts.baselineComparisonSkipped },
   );
@@ -376,12 +376,22 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
   ctx: AdapterContext,
   broker: TBroker,
   diff: ComputedDiff,
+  findings: DeterministicFindings,
+  baseline: BaselineInfo,
   identity: PipelineIdentity,
 ): Promise<DependencyReview> {
   if (!adapter.inspectAddedDependencies) return EMPTY_DEPENDENCY_REVIEW;
+  const selectionOptions = {
+    includeWithoutBaseline: baselineManifestUnavailable(diff, baseline),
+    stagedManifest: findings.redactedStagedManifest,
+    stagedFiles: findings.redactedStagedFiles,
+  };
   try {
     return await adapter.inspectAddedDependencies(ctx, broker, {
       manifestDiff: diff.manifestDiff,
+      baselineManifestUnavailable: selectionOptions.includeWithoutBaseline,
+      stagedManifest: selectionOptions.stagedManifest,
+      stagedFiles: selectionOptions.stagedFiles,
       scanId: identity.scanId,
       organizationId: identity.organizationId,
     });
@@ -392,8 +402,20 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
       adapterId: adapter.id,
       error: describeOperationalError(err),
     });
-    return failedDependencyReview(diff.manifestDiff);
+    return failedDependencyReview(diff.manifestDiff, selectionOptions);
   }
+}
+
+function baselineManifestUnavailable(diff: ComputedDiff, baseline: BaselineInfo): boolean {
+  if (diff.manifestDiff.hasPreviousManifest) return false;
+  // These reasons mean there genuinely is no earlier release to compare. Every
+  // other no-manifest outcome is an acquisition/parsing gap, so conservatively
+  // inspect every staged install dependency instead of reporting N/A.
+  return ![
+    "none",
+    "dist-tag-points-at-staged-version",
+    "package-json-missing-name-or-version",
+  ].includes(baseline.reason);
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context

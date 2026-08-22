@@ -183,6 +183,9 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
 
 export interface DependencyInspectionArgs {
   manifestDiff: PackageJsonDiff;
+  baselineManifestUnavailable: boolean;
+  stagedManifest: PackageJsonSummary | null;
+  stagedFiles: FileRecord[];
   scanId: string;
   organizationId: string;
 }

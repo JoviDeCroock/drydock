@@ -151,6 +151,8 @@ const UNINSPECTABLE_COPY: Record<string, string> = {
   "artifact-unavailable": "The dependency's artifact could not be downloaded, so it was not read.",
   "artifact-too-large": "The dependency's artifact is past the scanner's size limits.",
   "artifact-unparseable": "The dependency's artifact could not be parsed as a package archive.",
+  "artifact-truncated":
+    "At least one dependency file exceeded the retained detection sample, so Drydock did not treat the partial bytes as a complete review.",
   "budget-exhausted":
     "This release adds more dependencies than one review fetches, so this one was recorded but not read.",
   "review-failed":

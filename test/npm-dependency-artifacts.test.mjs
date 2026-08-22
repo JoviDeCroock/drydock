@@ -348,6 +348,23 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
+  test("the wall-clock budget includes resolving the registry connection", async () => {
+    const broker = brokerStub();
+    broker.registryUrl = async () => new Promise(() => {});
+    const startedAt = Date.now();
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { hanging: "1.0.0" } },
+      { budgetMs: 10 },
+    );
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(review).toMatchObject({
+      status: "partial",
+      dependencies: [{ name: "hanging", reason: "budget-exhausted" }],
+    });
+  });
+
   test("bounds persisted dependency records independently of selected count", async () => {
     const names = Array.from({ length: 80 }, (_, index) => `dependency-${index}`);
     const metadata = Object.fromEntries(
@@ -397,6 +414,20 @@ describe("inspectAddedNpmDependencies", () => {
       inspectedCount: 0,
       uninspectableCount: 1,
       dependencies: [{ name: "added", reason: "review-failed" }],
+    });
+  });
+
+  test("a baseline acquisition gap reviews every staged install dependency", async () => {
+    const broker = brokerStub();
+    const review = await inspect(
+      broker,
+      null,
+      { name: "p", version: "1.0.0", dependencies: { added: "1.0.0" } },
+      { baselineManifestUnavailable: true },
+    );
+    expect(review).toMatchObject({
+      selectedCount: 1,
+      dependencies: [{ name: "added", reason: "metadata-unavailable" }],
     });
   });
 
@@ -497,5 +528,33 @@ describe("inspectAddedNpmDependencies", () => {
       maxFiles: 600,
       maxTextSampleChars: 256 * 1024,
     });
+  });
+
+  test("a clipped dependency file is uninspectable instead of assessed from a prefix", async () => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const clipped = {
+      files: [
+        file("package.json", JSON.stringify({ name: "clipped", version: "1.0.0" })),
+        { ...file("install.js", "console.log('prefix')"), flags: ["baseline-truncated"] },
+      ],
+      packageJson: { name: "clipped", version: "1.0.0" },
+      archiveSha512: "ab".repeat(64),
+    };
+    const broker = brokerStub({
+      metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+      downloads: { [url]: clipped },
+    });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      fileCount: 2,
+      reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
+    });
+    expect(review.dependencies[0].automaticExecution).toEqual([]);
   });
 });

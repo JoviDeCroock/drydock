@@ -6,10 +6,27 @@ vi.mock("cloudflare:workers", () => ({
 
 const { evaluateStagedArtifactIntegrity, parseStagedArtifactIntegrity } =
   await import("../server/lib/ecosystems/artifact-integrity");
-const { buildNpmFindings } = await import("../server/lib/ecosystems/npm/findings");
+const { buildNpmFindings, mergeStagedPackageJson } =
+  await import("../server/lib/ecosystems/npm/findings");
 
 const DECLARED = "cf6abd23c6a49417b8e8cd8635a1bba94a6fe5d2";
 const OTHER = "48283451416861c231a367b872a700c1ef002013";
+
+describe("mergeStagedPackageJson", () => {
+  test("keeps the tarball's bundled-dependency declarations", () => {
+    expect(
+      mergeStagedPackageJson(
+        {
+          name: "pkg",
+          version: "1.0.0",
+          bundleDependencies: ["embedded"],
+          bundledDependencies: false,
+        },
+        { name: "pkg", version: "1.0.0" },
+      ),
+    ).toMatchObject({ bundleDependencies: ["embedded"], bundledDependencies: false });
+  });
+});
 
 describe("evaluateStagedArtifactIntegrity", () => {
   test("verifies matching digests", () => {

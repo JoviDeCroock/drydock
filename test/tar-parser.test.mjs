@@ -1201,6 +1201,8 @@ describe("parsePackageJson", () => {
             required: { optional: false },
             malformed: "yes",
           },
+          bundleDependencies: ["foo", 42],
+          bundledDependencies: true,
           files: ["dist", 42, "README.md"],
         }),
       },
@@ -1215,6 +1217,8 @@ describe("parsePackageJson", () => {
       host: { optional: true },
       required: { optional: false },
     });
+    expect(parsed?.bundleDependencies).toEqual(["foo"]);
+    expect(parsed?.bundledDependencies).toBe(true);
     expect(parsed?.files).toEqual(["dist", "README.md"]);
   });
 

@@ -68,6 +68,19 @@ describe("sandbox credential invariants", () => {
   });
 });
 
+describe("anonymous dependency metadata invariants", () => {
+  test("dependency resolution bypasses metadata caches", () => {
+    const source = readFileSync(path.join(SERVER_DIR, "lib/ecosystems/npm/broker.ts"), "utf8");
+    const start = source.indexOf("async function fetchAnonymousPackageMetadata(");
+    const end = source.indexOf("async function downloadAnonymousTarball(", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const anonymousRead = source.slice(start, end);
+    expect(anonymousRead).toContain("fetchPackageMetadata(");
+    expect(anonymousRead).not.toContain("fetchPackageMetadataCached(");
+  });
+});
+
 describe("hostile-bytes execution invariants", () => {
   // AGENTS.md: package bytes are hostile evidence — never execute package
   // code. The layers that hold those bytes (archive parsing and the

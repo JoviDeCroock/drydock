@@ -4,7 +4,7 @@ import { getNpmConnection } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
 import { fetchPackageMetadataCached } from "./registry-cache";
-import type { RegistryMetadata } from "./registry";
+import { fetchPackageMetadata, type RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
@@ -23,8 +23,9 @@ export interface NpmBroker extends AdapterBroker {
    * matters (whether the org's token is attached), and a boolean parameter is
    * the kind of thing a later refactor flips by accident. The org's connection
    * is still resolved, but only for its registry URL — a self-hosted mirror
-   * must keep working — and the cache partition is the shared public scope
-   * because no credential shaped the response.
+   * must keep working. These reads deliberately bypass metadata caching so a
+   * moving range or dist-tag is assessed against the registry's current
+   * version snapshot.
    */
   fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null>;
   /**
@@ -121,7 +122,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
 
   async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const registry = await this.registryUrl();
-    return fetchAnonymousPackageMetadata(this.env, this.ctx, registry, name);
+    return fetchAnonymousPackageMetadata(this.env, registry, name);
   }
 
   async downloadAnonymousTarball(
@@ -153,14 +154,11 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
  */
 async function fetchAnonymousPackageMetadata(
   env: Cloudflare.Env,
-  ctx: ExecutionContext,
   registry: string,
   name: string,
 ): Promise<RegistryMetadata | null> {
-  return fetchPackageMetadataCached(env, ctx, {
-    packageName: name,
-    registryUrl: registry,
-    cacheScope: ANONYMOUS_METADATA_CACHE_SCOPE,
+  return fetchPackageMetadata(env, name, {
+    npmRegistry: registry,
     abbreviated: true,
   }).catch(() => null);
 }
@@ -184,14 +182,6 @@ async function downloadAnonymousTarball(
     archiveDigestAlgorithms: ["SHA-512", "SHA-1"],
   });
 }
-
-/**
- * Cache partition for credential-free packuments. Shared across organizations
- * on purpose — the response was produced by a request any anonymous client
- * could make, so there is no private metadata to leak between tenants. It must
- * never be used for a token-bearing read.
- */
-const ANONYMOUS_METADATA_CACHE_SCOPE = "public";
 
 /**
  * Which registry this organization publishes to — without decrypting anything.
@@ -300,7 +290,7 @@ class LocalNpmBroker implements NpmBroker {
 
   async fetchAnonymousPackageMetadata(name: string): Promise<RegistryMetadata | null> {
     const registry = await this.registryUrl();
-    return fetchAnonymousPackageMetadata(this.ctx.env, this.ctx.executionCtx, registry, name);
+    return fetchAnonymousPackageMetadata(this.ctx.env, registry, name);
   }
 
   async downloadAnonymousTarball(
