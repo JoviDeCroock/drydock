@@ -20,6 +20,11 @@ const scenarioNames = (await readdir(scenariosRoot, { withFileTypes: true }))
   .sort();
 
 const scenarios = [];
+// Standalone packages published to the fake registry without a stage record —
+// the third-party dependencies a scenario's staged release newly declares. They
+// are served anonymously, exactly as a public registry serves a package nobody
+// is authenticated for.
+const registryDependencies = [];
 for (const name of scenarioNames) {
   const scenarioDir = path.join(scenariosRoot, name);
   const scenario = await readJson(path.join(scenarioDir, "scenario.json"));
@@ -35,6 +40,22 @@ for (const name of scenarioNames) {
   assertEqual(scenario.packageName, stagedManifest.name, `${name} staged package name`);
   if (previousManifest) {
     assertEqual(scenario.packageName, previousManifest.name, `${name} previous package name`);
+  }
+
+  for (const dependency of scenario.dependencies ?? []) {
+    const dependencyDir = path.join(scenarioDir, dependency.directory);
+    const dependencyManifest = await readJson(path.join(dependencyDir, "package.json"));
+    const dependencyPack = packPackage(dependencyDir, tarballRoot);
+    registryDependencies.push({
+      packageName: dependencyManifest.name,
+      version: dependencyManifest.version,
+      tag: dependency.tag ?? "latest",
+      publishedAt: dependency.publishedAt ?? null,
+      manifest: dependencyManifest,
+      tarballFile: dependencyPack.filename,
+      shasum: dependencyPack.shasum ?? null,
+      integrity: dependencyPack.integrity ?? null,
+    });
   }
 
   const stagedPack = await maybeRewritePackageJson(
@@ -89,13 +110,16 @@ await writeFile(
     {
       generatedAt: new Date().toISOString(),
       scenarios,
+      dependencies: registryDependencies,
     },
     null,
     2,
   ),
 );
 
-console.log(`Built ${scenarios.length} E2E registry scenario(s) in ${relative(outputRoot)}`);
+console.log(
+  `Built ${scenarios.length} E2E registry scenario(s) and ${registryDependencies.length} dependency package(s) in ${relative(outputRoot)}`,
+);
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));

@@ -6,7 +6,7 @@
   - `routes/scans/` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`. Split by what the caller is doing with a scan: `lifecycle` / `decisions` / `sharing` / `compare`, mounted by `index.ts`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
-  - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
+  - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, dependency-artifact evidence (`dependency-evidence.ts`), and shared UI types. `lib/review/index.ts` is the public entry.
   - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/scan/` — scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.
   - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract. The atpm ecosystem resolves releases over AT Protocol rather than through a registry; see `docs/atpm-public-diff.md`.
@@ -26,6 +26,7 @@
 - Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
 - The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
+- Dependency-artifact fetches are credential-free. The org npm token is resolved only for its registry URL and never attached to a request for a package the org does not own; an unreachable dependency is recorded as an uninspected gap, never retried with the token. See `docs/dependency-review.md`.
 - D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Two anonymous exceptions, both credential-free and IP rate-limited (see `docs/security-model.md`): the `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data; and `/public/reports/*`, where an unguessable share token minted by an owner/admin is the capability and the response is the scan's canonical report export and nothing else.
 - New Cloudflare bindings are hand-declared in `server/env.d.ts` (`cf-typegen` output is not used by typecheck) and must be added to `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and — when tests need them — `test/config/wrangler.jsonc`.
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.

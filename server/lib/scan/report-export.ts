@@ -4,6 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
+import { normalizeDependencyReview } from "../review";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -73,6 +74,12 @@ export function buildReportExport(detail: ScanDetail) {
     // Advisory release-memory signal. Additive + optional: scans that predate
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
+    // Dependencies this release newly introduced and what Drydock found in
+    // their bytes. Exported verbatim (it is already redaction-free evidence:
+    // names, versions, digests, rule IDs) so the record stays useful after the
+    // dependency version is unpublished. Additive + optional: scans from before
+    // the dependency review export null.
+    dependencyReview: normalizeDependencyReview(summary.dependencyReview),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried

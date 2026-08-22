@@ -92,6 +92,43 @@ The corpus deliberately records some product gaps instead of hiding them:
 4. If the scenario is important but not yet detected, add `coverageGaps` and assert the current diff-only behavior where possible.
 5. Run `pnpm run test:node -- security-corpus.test.mjs` before opening the PR.
 
+## Dependency-artifact corpus
+
+Dependency-artifact review scans the bytes of a dependency a release newly introduces, so its fixtures
+describe _two_ packages: the parent's manifests, and the artifact each declared dependency resolves to.
+They live under `test/fixtures/security-corpus/cases-dependencies/` and are evaluated by
+`test/security-corpus-dependencies.test.mjs`. See [`dependency-review.md`](./dependency-review.md) for
+the rule family and its severity ladder.
+
+Fields, in addition to the shared `id` / `title` / `category` / `intent`:
+
+- `previousPackageJson` / `stagedPackageJson` — the parent's manifests; their diff drives selection.
+- `dependencyArtifacts` — a map of dependency name → `{ version, packageJson, files }`. This stands in
+  for the registry and the sandbox, so the corpus exercises selection → assessment → findings with no
+  network. Resolution itself is covered by `test/npm-dependency-artifacts.test.mjs` and
+  `test/npm-semver.test.mjs`.
+- `uninspectableReasons` — dependency name → `DependencyUninspectableReason` for dependencies with no
+  entry in `dependencyArtifacts`.
+- `expectedDependencies` — per-dependency evidence assertions (declaration kind, resolved version,
+  verdict, automatic-execution entrypoints).
+- `expectedFindings` / `expectedRisk` — as in the npm corpus.
+- `expectedRecommendation` — the maintainer-facing verdict label from
+  `getReleaseRecommendation`. "Reaches critical" and "cannot be recommended for approval" are two
+  different claims, and this pins the second one.
+
+Three of the six fixtures are calibration cases and should stay that way:
+
+- `added-dependency-benign-library` — a new dependency with a network capability and no install hook must
+  not make a release risky just for being new.
+- `added-dependency-native-build` — a package that runs `node-gyp` on install is medium, not blocking;
+  otherwise every release adding a native dependency becomes unapprovable and the tier stops meaning
+  anything.
+- `added-dependency-prebuilt-downloader` — a package that downloads a platform binary during install
+  _does_ block, at `high` rather than `critical`. It is the loudest deliberate call in the family and the
+  one most likely to be argued with, so it is written down rather than left implicit.
+- `added-dependency-integrity-mismatch` pins the fail-closed boundary: inert dependency contents still
+  block when their recomputed digest disagrees with what the registry advertised.
+
 ## PyPI corpus
 
 The PyPI adapter (`server/lib/ecosystems/pypi/index.ts`) has its own golden corpus under
@@ -105,7 +142,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.28.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -351,6 +388,12 @@ conditions any revived burst rule would have to meet.
 `test/fixtures/security-corpus/cases-atpm/` pin each rule's severity and risk, plus a matching verified
 build that must stay quiet; the detection eval consumes the same cases through the production
 `atpmRecordFindings` path.
+
+`1.29.0` adds bounded dependency-artifact review for newly introduced npm dependencies. The
+`dependency-artifact.*` family records install-time execution and capabilities, uninspectable coverage
+gaps, and a critical `dependency-artifact.integrity-mismatch` when fetched bytes disagree with the
+registry's advertised digest. Fixtures under `cases-dependencies/` pin the severity ladder, including
+benign-library and native-build calibration cases and the integrity-mismatch fail-closed boundary.
 
 ### Fixture format
 

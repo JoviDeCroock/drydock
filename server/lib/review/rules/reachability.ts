@@ -42,14 +42,38 @@ export function consumerReachablePaths(
   codePatternSet: CodePatternSet | undefined = "javascript",
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
+  return reachableFromSeeds(files, [...entrypointCandidates(packageJson), ...extraSeedPaths]);
+}
 
+/**
+ * Files an *automatic* install/build entrypoint can execute, and nothing else.
+ *
+ * Deliberately narrower than {@link consumerReachablePaths}: that set also
+ * seeds from `main`/`bin`/`exports`, which is right for "can a consumer run
+ * this at all" but wrong for "does installing this package run this". The
+ * dependency-artifact review needs the second question — a newly introduced
+ * dependency whose dropper only runs when you `require()` it is a different
+ * (and lesser) claim than one that runs on `npm install`.
+ *
+ * Same conservative posture as the consumer walk: relative specifiers only, so
+ * an unproven edge keeps a finding at full severity rather than escalating it.
+ */
+export function lifecycleReachablePaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): Set<string> {
+  return reachableFromSeeds(files, lifecycleScriptSeedPaths(files, scripts, implicitScripts));
+}
+
+function reachableFromSeeds(files: FileRecord[], seeds: string[]): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
     byNormalizedPath.set(stripPackagePrefix(file.path), file);
   }
 
   const queue: string[] = [];
-  for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
+  for (const candidate of seeds) {
     const resolved = resolveModulePath(candidate, byNormalizedPath);
     if (resolved) queue.push(resolved);
   }

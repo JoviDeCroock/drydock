@@ -8,6 +8,7 @@ import type { ReleaseConsistency } from "./lib/scan/release-memory";
 import type { IntentEnvelope } from "./lib/intent-envelope";
 import type { ScanRiskBreakdown } from "./lib/review/risk";
 import type {
+  DependencyReview,
   DiffEntry,
   Finding,
   PackageJsonDiff,
@@ -54,6 +55,10 @@ export interface ScanResult {
   releaseConsistency: ReleaseConsistency;
   // Advisory source-binding classification; never feeds risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Dependencies this release newly introduces, with the bytes Drydock fetched
+  // for each. Unlike the advisory blocks above, its findings DO feed risk —
+  // they are deterministic evidence about code this release starts shipping.
+  dependencyReview: DependencyReview;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

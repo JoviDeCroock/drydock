@@ -28,9 +28,10 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 
 ## Shared review surface
 
-Two surfaces render the same review: the authenticated scan workbench
-(`src/pages/Dashboard/ScanDetail/`) and the anonymous public diff
-(`src/pages/Diff/`). What both use lives in `src/features/review/`:
+Three surfaces render parts of the same review: the authenticated scan workbench
+(`src/pages/Dashboard/ScanDetail/`), the anonymous public diff
+(`src/pages/Diff/`), and the public report (`src/pages/PublicReport/`). What more
+than one of them uses lives in `src/features/review/`:
 
 - `types.ts` — `ReviewFinding` (only the fields the review UI renders) and
   `FindingWithDiffStatus`. Deliberately narrower than a persisted scan finding
@@ -38,6 +39,13 @@ Two surfaces render the same review: the authenticated scan workbench
   `scanId`/`ruleVersion` values to satisfy a shared component.
 - `diff-entries.ts` — `filterDiffEntries` and `findingCountsByPath`.
 - `RiskSignalsSection.tsx` — the changed-file/package-context findings split.
+- `DependencyReviewSection.tsx` — the dependencies a release newly introduces and
+  what Drydock found in their artifacts. Rendered by the scan workbench and the
+  public report from the same re-validated persisted blob, so a shared report
+  and the maintainer's own view cannot disagree about what a release ships. Its
+  copy carries the resolution-honesty labelling (exact version vs review-time
+  snapshot vs dist-tag), which is the part reviewers act on — see
+  [`dependency-review.md`](./dependency-review.md).
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,

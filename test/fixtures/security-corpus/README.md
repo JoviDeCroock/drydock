@@ -4,11 +4,14 @@ This directory contains Drydock's corpus for deterministic staged-publish review
 
 - `cases/` holds npm fixtures evaluated by `test/security-corpus.test.mjs`.
 - `cases-pypi/` holds PyPI release-artifact fixtures evaluated by `test/security-corpus-pypi.test.mjs`.
+- `cases-vscode/` holds VS Code extension fixtures evaluated by `test/security-corpus-vscode.test.mjs`.
 - `cases-atpm/` holds atpm provenance fixtures evaluated by `test/security-corpus-atpm.test.mjs`.
+- `cases-dependencies/` holds dependency-artifact fixtures evaluated by `test/security-corpus-dependencies.test.mjs`. Each one describes a parent release _and_ the artifacts its newly declared dependencies resolve to; see `docs/security-detection-corpus.md` and `docs/dependency-review.md`.
 - `cases-frontier/` and `cases-benign/` are eval-only (read by `test/eval/`, not the golden tests). They use the v2 schema and include `real-sanitized` cases distilled from published incidents. See `docs/detection-eval.md` for the schema, the threat-class taxonomy, and the defanging rules (`real-sanitized` cases must carry a `provenance` note).
 - Fixtures are intentionally small JSON documents, not tarballs and not real malware.
 - `stagedFiles`/`previousFiles` (npm) and `artifacts`/`previousArtifacts` (PyPI) use the same `FileRecord` shape returned by the sandbox.
 - atpm fixtures provide target/baseline record projections, downloaded archive digests, and the optional trusted-publisher declaration consumed by `atpmRecordFindings`.
+- `dependencyArtifacts` entries may also provide `declaredDigest`, `reviewedDigest`, and `digestVerified` to pin dependency-review integrity outcomes.
 - `expectedFindings` names the exact deterministic rule IDs, severities, and files expected today.
 - `expectedRisk` records the expected deterministic risk from those findings.
 - Optional `expectedPackageJsonDiff` assertions cover diff surfaces that may not yet produce findings.

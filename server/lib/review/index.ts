@@ -69,6 +69,25 @@ export {
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./rules";
 export { annotateFindingsWithDiffStatus, normalizeFindingDiffStatus } from "./diff-annotation";
+export {
+  assessDependencyArtifact,
+  DEPENDENCY_ARTIFACT_MAX_FILES,
+  DEPENDENCY_TEXT_SAMPLE_LIMIT,
+  dependencyEvidenceFindings,
+  EMPTY_DEPENDENCY_REVIEW,
+  failedDependencyReview,
+  MAX_INSPECTED_DEPENDENCIES,
+  MAX_RECORDED_DEPENDENCIES,
+  normalizeDependencyReview,
+  selectAddedDependencies,
+} from "./dependency-evidence";
+export type {
+  AddedDependency,
+  DependencyDigest,
+  DependencyEvidence,
+  DependencyReview,
+  DependencyUninspectableReason,
+} from "./dependency-evidence";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };

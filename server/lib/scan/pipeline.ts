@@ -82,6 +82,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterCtx,
       adapterInput,
       broker,
+      identity,
       (resolved) => collectReleaseFingerprintFindings(db, identity, resolved),
     );
     const aiFindings = await maybeRunAiReview({

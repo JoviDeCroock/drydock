@@ -6,6 +6,7 @@ import {
   downloadInSandboxStream,
   SandboxError,
   SANDBOX_MAX_STREAM_TAR_BYTES,
+  type ArchiveDigestAlgorithm,
   type DownloadResult,
 } from "../../sandbox";
 
@@ -284,6 +285,12 @@ export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOp
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars` in `lib/sandbox.ts`. */
   maxTextSampleChars?: number;
+  /**
+   * See `DownloadOptions.archiveDigestAlgorithms`. The dependency-artifact path
+   * asks for SHA-512 so the digest it recomputes is comparable to the SRI npm
+   * publishes as `dist.integrity`.
+   */
+  archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
 }
 
 /**
@@ -306,5 +313,6 @@ export async function downloadPublishedTarball(
     format: "tgz",
     maxFiles: options.maxFiles,
     maxTextSampleChars: options.maxTextSampleChars,
+    archiveDigestAlgorithms: options.archiveDigestAlgorithms,
   });
 }

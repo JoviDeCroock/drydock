@@ -1,7 +1,23 @@
 import { reliableFetch } from "../../platform/reliable-fetch";
+import { compareParsedSemver, parseSemver, type ParsedSemver } from "./semver";
+
+/**
+ * The `dist` fields Drydock reads off a packument version.
+ *
+ * `shasum`/`integrity` are the registry's own digests for the published
+ * artifact. They are kept (rather than projected away with the rest of `dist`)
+ * because the dependency-artifact review records what the registry claimed the
+ * bytes were alongside the digest Drydock recomputed from the bytes it fetched
+ * — evidence that survives the version being unpublished later.
+ */
+interface RegistryVersionDist {
+  tarball?: string;
+  shasum?: string;
+  integrity?: string;
+}
 
 export interface RegistryMetadata {
-  versions?: Record<string, { dist?: { tarball?: string } }>;
+  versions?: Record<string, { dist?: RegistryVersionDist }>;
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
 }
@@ -104,12 +120,12 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   const projected: RegistryMetadata = {};
 
   if (doc.versions && typeof doc.versions === "object") {
-    const versions: Record<string, { dist?: { tarball?: string } }> = {};
+    const versions: Record<string, { dist?: RegistryVersionDist }> = {};
     for (const [version, entry] of Object.entries(doc.versions)) {
-      const tarball = entry?.dist?.tarball;
+      const dist = projectVersionDist(entry?.dist);
       // Every published version must survive as a truthy entry: baseline
       // selection walks the key set and dist-tag resolution checks presence.
-      versions[version] = typeof tarball === "string" ? { dist: { tarball } } : {};
+      versions[version] = dist ? { dist } : {};
     }
     projected.versions = versions;
   }
@@ -133,6 +149,20 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   }
 
   return projected;
+}
+
+function projectVersionDist(dist: unknown): RegistryVersionDist | null {
+  if (!dist || typeof dist !== "object") return null;
+  const raw = dist as RegistryVersionDist;
+  const projected: RegistryVersionDist = {};
+  if (typeof raw.tarball === "string") projected.tarball = raw.tarball;
+  // Bounded on purpose: these are package-controlled strings that ride into the
+  // cached document and the persisted report, and a real digest is far shorter.
+  if (typeof raw.shasum === "string" && raw.shasum.length <= 128) projected.shasum = raw.shasum;
+  if (typeof raw.integrity === "string" && raw.integrity.length <= 512) {
+    projected.integrity = raw.integrity;
+  }
+  return Object.keys(projected).length ? projected : null;
 }
 
 export function pickPreviousVersion(
@@ -219,52 +249,4 @@ function pickSemverFallbackVersion(
     source: "highest-published",
     reason: "highest-published-fallback",
   };
-}
-
-interface ParsedSemver {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string[];
-}
-
-function parseSemver(version: string): ParsedSemver | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/.exec(version);
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ? match[4].split(".") : [],
-  };
-}
-
-function compareParsedSemver(a: ParsedSemver, b: ParsedSemver) {
-  for (const key of ["major", "minor", "patch"] as const) {
-    const diff = a[key] - b[key];
-    if (diff) return diff;
-  }
-  if (!a.prerelease.length && !b.prerelease.length) return 0;
-  if (!a.prerelease.length) return 1;
-  if (!b.prerelease.length) return -1;
-  for (let i = 0; i < Math.max(a.prerelease.length, b.prerelease.length); i++) {
-    const left = a.prerelease[i];
-    const right = b.prerelease[i];
-    if (left === undefined) return -1;
-    if (right === undefined) return 1;
-    const leftNumber = /^\d+$/.test(left) ? Number(left) : null;
-    const rightNumber = /^\d+$/.test(right) ? Number(right) : null;
-    if (leftNumber !== null && rightNumber !== null) {
-      const diff = leftNumber - rightNumber;
-      if (diff) return diff;
-    } else if (leftNumber !== null) {
-      return -1;
-    } else if (rightNumber !== null) {
-      return 1;
-    } else {
-      const diff = left.localeCompare(right);
-      if (diff) return diff;
-    }
-  }
-  return 0;
 }

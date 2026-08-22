@@ -21,6 +21,14 @@ export const DETERMINISTIC_RULE_IDS = {
   dependencyOptionalAdded: "dependency.optional-added",
   dependencyAdded: "dependency.added",
   dependencyMajorBump: "dependency.major-bump",
+  // `dependency-artifact.*` describes the *fetched bytes* of a dependency this
+  // release newly introduces, not the manifest line that declares it (that is
+  // the `dependency.*` family above).
+  dependencyArtifactInstallRisk: "dependency-artifact.install-risk",
+  dependencyArtifactInstallExecution: "dependency-artifact.install-execution",
+  dependencyArtifactCapability: "dependency-artifact.capability",
+  dependencyArtifactIntegrityMismatch: "dependency-artifact.integrity-mismatch",
+  dependencyArtifactUninspectable: "dependency-artifact.uninspectable",
   stageMetadataMismatch: "stage.metadata-mismatch",
   stageTarballDigestMismatch: "stage.tarball-digest-mismatch",
   atpmProvenanceMissing: "atpm.provenance-missing",

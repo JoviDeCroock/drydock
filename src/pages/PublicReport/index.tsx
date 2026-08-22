@@ -12,6 +12,8 @@ import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { DependencyReviewSection } from "../../features/review/DependencyReviewSection";
+import { normalizeDependencyReview } from "../../../server/lib/review/dependency-evidence";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
@@ -41,6 +43,9 @@ interface PublicReport {
     contextFindingCount: number;
   } | null;
   diff: Array<{ path: string; status: string }> | null;
+  // Re-validated through `normalizeDependencyReview` rather than typed here:
+  // a report shared before the dependency review existed has no such key.
+  dependencyReview?: unknown;
   findings: Array<{
     severity: string;
     file: string;
@@ -152,6 +157,7 @@ export default function PublicReportPage() {
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
   const findings = sortedFindings.value;
   const changes = changedFiles.value;
+  const dependencyReview = normalizeDependencyReview(data.dependencyReview);
 
   return (
     <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
@@ -233,6 +239,8 @@ export default function PublicReportPage() {
           <EmptyLine>No deterministic findings in this release.</EmptyLine>
         </section>
       )}
+
+      {dependencyReview ? <DependencyReviewSection review={dependencyReview} /> : null}
 
       {changes.length ? (
         <section class="flex flex-col gap-3">

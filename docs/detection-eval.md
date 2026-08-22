@@ -42,17 +42,31 @@ false positives, and evasion robustness without digging through logs.
 
 ```
 test/fixtures/security-corpus/
-  cases/          npm golden cases     (regression set, also consumed by the eval)
-  cases-pypi/     PyPI golden cases    (regression set)
-  cases-atpm/     atpm provenance golden cases (regression set)
-  cases-frontier/ truth-labeled hard cases the rules may MISS  (reported, not gated)
-  cases-benign/   benign hard-negatives that the rules may flag (reported, not gated)
+  cases/              npm golden cases     (regression set, also consumed by the eval)
+  cases-pypi/         PyPI golden cases    (regression set)
+  cases-vscode/       VS Code golden cases (regression set)
+  cases-atpm/         atpm provenance golden cases (regression set)
+  cases-dependencies/ dependency-artifact golden cases (regression set, NOT in the eval)
+  cases-frontier/     truth-labeled hard cases the rules may MISS  (reported, not gated)
+  cases-benign/       benign hard-negatives that the rules may flag (reported, not gated)
 ```
 
 `cases/`, `cases-pypi/`, and `cases-atpm/` keep their existing golden schema; the eval infers
 their labels. `cases-frontier/` and `cases-benign/` use the v2 schema below and
 are eval-only (the golden tests never read them, so a frontier miss or a benign
 false positive does not break the regression suite).
+
+`cases-dependencies/` is deliberately outside the eval's scope for now. The eval
+scores a _staged artifact_ as malicious or benign; a dependency-artifact fixture
+describes two packages and asks a different question ("what does approving this
+release start shipping?"), so folding it into the same recall/FP rates would
+average two incomparable populations. Its golden harness
+(`test/security-corpus-dependencies.test.mjs`) carries the regression weight,
+including two explicit calibration cases — a benign new dependency and a native
+`node-gyp` build — that pin the false-positive posture the eval would otherwise
+measure. Bringing dependency review into the eval, with its own labeled
+population, is follow-up work; see
+[`dependency-review.md`](./dependency-review.md).
 
 ## Fixture v2 schema
 

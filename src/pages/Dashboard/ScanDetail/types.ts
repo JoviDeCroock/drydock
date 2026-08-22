@@ -29,6 +29,10 @@ export interface PersistedSummary {
   // predate the feature or may be malformed; readers re-validate through
   // `normalizeIntentEnvelope`.
   intentEnvelope?: unknown;
+  // Dependency-artifact review. Same treatment as the blobs above: scans that
+  // predate the feature have no key at all, so readers re-validate through
+  // `normalizeDependencyReview` rather than trusting the persisted shape.
+  dependencyReview?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];
