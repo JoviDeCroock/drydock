@@ -40,6 +40,7 @@ export function DecisionDialog({
     | "stagedVersion"
     | "source"
     | "registryUrl"
+    | "registryVersionStatus"
     | "registryStatusSupersededAt"
   >;
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;

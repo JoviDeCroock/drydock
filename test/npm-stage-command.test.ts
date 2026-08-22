@@ -55,6 +55,19 @@ describe("npm stage commands", () => {
     ).toBeNull();
   });
 
+  test.each(["published", "blocked", "deleted"])(
+    "has no command after npm reports the stage as %s",
+    (registryVersionStatus) => {
+      expect(
+        npmStageCommandFor("publish", {
+          stageId,
+          registryUrl: "https://registry.npmjs.org",
+          registryVersionStatus,
+        }),
+      ).toBeNull();
+    },
+  );
+
   test("has no command without a stage id", () => {
     expect(npmStageCommandFor("publish", {})).toBeNull();
     expect(npmStageCommandFor("publish", { stageId: null })).toBeNull();

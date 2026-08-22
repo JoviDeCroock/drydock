@@ -106,6 +106,9 @@ manual refresh to see registry outcomes. Approval commands are pinned to the
 registry URL captured with the scan, including for custom registries. The
 npmjs.com staged-packages shortcut is only offered for scans captured from the
 public npm registry; custom registries keep the registry-pinned CLI command.
+Once npm reports `published`, `blocked`, or `deleted`, the stage is no longer
+actionable, so recording a later Drydock decision does not offer either npm
+follow-up even though the decision itself remains available for the audit trail.
 
 ## Failure codes
 
