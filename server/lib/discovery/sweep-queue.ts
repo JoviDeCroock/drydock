@@ -27,7 +27,7 @@ import {
  * the npm connection from D1, so no token ciphertext or nonce is ever written
  * to a queue.
  */
-export interface DiscoverySweepQueueMessage {
+interface DiscoverySweepQueueMessage {
   kind: "discovery_sweep";
   organizationId: string;
   /** @deprecated Accepted only to drain cursor messages from an older deploy. */
@@ -38,14 +38,14 @@ export interface DiscoverySweepQueueMessage {
   actorUserId?: string;
 }
 
-export interface DiscoveryScanCandidate {
+interface DiscoveryScanCandidate {
   stageId: string;
   packageName: string | null;
   version: string | null;
 }
 
 /** One independent bounded slice produced by the initial registry listing. */
-export interface DiscoveryScanBatchQueueMessage {
+interface DiscoveryScanBatchQueueMessage {
   kind: "discovery_scan_batch";
   organizationId: string;
   source: Extract<ScanSource, "manual" | "auto_discovery">;
