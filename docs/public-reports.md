@@ -17,6 +17,11 @@ a shields.io badge per package and an opt-in public threat feed.
   `scan.share_revoked`) and surface in the organization audit log.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
+- Restaging the same registry package/version retires the older stage identity
+  and its public share capability. The obsolete review also leaves the badge
+  and threat feed; already-cached derived responses may remain visible for the
+  documented 300-second cache window, but their report link returns `404`
+  immediately and the superseded scan cannot be shared again.
 - That button only appears once the release is decided `publish` — a public
   report is the organization vouching for a release, and an undecided or blocked
   one has nothing to vouch for yet. A release that already has a link keeps the

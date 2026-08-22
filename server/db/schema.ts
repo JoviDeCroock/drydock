@@ -177,8 +177,9 @@ export const scans = sqliteTable(
     diffArtifactKey: text("diff_artifact_key"),
     // Public share link. A non-null token makes the completed scan's canonical
     // report export readable (unauthenticated) at /public/reports/:token.
-    // Revoking sets the token back to null; the token itself is the only
-    // capability — there is no separate "enabled" flag to drift out of sync.
+    // Revoking or superseding the registry stage sets the token back to null;
+    // the token itself is the only capability — there is no separate "enabled"
+    // flag to drift out of sync.
     publicShareToken: text("public_share_token"),
     publicSharedAt: integer("public_shared_at", { mode: "timestamp_ms" }),
     publicSharedByUserId: text("public_shared_by_user_id").references(() => user.id, {
@@ -187,7 +188,8 @@ export const scans = sqliteTable(
     // Public threat-feed listing is a second, separate opt-in on top of the
     // share link: a shared report is reachable by anyone holding the link,
     // but only feed-listed scans appear in the discoverable
-    // /public/threat-feed.json index. Cleared whenever the share is revoked.
+    // /public/threat-feed.json index. Cleared whenever the share is revoked or
+    // the registry stage is superseded.
     publicFeedListedAt: integer("public_feed_listed_at", { mode: "timestamp_ms" }),
     // Ecosystem-prefixed canonical package identity used by the public badge.
     // Populated only while feed-listed, so private shares stay unqueryable by

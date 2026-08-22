@@ -25,6 +25,24 @@ import {
 import type { AppDb } from "./client";
 import { scans } from "./schema";
 
+/**
+ * Retire every live signal attached to an obsolete registry-stage identity.
+ * The share token is a public capability and the feed/badge are public trust
+ * assertions, so they must stop with the registry ownership they described.
+ */
+export function registrySupersessionPatch(supersededAt: Date) {
+  return {
+    registryStatusSupersededAt: supersededAt,
+    registryVersionStatus: null,
+    registryVersionStatusAt: null,
+    publicShareToken: null,
+    publicSharedAt: null,
+    publicSharedByUserId: null,
+    publicFeedListedAt: null,
+    publicPackageKey: null,
+  };
+}
+
 export async function getScanReleaseIdentity(
   db: AppDb,
   scanId: string,
@@ -158,11 +176,7 @@ export async function backfillScanRegistryReleaseIdentity(
       .returning({ id: scans.id }),
     db
       .update(scans)
-      .set({
-        registryStatusSupersededAt: observedAt,
-        registryVersionStatus: null,
-        registryVersionStatusAt: null,
-      })
+      .set(registrySupersessionPatch(observedAt))
       .where(
         and(
           eq(scans.organizationId, input.organizationId),
@@ -184,11 +198,7 @@ export async function backfillScanRegistryReleaseIdentity(
       ),
     db
       .update(scans)
-      .set({
-        registryStatusSupersededAt: observedAt,
-        registryVersionStatus: null,
-        registryVersionStatusAt: null,
-      })
+      .set(registrySupersessionPatch(observedAt))
       .where(
         and(
           eq(scans.id, input.scanId),
@@ -446,11 +456,7 @@ export async function supersedeRegistryReleaseIncarnations(
     );
     await db
       .update(scans)
-      .set({
-        registryStatusSupersededAt: supersededAt,
-        registryVersionStatus: null,
-        registryVersionStatusAt: null,
-      })
+      .set(registrySupersessionPatch(supersededAt))
       .where(
         and(
           eq(scans.organizationId, input.organizationId),

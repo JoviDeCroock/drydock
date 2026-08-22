@@ -120,6 +120,20 @@ async function readScan(scanId: string) {
   return rows[0]!;
 }
 
+async function markScanPubliclyShared(scanId: string, org: Seeded) {
+  const now = new Date();
+  await createDb(env.DB)
+    .update(schema.scans)
+    .set({
+      publicShareToken: crypto.randomUUID().replaceAll("-", ""),
+      publicSharedAt: now,
+      publicSharedByUserId: org.userId,
+      publicFeedListedAt: now,
+      publicPackageKey: `npm:${PACKAGE}`,
+    })
+    .where(eq(schema.scans.id, scanId));
+}
+
 function stubRegistry(handler: (url: string) => Response | Promise<Response>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
     handler(typeof input === "string" ? input : input instanceof URL ? input.href : input.url),
@@ -164,6 +178,7 @@ describe("registry version status resolution", () => {
     const older = await seedCompletedScan(org, {
       createdAt: new Date("2026-08-20T10:00:00.000Z"),
     });
+    await markScanPubliclyShared(older.scanId, org);
     const db = createDb(env.DB);
     const scanId = crypto.randomUUID();
     await createScanJob(db, {
@@ -187,7 +202,14 @@ describe("registry version status resolution", () => {
     expect(recovered.registryPackageName).toBe(PACKAGE);
     expect(recovered.registryVersion).toBe(VERSION);
     expect(recovered.registryStatusSupersededAt).toBeNull();
-    expect((await readScan(older.scanId)).registryStatusSupersededAt).toBeTruthy();
+    expect(await readScan(older.scanId)).toMatchObject({
+      registryStatusSupersededAt: expect.any(Date),
+      publicShareToken: null,
+      publicSharedAt: null,
+      publicSharedByUserId: null,
+      publicFeedListedAt: null,
+      publicPackageKey: null,
+    });
   });
 
   test.each([
@@ -649,6 +671,7 @@ describe("registry version status resolution", () => {
   test("does not annotate history when discovery sees a different live stage id", async () => {
     const org = await seedOrg();
     const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    await markScanPubliclyShared(scanId, org);
     await recordRegistryVersionStatus(createDb(env.DB), {
       scanId,
       organizationId: org.organizationId,
@@ -671,6 +694,13 @@ describe("registry version status resolution", () => {
     expect(superseded.registryStatusSupersededAt).toBeTruthy();
     expect(superseded.registryVersionStatus).toBeNull();
     expect(superseded.registryVersionStatusAt).toBeNull();
+    expect(superseded).toMatchObject({
+      publicShareToken: null,
+      publicSharedAt: null,
+      publicSharedByUserId: null,
+      publicFeedListedAt: null,
+      publicPackageKey: null,
+    });
   });
 
   test("retires live replacements before the lookup limit so they cannot starve the backlog", async () => {
