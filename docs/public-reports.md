@@ -15,6 +15,14 @@ a shields.io badge per package and an opt-in public threat feed.
   revoke.
 - Both actions are recorded as scan events (`scan.share_enabled`,
   `scan.share_revoked`) and surface in the organization audit log.
+- Revocation is the owner's action and nothing else's: the opt-in
+  `SCAN_RETENTION_DAYS` sweep ([`artifact-storage.md`](./artifact-storage.md))
+  excludes scans with a live share token, so a link an owner handed out — and
+  the feed listing and badge that hang off it — never disappears because a
+  background job aged the scan out. Retention also takes a D1 lease before its
+  destructive R2 pass and share creation refuses that lease, closing the gap
+  between candidate selection and teardown. Revoking the share returns the scan
+  to the retention window.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
 - That button only appears once the release is decided `publish` — a public
@@ -34,7 +42,15 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
-  or organization/user identifiers.
+  or organization/user identifiers. Its `diff` is the scan's complete file diff
+  except on the degraded path where an artifact read failed and the export fell
+  back to the [compacted summary embed](./artifact-storage.md#summary-diff-compaction);
+  the additive `diffStats` object says which (`complete`) and carries the
+  `totalCount` / `changedCount` / per-status `counts` of the complete diff, so a
+  truncated list cannot be read as the whole release. Additive fields do not take
+  a schema bump — a consumer pinned to `v2` reads exactly what it read before —
+  but they do change the attested bytes, which are always computed from the
+  document served alongside them.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1
   Statement about the report (see below).
 - `GET /public/attestation-key` — the Ed25519 public key (JWK) and its RFC 7638

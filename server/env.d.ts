@@ -8,6 +8,11 @@ declare global {
       DB: D1Database;
       ARTIFACTS?: R2Bucket;
       SCAN_ARTIFACT_READS_DISABLED?: string;
+      // Time-based scan retention window, in days. Unset (the default) means no
+      // scan is ever deleted by the scheduled sweep — enabling destructive
+      // retention is an explicit operator decision. Values below
+      // SCAN_RETENTION_MIN_DAYS are refused. See server/lib/retention.ts.
+      SCAN_RETENTION_DAYS?: string;
       COMPARE_CACHE?: KVNamespace;
       // Better Auth session cache. Optional: without it Better Auth reads and
       // writes sessions in D1 only. See server/lib/auth/index.ts.

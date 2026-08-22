@@ -155,6 +155,13 @@ export const scans = sqliteTable(
     changedFileCount: integer("changed_file_count"),
     findingCount: integer("finding_count"),
     riskSummaryJson: text("risk_summary_json", { mode: "json" }),
+    // Compact deterministic finding profile — the canonically-ordered multiset of
+    // (ruleId, severity, file) — recorded at completion so release memory can read
+    // a prior approved release's profile from this row instead of downloading and
+    // digest-verifying its whole R2 report/files/diff bundle to project three
+    // fields. Null for rows written before the column and for profiles above the
+    // entry or byte budget; both fall back to the artifact projection.
+    findingProfileJson: text("finding_profile_json", { mode: "json" }),
     reportVersion: integer("report_version"),
     reportDigest: text("report_digest"),
     artifactStorageVersion: integer("artifact_storage_version"),
@@ -164,6 +171,13 @@ export const scans = sqliteTable(
     reportArtifactKey: text("report_artifact_key"),
     fileSamplesArtifactKey: text("file_samples_artifact_key"),
     diffArtifactKey: text("diff_artifact_key"),
+    // Lease held while the scheduled retention sweep tears this scan down.
+    // Public sharing refuses a live lease, so a share cannot be minted after
+    // eligibility was checked but before the destructive R2 sweep completes.
+    // The token makes release/teardown compare-and-swap safe; claimed_at lets a
+    // later tick recover a lease left behind by an interrupted invocation.
+    retentionClaimToken: text("retention_claim_token"),
+    retentionClaimedAt: integer("retention_claimed_at", { mode: "timestamp_ms" }),
     // Public share link. A non-null token makes the completed scan's canonical
     // report export readable (unauthenticated) at /public/reports/:token.
     // Revoking sets the token back to null; the token itself is the only
@@ -211,6 +225,21 @@ export const scans = sqliteTable(
       table.decision,
       table.createdAt,
     ),
+    // Release memory's prior-approved lookup filters organization + package_name
+    // + status + decision and takes the newest row. The index above lacks
+    // package_name, so that lookup had to scan every decided scan in the
+    // organization (and it runs once per scan, for every package). The four
+    // equality columns come first, then the ordering pair — `id` included so the
+    // `created_at desc, id desc` tiebreak is served by the index rather than by a
+    // sort the planner would rather avoid on a different index.
+    orgPackageDecisionCreatedIdx: index("scans_org_package_decision_created_idx").on(
+      table.organizationId,
+      table.packageName,
+      table.status,
+      table.decision,
+      table.createdAt,
+      table.id,
+    ),
     orgCreatedIdx: index("scans_org_created_idx").on(
       table.organizationId,
       table.createdAt,
@@ -228,6 +257,9 @@ export const scans = sqliteTable(
     publicFeedListedIdx: index("scans_public_feed_listed_idx").on(table.publicFeedListedAt),
     // No standalone public_package_key index: the composite above has it as a
     // leading column, so it already serves an equality lookup on the key alone.
+    // The optional time-based retention sweep selects by bare created_at across
+    // every organization; the (org, created_at) index cannot serve that.
+    createdIdx: index("scans_created_idx").on(table.createdAt),
   }),
 );
 
@@ -496,6 +528,9 @@ export const session = sqliteTable(
   },
   (table) => ({
     userIdx: index("session_user_idx").on(table.userId),
+    // Better Auth never deletes an expired session; the scheduled retention
+    // sweep does, by bare expires_at.
+    expiresIdx: index("session_expires_idx").on(table.expiresAt),
   }),
 );
 
@@ -537,6 +572,9 @@ export const verification = sqliteTable(
     // Better Auth resolves verification values by identifier on every
     // email-verification / password-reset / step-up flow.
     identifierIdx: index("verification_identifier_idx").on(table.identifier),
+    // Consumed and abandoned tokens are never cleaned up by Better Auth; the
+    // scheduled retention sweep deletes them by bare expires_at.
+    expiresIdx: index("verification_expires_idx").on(table.expiresAt),
   }),
 );
 

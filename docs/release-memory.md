@@ -96,18 +96,50 @@ review, which remain specific to the new release.
 - The lookup is wrapped: a database or artifact-read error degrades to `none`
   and emits a structured `scan.release_memory.lookup_failed` operational event
   instead of failing the scan.
-- The prior scan's rule findings are read from the digest-verified R2
-  `report.json` for artifact-backed scans (they are no longer duplicated into
-  `scan_findings`); legacy/degraded scans fall back to the D1 rows. Both paths
-  keep the profile deterministic-only: AI finding rows (`source: "ai"`) are
-  filtered out so the advisory reviewer's non-deterministic output can never
-  make a routine release read as `diverged`.
 - Old scans lack the field entirely; every reader goes through
   `normalizeReleaseConsistency`, which tolerates absence and malformed blobs.
-- The query is organization-scoped (`scans_org_decision_created_idx` covers
-  it); one organization's review history is never visible to another.
+- The query is organization-scoped; one organization's review history is never
+  visible to another. It is served by
+  `scans_org_package_decision_created_idx` — `(organization_id, package_name,
+status, decision, created_at, id)`. The older
+  `scans_org_decision_created_idx` lacks `package_name`, so this lookup used to
+  scan every decided scan in the organization, once per scan, for every
+  package.
 
-Code: `server/lib/scan/release-memory.ts` (profile building + comparison),
-`server/db/release-memory.ts` (prior-approved-scan lookup),
+## Where the prior profile is read from
+
+The lookup needs three fields per finding, and it used to get them by
+downloading and digest-verifying the prior release's **entire** artifact bundle
+(`report.json` + `files.json` + `diff.json`) on every scan. So the profile is
+persisted at completion instead:
+
+- `scans.finding_profile_json` holds `{ version, findings: [{ ruleId, severity,
+file }] }` in canonical profile order — the multiset itself, duplicates
+  included. It is built from the same redacted **rule** findings the scan
+  persists, so the advisory reviewer's output can never enter it. Profiles above
+  `FINDING_PROFILE_MAX_ENTRIES` or `FINDING_PROFILE_MAX_BYTES` are not stored at
+  all rather than stored truncated: a truncated profile is indistinguishable
+  from a smaller one, so it would report findings the prior release actually had
+  as new — a fabricated `diverged`. The byte budget also leaves headroom inside
+  D1's 2 MB row limit for the compacted diff, risk summary, and other scan
+  metadata; multibyte package paths therefore fall back instead of breaking scan
+  persistence.
+- Rows written before the column (and oversized profiles) fall back to
+  projecting the profile out of the prior scan's artifacts: the digest-verified
+  R2 `report.json` for artifact-backed scans (their findings are no longer
+  duplicated into `scan_findings`), and the D1 `scan_findings` rows for
+  legacy/degraded scans. Both paths filter `source: "ai"` rows out, mirroring
+  what the persisted profile excludes by construction.
+- A stored blob that will not parse logs
+  `scan.release_memory.profile_unreadable` and falls through to the artifact
+  path. It is never read as an empty profile — an empty profile would mark every
+  current finding new.
+- The pre-existing fail-closed rule still governs the fallback: an
+  artifact-backed prior whose report cannot be read returns nothing (the caller
+  degrades to `none`) rather than a corrupt-empty profile.
+
+Code: `server/lib/scan/release-memory.ts` (profile building + comparison +
+persisted-profile serialization), `server/db/release-memory.ts`
+(prior-approved-scan lookup),
 `resolveReleaseConsistency` in `server/lib/scan/pipeline-phases.ts` (pipeline
 phase), `src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice.tsx` (UI).

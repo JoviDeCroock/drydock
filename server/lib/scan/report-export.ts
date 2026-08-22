@@ -7,6 +7,12 @@ import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
+import type { DiffEntry } from "../review";
+import {
+  normalizeSummaryDiffStats,
+  summaryDiffStatusCounts,
+  type SummaryDiffStatusCounts,
+} from "./summary-diff";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -25,6 +31,11 @@ interface ReportExportFilenameInput {
 // `report.json` contract as much as from the public one, so they take the bump
 // with them: the export is the signing boundary, and a consumer that pinned v1
 // must not silently receive a document missing a field it read.
+//
+// Additive fields do not take a bump — `diffStats` was added to v2 — because a
+// consumer pinned to the tag still reads every field it read before. They do
+// change the attested bytes, but the attestation digests the document it is
+// served with, so there is nothing to disagree with.
 export const REPORT_EXPORT_SCHEMA = "drydock.report.v2";
 
 // Build a self-contained, archivable view of a completed review from the data
@@ -37,6 +48,7 @@ export const REPORT_EXPORT_SCHEMA = "drydock.report.v2";
 export function buildReportExport(detail: ScanDetail) {
   const { scan } = detail;
   const summary = isRecord(scan.summaryJson) ? scan.summaryJson : {};
+  const exportedDiff = detail.diff ?? (Array.isArray(summary.diff) ? summary.diff : null);
   return {
     schema: REPORT_EXPORT_SCHEMA,
     report: summary.report ?? null,
@@ -74,7 +86,19 @@ export function buildReportExport(detail: ScanDetail) {
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
-    diff: summary.diff ?? null,
+    // Prefer the artifact-sourced diff: for artifact-backed scans the
+    // summary-embedded copy is compacted to the release delta, while R2's
+    // report.json/diff.json keep the complete file diff the export promises.
+    // Legacy/degraded rows carry no artifact diff and their embed is still full.
+    diff: exportedDiff,
+    // What `diff` above actually is. Additive to `drydock.report.v2` — a v2
+    // consumer that ignores it reads exactly what it read before — but the
+    // export is the attested subject, so a diff that is NOT the complete one
+    // has to say so inside the signed bytes. Without this, an artifact read
+    // that failed closed silently downgrades the export to the compacted
+    // summary embed (changed entries only, capped) and a consumer reads
+    // "this release touched N files and no others" off a partial list.
+    diffStats: exportDiffStats(exportedDiff, detail.diff !== null, summary.diffStats),
     // Deterministic findings only. A completed AI review's findings are carried
     // by `aiReview.findings` above; including the persisted `source: "ai"` rows
     // here too would double-count them in this array and break the invariant
@@ -154,6 +178,38 @@ function toIso(value: unknown): string | null {
   if (typeof value === "number") return new Date(value).toISOString();
   if (typeof value === "string") return value;
   return null;
+}
+
+// Describe the exported diff against the scan's real one.
+//
+// `fromArtifact` means the diff came from R2's `diff.json`, which is always the
+// complete file diff. Otherwise it is the `summary_json` embed, which is the
+// complete diff for legacy/degraded rows and the compacted release delta for an
+// artifact-backed row whose R2 read failed. The persisted `summary.diffStats`
+// counts describe the FULL diff either way, so a truncated export can still
+// state what it left out; rows written before that field existed carry a full
+// embed, so counting the exported entries is exact for them.
+function exportDiffStats(
+  diff: DiffEntry[] | null,
+  fromArtifact: boolean,
+  persisted: unknown,
+): {
+  complete: boolean;
+  entryCount: number;
+  totalCount: number;
+  changedCount: number;
+  counts: SummaryDiffStatusCounts;
+} | null {
+  if (!diff) return null;
+  const stats = normalizeSummaryDiffStats(persisted);
+  const counts = stats?.counts ?? summaryDiffStatusCounts(diff);
+  return {
+    complete: fromArtifact || !stats?.compacted,
+    entryCount: diff.length,
+    totalCount: stats?.totalCount ?? diff.length,
+    changedCount: stats?.changedCount ?? counts.added + counts.removed + counts.modified,
+    counts,
+  };
 }
 
 // The export drops `priorScanId` and `decidedAt`: both describe a *prior* scan

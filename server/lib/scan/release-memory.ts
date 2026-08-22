@@ -12,6 +12,8 @@
 // adjustment, so `releaseRisk` (and the workflow gate reading it) cannot move.
 // See docs/release-memory.md.
 
+import { utf8ByteLength } from "../platform/json-size";
+
 type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
 
 export interface FindingProfileEntry {
@@ -61,6 +63,90 @@ export function buildFindingProfile(findings: ProfileFindingInput[]): FindingPro
       file: finding.file,
     }))
     .sort(compareProfileEntries);
+}
+
+/** Bump when the persisted profile shape changes. */
+const FINDING_PROFILE_VERSION = 1;
+
+/**
+ * Upper bound on entries in the persisted profile. Above it the profile is not
+ * stored at all (the reader falls back to the prior scan's artifacts) rather than
+ * stored truncated: a truncated profile is indistinguishable from a smaller one,
+ * so it would report findings the prior release actually had as "new" — a
+ * fabricated `diverged`. Release memory fails closed, never confidently wrong.
+ */
+const FINDING_PROFILE_MAX_ENTRIES = 2000;
+
+/**
+ * Byte budget for the JSON column. D1 caps an entire row at 2 MB, and this
+ * profile shares the row with the compacted diff, risk summary, AI result, and
+ * lifecycle metadata. The profile is only a lookup optimization, so keep a
+ * conservative slice of that limit and fall back to the artifact projection
+ * rather than letting multibyte package paths make scan persistence fail.
+ */
+const FINDING_PROFILE_MAX_BYTES = 256 * 1024;
+
+export interface PersistedFindingProfile {
+  version: number;
+  findings: FindingProfileEntry[];
+}
+
+/**
+ * The compact, canonically-ordered finding profile persisted on the scan row
+ * (`scans.finding_profile_json`) at completion, so a later scan of the same
+ * package can read this multiset directly instead of downloading and
+ * digest-verifying the whole prior R2 report/files/diff bundle just to project
+ * three fields out of it. Deterministic rule findings only — the caller passes
+ * the same redacted rule set it persists, and AI findings must never enter a
+ * profile (docs/release-memory.md).
+ *
+ * Returns null when the profile is too large to be worth a D1 column; callers
+ * store null and the read path falls back to the artifact projection.
+ */
+export function buildPersistedFindingProfile(
+  findings: ProfileFindingInput[],
+): PersistedFindingProfile | null {
+  if (findings.length > FINDING_PROFILE_MAX_ENTRIES) return null;
+  const profile = { version: FINDING_PROFILE_VERSION, findings: buildFindingProfile(findings) };
+  if (utf8ByteLength(JSON.stringify(profile)) > FINDING_PROFILE_MAX_BYTES) return null;
+  return profile;
+}
+
+/**
+ * Tolerant reader for the persisted profile. Rows written before the column
+ * existed hold null, and a malformed blob must degrade to the legacy artifact
+ * path rather than to a fabricated empty profile — an empty profile would mark
+ * every current finding new. So anything unusable reads null, and only a
+ * structurally valid envelope (including a genuinely empty `findings` array,
+ * which is what a clean scan records) is trusted.
+ */
+export function readPersistedFindingProfile(value: unknown): FindingProfileEntry[] | null {
+  const parsed = typeof value === "string" ? safeParseJson(value) : value;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const item = parsed as Partial<Record<keyof PersistedFindingProfile, unknown>>;
+  if (item.version !== FINDING_PROFILE_VERSION || !Array.isArray(item.findings)) return null;
+  const entries: FindingProfileEntry[] = [];
+  for (const entry of item.findings) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const finding = entry as Partial<FindingProfileEntry>;
+    if (
+      typeof finding.ruleId !== "string" ||
+      typeof finding.severity !== "string" ||
+      typeof finding.file !== "string"
+    ) {
+      return null;
+    }
+    entries.push({ ruleId: finding.ruleId, severity: finding.severity, file: finding.file });
+  }
+  return entries;
+}
+
+function safeParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 export interface ProfileComparison {

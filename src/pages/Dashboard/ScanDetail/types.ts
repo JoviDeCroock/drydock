@@ -1,4 +1,5 @@
 import type { DiffEntry } from "../../../../server/lib/review";
+import type { SummaryDiffStats } from "../../../../server/lib/scan/summary-diff";
 import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 
@@ -11,7 +12,14 @@ export interface PersistedSummary {
     rulesVersion?: string;
   };
   packageJsonDiff?: PackageJsonDiff;
+  /**
+   * The summary-embedded diff. For artifact-backed scans this is the compacted
+   * release delta (see server/lib/scan/summary-diff.ts) and `PersistedScanDetail.diff`
+   * carries the complete one; on legacy/degraded rows it is the full diff.
+   */
   diff?: DiffEntry[];
+  /** Aggregate shape of the real diff, when the scan recorded it. */
+  diffStats?: SummaryDiffStats;
   // Baseline selection recorded by the pipeline. The UI only reads
   // `comparisonSkipped`, which says a published predecessor existed but was
   // never downloaded, so the diff is not a release delta.

@@ -86,6 +86,7 @@ export async function enablePublicShare(
         publicShareToken: scans.publicShareToken,
         publicSharedAt: scans.publicSharedAt,
         publicFeedListedAt: scans.publicFeedListedAt,
+        retentionClaimToken: scans.retentionClaimToken,
         packageName: scans.packageName,
         stagedVersion: scans.stagedVersion,
       })
@@ -103,6 +104,7 @@ export async function enablePublicShare(
       publicFeedListedAt: existing.publicFeedListedAt,
     };
   }
+  if (existing.retentionClaimToken) return null;
 
   const now = new Date();
   const token = generatePublicShareToken();
@@ -122,6 +124,10 @@ export async function enablePublicShare(
         // Guards the idempotency promise under concurrency: two racing enables
         // must never rotate a token one of them already returned.
         isNull(scans.publicShareToken),
+        // Retention claims before leaving D1 for the destructive R2 sweep. Once
+        // that claim exists, minting a share would return a capability whose
+        // evidence and row are already being torn down.
+        isNull(scans.retentionClaimToken),
       ),
     )
     .returning({ id: scans.id });

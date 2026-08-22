@@ -31,6 +31,12 @@ export interface ScanArtifactMetadata {
   diffArtifactKey: string;
 }
 
+export interface ArtifactSweepResult {
+  /** False when the prefix could not be drained; the error was already logged. */
+  ok: boolean;
+  objectsDeleted: number;
+}
+
 export interface ScanArtifactFileRow {
   path: string;
   status: string;

@@ -3,7 +3,7 @@ import type { AppDb } from "../../db/client";
 import { scanFiles, scanFindings, scans } from "../../db/schema";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { redactJson, type DiffEntry, type Finding, type PackageJsonSummary } from "../review";
-import { writeScanArtifacts } from "./artifacts";
+import { deleteScanArtifacts, writeScanArtifacts } from "./artifacts";
 import { sha256Hex } from "../platform/crypto-utils";
 import { stableJson } from "../platform/stable-json";
 import { parsePackageJson, type ParsedFile } from "../tar-parser.js";
@@ -138,11 +138,37 @@ async function backfillOneScan(
         eq(scans.organizationId, scan.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.artifactStorageVersion),
+        // Retention claims before sweeping this scan's prefix. If it won while
+        // the backfill was reconstructing or writing, do not install metadata
+        // for objects that teardown has already decided to remove.
+        isNull(scans.retentionClaimToken),
       ),
     )
     .returning({ id: scans.id });
 
-  if (!updated.length) return "alreadyBacked";
+  if (!updated.length) {
+    // A concurrent backfill may have installed the same deterministic keys; in
+    // that case its artifact metadata owns them and deleting would corrupt the
+    // winning scan. Otherwise the row was deleted or is still D1-only (notably
+    // because retention claimed it), so these writes have no owner and must be
+    // swept now rather than becoming an unreachable R2 prefix.
+    const [current] = await db
+      .select({ artifactStorageVersion: scans.artifactStorageVersion })
+      .from(scans)
+      .where(and(eq(scans.id, scan.id), eq(scans.organizationId, scan.organizationId)))
+      .limit(1);
+    if (current?.artifactStorageVersion !== null && current?.artifactStorageVersion !== undefined) {
+      return "alreadyBacked";
+    }
+    const cleanup = await deleteScanArtifacts(bucket, scan.organizationId, scan.id);
+    if (!cleanup.ok) return "failed";
+    emitOperationalEvent("info", "scan.artifacts.backfill_write_discarded", {
+      scanId: scan.id,
+      organizationId: scan.organizationId,
+      objectsDeleted: cleanup.objectsDeleted,
+    });
+    return "alreadyBacked";
+  }
   emitOperationalEvent("info", "scan.artifacts.backfilled", {
     scanId: scan.id,
     organizationId: scan.organizationId,
