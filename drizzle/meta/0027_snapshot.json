@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "68e15ac5-7f36-4b7d-9877-410cc2837dc4",
+  "id": "3bacb2fc-eb50-4885-b6df-760cc71d9a00",
   "prevId": "3e6e53aa-9934-48a5-b804-47b2723d0387",
   "tables": {
     "account": {
@@ -800,10 +800,10 @@
           "name": "npm_connections_discovery_cursor_idx",
           "columns": [
             "id",
-            "validation_status",
             "organization_id"
           ],
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"npm_connections\".\"validation_status\" in ('valid', 'unvalidated')"
         }
       },
       "foreignKeys": {

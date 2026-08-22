@@ -8,6 +8,7 @@ import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import {
   enqueueDiscoverySweeps,
+  isDiscoverySweepMessage,
   type DiscoverySweepQueueMessage,
 } from "../../server/lib/discovery/sweep-queue";
 import worker from "../../server";
@@ -181,6 +182,23 @@ describe("discovery sweep producer", () => {
     // The queue path replaces the inline sweep entirely.
     expect(logSpy.mock.calls.find((call) => call[0] === "staged_publishes.cron.swept")).toBe(
       undefined,
+    );
+  });
+
+  test("uses the eligible-only partial index for the discovery cursor query", async () => {
+    const plan = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT id, organization_id
+       FROM npm_connections
+       WHERE validation_status in ('valid', 'unvalidated') AND id > ?
+       ORDER BY id
+       LIMIT ?`,
+    )
+      .bind("npmconn_cursor", 100)
+      .all<{ detail: string }>();
+
+    expect(plan.results.map((row) => row.detail).join("\n")).toContain(
+      "npm_connections_discovery_cursor_idx",
     );
   });
 
@@ -552,6 +570,25 @@ describe("queue message routing guard", () => {
       ackAll() {},
     } as unknown as MessageBatch<DiscoverySweepQueueMessage>;
   }
+
+  test("accepts only complete cursor-bearing continuation messages", () => {
+    expect(
+      isDiscoverySweepMessage({
+        kind: "discovery_sweep",
+        organizationId: "org_x",
+        afterStageId: "stage_50",
+        source: "manual",
+        actorUserId: "user_x",
+      }),
+    ).toBe(true);
+    expect(
+      isDiscoverySweepMessage({
+        kind: "discovery_sweep",
+        organizationId: "org_x",
+        afterStageId: "stage_50",
+      }),
+    ).toBe(false);
+  });
 
   test("drops an unrecognized message kind instead of running the scan handler", async () => {
     // Before the explicit guard this body fell through to executeScanJob and ran

@@ -1,6 +1,7 @@
 import { createDb, type AppDb } from "../../db/client";
 import { getNpmConnection, listAutoDiscoveryNpmConnectionRefs } from "../../db/npm-connections";
 import { getOrganizationOwnerUserId } from "../../db/organizations";
+import type { ScanSource } from "../../db/scans";
 import { allowInsecureLocalRegistry } from "../ecosystems/npm/connection";
 import {
   discoverAndQueueStagedPublishes,
@@ -17,14 +18,23 @@ import {
 } from "../platform/observability";
 
 /**
- * One organization's staged-publish discovery sweep. Carries only the
- * organization id: the consumer re-reads the npm connection from D1, so no
- * token ciphertext or nonce is ever written to a queue.
+ * One organization's staged-publish discovery sweep. Initial messages carry
+ * only the organization id; bounded continuations add a stage cursor and scan
+ * attribution. The consumer re-reads the npm connection from D1, so no token
+ * ciphertext or nonce is ever written to a queue.
  */
 export interface DiscoverySweepQueueMessage {
   kind: "discovery_sweep";
   organizationId: string;
+  /** Cursor used only by bounded continuation messages. */
+  afterStageId?: string;
+  /** Preserve the initiator and analytics source across a continuation. */
+  source?: Extract<ScanSource, "manual" | "auto_discovery">;
+  actorUserId?: string;
 }
+
+type DiscoverySweepContinuationMessage = DiscoverySweepQueueMessage &
+  Required<Pick<DiscoverySweepQueueMessage, "afterStageId" | "source" | "actorUserId">>;
 
 /**
  * The queue discovery sweeps are delivered on. The Worker refuses to run a
@@ -41,11 +51,47 @@ export const DISCOVERY_SWEEP_QUEUE_NAME = "staged-publish-review-discovery";
 
 export function isDiscoverySweepMessage(message: unknown): message is DiscoverySweepQueueMessage {
   if (typeof message !== "object" || message === null) return false;
-  const candidate = message as { kind?: unknown; organizationId?: unknown };
+  const candidate = message as Partial<Record<keyof DiscoverySweepQueueMessage, unknown>>;
+  if (
+    candidate.kind !== "discovery_sweep" ||
+    typeof candidate.organizationId !== "string" ||
+    candidate.organizationId.length === 0
+  ) {
+    return false;
+  }
+  const hasContinuationField =
+    candidate.afterStageId !== undefined ||
+    candidate.source !== undefined ||
+    candidate.actorUserId !== undefined;
+  if (!hasContinuationField) return true;
   return (
-    candidate.kind === "discovery_sweep" &&
-    typeof candidate.organizationId === "string" &&
-    candidate.organizationId.length > 0
+    typeof candidate.afterStageId === "string" &&
+    candidate.afterStageId.length > 0 &&
+    (candidate.source === "manual" || candidate.source === "auto_discovery") &&
+    typeof candidate.actorUserId === "string" &&
+    candidate.actorUserId.length > 0
+  );
+}
+
+/**
+ * Schedule the next bounded slice without making the current sweep depend on
+ * the enqueue response. A failed continuation costs one cron cycle; the scans
+ * already handed to SCAN_QUEUE remain valid work.
+ */
+export function scheduleDiscoverySweepContinuation(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  message: DiscoverySweepContinuationMessage,
+): void {
+  if (!env.DISCOVERY_QUEUE) return;
+  executionCtx.waitUntil(
+    env.DISCOVERY_QUEUE.send(message).catch((err) => {
+      emitOperationalEvent("error", "staged_publishes.sweep.continuation_enqueue_failed", {
+        organizationId: message.organizationId,
+        source: message.source ?? "auto_discovery",
+        error: describeOperationalError(err),
+      });
+    }),
   );
 }
 
@@ -227,7 +273,8 @@ export async function runDiscoverySweep(
     }
 
     const notificationOwnerUserId = await getOrganizationOwnerUserId(db, organizationId);
-    const actorUserId = connection.createdByUserId ?? notificationOwnerUserId;
+    const actorUserId =
+      message.actorUserId ?? connection.createdByUserId ?? notificationOwnerUserId;
     if (!notificationOwnerUserId || !actorUserId) {
       emitOperationalEvent("error", "staged_publishes.cron.skipped", {
         organizationId,
@@ -251,9 +298,20 @@ export async function runDiscoverySweep(
           executionCtx,
           organizationId,
           actorUserId,
-          source: "auto_discovery",
+          source: message.source ?? "auto_discovery",
           eventSource: "staged_publishes.cron",
           allowInsecureLocalhost,
+          afterStageId: message.afterStageId,
+          scheduleContinuation: env.DISCOVERY_QUEUE
+            ? (afterStageId) =>
+                scheduleDiscoverySweepContinuation(env, executionCtx, {
+                  kind: "discovery_sweep",
+                  organizationId,
+                  afterStageId,
+                  source: message.source ?? "auto_discovery",
+                  actorUserId,
+                })
+            : undefined,
         },
         usable,
       );

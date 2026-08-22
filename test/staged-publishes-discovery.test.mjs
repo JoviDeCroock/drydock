@@ -38,7 +38,11 @@ const {
   isTransientSweepFailure,
 } = await import("../server/lib/ecosystems/npm/staged-publishes-discovery.ts");
 
-const env = { DB: {}, SCAN_QUEUE: { sendBatch: vi.fn() } };
+const env = {
+  DB: {},
+  SCAN_QUEUE: { sendBatch: vi.fn() },
+  DISCOVERY_QUEUE: { send: vi.fn() },
+};
 
 /** Every message body handed to SCAN_QUEUE.sendBatch, flattened across batches. */
 function sentScanMessages() {
@@ -71,6 +75,7 @@ afterEach(() => {
     if (typeof fn?.mockReset === "function") fn.mockReset();
   }
   env.SCAN_QUEUE.sendBatch.mockReset();
+  env.DISCOVERY_QUEUE.send.mockReset();
   ctx.waitUntil.mockReset();
 });
 
@@ -513,9 +518,9 @@ describe("discoverAndQueueStagedPublishes", () => {
     ]);
   });
 
-  test("sends new scans in batches of at most 100", async () => {
-    // 100 is the Cloudflare Queues sendBatch cap, so 140 new stages must split
-    // into 100 + 40 rather than failing or falling back to one send per scan.
+  test("dispatches large discovery in bounded preparation batches", async () => {
+    // Each bounded slice reaches SCAN_QUEUE before the next one is prepared, so
+    // a later failure cannot strand every row the invocation created.
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: Array.from({ length: 140 }, (_, index) => ({
         id: `stage-${index}`,
@@ -540,15 +545,104 @@ describe("discoverAndQueueStagedPublishes", () => {
     );
 
     expect(result).toEqual(expect.objectContaining({ found: 140, created: 140 }));
-    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(2);
-    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(100);
-    expect(env.SCAN_QUEUE.sendBatch.mock.calls[1][0]).toHaveLength(40);
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(3);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(50);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[1][0]).toHaveLength(50);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[2][0]).toHaveLength(40);
     expect(sentScanMessages()).toHaveLength(140);
   });
 
+  test("hands off each candidate immediately without a discovery queue", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 3 }, (_, index) => ({
+        id: `stage-${index}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+    const fallbackEnv = { DB: {}, SCAN_QUEUE: env.SCAN_QUEUE };
+
+    const result = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env: fallbackEnv,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ created: 3, deferred: 0 }));
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(3);
+    for (const [batch] of env.SCAN_QUEUE.sendBatch.mock.calls) expect(batch).toHaveLength(1);
+  });
+
+  test("defers work past the per-invocation preparation budget with a stable cursor", async () => {
+    stagedPublishesMock.listStagedPublishes.mockResolvedValue({
+      items: Array.from({ length: 60 }, (_, index) => ({
+        id: `stage-${String(index).padStart(2, "0")}`,
+        packageName: `pkg-${index}`,
+        version: "1.0.0",
+      })),
+    });
+    dbMock.listExistingScanStageIds.mockResolvedValue(new Set());
+    dbMock.createScanJob.mockResolvedValue({ id: "scan-new" });
+    const scheduleContinuation = vi.fn();
+
+    const first = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        scheduleContinuation,
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(first).toEqual(
+      expect.objectContaining({ found: 60, created: 50, skipped: 0, deferred: 10 }),
+    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(50);
+    expect(scheduleContinuation).toHaveBeenCalledWith("stage-49");
+
+    env.SCAN_QUEUE.sendBatch.mockClear();
+    scheduleContinuation.mockClear();
+    const continuation = await discoverAndQueueStagedPublishes(
+      {
+        db,
+        env,
+        executionCtx: ctx,
+        organizationId: "org_a",
+        actorUserId: "user_a",
+        source: "auto_discovery",
+        eventSource: "staged_publishes.cron",
+        afterStageId: "stage-49",
+        scheduleContinuation,
+      },
+      { token: "npm_secret_token", registryUrl: "https://registry.npmjs.org" },
+    );
+
+    expect(continuation).toEqual(
+      expect.objectContaining({ found: 10, created: 10, skipped: 0, deferred: 0 }),
+    );
+    expect(env.SCAN_QUEUE.sendBatch).toHaveBeenCalledTimes(1);
+    expect(env.SCAN_QUEUE.sendBatch.mock.calls[0][0]).toHaveLength(10);
+    expect(scheduleContinuation).not.toHaveBeenCalled();
+  });
+
   test("rolls back every scan row a failed batch left off the queue", async () => {
-    // The second batch fails: the 100 scans already accepted keep running, and
-    // the 40 rows that never reached the queue are deleted so the next sweep
+    // The second bounded slice fails: the 50 scans already accepted keep
+    // running, and the next 50 rows are deleted so the next sweep
     // rediscovers them instead of seeing a permanently pending scan.
     stagedPublishesMock.listStagedPublishes.mockResolvedValue({
       items: Array.from({ length: 140 }, (_, index) => ({
@@ -578,8 +672,8 @@ describe("discoverAndQueueStagedPublishes", () => {
       ),
     ).rejects.toThrow("queue unavailable");
 
-    // One batched delete, not 40 sequential ones. Only the accepted batch's scan
-    // rows survive; the rejected batch's 40 are exactly the deleted ones.
+    // One batched delete, not 50 sequential ones. Only the accepted slice's scan
+    // rows survive; the rejected slice's 50 are exactly the deleted ones.
     expect(dbMock.deletePendingScanJobs).toHaveBeenCalledTimes(1);
     const acceptedScanIds = new Set(
       env.SCAN_QUEUE.sendBatch.mock.calls[0][0].map((entry) => entry.body.scanId),

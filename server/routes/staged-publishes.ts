@@ -12,6 +12,7 @@ import {
   discoverAndQueueStagedPublishes,
   ensureUsableNpmConnection,
 } from "../lib/ecosystems/npm/staged-publishes-discovery";
+import { scheduleDiscoverySweepContinuation } from "../lib/discovery/sweep-queue";
 import type { Bindings, Variables } from "../types";
 
 export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -57,16 +58,27 @@ stagedPublishesRoutes.post("/scan", async (c) => {
       actorUserId: session.userId,
       allowInsecureLocalhost,
     });
+    const executionCtx = workerExecutionContext(c.executionCtx);
     const result = await discoverAndQueueStagedPublishes(
       {
         db,
         env: c.env,
-        executionCtx: workerExecutionContext(c.executionCtx),
+        executionCtx,
         organizationId,
         actorUserId: session.userId,
         source: "manual",
         eventSource: "staged_publishes.discovery",
         allowInsecureLocalhost,
+        scheduleContinuation: c.env.DISCOVERY_QUEUE
+          ? (afterStageId) =>
+              scheduleDiscoverySweepContinuation(c.env, executionCtx, {
+                kind: "discovery_sweep",
+                organizationId,
+                afterStageId,
+                source: "manual",
+                actorUserId: session.userId,
+              })
+          : undefined,
       },
       usable,
     );

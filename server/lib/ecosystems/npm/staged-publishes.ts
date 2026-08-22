@@ -60,6 +60,8 @@ export interface StagedPublishesScanResponse {
   found: number;
   created: number;
   skipped: number;
+  /** New candidates handed to a bounded background continuation. */
+  deferred: number;
   queued: boolean;
   scans: StartedStagedPublishScan[];
 }

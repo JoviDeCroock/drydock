@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
 
@@ -96,7 +96,10 @@ export async function listAutoDiscoveryNpmConnectionRefs(
   db: AppDb,
   options: { limit: number; afterId?: string | null },
 ): Promise<AutoDiscoveryNpmConnectionRef[]> {
-  const eligible = inArray(npmConnections.validationStatus, ["valid", "unvalidated"]);
+  // Keep this literal predicate aligned with the partial discovery index in
+  // schema.ts. Bound IN values cannot prove that a SQLite partial index applies,
+  // so using inArray() here would fall back to scanning the primary-key index.
+  const eligible = sql`${npmConnections.validationStatus} in ('valid', 'unvalidated')`;
   const afterCursor = options.afterId ? gt(npmConnections.id, options.afterId) : undefined;
   return db
     .select({
