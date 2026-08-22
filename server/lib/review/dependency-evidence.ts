@@ -25,7 +25,13 @@
 //   - a dependency that could not be inspected fails visibly into manual
 //     review instead of silently reading as clean.
 
-import type { DependencySection, PackageJsonDiff, PackageJsonDiffEntry } from "./serialize";
+import {
+  dependencySpecsEqual,
+  dependencyWasInstalledAtStagedSpec,
+  type DependencySection,
+  type PackageJsonDiff,
+  type PackageJsonDiffEntry,
+} from "./serialize";
 import type { FileRecord, Finding, PackageJsonSummary } from "./";
 import { unusualDependencySpecKind } from "./dependency-specs";
 import {
@@ -34,7 +40,11 @@ import {
   deterministicFindings,
   type DeterministicFindingOptions,
 } from "./rules";
-import { lifecycleReachablePaths, normalizeReachabilityPath } from "./rules/reachability";
+import {
+  consumerInstallScriptCommands,
+  lifecycleReachablePaths,
+  normalizeReachabilityPath,
+} from "./rules/reachability";
 import { normalizeStringRecord } from "../tar-parser.js";
 
 /**
@@ -295,10 +305,16 @@ function introducesInstalledCode(entry: PackageJsonDiffEntry, relocated: Set<str
     entry.previousPeerOptional &&
     !entry.stagedPeerOptional
   ) {
-    return true;
+    return !dependencySpecsEqual(entry.previousInstalledSpec, entry.staged);
   }
   if (entry.status !== "added") return false;
-  if (entry.previouslyInstalled || relocated.has(entry.key)) return false;
+  if (
+    (entry.section === "optionalDependencies" && entry.previouslyInstalled) ||
+    dependencyWasInstalledAtStagedSpec(entry) ||
+    relocated.has(entry.key)
+  ) {
+    return false;
+  }
   if (isInstallingSection(entry.section)) return true;
   // A required peer newly *declared* by this release. `previouslyDeclared`
   // covers the peer that already existed in another section.
@@ -462,7 +478,9 @@ export function assessDependencyArtifact(
  * capability finding filed against that path may come from `scripts.test`,
  * `scripts.dev`, or another field that npm never executes during a consumer
  * install. Re-scan only the three install-hook values as synthetic source
- * records instead of treating every package.json finding as reachable.
+ * records instead of treating every package.json finding as reachable. npm
+ * scripts delegated through `npm run` are expanded first because they execute
+ * in the same consumer-install chain.
  */
 function installScriptCapabilities(
   scripts: Record<string, string>,
@@ -470,13 +488,14 @@ function installScriptCapabilities(
   options: DeterministicFindingOptions,
 ): string[] {
   const capabilities = new Set<string>();
-  for (const script of ["preinstall", "install", "postinstall"]) {
-    const command = scripts[script];
-    if (!command || implicitScripts[script] === command) continue;
+  for (const [index, { command }] of consumerInstallScriptCommands(
+    scripts,
+    implicitScripts,
+  ).entries()) {
     const findings = deterministicFindings(
       [
         {
-          path: `<install-script>/${script}.js`,
+          path: `<install-script>/${index}.js`,
           size: command.length,
           sha256: "",
           textSample: command,

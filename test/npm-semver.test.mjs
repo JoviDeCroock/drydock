@@ -53,6 +53,13 @@ describe("npm range satisfaction", () => {
     expect(matches("2.0.0", "^1.0.0 || ^3.0.0")).toBe(false);
   });
 
+  test("accepts npm comparator whitespace", () => {
+    expect(matches("1.2.3", ">= 1.2.3")).toBe(true);
+    expect(matches("2.0.0", "^ 1.2.3")).toBe(false);
+    expect(matches("1.2.3", "= 1.2.3")).toBe(true);
+    expect(matches("1.9.0", ">= 1.2.3 < 2.0.0")).toBe(true);
+  });
+
   test("hyphen ranges include partial upper bounds", () => {
     expect(matches("2.3.4", "1.2.3 - 2.3.4")).toBe(true);
     expect(matches("2.3.5", "1.2.3 - 2.3.4")).toBe(false);

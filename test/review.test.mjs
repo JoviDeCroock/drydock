@@ -1474,6 +1474,21 @@ describe("review", () => {
       { name: "pkg", version: "1.0.1", dependencies: { lodash: "^4.0.0" } },
     );
     expect(packageJsonDiffFindings(peerToRuntime)).toEqual([]);
+
+    // A different peer range can resolve different bytes, so moving that key
+    // into dependencies must not inherit the unchanged-relocation exemption.
+    const peerToDifferentRuntime = summarizePackageJsonDiff(
+      { name: "pkg", version: "1.0.0", peerDependencies: { lodash: "^3.0.0" } },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { lodash: "^4.0.0" },
+        peerDependencies: { lodash: "^4.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(peerToDifferentRuntime)).toEqual([
+      expect.objectContaining({ ruleId: "dependency.added", evidence: "lodash: ^4.0.0" }),
+    ]);
   });
 
   test("emits one finding per dependency key across sections", () => {
@@ -1562,6 +1577,7 @@ describe("review", () => {
         section: "peerDependencies",
         previouslyDeclared: true,
         previouslyInstalled: true,
+        previousInstalledSpec: "^18.0.0",
         previousDeclaredSpecs: ["^18.0.0"],
       },
     ]);
@@ -1602,6 +1618,7 @@ describe("review", () => {
         section: "dependencies",
         previouslyDeclared: true,
         previouslyInstalled: true,
+        previousRequiredPeerSpec: "^18.0.0",
       },
     ]);
     expect(packageJsonDiffFindings(existingPeerGetsRuntime)).toEqual([]);
@@ -1747,6 +1764,23 @@ describe("review", () => {
         evidence: "dep: ^1.0.0",
       }),
     ]);
+
+    const alreadyInstalledPeerBecomesRequired = summarizePackageJsonDiff(
+      {
+        name: "pkg",
+        version: "1.0.0",
+        dependencies: { dep: "^1.0.0" },
+        peerDependencies: { dep: "^1.0.0" },
+        peerDependenciesMeta: { dep: { optional: true } },
+      },
+      {
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { dep: "^1.0.0" },
+        peerDependencies: { dep: "^1.0.0" },
+      },
+    );
+    expect(packageJsonDiffFindings(alreadyInstalledPeerBecomesRequired)).toEqual([]);
 
     const requiredBecomesOptional = summarizePackageJsonDiff(
       {
