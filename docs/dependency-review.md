@@ -31,7 +31,10 @@ Deliberately excluded:
 - `devDependencies` — no consumer install fetches them;
 - optional peers (`peerDependenciesMeta[name].optional`) — a consumer opts into those rather than inheriting them;
 - keys that were already installed and merely moved between sections — a relocation ships no new code;
+- dependencies declared through `bundleDependencies` / `bundledDependencies` whose package bytes are actually present under `node_modules/` in the staged artifact — those bytes are already part of the parent review;
 - every dependency of a first-ever release (no baseline manifest), where the whole list diffs as "added" and inspecting it would describe the package rather than the release.
+
+A missing baseline manifest caused by metadata, connection, download, or parsing failure is not a first release. In that case Drydock conservatively selects every staged install dependency so the comparison gap cannot turn dependency review into `not-applicable`.
 
 The same relocation and previously-installed signals the `dependency.added` rule reads are reused here, so one surface cannot say "no new dependency" while the other says the opposite.
 
@@ -100,16 +103,17 @@ A review-time resolution is a **snapshot**, never permanent provenance. The repo
 
 Every way a dependency can end up unreviewed produces an evidence record and a `medium` finding, which floors the release at "review carefully":
 
-| Reason                 | Cause                                                                                     |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| `unresolvable-spec`    | git / URL / workspace-protocol spec, or grammar the range parser cannot model.            |
-| `no-matching-version`  | Nothing published satisfies the spec.                                                     |
-| `metadata-unavailable` | The registry answered nothing to a credential-free request — the private-dependency case. |
-| `artifact-unavailable` | The tarball could not be downloaded.                                                      |
-| `artifact-too-large`   | Past the sandbox's size or entry caps.                                                    |
-| `artifact-unparseable` | Not a parseable package archive.                                                          |
-| `budget-exhausted`     | More added dependencies than one review fetches.                                          |
-| `review-failed`        | The adapter-level dependency pass failed before the dependency could be inspected.        |
+| Reason                 | Cause                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `unresolvable-spec`    | git / URL / workspace-protocol spec, or grammar the range parser cannot model.                               |
+| `no-matching-version`  | Nothing published satisfies the spec.                                                                        |
+| `metadata-unavailable` | The registry answered nothing to a credential-free request — the private-dependency case.                    |
+| `artifact-unavailable` | The tarball could not be downloaded.                                                                         |
+| `artifact-too-large`   | Past the sandbox's size or entry caps.                                                                       |
+| `artifact-unparseable` | Not a parseable package archive.                                                                             |
+| `artifact-truncated`   | At least one file exceeded the retained detection sample; its prefix is not graded as the complete artifact. |
+| `budget-exhausted`     | More added dependencies than one review fetches.                                                             |
+| `review-failed`        | The adapter-level dependency pass failed before the dependency could be inspected.                           |
 
 `budget-exhausted` and `review-failed` records aggregate into bounded findings — a refactor or hostile manifest with many dependencies must not fill the packet with identical mediums or inflate persisted evidence. The report preserves the full selected/uninspectable counts, retains at most `MAX_RECORDED_DEPENDENCIES` (64) individual rows, and discloses the omitted count.
 
@@ -117,8 +121,8 @@ Every way a dependency can end up unreviewed produces an evidence record and a `
 
 - Dependency bytes are hostile evidence, handled exactly like the reviewed release's bytes: downloaded by the trusted parent, streamed into the credentials-free sandbox, never installed, never executed, never imported.
 - **Every dependency fetch is credential-free, and the token is never even decrypted on this path.** `NpmBroker.registryUrl()` reads the connection row for its registry URL and stops there — asking which registry to talk to cannot become a reason to hold a credential in scope. It applies the same connection preconditions as the credentialed path, so a scan cannot silently fall back to the public registry for an organization whose connection is missing or unvalidated, and it is resolved lazily so a release that adds no dependency does no work at all. `NpmBroker.fetchAnonymousPackageMetadata` / `downloadAnonymousTarball` are separate methods rather than a flag on the credentialed ones, because the two differ in exactly the property that matters and a boolean parameter is the kind of thing a later refactor flips by accident. A dependency only a credential could reach records as `metadata-unavailable`; private-dependency support needs its own credential and cache-isolation review.
-- Anonymous packuments are cached in the shared `public` partition, never an organization-scoped one — the response was produced by a request any anonymous client could make.
-- Bounds per release: `MAX_INSPECTED_DEPENDENCIES` (6) artifacts fetched, `MAX_RECORDED_DEPENDENCIES` (64) evidence rows persisted, `DEPENDENCY_ARTIFACT_MAX_FILES` (600) entries retained per artifact, `DEPENDENCY_TEXT_SAMPLE_LIMIT` (256 KiB) per file, and a 20 s wall-clock deadline for the whole pass. The deadline stops awaiting an in-flight broker call as well as preventing later fetches. Archive size caps are the sandbox's own.
+- Anonymous packuments bypass metadata caching so a range or dist-tag is resolved from the registry's current version snapshot before its artifact is reviewed.
+- Bounds per release: `MAX_INSPECTED_DEPENDENCIES` (6) artifacts fetched, `MAX_RECORDED_DEPENDENCIES` (64) evidence rows persisted, `DEPENDENCY_ARTIFACT_MAX_FILES` (600) entries retained per artifact, `DEPENDENCY_TEXT_SAMPLE_LIMIT` (256 KiB) per file, and a 20 s wall-clock deadline for the whole pass. Any file clipped by the text-sample cap makes that dependency visibly `artifact-truncated`; a prefix is never treated as a complete review. The deadline includes registry-connection lookup, stops awaiting an in-flight broker call, and prevents later fetches. Archive size caps are the sandbox's own.
 - The pass is additive: an adapter without the capability yields an empty review, while a capable adapter that throws yields a bounded `review-failed` coverage gap for every selected dependency. Failures are logged (`scan.dependency_review.failed`) and remain visible to the gate.
 - AI review may explain dependency evidence but cannot downgrade it — the same rule that applies to every other deterministic finding.
 

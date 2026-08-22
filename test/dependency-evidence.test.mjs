@@ -103,6 +103,40 @@ describe("selectAddedDependencies", () => {
     expect(selected).toEqual([]);
   });
 
+  test("a missing baseline caused by acquisition failure selects staged dependencies", () => {
+    const diff = diffOf(null, { name: "p", dependencies: { left: "^1.0.0" } });
+    expect(selectAddedDependencies(diff, { includeWithoutBaseline: true })).toEqual([
+      { name: "left", section: "dependencies", spec: "^1.0.0", declarationKind: "range" },
+    ]);
+  });
+
+  test("skips declared bundled dependencies only when their bytes are embedded", () => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0", missing: "1.0.0" },
+      bundleDependencies: ["embedded", "missing"],
+    };
+    const selected = selectAddedDependencies(diffOf({ name: "p" }, staged), {
+      stagedManifest: staged,
+      stagedFiles: [file("node_modules/embedded/package.json", '{"name":"embedded"}')],
+    });
+    expect(selected.map((entry) => entry.name)).toEqual(["missing"]);
+  });
+
+  test("boolean bundledDependencies excludes all embedded install dependencies", () => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0" },
+      bundledDependencies: true,
+    };
+    expect(
+      selectAddedDependencies(diffOf({ name: "p" }, staged), {
+        stagedManifest: staged,
+        stagedFiles: [file("node_modules/embedded/index.js", "module.exports = 1")],
+      }),
+    ).toEqual([]);
+  });
+
   test("one entry per key even when declared in several sections", () => {
     const selected = selectAddedDependencies(
       diffOf(

@@ -79,6 +79,19 @@ describe("sandbox text-sample retention invariants", () => {
     expect(capSetters()).toEqual([...CAPPED_ACQUISITION_FILES].sort());
   });
 
+  test("dependency review rejects every clipped text sample before assessment", () => {
+    const source = readFileSync(
+      path.join(SERVER_DIR, "lib/ecosystems/npm/dependency-artifacts.ts"),
+      "utf8",
+    );
+    const inspection = region(source, "async function inspectOne(", "/**\n * Which version");
+    expect(inspection).toContain('file.flags.includes("baseline-truncated")');
+    expect(inspection.indexOf('file.flags.includes("baseline-truncated")')).toBeLessThan(
+      inspection.indexOf("assessDependencyArtifact("),
+    );
+    expect(inspection).toContain('"artifact-truncated"');
+  });
+
   test("the staged npm download is parsed without a cap in both broker impls", () => {
     const source = readFileSync(path.join(SERVER_DIR, "lib/ecosystems/npm/broker.ts"), "utf8");
 

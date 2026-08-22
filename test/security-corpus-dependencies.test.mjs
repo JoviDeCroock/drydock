@@ -26,7 +26,10 @@ const cases = readdirSync(casesDir)
 // test/npm-dependency-artifacts.test.mjs and test/npm-semver.test.mjs.
 function buildReview(fixture) {
   const diff = summarizePackageJsonDiff(fixture.previousPackageJson, fixture.stagedPackageJson);
-  const selected = selectAddedDependencies(diff);
+  const selected = selectAddedDependencies(diff, {
+    stagedManifest: fixture.stagedPackageJson,
+    stagedFiles: fixture.stagedFiles ?? [],
+  });
   const dependencies = selected.map((dependency) => {
     const resolved = fixture.dependencyArtifacts?.[dependency.name];
     if (!resolved) {
