@@ -203,8 +203,9 @@ regexes via the non-executing JS lexer before scanning (see
   order, so an `app.route("/api/…")` placed above the `app.use("/api/*")` session guard
   in `server/index.ts` ships anonymous with nothing in the route file to show it; an
   `app.use()` handler can do the same by returning without `next()`. This pins the
-  guard's existence and the exact API registrations allowed above it. Commented-out
-  registrations and guards are blanked before the structural scan.
+  real `getAuthSession` guard and the exact registrations allowed above it, including
+  catch-alls and non-API bootstrap routes because they can still answer an API request.
+  Commented-out registrations and guards are blanked before the structural scan.
 - `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
   file that exists. Prose here navigates by path, and a rename silently breaks the

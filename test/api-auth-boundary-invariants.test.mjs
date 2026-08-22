@@ -26,12 +26,18 @@ function sanitizeApiSource(source) {
 
 const structuralIndexSource = sanitizeApiSource(indexSource);
 
-// The Better Auth handler must remain reachable without an existing session.
-// docs/security-model.md documents the one non-auth exception under `/api/*`:
-// public package diff is credential-free and IP rate-limited. Adding another
-// entry here is a security decision, not a test-maintenance formality.
-const API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
+// Every registration above the session guard can answer before authentication,
+// including catch-alls and routes outside `/api/*`. Each entry is deliberate:
+// bootstrap/security middleware, signed webhooks, capability URLs, or the
+// credential-free rate-limited public diff. Adding one is a security decision,
+// not a test-maintenance formality.
+const REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
+  { method: "use", path: "*" },
+  { method: "use", path: "*" },
+  { method: "route", path: "/webhooks" },
   { method: "route", path: "/api/public/v1/package-diff" },
+  { method: "route", path: "/og" },
+  { method: "route", path: "/public" },
   { method: "use", path: "/api/*" },
   { method: "use", path: "/api/*" },
   { method: "use", path: "/api/auth/*" },
@@ -39,16 +45,21 @@ const API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD = [
 ];
 
 /** Line number (1-based) of the `app.use("/api/*")` that requires a session. */
-function sessionGuardLine(lines) {
-  const guard = lines.findIndex(
-    (line, index) =>
-      line.startsWith('app.use("/api/*"') &&
-      // The session guard is the one that 401s on a missing session.
-      lines
-        .slice(index, index + 6)
-        .some((body) => /return c\.json\(\{ error: "unauthorized" \}/.test(body)),
-  );
-  return guard === -1 ? -1 : guard + 1;
+function sessionGuardLine(source) {
+  for (const registration of apiRegistrations(source)) {
+    if (registration.method !== "use" || registration.path !== "/api/*") continue;
+    const handler = registration.argumentSources[1] ?? "";
+    const assignment = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+getAuthSession\s*\(/.exec(
+      handler,
+    );
+    if (!assignment) continue;
+    const sessionName = assignment[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const missingSessionResponse = new RegExp(
+      `\\bif\\s*\\(\\s*!\\s*${sessionName}\\s*\\)\\s*return\\s+c\\.json\\s*\\(\\s*\\{\\s*error\\s*:\\s*["']unauthorized["']\\s*\\}\\s*,\\s*401\\s*\\)`,
+    );
+    if (missingSessionResponse.test(handler)) return registration.line;
+  }
+  return -1;
 }
 
 function apiRegistrations(source) {
@@ -131,6 +142,11 @@ function apiRegistrations(source) {
         // unresolved and make the boundary assertion fail closed below.
         path: pathToken?.type === "string" ? pathToken.value : null,
         line: source.slice(0, tokens[methodIndex].start).split("\n").length,
+        argumentSources: call.args.map((argument) =>
+          argument.length === 0
+            ? ""
+            : source.slice(argument[0].start, argument[argument.length - 1].end),
+        ),
       });
 
       const dot = tokens[call.endIndex + 1];
@@ -145,8 +161,7 @@ function apiRegistrations(source) {
 }
 
 describe("/api/* auth boundary", () => {
-  const lines = structuralIndexSource.split("\n");
-  const guardLine = sessionGuardLine(lines);
+  const guardLine = sessionGuardLine(structuralIndexSource);
 
   test("a session guard covers /api/*", () => {
     expect(
@@ -155,25 +170,21 @@ describe("/api/* auth boundary", () => {
     ).toBeGreaterThan(0);
   });
 
-  test("only auth and the documented public exception mount above the session guard", () => {
+  test("only explicitly reviewed registrations mount above the session guard", () => {
     const registrations = apiRegistrations(structuralIndexSource);
     expect(registrations.length).toBeGreaterThan(5);
 
     const anonymous = registrations
-      .filter(
-        (registration) =>
-          registration.line < guardLine &&
-          (registration.path === null || registration.path.startsWith("/api")),
-      )
+      .filter((registration) => registration.line < guardLine)
       .map(({ method, path }) => ({ method, path }));
     expect(
       anonymous,
-      "An API registration above the session guard can serve anonymously — Hono runs handlers " +
+      "A registration above the session guard can serve API requests anonymously — Hono runs handlers " +
         "and middleware in registration order, and app.use() may return without calling next(). " +
         "Use a string-literal path so this check can classify it, move it below the guard, or " +
         "review it as auth/bootstrap middleware or a genuinely credential-free rate-limited " +
         "public endpoint and pin it here.",
-    ).toEqual(API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD);
+    ).toEqual(REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD);
   });
 
   test("every registration allowed above the guard is actually present", () => {
@@ -181,7 +192,7 @@ describe("/api/* auth boundary", () => {
       method,
       path,
     }));
-    for (const allowed of API_REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD) {
+    for (const allowed of REGISTRATIONS_ALLOWED_ABOVE_SESSION_GUARD) {
       expect(
         registrations,
         `${allowed.method} ${allowed.path} is allowlisted above the guard but no longer registered — drop the stale entry.`,
@@ -234,6 +245,53 @@ describe("/api/* auth boundary", () => {
     ]);
   });
 
+  test("includes catch-all registrations that can answer API requests", () => {
+    const source = sanitizeApiSource(
+      [
+        'app.get("*", handler);',
+        'app.use("/*", middleware);',
+        'app.use("/api/*", async (c, next) => {',
+        '  const session = await getAuthSession(c.get("auth"), c.req.raw);',
+        '  if (!session) return c.json({ error: "unauthorized" }, 401);',
+        "  await next();",
+        "});",
+      ].join("\n"),
+    );
+    const guardLine = sessionGuardLine(source);
+
+    expect(
+      apiRegistrations(source)
+        .filter((registration) => registration.line < guardLine)
+        .map(({ method, path }) => ({ method, path })),
+    ).toEqual([
+      { method: "get", path: "*" },
+      { method: "use", path: "/*" },
+    ]);
+  });
+
+  test("requires the guard to reject a missing getAuthSession result", () => {
+    const lookalike = sanitizeApiSource(
+      [
+        'app.use("/api/*", async (c, next) => {',
+        '  if (!configured) return c.json({ error: "unauthorized" }, 401);',
+        "  await next();",
+        "});",
+      ].join("\n"),
+    );
+    const realGuard = sanitizeApiSource(
+      [
+        'app.use("/api/*", async (c, next) => {',
+        '  const session = await getAuthSession(c.get("auth"), c.req.raw);',
+        '  if (!session) return c.json({ error: "unauthorized" }, 401);',
+        "  await next();",
+        "});",
+      ].join("\n"),
+    );
+
+    expect(sessionGuardLine(lookalike)).toBe(-1);
+    expect(sessionGuardLine(realGuard)).toBe(1);
+  });
+
   test("ignores API registrations and session guards inside comments", () => {
     const source = sanitizeApiSource(
       [
@@ -247,7 +305,7 @@ describe("/api/* auth boundary", () => {
       ].join("\n"),
     );
 
-    expect(sessionGuardLine(source.split("\n"))).toBe(-1);
+    expect(sessionGuardLine(source)).toBe(-1);
     expect(apiRegistrations(source).map(({ method, path }) => ({ method, path }))).toEqual([
       { method: "get", path: "/api/real" },
     ]);

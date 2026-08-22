@@ -185,6 +185,47 @@ const rule = {
   },
 
   create(context) {
+    function canRenderNothing(node) {
+      if (!node) return true;
+      if (node.type === "JSXExpressionContainer") return canRenderNothing(node.expression);
+      if (node.type === "JSXEmptyExpression") return true;
+      if (node.type === "Literal") {
+        return node.value === null || typeof node.value === "boolean" || node.value === "";
+      }
+      if (node.type === "Identifier") return node.name === "undefined";
+      if (node.type === "LogicalExpression") {
+        if (node.operator === "&&") {
+          // JSX and fragments are truthy values, so only the right-hand side is
+          // rendered. An unknown condition may instead render false/null.
+          if (node.left.type === "JSXElement" || node.left.type === "JSXFragment") {
+            return canRenderNothing(node.right);
+          }
+          return true;
+        }
+        return canRenderNothing(node.left) || canRenderNothing(node.right);
+      }
+      if (node.type === "ConditionalExpression") {
+        return canRenderNothing(node.consequent) || canRenderNothing(node.alternate);
+      }
+      if (node.type === "JSXFragment") {
+        return meaningfulChildren(node).every(canRenderNothing);
+      }
+      if (node.type === "ArrayExpression") {
+        return node.elements.every(canRenderNothing);
+      }
+      return false;
+    }
+
+    function boundaryElementsAcross(children, side) {
+      const ordered = side === "top" ? children : [...children].reverse();
+      const elements = [];
+      for (const child of ordered) {
+        elements.push(...boundaryElements(child, side));
+        if (!canRenderNothing(child)) break;
+      }
+      return elements;
+    }
+
     function boundaryElements(node, side) {
       if (!node) return [];
       if (node.type === "JSXElement") return [node];
@@ -202,9 +243,7 @@ const rule = {
         ];
       }
       if (node.type === "JSXFragment") {
-        const children = meaningfulChildren(node);
-        const boundary = side === "top" ? children[0] : children[children.length - 1];
-        return boundaryElements(boundary, side);
+        return boundaryElementsAcross(meaningfulChildren(node), side);
       }
       return [];
     }
@@ -213,12 +252,26 @@ const rule = {
       const ruleElement = boundaryElements(neighbour, side).find((element) =>
         drawsDirectionalRule(element, side),
       );
-      if (!ruleElement) return;
+      if (!ruleElement) return false;
       context.report({
         node: neighbour,
         messageId: "onSibling",
         data: { what: elementName(ruleElement) === "hr" ? "<hr>" : "border-t/border-b" },
       });
+      return true;
+    }
+
+    function reportAdjacentSibling(siblings, startIndex, step, side) {
+      for (let index = startIndex; index >= 0 && index < siblings.length; index += step) {
+        const neighbour = siblings[index];
+        if (reportSibling(neighbour, side)) return;
+        if (!canRenderNothing(neighbour)) return;
+      }
+    }
+
+    function touchesBoundary(siblings, nodeIndex, side) {
+      const between = side === "top" ? siblings.slice(0, nodeIndex) : siblings.slice(nodeIndex + 1);
+      return between.every(canRenderNothing);
     }
 
     function checkElement(node) {
@@ -236,6 +289,9 @@ const rule = {
       const parent = node.parent;
       if (parent?.type !== "JSXElement" && parent?.type !== "JSXFragment") return;
       const siblings = meaningfulChildren(parent);
+      const index = siblings.indexOf(node);
+      const touchesTop = touchesBoundary(siblings, index, "top");
+      const touchesBottom = touchesBoundary(siblings, index, "bottom");
 
       // The wrapper that draws its own rule on the same boundary. Only when the
       // label is the wrapper's leading or trailing child: a label in the middle
@@ -244,21 +300,17 @@ const rule = {
         const wrapperClass = classAttribute(parent);
         if (
           wrapperClass &&
-          ((siblings[0] === node && drawsDirectionalRule(parent, "top")) ||
-            (siblings[siblings.length - 1] === node && drawsDirectionalRule(parent, "bottom")))
+          ((touchesTop && drawsDirectionalRule(parent, "top")) ||
+            (touchesBottom && drawsDirectionalRule(parent, "bottom")))
         ) {
           context.report({ node: wrapperClass, messageId: "onWrapper" });
         }
       }
 
-      // Immediate siblings on either side.
-      const index = siblings.indexOf(node);
-      for (const [neighbour, side] of [
-        [siblings[index - 1], "bottom"],
-        [siblings[index + 1], "top"],
-      ]) {
-        reportSibling(neighbour, side);
-      }
+      // Visually adjacent siblings on either side. A conditional that renders
+      // nothing does not create a boundary, so continue through that branch.
+      reportAdjacentSibling(siblings, index - 1, -1, "bottom");
+      reportAdjacentSibling(siblings, index + 1, 1, "top");
 
       // A wrapper does not make its outer boundary non-adjacent. This is the
       // CollapsibleCard shape: the label is the summary's trailing child and a
@@ -268,11 +320,11 @@ const rule = {
         if (grandparent?.type !== "JSXElement" && grandparent?.type !== "JSXFragment") return;
         const outerSiblings = meaningfulChildren(grandparent);
         const parentIndex = outerSiblings.indexOf(parent);
-        if (siblings[0] === node) {
-          reportSibling(outerSiblings[parentIndex - 1], "bottom");
+        if (touchesTop) {
+          reportAdjacentSibling(outerSiblings, parentIndex - 1, -1, "bottom");
         }
-        if (siblings[siblings.length - 1] === node) {
-          reportSibling(outerSiblings[parentIndex + 1], "top");
+        if (touchesBottom) {
+          reportAdjacentSibling(outerSiblings, parentIndex + 1, 1, "top");
         }
       }
     }

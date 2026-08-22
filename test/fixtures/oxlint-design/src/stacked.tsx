@@ -137,3 +137,32 @@ export function OnConditionalPrecedingSibling({ show }: { show: boolean }) {
     </section>
   );
 }
+
+export function OnRuleAfterOptionalContent({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show && <p>optional content</p>}
+      <hr />
+    </section>
+  );
+}
+
+export function OnRuleAfterNullableContent({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show ? <p>optional content</p> : null}
+      <div class="border-t border-border">body</div>
+    </section>
+  );
+}
+
+export function OnOptionalContentBeforeLeadingLabel({ show }: { show: boolean }) {
+  return (
+    <section class="border-t border-border">
+      {show && <p>optional content</p>}
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}

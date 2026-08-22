@@ -151,3 +151,23 @@ export function StringArgumentToAnUnrelatedCall() {
     </SectionLabel>
   );
 }
+
+export function ConditionalContentAlwaysSeparates({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show ? <p>first body</p> : <p>alternate body</p>}
+      <hr />
+    </section>
+  );
+}
+
+export function TruthyJsxConditionAlwaysSeparates() {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {<p>truthy condition</p> && <p>body</p>}
+      <div class="border-t border-border">separate boundary</div>
+    </section>
+  );
+}
