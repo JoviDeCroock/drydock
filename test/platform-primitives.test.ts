@@ -9,8 +9,12 @@ import {
 import { isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import { isSafeManifestPath } from "../server/lib/platform/path-safety";
+import {
+  isSafeHttpUrlForShellArgument,
+  quotePosixShellArgument,
+} from "../server/lib/platform/shell-command";
 
-// These four primitives are each shared by several call sites, so a regression
+// These primitives are each shared by several call sites, so a regression
 // in one of them is a regression everywhere at once. isSafeManifestPath in
 // particular guards every ecosystem's manifest parser against path traversal:
 // before it was hoisted here it existed as three copies, and a weakening edit
@@ -184,6 +188,28 @@ describe("markup escaping", () => {
 
   test("escapeXml uses &apos;, which is defined in XML but not HTML4", () => {
     expect(escapeXml(`<a href="x">&'`)).toBe("&lt;a href=&quot;x&quot;&gt;&amp;&apos;");
+  });
+});
+
+describe("POSIX shell command arguments", () => {
+  test("accepts ordinary HTTP registry URLs without embedded credentials", () => {
+    expect(isSafeHttpUrlForShellArgument("https://registry.example.test/npm")).toBe(true);
+    expect(isSafeHttpUrlForShellArgument("http://127.0.0.1:4873")).toBe(true);
+  });
+
+  test("rejects credentials, unsupported protocols, control characters, and malformed URLs", () => {
+    expect(isSafeHttpUrlForShellArgument("https://user:password@registry.example.test")).toBe(
+      false,
+    );
+    expect(isSafeHttpUrlForShellArgument("file:///tmp/registry")).toBe(false);
+    expect(isSafeHttpUrlForShellArgument("https://registry.example.test/\nnext")).toBe(false);
+    expect(isSafeHttpUrlForShellArgument("not a url")).toBe(false);
+  });
+
+  test("quotes one opaque POSIX shell argument, including apostrophes", () => {
+    expect(quotePosixShellArgument("https://registry.example.test/team's")).toBe(
+      "'https://registry.example.test/team'\\''s'",
+    );
   });
 });
 

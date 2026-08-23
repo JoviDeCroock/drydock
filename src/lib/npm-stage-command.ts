@@ -1,4 +1,8 @@
 import { isValidStageId } from "../../server/lib/ecosystems/npm/stage-id";
+import {
+  isSafeHttpUrlForShellArgument,
+  quotePosixShellArgument,
+} from "../../server/lib/platform/shell-command";
 import type { ScanDecision } from "../models/scan";
 import { canOfferNpmStageFollowUp, type NpmStageFollowUpScan } from "./npm-stage-follow-up";
 
@@ -27,25 +31,6 @@ export function npmStageCommandFor(
   const command = `npm stage ${decision === "publish" ? "approve" : "reject"} ${stageId}`;
   const registryUrl = scan.registryUrl?.trim();
   if (!registryUrl) return command;
-  if (!isSafeRegistryUrl(registryUrl)) return null;
-  return `${command} --registry ${shellSingleQuote(registryUrl)}`;
-}
-
-function isSafeRegistryUrl(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code <= 31 || code === 127) return false;
-  }
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+  if (!isSafeHttpUrlForShellArgument(registryUrl)) return null;
+  return `${command} --registry ${quotePosixShellArgument(registryUrl)}`;
 }

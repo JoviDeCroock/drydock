@@ -65,8 +65,12 @@ export async function listScans(
   const decisionFilter = options.decisionFilter ?? "undecided";
 
   const conditions = [eq(scans.organizationId, organizationId)];
-  if (decisionFilter === "undecided") conditions.push(isNull(scans.decision));
-  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  if (decisionFilter === "undecided") {
+    // Superseded reviews are immutable history, not pending work: the decision
+    // route refuses them, so leaving them in the default queue creates rows the
+    // reviewer can never resolve. They remain visible under the `all` filter.
+    conditions.push(isNull(scans.decision), isNull(scans.registryStatusSupersededAt));
+  } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
   if (options.cursor) {

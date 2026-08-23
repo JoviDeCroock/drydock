@@ -10,6 +10,7 @@ import {
 } from "../../../db/scans";
 import { notifyStagedReleaseAwaitingApproval } from "../../notify";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
+import { mapWithConcurrency } from "../../platform/concurrency";
 import { emitOperationalEvent } from "../../platform/observability";
 import { fetchNpmVersionStatus, type NpmVersionStatus } from "./version-status";
 
@@ -164,70 +165,76 @@ export async function resolveNpmReleaseOutcomes(
   if (!eligible.length) return result;
   result.checked = eligible.length;
 
-  await runWithConcurrency(
+  await mapWithConcurrency(
     eligible,
     input.lookupConcurrency ?? LOOKUP_CONCURRENCY,
     async (candidate) => {
-      const lookup = await fetchNpmVersionStatus(
-        connection.registryUrl,
-        connection.token,
-        candidate.packageName,
-        candidate.stagedVersion,
-        { allowInsecureLocalhost },
-      );
-      const status = lookup.ok ? lookup.status : null;
-
       try {
-        const persisted = await recordRegistryVersionStatus(db, {
-          scanId: candidate.id,
-          organizationId,
-          status,
-          // The sweep's own clock, not each lookup's: one coherent stamp per
-          // batch keeps an injected clock meaningful and the recheck floors exact.
-          checkedAt: now,
-        });
+        const lookup = await fetchNpmVersionStatus(
+          connection.registryUrl,
+          connection.token,
+          candidate.packageName,
+          candidate.stagedVersion,
+          { allowInsecureLocalhost },
+        );
+        const status = lookup.ok ? lookup.status : null;
+
+        let persisted: boolean;
+        try {
+          persisted = await recordRegistryVersionStatus(db, {
+            scanId: candidate.id,
+            organizationId,
+            status,
+            // The sweep's own clock, not each lookup's: one coherent stamp per
+            // batch keeps an injected clock meaningful and the recheck floors exact.
+            checkedAt: now,
+          });
+        } catch (err) {
+          // A write failure just means this scan is retried next sweep. The rest of
+          // the batch is unaffected and must not be abandoned for it.
+          emitOperationalEvent("warn", "npm.release_outcome.persist_failed", {
+            organizationId,
+            scanId: candidate.id,
+            error: err instanceof Error ? err.name : "unknown",
+          });
+          return;
+        }
         if (!persisted) return;
-      } catch (err) {
-        // A write failure just means this scan is retried next sweep. The rest of
-        // the batch is unaffected and must not be abandoned for it.
-        emitOperationalEvent("warn", "npm.release_outcome.persist_failed", {
-          organizationId,
+
+        if (!status) return;
+        result.resolved += 1;
+        result.statuses[status] = (result.statuses[status] ?? 0) + 1;
+
+        if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
+        if (!candidate.decidedAt) return;
+        // Claim the send before sending, so two overlapping sweeps cannot both
+        // email about the same release. A failed send costs the reminder rather
+        // than risking a duplicate — the release is still visible in the workbench.
+        const claimed = await markRegistryPublishReminderSent(db, {
           scanId: candidate.id,
-          error: err instanceof Error ? err.name : "unknown",
+          organizationId,
+          expectedDecidedAt: candidate.decidedAt,
+          expectedRegistryStatusAt: now,
+          sentAt: now,
         });
-        return;
+        if (!claimed) return;
+        result.reminded += 1;
+        await notifyStagedReleaseAwaitingApproval({
+          env,
+          db,
+          organizationId,
+          ownerUserId,
+          scanId: candidate.id,
+          stageId: candidate.stageId,
+          packageName: candidate.packageName,
+          version: candidate.stagedVersion,
+          decidedAt: candidate.decidedAt,
+          registryUrl: connection.registryUrl,
+        });
+      } catch {
+        // Deliberately swallowed: one unresolvable release must not stop the
+        // rest of the batch, and every failure mode here is retried next sweep.
       }
-
-      if (!status) return;
-      result.resolved += 1;
-      result.statuses[status] = (result.statuses[status] ?? 0) + 1;
-
-      if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
-      if (!candidate.decidedAt) return;
-      // Claim the send before sending, so two overlapping sweeps cannot both
-      // email about the same release. A failed send costs the reminder rather
-      // than risking a duplicate — the release is still visible in the workbench.
-      const claimed = await markRegistryPublishReminderSent(db, {
-        scanId: candidate.id,
-        organizationId,
-        expectedDecidedAt: candidate.decidedAt,
-        expectedRegistryStatusAt: now,
-        sentAt: now,
-      });
-      if (!claimed) return;
-      result.reminded += 1;
-      await notifyStagedReleaseAwaitingApproval({
-        env,
-        db,
-        organizationId,
-        ownerUserId,
-        scanId: candidate.id,
-        stageId: candidate.stageId,
-        packageName: candidate.packageName,
-        version: candidate.stagedVersion,
-        decidedAt: candidate.decidedAt,
-        registryUrl: connection.registryUrl,
-      });
     },
   );
 
@@ -350,25 +357,4 @@ export function shouldRemindAboutForgottenApproval(
   const decidedAt = candidate.decidedAt ? new Date(candidate.decidedAt).getTime() : null;
   if (decidedAt === null || Number.isNaN(decidedAt)) return false;
   return now.getTime() - decidedAt >= FORGOTTEN_APPROVAL_DELAY_MS;
-}
-
-async function runWithConcurrency<T>(
-  items: readonly T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (cursor < items.length) {
-      const item = items[cursor++];
-      if (item === undefined) continue;
-      try {
-        await worker(item);
-      } catch {
-        // Deliberately swallowed: one unresolvable release must not stop the
-        // rest of the batch, and every failure mode here is retried next sweep.
-      }
-    }
-  });
-  await Promise.all(runners);
 }

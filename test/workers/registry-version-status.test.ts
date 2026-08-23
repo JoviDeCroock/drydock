@@ -548,12 +548,13 @@ describe("registry version status resolution", () => {
     expect(newestScan.registryVersionStatus).toBe("published");
   });
 
-  test("exposes supersession in scan lists and refuses decisions on the obsolete stage", async () => {
+  test("keeps superseded reviews in history but out of the undecided queue", async () => {
     const org = await seedOrg();
     const older = await seedCompletedScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
+    const replacementScanId = crypto.randomUUID();
     await createScanJob(db, {
-      id: crypto.randomUUID(),
+      id: replacementScanId,
       stageId: "stage-restaged",
       organizationId: org.organizationId,
       ownerUserId: org.userId,
@@ -562,6 +563,9 @@ describe("registry version status resolution", () => {
       registryUrl: REGISTRY_URL,
     });
 
+    const undecided = await listScans(db, org.organizationId);
+    expect(undecided.scans.map((scan) => scan.id)).toContain(replacementScanId);
+    expect(undecided.scans.map((scan) => scan.id)).not.toContain(older.scanId);
     const listed = await listScans(db, org.organizationId, { decisionFilter: "all" });
     expect(
       listed.scans.find((scan) => scan.id === older.scanId)?.registryStatusSupersededAt,
@@ -575,6 +579,25 @@ describe("registry version status resolution", () => {
       }),
     ).resolves.toBeNull();
     expect((await readScan(older.scanId)).decision).toBeNull();
+  });
+
+  test("clamps an invalid lookup concurrency instead of silently skipping candidates", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const fetchMock = stubRegistry(() => statusResponse("published"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      lookupConcurrency: 0,
+    });
+
+    expect(result).toMatchObject({ checked: 1, resolved: 1, statuses: { published: 1 } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await readScan(scanId)).registryVersionStatus).toBe("published");
   });
 
   test("the later scan owns a release even when creation timestamps tie and its id sorts lower", async () => {

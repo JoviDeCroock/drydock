@@ -7,6 +7,7 @@ import {
 } from "../../db/organizations";
 import { getScan } from "../../db/scans";
 import { isValidStageId } from "../ecosystems/npm/stage-id";
+import { isSafeHttpUrlForShellArgument, quotePosixShellArgument } from "../platform/shell-command";
 import { getSlackConnectionSecret } from "../../db/slack-connection";
 import { sendNotificationEmail } from "./email";
 import { normalizeReleaseConsistency, type ReleaseConsistency } from "../scan/release-memory";
@@ -739,33 +740,14 @@ function formatPackageLabel(
  * one with shell metacharacters intact.
  */
 function approvalInstructions(stageId: string, registryUrl: string): string[] {
-  if (!isValidStageId(stageId) || !isSafeRegistryUrl(registryUrl)) return [];
+  if (!isValidStageId(stageId) || !isSafeHttpUrlForShellArgument(registryUrl)) return [];
   return [
     `Stage: ${stageId}`,
     "",
     "Drydock never publishes on your behalf. To finish the release, run npm's own approval:",
     "",
-    `  npm stage approve ${stageId} --registry ${shellSingleQuote(registryUrl)}`,
+    `  npm stage approve ${stageId} --registry ${quotePosixShellArgument(registryUrl)}`,
   ];
-}
-
-function isSafeRegistryUrl(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code <= 31 || code === 127) return false;
-  }
-  try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /**

@@ -91,7 +91,8 @@ the older rows and clears their displayable registry status, so historical
 reviews cannot keep presenting a live-looking verdict or command for an obsolete
 stage ID. Any public report capability, badge, or threat-feed listing attached
 to the obsolete stage is retired at the same time. Superseded reviews cannot
-accept or update decisions, and failure
+accept or update decisions; they remain under **All** as history but leave the
+default **Undecided** work queue. Failure
 refinement rechecks ownership after its registry request so a concurrent restage
 cannot attribute the replacement stage's outcome to the older scan. The reminder
 marker remains as send-once history. Deleting a failed newer scan therefore
