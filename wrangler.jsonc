@@ -160,6 +160,10 @@
 			"custom_domain": true
 		},
 		{
+			"pattern": "www.drydock.org",
+			"custom_domain": true
+		},
+		{
 			"pattern": "drydock.resynapse.dev",
 			"custom_domain": true
 		},

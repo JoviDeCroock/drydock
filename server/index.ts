@@ -63,6 +63,8 @@ export { NpmAdapterBroker } from "./lib/ecosystems/npm";
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
+const WWW_HOSTNAME = "www.drydock.org";
+const CANONICAL_STATIC_PATHS = new Set(["/diff", "/docs", "/privacy"]);
 const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",
@@ -77,10 +79,20 @@ const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard/settings/github-app/callback/",
 ]);
 
-function canonicalDomainRedirect(request: Request): Response | null {
+function canonicalRequestRedirect(request: Request): Response | null {
   const url = new URL(request.url);
-  if (url.hostname !== LEGACY_HOSTNAME) return null;
-  url.hostname = CANONICAL_HOSTNAME;
+  let redirect = false;
+
+  if (url.hostname === LEGACY_HOSTNAME || url.hostname === WWW_HOSTNAME) {
+    url.hostname = CANONICAL_HOSTNAME;
+    redirect = true;
+  }
+  if (url.pathname.endsWith("/") && CANONICAL_STATIC_PATHS.has(url.pathname.slice(0, -1))) {
+    url.pathname = url.pathname.slice(0, -1);
+    redirect = true;
+  }
+
+  if (!redirect) return null;
   return Response.redirect(url.toString(), 308);
 }
 
@@ -92,6 +104,13 @@ function isServerOwnedPath(path: string): boolean {
 
 function assetFallbackRequest(request: Request): Request {
   const url = new URL(request.url);
+  // The static asset binding stores prerendered routes as /route/index.html and
+  // redirects a bare /route request to /route/. Fetch that generated document
+  // internally so the public URL can stay on the self-canonical, no-slash form.
+  if (CANONICAL_STATIC_PATHS.has(url.pathname)) {
+    url.pathname = `${url.pathname}/`;
+    return new Request(url, request);
+  }
   if (isPackageDiffDetailPath(url.pathname)) {
     url.pathname = "/diff/";
     url.search = "";
@@ -152,7 +171,7 @@ app.use("*", async (c, next) => {
   applySecurityHeaders(c);
 });
 
-app.use("*", async (c, next) => canonicalDomainRedirect(c.req.raw) ?? next());
+app.use("*", async (c, next) => canonicalRequestRedirect(c.req.raw) ?? next());
 
 // GitHub App webhooks are signed by GitHub itself, not Better Auth, and arrive
 // without an Origin/Referer header. They must be mounted before the auth and

@@ -10,6 +10,13 @@ describe("Wrangler static asset routing", () => {
     expect(assetsBlock).toContain('"binding": "ASSETS"');
     expect(assetsBlock).toContain('"run_worker_first": true');
   });
+
+  test("routes both canonical host spellings to the Worker", () => {
+    const config = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+
+    expect(config).toContain('"pattern": "drydock.org"');
+    expect(config).toContain('"pattern": "www.drydock.org"');
+  });
 });
 
 describe("Wrangler public egress routing", () => {
