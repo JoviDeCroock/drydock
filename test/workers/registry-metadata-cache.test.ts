@@ -223,13 +223,21 @@ describe("cached npm packument reads", () => {
 describe("projectRegistryMetadata", () => {
   test("keeps versions without a tarball as present-but-empty entries", () => {
     const projected = projectRegistryMetadata({
-      versions: { "1.0.0": { dist: {} }, "0.9.0": null },
+      versions: {
+        "1.0.0": { dist: {}, deprecated: "known-bad release" },
+        "0.9.0": null,
+        "0.8.0": { deprecated: "x".repeat(1_025) },
+      },
       "dist-tags": { latest: "1.0.0", broken: 7 },
       time: { "1.0.0": "2026-01-01T00:00:00.000Z", modified: 5 },
       readme: "big",
     });
 
-    expect(projected.versions).toEqual({ "1.0.0": {}, "0.9.0": {} });
+    expect(projected.versions).toEqual({
+      "1.0.0": { deprecated: true },
+      "0.9.0": {},
+      "0.8.0": { deprecated: true },
+    });
     expect(projected["dist-tags"]).toEqual({ latest: "1.0.0" });
     expect(projected.time).toEqual({ "1.0.0": "2026-01-01T00:00:00.000Z" });
     expect("readme" in projected).toBe(false);

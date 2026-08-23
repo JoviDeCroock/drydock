@@ -145,6 +145,45 @@ describe("resolveDependencyVersion", () => {
     expect(resolveDependencyVersion(metadata, "^1.0.0")).toBe("1.4.7");
   });
 
+  test("a range skips a deprecated latest when a non-deprecated match exists", () => {
+    expect(
+      resolveDependencyVersion(
+        {
+          versions: { "1.0.0": {}, "1.1.0": { deprecated: true } },
+          "dist-tags": { latest: "1.1.0" },
+        },
+        "^1.0.0",
+      ),
+    ).toBe("1.0.0");
+  });
+
+  test("a range uses the highest deprecated match only when every match is deprecated", () => {
+    expect(
+      resolveDependencyVersion(
+        {
+          versions: {
+            "1.0.0": { deprecated: true },
+            "1.1.0": { deprecated: true },
+          },
+          "dist-tags": { latest: "1.0.0" },
+        },
+        "^1.0.0",
+      ),
+    ).toBe("1.1.0");
+  });
+
+  test("an explicit dist-tag still resolves to its deprecated target", () => {
+    expect(
+      resolveDependencyVersion(
+        {
+          versions: { "1.0.0": { deprecated: true } },
+          "dist-tags": { legacy: "1.0.0" },
+        },
+        "legacy",
+      ),
+    ).toBe("1.0.0");
+  });
+
   test("a dist-tag pointing at an unpublished version does not resolve", () => {
     expect(
       resolveDependencyVersion(

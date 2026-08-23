@@ -1,0 +1,40 @@
+{
+  "id": "added-dependency-bundled-placeholder",
+  "title": "A placeholder bundled directory does not suppress dependency review",
+  "category": "dependency-introduction",
+  "intent": "A bundle declaration and an arbitrary file under node_modules are not a loadable bundled package. npm fetches the declared dependency, so Drydock must keep it in dependency-artifact review.",
+  "previousPackageJson": { "name": "bundled-app", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "bundled-app",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "embedded-helper": "1.0.0" },
+    "bundleDependencies": ["embedded-helper"]
+  },
+  "stagedFiles": [
+    {
+      "path": "node_modules/embedded-helper/index.js",
+      "size": 18,
+      "sha256": "placeholder-index",
+      "flags": [],
+      "textSample": "module.exports = 1"
+    }
+  ],
+  "dependencyArtifacts": {},
+  "expectedDependencies": [
+    {
+      "name": "embedded-helper",
+      "status": "uninspectable",
+      "reason": "metadata-unavailable"
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>embedded-helper"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

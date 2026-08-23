@@ -38,6 +38,7 @@ import {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
+  safeJson,
   type DeterministicFindingOptions,
 } from "./rules";
 import {
@@ -296,10 +297,21 @@ function isBundledInStagedArtifact(
   );
   if (!declared) return false;
 
-  // Do not trust the manifest alone. A dependency is excluded only when its
-  // package bytes are actually embedded in this release artifact.
-  const prefix = `node_modules/${entry.key}/`;
-  return (options.stagedFiles ?? []).some((file) => file.path.startsWith(prefix));
+  // Do not trust the manifest or a placeholder directory alone. npm only uses
+  // an embedded bundle when its direct child package has a loadable identity;
+  // otherwise it fetches the declared dependency from the registry.
+  const packageJsonPath = `node_modules/${entry.key}/package.json`;
+  const packageJson = (options.stagedFiles ?? []).find(
+    (file) => file.path === packageJsonPath && file.textSample,
+  );
+  if (!packageJson?.textSample) return false;
+  const identity = safeJson(packageJson.textSample);
+  return (
+    isRecord(identity) &&
+    identity.name === entry.key &&
+    typeof identity.version === "string" &&
+    identity.version.trim().length > 0
+  );
 }
 
 function introducesInstalledCode(
