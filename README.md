@@ -6,6 +6,15 @@ Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub
 
 Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
 
+## Use Drydock without an account
+
+- **Read a package diff:** compare any two public npm, PyPI, or atpm releases at [drydock.org/diff](https://drydock.org/diff). Drydock parses the archives without installing or executing package code.
+- **Add diffs to Renovate PRs:** extend `"github>JoviDeCroock/drydock//renovate/diff-links"` after your base presets. Every linkable npm and PyPI update gains a Drydock column.
+- **Add diffs to Dependabot PRs:** copy the [verified comment workflow](https://drydock.org/docs#dependabot-diff-links). It supports grouped updates and never checks out PR code.
+- **Show reviewed releases:** after opting a shared review into the public feed, copy its README badge from the share dialog. The badge points readers back to verifiable review evidence.
+
+The dependency-PR integrations add plain links, so Drydock is contacted only when a reviewer chooses to open a diff. See the [integration contract](docs/dependency-pr-diff-links.md) for version-pair guards and security details.
+
 ## Sponsored by
 
 <a href="https://www.aikido.dev">
