@@ -23,11 +23,33 @@ import {
   TocList,
   WorkflowExample,
 } from "./primitives";
+import { scrollToDocsHash } from "./hash-navigation";
 import { TOC_IDS } from "./toc";
 
 export default function DocsPage() {
   const authed = useAuthedSession();
   const activeId = useSignal(TOC_IDS[0]);
+
+  useEffect(() => {
+    let frame: number | undefined;
+    const scrollToCurrentHash = () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        scrollToDocsHash(window.location.hash, document);
+      });
+    };
+
+    // Cross-page links are intercepted by preact-iso. Once the lazy docs route
+    // mounts, the router scrolls it to the top, so restore the intended anchor
+    // after that route transition has committed.
+    scrollToCurrentHash();
+    window.addEventListener("hashchange", scrollToCurrentHash);
+    return () => {
+      window.removeEventListener("hashchange", scrollToCurrentHash);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     const visible = new Set<string>();
