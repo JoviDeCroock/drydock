@@ -664,40 +664,43 @@ describe("analyzeRelease", () => {
     expect(dependencyFinding).toMatchObject({ severity: "medium" });
   });
 
-  test("marks a missing baseline manifest as unavailable when acquisition failed", async () => {
-    const acquired = clonedResolved();
-    acquired.staged.artifact.manifest.dependencies = { added: "1.0.0" };
-    acquired.staged.artifact.files[0].textSample = JSON.stringify({
-      name: "pkg",
-      version: "1.0.1",
-      dependencies: { added: "1.0.0" },
-    });
-    acquired.baseline = {
-      artifact: null,
-      baseline: { ...baselineInfo, version: null, reason: "baseline-unavailable" },
-    };
-    const inspectAddedDependencies = vi.fn(async () => ({
-      status: "partial",
-      selectedCount: 1,
-      inspectedCount: 0,
-      uninspectableCount: 1,
-      dependencies: [],
-    }));
-    const adapter = makeAdapter({
-      acquireStaged: vi.fn(async () => acquired.staged),
-      acquireBaseline: vi.fn(async () => acquired.baseline),
-      inspectAddedDependencies,
-    });
-    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+  test.each(["baseline-unavailable", "package-json-missing-name-or-version"])(
+    "marks a missing baseline manifest as unavailable for %s",
+    async (reason) => {
+      const acquired = clonedResolved();
+      acquired.staged.artifact.manifest.dependencies = { added: "1.0.0" };
+      acquired.staged.artifact.files[0].textSample = JSON.stringify({
+        name: "pkg",
+        version: "1.0.1",
+        dependencies: { added: "1.0.0" },
+      });
+      acquired.baseline = {
+        artifact: null,
+        baseline: { ...baselineInfo, version: null, reason },
+      };
+      const inspectAddedDependencies = vi.fn(async () => ({
+        status: "partial",
+        selectedCount: 1,
+        inspectedCount: 0,
+        uninspectableCount: 1,
+        dependencies: [],
+      }));
+      const adapter = makeAdapter({
+        acquireStaged: vi.fn(async () => acquired.staged),
+        acquireBaseline: vi.fn(async () => acquired.baseline),
+        inspectAddedDependencies,
+      });
+      const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
 
-    await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} }, identity);
+      await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} }, identity);
 
-    expect(inspectAddedDependencies).toHaveBeenCalledWith(
-      ctx,
-      expect.anything(),
-      expect.objectContaining({ baselineManifestUnavailable: true }),
-    );
-  });
+      expect(inspectAddedDependencies).toHaveBeenCalledWith(
+        ctx,
+        expect.anything(),
+        expect.objectContaining({ baselineManifestUnavailable: true }),
+      );
+    },
+  );
 
   test("an adapter without the capability records an empty review", async () => {
     const acquired = clonedResolved();

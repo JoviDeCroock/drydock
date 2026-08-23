@@ -145,7 +145,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.36.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.37.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -449,6 +449,14 @@ dependency has a terminal inspected or uninspectable record, that evidence repla
 declaration-only `dependency.added` / `dependency.optional-added` finding, so a clean reviewed dependency
 can remain low risk. Finding projection and the report UI now share the same proven/unproven install-risk
 classifier, keeping their severity and claims aligned.
+
+`1.37.0` closes registry-resolution and dependency-evidence trust gaps. Published versions and ranges
+with non-canonical or unsafe numeric identifiers are rejected instead of selecting bytes npm ignores;
+a missing staged package name or version is treated as a baseline acquisition gap rather than a genuine
+first release; and an unsupported or malformed `dist.integrity` cannot fall through to a matching legacy
+SHA-1 shasum. A lifecycle path that reaches both a process launch and a bundled native artifact is now a
+proven high-risk install path with native-specific finding and report copy, pinned by
+`added-dependency-native-execution`.
 
 ### Fixture format
 

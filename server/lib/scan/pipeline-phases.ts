@@ -426,11 +426,7 @@ function baselineManifestUnavailable(diff: ComputedDiff, baseline: BaselineInfo)
   // These reasons mean there genuinely is no earlier release to compare. Every
   // other no-manifest outcome is an acquisition/parsing gap, so conservatively
   // inspect every staged install dependency instead of reporting N/A.
-  return ![
-    "none",
-    "dist-tag-points-at-staged-version",
-    "package-json-missing-name-or-version",
-  ].includes(baseline.reason);
+  return !["none", "dist-tag-points-at-staged-version"].includes(baseline.reason);
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context

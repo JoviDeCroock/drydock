@@ -464,10 +464,9 @@ export function assessDependencyArtifact(
     .sort();
 
   const hasAutomaticExecution = automaticExecution.length > 0;
-  const reachableDanger = installReachableCapabilities.some(
-    (ruleId) =>
-      INSTALL_TIME_DANGER_RULE_IDS.has(ruleId) || isNativeExecutionPair(ruleId, capabilities),
-  );
+  const reachableDanger =
+    installReachableCapabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId)) ||
+    hasNativeExecutionPair(installReachableCapabilities);
   const anyDanger = capabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId));
 
   const verdict: DependencyVerdict = !hasAutomaticExecution
@@ -491,6 +490,8 @@ export interface DependencyInstallRiskClassification {
   severity: "medium" | "high" | "critical";
   proven: boolean;
   strong: boolean;
+  /** The install path can invoke a native executable, rather than a downloader-shaped capability. */
+  nativeExecution: boolean;
   observedCapabilities: string[];
 }
 
@@ -505,9 +506,12 @@ export function classifyDependencyInstallRisk(
   evidence: Pick<DependencyEvidence, "verdict" | "capabilities" | "installReachableCapabilities">,
 ): DependencyInstallRiskClassification | null {
   if (evidence.verdict !== "install-risk") return null;
-  const proven = evidence.installReachableCapabilities.some((ruleId) =>
+  const provenDanger = evidence.installReachableCapabilities.some((ruleId) =>
     INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
   );
+  const nativeExecution =
+    !provenDanger && hasNativeExecutionPair(evidence.installReachableCapabilities);
+  const proven = provenDanger || nativeExecution;
   const observedCapabilities = proven
     ? evidence.installReachableCapabilities
     : evidence.capabilities;
@@ -516,6 +520,7 @@ export function classifyDependencyInstallRisk(
     severity: strong ? (proven ? "critical" : "high") : proven ? "high" : "medium",
     proven,
     strong,
+    nativeExecution,
     observedCapabilities,
   };
 }
@@ -588,11 +593,12 @@ function installScriptCapabilities(
   return [...capabilities];
 }
 
-// A native artifact is only an install-time execution concern when something
-// runs on install to use it; on its own it is an ordinary prebuilt binary.
-function isNativeExecutionPair(ruleId: string, capabilities: string[]): boolean {
+// A native artifact is only an install-time execution concern when the same
+// install-reachable path can spawn a process to use it; on its own it is an
+// ordinary prebuilt binary, and unrelated process execution is not proof.
+function hasNativeExecutionPair(capabilities: string[]): boolean {
   return (
-    ruleId === DETERMINISTIC_RULE_IDS.fileNativeArtifact &&
+    capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact) &&
     capabilities.includes(DETERMINISTIC_RULE_IDS.codeProcessExecution)
   );
 }
@@ -648,9 +654,11 @@ function dependencyPathLabel(
  * findings stay on the evidence record for the report.
  *
  * Severity ladder, and why:
- *   - `install-risk` with a proven install-time reach → `critical`. This is the
- *     arrayref shape: adding the dependency runs a downloader on every consumer
- *     install. A release carrying it cannot be recommended for approval.
+ *   - `install-risk` with a proven strong install-time reach → `critical`. This
+ *     is the arrayref shape: adding the dependency runs a dropper on every
+ *     consumer install. A release carrying it cannot be recommended for approval.
+ *   - `install-risk` with a proven weak install-time reach → `high`. This covers
+ *     both downloads and a process launch paired with a native executable.
  *   - `install-risk` whose reach is unproven → `high`. The capability is in the
  *     artifact and something runs on install; static reachability just could not
  *     draw the edge. Failing quiet here would be the wrong direction.
@@ -701,7 +709,7 @@ export function dependencyEvidenceFindings(
       // rather than dropped. `strong` is "does this behavior have a benign
       // reading?" — a remote shell does not, an HTTPS download does.
       const classification = classifyDependencyInstallRisk(evidence)!;
-      const { proven, strong, observedCapabilities: observed } = classification;
+      const { proven, strong, nativeExecution, observedCapabilities: observed } = classification;
       const behaviors =
         describeCapabilities(observed) ||
         "install-time behavior Drydock flags as downloader-shaped";
@@ -710,13 +718,15 @@ export function dependencyEvidenceFindings(
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
         ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallRisk,
         evidence: `${path} → ${behaviors}`,
-        reason: !strong
-          ? proven
-            ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"
-            : "this release introduces a dependency that runs automatically on install and also contains network-capable code; Drydock could not statically prove the install hook reaches that code, so confirm whether it is an install-time download or unrelated package behavior before approving"
-          : proven
-            ? "this release introduces a dependency that runs automatically on install and whose install-time code path pipes remote code into a shell, evaluates assembled code, or reads credentials — the arrayref/proc-macro1 shape, where a compromised parent added a dependency whose build step fetched the payload; the dependency's own bytes were reviewed and are recorded with this scan"
-            : "this release introduces a dependency that runs automatically on install and also carries remote-shell, credential-access, or dynamic-evaluation code; Drydock could not statically prove the install hook reaches it, so this is reported one step below a proven install-time path rather than dismissed",
+        reason: nativeExecution
+          ? "this release introduces a dependency whose install-time path can invoke a native executable; confirm that the binary and the process launch are expected before approving, because every consumer install inherits that native execution"
+          : !strong
+            ? proven
+              ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"
+              : "this release introduces a dependency that runs automatically on install and also contains network-capable code; Drydock could not statically prove the install hook reaches that code, so confirm whether it is an install-time download or unrelated package behavior before approving"
+            : proven
+              ? "this release introduces a dependency that runs automatically on install and whose install-time code path pipes remote code into a shell, evaluates assembled code, or reads credentials — the arrayref/proc-macro1 shape, where a compromised parent added a dependency whose build step fetched the payload; the dependency's own bytes were reviewed and are recorded with this scan"
+              : "this release introduces a dependency that runs automatically on install and also carries remote-shell, credential-access, or dynamic-evaluation code; Drydock could not statically prove the install hook reaches it, so this is reported one step below a proven install-time path rather than dismissed",
       });
     } else if (evidence.verdict === "install-execution") {
       findings.push({

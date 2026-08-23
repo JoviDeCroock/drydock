@@ -585,6 +585,28 @@ describe("inspectAddedNpmDependencies", () => {
     expect(review.dependencies[0].digestVerified).toBe(true);
   });
 
+  test("an unsupported SRI cannot fall through to a matching legacy shasum", async () => {
+    const url = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
+    const broker = brokerStub({
+      metadata: {
+        "proc-macro1": packument("proc-macro1", {
+          "0.1.0": {
+            integrity: `sha256-${Buffer.alloc(32).toString("base64")}`,
+            shasum: "AA".repeat(20),
+          },
+        }),
+      },
+      downloads: { [url]: DROPPER_TARBALL },
+    });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
+    );
+    expect(review.dependencies[0].declaredDigest).toBeNull();
+    expect(review.dependencies[0].digestVerified).toBeNull();
+  });
+
   test("does not persist malformed registry digests", async () => {
     const broker = brokerStub({
       metadata: {
