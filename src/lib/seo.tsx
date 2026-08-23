@@ -10,13 +10,15 @@ import {
 } from "./seo-metadata";
 
 export {
+  discoveryGuideSeoByPath,
+  DISCOVERY_GUIDE_PATHS,
   docsPageSeo,
   getPageSeoMetadata,
   homePageSeo,
   packageDiffSeo,
   privacyPageSeo,
 } from "./seo-metadata";
-export type { PageSeoMetadata } from "./seo-metadata";
+export type { DiscoveryGuidePath, PageSeoMetadata } from "./seo-metadata";
 
 interface PrerenderHeadElement {
   type: string;

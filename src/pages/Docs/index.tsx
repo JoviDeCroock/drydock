@@ -898,6 +898,24 @@ jobs:
               </div>
             </Card>
           </section>
+
+          <section class="flex flex-col gap-4">
+            <SectionLabel as="h2">Focused guides</SectionLabel>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <JourneyCard number="01" href="/npm-staged-publishing" title="npm staged publishing">
+                Review a private npm tarball before completing publication with 2FA.
+              </JourneyCard>
+              <JourneyCard number="02" href="/github-actions-package-gate" title="Workflow gates">
+                Hold npm, PyPI, or VS Code release jobs behind an artifact review.
+              </JourneyCard>
+              <JourneyCard number="03" href="/package-tarball-diff" title="Package tarball diff">
+                Compare registry artifacts without an account or package installation.
+              </JourneyCard>
+              <JourneyCard number="04" href="/security" title="Security model">
+                Read how package isolation, credentials, and human decisions stay bounded.
+              </JourneyCard>
+            </div>
+          </section>
         </div>
       </div>
     </PageShell>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import {
+  DISCOVERY_GUIDE_PATHS,
+  discoveryGuideSeoByPath,
   docsPageSeo,
   getPageSeoMetadata,
   homePageSeo,
@@ -19,6 +21,10 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/docs/")).toBe(true);
     expect(isPrerenderedRoute("/privacy")).toBe(true);
     expect(isPrerenderedRoute("/privacy/")).toBe(true);
+    for (const path of DISCOVERY_GUIDE_PATHS) {
+      expect(isPrerenderedRoute(path)).toBe(true);
+      expect(isPrerenderedRoute(`${path}/`)).toBe(true);
+    }
   });
 
   it("matches generated dashboard shell pages with or without canonical trailing slashes", () => {
@@ -67,5 +73,17 @@ describe("page SEO metadata", () => {
       title: "@preact/signals 1.0.0 → 2.0.0 | Drydock package diff",
       path: "/diff/@preact/signals/1.0.0/2.0.0",
     });
+  });
+
+  it("gives every focused guide distinct canonical metadata", () => {
+    const titles = new Set<string>();
+    for (const path of DISCOVERY_GUIDE_PATHS) {
+      const metadata = discoveryGuideSeoByPath[path];
+      expect(metadata.path).toBe(path);
+      expect(getPageSeoMetadata(path)).toBe(metadata);
+      expect(getPageSeoMetadata(`${path}/`)).toBe(metadata);
+      titles.add(metadata.title);
+    }
+    expect(titles.size).toBe(DISCOVERY_GUIDE_PATHS.length);
   });
 });

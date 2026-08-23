@@ -56,6 +56,7 @@ import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
+import { DISCOVERY_GUIDE_PATHS } from "../src/lib/seo-metadata";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/ecosystems/npm";
@@ -64,7 +65,12 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const CANONICAL_HOSTNAME = "drydock.org";
 const LEGACY_HOSTNAME = "drydock.resynapse.dev";
 const WWW_HOSTNAME = "www.drydock.org";
-const CANONICAL_STATIC_PATHS = new Set(["/diff", "/docs", "/privacy"]);
+const CANONICAL_STATIC_PATHS = new Set<string>([
+  "/diff",
+  "/docs",
+  "/privacy",
+  ...DISCOVERY_GUIDE_PATHS,
+]);
 const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public"];
 const DASHBOARD_STATIC_ASSET_PATHS = new Set([
   "/dashboard",

@@ -24,6 +24,7 @@ const InvitePage = lazy(() => import("./pages/Dashboard/Invite"));
 const GithubAppCallbackPage = lazy(() => import("./pages/Dashboard/GithubAppCallback"));
 const PackageDiffPage = lazy(() => import("./pages/Diff"));
 const PublicReportPage = lazy(() => import("./pages/PublicReport"));
+const DiscoveryGuidePage = lazy(() => import("./pages/Guides"));
 const NotFoundPage = lazy(() => import("./pages/NotFound"));
 
 export function App() {
@@ -34,6 +35,13 @@ export function App() {
           <Route path="/" component={LandingPage} />
           <Route path="/docs" component={DocsPage} />
           <Route path="/privacy" component={PrivacyPage} />
+          <Route path="/npm-staged-publishing" component={DiscoveryGuidePage} />
+          <Route path="/github-actions-package-gate" component={DiscoveryGuidePage} />
+          <Route path="/pypi-release-security" component={DiscoveryGuidePage} />
+          <Route path="/vscode-extension-security" component={DiscoveryGuidePage} />
+          <Route path="/package-tarball-diff" component={DiscoveryGuidePage} />
+          <Route path="/security" component={DiscoveryGuidePage} />
+          <Route path="/open-source" component={DiscoveryGuidePage} />
           <Route path="/diff" component={PackageDiffPage} />
           <Route path="/diff/*" component={PackageDiffPage} />
           <Route path="/login" component={LoginPage} />

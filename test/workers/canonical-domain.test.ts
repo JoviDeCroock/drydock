@@ -83,6 +83,25 @@ describe("canonical domain routing", () => {
     expect(res.headers.get("Location")).toBe("https://drydock.org/diff?package=preact");
   });
 
+  test("serves focused guides at self-canonical no-slash URLs", async () => {
+    const res = await fetchWorker(
+      "https://drydock.org/npm-staged-publishing?from=search",
+      assetEnv,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset:/npm-staged-publishing/?from=search");
+  });
+
+  test("permanently redirects focused guide trailing-slash URLs", async () => {
+    const res = await fetchWorker("https://drydock.org/package-tarball-diff/?from=bookmark");
+
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe(
+      "https://drydock.org/package-tarball-diff?from=bookmark",
+    );
+  });
+
   test("serves generated app assets through the Worker-first fallback", async () => {
     const res = await fetchWorker("https://drydock.org/dashboard/settings?tab=general", assetEnv);
 

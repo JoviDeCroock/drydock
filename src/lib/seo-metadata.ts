@@ -19,6 +19,54 @@ export interface PageSeoMetadata {
   path: string;
 }
 
+export const discoveryGuideSeoByPath = {
+  "/npm-staged-publishing": {
+    title: "npm staged publishing security review | Drydock",
+    description:
+      "Review an npm staged package tarball against its published baseline before completing publication with npm 2FA.",
+    path: "/npm-staged-publishing",
+  },
+  "/github-actions-package-gate": {
+    title: "GitHub Actions package release gate | Drydock",
+    description:
+      "Hold npm, PyPI, or VS Code publication in a GitHub Environment until the exact built artifacts pass human review.",
+    path: "/github-actions-package-gate",
+  },
+  "/pypi-release-security": {
+    title: "PyPI release security for wheels and sdists | Drydock",
+    description:
+      "Review Python wheels and source distributions before a GitHub Actions trusted-publishing workflow uploads them to PyPI.",
+    path: "/pypi-release-security",
+  },
+  "/vscode-extension-security": {
+    title: "VS Code extension pre-publish security | Drydock",
+    description:
+      "Review the packaged VSIX, activation changes, entrypoints, and risky capabilities before marketplace publication.",
+    path: "/vscode-extension-security",
+  },
+  "/package-tarball-diff": {
+    title: "Package tarball diff for npm, PyPI, and atpm | Drydock",
+    description:
+      "Compare package artifacts file by file with deterministic supply-chain findings. No account or package installation required.",
+    path: "/package-tarball-diff",
+  },
+  "/security": {
+    title: "Drydock package-review security model",
+    description:
+      "How Drydock isolates hostile package artifacts, keeps publish credentials outside the sandbox, and preserves human release decisions.",
+    path: "/security",
+  },
+  "/open-source": {
+    title: "Open-source pre-publish package review | Drydock",
+    description:
+      "Audit Drydock's Apache-2.0 detection rules and security boundaries, or self-host package review in your own Cloudflare account.",
+    path: "/open-source",
+  },
+} as const satisfies Record<string, PageSeoMetadata>;
+
+export type DiscoveryGuidePath = keyof typeof discoveryGuideSeoByPath;
+export const DISCOVERY_GUIDE_PATHS = Object.keys(discoveryGuideSeoByPath) as DiscoveryGuidePath[];
+
 // Per-diff share card. Every shared diff otherwise unfurls with the same
 // site-wide image, so a timeline reader cannot tell which package a link is
 // about without clicking it.
@@ -98,5 +146,8 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/docs") return docsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
   if (canonicalPathname === "/diff") return packageDiffSeo();
+  if (canonicalPathname in discoveryGuideSeoByPath) {
+    return discoveryGuideSeoByPath[canonicalPathname as DiscoveryGuidePath];
+  }
   return undefined;
 }
