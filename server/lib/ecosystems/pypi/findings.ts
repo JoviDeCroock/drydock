@@ -6,7 +6,7 @@ import {
   tarSuspiciousEntryFindings,
 } from "../../review";
 import { canonicalizePath, normalizeTarPath, type TarSuspiciousEntry } from "../../tar-parser.js";
-import { firstMatchingLine } from "../../platform/text-utils";
+import { firstMatchingLine, matchesAnyPattern } from "../../platform/text-utils";
 import { normalizePyPiProjectName } from "./manifest";
 import { pyPiVersionsEquivalent } from "./version";
 import {
@@ -166,12 +166,8 @@ export function pyPiReleaseFindings(
       }
       if (artifact.kind === "sdist" && /^setup\.py$/i.test(file.path)) {
         const setupText = file.textSample ?? "";
-        const matchedInstallCommand = SETUP_INSTALL_COMMAND_PATTERNS.some((pattern) =>
-          pattern.test(setupText),
-        );
-        const matchedExecution = PYTHON_EXECUTION_CAPABILITY_PATTERNS.some((pattern) =>
-          pattern.test(setupText),
-        );
+        const matchedInstallCommand = matchesAnyPattern(setupText, SETUP_INSTALL_COMMAND_PATTERNS);
+        const matchedExecution = matchesAnyPattern(setupText, PYTHON_EXECUTION_CAPABILITY_PATTERNS);
         if (matchedInstallCommand || matchedExecution) {
           findings.push(
             tag("setupInstallCommand", {

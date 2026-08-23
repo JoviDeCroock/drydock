@@ -1,5 +1,6 @@
 import { diffLines } from "diff";
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
+import { matchesAnyPattern } from "../platform/text-utils";
 import {
   codePatternsFor,
   DETERMINISTIC_RULE_IDS,
@@ -214,10 +215,7 @@ function findingPatternMatchesChangedLine(
   for (const lineNumber of changedLines) {
     const line = lines[lineNumber - 1];
     if (line === undefined) continue;
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) return true;
-    }
+    if (matchesAnyPattern(line, patterns)) return true;
   }
   return false;
 }

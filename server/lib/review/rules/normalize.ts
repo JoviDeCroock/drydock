@@ -21,7 +21,12 @@
 
 import { jsTokenText, tokenizeJs, type JsToken } from "../../platform/js-lexer";
 
-// Samples are bounded to 64KB by the sandbox; this is a safety valve only.
+// Hard ceiling on what the folder will tokenize. Samples are NOT bounded by the
+// sandbox any more — issue #191 made staged and public parses retain whole file
+// bodies — so this is real enforcement, not a safety valve. The regex pass that
+// consumes the folded text bounds itself separately (see
+// `platform/text-utils.ts`); a file over this size is scanned unfolded rather
+// than tokenized.
 const MAX_NORMALIZE_BYTES = 512 * 1024;
 // Folds simplify monotonically (shorter text, fewer tokens), so a handful of
 // passes reaches a fixpoint. `globalThis['re' + 'quire']` needs two: concat then

@@ -58,14 +58,19 @@ const SHELL_NETWORK_TOOL_PATTERNS = [
 // Download-and-execute: a network tool composed with an interpreter in one
 // command. Unlike a bare shell tool there is no benign reading of these — a
 // release that adds one is fetching and running code it did not ship.
+//
+// These patterns are deliberately evaluated through the bounded-window helpers
+// in `platform/text-utils.ts`. That keeps hostile minified lines from turning
+// their greedy spans into parent-Worker CPU exhaustion without imposing a
+// padding limit that an attacker can use to evade the rule.
 const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
   // The interpreter may sit behind any number of intermediate pipe stages
   // (`| base64 -d | bash`, `| gunzip | sh` — the standard obfuscated forms), an
   // absolute path (`| /bin/bash`), and a privilege/environment prefix
   // (`| sudo -E bash`, `| env bash`). The trailing `\b` is what keeps
   // `| sha256sum` and `| shasum` out.
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
-  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\/+)?(?:[^\s/]+\/+)*(?:ba|z|k|da)?sh\b/i,
+  /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\/+)?(?:[^\s/]+\/+)*(?:python[\d.]*|perl|ruby|node)\b/i,
   /\$\(\s*(?:curl|wget)\b/i,
   /<\(\s*(?:curl|wget)\b/i,
   // Backtick command substitution: `` eval `curl -s https://x` ``.
@@ -113,6 +118,11 @@ const JS_DYNAMIC_EVALUATION_PATTERNS = [
   // preset idiom, so it flagged the legit-require-resolve benign hard-negative.
   /\batob\s*\(/,
   /\bBuffer\.from\s*\([^,]+,\s*["']base64["']\s*\)/,
+  // A large inline payload can put `Buffer.from(` and its encoding argument in
+  // different scan windows. Match a base64-shaped tail independently so the
+  // bounded matcher still sees packed payloads without handing a regex the
+  // whole hostile file body.
+  /(?:[A-Za-z0-9+/_=-]\r?\n?){256}["'`]\s*,\s*["']base64["']\s*\)/,
 ];
 const PYTHON_DYNAMIC_EVALUATION_PATTERNS = [
   /(?<!\.)\bexec\s*\(/,
@@ -190,6 +200,10 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
 // pattern, since over-redacting a placeholder is harmless while under-redacting
 // a real credential is not.
 const URL_CREDENTIALS_REDACTION_PATTERN = /\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+/g;
+const PRIVATE_KEY_REDACTION_PATTERN =
+  /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----)[\s\S])*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g;
+const PRIVATE_KEY_FINDING_PATTERN =
+  /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g;
 const PLACEHOLDER_USERNAME_SEGMENT = [
   "user(?:name)?",
   "usr",
@@ -242,7 +256,15 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[REDACTED_JWT]"],
   [URL_CREDENTIALS_REDACTION_PATTERN, "[REDACTED_URL_WITH_CREDENTIALS]"],
   [
-    /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g,
+    // The body is a tempered span, not `[\s\S]*?`. The lazy form rescans the
+    // whole remainder of the input from every `-----BEGIN` marker, so a file
+    // carrying many BEGIN markers and no END is quadratic — and this pattern
+    // runs over every retained file body through `redactText`, including on the
+    // anonymous /diff path. The tempered body cannot cross a second complete
+    // private-key BEGIN marker, so repeated openers partition the work instead
+    // of each rescanning the whole remaining file. It still permits arbitrary
+    // dashes in PGP armor headers and has no fail-open key-size limit.
+    PRIVATE_KEY_REDACTION_PATTERN,
     "[REDACTED_PRIVATE_KEY]",
   ],
   [/(authorization\s*[:=]\s*)['"]?Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, "$1[REDACTED_BEARER]"],
@@ -255,7 +277,9 @@ export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.
   ([pattern, label]) =>
     pattern === URL_CREDENTIALS_REDACTION_PATTERN
       ? [URL_CREDENTIALS_FINDING_PATTERN, label]
-      : [pattern, label],
+      : pattern === PRIVATE_KEY_REDACTION_PATTERN
+        ? [PRIVATE_KEY_FINDING_PATTERN, label]
+        : [pattern, label],
 );
 
 export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =

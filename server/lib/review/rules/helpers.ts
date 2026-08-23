@@ -1,5 +1,5 @@
 import type { Finding } from "..";
-import { firstMatchingLine } from "../../platform/text-utils";
+import { firstMatchingLine, matchesAnyPattern } from "../../platform/text-utils";
 import { FINDING_SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from "./patterns";
 import { DETERMINISTIC_RULE_IDS, type DeterministicRuleKey } from "./rule-ids";
 
@@ -39,10 +39,10 @@ interface SecretTextOptions {
 }
 
 export function containsSecretLikeText(text: string, options: SecretTextOptions = {}): boolean {
-  return secretPatternsFor(options).some(([pattern]) => {
-    pattern.lastIndex = 0;
-    return pattern.test(text);
-  });
+  return matchesAnyPattern(
+    text,
+    secretPatternsFor(options).map(([pattern]) => pattern),
+  );
 }
 
 export function firstSecretLine(

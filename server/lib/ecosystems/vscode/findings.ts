@@ -9,7 +9,7 @@ import {
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import { JS_PATTERN_SET } from "../../review/rules/patterns";
 import { normalizeCodeForScanning } from "../../review/rules/normalize";
-import { firstMatchingLine } from "../../platform/text-utils";
+import { firstMatchingLine, matchesAnyPattern } from "../../platform/text-utils";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
   extensionIdFromManifest,
@@ -269,10 +269,7 @@ function isJavaScriptFile(path: string): boolean {
 
 function isWasmLoader(sample: string | undefined): boolean {
   if (!sample) return false;
-  return WASM_LOADER_PATTERNS.some((pattern) => {
-    pattern.lastIndex = 0;
-    return pattern.test(sample);
-  });
+  return matchesAnyPattern(sample, WASM_LOADER_PATTERNS);
 }
 
 function readConfigurationKeys(sample: string): string[] {
@@ -401,12 +398,7 @@ function broadActivationEvent(events: string[]): string | null {
 }
 
 function matches(patterns: RegExp[], sample: string, normalized: string): boolean {
-  return patterns.some((pattern) => {
-    pattern.lastIndex = 0;
-    const raw = pattern.test(sample);
-    pattern.lastIndex = 0;
-    return raw || pattern.test(normalized);
-  });
+  return matchesAnyPattern(sample, patterns) || matchesAnyPattern(normalized, patterns);
 }
 
 function vscodeTag(

