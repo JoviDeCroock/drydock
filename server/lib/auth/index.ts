@@ -400,6 +400,25 @@ function isLocalAuthUrl(url: string | undefined): boolean {
   }
 }
 
+/**
+ * GitHub sign-in is identity-only OAuth (profile + verified email) — it never
+ * installs the GitHub App and grants no repo access. Enabled by the operator
+ * via a dedicated credential pair so a deployment can run the workflow-gate
+ * App without offering social sign-in, or vice versa.
+ */
+export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
+  const clientId = env.GITHUB_OAUTH_CLIENT_ID;
+  return Boolean(
+    clientId &&
+    env.GITHUB_OAUTH_CLIENT_SECRET &&
+    // GitHub App OAuth client IDs use the `Iv` prefix across legacy and
+    // current formats. Their user-to-server
+    // tokens can inherit installation permissions, so accepting one would
+    // make the UI's identity-only/no-repository-access promise false.
+    !clientId.startsWith("Iv"),
+  );
+}
+
 export function createAuth(env: Cloudflare.Env) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
@@ -408,6 +427,7 @@ export function createAuth(env: Cloudflare.Env) {
   const sessionCache = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
   const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
+  const githubSignIn = isGithubSignInEnabled(env);
   return betterAuth({
     appName: "Drydock",
     secret: env.BETTER_AUTH_SECRET,
@@ -479,20 +499,74 @@ export function createAuth(env: Cloudflare.Env) {
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
     },
+    ...(githubSignIn
+      ? {
+          socialProviders: {
+            github: {
+              clientId: env.GITHUB_OAUTH_CLIENT_ID as string,
+              clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET as string,
+            },
+          },
+        }
+      : {}),
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (
+          (ctx.path === "/sign-in/social" || ctx.path === "/link-social") &&
+          ctx.body &&
+          typeof ctx.body === "object" &&
+          Object.hasOwn(ctx.body, "scopes")
+        ) {
+          // Better Auth otherwise appends request-provided scopes to the
+          // provider defaults. Reject overrides at the server boundary so the
+          // GitHub grant remains profile-and-email-only for every caller.
+          throw APIError.from("BAD_REQUEST", {
+            code: "OAUTH_SCOPES_NOT_ALLOWED",
+            message: "OAuth scope overrides are not allowed",
+          });
+        }
+      }),
+    },
+    account: {
+      // A social sign-in leaves the provider's access (and refresh) token in
+      // `account`. Better Auth stores those in plain text by default, which
+      // would put usable GitHub credentials in every D1 dump and backup —
+      // encrypt them at rest instead. Drydock application logic never uses
+      // them after callback; Better Auth's authenticated account API can still
+      // return them to the signed-in user, so the grant must stay identity-only.
+      encryptOAuthTokens: true,
+      accountLinking: {
+        // Keep social-only and password identities separate. Better Auth also
+        // exposes an explicit link endpoint; leaving it enabled would let a
+        // password account attach GitHub and bypass its Drydock TOTP challenge
+        // on later sign-ins, then potentially unlink its credential into a
+        // state the password-gated 2FA management routes cannot service.
+        enabled: false,
+        disableImplicitLinking: true,
+      },
+    },
     databaseHooks: {
       user: {
         create: {
           // Top of the funnel. Fires once per account row, so it counts real
           // signups rather than sign-in attempts. Nothing identifying is
           // recorded — not the email, not the user id (see the privacy posture
-          // in lib/platform/analytics.ts). `emailVerificationEnabled` rides
-          // along as the outcome because an unverified account cannot reach a
-          // scan, and that is the first place the funnel leaks.
-          after: async () => {
+          // in lib/platform/analytics.ts). The outcome tracks whether the
+          // account can reach a scan immediately: an unverified password
+          // account cannot, and that is the first place the funnel leaks.
+          // Method is inferred rather than read from context: GitHub supplies
+          // a provider-verified email, so social accounts are the only ones
+          // created with emailVerified already true; password sign-ups always
+          // start unverified regardless of whether verification is enforced.
+          // Known skew: a GitHub account whose email arrives unverified (e.g.
+          // the provider app lacks the Email addresses read permission, see
+          // docs/self-hosting.md) is counted as email_password.
+          after: async (createdUser) => {
+            const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
               name: "user.signed_up",
-              method: "email_password",
-              outcome: emailVerificationEnabled ? "verification_pending" : "active",
+              method: social ? "github" : "email_password",
+              outcome: social || !emailVerificationEnabled ? "active" : "verification_pending",
             });
           },
         },

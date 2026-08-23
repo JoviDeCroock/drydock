@@ -12,13 +12,20 @@ import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
 import { Eyebrow, Muted } from "../../components/Typography";
+import { SocialSignIn } from "./SocialSignIn";
 
 export default function RegisterPage() {
   const location = useLocation();
   const name = useSignal("");
   const email = useSignal("");
   const password = useSignal("");
-  const error = useSignal<string | null>(null);
+  // A failed or cancelled OAuth redirect lands back here with ?error=…
+  // (the errorCallbackURL passed when the redirect started).
+  const error = useSignal<string | null>(
+    location.query.error
+      ? "GitHub sign-in didn't complete. Try again, or create an account with email."
+      : null,
+  );
   const loading = useSignal(false);
   const verificationSentTo = useSignal<string | null>(null);
   const resending = useSignal(false);
@@ -120,6 +127,12 @@ export default function RegisterPage() {
           Create a workspace, connect npm or a GitHub gate, and review held releases before they go
           live.
         </Muted>
+
+        <SocialSignIn
+          returnTo={returnTo}
+          errorPath="/register"
+          onError={(message) => (error.value = message)}
+        />
 
         <form class="flex flex-col gap-4 mt-2" onSubmit={onSubmit}>
           <Field label="Name" for="register-name">

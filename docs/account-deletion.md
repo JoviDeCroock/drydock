@@ -16,12 +16,18 @@ user: {
 
 ## Reauth
 
-Deletion is irreversible, so it is gated on the account password. The client
-(`sessionModel.deleteAccount` in `src/models/auth.ts`) posts `{ password }` to
-`POST /api/auth/delete-user`; Better Auth verifies it against the credential account before
-running `beforeDelete`. A wrong password returns `400 INVALID_PASSWORD` and nothing is touched.
-The UI (`src/pages/Dashboard/Account/DeleteAccountSection.tsx`) also requires the user to
-type their own email, so the action can't fire from a stray click or an autofilled password.
+Deletion is irreversible, so it is reauthenticated according to the account's
+sign-in method. A credential account posts `{ password }` to
+`POST /api/auth/delete-user`; Better Auth verifies it before running
+`beforeDelete`, and a wrong password returns `400 INVALID_PASSWORD` with nothing
+touched. A GitHub-only account has no password, so the client posts `{}` and
+Better Auth requires the OAuth-created session to still be fresh. If it has aged
+out, the user signs out, signs back in with GitHub, and retries.
+
+The UI (`src/pages/Dashboard/Account/DeleteAccountSection.tsx`) always requires
+the user to type their own email, so the action cannot fire from a stray click.
+It asks for a password only when `GET /api/auth/list-accounts` reports a
+`credential` row.
 
 ## What gets deleted
 
@@ -65,6 +71,7 @@ landing page (`/`). All of the user's other sessions are revoked as part of the 
 ## Tests
 
 - `test/workers/account-deletion.test.ts` — drives the real Better Auth handler via `worker.fetch`
-  and asserts against D1: full deletion (user + personal workspace + sessions/accounts gone), the
-  shared-org block (account and org untouched, error names the org), membership removal + reference
-  nulling in an org owned by someone else, and wrong-password rejection.
+  and asserts against D1: password and GitHub-only deletion (user + personal workspace +
+  sessions/accounts gone), the shared-org block (account and org untouched, error names the org),
+  membership removal + reference nulling in an org owned by someone else, and wrong-password
+  rejection.

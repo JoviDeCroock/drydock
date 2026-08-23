@@ -1,6 +1,6 @@
-import { useSignal } from "@preact/signals";
+import { useComputed, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { sessionModel } from "../../../models/auth";
+import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { errorMessage } from "../../../models/api";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -18,10 +18,17 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
 
-  // Require both reauth (password) and the typed email, so the irreversible
-  // action can't fire from a stray click or an autofilled field alone.
-  const emailMatches = confirmEmail.value.trim().toLowerCase() === email.toLowerCase();
-  const canSubmit = password.value.length > 0 && emailMatches && !busy.value;
+  // Every account must type its email. Credential accounts also reauthenticate
+  // with a password; GitHub-only accounts rely on Better Auth's fresh-session
+  // check because they have no password to provide.
+  const canSubmit = useComputed(() => {
+    const hasPassword = signInMethodsModel.hasPassword.value;
+    const passwordReady = password.value.length > 0;
+    const emailMatches = confirmEmail.value.trim().toLowerCase() === email.toLowerCase();
+    const isBusy = busy.value;
+    return (!hasPassword || passwordReady) && emailMatches && !isBusy;
+  });
+  const submitDisabled = useComputed(() => !canSubmit.value);
 
   const open = () => {
     error.value = null;
@@ -37,10 +44,10 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit.peek()) return;
     busy.value = true;
     error.value = null;
-    const pw = password.value; // read before the await so the lint reactive guard is satisfied
+    const pw = signInMethodsModel.hasPassword.peek() ? password.peek() : undefined;
     try {
       await sessionModel.deleteAccount(pw);
       onDeleted();
@@ -71,7 +78,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         description="This permanently deletes your account and everything you solely own. This action cannot be undone."
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={close} disabled={busy.value}>
+            <Button variant="secondary" size="sm" onClick={close} disabled={busy}>
               Cancel
             </Button>
             <Button
@@ -79,7 +86,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
               variant="danger"
               size="sm"
               form="account-delete-form"
-              disabled={!canSubmit}
+              disabled={submitDisabled}
             >
               <Show when={busy} fallback="Delete account">
                 Deleting…
@@ -89,25 +96,35 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         }
       >
         <form id="account-delete-form" onSubmit={onSubmit} class="flex flex-col gap-4">
-          <Field label="Confirm your password" for="account-delete-password">
-            <Input
-              id="account-delete-password"
-              type="password"
-              value={password.value}
-              autocomplete="current-password"
-              required
-              disabled={busy.value}
-              onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
-            />
-          </Field>
+          <Show
+            when={signInMethodsModel.hasPassword}
+            fallback={
+              <Alert tone="info">
+                GitHub verifies this deletion through your current sign-in. If the session is no
+                longer fresh, sign out, sign back in with GitHub, and retry.
+              </Alert>
+            }
+          >
+            <Field label="Confirm your password" for="account-delete-password">
+              <Input
+                id="account-delete-password"
+                type="password"
+                value={password}
+                autocomplete="current-password"
+                required
+                disabled={busy}
+                onInput={(e) => (password.value = (e.target as HTMLInputElement).value)}
+              />
+            </Field>
+          </Show>
           <Field label={`Type ${email} to confirm`} for="account-delete-email">
             <Input
               id="account-delete-email"
               type="email"
-              value={confirmEmail.value}
+              value={confirmEmail}
               autocomplete="off"
               spellcheck={false}
-              disabled={busy.value}
+              disabled={busy}
               onInput={(e) => (confirmEmail.value = (e.target as HTMLInputElement).value)}
             />
           </Field>

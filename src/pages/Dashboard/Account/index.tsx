@@ -2,7 +2,7 @@ import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl } from "../../../lib/query-state";
-import { sessionModel } from "../../../models/auth";
+import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { LinkButton } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
@@ -29,6 +29,8 @@ export default function AccountPage() {
         location.route("/login", true);
         return;
       }
+      await signInMethodsModel.load(data.user.id);
+      if (cancelled) return;
       sessionChecked.value = true;
     })();
     return () => {
