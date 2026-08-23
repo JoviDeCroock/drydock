@@ -15,7 +15,7 @@ export const BROWSER_RULE_IDS = {
 
 export type BrowserArtifactKind = "zip" | "xpi";
 
-export interface BrowserReleaseManifestArtifact {
+interface BrowserReleaseManifestArtifact {
   path: string;
   sha256: string;
   kind: BrowserArtifactKind;

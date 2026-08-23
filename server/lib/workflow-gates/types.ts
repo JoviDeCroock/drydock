@@ -3,7 +3,7 @@ import type { FileRecord, PackageJsonSummary } from "../review";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 
 export type WorkflowArtifactKind = string;
-export type WorkflowSandboxFormat = "tgz" | "zip" | "zip-buffered" | "vsix";
+type WorkflowSandboxFormat = "tgz" | "zip" | "zip-buffered" | "vsix";
 
 export interface ParsedGateArtifact {
   path: string;

@@ -109,7 +109,7 @@ export function buildBrowserReleaseManifest(
   });
 }
 
-export function parseBrowserReleaseManifest(value: unknown): BrowserReleaseManifest {
+function parseBrowserReleaseManifest(value: unknown): BrowserReleaseManifest {
   if (!isRecord(value)) throw new Error("manifest must be an object");
   if (value.schema !== BROWSER_RELEASE_MANIFEST_SCHEMA) {
     throw new Error(`manifest schema must be ${BROWSER_RELEASE_MANIFEST_SCHEMA}`);

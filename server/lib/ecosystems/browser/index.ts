@@ -194,7 +194,5 @@ export { BROWSER_RULE_IDS, BROWSER_RULES_VERSION } from "./types";
 export type {
   BrowserAdapterInput,
   BrowserArtifactInput,
-  BrowserExtensionManifest,
   BrowserReleaseCandidateReview,
-  BrowserReleaseManifest,
 } from "./types";
