@@ -37,6 +37,7 @@ import {
   redactFileRecords,
   redactFindings,
   redactJson,
+  reconcileDependencyReviewFindings,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
   type CodePatternSet,
@@ -321,7 +322,7 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
 /**
  * Fold a completed dependency review into an existing `DeterministicFindings`.
  *
- * Mutates rather than rebuilds because the arrays it appends to are the exact
+ * Mutates rather than rebuilds because the arrays it updates are the exact
  * ones every later phase reads (`ruleFindings` is persisted, `annotatedFindings`
  * is scored, `releaseRuleFindings` feeds the AI reviewer). Dependency findings
  * are release-scoped by rule ID, so annotation resolves them to
@@ -340,6 +341,19 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
   },
 ): void {
   findings.dependencyReview = review;
+  const ruleFindings = reconcileDependencyReviewFindings(findings.ruleFindings, review);
+  findings.ruleFindings.splice(0, findings.ruleFindings.length, ...ruleFindings);
+  const annotatedFindings = reconcileDependencyReviewFindings(findings.annotatedFindings, review);
+  findings.annotatedFindings.splice(0, findings.annotatedFindings.length, ...annotatedFindings);
+  const releaseRuleFindings = reconcileDependencyReviewFindings(
+    findings.releaseRuleFindings,
+    review,
+  );
+  findings.releaseRuleFindings.splice(
+    0,
+    findings.releaseRuleFindings.length,
+    ...releaseRuleFindings,
+  );
   const dependencyFindings = redactFindings(
     dependencyEvidenceFindings(review, {
       name: parent.name,
@@ -365,10 +379,11 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
  * Ask the adapter to review the dependency artifacts this release newly
  * introduces, if it can.
  *
- * The dependency pass is additive evidence about the release, never a reason
- * to discard its own review: an adapter without the capability yields an empty
- * review, while an unexpected throw becomes a bounded `review-failed` gap for
- * every selected dependency. The adapter is expected to record ordinary
+ * The dependency pass adds precise evidence about the release and replaces the
+ * manifest-only declaration signal for every dependency with a terminal review
+ * record. An adapter without the capability yields an empty review, while an
+ * unexpected throw becomes a bounded `review-failed` gap for every selected
+ * dependency. The adapter is expected to record ordinary
  * per-dependency failures itself; this catch is the fail-visible backstop.
  */
 async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(

@@ -62,6 +62,20 @@ function buildReview(fixture) {
       codePatternSet: "javascript",
       entrypointResolution: "npm",
     });
+    if (assessment.installReachableUninspectedFiles.length) {
+      return {
+        ...emptyEvidence(dependency),
+        status: "uninspectable",
+        reason: "artifact-truncated",
+        resolvedVersion: resolved.version,
+        registryHost: "registry.npmjs.org",
+        declaredDigest: resolved.declaredDigest ?? null,
+        reviewedDigest: resolved.reviewedDigest ?? null,
+        digestVerified:
+          typeof resolved.digestVerified === "boolean" ? resolved.digestVerified : null,
+        fileCount: resolved.files.length,
+      };
+    }
     return {
       ...emptyEvidence(dependency),
       status: "inspected",
@@ -151,11 +165,10 @@ describe("dependency-artifact detection corpus", () => {
       }
       expect(computeRisk(findings)).toBe(fixture.expectedRisk);
 
-      // Every dependency-artifact finding is release-scoped, so the corpus's
-      // expected risk is also the release risk the recommendation reads. Pin
-      // the maintainer-facing verdict too: "reaches critical" and "cannot be
-      // recommended for approval" are two different claims, and the acceptance
-      // criterion is the second one.
+      // Pin the artifact-family calibration and its maintainer-facing verdict.
+      // The scan-pipeline suite separately proves that this precise evidence
+      // replaces the declaration-only dependency finding before release risk is
+      // composed.
       const recommendation = getReleaseRecommendation(
         fixture.expectedRisk,
         fixture.expectedRisk,

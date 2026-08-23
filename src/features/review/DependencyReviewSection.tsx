@@ -3,6 +3,7 @@ import type {
   DependencyEvidence,
   DependencyReview,
 } from "../../../server/lib/review/dependency-evidence";
+import { classifyDependencyInstallRisk } from "../../../server/lib/review/dependency-evidence";
 import { Badge, type BadgeTone } from "../../components/Badge";
 import { EmptyLine, SectionLabel } from "../../components/Typography";
 
@@ -112,7 +113,8 @@ function countLabel(review: DependencyReview): string {
 function verdictTone(dependency: DependencyEvidence): BadgeTone {
   if (dependency.digestVerified === false) return "critical";
   if (dependency.status === "uninspectable") return "medium";
-  if (dependency.verdict === "install-risk") return "critical";
+  const installRisk = classifyDependencyInstallRisk(dependency);
+  if (installRisk) return installRisk.severity;
   if (dependency.verdict === "install-execution") return "medium";
   return "ok";
 }
@@ -131,8 +133,16 @@ function describeDependency(dependency: DependencyEvidence): string {
   }
   if (dependency.status === "uninspectable")
     return UNINSPECTABLE_COPY[dependency.reason ?? "other"];
-  if (dependency.verdict === "install-risk") {
-    return "Installing this package runs code that downloads, evaluates, or reads credentials. Review it directly before approving the release.";
+  const installRisk = classifyDependencyInstallRisk(dependency);
+  if (installRisk?.proven) {
+    return installRisk.strong
+      ? "Installing this package reaches remote-shell, credential-access, dynamic-evaluation, or embedded-secret behavior. Review it directly before approving the release."
+      : "Installing this package reaches network-capable code. Confirm what it downloads and from where before approving the release.";
+  }
+  if (installRisk) {
+    return installRisk.strong
+      ? "This package runs code during install and also contains remote-shell, credential-access, dynamic-evaluation, or embedded-secret behavior, but Drydock could not prove the install hook reaches it. Review the package directly before approving."
+      : "This package runs code during install and contains network-capable code elsewhere, but Drydock could not prove the install hook reaches it.";
   }
   if (dependency.verdict === "install-execution") {
     return "Installing this package executes a lifecycle or build step. Nothing in that step matched a downloader or credential pattern.";

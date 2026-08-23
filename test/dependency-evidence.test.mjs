@@ -2,9 +2,11 @@
 import { describe, expect, test } from "vitest";
 import {
   assessDependencyArtifact,
+  classifyDependencyInstallRisk,
   computeRisk,
   dependencyEvidenceFindings,
   normalizeDependencyReview,
+  reconcileDependencyReviewFindings,
   selectAddedDependencies,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
@@ -400,6 +402,54 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.automaticExecution).toEqual([]);
   });
 
+  test("records an install-reachable file whose body was deliberately skipped", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.min.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "install.min.js",
+          size: 1024,
+          sha256: "skipped-install",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["install.min.js"]);
+  });
+
+  test("does not fail completeness for an unrelated skipped source map", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", "console.log('installed');"),
+        {
+          path: "dist/index.js.map",
+          size: 1024,
+          sha256: "skipped-map",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual([]);
+    expect(assessment.verdict).toBe("install-execution");
+  });
+
   test("a danger capability the install hook cannot reach is reported as unproven", () => {
     const assessment = assessDependencyArtifact(
       [
@@ -497,6 +547,55 @@ describe("assessDependencyArtifact", () => {
       expect(assessment.installReachUnproven).toBe(false);
     },
   );
+});
+
+describe("classifyDependencyInstallRisk", () => {
+  test.each([
+    ["proven strong behavior", ["code.remote-shell"], ["code.remote-shell"], "critical"],
+    ["proven network behavior", ["code.network-access"], ["code.network-access"], "high"],
+    ["unproven strong behavior", ["code.remote-shell"], [], "high"],
+    ["unproven network behavior", ["code.network-access"], [], "medium"],
+  ])("classifies %s as %s", (_label, capabilities, installReachableCapabilities, severity) => {
+    expect(
+      classifyDependencyInstallRisk({
+        verdict: "install-risk",
+        capabilities,
+        installReachableCapabilities,
+      }),
+    ).toMatchObject({ severity });
+  });
+
+  test("returns null for a non-risk verdict", () => {
+    expect(
+      classifyDependencyInstallRisk({
+        verdict: "clean",
+        capabilities: ["code.remote-shell"],
+        installReachableCapabilities: ["code.remote-shell"],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("reconcileDependencyReviewFindings", () => {
+  test("replaces only the declaration finding for a dependency with terminal evidence", () => {
+    const findings = [
+      { ruleId: "dependency.added", evidence: "clean-dep: 1.0.0" },
+      { ruleId: "dependency.optional-added", evidence: "optional-dep: ^2.0.0" },
+      { ruleId: "dependency.major-bump", evidence: "clean-dep: 0.9.0 → 1.0.0" },
+      { ruleId: "dependency.added", evidence: "omitted-dep: 3.0.0" },
+    ];
+    const review = {
+      dependencies: [
+        { name: "clean-dep", declaredSpec: "1.0.0" },
+        { name: "optional-dep", declaredSpec: "^2.0.0" },
+      ],
+    };
+
+    expect(reconcileDependencyReviewFindings(findings, review)).toEqual([
+      { ruleId: "dependency.major-bump", evidence: "clean-dep: 0.9.0 → 1.0.0" },
+      { ruleId: "dependency.added", evidence: "omitted-dep: 3.0.0" },
+    ]);
+  });
 });
 
 describe("dependencyEvidenceFindings", () => {
