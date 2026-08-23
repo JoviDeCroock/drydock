@@ -62,6 +62,27 @@ describe("canonical domain routing", () => {
     );
   });
 
+  test("redirects the www host and canonicalizes static paths in one hop", async () => {
+    const res = await fetchWorker("https://www.drydock.org/docs/?from=bookmark");
+
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe("https://drydock.org/docs?from=bookmark");
+  });
+
+  test("serves canonical public routes without the asset binding's slash redirect", async () => {
+    const res = await fetchWorker("https://drydock.org/docs?from=search", assetEnv);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset:/docs/?from=search");
+  });
+
+  test("permanently redirects non-canonical trailing-slash public routes", async () => {
+    const res = await fetchWorker("https://drydock.org/diff/?package=preact");
+
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe("https://drydock.org/diff?package=preact");
+  });
+
   test("serves generated app assets through the Worker-first fallback", async () => {
     const res = await fetchWorker("https://drydock.org/dashboard/settings?tab=general", assetEnv);
 
