@@ -95,6 +95,15 @@ export type SemverRange = ComparatorSet[];
 
 const ANY_RANGE: SemverRange = [[]];
 
+// Dependency specs are package-controlled input and range matching is
+// synchronous. Keep both the input and the nested satisfaction loops bounded;
+// the dependency review's AbortSignal cannot interrupt CPU work already in
+// progress.
+export const MAX_SEMVER_RANGE_LENGTH = 4_096;
+export const MAX_SEMVER_RANGE_BRANCHES = 64;
+export const MAX_SEMVER_COMPARATORS_PER_BRANCH = 32;
+export const MAX_SEMVER_COMPARATORS_TOTAL = 64;
+
 // A partial version (`1`, `1.2`, `1.x`) inside a comparator or an `^`/`~`
 // operator. Captures the operator, then up to three numeric-or-wildcard parts,
 // then an optional prerelease/build suffix.
@@ -106,13 +115,19 @@ const PARTIAL_RE = new RegExp(
 );
 
 export function parseRange(spec: string): SemverRange | null {
+  if (spec.length > MAX_SEMVER_RANGE_LENGTH) return null;
   const trimmed = spec.trim();
   if (trimmed === "" || trimmed === "*" || trimmed === "x" || trimmed === "X") return ANY_RANGE;
+  const branches = trimmed.split("||");
+  if (branches.length > MAX_SEMVER_RANGE_BRANCHES) return null;
   const sets: ComparatorSet[] = [];
-  for (const branch of trimmed.split("||")) {
+  let comparatorCount = 0;
+  for (const branch of branches) {
     const set = parseComparatorSet(branch.trim());
     if (!set) return null;
     sets.push(set);
+    comparatorCount += set.length;
+    if (comparatorCount > MAX_SEMVER_COMPARATORS_TOTAL) return null;
   }
   return sets.length ? sets : null;
 }
@@ -133,8 +148,10 @@ function parseComparatorSet(branch: string): ComparatorSet | null {
   // before tokenization so comparator sets remain whitespace-delimited.
   branch = branch.replace(/(\^|~>|~|>=|<=|>|<|=)\s+(?=v?(?:\d|x|X|\*))/g, "$1");
 
+  const tokens = branch.split(/\s+/).filter(Boolean);
+  if (tokens.length > MAX_SEMVER_COMPARATORS_PER_BRANCH) return null;
   const comparators: Comparator[] = [];
-  for (const token of branch.split(/\s+/).filter(Boolean)) {
+  for (const token of tokens) {
     const parsed = parseComparator(token);
     if (!parsed) return null;
     comparators.push(...parsed);

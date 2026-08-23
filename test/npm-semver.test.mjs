@@ -1,6 +1,14 @@
 // @ts-nocheck
 import { describe, expect, test } from "vitest";
-import { maxSatisfyingVersion, parseRange, satisfies } from "../server/lib/ecosystems/npm/semver";
+import {
+  MAX_SEMVER_COMPARATORS_PER_BRANCH,
+  MAX_SEMVER_COMPARATORS_TOTAL,
+  MAX_SEMVER_RANGE_BRANCHES,
+  MAX_SEMVER_RANGE_LENGTH,
+  maxSatisfyingVersion,
+  parseRange,
+  satisfies,
+} from "../server/lib/ecosystems/npm/semver";
 import { parseSemver } from "../server/lib/ecosystems/npm/semver";
 
 function matches(version, spec) {
@@ -89,6 +97,28 @@ describe("npm range satisfaction", () => {
     expect(parseRange("1.0.0-alpha.01")).toBeNull();
     expect(parseRange("1.0.0-9007199254740992")).toBeNull();
     expect(parseRange("1.2.3 - 9007199254740992")).toBeNull();
+  });
+
+  test("bounds package-controlled range structure before synchronous matching", () => {
+    const allowedBranches = Array.from(
+      { length: MAX_SEMVER_RANGE_BRANCHES },
+      (_, index) => `1.0.${index}`,
+    ).join(" || ");
+    expect(parseRange(allowedBranches)).not.toBeNull();
+    expect(
+      parseRange(Array.from({ length: MAX_SEMVER_RANGE_BRANCHES + 1 }, () => "1.0.0").join(" || ")),
+    ).toBeNull();
+    expect(
+      parseRange(
+        Array.from({ length: MAX_SEMVER_COMPARATORS_PER_BRANCH + 1 }, () => ">=1.0.0").join(" "),
+      ),
+    ).toBeNull();
+    const comparatorHeavyBranches = [
+      Array.from({ length: MAX_SEMVER_COMPARATORS_TOTAL / 2 }, () => "^1.0.0").join(" "),
+      "^1.0.0",
+    ].join(" || ");
+    expect(parseRange(comparatorHeavyBranches)).toBeNull();
+    expect(parseRange(`1.0.0${" ".repeat(MAX_SEMVER_RANGE_LENGTH)}`)).toBeNull();
   });
 });
 

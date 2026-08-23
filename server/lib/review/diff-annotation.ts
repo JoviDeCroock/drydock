@@ -50,7 +50,11 @@ export function annotateFindingsWithDiffStatus<
     // score the package's whole contents as this release's delta. Report the
     // comparison as missing instead of inventing one.
     if (options.baselineComparisonSkipped) {
-      return { ...finding, diffStatus: "unknown" as FindingDiffStatus, releaseDelta: false };
+      return {
+        ...finding,
+        diffStatus: "unknown" as FindingDiffStatus,
+        releaseDelta: isReleaseScopedFinding(finding),
+      };
     }
 
     const diffStatus = diffByPath.get(finding.file) ?? "unknown";

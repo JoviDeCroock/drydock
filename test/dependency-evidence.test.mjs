@@ -261,7 +261,9 @@ describe("selectAddedDependencies", () => {
     };
     const selected = selectAddedDependencies(diffOf({ name: "p" }, staged), {
       stagedManifest: staged,
-      stagedFiles: [file("node_modules/embedded/package.json", '{"name":"embedded"}')],
+      stagedFiles: [
+        file("node_modules/embedded/package.json", '{"name":"embedded","version":"1.0.0"}'),
+      ],
     });
     expect(selected.map((entry) => entry.name)).toEqual(["missing"]);
   });
@@ -275,9 +277,27 @@ describe("selectAddedDependencies", () => {
     expect(
       selectAddedDependencies(diffOf({ name: "p" }, staged), {
         stagedManifest: staged,
-        stagedFiles: [file("node_modules/embedded/index.js", "module.exports = 1")],
+        stagedFiles: [
+          file("node_modules/embedded/package.json", '{"name":"embedded","version":"1.0.0"}'),
+        ],
       }),
     ).toEqual([]);
+  });
+
+  test("a placeholder bundled directory does not suppress registry review", () => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0" },
+      bundledDependencies: true,
+    };
+    expect(
+      selectAddedDependencies(diffOf({ name: "p" }, staged), {
+        stagedManifest: staged,
+        stagedFiles: [file("node_modules/embedded/index.js", "module.exports = 1")],
+      }),
+    ).toEqual([
+      { name: "embedded", section: "dependencies", spec: "1.0.0", declarationKind: "exact" },
+    ]);
   });
 
   test("one entry per key even when declared in several sections", () => {

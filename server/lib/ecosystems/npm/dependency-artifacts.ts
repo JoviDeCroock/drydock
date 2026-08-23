@@ -428,10 +428,11 @@ function isAmbiguousDependencyArchiveEntry(entry: TarSuspiciousEntry): boolean {
  *
  * Dist-tags resolve through the packument's own tag map — `latest` is a moving
  * pointer, and pretending it is a range would silently pick a different
- * version than npm would. For ranges, npm prefers the default `latest` tag when
- * that version satisfies the range; only then does it fall back to the highest
- * satisfying version. Unsupported grammar returns null so the caller records
- * a gap instead of guessing.
+ * version than npm would. For ranges, npm prefers a non-deprecated default
+ * `latest` when it satisfies the range, then the highest non-deprecated match,
+ * and only falls back to a deprecated match when every satisfying version is
+ * deprecated. Unsupported grammar returns null so the caller records a gap
+ * instead of guessing.
  */
 export function resolveDependencyVersion(metadata: RegistryMetadata, spec: string): string | null {
   const versions = Object.keys(metadata.versions ?? {});
@@ -440,7 +441,17 @@ export function resolveDependencyVersion(metadata: RegistryMetadata, spec: strin
   const tagged = trimmed && metadata["dist-tags"]?.[trimmed];
   if (tagged && versions.includes(tagged)) return tagged;
   const latest = metadata["dist-tags"]?.latest;
-  if (latest && versions.includes(latest) && maxSatisfyingVersion([latest], trimmed)) return latest;
+  if (
+    latest &&
+    versions.includes(latest) &&
+    !metadata.versions?.[latest]?.deprecated &&
+    maxSatisfyingVersion([latest], trimmed)
+  ) {
+    return latest;
+  }
+  const nonDeprecated = versions.filter((version) => !metadata.versions?.[version]?.deprecated);
+  const preferred = maxSatisfyingVersion(nonDeprecated, trimmed);
+  if (preferred) return preferred;
   return maxSatisfyingVersion(versions, trimmed);
 }
 
