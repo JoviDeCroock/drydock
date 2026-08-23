@@ -66,6 +66,23 @@ export const discoveryGuideSeoByPath = {
 
 export type DiscoveryGuidePath = keyof typeof discoveryGuideSeoByPath;
 export const DISCOVERY_GUIDE_PATHS = Object.keys(discoveryGuideSeoByPath) as DiscoveryGuidePath[];
+export const incidentCaseSeoByPath = {
+  "/incidents/node-ipc-peacenotwar": {
+    title: "node-ipc 11.0.0 package diff: peacenotwar added | Drydock",
+    description:
+      "Inspect the surviving node-ipc 9.2.1 to 11.0.0 artifact diff and the new peacenotwar runtime dependency without installing either release.",
+    path: "/incidents/node-ipc-peacenotwar",
+  },
+  "/incidents/es5-ext-postinstall": {
+    title: "es5-ext 0.10.54 package diff: postinstall added | Drydock",
+    description:
+      "Inspect the es5-ext 0.10.53 to 0.10.54 artifact diff that introduced a postinstall hook in a patch release.",
+    path: "/incidents/es5-ext-postinstall",
+  },
+} as const satisfies Record<string, PageSeoMetadata>;
+
+export type IncidentCasePath = keyof typeof incidentCaseSeoByPath;
+export const INCIDENT_CASE_PATHS = Object.keys(incidentCaseSeoByPath) as IncidentCasePath[];
 
 // Per-diff share card. Every shared diff otherwise unfurls with the same
 // site-wide image, so a timeline reader cannot tell which package a link is
@@ -148,6 +165,9 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/diff") return packageDiffSeo();
   if (canonicalPathname in discoveryGuideSeoByPath) {
     return discoveryGuideSeoByPath[canonicalPathname as DiscoveryGuidePath];
+  }
+  if (canonicalPathname in incidentCaseSeoByPath) {
+    return incidentCaseSeoByPath[canonicalPathname as IncidentCasePath];
   }
   return undefined;
 }

@@ -6,6 +6,8 @@ import {
   docsPageSeo,
   getPageSeoMetadata,
   homePageSeo,
+  INCIDENT_CASE_PATHS,
+  incidentCaseSeoByPath,
   packageDiffSeo,
   privacyPageSeo,
 } from "../src/lib/seo";
@@ -21,7 +23,7 @@ describe("isPrerenderedRoute", () => {
     expect(isPrerenderedRoute("/docs/")).toBe(true);
     expect(isPrerenderedRoute("/privacy")).toBe(true);
     expect(isPrerenderedRoute("/privacy/")).toBe(true);
-    for (const path of DISCOVERY_GUIDE_PATHS) {
+    for (const path of [...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS]) {
       expect(isPrerenderedRoute(path)).toBe(true);
       expect(isPrerenderedRoute(`${path}/`)).toBe(true);
     }
@@ -55,6 +57,17 @@ describe("page SEO metadata", () => {
       title: "Drydock Package Review: pre-publish package security",
     });
     expect(homePageSeo.description).toContain("exact npm, PyPI, or VS Code artifact");
+  });
+
+  it("gives each incident analysis distinct canonical metadata", () => {
+    const titles = new Set<string>();
+    for (const path of INCIDENT_CASE_PATHS) {
+      const metadata = incidentCaseSeoByPath[path];
+      expect(getPageSeoMetadata(path)).toBe(metadata);
+      expect(getPageSeoMetadata(`${path}/`)).toBe(metadata);
+      titles.add(metadata.title);
+    }
+    expect(titles.size).toBe(INCIDENT_CASE_PATHS.length);
   });
 
   it("is defined only for the public landing, docs, and privacy pages", () => {

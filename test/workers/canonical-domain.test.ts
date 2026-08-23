@@ -102,6 +102,23 @@ describe("canonical domain routing", () => {
     );
   });
 
+  test("serves incident analyses at self-canonical no-slash URLs", async () => {
+    const res = await fetchWorker(
+      "https://drydock.org/incidents/node-ipc-peacenotwar?from=search",
+      assetEnv,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("asset:/incidents/node-ipc-peacenotwar/?from=search");
+  });
+
+  test("permanently redirects incident-analysis trailing-slash URLs", async () => {
+    const res = await fetchWorker("https://drydock.org/incidents/es5-ext-postinstall/");
+
+    expect(res.status).toBe(308);
+    expect(res.headers.get("Location")).toBe("https://drydock.org/incidents/es5-ext-postinstall");
+  });
+
   test("serves generated app assets through the Worker-first fallback", async () => {
     const res = await fetchWorker("https://drydock.org/dashboard/settings?tab=general", assetEnv);
 
