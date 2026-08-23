@@ -781,6 +781,17 @@ describe("normalizeDependencyReview", () => {
     expect(review.dependencies[0].reason).toBeNull();
   });
 
+  test.each([undefined, "bogus"])(
+    "drops inspected evidence without an explicit valid verdict (%s)",
+    (verdict) => {
+      const review = normalizeDependencyReview({
+        status: "complete",
+        dependencies: [{ name: "x", declaredSpec: "1.0.0", status: "inspected", verdict }],
+      });
+      expect(review.dependencies).toEqual([]);
+    },
+  );
+
   test("removes credentials and signed parameters from persisted artifact URLs", () => {
     const review = normalizeDependencyReview({
       status: "complete",
@@ -789,6 +800,7 @@ describe("normalizeDependencyReview", () => {
           name: "x",
           declaredSpec: "1.0.0",
           status: "inspected",
+          verdict: "clean",
           artifactUrl:
             "https://reader:secret@registry.example.com/x/-/x-1.0.0.tgz?token=signed#fragment",
         },
@@ -807,6 +819,7 @@ describe("normalizeDependencyReview", () => {
         name: `dependency-${index}-${"x".repeat(300)}`,
         declaredSpec: "1.0.0",
         status: "inspected",
+        verdict: "clean",
       })),
     });
 
