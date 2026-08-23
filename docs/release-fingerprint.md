@@ -13,7 +13,7 @@ Release-process findings are release-scoped, so they feed **release risk** — w
 ## Shared mechanics
 
 - Findings carry the synthetic file label `<release-process>` (`RELEASE_PROCESS_FINDING_FILE`) because they describe the release, not a file. The diff annotator treats every `release.*` rule as release-scoped, so these findings always land with `releaseDelta: true` and feed release risk (and, as anchor-severity findings, overall artifact risk). The findings UI renders the label as plain text instead of an open-in-diff button.
-- The current scan may not have a persisted row when the rule runs, so its identity is taken from the staged manifest rather than read back from D1.
+- The current scan may not have a persisted row when the rule runs, so its identity comes from the adapter's history identity rather than being read back from D1. That defaults to the staged manifest name; an adapter returns null when the artifact exposes only an unstable display label. Name-only browser archives therefore cannot join unrelated extensions into one release history.
 - The history query filters by `organizationId` (the workflow-gate join re-checks the gate's organization) and rides the existing `scans_package_idx` index.
 
 ## `release.source-drift` (severity: high for gate→staged, medium otherwise)

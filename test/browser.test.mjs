@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   browserAdapter,
-  browserExtensionIdentity,
+  browserExtensionCandidateName,
   buildBrowserReleaseManifest,
   createBrowserExtensionReview,
   inferBrowserArtifactKind,
@@ -44,11 +44,33 @@ describe("browser extension review adapter", () => {
         content_scripts: [{ matches: ["https://example.invalid/*"], js: ["content.js"] }],
       }),
     ]);
-    expect(browserExtensionIdentity(manifest)).toBe("tab-helper@example.invalid");
+    expect(browserExtensionCandidateName(manifest)).toBe("tab-helper@example.invalid");
     expect(manifest.backgroundEntrypoints).toEqual(["background.js"]);
     expect(manifest.contentScriptEntrypoints).toEqual(["content.js"]);
     expect(manifest.hostPermissions).toEqual(["https://example.invalid/*"]);
     expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
+  });
+
+  test("uses only an embedded stable ID for cross-scan history", async () => {
+    const path = "dist/tab-helper.zip";
+    const chromeInput = browserAdapter.parseInput({
+      manifest: buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]),
+      artifact: { path, sha256: SHA, files: [manifestFile()] },
+    });
+    const chrome = await browserAdapter.acquireStaged({}, chromeInput, { dispose() {} });
+    expect(browserAdapter.historyPackageName?.({ details: chrome.details })).toBeNull();
+
+    const geckoId = "tab-helper@example.invalid";
+    const firefoxInput = browserAdapter.parseInput({
+      manifest: buildBrowserReleaseManifest(geckoId, "1.2.0", [{ path, sha256: SHA }]),
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ browser_specific_settings: { gecko: { id: geckoId } } })],
+      },
+    });
+    const firefox = await browserAdapter.acquireStaged({}, firefoxInput, { dispose() {} });
+    expect(browserAdapter.historyPackageName?.({ details: firefox.details })).toBe(geckoId);
   });
 
   test("fails closed without a root extension manifest", () => {
@@ -208,16 +230,22 @@ describe("browser extension review adapter", () => {
     "clipboardRead",
     "clipboardWrite",
     "cookies",
+    "debugger",
     "downloads",
     "geolocation",
     "history",
     "identity",
     "identity.email",
+    "management",
+    "nativeMessaging",
+    "privacy",
+    "proxy",
     "sessions",
     "tabs",
     "topSites",
     "webNavigation",
     "webRequest",
+    "webRequestBlocking",
   ])("flags sensitive browser permission %s", (permission) => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [

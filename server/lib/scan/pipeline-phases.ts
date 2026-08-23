@@ -86,6 +86,10 @@ interface FindingAnnotationRecord {
  */
 export interface ArtifactFacts {
   packageSummary: AdapterPackageSummary;
+  /** Stable adapter-selected identity for cross-scan history; null opts out. */
+  historyPackageName: string | null;
+  /** Registry-control-plane identity recovered while acquiring the release. */
+  registryReleaseIdentity: { packageName: string; version: string } | null;
   fileCount: number;
   previousFileCount: number;
   baseline: BaselineInfo;
@@ -205,14 +209,20 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
   resolved: ResolvedArtifacts,
 ): ArtifactFacts {
   const { staged, baseline } = resolved;
+  const describeArgs = {
+    input: adapterInput,
+    staged: staged.artifact,
+    details: staged.details,
+    baseline: baseline.baseline,
+    previous: baseline.artifact,
+  };
+  const packageSummary = adapter.describe(describeArgs);
   return {
-    packageSummary: adapter.describe({
-      input: adapterInput,
-      staged: staged.artifact,
-      details: staged.details,
-      baseline: baseline.baseline,
-      previous: baseline.artifact,
-    }),
+    packageSummary,
+    historyPackageName: adapter.historyPackageName
+      ? adapter.historyPackageName(describeArgs)
+      : packageSummary.name,
+    registryReleaseIdentity: adapter.registryReleaseIdentity?.(staged.details) ?? null,
     fileCount: staged.artifact.files.length,
     previousFileCount: baseline.artifact?.files.length ?? 0,
     baseline: baseline.baseline,
@@ -280,12 +290,12 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   ctx: AdapterContext,
   adapterInput: TInput,
   broker: TBroker,
-  extraFindings: (resolved: ResolvedArtifacts) => Promise<Finding[]> = async () => [],
+  extraFindings: (facts: ArtifactFacts) => Promise<Finding[]> = async () => [],
 ): Promise<ReleaseAnalysis> {
   const resolved = await resolveBaseline(adapter, ctx, adapterInput, broker);
   const diff = computeDiff(resolved);
-  const findings = runDeterministicFindings(adapter, resolved, diff, await extraFindings(resolved));
   const facts = summarizeResolvedArtifacts(adapter, adapterInput, resolved);
+  const findings = runDeterministicFindings(adapter, resolved, diff, await extraFindings(facts));
   releaseResolvedArtifacts(resolved);
   // Raw manifest text; only `adapter.runFindings` reads it, and it has run.
   // `findings.redactedStagedManifest` is the redacted form later phases persist.
@@ -343,8 +353,10 @@ export interface ResolveReleaseConsistencyArgs {
   db: AppDb;
   env?: Cloudflare.Env;
   identity: PipelineIdentity;
-  /** The staged manifest name — the same value persistScan records as `scans.packageName`. */
+  /** Stable adapter-selected history name; null disables cross-scan lookup. */
   packageName: string | null;
+  /** No trustworthy predecessor was available, so consistency is unknowable. */
+  baselineComparisonSkipped?: boolean;
   /** The current scan's deterministic rule findings (redacted set that gets persisted). */
   ruleFindings: Finding[];
 }
@@ -359,7 +371,9 @@ export interface ResolveReleaseConsistencyArgs {
 export async function resolveReleaseConsistency(
   args: ResolveReleaseConsistencyArgs,
 ): Promise<ReleaseConsistency> {
-  if (!args.packageName) return noneReleaseConsistency(args.ruleFindings.length);
+  if (args.baselineComparisonSkipped || !args.packageName) {
+    return noneReleaseConsistency(args.ruleFindings.length);
+  }
   try {
     const prior = await getPriorApprovedScanFindings(
       args.db,

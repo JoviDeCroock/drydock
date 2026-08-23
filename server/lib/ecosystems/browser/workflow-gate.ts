@@ -1,6 +1,6 @@
 import {
   browserAdapter,
-  browserExtensionIdentity,
+  browserExtensionCandidateName,
   buildBrowserReleaseManifest,
   inferBrowserArtifactKind,
   parseBrowserExtensionManifest,
@@ -63,7 +63,7 @@ export const browserWorkflowGateAdapter: WorkflowGateAdapter = {
             : `${artifact.path}: manifest.json is invalid`,
         );
       }
-      const identity = browserExtensionIdentity(parsed);
+      const candidateName = browserExtensionCandidateName(parsed);
       // Gecko IDs are stable store identities. Chrome archives commonly omit
       // one, so keep name-only artifacts separate by their verified digest
       // instead of merging unrelated same-name extensions.
@@ -75,15 +75,15 @@ export const browserWorkflowGateAdapter: WorkflowGateAdapter = {
         if (group.version !== parsed.version) {
           throw new WorkflowArtifactError(
             "artifact_identity_inconsistent",
-            `${artifact.path} version ${parsed.version} disagrees with ${group.version} for ${identity}`,
+            `${artifact.path} version ${parsed.version} disagrees with ${group.version} for ${candidateName}`,
           );
         }
         throw new WorkflowArtifactError(
           "artifact_identity_inconsistent",
-          `browser extension ${identity} has more than one archive in this release`,
+          `browser extension ${candidateName} has more than one archive in this release`,
         );
       }
-      groups.set(identityKey, { identity, version: parsed.version, artifact });
+      groups.set(identityKey, { identity: candidateName, version: parsed.version, artifact });
     }
 
     return [...groups.values()].map(({ identity, version, artifact }) => {

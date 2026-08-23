@@ -115,6 +115,8 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
 
   runFindings(args: AdapterRunFindingsArgs): Finding[];
   describe(args: AdapterDescribeArgs<TInput>): AdapterPackageSummary;
+  historyPackageName?(args: AdapterDescribeArgs<TInput>): string | null;
+
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
   registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
 }

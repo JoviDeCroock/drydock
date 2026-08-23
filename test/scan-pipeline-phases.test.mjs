@@ -243,6 +243,8 @@ describe("summarizeResolvedArtifacts", () => {
         stagedTag: "latest",
         previousVersion: "1.0.0",
       },
+      historyPackageName: "pkg",
+      registryReleaseIdentity: null,
       fileCount: 3,
       previousFileCount: 2,
       baseline: baselineInfo,
@@ -253,6 +255,18 @@ describe("summarizeResolvedArtifacts", () => {
     // Nothing in the facts carries file text: that is the whole point.
     expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);
     expect(JSON.stringify(facts)).not.toContain("export const value");
+  });
+
+  test("honors an adapter opt-out from cross-scan package history", () => {
+    const historyPackageName = vi.fn(() => null);
+    const facts = summarizeResolvedArtifacts(
+      makeAdapter({ historyPackageName }),
+      { stageId: "stage-1" },
+      resolved,
+    );
+
+    expect(facts.historyPackageName).toBeNull();
+    expect(historyPackageName).toHaveBeenCalledOnce();
   });
 
   test("carries the staged manifest's declared repository", () => {
@@ -632,6 +646,18 @@ describe("resolveReleaseConsistency", () => {
       db: {},
       identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
       packageName: null,
+      ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
+    });
+
+    expect(out).toEqual(noneConsistency);
+  });
+
+  test("returns none when the baseline comparison was skipped", async () => {
+    const out = await resolveReleaseConsistency({
+      db: {},
+      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
+      packageName: "pkg",
+      baselineComparisonSkipped: true,
       ruleFindings: [{ severity: "high", file: "index.js", evidence: "", reason: "" }],
     });
 

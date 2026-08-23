@@ -26,8 +26,8 @@ import {
   scoreRisk,
   type ComputedDiff,
   type DeterministicFindings,
+  type ArtifactFacts,
   type PipelineIdentity,
-  type ResolvedArtifacts,
 } from "./pipeline-phases";
 import type { ScanInput, ScanResult } from "../../types";
 
@@ -87,8 +87,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       adapterCtx,
       adapterInput,
       broker,
-      async (resolved) => {
-        const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
+      async (releaseFacts) => {
+        const registryIdentity = releaseFacts.registryReleaseIdentity;
         if (input.scanId && registryUrl && registryIdentity) {
           const identityResult = await backfillScanRegistryReleaseIdentity(db, {
             scanId: input.scanId,
@@ -100,7 +100,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
             throw new Error("The staged release identity changed after this scan was queued.");
           }
         }
-        return collectReleaseFingerprintFindings(db, identity, resolved);
+        return collectReleaseFingerprintFindings(db, identity, releaseFacts);
       },
     );
     const aiFindings = await maybeRunAiReview({
@@ -133,7 +133,8 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       db,
       env,
       identity,
-      packageName: findings.redactedStagedManifest?.name ?? null,
+      packageName: facts.historyPackageName,
+      baselineComparisonSkipped: facts.baselineComparisonSkipped,
       ruleFindings: findings.ruleFindings,
     });
 
@@ -206,9 +207,9 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
 async function collectReleaseFingerprintFindings(
   db: ScanPipelineContext["db"],
   identity: PipelineIdentity,
-  resolved: ResolvedArtifacts,
+  facts: ArtifactFacts,
 ): Promise<Finding[]> {
-  const packageName = resolved.staged.artifact.manifest?.name || null;
+  const packageName = facts.historyPackageName;
   try {
     const history = await loadReleaseFingerprintHistory(db, {
       organizationId: identity.organizationId,

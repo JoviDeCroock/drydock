@@ -1,5 +1,6 @@
 import type { SharedScanRow } from "../db/scan-share";
 import { coloCacheDelete } from "./platform/colo-cache";
+import { isRecord } from "./platform/guards";
 
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
 
@@ -36,10 +37,10 @@ export function isValidBadgeTag(tag: string): boolean {
 }
 
 export function scanDistTag(summaryJson: unknown): string | null {
-  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
-    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
-    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
-      const tag = (stagedPublish as { tag?: unknown }).tag;
+  if (isRecord(summaryJson)) {
+    const stagedPublish = summaryJson.stagedPublish;
+    if (isRecord(stagedPublish)) {
+      const tag = stagedPublish.tag;
       if (typeof tag === "string" && isValidBadgeTag(tag)) return tag;
     }
   }
@@ -103,12 +104,12 @@ export function purgePublicFeedCache(
 }
 
 function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
-  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
-    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
-    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
-      const provenance = (stagedPublish as { provenance?: unknown }).provenance;
-      if (provenance && typeof provenance === "object" && !Array.isArray(provenance)) {
-        const ecosystem = (provenance as { ecosystem?: unknown }).ecosystem;
+  if (isRecord(summaryJson)) {
+    const stagedPublish = summaryJson.stagedPublish;
+    if (isRecord(stagedPublish)) {
+      const provenance = stagedPublish.provenance;
+      if (isRecord(provenance)) {
+        const ecosystem = provenance.ecosystem;
         if (isPublicEcosystem(ecosystem)) return ecosystem;
       }
     }
@@ -131,15 +132,11 @@ export function scanPublicPackageIdentity(
   packageName: string | null,
 ): string | null {
   if (!packageName || source !== "workflow_gate") return packageName;
-  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) {
-    return packageName;
-  }
-  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
-  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
-    return packageName;
-  }
+  if (!isRecord(summaryJson)) return packageName;
+  const stagedPublish = summaryJson.stagedPublish;
+  if (!isRecord(stagedPublish)) return packageName;
   if (!("publicPackageIdentity" in stagedPublish)) return packageName;
-  const identity = (stagedPublish as { publicPackageIdentity?: unknown }).publicPackageIdentity;
+  const identity = stagedPublish.publicPackageIdentity;
   return typeof identity === "string" && identity.trim() ? identity : null;
 }
 
@@ -158,8 +155,8 @@ export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
 
 function sharedScanReleaseRisk(row: SharedScanRow): string {
   const breakdown = row.riskSummaryJson;
-  if (breakdown && typeof breakdown === "object" && !Array.isArray(breakdown)) {
-    const releaseRisk = (breakdown as { releaseRisk?: unknown }).releaseRisk;
+  if (isRecord(breakdown)) {
+    const releaseRisk = breakdown.releaseRisk;
     if (typeof releaseRisk === "string" && releaseRisk) return releaseRisk;
   }
   return row.risk;

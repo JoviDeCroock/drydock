@@ -58,7 +58,7 @@ Adapter-level scan tests should include at least one baseline-backed fixture tha
 
 Browser-extension adapter cases live under `test/fixtures/security-corpus/cases-browser/` and run through `test/security-corpus-browser.test.mjs`. `browser.*` findings carry `BROWSER_RULES_VERSION` (currently `0.5.0`); shared `file.*`, `code.*`, `diff.*`, and `tar.*` findings keep `DETERMINISTIC_RULES_VERSION`.
 
-The initial corpus pins a narrow benign WebExtension and a baseline-backed extension that adds `nativeMessaging`, all-sites host/content-script access, and a credential-looking file. The latter must retain the shared `diff.credential-file-added` result in addition to browser-specific findings. Version `0.2.0` adds a scheme-wide access case for `https://*/*` host/content-script matches and an `https:` script CSP source. Version `0.3.0` adds `browser-csp-default-source`, which pins `default-src` fallback and a bare remote host source. Version `0.4.0` expands privileged-permission coverage to sensitive clipboard, cookie, download, history, and tab APIs. Version `0.5.0` adds bookmarks, geolocation, identity, session, top-sites, navigation, and non-blocking web-request APIs; `browser-sensitive-identity-extension` pins the finding and the adapter unit table covers every added permission. Fixtures use synthetic `manifest.json` and `FileRecord` evidence only; URLs and extension ids use `example.invalid`.
+The initial corpus pins a narrow benign WebExtension and a baseline-backed extension that adds `nativeMessaging`, all-sites host/content-script access, and a credential-looking file. The latter must retain the shared `diff.credential-file-added` result in addition to browser-specific findings. Version `0.2.0` adds a scheme-wide access case for `https://*/*` host/content-script matches and an `https:` script CSP source. Version `0.3.0` adds `browser-csp-default-source`, which pins `default-src` fallback and a bare remote host source. Version `0.4.0` expands privileged-permission coverage to sensitive clipboard, cookie, download, history, and tab APIs. Version `0.5.0` adds bookmarks, geolocation, identity, session, top-sites, navigation, and non-blocking web-request APIs; `browser-sensitive-identity-extension` pins the finding and the adapter's table-driven unit test covers the complete privileged-permission catalog. Fixtures use synthetic `manifest.json` and `FileRecord` evidence only; URLs and extension ids use `example.invalid`.
 
 ## Initial taxonomy
 
@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.30.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -425,6 +425,12 @@ build that must stay quiet; the detection eval consumes the same cases through t
 `package.json` semantics. Browser-extension background and content scripts now
 participate in shared reachability, so a manifest-loaded script under a path
 such as `tests/` cannot receive the test-only capability demotion.
+
+`1.30.0` requires a stable adapter-selected history name before the
+history-based `release.source-drift` rule can compare releases. Browser archives
+with only a localized or reused display name opt out, preventing unrelated
+extensions from being joined into one release-process fingerprint. The Worker
+regression matrix in `test/workers/release-fingerprint.test.ts` pins the opt-out.
 
 ### Fixture format
 

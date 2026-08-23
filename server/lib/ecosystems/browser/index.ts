@@ -77,6 +77,12 @@ export const browserAdapter: PackageAdapter<BrowserAdapterInput, AdapterBroker> 
     };
   },
 
+  historyPackageName({ details }) {
+    // A Chrome archive commonly has only a localized/reused display name.
+    // Cross-release history is safe only when the manifest embeds a stable ID.
+    return (details as BrowserAdapterDetails).artifact.extensionId;
+  },
+
   summarizeDetails(details) {
     const d = details as BrowserAdapterDetails;
     return {
@@ -185,7 +191,7 @@ export function createBrowserExtensionReview(input: {
 }
 
 export {
-  browserExtensionIdentity,
+  browserExtensionCandidateName,
   buildBrowserReleaseManifest,
   inferBrowserArtifactKind,
   parseBrowserExtensionManifest,

@@ -11,7 +11,7 @@ presents those findings as if they were novel.
 
 During a scan, after deterministic findings are computed and before they are
 scored, the pipeline looks up the most recent scan in the **same organization**, for the
-**same `packageName`**, with `status = 'complete'` and `decision = 'publish'`
+same adapter-selected history name (normally `packageName`), with `status = 'complete'` and `decision = 'publish'`
 (the in-flight scan id is excluded). Both scans are reduced to a **finding
 profile**: the multiset of `(ruleId, severity, file)` over rule findings.
 `line` and `evidence` are ignored — a finding that moved lines is the same
@@ -59,7 +59,7 @@ The boundaries are what make this safe:
 - **It fails closed.** No prior approved scan, or a `diverged` profile whose
   `newFindings` list hit the 25-entry cap (so the approved set can't be
   reconstructed exactly), drops nothing at all.
-- **A skipped baseline disables it entirely.** When a published baseline
+- **A skipped baseline disables it entirely.** The pipeline skips the history read itself, not only the scoring adjustment. When a published baseline
   exceeded the download budget or the ecosystem could not resolve a trustworthy
   predecessor (`BaselineInfo.comparisonSkipped`), every finding is annotated
   `unknown` package context, so the whole scan would otherwise land in the
@@ -69,6 +69,10 @@ The boundaries are what make this safe:
   `(ruleId, severity, file)` does not imply identical bytes. Discounting there
   would grade an uncompared release as clean — the failure the skipped-baseline
   handling exists to prevent.
+- **An unstable display label disables it entirely.** Adapters return a null
+  history name when a release has no durable identity. In particular, a
+  name-only Chrome archive cannot inherit approval context from an unrelated
+  extension with the same localized or reused manifest name.
 - **AI output can't reach it, in either direction.** The profile is
   deterministic-only, so the advisory reviewer cannot influence what counts as
   previously approved — and, symmetrically, an AI finding is never dropped by

@@ -167,11 +167,20 @@ const fakeAdapter: PackageAdapter<FakeInput> = {
   },
 };
 
+const displayNameOnlyAdapter: PackageAdapter<FakeInput> = {
+  ...fakeAdapter,
+  // Models a browser archive with no embedded stable store identity.
+  historyPackageName() {
+    return null;
+  },
+};
+
 async function runFakeScan(args: {
   db: ReturnType<typeof createDb>;
   organizationId: string;
   userId: string;
   packageName: string;
+  adapter?: PackageAdapter<FakeInput>;
 }) {
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${crypto.randomUUID()}`;
@@ -189,7 +198,7 @@ async function runFakeScan(args: {
       db: args.db,
       session: { userId: args.userId },
     },
-    fakeAdapter,
+    args.adapter ?? fakeAdapter,
     {
       scanId,
       stageId,
@@ -265,6 +274,35 @@ describe("release-process fingerprint (workers)", () => {
     expect(
       persisted?.findings.find((item) => item.ruleId === "release.source-drift"),
     ).toMatchObject({ releaseDelta: true });
+  });
+
+  test("an unstable display name cannot join unrelated cross-scan history", async () => {
+    const { db, userId, organizationId } = await seedUserAndOrg();
+    const now = new Date();
+    const gateId = await seedGateChain(db, organizationId, "octo/other-extension", "release");
+    for (let index = 0; index < 3; index += 1) {
+      await seedScan(db, {
+        organizationId,
+        ownerUserId: userId,
+        packageName: "Localized extension name",
+        source: "workflow_gate",
+        gateId,
+        createdAt: new Date(now.getTime() - (index + 1) * DAY_MS),
+      });
+    }
+
+    const { result } = await runFakeScan({
+      db,
+      organizationId,
+      userId,
+      packageName: "Localized extension name",
+      adapter: displayNameOnlyAdapter,
+    });
+
+    expect(result.ruleFindings.filter((finding) => finding.ruleId?.startsWith("release."))).toEqual(
+      [],
+    );
+    expect(result.releaseConsistency.status).toBe("none");
   });
 
   test("mixed release-path history stays silent", async () => {

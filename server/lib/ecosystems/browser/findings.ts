@@ -9,7 +9,7 @@ import {
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
-  browserExtensionIdentity,
+  browserExtensionCandidateName,
   findBrowserManifestFile,
   parseBrowserExtensionManifest,
 } from "./manifest";
@@ -73,10 +73,12 @@ function browserManifestFindings(
 ): Finding[] {
   const findings: Finding[] = [];
   const manifestFile = findBrowserManifestFile(files);
-  const identity = browserExtensionIdentity(manifest);
+  const candidateName = browserExtensionCandidateName(manifest);
   const mismatches: string[] = [];
-  if (details.manifest.package !== identity) {
-    mismatches.push(`release package ${details.manifest.package} != manifest.json ${identity}`);
+  if (details.manifest.package !== candidateName) {
+    mismatches.push(
+      `release package ${details.manifest.package} != manifest.json ${candidateName}`,
+    );
   }
   if (details.manifest.version !== manifest.version) {
     mismatches.push(

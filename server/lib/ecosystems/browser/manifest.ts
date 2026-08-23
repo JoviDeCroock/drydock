@@ -82,7 +82,8 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
   };
 }
 
-export function browserExtensionIdentity(manifest: BrowserExtensionManifest): string {
+/** Stable extension ID when present, otherwise the manifest's display label. */
+export function browserExtensionCandidateName(manifest: BrowserExtensionManifest): string {
   return manifest.extensionId ?? manifest.name;
 }
 
@@ -90,7 +91,7 @@ export function packageJsonSummaryForBrowser(
   manifest: BrowserExtensionManifest,
 ): PackageJsonSummary {
   return {
-    name: browserExtensionIdentity(manifest),
+    name: browserExtensionCandidateName(manifest),
     version: manifest.version,
   };
 }
