@@ -526,6 +526,77 @@ describe("analyzeRelease", () => {
     expect(out.findings.dependencyReview.dependencies).toHaveLength(1);
   });
 
+  test.each([
+    ["dependencies", "dependency.added", "medium"],
+    ["optionalDependencies", "dependency.optional-added", "high"],
+  ])(
+    "a clean reviewed %s declaration replaces its manifest-only finding",
+    async (section, ruleId, severity) => {
+      const acquired = clonedResolved();
+      acquired.staged.artifact.manifest[section] = { "clean-dep": "1.0.0" };
+      acquired.staged.artifact.files[0].textSample = JSON.stringify({
+        name: "pkg",
+        version: "1.0.1",
+        [section]: { "clean-dep": "1.0.0" },
+      });
+      const adapter = makeAdapter({
+        acquireStaged: vi.fn(async () => acquired.staged),
+        acquireBaseline: vi.fn(async () => acquired.baseline),
+        runFindings: vi.fn(() => [
+          {
+            severity,
+            file: "package.json",
+            evidence: "clean-dep: 1.0.0",
+            reason: "A newly added dependency was not inspected.",
+            ruleId,
+            ruleVersion: "test",
+          },
+        ]),
+        inspectAddedDependencies: vi.fn(async () => ({
+          status: "complete",
+          selectedCount: 1,
+          inspectedCount: 1,
+          uninspectableCount: 0,
+          dependencies: [
+            {
+              name: "clean-dep",
+              section,
+              declaredSpec: "1.0.0",
+              declarationKind: "exact",
+              status: "inspected",
+              reason: null,
+              resolvedVersion: "1.0.0",
+              registryHost: "registry.npmjs.org",
+              artifactUrl: "https://registry.npmjs.org/clean-dep/-/clean-dep-1.0.0.tgz",
+              declaredDigest: null,
+              reviewedDigest: null,
+              digestVerified: null,
+              fileCount: 1,
+              automaticExecution: [],
+              capabilities: [],
+              installReachableCapabilities: [],
+              verdict: "clean",
+            },
+          ],
+        })),
+      });
+      const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+      const out = await analyzeRelease(
+        adapter,
+        ctx,
+        { stageId: "stage-1" },
+        { dispose() {} },
+        identity,
+      );
+
+      expect(out.findings.ruleFindings).toEqual([]);
+      expect(out.findings.annotatedFindings).toEqual([]);
+      expect(out.findings.releaseRuleFindings).toEqual([]);
+      expect(scoreRisk(out.findings.annotatedFindings, disabledAi).releaseRisk).toBe("low");
+    },
+  );
+
   test("the dependency pass runs after both package sides' raw files are released", async () => {
     // Ordering invariant, not a detail: the pass makes bounded network calls,
     // and holding two unredacted package sides alive for their duration is

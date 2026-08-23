@@ -676,6 +676,81 @@ describe("inspectAddedNpmDependencies", () => {
     },
   );
 
+  test("an install-reachable minified file with skipped text is uninspectable", async () => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const manifest = {
+      name: "clipped",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.min.js" },
+    };
+    const clipped = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "install.min.js",
+          size: 4096,
+          sha256: "skipped-install",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: clipped },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      resolvedVersion: "1.0.0",
+      fileCount: 2,
+    });
+  });
+
+  test("an unrelated skipped source map does not invalidate complete install evidence", async () => {
+    const url = "https://registry.npmjs.org/complete/-/complete-1.0.0.tgz";
+    const manifest = {
+      name: "complete",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", "console.log('installed');"),
+        {
+          path: "dist/index.js.map",
+          size: 4096,
+          sha256: "skipped-map",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { complete: packument("complete", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { complete: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "inspected",
+      verdict: "install-execution",
+      resolvedVersion: "1.0.0",
+      fileCount: 3,
+    });
+  });
+
   test.each([
     ["duplicate", "duplicate path; later entry replaced earlier entry"],
     ["unicode-confusable", "path contained visually-confusable characters"],

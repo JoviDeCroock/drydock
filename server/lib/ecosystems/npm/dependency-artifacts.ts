@@ -383,6 +383,19 @@ async function inspectOne(
     codePatternSet: "javascript",
     entrypointResolution: "npm",
   });
+  if (assessment.installReachableUninspectedFiles.length) {
+    return uninspectable(
+      dependency,
+      registryHost,
+      "artifact-truncated",
+      resolved,
+      tarballUrl,
+      declared,
+      reviewedDigest,
+      download.archiveSha1,
+      download.files.length,
+    );
+  }
 
   return {
     name: boundedText(dependency.name, 256),
