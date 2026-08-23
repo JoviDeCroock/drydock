@@ -12,6 +12,7 @@ import { SeverityBar } from "../../components/SeverityBar";
 import { StatusStrip, StatusStripItem } from "../../components/StatusStrip";
 import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
+import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
@@ -77,6 +78,8 @@ export default function LandingPage() {
           Diff any npm, PyPI, or atpm package →
         </LinkButton>
       </section>
+
+      <DependencyPrIntegrations />
 
       <AikidoPartnerStrip />
 

@@ -40,6 +40,9 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await expect(
       page.getByRole("heading", { name: "Review the package artifact before it ships." }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Put an artifact diff in every dependency PR." }),
+    ).toBeVisible();
     await tour.capture(page, "landing", "Marketing entry point and product promise.");
 
     await page.goto("/docs");

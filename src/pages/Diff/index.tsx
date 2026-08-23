@@ -45,6 +45,7 @@ import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
 import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-ref";
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
+import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import type { FindingWithDiffStatus } from "../../features/review/types";
@@ -306,6 +307,8 @@ function DiffLanding() {
           same report.
         </Muted>
       </section>
+
+      <DependencyPrIntegrations />
 
       <AikidoPartnerStrip />
     </PageShell>
