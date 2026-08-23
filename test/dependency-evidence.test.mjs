@@ -467,6 +467,28 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachUnproven).toBe(true);
   });
 
+  test("an unrelated process launch cannot pair with an install-reachable native artifact", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", "require('./bin/addon.node');"),
+        { ...file("bin/addon.node", ""), flags: ["binary"] },
+        file("lib/build.js", "require('child_process').execFileSync('compiler');"),
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableCapabilities).toContain("file.native-artifact");
+    expect(assessment.installReachableCapabilities).not.toContain("code.process-execution");
+    expect(assessment.verdict).toBe("install-execution");
+  });
+
   test("a capability in a non-install package script is not proven install-reachable", () => {
     const manifest = {
       name: "n",
@@ -563,6 +585,16 @@ describe("classifyDependencyInstallRisk", () => {
         installReachableCapabilities,
       }),
     ).toMatchObject({ severity });
+  });
+
+  test("classifies a reachable native executable and process launch as proven high risk", () => {
+    expect(
+      classifyDependencyInstallRisk({
+        verdict: "install-risk",
+        capabilities: ["code.process-execution", "file.native-artifact"],
+        installReachableCapabilities: ["code.process-execution", "file.native-artifact"],
+      }),
+    ).toMatchObject({ severity: "high", proven: true, nativeExecution: true });
   });
 
   test("returns null for a non-risk verdict", () => {
@@ -710,6 +742,23 @@ describe("dependencyEvidenceFindings", () => {
     );
     expect(finding.severity).toBe("high");
     expect(finding.reason).toContain("prebuilt-binary tooling");
+  });
+
+  test("a proven native process launch uses native-specific reviewer copy", () => {
+    const [finding] = dependencyEvidenceFindings(
+      review([
+        evidence({
+          verdict: "install-risk",
+          automaticExecution: [{ kind: "script", name: "postinstall" }],
+          capabilities: ["code.process-execution", "file.native-artifact"],
+          installReachableCapabilities: ["code.process-execution", "file.native-artifact"],
+        }),
+      ]),
+      parent,
+    );
+    expect(finding.severity).toBe("high");
+    expect(finding.reason).toContain("native executable");
+    expect(finding.reason).not.toContain("network");
   });
 
   test("an unproven install-time reach lands one step lower", () => {

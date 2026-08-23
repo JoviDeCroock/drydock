@@ -134,6 +134,9 @@ function describeDependency(dependency: DependencyEvidence): string {
   if (dependency.status === "uninspectable")
     return UNINSPECTABLE_COPY[dependency.reason ?? "other"];
   const installRisk = classifyDependencyInstallRisk(dependency);
+  if (installRisk?.nativeExecution) {
+    return "Installing this package can invoke a native executable. Confirm that the binary and process launch are expected before approving the release.";
+  }
   if (installRisk?.proven) {
     return installRisk.strong
       ? "Installing this package reaches remote-shell, credential-access, dynamic-evaluation, or embedded-secret behavior. Review it directly before approving the release."

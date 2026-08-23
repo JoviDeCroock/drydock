@@ -35,7 +35,7 @@ Deliberately excluded:
 - dependencies declared through `bundleDependencies` / `bundledDependencies` whose package bytes are actually present under `node_modules/` in the staged artifact — those bytes are already part of the parent review;
 - every dependency of a first-ever release (no baseline manifest), where the whole list diffs as "added" and inspecting it would describe the package rather than the release.
 
-A missing baseline manifest caused by metadata, connection, download, or parsing failure is not a first release. In that case Drydock conservatively selects every staged install dependency so the comparison gap cannot turn dependency review into `not-applicable`.
+A missing baseline manifest caused by metadata, connection, download, or parsing failure is not a first release. A parseable staged manifest that lacks its package name or version is likewise an acquisition gap rather than proof that no prior release exists. In those cases Drydock conservatively selects every staged install dependency so the comparison gap cannot turn dependency review into `not-applicable`.
 
 The same relocation and previously-installed signals the `dependency.added` rule reads are reused here, so one surface cannot say "no new dependency" while the other says the opposite.
 
@@ -45,20 +45,20 @@ Transitive closure is **out of scope** for now. So is any ecosystem other than n
 
 `server/lib/ecosystems/npm/dependency-artifacts.ts` owns resolution and fetching; `server/lib/review/dependency-evidence.ts` owns everything that does not depend on which registry the dependency lives in.
 
-1. **Resolve** the declared spec against the registry's published versions. A dist-tag resolves through the packument's tag map (a tag is a moving pointer, not a range). For a range, Drydock mirrors npm's default-tag preference: use `latest` when it satisfies the range, otherwise use the highest satisfying version. The bounded matcher in `server/lib/ecosystems/npm/semver.ts` returns null for grammar it cannot represent rather than guessing.
+1. **Resolve** the declared spec against the registry's published versions. A dist-tag resolves through the packument's tag map (a tag is a moving pointer, not a range). For a range, Drydock mirrors npm's default-tag preference: use `latest` when it satisfies the range, otherwise use the highest satisfying version. The bounded matcher in `server/lib/ecosystems/npm/semver.ts` rejects non-canonical numeric identifiers, unsafe integers, invalid prerelease identifiers, and grammar it cannot represent rather than selecting bytes npm would ignore.
 2. **Fetch** the resolved artifact and stream it into the credentials-free sandbox, exactly like the previous-version baseline. Never installed, never executed.
 3. **Assess** the parsed bytes with the same deterministic rule set the reviewed release gets, then reduce the result to a verdict about what _installing_ the package does.
 4. **Record** the declaration, the review-time resolution, the digest the registry advertised, the digest recomputed from the bytes fetched, and the verdict. Artifact provenance retains only the registry origin and path; URL userinfo, query parameters, and fragments are stripped before persistence so signed URLs or credentials cannot enter a public report.
 
 ### Verdicts
 
-| Verdict             | Meaning                                                                                                                            |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `install-risk`      | Something runs on install **and** the artifact carries downloader / credential-access / dynamic-evaluation / embedded-secret code. |
-| `install-execution` | Something runs on install; nothing in the artifact matched those behaviors.                                                        |
-| `clean`             | Nothing runs automatically on install.                                                                                             |
+| Verdict             | Meaning                                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `install-risk`      | Something runs on install **and** its reachable path carries downloader / credential-access / dynamic-evaluation / embedded-secret code, or can launch a bundled native executable. |
+| `install-execution` | Something runs on install; nothing in the artifact matched those behaviors.                                                                                                         |
+| `clean`             | Nothing runs automatically on install.                                                                                                                                              |
 
-"Something runs on install" means a `preinstall`/`install`/`postinstall` script, or an implicit `node-gyp` build. Process execution alone is deliberately **not** a danger capability: prebuilt-binary packages spawn `node-gyp` by design, and treating that as blocking would make every release adding a native dependency unapprovable — which is how a tier stops meaning anything.
+"Something runs on install" means a `preinstall`/`install`/`postinstall` script, or an implicit `node-gyp` build. Process execution alone is deliberately **not** a danger capability: prebuilt-binary packages spawn `node-gyp` by design, and treating that as blocking would make every release adding a native dependency unapprovable — which is how a tier stops meaning anything. When the install-reachable path contains both a process launch and a bundled native artifact, however, Drydock reports a proven high-risk native execution path rather than describing it as network-capable.
 
 ### Findings and severity
 
@@ -66,15 +66,15 @@ Findings are namespaced to the dependency path with a synthetic `<dependency>nam
 
 Severity is set by two independent axes. **Proven** asks whether the install hook can statically reach the behavior; static reachability can miss a dynamic edge, so an unproven reach is demoted rather than dropped. **Strong** asks whether the behavior has a benign reading — remote shell, credential access, dynamic evaluation, and embedded secrets do not; a plain HTTPS download does.
 
-| Rule ID                                  | Severity   | When                                                                                           |
-| ---------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| `dependency-artifact.install-risk`       | `critical` | Strong behavior, provably reachable from the install hook. The arrayref shape.                 |
-| `dependency-artifact.install-risk`       | `high`     | Strong behavior present but unproven reach, **or** a provably reachable install-time download. |
-| `dependency-artifact.install-risk`       | `medium`   | Install-time download present but unproven reach.                                              |
-| `dependency-artifact.install-execution`  | `medium`   | Runs on install, nothing of the above behind it.                                               |
-| `dependency-artifact.capability`         | `info`     | Reviewed, nothing runs on install; records what the artifact can do.                           |
-| `dependency-artifact.integrity-mismatch` | `critical` | Fetched bytes disagree with the digest advertised by the registry; the review is invalid.      |
-| `dependency-artifact.uninspectable`      | `medium`   | Drydock could not review the dependency's own bytes.                                           |
+| Rule ID                                  | Severity   | When                                                                                                                                                               |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dependency-artifact.install-risk`       | `critical` | Strong behavior, provably reachable from the install hook. The arrayref shape.                                                                                     |
+| `dependency-artifact.install-risk`       | `high`     | Strong behavior present but unproven reach, a provably reachable install-time download, **or** a reachable process launch paired with a bundled native executable. |
+| `dependency-artifact.install-risk`       | `medium`   | Install-time download present but unproven reach.                                                                                                                  |
+| `dependency-artifact.install-execution`  | `medium`   | Runs on install, nothing of the above behind it.                                                                                                                   |
+| `dependency-artifact.capability`         | `info`     | Reviewed, nothing runs on install; records what the artifact can do.                                                                                               |
+| `dependency-artifact.integrity-mismatch` | `critical` | Fetched bytes disagree with the digest advertised by the registry; the review is invalid.                                                                          |
+| `dependency-artifact.uninspectable`      | `medium`   | Drydock could not review the dependency's own bytes.                                                                                                               |
 
 Both `critical` and `high` land on "block manual approval", so an install-time download does hold the release — a newly added dependency that fetches on every consumer install is worth reading once. It sits a tier below the dropper because `prebuild-install` fetching a platform binary and a dropper fetching a payload look identical to a scanner, and spending `critical` on `sharp` leaves nothing for the dropper. `added-dependency-prebuilt-downloader` in the corpus is that call, written down.
 
@@ -98,7 +98,7 @@ A review-time resolution is a **snapshot**, never permanent provenance. The repo
 - **exact version** — the declaration fixes the version coordinate, but not the bytes; the recomputed digest remains the byte-level review evidence (`"exact"`);
 - **unresolved / uninspected** — no artifact was read, so the release cannot be represented as fully reviewed (`"unusual"`, or any `uninspectable` reason).
 
-`digestVerified` is three-valued on purpose: `true` when the registry's advertised digest and the recomputed digest agree, `false` when they disagree, and `null` when one was missing. A missing digest is unverified, never a match. When an SRI lists several SHA-512 digests, matching any one follows npm's integrity semantics; the matching digest is the one retained in the evidence row.
+`digestVerified` is three-valued on purpose: `true` when the registry's advertised digest and the recomputed digest agree, `false` when they disagree, and `null` when one was missing or unsupported. A missing digest is unverified, never a match. When an SRI lists several SHA-512 digests, matching any one follows npm's integrity semantics; the matching digest is the one retained in the evidence row. A valid legacy `dist.shasum` is used only when `dist.integrity` is absent. If integrity is present but has no supported SHA-512 token, Drydock does not fall through to SHA-1 and claim that the registry's authoritative SRI was verified.
 
 ## Failing visibly
 

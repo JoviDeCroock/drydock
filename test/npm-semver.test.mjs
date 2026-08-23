@@ -82,6 +82,14 @@ describe("npm range satisfaction", () => {
     expect(parseRange("workspace:*")).toBeNull();
     expect(parseRange("latest")).toBeNull();
   });
+
+  test("rejects numeric identifiers npm SemVer does not accept", () => {
+    expect(parseRange("^01.2.3")).toBeNull();
+    expect(parseRange(">=9007199254740992.0.0")).toBeNull();
+    expect(parseRange("1.0.0-alpha.01")).toBeNull();
+    expect(parseRange("1.0.0-9007199254740992")).toBeNull();
+    expect(parseRange("1.2.3 - 9007199254740992")).toBeNull();
+  });
 });
 
 describe("maxSatisfyingVersion", () => {
@@ -101,6 +109,15 @@ describe("maxSatisfyingVersion", () => {
 
   test("ignores unparseable published version keys", () => {
     expect(maxSatisfyingVersion(["1.0.0", "not-a-version"], "*")).toBe("1.0.0");
+  });
+
+  test("ignores non-canonical and unsafe published version keys", () => {
+    expect(
+      maxSatisfyingVersion(["01.2.3", "9007199254740992.0.0", "1.2.3-alpha.01", "1.2.3"], "*"),
+    ).toBe("1.2.3");
+    expect(parseSemver("01.2.3")).toBeNull();
+    expect(parseSemver("9007199254740992.0.0")).toBeNull();
+    expect(parseSemver("1.2.3-9007199254740992")).toBeNull();
   });
 
   test("orders non-numeric prerelease identifiers by ASCII code point", () => {

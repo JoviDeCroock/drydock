@@ -19,15 +19,25 @@ export interface ParsedSemver {
   prerelease: string[];
 }
 
-const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/;
+const NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
+const PARTIAL_IDENTIFIER = `(?:${NUMERIC_IDENTIFIER}|x|X|\\*)`;
+const PRERELEASE_IDENTIFIER = `(?:${NUMERIC_IDENTIFIER}|\\d*[A-Za-z-][0-9A-Za-z-]*)`;
+const BUILD_IDENTIFIER = "[0-9A-Za-z-]+";
+const SEMVER_RE = new RegExp(
+  `^(${NUMERIC_IDENTIFIER})\\.(${NUMERIC_IDENTIFIER})\\.(${NUMERIC_IDENTIFIER})` +
+    `(?:-(${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*))?` +
+    `(?:\\+${BUILD_IDENTIFIER}(?:\\.${BUILD_IDENTIFIER})*)?$`,
+);
 
 export function parseSemver(version: string): ParsedSemver | null {
   const match = SEMVER_RE.exec(version.trim());
   if (!match) return null;
+  const numeric = match.slice(1, 4).map(Number);
+  if (!numeric.every(Number.isSafeInteger) || hasUnsafeNumericPrerelease(match[4])) return null;
   return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
+    major: numeric[0],
+    minor: numeric[1],
+    patch: numeric[2],
     prerelease: match[4] ? match[4].split(".") : [],
   };
 }
@@ -88,8 +98,12 @@ const ANY_RANGE: SemverRange = [[]];
 // A partial version (`1`, `1.2`, `1.x`) inside a comparator or an `^`/`~`
 // operator. Captures the operator, then up to three numeric-or-wildcard parts,
 // then an optional prerelease/build suffix.
-const PARTIAL_RE =
-  /^(\^|~>|~|>=|<=|>|<|=|)\s*v?(\d+|x|X|\*)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const PARTIAL_RE = new RegExp(
+  `^(\\^|~>|~|>=|<=|>|<|=|)\\s*v?(${PARTIAL_IDENTIFIER})` +
+    `(?:\\.(${PARTIAL_IDENTIFIER}))?(?:\\.(${PARTIAL_IDENTIFIER}))?` +
+    `(?:-(${PRERELEASE_IDENTIFIER}(?:\\.${PRERELEASE_IDENTIFIER})*))?` +
+    `(?:\\+${BUILD_IDENTIFIER}(?:\\.${BUILD_IDENTIFIER})*)?$`,
+);
 
 export function parseRange(spec: string): SemverRange | null {
   const trimmed = spec.trim();
@@ -133,6 +147,13 @@ function parseComparator(token: string): Comparator[] | null {
   if (!match) return null;
   const [, rawOperator, rawMajor, rawMinor, rawPatch, prerelease] = match;
   const operator = rawOperator || "=";
+
+  if (
+    [rawMajor, rawMinor, rawPatch].some(isUnsafeNumericIdentifier) ||
+    hasUnsafeNumericPrerelease(prerelease)
+  ) {
+    return null;
+  }
 
   const major = numericPart(rawMajor);
   const parsedMinor = numericPart(rawMinor);
@@ -238,7 +259,14 @@ function nextAfterWildcard(floor: ParsedSemver, wildcardIndex: number): ParsedSe
 
 function hyphenLowerBound(token: string): Comparator | null {
   const match = PARTIAL_RE.exec(token.trim());
-  if (!match || match[1]) return null;
+  if (
+    !match ||
+    match[1] ||
+    [match[2], match[3], match[4]].some(isUnsafeNumericIdentifier) ||
+    hasUnsafeNumericPrerelease(match[5])
+  ) {
+    return null;
+  }
   const major = numericPart(match[2]);
   if (major === null) return null;
   return {
@@ -254,7 +282,14 @@ function hyphenLowerBound(token: string): Comparator | null {
 
 function hyphenUpperBound(token: string): Comparator | null {
   const match = PARTIAL_RE.exec(token.trim());
-  if (!match || match[1]) return null;
+  if (
+    !match ||
+    match[1] ||
+    [match[2], match[3], match[4]].some(isUnsafeNumericIdentifier) ||
+    hasUnsafeNumericPrerelease(match[5])
+  ) {
+    return null;
+  }
   const major = numericPart(match[2]);
   if (major === null) return null;
   const minor = numericPart(match[3]);
@@ -276,6 +311,21 @@ function numericPart(value: string | undefined): number | null {
   if (value === undefined) return null;
   if (value === "x" || value === "X" || value === "*") return null;
   return Number.parseInt(value, 10);
+}
+
+function isUnsafeNumericIdentifier(value: string | undefined): boolean {
+  if (value === undefined || value === "x" || value === "X" || value === "*") return false;
+  return !Number.isSafeInteger(Number(value));
+}
+
+function hasUnsafeNumericPrerelease(value: string | undefined): boolean {
+  return (
+    value
+      ?.split(".")
+      .some(
+        (identifier) => /^\d+$/.test(identifier) && !Number.isSafeInteger(Number(identifier)),
+      ) ?? false
+  );
 }
 
 /**

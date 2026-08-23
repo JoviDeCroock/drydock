@@ -455,10 +455,10 @@ export function resolveDependencyVersion(metadata: RegistryMetadata, spec: strin
  * are directly comparable by eye.
  *
  * SHA-512 only: it is the SRI algorithm npm actually emits and the only strong
- * digest the dependency download recomputes. An SRI naming something else is
- * left to fall through to `shasum`, and if there is no `shasum` either the
- * review is honestly unverified rather than compared against a digest nothing
- * recomputed.
+ * digest the dependency download recomputes. When an integrity field exists but
+ * names another algorithm (or is malformed), the review stays unverified rather
+ * than falling back to `shasum`: npm consumers prefer `dist.integrity`, so a
+ * matching legacy SHA-1 must not hide a mismatch in the authoritative SRI.
  */
 function declaredDigest(
   dist: { integrity?: string; shasum?: string } | undefined,
@@ -473,6 +473,7 @@ function declaredDigest(
         : null;
     return { algorithm: "sha512", value: matching ?? sri[0] };
   }
+  if (dist.integrity !== undefined) return null;
   return dist.shasum && /^[0-9a-f]{40}$/i.test(dist.shasum)
     ? { algorithm: "sha1", value: dist.shasum.toLowerCase() }
     : null;
