@@ -2,10 +2,11 @@ import { packageDiffCardPath, packageDiffPath, type DiffEcosystem } from "./pack
 import { diffRefLabel } from "./pkg-pr-new";
 
 export const SITE_NAME = "Drydock";
+export const PRODUCT_NAME = "Drydock Package Review";
 export const SITE_URL = "https://drydock.org";
 export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 export const OG_IMAGE_ALT =
-  "Drydock — pre-publish package review for npm, PyPI, and VS Code maintainers";
+  "Drydock Package Review — pre-publish package security for npm, PyPI, and VS Code maintainers";
 
 // Standard 1.91:1 share-card ratio, matching server/lib/og-card.ts. The static
 // site-wide card is 1200x800; per-diff cards are generated at 1200x630.
@@ -39,9 +40,9 @@ export function packageDiffOgImageAlt(
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock: pre-publish package review",
+  title: "Drydock Package Review: pre-publish package security",
   description:
-    "Drydock lets npm, PyPI, and VS Code maintainers review the exact package artifact before an npm stage publish or gated release goes live.",
+    "Review the exact npm, PyPI, or VS Code artifact before publication. Drydock diffs built package bytes and pins supply-chain risks to changed lines.",
   path: "/",
 };
 

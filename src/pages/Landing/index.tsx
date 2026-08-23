@@ -27,15 +27,15 @@ export default function LandingPage() {
       <PageSeo metadata={homePageSeo} />
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Package review before publish</Eyebrow>
+        <Eyebrow tone="accent">Pre-publish package security</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Review the package that will ship.
+          Review the package artifact before it ships.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           Between your last code review and the public registry sit build scripts, bundler output,
-          and CI credentials. Drydock holds the release while it is still private, diffs the exact
-          artifact against the last published version, and pins every finding to a changed line. You
-          make the final call.
+          and CI credentials. Drydock Package Review holds the release while it is still private,
+          diffs the exact artifact against the last published version, and pins every supply-chain
+          finding to a changed line. You make the final call.
         </p>
         <MonoDetail
           parts={[
