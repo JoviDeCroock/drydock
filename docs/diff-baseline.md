@@ -11,7 +11,7 @@ The baseline selector is intentionally tag-aware:
 1. If the staged metadata has a tag and current package metadata has `dist-tags[tag]` pointing at a published version other than the staged version, the scan diffs against that version.
 2. Otherwise, it falls back to the highest semver predecessor lower than the staged version.
 3. If there is no lower predecessor, it falls back to the highest published semver-like version.
-4. If no baseline can be selected or downloaded, the scan proceeds as an all-added diff and records the baseline reason in `summary_json.baseline`.
+4. If no baseline can be selected or downloaded, the scan proceeds as an all-added diff and records the baseline reason in `summary_json.baseline`. An adapter that cannot resolve a trustworthy public predecessor may additionally set `comparisonSkipped: "baseline-unavailable"`; the browser-extension gate uses this state so all-added files remain unknown package context and the release requires manual review.
 
 This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
 

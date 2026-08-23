@@ -171,7 +171,7 @@ The browser adapter (`server/lib/ecosystems/browser/`):
 - runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules;
 - reports privileged permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;
 - records the exact archive kind and SHA-256 in report provenance;
-- does not invent a public baseline: Chrome packages usually do not embed a store id, and store download availability differs by channel. A gate without an explicit previous artifact reviews package context and the exact candidate bytes without claiming a version delta.
+- does not invent a public baseline: Chrome packages usually do not embed a store id, and store download availability differs by channel. A gate without an explicit previous artifact records `comparisonSkipped: "baseline-unavailable"`, treats findings as package context rather than release deltas, and recommends manual review instead of grading an all-added diff as a release change.
 
 Recommended workflow shape:
 

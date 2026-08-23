@@ -1,0 +1,23 @@
+{
+  "id": "browser-sensitive-history-extension",
+  "title": "WebExtension with browsing-history access",
+  "category": "browser-extension",
+  "intent": "A sensitive browser API permission must produce authoritative deterministic evidence even when the advisory AI reviewer is disabled.",
+  "slug": "history-helper",
+  "extensionId": "history-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "8989898989898989898989898989898989898989898989898989898989898989",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 260,
+      "sha256": "9090909090909090909090909090909090909090909090909090909090909090",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"History helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"history-helper@example.invalid\" } },\n  \"permissions\": [\"history\"]\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" }
+  ]
+}

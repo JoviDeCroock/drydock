@@ -13,8 +13,8 @@ export interface PersistedSummary {
   packageJsonDiff?: PackageJsonDiff;
   diff?: DiffEntry[];
   // Baseline selection recorded by the pipeline. The UI only reads
-  // `comparisonSkipped`, which says a published predecessor existed but was
-  // never downloaded, so the diff is not a release delta.
+  // `comparisonSkipped`, which says a trustworthy baseline comparison was
+  // unavailable, so the diff is not a release delta.
   baseline?: { version?: string | null; comparisonSkipped?: string };
   // Adapter-shaped staged details persisted by summarizeDetails. The UI only
   // reads the byte-continuity blocks; the rest stays opaque.

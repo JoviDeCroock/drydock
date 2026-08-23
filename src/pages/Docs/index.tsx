@@ -520,7 +520,7 @@ export default function DocsPage() {
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Supported evidence">whl, tar.gz, tgz, vsix</Requirement>
+              <Requirement label="Supported evidence">whl, tar.gz, tgz, vsix, zip, xpi</Requirement>
               <Requirement label="Release hold">GitHub Environment</Requirement>
               <Requirement label="Publish credential">Stays in GitHub Actions</Requirement>
             </div>

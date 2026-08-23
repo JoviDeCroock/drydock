@@ -7,6 +7,7 @@ import {
   inferBrowserArtifactKind,
   parseBrowserExtensionManifest,
 } from "../server/lib/ecosystems/browser";
+import { computeDiff, runDeterministicFindings } from "../server/lib/scan/pipeline-phases";
 
 const SHA = "ab".repeat(32);
 
@@ -68,14 +69,32 @@ describe("browser extension review adapter", () => {
     const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const input = browserAdapter.parseInput({
       manifest: release,
-      artifact: { path, sha256: SHA, files: [manifestFile()] },
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ permissions: ["nativeMessaging"] })],
+      },
     });
     const staged = await browserAdapter.acquireStaged({}, input, { dispose() {} });
     const baseline = await browserAdapter.acquireBaseline({}, input, { dispose() {} }, staged);
     expect(baseline).toMatchObject({
       artifact: null,
-      baseline: { source: "none", reason: "no-store-identity-for-public-baseline" },
+      baseline: {
+        source: "none",
+        reason: "no-store-identity-for-public-baseline",
+        comparisonSkipped: "baseline-unavailable",
+      },
     });
+    const diff = computeDiff({ staged, baseline });
+    const findings = runDeterministicFindings(browserAdapter, { staged, baseline }, diff);
+    expect(findings.annotatedFindings.length).toBeGreaterThan(0);
+    expect(findings.annotatedFindings).toEqual(
+      findings.annotatedFindings.map((finding) => ({
+        ...finding,
+        diffStatus: "unknown",
+        releaseDelta: false,
+      })),
+    );
     expect(browserAdapter.summarizeDetails(staged.details)).toMatchObject({
       provenance: {
         ecosystem: "browser",
@@ -137,6 +156,30 @@ describe("browser extension review adapter", () => {
     );
     expect(review.risk).toBe("high");
   });
+
+  test.each(["clipboardRead", "clipboardWrite", "cookies", "downloads", "history", "tabs"])(
+    "flags sensitive browser permission %s",
+    (permission) => {
+      const path = "dist/tab-helper.zip";
+      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
+        {
+          path,
+          sha256: SHA,
+        },
+      ]);
+      const review = createBrowserExtensionReview({
+        manifest,
+        artifact: {
+          path,
+          sha256: SHA,
+          files: [manifestFile({ permissions: [permission] })],
+        },
+      });
+      expect(review.ruleFindings.map((finding) => finding.ruleId)).toContain(
+        "browser.privileged-permission",
+      );
+    },
+  );
 
   test.each([
     "default-src 'self' cdn.example.invalid",

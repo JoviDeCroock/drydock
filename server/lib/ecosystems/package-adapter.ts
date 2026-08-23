@@ -53,7 +53,7 @@ type BaselineSelectionSource =
   | "upload-time"
   | "none";
 
-export type BaselineComparisonSkip = "baseline-too-large";
+export type BaselineComparisonSkip = "baseline-too-large" | "baseline-unavailable";
 
 export interface BaselineInfo {
   version: string | null;

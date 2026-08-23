@@ -43,7 +43,10 @@ export function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
-  const baselineComparisonSkipped = summary.baseline?.comparisonSkipped === "baseline-too-large";
+  const baselineComparisonSkip = summary.baseline?.comparisonSkipped;
+  const baselineComparisonSkipped =
+    baselineComparisonSkip === "baseline-too-large" ||
+    baselineComparisonSkip === "baseline-unavailable";
   const recommendation = getReleaseRecommendation(
     artifactRisk,
     releaseRisk,
@@ -60,7 +63,7 @@ export function ReleaseRecommendation({
     summary,
     diffCount,
     changedFindings,
-    baselineComparisonSkipped,
+    baselineComparisonSkipped ? baselineComparisonSkip : undefined,
   );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -133,18 +136,21 @@ function buildRecommendationEvidence(
   summary: PersistedSummary,
   diffCount: number,
   changedFindings: ReviewFinding[],
-  baselineComparisonSkipped: boolean,
+  baselineComparisonSkip: string | undefined,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
   // Lead with the missing comparison: it explains why there are no release
   // deltas below, which would otherwise read as an all-clear.
-  if (baselineComparisonSkipped) {
+  if (baselineComparisonSkip) {
     const version = summary.baseline?.version;
     evidence.push({
       label: "baseline",
-      value: version
-        ? `Published ${version} exceeded the download budget, so no file was compared against it.`
-        : "The published release exceeded the download budget, so no file was compared against it.",
+      value:
+        baselineComparisonSkip === "baseline-too-large"
+          ? version
+            ? `Published ${version} exceeded the download budget, so no file was compared against it.`
+            : "The published release exceeded the download budget, so no file was compared against it."
+          : "No published baseline was available, so no file was compared against it.",
     });
   }
   const releaseFindings = changedFindings;

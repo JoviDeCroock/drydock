@@ -21,11 +21,17 @@ import {
 } from "./types";
 
 const PRIVILEGED_PERMISSIONS = new Set([
+  "clipboardRead",
+  "clipboardWrite",
+  "cookies",
   "debugger",
+  "downloads",
+  "history",
   "management",
   "nativeMessaging",
   "privacy",
   "proxy",
+  "tabs",
   "webRequestBlocking",
 ]);
 const ALL_URL_PATTERNS = new Set(["<all_urls>", "*://*/*", "https://*/*", "http://*/*"]);

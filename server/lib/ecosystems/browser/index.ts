@@ -140,6 +140,7 @@ function emptyBaseline(): BaselineInfo {
     source: "none",
     distTagVersion: null,
     reason: "no-store-identity-for-public-baseline",
+    comparisonSkipped: "baseline-unavailable",
   };
 }
 
