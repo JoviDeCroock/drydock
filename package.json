@@ -35,6 +35,7 @@
     "e2e:dev:seed": "node test/e2e/dev-server.mjs --seed",
     "e2e:seed": "node scripts/e2e-seed.mjs",
     "ops:snapshot": "node scripts/ops-snapshot.mjs",
+    "discoverability:snapshot": "node scripts/discoverability-snapshot.mjs",
     "agent:tour": "node scripts/agent-tour.mjs",
     "test:e2e": "playwright test",
     "verify": "node scripts/verify.mjs",

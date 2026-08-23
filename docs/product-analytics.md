@@ -152,6 +152,11 @@ model, and reviewer version. See
 
 ## Reading the data
 
+For the discoverability scorecard, `pnpm run discoverability:snapshot` runs a
+fixed set of sampled aggregate queries over public diff reads and downstream
+activation outcomes. Search queries and landing-page impressions remain in
+Google Search Console; see [`discoverability.md`](./discoverability.md).
+
 Analytics Engine is queried through the Cloudflare SQL API:
 
 ```sh
