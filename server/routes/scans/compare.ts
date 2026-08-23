@@ -158,6 +158,7 @@ scanCompareRoutes.get("/:id/compare", async (c) => {
   const loaded = await loadCompareArchive(c, ctx, {
     rateLimitKey: `compare-fetch:${ctx.session.userId}`,
     rateLimit: 30,
+    requireCompleteFiles: true,
   });
   if ("error" in loaded) return loaded.error;
 
@@ -166,7 +167,7 @@ scanCompareRoutes.get("/:id/compare", async (c) => {
       version: loaded.cached.version,
       files: stripTextSamples(loaded.cached.files),
       packageJson: loaded.cached.packageJson,
-      findingAnnotations: buildCompareFindingAnnotations(ctx.scan, loaded.cached.files),
+      findingAnnotations: buildCompareFindingAnnotations(ctx.scan, loaded.comparisonFiles),
       cachedAt: loaded.cached.cachedAt,
     },
     200,
@@ -182,7 +183,7 @@ type CompareContext = Extract<
 async function loadCompareArchive(
   c: import("hono").Context<{ Bindings: Bindings; Variables: Variables }>,
   ctx: CompareContext,
-  options: { rateLimitKey: string; rateLimit: number },
+  options: { rateLimitKey: string; rateLimit: number; requireCompleteFiles?: boolean },
 ) {
   let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
   try {
@@ -234,15 +235,16 @@ async function loadCompareArchive(
     } as const;
   }
 
-  const cached = await loadCompare(c.env, workerExecutionContext(c.executionCtx), ctx.version, {
+  const loaded = await loadCompare(c.env, workerExecutionContext(c.executionCtx), ctx.version, {
     tarballUrl,
     registryUrl,
     npmToken: connection?.token,
     cacheScope: `org:${ctx.organizationId}`,
     allowInsecureLocalhost,
+    requireCompleteFiles: options.requireCompleteFiles,
   });
 
-  return { cached } as const;
+  return loaded;
 }
 
 function buildCompareFindingAnnotations(

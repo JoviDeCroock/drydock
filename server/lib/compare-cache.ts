@@ -26,6 +26,13 @@ export interface CachedCompare {
   textSamplesOmitted?: boolean;
 }
 
+export interface LoadedCompare {
+  /** The payload written to/read from KV and safe to return to file browsers. */
+  cached: CachedCompare;
+  /** Complete baseline files for semantic diff annotation. */
+  comparisonFiles: FileRecord[];
+}
+
 const CACHE_PREFIX = "compare:v3:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 // Compare payloads are immutable once written (the key is content-addressed
@@ -85,9 +92,11 @@ const CACHE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
 export function serializeCompareCachePayload(
   payload: CachedCompare,
   maxPayloadBytes = CACHE_MAX_PAYLOAD_BYTES,
-): { serialized: string; samplesOmitted: boolean } {
+): { serialized: string; samplesOmitted: boolean; cached: CachedCompare } {
   let serialized = JSON.stringify(payload);
-  if (utf8ByteLength(serialized) <= maxPayloadBytes) return { serialized, samplesOmitted: false };
+  if (utf8ByteLength(serialized) <= maxPayloadBytes) {
+    return { serialized, samplesOmitted: false, cached: payload };
+  }
   // Drop the reference before building anything else: for the versions that
   // reach this branch the discarded string is ~20 MiB and the Worker still holds
   // the parsed archive.
@@ -101,21 +110,22 @@ export function serializeCompareCachePayload(
   };
   const bareJson = JSON.stringify(bare);
   const budget = maxPayloadBytes - utf8ByteLength(bareJson);
-  if (budget <= 0) return { serialized: bareJson, samplesOmitted: true };
+  if (budget <= 0) return { serialized: bareJson, samplesOmitted: true, cached: bare };
 
   const retained = retainedSamplePaths(sampleCandidates([payload.files]), budget);
-  if (!retained.size) return { serialized: bareJson, samplesOmitted: true };
+  if (!retained.size) return { serialized: bareJson, samplesOmitted: true, cached: bare };
 
-  const reduced = JSON.stringify({
+  const reduced: CachedCompare = {
     ...payload,
     files: applySampleRetention(payload.files, retained),
     textSamplesOmitted: true,
-  } satisfies CachedCompare);
+  };
+  const reducedJson = JSON.stringify(reduced);
   // Selection works from per-path cost arithmetic rather than a trial
   // serialization, so confirm the real payload fits before committing to it.
-  return utf8ByteLength(reduced) <= maxPayloadBytes
-    ? { serialized: reduced, samplesOmitted: true }
-    : { serialized: bareJson, samplesOmitted: true };
+  return utf8ByteLength(reducedJson) <= maxPayloadBytes
+    ? { serialized: reducedJson, samplesOmitted: true, cached: reduced }
+    : { serialized: bareJson, samplesOmitted: true, cached: bare };
 }
 
 /**
@@ -132,7 +142,7 @@ export async function writeCompareCache(
   payload: CachedCompare,
 ): Promise<CachedCompare> {
   if (!env.COMPARE_CACHE) return payload;
-  const { serialized, samplesOmitted } = serializeCompareCachePayload(payload);
+  const { serialized, samplesOmitted, cached } = serializeCompareCachePayload(payload);
   const cachedBytes = utf8ByteLength(serialized);
   if (cachedBytes > CACHE_MAX_PAYLOAD_BYTES) {
     // Even the metadata-only floor is over the cap — a release with an enormous
@@ -169,7 +179,7 @@ export async function writeCompareCache(
     return undefined;
   });
   ctx.waitUntil(write);
-  return samplesOmitted ? (JSON.parse(serialized) as CachedCompare) : payload;
+  return cached;
 }
 
 export async function loadCompare(
@@ -182,15 +192,19 @@ export async function loadCompare(
     npmToken?: string;
     cacheScope: string;
     allowInsecureLocalhost?: boolean;
+    /** Bypass shed entries when line-level diff semantics need full samples. */
+    requireCompleteFiles?: boolean;
   },
-): Promise<CachedCompare> {
+): Promise<LoadedCompare> {
   const key = await computeCompareCacheKey(
     options.registryUrl,
     options.tarballUrl,
     options.cacheScope,
   );
   const cached = await readCompareCache(env, key);
-  if (cached) return cached;
+  if (cached && (!options.requireCompleteFiles || !cached.textSamplesOmitted)) {
+    return { cached, comparisonFiles: cached.files };
+  }
 
   const downloaded = await downloadPublishedTarball(env, ctx, options.tarballUrl, {
     registryUrl: options.registryUrl,
@@ -206,7 +220,10 @@ export async function loadCompare(
   };
   // The cached copy, so the populating request sees the same file bodies (and the
   // same `sample-omitted` flags) every later request will.
-  return writeCompareCache(env, ctx, key, payload);
+  return {
+    cached: await writeCompareCache(env, ctx, key, payload),
+    comparisonFiles: payload.files,
+  };
 }
 
 export function stripTextSamples(files: FileRecord[]): FileRecord[] {
