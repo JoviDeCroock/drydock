@@ -2,7 +2,7 @@ import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 
 export const BROWSER_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
-export const BROWSER_RULES_VERSION = "0.4.0";
+export const BROWSER_RULES_VERSION = "0.5.0";
 
 export const BROWSER_RULE_IDS = {
   metadataMismatch: "browser.metadata-mismatch",
@@ -52,6 +52,7 @@ export interface BrowserExtensionManifest {
   hostPermissions: string[];
   optionalHostPermissions: string[];
   contentScriptMatches: string[];
+  contentScriptEntrypoints: string[];
   externallyConnectableMatches: string[];
   backgroundEntrypoints: string[];
   contentSecurityPolicy: string | null;
@@ -63,7 +64,8 @@ export interface BrowserAdapterDetails {
     path: string;
     sha256: string;
     kind: BrowserArtifactKind;
-    extensionId: string;
+    extensionId: string | null;
+    displayName: string;
     manifestPath: "manifest.json";
     manifestVersion: 2 | 3;
     permissions: string[];
@@ -71,6 +73,7 @@ export interface BrowserAdapterDetails {
     hostPermissions: string[];
     optionalHostPermissions: string[];
     contentScriptMatches: string[];
+    contentScriptEntrypoints: string[];
     externallyConnectableMatches: string[];
     backgroundEntrypoints: string[];
     contentSecurityPolicy: string | null;

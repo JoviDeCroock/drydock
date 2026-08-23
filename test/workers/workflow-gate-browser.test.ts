@@ -13,6 +13,7 @@ import {
 import { resolveBundleArtifacts } from "../../server/lib/workflow-gates/resolve";
 
 const SHA = "cd".repeat(32);
+const OTHER_SHA = "ce".repeat(32);
 
 describe("browser extension workflow-gate adapter", () => {
   test("registers browser extensions and keeps generic ZIPs out of auto-detection", () => {
@@ -79,6 +80,23 @@ describe("browser extension workflow-gate adapter", () => {
       ]),
     ).toThrow(/more than one archive/);
   });
+
+  test("keeps same-name Chrome archives separate without a stable extension id", () => {
+    const candidates = browserWorkflowGateAdapter.prepareReleaseCandidates([
+      parsedArtifact("dist/chrome.zip", [nameOnlyManifestFile()]),
+      parsedArtifact("dist/edge.zip", [nameOnlyManifestFile()], OTHER_SHA),
+    ]);
+    expect(candidates).toHaveLength(2);
+    expect(new Set(candidates.map((candidate) => candidate.scanKey))).toEqual(
+      new Set([SHA, OTHER_SHA]),
+    );
+    expect(candidates.map((candidate) => candidate.pipelineInput)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ artifact: expect.objectContaining({ path: "dist/chrome.zip" }) }),
+        expect.objectContaining({ artifact: expect.objectContaining({ path: "dist/edge.zip" }) }),
+      ]),
+    );
+  });
 });
 
 function manifestFile() {
@@ -97,10 +115,29 @@ function manifestFile() {
   };
 }
 
-function parsedArtifact(path: string, files: ReturnType<typeof manifestFile>[]) {
+function nameOnlyManifestFile() {
+  const value = {
+    manifest_version: 3,
+    name: "Tab helper",
+    version: "1.2.0",
+  };
+  return {
+    path: "manifest.json",
+    size: JSON.stringify(value).length,
+    sha256: "12".repeat(32),
+    flags: [],
+    textSample: JSON.stringify(value),
+  };
+}
+
+function parsedArtifact(
+  path: string,
+  files: Array<ReturnType<typeof manifestFile> | ReturnType<typeof nameOnlyManifestFile>>,
+  sha256 = SHA,
+) {
   return {
     path,
-    sha256: SHA,
+    sha256,
     ecosystem: "browser",
     kind: path.endsWith(".xpi") ? "xpi" : "zip",
     files,

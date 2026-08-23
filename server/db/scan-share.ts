@@ -5,6 +5,7 @@ import {
   publicPackageLookupKey,
   scanDistTag,
   scanEcosystem,
+  scanPublicPackageIdentity,
   type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
@@ -227,9 +228,10 @@ export function badgeLookupKey(row: {
   packageName: string | null;
   summaryJson: unknown;
 }): string | null {
-  if (!row.packageName) return null;
+  const packageIdentity = scanPublicPackageIdentity(row.source, row.summaryJson, row.packageName);
+  if (!packageIdentity) return null;
   const ecosystem = scanEcosystem(row.source, row.summaryJson);
-  return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
+  return ecosystem ? publicPackageLookupKey(ecosystem, packageIdentity) : null;
 }
 
 /**

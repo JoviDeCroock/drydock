@@ -1,0 +1,23 @@
+{
+  "id": "browser-sensitive-identity-extension",
+  "title": "WebExtension with browser identity access",
+  "category": "browser-extension",
+  "intent": "Browser identity access must produce authoritative deterministic evidence because it can expose account identity and mint authentication tokens.",
+  "slug": "identity-helper",
+  "extensionId": "identity-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 270,
+      "sha256": "9292929292929292929292929292929292929292929292929292929292929292",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Identity helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"identity-helper@example.invalid\" } },\n  \"permissions\": [\"identity\"]\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" }
+  ]
+}

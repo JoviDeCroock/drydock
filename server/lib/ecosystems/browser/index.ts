@@ -13,7 +13,6 @@ import type {
 } from "../package-adapter";
 import { buildBrowserFindings } from "./findings";
 import {
-  browserExtensionIdentity,
   packageJsonSummaryForBrowser,
   parseBrowserAdapterInput,
   parseBrowserExtensionManifest,
@@ -83,6 +82,9 @@ export const browserAdapter: PackageAdapter<BrowserAdapterInput, AdapterBroker> 
     return {
       manifest: d.manifest,
       artifact: d.artifact,
+      // A null identity keeps display-name-only Chrome archives out of public
+      // package-name indexes while still allowing the gate review itself.
+      publicPackageIdentity: d.artifact.extensionId,
       provenance: {
         ecosystem: "browser",
         mode: "workflow_gate",
@@ -101,7 +103,6 @@ function acquireBrowserArtifact(
   artifactInput: BrowserArtifactInput,
 ): { artifact: AcquiredArtifact; details: BrowserAdapterDetails } {
   const { manifest } = parseBrowserExtensionManifest(artifactInput.files);
-  const extensionId = browserExtensionIdentity(manifest);
   const kind = releaseManifest.artifacts[0].kind;
   return {
     artifact: {
@@ -117,7 +118,8 @@ function acquireBrowserArtifact(
         path: artifactInput.path,
         sha256: artifactInput.sha256,
         kind,
-        extensionId,
+        extensionId: manifest.extensionId,
+        displayName: manifest.name,
         manifestPath: "manifest.json",
         manifestVersion: manifest.manifestVersion,
         permissions: manifest.permissions,
@@ -125,6 +127,7 @@ function acquireBrowserArtifact(
         hostPermissions: manifest.hostPermissions,
         optionalHostPermissions: manifest.optionalHostPermissions,
         contentScriptMatches: manifest.contentScriptMatches,
+        contentScriptEntrypoints: manifest.contentScriptEntrypoints,
         externallyConnectableMatches: manifest.externallyConnectableMatches,
         backgroundEntrypoints: manifest.backgroundEntrypoints,
         contentSecurityPolicy: manifest.contentSecurityPolicy,

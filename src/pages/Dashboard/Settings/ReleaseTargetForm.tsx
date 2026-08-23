@@ -93,12 +93,8 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
   const repositoryFullName = githubApp.formRepositoryFullName.value;
   const submitting = githubApp.formSubmitting.value;
   const repositories = githubApp.availableRepositories.value;
-  const accessibleCount = githubApp.activeRepositories.value.length;
   const repositoryStatus = githubApp.activeRepositoryStatus.value;
   const repositoryError = githubApp.activeRepositoryError.value;
-  // Repositories disappear from the picker once they have a release target, so
-  // an empty list with accessible repos behind it means every one is mapped.
-  const allMapped = accessibleCount > 0 && repositories.length === 0;
 
   return (
     <Field label="Repository" for="releaseTargetRepo">
@@ -115,9 +111,7 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
               ? "Loading repositories…"
               : repositories.length
                 ? "Pick a repository…"
-                : allMapped
-                  ? "All repositories already mapped"
-                  : "No repositories visible"}
+                : "No repositories visible"}
         </option>
         {repositories.map((repo: { id: number; fullName: string }) => (
           <option key={repo.id} value={repo.fullName}>
@@ -128,16 +122,10 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
       {repositoryError ? (
         <Muted class="text-[12px] mt-1.5 text-danger-text">{repositoryError}</Muted>
       ) : null}
-      {installationRowId && !repositoryError && repositoryStatus === "idle" && allMapped ? (
-        <Muted class="text-[12px] mt-1.5">
-          Every repository this installation can see already has a release target. Remove one below
-          to remap it, or grant the GitHub App access to another repository.
-        </Muted>
-      ) : null}
       {installationRowId &&
       !repositoryError &&
       repositoryStatus === "idle" &&
-      accessibleCount === 0 ? (
+      repositories.length === 0 ? (
         <Muted class="text-[12px] mt-1.5">
           This installation has no accessible repositories. Grant the GitHub App access to a
           repository in{" "}
@@ -161,8 +149,10 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
   const environment = githubApp.formEnvironment.value;
   const submitting = githubApp.formSubmitting.value;
   const environments = githubApp.activeEnvironments.value;
+  const configuredEnvironmentCount = githubApp.activeRepositoryEnvironments.value.length;
   const environmentStatus = githubApp.activeEnvironmentStatus.value;
   const environmentError = githubApp.activeEnvironmentError.value;
+  const allMapped = configuredEnvironmentCount > 0 && environments.length === 0;
 
   return (
     <Field label="GitHub environment" for="releaseTargetEnv">
@@ -179,7 +169,9 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
               ? "Loading environments…"
               : environments.length
                 ? "Pick an environment…"
-                : "No environments configured"}
+                : allMapped
+                  ? "All environments already mapped"
+                  : "No environments configured"}
         </option>
         {environments.map((env: { name: string }) => (
           <option key={env.name} value={env.name}>
@@ -190,10 +182,15 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
       {environmentError ? (
         <Muted class="text-[12px] mt-1.5 text-danger-text">{environmentError}</Muted>
       ) : null}
+      {repositoryFullName && !environmentError && environmentStatus === "idle" && allMapped ? (
+        <Muted class="text-[12px] mt-1.5">
+          Every GitHub environment on this repository already has a release target.
+        </Muted>
+      ) : null}
       {repositoryFullName &&
       !environmentError &&
       environmentStatus === "idle" &&
-      !environments.length ? (
+      configuredEnvironmentCount === 0 ? (
         <Muted class="text-[12px] mt-1.5">
           No environments on this repo yet. Create one in{" "}
           <a

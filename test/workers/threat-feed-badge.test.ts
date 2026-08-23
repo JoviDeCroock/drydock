@@ -81,6 +81,9 @@ async function seedCompletedScan(
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
+    // Browser archives without a Gecko/store ID may be feed-listed by time,
+    // but their display name is not safe for global badge lookup.
+    withoutStablePublicIdentity?: boolean;
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -123,6 +126,11 @@ async function seedCompletedScan(
         ? {
             stagedPublish: {
               ...(options.tag ? { tag: options.tag } : {}),
+              ...(gateEcosystem === "browser"
+                ? {
+                    publicPackageIdentity: options.withoutStablePublicIdentity ? null : packageName,
+                  }
+                : {}),
               provenance: {
                 ecosystem: gateEcosystem,
                 mode: "workflow_gate",
@@ -416,6 +424,23 @@ describe("shields badge endpoint", () => {
         ecosystem,
       );
     }
+  });
+
+  test("name-only browser scans stay out of the package badge index", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `Tab helper ${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      ecosystem: "browser",
+      source: "workflow_gate",
+      withoutStablePublicIdentity: true,
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "browser", packageName)).body.message).toBe("not reviewed");
+    const feed = await fetchFeed(app);
+    expect(feed.entries.find((entry) => entry.package === packageName)?.ecosystem).toBe("browser");
   });
 
   test("a hostile version string cannot reshape the rendered badge", async () => {

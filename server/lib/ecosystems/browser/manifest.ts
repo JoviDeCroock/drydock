@@ -70,6 +70,9 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       hostPermissions: stringList(raw.host_permissions),
       optionalHostPermissions: stringList(raw.optional_host_permissions),
       contentScriptMatches: nestedStringList(raw.content_scripts, "matches"),
+      contentScriptEntrypoints: nestedStringList(raw.content_scripts, "js").filter(
+        isSafeManifestPath,
+      ),
       externallyConnectableMatches: isRecord(raw.externally_connectable)
         ? stringList(raw.externally_connectable.matches)
         : [],

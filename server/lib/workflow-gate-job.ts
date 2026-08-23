@@ -455,7 +455,7 @@ async function reviewGatePackages(
   return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
     const { candidate, packageAdapter } = pkg;
     const scanId = crypto.randomUUID();
-    const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.package.name}`;
+    const stageId = `workflow-gate:${gate.id}:${candidate.ecosystem}:${candidate.scanKey ?? candidate.package.name}`;
     await createScanJob(db, {
       id: scanId,
       stageId,

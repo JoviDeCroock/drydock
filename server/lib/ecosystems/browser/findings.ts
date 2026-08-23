@@ -21,17 +21,25 @@ import {
 } from "./types";
 
 const PRIVILEGED_PERMISSIONS = new Set([
+  "bookmarks",
   "clipboardRead",
   "clipboardWrite",
   "cookies",
   "debugger",
   "downloads",
+  "geolocation",
   "history",
+  "identity",
+  "identity.email",
   "management",
   "nativeMessaging",
   "privacy",
   "proxy",
+  "sessions",
   "tabs",
+  "topSites",
+  "webNavigation",
+  "webRequest",
   "webRequestBlocking",
 ]);
 const ALL_URL_PATTERNS = new Set(["<all_urls>", "*://*/*", "https://*/*", "http://*/*"]);
@@ -47,6 +55,10 @@ export function buildBrowserFindings(args: {
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
+      consumerEntrypointPaths: [
+        ...extensionManifest.backgroundEntrypoints,
+        ...extensionManifest.contentScriptEntrypoints,
+      ],
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),

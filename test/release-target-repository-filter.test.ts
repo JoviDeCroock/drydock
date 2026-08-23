@@ -1,16 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   buildReleaseTargetPayload,
-  selectUnmappedRepositories,
-  type InstallationRepository,
+  selectUnmappedEnvironments,
   type PublicReleaseTarget,
+  type RepositoryEnvironment,
 } from "../src/models/github-app";
-
-const repos: InstallationRepository[] = [
-  { id: 1, fullName: "octo/alpha", defaultBranch: "main" },
-  { id: 2, fullName: "octo/beta", defaultBranch: "main" },
-  { id: 3, fullName: "octo/gamma", defaultBranch: null },
-];
 
 function target(repositoryId: number): PublicReleaseTarget {
   return {
@@ -27,26 +21,33 @@ function target(repositoryId: number): PublicReleaseTarget {
   };
 }
 
-describe("selectUnmappedRepositories", () => {
-  test("returns every repository when nothing is mapped yet", () => {
-    expect(selectUnmappedRepositories(repos, [])).toEqual(repos);
+describe("selectUnmappedEnvironments", () => {
+  const environments: RepositoryEnvironment[] = [
+    { name: "chrome-release" },
+    { name: "Firefox-Release" },
+  ];
+
+  test("returns every environment when no repository is selected", () => {
+    expect(selectUnmappedEnvironments(environments, [target(1)], null)).toEqual(environments);
   });
 
-  test("drops repositories that already have a release target", () => {
-    const available = selectUnmappedRepositories(repos, [target(2)]);
-    expect(available.map((repo) => repo.id)).toEqual([1, 3]);
+  test("drops only environments already mapped for the selected repository", () => {
+    const chrome = target(1);
+    chrome.environment = "CHROME-RELEASE";
+    const otherRepository = target(2);
+    otherRepository.environment = "Firefox-Release";
+    expect(selectUnmappedEnvironments(environments, [chrome, otherRepository], 1)).toEqual([
+      { name: "Firefox-Release" },
+    ]);
   });
 
-  test("matches on repository id, not full name, so renames still hide the repo", () => {
-    const renamed = target(1);
-    renamed.repositoryFullName = "octo/alpha-renamed";
-    const available = selectUnmappedRepositories(repos, [renamed]);
-    expect(available.map((repo) => repo.id)).toEqual([2, 3]);
-  });
-
-  test("returns an empty list once every accessible repo is mapped", () => {
-    const allMapped = selectUnmappedRepositories(repos, [target(1), target(2), target(3)]);
-    expect(allMapped).toEqual([]);
+  test("returns an empty list once every environment on the repository is mapped", () => {
+    const chrome = target(1);
+    chrome.environment = "chrome-release";
+    const firefox = target(1);
+    firefox.id = "rt_firefox";
+    firefox.environment = "Firefox-Release";
+    expect(selectUnmappedEnvironments(environments, [chrome, firefox], 1)).toEqual([]);
   });
 });
 

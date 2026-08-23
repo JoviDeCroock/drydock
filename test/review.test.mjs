@@ -2431,6 +2431,25 @@ describe("test-scoped capability findings", () => {
     });
   });
 
+  test("keeps full severity for an ecosystem-provided consumer entrypoint", () => {
+    const staged = [
+      pkg(),
+      file("index.js", "module.exports = {};\n"),
+      file(
+        "test/consumer.js",
+        "const { execSync } = require('child_process');\nexecSync('node -v');\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["test/consumer.js"],
+    });
+    expect(findings.find((finding) => finding.ruleId === "code.process-execution")).toMatchObject({
+      file: "test/consumer.js",
+      severity: "high",
+    });
+  });
+
   test("keeps full severity when a lifecycle script points into the test tree", () => {
     const staged = [
       {

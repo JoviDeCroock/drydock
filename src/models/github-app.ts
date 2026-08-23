@@ -190,17 +190,21 @@ export type ReleaseTargetFormStatus = "idle" | "submitting";
 export type RepositoryListStatus = "idle" | "loading" | "error";
 export type EnvironmentListStatus = "idle" | "loading" | "error";
 
-// A release target is unique per (org, repositoryId, environment). The picker
-// already scopes to the org, so a repository that already has any release
-// target is dropped from the options to keep the user from re-submitting a
-// duplicate.
-export function selectUnmappedRepositories(
-  repositories: InstallationRepository[],
-  releaseTargets: Pick<PublicReleaseTarget, "repositoryId">[],
-): InstallationRepository[] {
-  if (!releaseTargets.length) return repositories;
-  const mapped = new Set(releaseTargets.map((target) => target.repositoryId));
-  return repositories.filter((repo) => !mapped.has(repo.id));
+// A release target is unique per (org, repositoryId, environment), so keep a
+// repository available after its first target and remove only the environments
+// already mapped for that repository.
+export function selectUnmappedEnvironments(
+  environments: RepositoryEnvironment[],
+  releaseTargets: Pick<PublicReleaseTarget, "repositoryId" | "environment">[],
+  repositoryId: number | null,
+): RepositoryEnvironment[] {
+  if (repositoryId === null) return environments;
+  const mapped = new Set(
+    releaseTargets
+      .filter((target) => target.repositoryId === repositoryId)
+      .map((target) => target.environment.trim().toLowerCase()),
+  );
+  return environments.filter((environment) => !mapped.has(environment.name.trim().toLowerCase()));
 }
 
 export function buildReleaseTargetPayload(input: {
@@ -269,20 +273,31 @@ export const GithubAppModel = createModel(() => {
     const errors = repositoryErrors.value;
     return id ? (errors[id] ?? null) : null;
   });
-  const availableRepositories = computed<InstallationRepository[]>(() =>
-    selectUnmappedRepositories(activeRepositories.value, releaseTargets.value),
-  );
+  const availableRepositories = activeRepositories;
 
   const environmentCacheKey = computed<string>(() => {
     const installationId = formInstallationRowId.value;
     const repo = formRepositoryFullName.value;
     return installationId && repo ? `${installationId}::${repo}` : "";
   });
-  const activeEnvironments = computed<RepositoryEnvironment[]>(() => {
+  const activeRepositoryEnvironments = computed<RepositoryEnvironment[]>(() => {
     const key = environmentCacheKey.value;
     const cache = environmentCache.value;
     return key ? (cache[key] ?? []) : [];
   });
+  const selectedRepositoryId = computed<number | null>(() => {
+    const fullName = formRepositoryFullName.value;
+    return (
+      activeRepositories.value.find((repository) => repository.fullName === fullName)?.id ?? null
+    );
+  });
+  const activeEnvironments = computed<RepositoryEnvironment[]>(() =>
+    selectUnmappedEnvironments(
+      activeRepositoryEnvironments.value,
+      releaseTargets.value,
+      selectedRepositoryId.value,
+    ),
+  );
   const activeEnvironmentStatus = computed<EnvironmentListStatus>(() => {
     const key = environmentCacheKey.value;
     const statusMap = environmentStatus.value;
@@ -298,7 +313,8 @@ export const GithubAppModel = createModel(() => {
     () =>
       formInstallationRowId.value.trim() !== "" &&
       formRepositoryFullName.value.trim() !== "" &&
-      formEnvironment.value.trim() !== "",
+      formEnvironment.value.trim() !== "" &&
+      activeEnvironments.value.some((environment) => environment.name === formEnvironment.value),
   );
 
   function setRepositoryStatus(installationRowId: string, value: RepositoryListStatus) {
@@ -361,6 +377,7 @@ export const GithubAppModel = createModel(() => {
     activeRepositoryStatus,
     activeRepositoryError,
     availableRepositories,
+    activeRepositoryEnvironments,
     activeEnvironments,
     activeEnvironmentStatus,
     activeEnvironmentError,

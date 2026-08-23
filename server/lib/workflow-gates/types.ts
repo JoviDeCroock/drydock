@@ -22,6 +22,12 @@ export interface ArchiveContents {
 
 export interface PreparedReleaseCandidate {
   ecosystem: string;
+  /**
+   * Optional stable suffix for the internal scan stage id when two candidates
+   * may share the same display package name. The adapter must derive it from
+   * reviewed artifact identity, never from an untrusted outer filename alone.
+   */
+  scanKey?: string;
   pipelineInput: Record<string, unknown>;
   package: { name: string; version: string };
 }

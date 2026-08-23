@@ -125,6 +125,24 @@ export function scanEcosystem(source: string, summaryJson: unknown): PublicEcosy
   return provenanceEcosystem(summaryJson) ?? (source === "workflow_gate" ? null : "npm");
 }
 
+export function scanPublicPackageIdentity(
+  source: string,
+  summaryJson: unknown,
+  packageName: string | null,
+): string | null {
+  if (!packageName || source !== "workflow_gate") return packageName;
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) {
+    return packageName;
+  }
+  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
+    return packageName;
+  }
+  if (!("publicPackageIdentity" in stagedPublish)) return packageName;
+  const identity = (stagedPublish as { publicPackageIdentity?: unknown }).publicPackageIdentity;
+  return typeof identity === "string" && identity.trim() ? identity : null;
+}
+
 type PackageIdentity = "registry-verified" | "manifest-claimed";
 
 function scanPackageIdentity(source: string): PackageIdentity {

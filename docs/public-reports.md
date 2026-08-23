@@ -88,7 +88,7 @@ together always verifies, which is what matters for the archival use case.
 ## Badge endpoint
 
 `GET /public/badge/:ecosystem/:package[?tag=]` (ecosystems: `npm`, `pypi`,
-`vscode`; npm names may contain `@scope/` slashes) returns a
+`vscode`, `browser`; npm names may contain `@scope/` slashes) returns a
 [shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
 for the most recent **feed-listed** review of that package's release line:
 
@@ -107,6 +107,12 @@ for the most recent **feed-listed** review of that package's release line:
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
 package name.
+
+Browser-extension badges require a stable ID from
+`browser_specific_settings.gecko.id` (or legacy `applications.gecko.id`). Chrome
+archives that only declare a display name can still be shared and feed-listed,
+but return `not reviewed` from name lookup because localized or reused names do
+not establish a global package identity.
 
 ### Release lines (`?tag=`)
 

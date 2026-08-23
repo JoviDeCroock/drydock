@@ -14,6 +14,12 @@ export type EntrypointResolution = "npm" | "vscode";
 export interface DeterministicFindingOptions {
   codePatternSet?: CodePatternSet;
   /**
+   * Package-relative scripts that the ecosystem loads for consumers outside
+   * package.json semantics, such as WebExtension background/content scripts.
+   * These are reachability seeds only; callers must parse and validate paths.
+   */
+  consumerEntrypointPaths?: string[];
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -69,7 +75,10 @@ export function buildRuleContext(
     consumerReachable: consumerReachablePaths(
       files,
       packageJson,
-      lifecycleScriptSeedPaths(files, scripts, implicitScripts),
+      [
+        ...lifecycleScriptSeedPaths(files, scripts, implicitScripts),
+        ...(options.consumerEntrypointPaths ?? []),
+      ],
       options.codePatternSet,
     ),
     patterns: codePatternsFor(options.codePatternSet),

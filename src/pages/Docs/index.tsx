@@ -540,7 +540,8 @@ export default function DocsPage() {
                   </>,
                   <>
                     Back in Drydock settings, map that repository and environment to the
-                    organization. You can optionally narrow the gate to one artifact name.
+                    organization. Map additional environments on the same repository when separate
+                    stores or release jobs need independent gates.
                   </>,
                   <>
                     Add a build job that uploads release candidates and a publish job that uses the
@@ -569,7 +570,9 @@ export default function DocsPage() {
                 Set the release target ecosystem to <InlineCode>Browser extensions</InlineCode> for
                 a <InlineCode>.zip</InlineCode> candidate. Unpinned auto-detection ignores generic
                 ZIP files so unrelated source or CI archives cannot block another release; browser
-                <InlineCode>.xpi</InlineCode> files remain auto-detectable.
+                <InlineCode>.xpi</InlineCode> files remain auto-detectable. A Gecko extension ID is
+                used as the stable public identity when present; a Chrome archive with only a
+                display name remains reviewable but is not exposed through package-name badges.
               </Prose>
               <Prose>
                 Generate <InlineCode>SHA256SUMS</InlineCode> beside the artifacts during the build,

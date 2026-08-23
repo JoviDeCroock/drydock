@@ -22,7 +22,11 @@ import {
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
-import { scanDistTag, scanEcosystem } from "../../../../server/lib/public-feed";
+import {
+  scanDistTag,
+  scanEcosystem,
+  scanPublicPackageIdentity,
+} from "../../../../server/lib/public-feed";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -301,7 +305,11 @@ export default function ScanDetailPage() {
       {isWorkflowGate && detail ? (
         <GateContextPanel
           gate={gate}
-          packageName={detail.scan.packageName}
+          packageName={scanPublicPackageIdentity(
+            detail.scan.source ?? "",
+            detail.scan.summaryJson,
+            detail.scan.packageName,
+          )}
           canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}

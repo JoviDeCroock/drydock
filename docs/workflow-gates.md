@@ -159,7 +159,7 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 
 ## Browser-extension workflow-gate notes
 
-Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives identity from `browser_specific_settings.gecko.id` (or the legacy `applications.gecko.id`) when present and otherwise uses the manifest name; the version always comes from `manifest.json`.
+Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives a stable identity from `browser_specific_settings.gecko.id` (or the legacy `applications.gecko.id`) when present and otherwise uses the manifest name for display; the version always comes from `manifest.json`. Because a Chrome display name is neither unique nor stable, name-only archives are kept separate by release artifact and may appear in the chronological threat feed, but they are not exposed through the name-indexed public badge endpoint.
 
 Choose **Browser extension** in the release target's **Artifact ecosystem** selector when publishing a `.zip`. ZIP is also a generic CI/source-artifact extension, so unpinned auto-detection deliberately ignores it instead of letting an unrelated ZIP block another ecosystem's gate. Browser-specific `.xpi` artifacts remain safe to auto-detect.
 
@@ -167,9 +167,9 @@ The browser adapter (`server/lib/ecosystems/browser/`):
 
 - parses ZIP/XPI bytes in the shared credential-free sandbox and retains root `manifest.json` as identity evidence;
 - supports Manifest V2 and V3, and rejects missing/invalid identity, version, or manifest version;
-- requires one archive per extension identity in a release target, so two artifacts cannot ambiguously claim the same store release;
-- runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules;
-- reports privileged permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;
+- requires one archive per stable extension identity in a release target and keeps name-only archives distinct by verified artifact digest, so unrelated Chrome archives with the same display name cannot be merged;
+- runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules, treating manifest-loaded background and content scripts as consumer entrypoints regardless of their directory names;
+- reports privileged browser/data permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;
 - records the exact archive kind and SHA-256 in report provenance;
 - does not invent a public baseline: Chrome packages usually do not embed a store id, and store download availability differs by channel. A gate without an explicit previous artifact records `comparisonSkipped: "baseline-unavailable"`, treats findings as package context rather than release deltas, and recommends manual review instead of grading an all-added diff as a release change.
 
@@ -203,7 +203,7 @@ jobs:
       - run: npm run publish:browser-extension -- dist/extension.zip
 ```
 
-Store credentials remain in the protected publish job. If one workflow publishes separate Chrome and Firefox archives, use separate protected environments/release targets so each gate has one unambiguous archive and digest.
+Store credentials remain in the protected publish job. If one workflow publishes separate Chrome and Firefox archives, use separate protected environments/release targets so each gate has one unambiguous archive and digest. The settings form keeps a repository selectable after its first mapping and removes only environments already mapped for that repository.
 
 ## Trust and failure behavior
 
