@@ -1,6 +1,6 @@
-# Drydock
+# Drydock Package Review
 
-Drydock reviews package artifacts before a maintainer approves publication. It compares the candidate with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
+Drydock is pre-publish package security for maintainers. It reviews the exact npm, PyPI, or VS Code artifact before publication, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
 
 Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
 

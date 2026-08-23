@@ -44,6 +44,13 @@ describe("isPrerenderedRoute", () => {
 });
 
 describe("page SEO metadata", () => {
+  it("names the package-security category in the home result", () => {
+    expect(homePageSeo).toMatchObject({
+      title: "Drydock Package Review: pre-publish package security",
+    });
+    expect(homePageSeo.description).toContain("exact npm, PyPI, or VS Code artifact");
+  });
+
   it("is defined only for the public landing, docs, and privacy pages", () => {
     expect(getPageSeoMetadata("/")).toBe(homePageSeo);
     expect(getPageSeoMetadata("/docs")).toBe(docsPageSeo);
