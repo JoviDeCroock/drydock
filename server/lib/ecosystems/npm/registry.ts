@@ -17,7 +17,7 @@ interface RegistryVersionDist {
 }
 
 export interface RegistryMetadata {
-  versions?: Record<string, { dist?: RegistryVersionDist }>;
+  versions?: Record<string, { dist?: RegistryVersionDist; deprecated?: true }>;
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
 }
@@ -180,12 +180,16 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   const projected: RegistryMetadata = {};
 
   if (doc.versions && typeof doc.versions === "object") {
-    const versions: Record<string, { dist?: RegistryVersionDist }> = {};
+    const versions: Record<string, { dist?: RegistryVersionDist; deprecated?: true }> = {};
     for (const [version, entry] of Object.entries(doc.versions)) {
       const dist = projectVersionDist(entry?.dist);
+      const deprecated = projectDeprecation(entry?.deprecated);
       // Every published version must survive as a truthy entry: baseline
       // selection walks the key set and dist-tag resolution checks presence.
-      versions[version] = dist ? { dist } : {};
+      versions[version] = {
+        ...(dist ? { dist } : {}),
+        ...(deprecated ? { deprecated } : {}),
+      };
     }
     projected.versions = versions;
   }
@@ -209,6 +213,12 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   }
 
   return projected;
+}
+
+function projectDeprecation(value: unknown): true | null {
+  // Only the truthiness affects npm's range selection. Retaining the entire
+  // package-controlled message would grow every cached packument for no gain.
+  return typeof value === "string" && value.length > 0 ? true : null;
 }
 
 function projectVersionDist(dist: unknown): RegistryVersionDist | null {

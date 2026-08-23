@@ -980,6 +980,21 @@ describe("review", () => {
     });
     expect(withoutBaseline.every((finding) => finding.releaseDelta === false)).toBe(true);
     expect(withoutBaseline.every((finding) => finding.diffStatus === "unknown")).toBe(true);
+
+    const dependencyWithoutBaseline = annotateFindingsWithDiffStatus(
+      [
+        {
+          file: "<dependency>new-package@1.0.0:package.json",
+          ruleId: "dependency-artifact.install-execution",
+          severity: "medium",
+        },
+      ],
+      diff,
+      { baselineComparisonSkipped: true },
+    );
+    expect(dependencyWithoutBaseline).toEqual([
+      expect.objectContaining({ diffStatus: "unknown", releaseDelta: true }),
+    ]);
   });
 
   test("keeps modified-file findings contextual when the finding line did not change", () => {
