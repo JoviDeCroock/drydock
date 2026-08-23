@@ -303,7 +303,7 @@ export function consumerInstallScriptCommands(
     const command = scripts[next.name];
     if (!command || (next.root && implicitScripts[next.name] === command)) continue;
     commands.push({ name: next.name, command });
-    for (const name of npmRunScriptNames(command)) {
+    for (const name of npmRunScriptNames(command, scripts)) {
       // `npm run setup` also invokes `presetup` and `postsetup` when declared.
       // Queue all three explicitly; `seen` prevents cycles and repeated work.
       queue.push(
@@ -316,12 +316,41 @@ export function consumerInstallScriptCommands(
   return commands;
 }
 
-function npmRunScriptNames(command: string): string[] {
-  return [
-    ...command.matchAll(/\bnpm\s+(?:run|run-script)\s+(?:"([^"\n]+)"|'([^'\n]+)'|([^\s;&|]+))/g),
-  ]
-    .map((match) => match[1] ?? match[2] ?? match[3])
-    .filter((name): name is string => Boolean(name));
+function npmRunScriptNames(command: string, scripts: Record<string, string>): string[] {
+  const names = new Set<string>();
+  // npm accepts config flags before or after the subcommand (`npm --silent run
+  // setup`, `npm run --silent setup`). Inspect every non-option word after the
+  // run command that names a declared script. This is intentionally
+  // conservative around config options with separate values: an extra
+  // statically-reachable script is safer than letting flag placement hide the
+  // install chain.
+  const words = shellWords(command);
+  for (let npmIndex = 0; npmIndex < words.length; npmIndex += 1) {
+    if (words[npmIndex] !== "npm") continue;
+    const invocationEnd = words.findIndex(
+      (word, index) => index > npmIndex && SHELL_COMMAND_OPERATORS.has(word),
+    );
+    const end = invocationEnd === -1 ? words.length : invocationEnd;
+    const runOffset = words
+      .slice(npmIndex + 1, end)
+      .findIndex((word) => word === "run" || word === "run-script");
+    const runIndex = runOffset === -1 ? -1 : npmIndex + 1 + runOffset;
+    if (runIndex === -1) continue;
+    for (const word of words.slice(runIndex + 1, end)) {
+      if (word === "--") break;
+      if (word.startsWith("-") || !Object.hasOwn(scripts, word)) continue;
+      names.add(word);
+    }
+  }
+  return [...names];
+}
+
+const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
+
+function shellWords(value: string): string[] {
+  return [...value.matchAll(/"([^"\n]*)"|'([^'\n]*)'|(&&|\|\||[;&|])|([^\s;&|]+)/g)].map(
+    (match) => match[1] ?? match[2] ?? match[3] ?? match[4],
+  );
 }
 
 export function scriptPathCandidates(path: string): Set<string> {

