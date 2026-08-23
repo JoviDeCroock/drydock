@@ -218,7 +218,15 @@ describe("runDeterministicFindings", () => {
   });
 
   test("returns empty redacted previous files when there is no baseline", () => {
-    const adapter = makeAdapter();
+    const inspectEmbeddedAddedDependencies = vi.fn(() => ({
+      status: "not-applicable",
+      selectedCount: 0,
+      inspectedCount: 0,
+      uninspectableCount: 0,
+      omittedCount: 0,
+      dependencies: [],
+    }));
+    const adapter = makeAdapter({ inspectEmbeddedAddedDependencies });
     const noBaseline = {
       staged: resolved.staged,
       baseline: { artifact: null, baseline: baselineInfo },
@@ -229,6 +237,64 @@ describe("runDeterministicFindings", () => {
 
     expect(out.redactedPreviousFiles).toEqual([]);
     expect(out.redactedPreviousManifest).toBeNull();
+    expect(inspectEmbeddedAddedDependencies).toHaveBeenCalledWith(
+      expect.objectContaining({ baselineManifestUnavailable: true }),
+    );
+  });
+
+  test("assesses embedded dependencies while raw parent files are still available", () => {
+    const inspectEmbeddedAddedDependencies = vi.fn((args) => {
+      expect(args.stagedFiles.find((file) => file.path === "index.js").textSample).toContain(
+        NPM_TOKEN,
+      );
+      return {
+        status: "complete",
+        selectedCount: 1,
+        inspectedCount: 1,
+        uninspectableCount: 0,
+        dependencies: [
+          {
+            name: "embedded",
+            section: "dependencies",
+            declaredSpec: "1.0.0",
+            declarationKind: "exact",
+            status: "inspected",
+            reason: null,
+            resolvedVersion: "1.0.0",
+            registryHost: null,
+            artifactOrigin: null,
+            declaredDigest: null,
+            reviewedDigest: null,
+            digestVerified: null,
+            fileCount: 2,
+            automaticExecution: [{ kind: "script", name: "postinstall" }],
+            capabilities: ["code.network-access"],
+            installReachableCapabilities: ["code.network-access"],
+            verdict: "install-risk",
+          },
+        ],
+      };
+    });
+    const adapter = makeAdapter({ inspectEmbeddedAddedDependencies });
+    const diff = computeDiff(resolved);
+
+    const out = runDeterministicFindings(adapter, resolved, diff);
+
+    expect(inspectEmbeddedAddedDependencies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baselineManifestUnavailable: false,
+        stagedFiles: stagedArtifact.files,
+      }),
+    );
+    expect(out.dependencyReview.dependencies).toHaveLength(1);
+    expect(out.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "dependency-artifact.install-risk",
+          severity: "high",
+        }),
+      ]),
+    );
   });
 });
 
@@ -472,7 +538,7 @@ describe("analyzeRelease", () => {
           reason: null,
           resolvedVersion: "0.1.0",
           registryHost: "registry.npmjs.org",
-          artifactUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+          artifactOrigin: "https://registry.npmjs.org",
           declaredDigest: null,
           reviewedDigest: null,
           digestVerified: null,
@@ -567,7 +633,7 @@ describe("analyzeRelease", () => {
               reason: null,
               resolvedVersion: "1.0.0",
               registryHost: "registry.npmjs.org",
-              artifactUrl: "https://registry.npmjs.org/clean-dep/-/clean-dep-1.0.0.tgz",
+              artifactOrigin: "https://registry.npmjs.org",
               declaredDigest: null,
               reviewedDigest: null,
               digestVerified: null,

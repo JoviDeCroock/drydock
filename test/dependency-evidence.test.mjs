@@ -5,9 +5,11 @@ import {
   classifyDependencyInstallRisk,
   computeRisk,
   dependencyEvidenceFindings,
+  mergeDependencyReviews,
   normalizeDependencyReview,
   reconcileDependencyReviewFindings,
   selectAddedDependencies,
+  selectBundledAddedDependencies,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
 import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review/rules";
@@ -253,6 +255,23 @@ describe("selectAddedDependencies", () => {
     ]);
   });
 
+  test("a missing baseline caused by acquisition failure selects embedded dependencies", () => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0" },
+      bundleDependencies: ["embedded"],
+    };
+    expect(
+      selectBundledAddedDependencies(diffOf(null, staged), {
+        includeWithoutBaseline: true,
+        stagedManifest: staged,
+        stagedFiles: [
+          file("node_modules/embedded/package.json", '{"name":"embedded","version":"1.0.0"}'),
+        ],
+      }).map((entry) => entry.name),
+    ).toEqual(["embedded"]);
+  });
+
   test("skips declared bundled dependencies only when their bytes are embedded", () => {
     const staged = {
       name: "p",
@@ -266,6 +285,14 @@ describe("selectAddedDependencies", () => {
       ],
     });
     expect(selected.map((entry) => entry.name)).toEqual(["missing"]);
+    expect(
+      selectBundledAddedDependencies(diffOf({ name: "p" }, staged), {
+        stagedManifest: staged,
+        stagedFiles: [
+          file("node_modules/embedded/package.json", '{"name":"embedded","version":"1.0.0"}'),
+        ],
+      }).map((entry) => entry.name),
+    ).toEqual(["embedded"]);
   });
 
   test("boolean bundledDependencies excludes all embedded install dependencies", () => {
@@ -357,6 +384,39 @@ describe("selectAddedDependencies", () => {
       ranged: "range",
       tagged: "tag",
       hosted: "unusual",
+    });
+  });
+});
+
+describe("mergeDependencyReviews", () => {
+  test("combines embedded and registry evidence under one status", () => {
+    const evidence = (name) => ({ name, declaredSpec: "1.0.0" });
+    expect(
+      mergeDependencyReviews(
+        {
+          status: "complete",
+          selectedCount: 1,
+          inspectedCount: 1,
+          uninspectableCount: 0,
+          omittedCount: 0,
+          dependencies: [evidence("embedded")],
+        },
+        {
+          status: "partial",
+          selectedCount: 2,
+          inspectedCount: 1,
+          uninspectableCount: 1,
+          omittedCount: 0,
+          dependencies: [evidence("registry-a"), evidence("registry-b")],
+        },
+      ),
+    ).toMatchObject({
+      status: "partial",
+      selectedCount: 3,
+      inspectedCount: 2,
+      uninspectableCount: 1,
+      omittedCount: 0,
+      dependencies: [{ name: "embedded" }, { name: "registry-a" }, { name: "registry-b" }],
     });
   });
 });
@@ -454,7 +514,10 @@ describe("assessDependencyArtifact", () => {
     const assessment = assessDependencyArtifact(
       [
         file("package.json", JSON.stringify(manifest)),
-        file("install.js", "console.log('installed');"),
+        file(
+          "install.js",
+          "const fs = require('node:fs'); /* require(dynamicName) */ console.log(fs.constants.F_OK);",
+        ),
         {
           path: "dist/index.js.map",
           size: 1024,
@@ -468,6 +531,30 @@ describe("assessDependencyArtifact", () => {
 
     expect(assessment.installReachableUninspectedFiles).toEqual([]);
     expect(assessment.verdict).toBe("install-execution");
+  });
+
+  test("fails completeness when an install path dynamically loads skipped executable text", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", "require('./payload.' + 'map')"),
+        {
+          path: "payload.map",
+          size: 1024,
+          sha256: "skipped-dynamic-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.map"]);
   });
 
   test("a danger capability the install hook cannot reach is reported as unproven", () => {
@@ -663,7 +750,7 @@ describe("dependencyEvidenceFindings", () => {
       reason: null,
       resolvedVersion: "0.1.0",
       registryHost: "registry.npmjs.org",
-      artifactUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+      artifactOrigin: "https://registry.npmjs.org",
       declaredDigest: null,
       reviewedDigest: null,
       digestVerified: null,
@@ -960,7 +1047,7 @@ describe("normalizeDependencyReview", () => {
     },
   );
 
-  test("removes credentials and signed parameters from persisted artifact URLs", () => {
+  test("retains only the origin from persisted artifact URLs", () => {
     const review = normalizeDependencyReview({
       status: "complete",
       dependencies: [
@@ -970,11 +1057,11 @@ describe("normalizeDependencyReview", () => {
           status: "inspected",
           verdict: "clean",
           artifactUrl:
-            "https://reader:secret@registry.example.com/x/-/x-1.0.0.tgz?token=signed#fragment",
+            "https://reader:secret@registry.example.com/private/signed-path-token/x/-/x-1.0.0.tgz?token=signed#fragment",
         },
       ],
     });
-    expect(review.dependencies[0].artifactUrl).toBe("https://registry.example.com/x/-/x-1.0.0.tgz");
+    expect(review.dependencies[0].artifactOrigin).toBe("https://registry.example.com");
   });
 
   test("bounds persisted evidence and accounts for omitted records", () => {

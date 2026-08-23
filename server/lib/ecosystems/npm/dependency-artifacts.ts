@@ -22,17 +22,20 @@ import {
   assessDependencyArtifact,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
+  EMPTY_DEPENDENCY_REVIEW,
   failedDependencyReview,
   MAX_INSPECTED_DEPENDENCIES,
   MAX_RECORDED_DEPENDENCIES,
-  sanitizeDependencyArtifactUrl,
+  sanitizeDependencyArtifactOrigin,
   selectAddedDependencies,
+  selectBundledAddedDependencies,
   type AddedDependency,
   type DependencyDigest,
   type DependencyEvidence,
   type DependencyReview,
   type DependencyUninspectableReason,
   type PackageJsonDiff,
+  type PackageJsonSummary,
 } from "../../review";
 import {
   describeOperationalError,
@@ -40,11 +43,14 @@ import {
   emitOperationalEvent,
 } from "../../platform/observability";
 import { parseSandboxErrorDetail } from "../../sandbox";
-import type { TarSuspiciousEntry } from "../../tar-parser.js";
+import { parsePackageJson, type TarSuspiciousEntry } from "../../tar-parser.js";
 import { isValidNpmPackageName, type RegistryMetadata } from "./registry";
 import { maxSatisfyingVersion } from "./semver";
 import type { NpmBroker } from "./broker";
-import type { DependencyInspectionArgs } from "../package-adapter";
+import type {
+  DependencyInspectionArgs,
+  EmbeddedDependencyInspectionArgs,
+} from "../package-adapter";
 
 /**
  * Wall-clock budget for the whole dependency pass.
@@ -80,6 +86,113 @@ export function inspectAddedNpmDependenciesForAdapter(
     scanId: args.scanId,
     organizationId: args.organizationId,
   });
+}
+
+/** Review direct bundled children from the exact subtree consumers receive. */
+export function inspectBundledNpmDependenciesForAdapter(
+  args: EmbeddedDependencyInspectionArgs,
+): DependencyReview {
+  const selectionOptions = {
+    includeWithoutBaseline: args.baselineManifestUnavailable,
+    stagedManifest: args.stagedManifest,
+    stagedFiles: args.stagedFiles,
+  };
+  const selected = selectBundledAddedDependencies(args.manifestDiff, selectionOptions);
+  if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
+
+  const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
+  const dependencies = recorded.map((dependency) =>
+    inspectBundledDependency(dependency, args.stagedFiles),
+  );
+  const inspectedCount = dependencies.filter((entry) => entry.status === "inspected").length;
+  const omittedCount = selected.length - recorded.length;
+  return {
+    status: omittedCount ? "partial" : "complete",
+    selectedCount: selected.length,
+    inspectedCount,
+    uninspectableCount: selected.length - inspectedCount,
+    omittedCount,
+    dependencies,
+  };
+}
+
+function inspectBundledDependency(
+  dependency: AddedDependency,
+  stagedFiles: EmbeddedDependencyInspectionArgs["stagedFiles"],
+): DependencyEvidence {
+  const prefix = `node_modules/${dependency.name}/`;
+  const files = stagedFiles
+    .filter((file) => file.path.startsWith(prefix))
+    .map((file) => ({ ...file, path: file.path.slice(prefix.length) }));
+  const manifest = parsePackageJson(files);
+  const version = typeof manifest?.version === "string" ? manifest.version : null;
+  if (!manifest) {
+    return uninspectable(
+      dependency,
+      null,
+      "manifest-unavailable",
+      version,
+      null,
+      null,
+      null,
+      null,
+      files.length,
+    );
+  }
+  if (
+    files.some(
+      (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
+    )
+  ) {
+    return uninspectable(
+      dependency,
+      null,
+      "artifact-truncated",
+      version,
+      null,
+      null,
+      null,
+      null,
+      files.length,
+    );
+  }
+
+  const assessment = assessDependencyArtifact(files, manifest as PackageJsonSummary, {
+    codePatternSet: "javascript",
+    entrypointResolution: "npm",
+  });
+  if (assessment.installReachableUninspectedFiles.length) {
+    return uninspectable(
+      dependency,
+      null,
+      "artifact-truncated",
+      version,
+      null,
+      null,
+      null,
+      null,
+      files.length,
+    );
+  }
+  return {
+    name: boundedText(dependency.name, 256),
+    section: dependency.section,
+    declaredSpec: boundedText(dependency.spec, 512),
+    declarationKind: dependency.declarationKind,
+    status: "inspected",
+    reason: null,
+    resolvedVersion: version ? boundedText(version, 256) : null,
+    registryHost: null,
+    artifactOrigin: null,
+    declaredDigest: null,
+    reviewedDigest: null,
+    digestVerified: null,
+    fileCount: files.length,
+    automaticExecution: assessment.automaticExecution,
+    capabilities: assessment.capabilities,
+    installReachableCapabilities: assessment.installReachableCapabilities,
+    verdict: assessment.verdict,
+  };
 }
 
 export interface InspectDependenciesArgs {
@@ -406,7 +519,7 @@ async function inspectOne(
     reason: null,
     resolvedVersion: boundedText(resolved, 256),
     registryHost,
-    artifactUrl: sanitizeDependencyArtifactUrl(tarballUrl),
+    artifactOrigin: sanitizeDependencyArtifactOrigin(tarballUrl),
     declaredDigest: declared,
     reviewedDigest,
     digestVerified: compareDigests(declared, reviewedDigest, download.archiveSha1),
@@ -559,7 +672,7 @@ function uninspectable(
     reason,
     resolvedVersion: resolvedVersion ? boundedText(resolvedVersion, 256) : null,
     registryHost,
-    artifactUrl: sanitizeDependencyArtifactUrl(artifactUrl),
+    artifactOrigin: sanitizeDependencyArtifactOrigin(artifactUrl),
     declaredDigest: declared,
     reviewedDigest: reviewed,
     digestVerified: compareDigests(declared, reviewed, reviewedSha1),
