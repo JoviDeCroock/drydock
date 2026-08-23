@@ -13,11 +13,11 @@ Hono Worker
   ├─ D1 persistence and R2 report/artifact storage
   ├─ Queue-backed scan/gate orchestration
   ├─ Dynamic Worker loader for untrusted archive parsing
-  ├─ npm / PyPI / VS Code / atpm adapters, plus npm / PyPI / VS Code workflow gates
+  ├─ npm / PyPI / VS Code / browser / atpm adapters and workflow gates
   └─ constrained brokers/gateways for registry/artifact downloads
         │
         ▼
-      npm registry, PyPI, VS Code Marketplace, GitHub Actions artifacts,
+      npm registry, PyPI, VS Code Marketplace, browser stores, GitHub Actions artifacts,
       AT Protocol identity + PDS hosts (atpm)
 
 Dynamic Worker sandbox
@@ -50,7 +50,7 @@ Files that sit at `server/lib/` root are the ones no single group owns: the sand
 
 ## Ecosystems and capabilities
 
-`server/lib/ecosystems/index.ts` is the single registry of ecosystems. Each one is a directory (`ecosystems/npm/`, `ecosystems/pypi/`, `ecosystems/vscode/`, `ecosystems/atpm/`) holding everything that ecosystem needs — acquisition, broker, findings, manifest parsing, and whichever capability adapters it implements — and the registry declares which of the three release paths it supports:
+`server/lib/ecosystems/index.ts` is the single registry of ecosystems. Each one is a directory (`ecosystems/npm/`, `ecosystems/pypi/`, `ecosystems/vscode/`, `ecosystems/browser/`, `ecosystems/atpm/`) holding everything that ecosystem needs — acquisition, broker, findings, manifest parsing, and whichever capability adapters it implements — and the registry declares which of the three release paths it supports:
 
 | Capability     | Field        | Contract                                | Meaning                                                                     |
 | -------------- | ------------ | --------------------------------------- | --------------------------------------------------------------------------- |
@@ -58,11 +58,11 @@ Files that sit at `server/lib/` root are the ones no single group owns: the sand
 | Workflow gate  | `gate`       | `WorkflowGateAdapter`                   | A GitHub Actions publish job is held while Drydock reviews built artifacts. |
 | Public diff    | `publicDiff` | `PublicDiffAdapter`                     | Two published versions diff anonymously on `/diff`, credential-free.        |
 
-Today: npm has all three, PyPI has gate + public diff (the registry cannot stage a candidate), VS Code is gate-only, and atpm is public-diff-only (releases live in the publisher's own AT Protocol repository, which Drydock reads but neither stages nor gates — see [`atpm-public-diff.md`](./atpm-public-diff.md)). Capability presence is data, not convention — `getStagedAdapter` / `getWorkflowGateAdapter` fail closed with `UnsupportedEcosystemError` rather than falling back to another ecosystem's reviewer, and `test/workers/ecosystem-registry.test.ts` pins the matrix so a change to it is deliberate.
+Today: npm has all three, PyPI has gate + public diff (the registry cannot stage a candidate), VS Code and browser extensions are gate-only, and atpm is public-diff-only (releases live in the publisher's own AT Protocol repository, which Drydock reads but neither stages nor gates — see [`atpm-public-diff.md`](./atpm-public-diff.md)). Capability presence is data, not convention — `getStagedAdapter` / `getWorkflowGateAdapter` fail closed with `UnsupportedEcosystemError` rather than falling back to another ecosystem's reviewer, and `test/workers/ecosystem-registry.test.ts` pins the matrix so a change to it is deliberate.
 
 Adding an ecosystem means writing one directory and one registry entry. Routes and orchestrators read capabilities off the registry instead of branching on the ecosystem name, so a new ecosystem does not need to be threaded through `routes/public-diff.ts`, the gate router, or the scan job.
 
-When an ecosystem needs behavior the shared runner does not have, add an optional method to the relevant adapter contract rather than an `if (ecosystem === …)` in the runner. `WorkflowGateAdapter.narrowParsedArtifact` is the worked example: PyPI collapses duplicate text samples across the dozens of platform wheels one release ships, and the shared gate runner just calls the hook when the adapter defines it.
+When an ecosystem needs behavior the shared runner does not have, add an optional method to the relevant adapter contract rather than an `if (ecosystem === …)` in the runner. `WorkflowGateAdapter.narrowParsedArtifact` lets PyPI collapse duplicate text samples across platform wheels, while `sandboxFormat` lets ZIP/XPI/VSIX adapters select streaming or bounded central-directory-first parsing without ecosystem-name branches.
 
 The ecosystem id set is spelled once, in `ecosystems/labels.ts` (`EcosystemId`, `ECOSYSTEM_LABELS`, `isEcosystemId`). That module is dependency-free on purpose: the registry imports adapters, brokers, and the sandbox client, so the browser bundle reads labels from here instead, and persisted-value validators (`ReleaseProvenance.ecosystem`, report export) narrow through `isEcosystemId` rather than repeating the union.
 

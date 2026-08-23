@@ -3,6 +3,7 @@ import type { FileRecord, PackageJsonSummary } from "../review";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 
 export type WorkflowArtifactKind = string;
+export type WorkflowSandboxFormat = "tgz" | "zip" | "zip-buffered" | "vsix";
 
 export interface ParsedGateArtifact {
   path: string;
@@ -34,7 +35,11 @@ export interface WorkflowGateAdapter {
 
   classifyArtifact(path: string): WorkflowArtifactKind | null;
 
+  classifyArtifactForAutoDetection?(path: string): WorkflowArtifactKind | null;
+
   detectArtifact(contents: ArchiveContents): WorkflowArtifactKind | null;
+
+  readonly sandboxFormat?: (kind: WorkflowArtifactKind) => WorkflowSandboxFormat;
 
   // Artifacts contain parsed evidence only; no installation token reaches adapters.
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[];

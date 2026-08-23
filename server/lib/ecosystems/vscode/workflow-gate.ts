@@ -33,6 +33,10 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
     return null;
   },
 
+  sandboxFormat() {
+    return "vsix";
+  },
+
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     return deriveVscodeReleaseCandidates(artifacts);
   },

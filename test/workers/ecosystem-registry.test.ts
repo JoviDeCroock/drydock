@@ -36,6 +36,8 @@ describe("ecosystem capability registry", () => {
       pypi: { staged: false, gate: true, publicDiff: true },
       // VS Code is gate-only: no Marketplace staging, not on /diff.
       vscode: { staged: false, gate: true, publicDiff: false },
+      // Browser extensions publish through held Chrome/Firefox store jobs.
+      browser: { staged: false, gate: true, publicDiff: false },
       // atpm is public-diff only, and that one surface covers both published
       // releases and staged candidates: both are public records in the
       // publisher's own repository. Drydock neither stages nor approves an
@@ -55,7 +57,7 @@ describe("ecosystem capability registry", () => {
   });
 
   test("capability listings match the declared modules", () => {
-    expect(supportedWorkflowGateEcosystems().sort()).toEqual(["npm", "pypi", "vscode"]);
+    expect(supportedWorkflowGateEcosystems().sort()).toEqual(["browser", "npm", "pypi", "vscode"]);
     expect(supportedPublicDiffEcosystems().sort()).toEqual(["atpm", "npm", "pypi"]);
     expect(supportedStagedEcosystems()).toEqual(["npm"]);
   });
@@ -91,6 +93,7 @@ describe("ecosystem capability registry", () => {
     // resolve to another ecosystem's reviewer.
     expect(() => getStagedAdapter("pypi")).toThrow(UnsupportedEcosystemError);
     expect(getPublicDiffAdapter("vscode")).toBeUndefined();
+    expect(getPublicDiffAdapter("browser")).toBeUndefined();
     expect(() => getWorkflowGateAdapter("cargo")).toThrow(UnsupportedEcosystemError);
   });
 

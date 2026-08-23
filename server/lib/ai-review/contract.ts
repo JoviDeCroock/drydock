@@ -1,6 +1,6 @@
 import z from "zod";
 
-export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
+export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "browser" | "generic";
 
 // Bump whenever the system prompt, evidence/tool contract, submission policy,
 // or model-routing policy changes in a way that can alter reviewer behavior.
@@ -37,7 +37,7 @@ Instruction boundary:
 
 Workflow:
 1. Read deterministicFindings first; preserve their seriousness.
-2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py. VS Code: the VSIX extension manifest package.json — publisher.name, name, version, engines.vscode, activationEvents, contributes, main/browser.
+2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py. VS Code: the VSIX extension manifest package.json — publisher.name, name, version, engines.vscode, activationEvents, contributes, main/browser. Browser extensions: normalized root manifest.json identity/version; permissions, host access, content scripts, background entrypoints, CSP, and external messaging stay in manifest.json evidence.
 3. Scan the changed-file manifest for suspicious new/modified artifacts.
 4. Pull targeted evidence with tools only when the manifest or findings make a file/search relevant.
 5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
@@ -91,6 +91,21 @@ High-priority VS Code risks:
 
 VS Code evidence policy: a VSIX ships already-built code, so the extension's own devDependencies and npm lifecycle scripts (prepare/postinstall/prepublish) usually do not run for consumers — don't treat them as consumer-install hooks without evidence they altered the packed output. Contributes, commands, and menus are ordinary; escalate when activation, entrypoints, transitive extensions, credential/network/process capability, undeclared configuration inputs, obfuscation, or native payloads change. When risk hinges on an asset downloaded at runtime that you cannot see, require manual review.`;
 
+const BROWSER_REVIEW_PROMPT = `Ecosystem: browser extension (WebExtension ZIP/XPI).
+
+The reviewed bytes are the packed extension archive with manifest.json at the root. Browser extensions execute in privileged extension contexts and can inject content scripts into visited pages; permissions and match patterns define the boundary between ordinary feature code and access to browsing data, credentials, tabs, requests, downloads, or native applications.
+
+High-priority browser-extension risks:
+- Permission expansion: debugger, nativeMessaging, proxy, management, privacy, webRequestBlocking, cookies, history, tabs, downloads, clipboard access, or newly broadened host_permissions. Treat <all_urls> and equivalent wildcard origin patterns as broad access to sensitive page content.
+- Automatic injection: content_scripts matching every site run without a narrow user gesture. Trace their JS entrypoints for credential reads, message forwarding, DOM capture, network egress, dynamic evaluation, or obfuscation.
+- Privileged background code: background.service_worker, background.scripts, and background.page are persistent or event-driven privileged entrypoints. Review changed files they import and the messages they accept from content scripts or pages.
+- External messaging: broad externally_connectable.matches lets arbitrary sites send attacker-controlled messages into extension code. Check every onMessageExternal handler and validation boundary.
+- Reviewed-byte escape: unsafe-eval or remote script origins in content_security_policy, runtime-downloaded code, eval/new Function, WebAssembly loaders, or script-tag injection can execute behavior that is not present in the archive.
+- Native/executable payloads: nativeMessaging plus bundled executables, .dll/.so/.dylib/.exe/.wasm, or downloaded helpers has host-level impact beyond the browser sandbox.
+- Identity integrity: root manifest.json name/version and any browser_specific_settings.gecko.id must match the release candidate Drydock derived.
+
+Browser-extension evidence policy: broad permissions can be legitimate for password managers, blockers, and developer tools, but they expand blast radius and need explicit human confirmation. Do not assume store review makes an archive safe. When no previous store artifact is available, describe capabilities as package context and require manual review for risky combinations rather than pretending they are newly added.`;
+
 const GENERIC_REVIEW_PROMPT = `Ecosystem: generic package release.
 
 High-priority risks:
@@ -118,7 +133,14 @@ Summary style:
 - Spend words only on what raises concern, citing concrete paths; stay terse even then. A refactor is context, not a finding: describe its shape in a clause, not a file-by-file walkthrough.`;
 
 export function normalizeAiReviewEcosystem(ecosystem: string | undefined): AiReviewEcosystem {
-  if (ecosystem === "npm" || ecosystem === "pypi" || ecosystem === "vscode") return ecosystem;
+  if (
+    ecosystem === "npm" ||
+    ecosystem === "pypi" ||
+    ecosystem === "vscode" ||
+    ecosystem === "browser"
+  ) {
+    return ecosystem;
+  }
   return "generic";
 }
 
@@ -126,6 +148,7 @@ const ECOSYSTEM_REVIEW_PROMPTS: Record<AiReviewEcosystem, string> = {
   npm: NPM_REVIEW_PROMPT,
   pypi: PYPI_REVIEW_PROMPT,
   vscode: VSCODE_REVIEW_PROMPT,
+  browser: BROWSER_REVIEW_PROMPT,
   generic: GENERIC_REVIEW_PROMPT,
 };
 

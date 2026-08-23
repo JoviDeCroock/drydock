@@ -49,6 +49,10 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
     return contents.files.some((file) => isSdistRootMetadataPath(file.path)) ? "sdist" : null;
   },
 
+  sandboxFormat(kind) {
+    return kind === "wheel" ? "zip" : "tgz";
+  },
+
   // A PyPI release fans out into many platform wheels that repeat the same
   // pure-Python sources verbatim. Scope the dedupe by normalized project name so
   // two different projects in one bundle never share retained bodies, falling

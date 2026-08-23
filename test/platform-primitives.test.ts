@@ -6,7 +6,7 @@ import {
   sha256Base64Url,
   sha256Hex,
 } from "../server/lib/platform/crypto-utils";
-import { isRecord } from "../server/lib/platform/guards";
+import { hasAsciiControlCharacter, isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import { isSafeManifestPath } from "../server/lib/platform/path-safety";
 import {
@@ -82,6 +82,19 @@ describe("isRecord", () => {
     expect(isRecord("")).toBe(false);
     expect(isRecord("{}")).toBe(false);
     expect(isRecord(false)).toBe(false);
+  });
+});
+
+describe("hasAsciiControlCharacter", () => {
+  test("rejects C0 and DEL characters used for log or evidence injection", () => {
+    expect(hasAsciiControlCharacter("line\nbreak")).toBe(true);
+    expect(hasAsciiControlCharacter("nul\0byte")).toBe(true);
+    expect(hasAsciiControlCharacter(`delete${String.fromCharCode(0x7f)}char`)).toBe(true);
+  });
+
+  test("accepts ordinary text and non-ASCII Unicode", () => {
+    expect(hasAsciiControlCharacter("release/env: prod #1")).toBe(false);
+    expect(hasAsciiControlCharacter("Navigateur 🧭")).toBe(false);
   });
 });
 

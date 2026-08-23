@@ -54,6 +54,12 @@ The test intentionally compares exact rule IDs, severities, files, and risk. If 
 
 Adapter-level scan tests should include at least one baseline-backed fixture that asserts a `diff.*` rule ID. This keeps ecosystem adapters from accidentally dropping the package diff before deterministic findings run.
 
+## Browser-extension corpus
+
+Browser-extension adapter cases live under `test/fixtures/security-corpus/cases-browser/` and run through `test/security-corpus-browser.test.mjs`. `browser.*` findings carry `BROWSER_RULES_VERSION` (currently `0.2.0`); shared `file.*`, `code.*`, `diff.*`, and `tar.*` findings keep `DETERMINISTIC_RULES_VERSION`.
+
+The initial corpus pins a narrow benign WebExtension and a baseline-backed extension that adds `nativeMessaging`, all-sites host/content-script access, and a credential-looking file. The latter must retain the shared `diff.credential-file-added` result in addition to browser-specific findings. Version `0.2.0` adds a scheme-wide access case for `https://*/*` host/content-script matches and an `https:` script CSP source. Fixtures use synthetic `manifest.json` and `FileRecord` evidence only; URLs and extension ids use `example.invalid`.
+
 ## Initial taxonomy
 
 The first corpus slice covers:
@@ -486,6 +492,7 @@ The corpus records these intentional blind spots rather than hiding them:
 ### Running
 
 - PyPI corpus only: `pnpm run test:node -- security-corpus-pypi.test.mjs`
+- Browser-extension corpus only: `pnpm run test:node -- security-corpus-browser.test.mjs`
 - Regression net after a rules-version bump: `pnpm run test:node -- security-corpus.test.mjs pypi.test.mjs`
 - Full pre-commit parity: `pnpm run verify`
 

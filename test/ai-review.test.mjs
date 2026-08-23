@@ -139,6 +139,14 @@ describe("AI review prompt selection", () => {
     expect(prompt).not.toContain("Ecosystem: generic package release.");
   });
 
+  test("routes browser extensions to WebExtension-specific review guidance", () => {
+    expect(normalizeAiReviewEcosystem("browser")).toBe("browser");
+    const prompt = buildReviewerSystemPrompt("browser");
+    expect(prompt).toContain("WebExtension ZIP/XPI");
+    expect(prompt).toContain("externally_connectable");
+    expect(prompt).not.toContain("Ecosystem: PyPI");
+  });
+
   test("falls back to generic package guidance for unknown adapters", () => {
     expect(normalizeAiReviewEcosystem("rubygems")).toBe("generic");
     expect(normalizeAiReviewEcosystem(undefined)).toBe("generic");

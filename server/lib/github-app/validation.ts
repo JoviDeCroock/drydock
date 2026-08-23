@@ -5,6 +5,7 @@ import {
   SUPPORTED_ECOSYSTEMS,
 } from "./config";
 import type { CreateReleaseTargetInput } from "./persistence";
+import { hasAsciiControlCharacter } from "../platform/guards";
 
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -38,7 +39,7 @@ export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
       "environment is required and must not exceed 255 characters",
     );
   }
-  if (hasControlCharacter(environment)) {
+  if (hasAsciiControlCharacter(environment)) {
     throw new GithubAppValidationError("invalid_input", "environment has invalid characters");
   }
 }
@@ -57,12 +58,4 @@ export function parseRepositoryFullName(fullName: string): { owner: string; name
 
 export function normalizeGithubEnvironmentName(environment: string): string {
   return environment.trim().toLowerCase();
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    if (code <= 31 || code === 127) return true;
-  }
-  return false;
 }

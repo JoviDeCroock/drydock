@@ -13,6 +13,7 @@ import {
   REKOR_LOG_KEYS,
 } from "./trust-roots";
 import { hexEncode } from "../../platform/crypto-utils";
+import { hasAsciiControlCharacter } from "../../platform/guards";
 import {
   decodeBase64,
   decodeDerString,
@@ -429,23 +430,8 @@ function extensionString(certificate: X509Certificate, oid: string): string | nu
   const value = certificate.extensions.get(oid);
   if (!value || !value.length) return null;
   const decoded = decodeDerString(value).trim();
-  if (!decoded || decoded.length > 512 || hasControlCharacter(decoded)) return null;
+  if (!decoded || decoded.length > 512 || hasAsciiControlCharacter(decoded)) return null;
   return decoded;
-}
-
-/**
- * Control characters would let a certificate inject line breaks into the
- * resolution trail and the finding evidence rendered from these values.
- * Checked by code point rather than by regex, which cannot spell a control
- * character class without tripping the lint rule that exists to catch the
- * accidental version of exactly this.
- */
-function hasControlCharacter(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
 }
 
 function protobufUint64(value: unknown): number | null {

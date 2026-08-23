@@ -225,7 +225,7 @@ const ARCHIVE_DIGEST_ALGORITHMS = new Set<ArchiveDigestAlgorithm>(["SHA-1", "SHA
 export interface DownloadOptions {
   stageId?: string;
   tarballUrl?: string;
-  archiveFormat?: "tgz" | "zip" | "vsix";
+  archiveFormat?: "tgz" | "zip" | "zip-buffered" | "vsix";
   publicArtifactUrls?: string[];
   maxFiles?: number;
   /**
@@ -297,7 +297,7 @@ function isSerializedSandboxDetail(message: string): boolean {
 
 export interface InlineDownloadOptions {
   bytes: Uint8Array;
-  format: "tgz" | "zip" | "vsix";
+  format: "tgz" | "zip" | "zip-buffered" | "vsix";
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars`. */
   maxTextSampleChars?: number;
@@ -305,7 +305,7 @@ export interface InlineDownloadOptions {
 
 export interface StreamDownloadOptions {
   body: ReadableStream<Uint8Array>;
-  format: "tgz" | "zip" | "vsix";
+  format: "tgz" | "zip" | "zip-buffered" | "vsix";
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars`. */
   maxTextSampleChars?: number;
@@ -365,7 +365,7 @@ async function parseInCredentialsFreeSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   body: ArrayBuffer | ReadableStream<Uint8Array>,
-  format: "tgz" | "zip" | "vsix",
+  format: "tgz" | "zip" | "zip-buffered" | "vsix",
   maxFiles?: number,
   retention: { maxTextSampleChars?: number } = {},
 ): Promise<DownloadResult> {
@@ -505,7 +505,7 @@ export default {
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
-      if (archiveFormat !== "zip" && archiveFormat !== "tgz" && archiveFormat !== "vsix") return json({ error: "invalid inline archive format", status: 400 }, 400);
+      if (archiveFormat !== "zip" && archiveFormat !== "zip-buffered" && archiveFormat !== "tgz" && archiveFormat !== "vsix") return json({ error: "invalid inline archive format", status: 400 }, 400);
       res = new Response(request.body, { status: 200, headers: { "content-type": "application/octet-stream" } });
     } else {
       const { stageId, tarballUrl } = await request.json();
@@ -516,10 +516,10 @@ export default {
       res = await fetch(url, { headers: { accept: "application/octet-stream" } });
       if (!res.ok) return json({ error: "download failed", status: res.status }, 502);
 
-      // Only the vsix path buffers the whole archive, so only it needs the
-      // wire-size gate; tgz and wheel zips stream.
+      // Central-directory-first ZIP parsing buffers the whole archive, so only
+      // those formats need the wire-size gate; tgz and wheel zips stream.
       const contentLength = Number(res.headers.get("content-length") || "0");
-      if (archiveFormat === "vsix" && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
+      if ((archiveFormat === "vsix" || archiveFormat === "zip-buffered") && contentLength > maxTarBytes) return json({ error: "tarball too large", status: 413 }, 413);
     }
     const maxStreamTarBytes = env.MAX_STREAM_TAR_BYTES || maxTarBytes * 10;
     // Digest the wire bytes before anything decompresses or parses them, so
@@ -538,11 +538,11 @@ export default {
       maxStreamTarBytes,
       archiveDigestAlgorithms.length ? archiveDigestAlgorithms : ["SHA-1"],
     );
-    if (archiveFormat === "vsix") {
-      // VSIX zips are packed by yazl (via vsce), whose streamed entries carry
-      // their sizes in data descriptors — only the central directory (what
-      // consumers read) is authoritative, so the archive buffers under the
-      // wire cap and is parsed CD-first, exactly as before zip streaming.
+    if (archiveFormat === "vsix" || archiveFormat === "zip-buffered") {
+      // VSIX and some WebExtension builders emit streamed entries whose sizes
+      // live in data descriptors. Only the central directory (what consumers
+      // read) is authoritative, so the archive buffers under the wire cap and
+      // is parsed CD-first, exactly as before zip streaming.
       let zip;
       try {
         zip = await readStreamBounded(archive.body, maxTarBytes);

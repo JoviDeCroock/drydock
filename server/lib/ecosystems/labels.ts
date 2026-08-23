@@ -11,6 +11,7 @@ export const ECOSYSTEM_LABELS = {
   npm: "npm",
   pypi: "PyPI",
   vscode: "VS Code",
+  browser: "Browser extension",
   atpm: "atpm",
 } as const;
 

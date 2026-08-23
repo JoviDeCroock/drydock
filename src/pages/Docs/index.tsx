@@ -95,7 +95,7 @@ export default function DocsPage() {
           gives a human the final decision.
         </p>
         <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-          About 5 minutes · No security background required · npm, PyPI, VS Code, and atpm
+          About 5 minutes · No security background required · npm, PyPI, VS Code, browser, and atpm
         </p>
         <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
           <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -334,7 +334,7 @@ export default function DocsPage() {
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
-                  bestFor="PyPI, npm, VS Code, monorepos, and CI-first releases."
+                  bestFor="PyPI, npm, VS Code, browser extensions, monorepos, and CI-first releases."
                   heldBy="A GitHub Environment holds the publish job."
                   decision="You approve or reject the job from Drydock."
                 />
@@ -342,7 +342,8 @@ export default function DocsPage() {
               <Callout label="Quick decision">
                 Use npm staging for npm's private candidate store. For atpm, open the
                 credential-free staged review from the link on your staged dashboard. For PyPI, the
-                VS Code Marketplace, or other CI-first releases, use a GitHub workflow gate.
+                VS Code Marketplace, browser stores, or other CI-first releases, use a GitHub
+                workflow gate.
               </Callout>
             </Subsection>
           </section>
@@ -556,11 +557,19 @@ export default function DocsPage() {
 
             <Subsection id="gate-bundle" title="Prepare the release artifacts">
               <Prose>
-                For npm, PyPI, and VS Code, there is no Drydock manifest to maintain. Upload built{" "}
-                <InlineCode>.whl</InlineCode>, <InlineCode>.tar.gz</InlineCode>,{" "}
-                <InlineCode>.tgz</InlineCode>, or <InlineCode>.vsix</InlineCode> files before the
-                protected job starts. Drydock derives the ecosystem, package name, and version from
-                metadata inside each archive.
+                For npm, PyPI, VS Code, and browser extensions, there is no Drydock manifest to
+                maintain. Upload built <InlineCode>.whl</InlineCode>,{" "}
+                <InlineCode>.tar.gz</InlineCode>, <InlineCode>.tgz</InlineCode>,{" "}
+                <InlineCode>.vsix</InlineCode>, <InlineCode>.zip</InlineCode>, or{" "}
+                <InlineCode>.xpi</InlineCode> files before the protected job starts. Drydock derives
+                the ecosystem, package or extension identity, and version from metadata inside each
+                archive.
+              </Prose>
+              <Prose>
+                Set the release target ecosystem to <InlineCode>Browser extensions</InlineCode> for
+                a <InlineCode>.zip</InlineCode> candidate. Unpinned auto-detection ignores generic
+                ZIP files so unrelated source or CI archives cannot block another release; browser
+                <InlineCode>.xpi</InlineCode> files remain auto-detectable.
               </Prose>
               <Prose>
                 Generate <InlineCode>SHA256SUMS</InlineCode> beside the artifacts during the build,
@@ -674,10 +683,38 @@ export default function DocsPage() {
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
               </WorkflowExample>
+              <WorkflowExample title="Browser extension">
+                {`jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run build:extension
+      - run: npx web-ext build --source-dir dist/extension --artifacts-dir dist --filename extension.zip
+      - run: cd dist && sha256sum extension.zip > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension-release-candidate
+          path: dist/
+
+  publish:
+    needs: package
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser-extension-release-candidate
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      # Upload this exact archive to Chrome/Firefox; do not rebuild it.
+      - run: npm run publish:browser-extension -- dist/extension.zip`}
+              </WorkflowExample>
               <Callout label="Authentication stays in the publish job">
                 Add the registry authentication your release already uses—for example PyPI Trusted
                 Publishing, npm trusted publishing or a scoped token, or a VS Code Marketplace
-                token—to the protected publish job. Drydock does not receive those credentials.
+                token, or browser-store API credentials—to the protected publish job. Drydock does
+                not receive those credentials.
               </Callout>
             </Subsection>
 

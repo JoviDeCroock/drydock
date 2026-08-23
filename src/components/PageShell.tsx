@@ -122,7 +122,7 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
         <div class="flex flex-col gap-1">
           <BrandMark href="/" size="sm" />
           <p class="m-0 font-mono text-[11px] text-ink-subtle">
-            Pre-publish review for npm, PyPI, and VS Code · © 2026 Drydock
+            Pre-publish review for npm, PyPI, VS Code, and browser extensions · © 2026 Drydock
           </p>
         </div>
         <nav class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]" aria-label="Footer">

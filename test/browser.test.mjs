@@ -1,0 +1,140 @@
+import { describe, expect, test } from "vitest";
+import {
+  browserAdapter,
+  browserExtensionIdentity,
+  buildBrowserReleaseManifest,
+  createBrowserExtensionReview,
+  inferBrowserArtifactKind,
+  parseBrowserExtensionManifest,
+} from "../server/lib/ecosystems/browser";
+
+const SHA = "ab".repeat(32);
+
+function manifestFile(overrides = {}) {
+  const manifest = {
+    manifest_version: 3,
+    name: "Tab helper",
+    version: "1.2.0",
+    background: { service_worker: "background.js" },
+    permissions: ["storage"],
+    ...overrides,
+  };
+  return {
+    path: "manifest.json",
+    size: JSON.stringify(manifest).length,
+    sha256: "11".repeat(32),
+    flags: [],
+    textSample: JSON.stringify(manifest),
+  };
+}
+
+describe("browser extension review adapter", () => {
+  test("recognizes ZIP and XPI release artifacts", () => {
+    expect(inferBrowserArtifactKind("dist/addon.zip")).toBe("zip");
+    expect(inferBrowserArtifactKind("dist/addon.XPI")).toBe("xpi");
+    expect(inferBrowserArtifactKind("dist/addon.crx")).toBeNull();
+  });
+
+  test("derives Firefox identity and WebExtension capabilities from manifest.json", () => {
+    const { manifest } = parseBrowserExtensionManifest([
+      manifestFile({
+        browser_specific_settings: { gecko: { id: "tab-helper@example.invalid" } },
+        host_permissions: ["https://example.invalid/*"],
+        content_scripts: [{ matches: ["https://example.invalid/*"], js: ["content.js"] }],
+      }),
+    ]);
+    expect(browserExtensionIdentity(manifest)).toBe("tab-helper@example.invalid");
+    expect(manifest.backgroundEntrypoints).toEqual(["background.js"]);
+    expect(manifest.hostPermissions).toEqual(["https://example.invalid/*"]);
+    expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
+  });
+
+  test("fails closed without a root extension manifest", () => {
+    expect(() =>
+      parseBrowserExtensionManifest([
+        {
+          path: "nested/manifest.json",
+          size: 2,
+          sha256: "22".repeat(32),
+          flags: [],
+          textSample: "{}",
+        },
+      ]),
+    ).toThrow(/root manifest\.json/);
+  });
+
+  test("records exact archive provenance and no invented public baseline", async () => {
+    const path = "dist/tab-helper.zip";
+    const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const input = browserAdapter.parseInput({
+      manifest: release,
+      artifact: { path, sha256: SHA, files: [manifestFile()] },
+    });
+    const staged = await browserAdapter.acquireStaged({}, input, { dispose() {} });
+    const baseline = await browserAdapter.acquireBaseline({}, input, { dispose() {} }, staged);
+    expect(baseline).toMatchObject({
+      artifact: null,
+      baseline: { source: "none", reason: "no-store-identity-for-public-baseline" },
+    });
+    expect(browserAdapter.summarizeDetails(staged.details)).toMatchObject({
+      provenance: {
+        ecosystem: "browser",
+        mode: "workflow_gate",
+        artifacts: [{ path, kind: "zip", sha256: SHA }],
+      },
+    });
+  });
+
+  test("rejects adapter inputs that are not bound to the declared archive", () => {
+    const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
+      { path: "dist/tab-helper.zip", sha256: SHA },
+    ]);
+    expect(() =>
+      browserAdapter.parseInput({
+        manifest: release,
+        artifact: { path: "dist/other.xpi", sha256: SHA, files: [manifestFile()] },
+      }),
+    ).toThrow(/artifact path/);
+    expect(() =>
+      browserAdapter.parseInput({
+        manifest: release,
+        artifact: {
+          path: "dist/tab-helper.zip",
+          sha256: "cd".repeat(32),
+          files: [manifestFile()],
+        },
+      }),
+    ).toThrow(/artifact digest/);
+  });
+
+  test("flags privileged and all-sites extension capabilities", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({
+            permissions: ["nativeMessaging"],
+            host_permissions: ["<all_urls>"],
+            content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"] }],
+            externally_connectable: { matches: ["https://*/*"] },
+            content_security_policy: "script-src 'self' 'unsafe-eval'; object-src 'self'",
+          }),
+        ],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining([
+        "browser.privileged-permission",
+        "browser.broad-host-access",
+        "browser.broad-content-script",
+        "browser.externally-connectable",
+        "browser.unsafe-extension-csp",
+      ]),
+    );
+    expect(review.risk).toBe("high");
+  });
+});

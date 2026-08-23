@@ -10,7 +10,7 @@ export const PRODUCT_NAME = "Drydock Package Review";
 export const SITE_URL = "https://drydock.org";
 export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 export const OG_IMAGE_ALT =
-  "Drydock Package Review — pre-publish package security for npm, PyPI, and VS Code maintainers";
+  "Drydock Package Review — pre-publish package security for npm, PyPI, VS Code, and browser-extension maintainers";
 
 // Standard 1.91:1 share-card ratio, matching server/lib/og-card.ts. The static
 // site-wide card is 1200x800; per-diff cards are generated at 1200x630.
@@ -112,14 +112,14 @@ export function packageDiffOgImageAlt(
 export const homePageSeo: PageSeoMetadata = {
   title: "Drydock Package Review: pre-publish package security",
   description:
-    "Review the exact npm, PyPI, or VS Code artifact before publication. Drydock diffs built package bytes and pins supply-chain risks to changed lines.",
+    "Review the exact npm, PyPI, VS Code, or browser-extension artifact before publication. Drydock diffs built package bytes and pins supply-chain risks to changed lines.",
   path: "/",
 };
 
 export const docsPageSeo: PageSeoMetadata = {
   title: "Learn Drydock: artifact review before you publish",
   description:
-    "Learn how Drydock reviews npm, PyPI, and VS Code release artifacts, then set up npm stage publish or a GitHub workflow gate.",
+    "Learn how Drydock reviews npm, PyPI, VS Code, and browser-extension artifacts, then set up npm stage publish or a GitHub workflow gate.",
   path: "/docs",
 };
 

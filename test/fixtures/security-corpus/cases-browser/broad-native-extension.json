@@ -1,0 +1,58 @@
+{
+  "id": "browser-broad-native-extension",
+  "title": "extension adds all-sites injection, native messaging, and a credential file",
+  "category": "browser-extension",
+  "intent": "Baseline-backed fixture pins broad WebExtension capabilities and proves the shared diff pipeline reaches browser archives.",
+  "slug": "tab-helper",
+  "extensionId": "tab-helper@example.invalid",
+  "version": "1.1.0",
+  "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "previousSha256": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+  "previousFiles": [
+    {
+      "path": "manifest.json",
+      "size": 220,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Tab helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"tab-helper@example.invalid\" } },\n  \"permissions\": [\"storage\"]\n}\n"
+    },
+    {
+      "path": "content.js",
+      "size": 22,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "flags": [],
+      "textSample": "console.log('ready');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 430,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Tab helper\",\n  \"version\": \"1.1.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"tab-helper@example.invalid\" } },\n  \"permissions\": [\"storage\", \"nativeMessaging\"],\n  \"host_permissions\": [\"<all_urls>\"],\n  \"content_scripts\": [{ \"matches\": [\"<all_urls>\"], \"js\": [\"content.js\"] }]\n}\n"
+    },
+    {
+      "path": "content.js",
+      "size": 22,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "flags": [],
+      "textSample": "console.log('ready');\n"
+    },
+    {
+      "path": ".env",
+      "size": 19,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "flags": [],
+      "textSample": "# packaged by error\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.broad-host-access", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.broad-content-script", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "file.secret-content", "severity": "critical", "file": ".env" },
+    { "ruleId": "diff.credential-file-added", "severity": "critical", "file": ".env" }
+  ]
+}

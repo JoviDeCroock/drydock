@@ -2,7 +2,7 @@
 
 Workflow gates are Drydock's review mode for releases whose registry cannot hold a private staged artifact. GitHub Actions builds the release, uploads the candidate artifacts, and a GitHub Environment custom deployment-protection rule pauses publishing while Drydock reviews the bytes.
 
-Supported gate ecosystems: **PyPI**, **npm**, and **VS Code extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
+Supported gate ecosystems: **PyPI**, **npm**, **VS Code extensions**, and **browser extensions**. Shared GitHub plumbing lives in `server/lib/workflow-gates/`; artifact-specific behavior lives behind adapters.
 
 atpm has no gate. Its releases are reviewed through an anonymous link from atpm's own staged dashboard, and approving stays entirely on atpm's side; see [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md).
 
@@ -34,7 +34,7 @@ Required bindings/secrets include the GitHub App id/private key/client credentia
 
 A release set is the boundary between CI and Drydock. Drydock never trusts a maintainer-declared manifest as authority over reviewed bytes; it recomputes identity and digest evidence from the uploaded artifacts themselves.
 
-Package identity and version come from each artifact's own metadata: wheel `METADATA`, sdist `PKG-INFO`, npm `package.json`, or VSIX `extension/package.json` (`publisher.name` + `version`). Every artifact must expose a package identity and version; files are grouped by normalized package name where the ecosystem has one, and artifacts that share a name must agree on the version. Distinct package names are separate releases, which is the expected monorepo shape.
+Package identity and version come from each artifact's own metadata: wheel `METADATA`, sdist `PKG-INFO`, npm `package.json`, VSIX `extension/package.json` (`publisher.name` + `version`), or a WebExtension's root `manifest.json` (Gecko id when present, otherwise name, plus version). Every artifact must expose a package identity and version; files are grouped by normalized package name where the ecosystem has one, and artifacts that share a name must agree on the version. Distinct package names are separate releases, which is the expected monorepo shape.
 
 For every candidate artifact set, adapters must provide:
 
@@ -157,6 +157,54 @@ jobs:
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
 
+## Browser-extension workflow-gate notes
+
+Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives identity from `browser_specific_settings.gecko.id` (or the legacy `applications.gecko.id`) when present and otherwise uses the manifest name; the version always comes from `manifest.json`.
+
+Pin the release target's ecosystem to **Browser extensions** when publishing a `.zip`. ZIP is also a generic CI/source-artifact extension, so unpinned auto-detection deliberately ignores it instead of letting an unrelated ZIP block another ecosystem's gate. Browser-specific `.xpi` artifacts remain safe to auto-detect.
+
+The browser adapter (`server/lib/ecosystems/browser/`):
+
+- parses ZIP/XPI bytes in the shared credential-free sandbox and retains root `manifest.json` as identity evidence;
+- supports Manifest V2 and V3, and rejects missing/invalid identity, version, or manifest version;
+- requires one archive per extension identity in a release target, so two artifacts cannot ambiguously claim the same store release;
+- runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules;
+- reports privileged permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;
+- records the exact archive kind and SHA-256 in report provenance;
+- does not invent a public baseline: Chrome packages usually do not embed a store id, and store download availability differs by channel. A gate without an explicit previous artifact reviews package context and the exact candidate bytes without claiming a version delta.
+
+Recommended workflow shape:
+
+```yaml
+jobs:
+  package:
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run build:extension
+      - run: npx web-ext build --source-dir dist/extension --artifacts-dir dist --filename extension.zip
+      - run: cd dist && sha256sum extension.zip > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension-release-candidate
+          path: |
+            dist/extension.zip
+            dist/SHA256SUMS
+  publish:
+    needs: package
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser-extension-release-candidate
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      # This command must upload dist/extension.zip as-is; it must not rebuild.
+      - run: npm run publish:browser-extension -- dist/extension.zip
+```
+
+Store credentials remain in the protected publish job. If one workflow publishes separate Chrome and Firefox archives, use separate protected environments/release targets so each gate has one unambiguous archive and digest.
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.
@@ -194,4 +242,4 @@ byte-continuity loop without trusting any single step.
 ## Remaining work
 
 - Expand gate-specific e2e coverage as more ecosystems are added.
-- Keep GitHub/PyPI/npm/VS Code validation failures user-actionable without leaking credentials or private package bytes.
+- Keep GitHub/PyPI/npm/VS Code/browser validation failures user-actionable without leaking credentials or private package bytes.

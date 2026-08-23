@@ -82,7 +82,7 @@ describe("ecosystem branching invariants", () => {
   test("the ecosystem registry knows every ecosystem directory", () => {
     // The scan derives its literals from lib/ecosystems/* directory names, so
     // pin the shape that derivation relies on: one directory per ecosystem.
-    expect(ecosystemIds().sort()).toEqual(["atpm", "npm", "pypi", "vscode"]);
+    expect(ecosystemIds().sort()).toEqual(["atpm", "browser", "npm", "pypi", "vscode"]);
   });
 
   test("routes and orchestrators do not branch on ecosystem names", () => {

@@ -1,4 +1,5 @@
 import { atpmPublicDiff } from "./atpm/public-diff";
+import { browserWorkflowGateAdapter } from "./browser/workflow-gate";
 import { npmAdapter } from "./npm";
 import { npmPublicDiff } from "./npm/public-diff";
 import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
@@ -29,6 +30,11 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
     id: "vscode",
     label: ECOSYSTEM_LABELS.vscode,
     gate: vscodeWorkflowGateAdapter,
+  },
+  browser: {
+    id: "browser",
+    label: ECOSYSTEM_LABELS.browser,
+    gate: browserWorkflowGateAdapter,
   },
   atpm: {
     id: "atpm",
@@ -87,7 +93,9 @@ function gateAdapters(): WorkflowGateAdapter[] {
 export function classifyBundleArtifact(path: string): { ecosystem: string; kind: string } | null {
   const claims: { ecosystem: string; kind: string }[] = [];
   for (const adapter of gateAdapters()) {
-    const kind = adapter.classifyArtifact(path);
+    const kind = adapter.classifyArtifactForAutoDetection
+      ? adapter.classifyArtifactForAutoDetection(path)
+      : adapter.classifyArtifact(path);
     if (kind) claims.push({ ecosystem: adapter.ecosystem, kind });
   }
   if (claims.length === 0) return null;

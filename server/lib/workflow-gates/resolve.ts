@@ -5,7 +5,7 @@ import {
   WorkflowArtifactError,
 } from "../github-app/artifacts";
 import { downloadInSandboxInline } from "../sandbox";
-import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems } from "../ecosystems";
+import { AMBIGUOUS_ARCHIVE_ECOSYSTEM, detectArchiveEcosystems, getEcosystem } from "../ecosystems";
 import type { ParsedGateArtifact } from "./types";
 
 const GATE_ARTIFACT_PARSE_CONCURRENCY = 4;
@@ -25,8 +25,7 @@ export async function resolveBundleArtifact(
   ctx: ExecutionContext,
   file: ResolvedReleaseFile,
 ): Promise<ParsedGateArtifact> {
-  const lowerPath = file.path.toLowerCase();
-  const format = lowerPath.endsWith(".vsix") ? "vsix" : lowerPath.endsWith(".whl") ? "zip" : "tgz";
+  const format = getEcosystem(file.ecosystem)?.gate?.sandboxFormat?.(file.kind) ?? "tgz";
   const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
   const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 
