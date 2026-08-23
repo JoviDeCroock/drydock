@@ -130,9 +130,10 @@ The corpus includes calibration cases that should stay that way:
 - `added-dependency-integrity-mismatch` pins the fail-closed boundary: inert dependency contents still
   block when their recomputed digest disagrees with what the registry advertised.
 - `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
-  genuinely embedded in the reviewed parent artifact must not be replaced with a second registry
-  snapshot. `added-dependency-bundled-placeholder` proves an arbitrary file under the declared
-  `node_modules` path cannot impersonate that identity and suppress registry review.
+  genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
+  second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
+  manifest is part of that assessment, while `added-dependency-bundled-placeholder` proves an arbitrary
+  file under the declared `node_modules` path cannot impersonate that identity and suppress registry review.
 
 ## PyPI corpus
 
@@ -147,7 +148,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.38.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.39.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -467,6 +468,14 @@ excluded only when the embedded direct child has a readable matching package ide
 `added-dependency-bundled-placeholder`. Dependency-artifact findings remain release-scoped when baseline
 acquisition failed, so an honest `unknown` file diff cannot remove newly introduced dependency evidence
 from `releaseRisk` or the workflow gate.
+
+`1.39.0` closes two executable-content gaps in dependency review. Newly introduced direct dependencies
+embedded through `bundleDependencies` / `bundledDependencies` are now assessed from the exact child
+subtree consumers install, including the child's own lifecycle manifest, rather than being treated as
+covered by root-manifest review. Install-reachable dynamic module loads also make omitted executable
+`.map` / minified JavaScript text fail visibly instead of recording partial bytes as inspected. The
+`added-dependency-bundled-install-downloader` fixture and focused skipped-text regressions pin both
+boundaries.
 
 ### Fixture format
 

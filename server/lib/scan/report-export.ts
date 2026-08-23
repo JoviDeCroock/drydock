@@ -75,10 +75,10 @@ export function buildReportExport(detail: ScanDetail) {
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     // Dependencies this release newly introduced and what Drydock found in
-    // their bytes. Exported verbatim (it is already redaction-free evidence:
-    // names, versions, digests, rule IDs) so the record stays useful after the
-    // dependency version is unpublished. Additive + optional: scans from before
-    // the dependency review export null.
+    // their bytes. Exported after shape validation (the only retained network
+    // location is an HTTP(S) origin; registry-controlled paths are discarded)
+    // so the record stays useful after the dependency version is unpublished.
+    // Additive + optional: scans from before the dependency review export null.
     dependencyReview: normalizeDependencyReview(summary.dependencyReview),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,

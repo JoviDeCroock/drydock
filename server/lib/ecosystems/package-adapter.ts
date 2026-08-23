@@ -162,6 +162,13 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
 
   /**
+   * Inspect newly introduced dependencies whose exact bytes are embedded in
+   * the staged artifact. Runs synchronously while the raw parent files are
+   * still available, before the pipeline releases them ahead of network work.
+   */
+  inspectEmbeddedAddedDependencies?(args: EmbeddedDependencyInspectionArgs): DependencyReview;
+
+  /**
    * Review the artifacts of dependencies this release newly introduces.
    *
    * Optional because it is a *capability*, not a stage every ecosystem can
@@ -188,4 +195,11 @@ export interface DependencyInspectionArgs {
   stagedFiles: FileRecord[];
   scanId: string;
   organizationId: string;
+}
+
+export interface EmbeddedDependencyInspectionArgs {
+  manifestDiff: PackageJsonDiff;
+  baselineManifestUnavailable: boolean;
+  stagedManifest: PackageJsonSummary | null;
+  stagedFiles: FileRecord[];
 }

@@ -33,6 +33,7 @@ import {
   dependencyEvidenceFindings,
   EMPTY_DEPENDENCY_REVIEW,
   failedDependencyReview,
+  mergeDependencyReviews,
   redactFileRecords,
   redactFindings,
   redactJson,
@@ -168,15 +169,33 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 ): DeterministicFindings {
   const { staged, baseline } = resolved;
 
-  const adapterFindings = adapter.runFindings({
-    staged: staged.artifact,
-    baseline: baseline.artifact,
-    details: staged.details,
-    fileDiff: diff.fileDiff,
-    manifestDiff: diff.manifestDiff,
-    stagedManifestText: diff.stagedManifestText,
+  const embeddedDependencyReview =
+    adapter.inspectEmbeddedAddedDependencies?.({
+      manifestDiff: diff.manifestDiff,
+      baselineManifestUnavailable: baselineManifestUnavailable(diff, baseline.baseline),
+      stagedManifest: staged.artifact.manifest,
+      stagedFiles: staged.artifact.files,
+    }) ?? EMPTY_DEPENDENCY_REVIEW;
+  const adapterFindings = reconcileDependencyReviewFindings(
+    adapter.runFindings({
+      staged: staged.artifact,
+      baseline: baseline.artifact,
+      details: staged.details,
+      fileDiff: diff.fileDiff,
+      manifestDiff: diff.manifestDiff,
+      stagedManifestText: diff.stagedManifestText,
+    }),
+    embeddedDependencyReview,
+  );
+  const embeddedDependencyFindings = dependencyEvidenceFindings(embeddedDependencyReview, {
+    name: staged.artifact.manifest?.name ?? null,
+    version: staged.artifact.manifest?.version ?? null,
   });
-  const ruleFindings = redactFindings([...adapterFindings, ...extraFindings]);
+  const ruleFindings = redactFindings([
+    ...adapterFindings,
+    ...embeddedDependencyFindings,
+    ...extraFindings,
+  ]);
 
   const redactedStagedFiles = redactFileRecords(staged.artifact.files);
   const redactedPreviousFiles = baseline.artifact ? redactFileRecords(baseline.artifact.files) : [];
@@ -196,7 +215,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 
   return {
     ruleFindings,
-    dependencyReview: EMPTY_DEPENDENCY_REVIEW,
+    dependencyReview: embeddedDependencyReview,
     redactedStagedFiles,
     redactedPreviousFiles,
     redactedStagedManifest,
@@ -340,14 +359,18 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
     baselineComparisonSkipped: boolean;
   },
 ): void {
-  findings.dependencyReview = review;
-  const ruleFindings = reconcileDependencyReviewFindings(findings.ruleFindings, review);
+  const combinedReview = mergeDependencyReviews(findings.dependencyReview, review);
+  findings.dependencyReview = combinedReview;
+  const ruleFindings = reconcileDependencyReviewFindings(findings.ruleFindings, combinedReview);
   findings.ruleFindings.splice(0, findings.ruleFindings.length, ...ruleFindings);
-  const annotatedFindings = reconcileDependencyReviewFindings(findings.annotatedFindings, review);
+  const annotatedFindings = reconcileDependencyReviewFindings(
+    findings.annotatedFindings,
+    combinedReview,
+  );
   findings.annotatedFindings.splice(0, findings.annotatedFindings.length, ...annotatedFindings);
   const releaseRuleFindings = reconcileDependencyReviewFindings(
     findings.releaseRuleFindings,
-    review,
+    combinedReview,
   );
   findings.releaseRuleFindings.splice(
     0,

@@ -215,7 +215,7 @@ describe("scan report JSON export", () => {
               reason: null,
               resolvedVersion: "0.1.0",
               registryHost: "registry.npmjs.org",
-              artifactUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+              artifactOrigin: "https://registry.npmjs.org",
               declaredDigest: { algorithm: "sha512", value: "Zm9vYmFy" },
               reviewedDigest: { algorithm: "sha512", value: "Zm9vYmFy" },
               digestVerified: true,

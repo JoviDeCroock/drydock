@@ -240,7 +240,7 @@ describe("inspectAddedNpmDependencies", () => {
       status: "inspected",
       verdict: "install-risk",
       registryHost: "registry.npmjs.org",
-      artifactUrl: url,
+      artifactOrigin: "https://registry.npmjs.org",
       fileCount: 2,
     });
     expect(dependency.automaticExecution).toEqual([{ kind: "script", name: "postinstall" }]);
@@ -320,7 +320,7 @@ describe("inspectAddedNpmDependencies", () => {
     );
 
     expect(broker.calls.downloads[0].url).toBe(fetchedUrl);
-    expect(review.dependencies[0].artifactUrl).toBe(safeUrl);
+    expect(review.dependencies[0].artifactOrigin).toBe("https://registry.npmjs.org");
   });
 
   test("a digest the registry and the bytes disagree on is recorded as unverified-false", async () => {
@@ -771,6 +771,44 @@ describe("inspectAddedNpmDependencies", () => {
       reason: "artifact-truncated",
       resolvedVersion: "1.0.0",
       fileCount: 2,
+    });
+  });
+
+  test("a dynamically loaded skipped source map is uninspectable", async () => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const manifest = {
+      name: "clipped",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", "require('./payload.' + 'map')"),
+        {
+          path: "payload.map",
+          size: 4096,
+          sha256: "skipped-dynamic-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      resolvedVersion: "1.0.0",
+      fileCount: 3,
     });
   });
 

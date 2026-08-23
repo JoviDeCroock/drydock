@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-bundled",
-  "title": "A dependency bundled into the reviewed parent artifact is not fetched again",
+  "title": "A dependency bundled into the reviewed parent artifact is assessed in place",
   "category": "dependency-introduction",
-  "intent": "The staged manifest adds a runtime dependency but also declares and embeds that package under node_modules. Its bytes already belong to the parent artifact's deterministic review, so dependency-artifact review must not resolve a second potentially different registry copy.",
+  "intent": "The staged manifest adds a runtime dependency but also declares and embeds that package under node_modules. Drydock must assess the exact embedded subtree consumers receive without resolving a second potentially different registry copy.",
   "previousPackageJson": { "name": "bundled-app", "version": "1.0.0", "main": "index.js" },
   "stagedPackageJson": {
     "name": "bundled-app",
@@ -21,7 +21,18 @@
     }
   ],
   "dependencyArtifacts": {},
-  "expectedDependencies": [],
+  "expectedDependencies": [
+    {
+      "name": "embedded-helper",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "verdict": "clean",
+      "automaticExecution": []
+    }
+  ],
   "expectedFindings": [],
   "expectedRisk": "low",
   "expectedRecommendation": "likely safe"
