@@ -21,13 +21,14 @@ import { scanEvents, scans } from "./schema";
 
 // Internal scan-maintenance columns never belong in ordinary detail/file/compare
 // reads: `finding_profile_json` is a release-memory lookup cache up to 256 KiB,
-// while the retention lease is orchestration state. Omit them in SQL rather than
-// reading them only to strip them from the response afterward. Their owning
-// queries select them explicitly.
+// while maintenance lease fields are orchestration state. Omit them in SQL
+// rather than reading them only to strip them from the response afterward.
+// Their owning queries select them explicitly.
 const {
   findingProfileJson: _findingProfileJsonColumn,
-  retentionClaimToken: _retentionClaimTokenColumn,
-  retentionClaimedAt: _retentionClaimedAtColumn,
+  maintenanceKind: _maintenanceKindColumn,
+  maintenanceToken: _maintenanceTokenColumn,
+  maintenanceClaimedAt: _maintenanceClaimedAtColumn,
   ...scanReadColumns
 } = getTableColumns(scans);
 

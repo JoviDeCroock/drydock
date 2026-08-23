@@ -14,17 +14,21 @@ import { AUDIT_LOG_RETENTION_DAYS, pruneAuditEventsOlderThan } from "../db/audit
 import { pruneExpiredAuthRows, type PrunedAuthRowCounts } from "../db/auth-retention";
 import { createDb, type AppDb } from "../db/client";
 import {
-  claimScanForRetention,
   clearScanArtifactMetadata,
   deleteScanWithChildren,
-  expireScanRetentionClaim,
   expiredScanCursor,
   listScansOlderThan,
-  releaseScanRetentionClaim,
   type BoundedSweepResult,
   type ExpiredScanCursor,
   type ExpiredScanRow,
 } from "../db/retention";
+import {
+  claimScanForRetention,
+  markScanRetentionArtifactsRemoved,
+  releaseScanMaintenanceClaim,
+  SCAN_MAINTENANCE_KINDS,
+  SCAN_MAINTENANCE_LEASE_MS,
+} from "../db/scan-maintenance";
 import { deleteScanArtifacts } from "./scan/artifacts";
 import {
   describeOperationalError,
@@ -56,11 +60,6 @@ const SCAN_RETENTION_MAX_PER_TICK = 50;
  * scan behind them would ever be reached.
  */
 const SCAN_RETENTION_MAX_PAGES = 4;
-
-// A scheduled pass normally finishes in seconds. An hour keeps overlapping
-// invocations from stealing a live claim while still recovering automatically
-// after an isolate is terminated between the D1 claim and its finally block.
-export const SCAN_RETENTION_CLAIM_LEASE_MS = 60 * 60 * 1000;
 
 export interface RetentionSweepResult {
   auditEvents: BoundedSweepResult | null;
@@ -295,15 +294,15 @@ async function deleteOneExpiredScan(
   const claimed = await claimScanForRetention(db, {
     scanId: candidate.id,
     organizationId: candidate.organizationId,
-    claimToken: crypto.randomUUID(),
+    token: crypto.randomUUID(),
     claimedAt: now,
-    staleBefore: new Date(now.getTime() - SCAN_RETENTION_CLAIM_LEASE_MS),
+    staleBefore: new Date(now.getTime() - SCAN_MAINTENANCE_LEASE_MS),
   });
   if (!claimed) return null;
 
-  const claimToken = claimed.claimToken;
+  const claimToken = claimed.token;
   let deleted = false;
-  let artifactEvidenceRemoved = claimed.artifactEvidenceRemoved;
+  let artifactEvidenceRemoved = claimed.kind === SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved;
   try {
     // Order is load-bearing; see clearScanArtifactMetadata. The D1 lease above
     // is equally load-bearing: sharing checks it before minting a capability.
@@ -328,9 +327,17 @@ async function deleteOneExpiredScan(
   } finally {
     if (!deleted) {
       if (artifactEvidenceRemoved) {
-        await expireScanRetentionClaim(db, candidate.id, candidate.organizationId, claimToken);
+        await markScanRetentionArtifactsRemoved(db, {
+          scanId: candidate.id,
+          organizationId: candidate.organizationId,
+          token: claimToken,
+        });
       } else {
-        await releaseScanRetentionClaim(db, candidate.id, candidate.organizationId, claimToken);
+        await releaseScanMaintenanceClaim(db, {
+          scanId: candidate.id,
+          organizationId: candidate.organizationId,
+          token: claimToken,
+        });
       }
     }
   }

@@ -92,7 +92,7 @@ export async function enablePublicShare(
         publicShareToken: scans.publicShareToken,
         publicSharedAt: scans.publicSharedAt,
         publicFeedListedAt: scans.publicFeedListedAt,
-        retentionClaimToken: scans.retentionClaimToken,
+        maintenanceKind: scans.maintenanceKind,
         packageName: scans.packageName,
         stagedVersion: scans.stagedVersion,
       })
@@ -116,7 +116,7 @@ export async function enablePublicShare(
       publicFeedListedAt: existing.publicFeedListedAt,
     };
   }
-  if (existing.retentionClaimToken) return null;
+  if (existing.maintenanceKind) return null;
 
   const now = new Date();
   const token = generatePublicShareToken();
@@ -137,10 +137,9 @@ export async function enablePublicShare(
         // Guards the idempotency promise under concurrency: two racing enables
         // must never rotate a token one of them already returned.
         isNull(scans.publicShareToken),
-        // Retention claims before leaving D1 for the destructive R2 sweep. Once
-        // that claim exists, minting a share would return a capability whose
-        // evidence and row are already being torn down.
-        isNull(scans.retentionClaimToken),
+        // Cross-store maintenance owns the deterministic R2 prefix. Sharing
+        // waits so it cannot publish a capability during backfill or teardown.
+        isNull(scans.maintenanceKind),
       ),
     )
     .returning({ id: scans.id });

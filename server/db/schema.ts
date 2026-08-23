@@ -182,13 +182,17 @@ export const scans = sqliteTable(
     reportArtifactKey: text("report_artifact_key"),
     fileSamplesArtifactKey: text("file_samples_artifact_key"),
     diffArtifactKey: text("diff_artifact_key"),
-    // Lease held while the scheduled retention sweep tears this scan down.
-    // Public sharing refuses a live lease, so a share cannot be minted after
-    // eligibility was checked but before the destructive R2 sweep completes.
-    // The token makes release/teardown compare-and-swap safe; claimed_at lets a
-    // later tick recover a lease left behind by an interrupted invocation.
-    retentionClaimToken: text("retention_claim_token"),
-    retentionClaimedAt: integer("retention_claimed_at", { mode: "timestamp_ms" }),
+    // Cross-store maintenance is serialized in D1 before either retention or
+    // artifact backfill touches the scan's deterministic R2 prefix. Kind is an
+    // explicit state: `retention-artifacts-removed` is the durable tombstone that
+    // prevents sharing after R2 evidence is gone but before D1 teardown finishes.
+    // Token makes transitions compare-and-swap safe; claimed_at makes interrupted
+    // backfill/retention leases recoverable.
+    maintenanceKind: text("maintenance_kind", {
+      enum: ["artifact-backfill", "retention", "retention-artifacts-removed"],
+    }),
+    maintenanceToken: text("maintenance_token"),
+    maintenanceClaimedAt: integer("maintenance_claimed_at", { mode: "timestamp_ms" }),
     // Public share link. A non-null token makes the completed scan's canonical
     // report export readable (unauthenticated) at /public/reports/:token.
     // Revoking or superseding the registry stage sets the token back to null;

@@ -1,0 +1,262 @@
+import { and, eq, isNull, lt, notExists, or, sql } from "drizzle-orm";
+import type { AppDb } from "./client";
+import { githubWorkflowGates, scans } from "./schema";
+
+export const SCAN_MAINTENANCE_LEASE_MS = 60 * 60 * 1000;
+
+export const SCAN_MAINTENANCE_KINDS = {
+  artifactBackfill: "artifact-backfill",
+  retention: "retention",
+  retentionArtifactsRemoved: "retention-artifacts-removed",
+} as const;
+
+export type ScanMaintenanceKind =
+  (typeof SCAN_MAINTENANCE_KINDS)[keyof typeof SCAN_MAINTENANCE_KINDS];
+
+export interface ClaimedScanMaintenance {
+  artifactStorageVersion: number | null;
+  kind: ScanMaintenanceKind;
+  token: string;
+}
+
+interface ScanMaintenanceClaimInput {
+  scanId: string;
+  organizationId: string;
+  token: string;
+  claimedAt: Date;
+  staleBefore: Date;
+}
+
+/**
+ * Claim an unbackfilled scan before writing its deterministic R2 prefix.
+ *
+ * Backfill can recover only its own stale work. A stale retention state still
+ * belongs to destructive teardown, especially when its kind says evidence has
+ * already been removed, so backfill must never overwrite it.
+ */
+export async function claimScanForArtifactBackfill(
+  db: AppDb,
+  input: ScanMaintenanceClaimInput,
+): Promise<ClaimedScanMaintenance | null> {
+  const claimed = await db
+    .update(scans)
+    .set({
+      maintenanceKind: SCAN_MAINTENANCE_KINDS.artifactBackfill,
+      maintenanceToken: input.token,
+      maintenanceClaimedAt: input.claimedAt,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.status, "complete"),
+        isNull(scans.artifactStorageVersion),
+        or(
+          and(isNull(scans.maintenanceKind), isNull(scans.maintenanceToken)),
+          and(
+            eq(scans.maintenanceKind, SCAN_MAINTENANCE_KINDS.artifactBackfill),
+            or(
+              isNull(scans.maintenanceClaimedAt),
+              lt(scans.maintenanceClaimedAt, input.staleBefore),
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning({
+      artifactStorageVersion: scans.artifactStorageVersion,
+      kind: scans.maintenanceKind,
+      token: scans.maintenanceToken,
+    });
+  return normalizeScanMaintenanceClaim(claimed[0]);
+}
+
+/**
+ * Claim a still-private scan for retention before leaving D1 for R2.
+ *
+ * Retention may recover any stale maintenance lease. If the previous retention
+ * pass already removed R2 evidence, the explicit tombstone kind survives the
+ * ownership rotation so sharing remains closed across every retry.
+ */
+export async function claimScanForRetention(
+  db: AppDb,
+  input: ScanMaintenanceClaimInput,
+): Promise<ClaimedScanMaintenance | null> {
+  // SQLite evaluates SET expressions against the pre-update row, so this keeps
+  // the irreversible phase while atomically rotating the owner token.
+  const claimedKind = sql<ScanMaintenanceKind>`case
+    when ${scans.maintenanceKind} = ${SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved}
+    then ${SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved}
+    else ${SCAN_MAINTENANCE_KINDS.retention}
+  end`;
+  const claimed = await db
+    .update(scans)
+    .set({
+      maintenanceKind: claimedKind,
+      maintenanceToken: input.token,
+      maintenanceClaimedAt: input.claimedAt,
+    })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        isNull(scans.publicShareToken),
+        or(
+          and(isNull(scans.maintenanceKind), isNull(scans.maintenanceToken)),
+          and(
+            sql`${scans.maintenanceKind} is not null`,
+            sql`${scans.maintenanceToken} is not null`,
+            or(
+              isNull(scans.maintenanceClaimedAt),
+              lt(scans.maintenanceClaimedAt, input.staleBefore),
+            ),
+          ),
+        ),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(githubWorkflowGates)
+            .where(
+              and(
+                eq(githubWorkflowGates.status, "pending"),
+                or(
+                  eq(githubWorkflowGates.id, scans.gateId),
+                  eq(githubWorkflowGates.scanId, scans.id),
+                ),
+              ),
+            ),
+        ),
+      ),
+    )
+    .returning({
+      artifactStorageVersion: scans.artifactStorageVersion,
+      kind: scans.maintenanceKind,
+      token: scans.maintenanceToken,
+    });
+  return normalizeScanMaintenanceClaim(claimed[0]);
+}
+
+/** Release a failed maintenance attempt without disturbing a newer owner. */
+export async function releaseScanMaintenanceClaim(
+  db: AppDb,
+  input: { scanId: string; organizationId: string; token: string },
+): Promise<boolean> {
+  const released = await db
+    .update(scans)
+    .set({ maintenanceKind: null, maintenanceToken: null, maintenanceClaimedAt: null })
+    .where(ownedScanMaintenance(input))
+    .returning({ id: scans.id });
+  return released.length > 0;
+}
+
+/**
+ * Persist the irreversible retention phase and make it immediately reclaimable.
+ * This is deliberately not a release: sharing must stay closed after R2 evidence
+ * is gone, even when later D1 teardown fails repeatedly.
+ */
+export async function markScanRetentionArtifactsRemoved(
+  db: AppDb,
+  input: { scanId: string; organizationId: string; token: string },
+): Promise<boolean> {
+  const updated = await db
+    .update(scans)
+    .set({
+      maintenanceKind: SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved,
+      maintenanceClaimedAt: new Date(0),
+    })
+    .where(ownedScanMaintenance(input))
+    .returning({ id: scans.id });
+  return updated.length > 0;
+}
+
+export interface BackfilledArtifactMetadata {
+  artifactStorageVersion: number;
+  artifactManifestKey: string;
+  artifactManifestDigest: string;
+  artifactManifestSize: number;
+  reportArtifactKey: string;
+  fileSamplesArtifactKey: string;
+  diffArtifactKey: string;
+}
+
+/** Install verified artifact pointers and release the backfill lease atomically. */
+export async function completeScanArtifactBackfill(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    token: string;
+    metadata: BackfilledArtifactMetadata;
+  },
+): Promise<boolean> {
+  const updated = await db
+    .update(scans)
+    .set({
+      ...input.metadata,
+      maintenanceKind: null,
+      maintenanceToken: null,
+      maintenanceClaimedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        ownedScanMaintenance(input),
+        eq(scans.status, "complete"),
+        isNull(scans.artifactStorageVersion),
+        eq(scans.maintenanceKind, SCAN_MAINTENANCE_KINDS.artifactBackfill),
+      ),
+    )
+    .returning({ id: scans.id });
+  return updated.length > 0;
+}
+
+/**
+ * Whether this backfill still owns the uninstalled deterministic R2 prefix.
+ * A deleted row has no successor owner, so its now-unreachable prefix is safe to
+ * sweep; an installed row or changed token must be left to the winner.
+ */
+export async function ownsUninstalledBackfillPrefix(
+  db: AppDb,
+  input: { scanId: string; organizationId: string; token: string },
+): Promise<boolean> {
+  const [current] = await db
+    .select({
+      artifactStorageVersion: scans.artifactStorageVersion,
+      kind: scans.maintenanceKind,
+      token: scans.maintenanceToken,
+    })
+    .from(scans)
+    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+    .limit(1);
+  if (!current) return true;
+  return (
+    current.artifactStorageVersion === null &&
+    current.kind === SCAN_MAINTENANCE_KINDS.artifactBackfill &&
+    current.token === input.token
+  );
+}
+
+function ownedScanMaintenance(input: { scanId: string; organizationId: string; token: string }) {
+  return and(
+    eq(scans.id, input.scanId),
+    eq(scans.organizationId, input.organizationId),
+    eq(scans.maintenanceToken, input.token),
+  );
+}
+
+function normalizeScanMaintenanceClaim(
+  row:
+    | {
+        artifactStorageVersion: number | null;
+        kind: ScanMaintenanceKind | null;
+        token: string | null;
+      }
+    | undefined,
+): ClaimedScanMaintenance | null {
+  if (!row?.kind || !row.token) return null;
+  return {
+    artifactStorageVersion: row.artifactStorageVersion,
+    kind: row.kind,
+    token: row.token,
+  };
+}

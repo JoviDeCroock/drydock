@@ -12,7 +12,6 @@ import { githubWorkflowGates, scanEvents, scans } from "./schema";
 
 const RETENTION_DEFAULT_BATCH_SIZE = 200;
 const RETENTION_DEFAULT_MAX_BATCHES = 10;
-const ARTIFACTS_REMOVED_CLAIM_PREFIX = "artifacts-removed:";
 
 export interface BoundedSweepOptions {
   /** Rows deleted per statement. */
@@ -142,133 +141,6 @@ export async function listScansOlderThan(
   return rows as ExpiredScanRow[];
 }
 
-export interface ClaimedExpiredScan {
-  artifactStorageVersion: number | null;
-  claimToken: string;
-  artifactEvidenceRemoved: boolean;
-}
-
-/**
- * Atomically claim an expired scan before its teardown leaves D1 for R2.
- *
- * The candidate read is deliberately not trusted here: sharing or gate state
- * may have changed since that read. A live claim also blocks `enablePublicShare`,
- * making "claim wins" and "share wins" the only two outcomes. Stale claims are
- * recoverable after `staleBefore`, so an interrupted scheduled invocation cannot
- * pin a scan forever.
- */
-export async function claimScanForRetention(
-  db: AppDb,
-  input: {
-    scanId: string;
-    organizationId: string;
-    claimToken: string;
-    claimedAt: Date;
-    staleBefore: Date;
-  },
-): Promise<ClaimedExpiredScan | null> {
-  // SQLite evaluates all SET expressions against the pre-update row. Preserve a
-  // post-R2 tombstone while atomically rotating ownership to a fresh token; the
-  // claimed_at = epoch check also carries forward tombstones written before the
-  // token prefix existed.
-  const claimedToken = sql<string>`case
-    when ${scans.retentionClaimToken} like ${`${ARTIFACTS_REMOVED_CLAIM_PREFIX}%`}
-      or ${scans.retentionClaimedAt} = 0
-    then ${artifactsRemovedClaimToken(input.claimToken)}
-    else ${input.claimToken}
-  end`;
-  const claimed = await db
-    .update(scans)
-    .set({ retentionClaimToken: claimedToken, retentionClaimedAt: input.claimedAt })
-    .where(
-      and(
-        eq(scans.id, input.scanId),
-        eq(scans.organizationId, input.organizationId),
-        isNull(scans.publicShareToken),
-        or(
-          isNull(scans.retentionClaimToken),
-          isNull(scans.retentionClaimedAt),
-          lt(scans.retentionClaimedAt, input.staleBefore),
-        ),
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(githubWorkflowGates)
-            .where(
-              and(
-                eq(githubWorkflowGates.status, "pending"),
-                or(
-                  eq(githubWorkflowGates.id, scans.gateId),
-                  eq(githubWorkflowGates.scanId, scans.id),
-                ),
-              ),
-            ),
-        ),
-      ),
-    )
-    .returning({
-      artifactStorageVersion: scans.artifactStorageVersion,
-      claimToken: scans.retentionClaimToken,
-    });
-  const row = claimed[0];
-  if (!row?.claimToken) return null;
-  return {
-    artifactStorageVersion: row.artifactStorageVersion,
-    claimToken: row.claimToken,
-    artifactEvidenceRemoved: isArtifactsRemovedClaimToken(row.claimToken),
-  };
-}
-
-/** Release a failed/deferred teardown without disturbing a newer claimant. */
-export async function releaseScanRetentionClaim(
-  db: AppDb,
-  scanId: string,
-  organizationId: string,
-  claimToken: string,
-): Promise<boolean> {
-  const released = await db
-    .update(scans)
-    .set({ retentionClaimToken: null, retentionClaimedAt: null })
-    .where(
-      and(
-        eq(scans.id, scanId),
-        eq(scans.organizationId, organizationId),
-        eq(scans.retentionClaimToken, claimToken),
-      ),
-    )
-    .returning({ id: scans.id });
-  return released.length > 0;
-}
-
-/**
- * Keep a post-R2 claim as a sharing tombstone, but make it immediately
- * reclaimable by the next scheduled pass. This is distinct from release: once
- * artifact evidence is gone, a transient D1 failure must not reopen sharing on
- * the degraded row that remains.
- */
-export async function expireScanRetentionClaim(
-  db: AppDb,
-  scanId: string,
-  organizationId: string,
-  claimToken: string,
-): Promise<boolean> {
-  const expired = await db
-    .update(scans)
-    .set({
-      retentionClaimToken: artifactsRemovedClaimToken(claimToken),
-      retentionClaimedAt: new Date(0),
-    })
-    .where(
-      and(
-        eq(scans.id, scanId),
-        eq(scans.organizationId, organizationId),
-        eq(scans.retentionClaimToken, claimToken),
-      ),
-    )
-    .returning({ id: scans.id });
-  return expired.length > 0;
-}
-
 /** Cursor addressing `row`, for paging past a deferred candidate. */
 export function expiredScanCursor(row: ExpiredScanRow): ExpiredScanCursor {
   return { createdAtMs: row.createdAt.getTime(), id: row.id };
@@ -329,7 +201,7 @@ export async function clearScanArtifactMetadata(
       and(
         eq(scans.id, scanId),
         eq(scans.organizationId, organizationId),
-        eq(scans.retentionClaimToken, claimToken),
+        eq(scans.maintenanceToken, claimToken),
       ),
     )
     .returning({ id: scans.id });
@@ -366,7 +238,7 @@ export async function deleteScanWithChildren(
     select 1 from ${scans}
     where ${scans.id} = ${scanId}
       and ${scans.organizationId} = ${organizationId}
-      and ${scans.retentionClaimToken} = ${claimToken}
+      and ${scans.maintenanceToken} = ${claimToken}
   )`;
   const scopedToScan = and(
     eq(scanEvents.scanId, scanId),
@@ -385,7 +257,7 @@ export async function deleteScanWithChildren(
         and(
           eq(scans.id, scanId),
           eq(scans.organizationId, organizationId),
-          eq(scans.retentionClaimToken, claimToken),
+          eq(scans.maintenanceToken, claimToken),
         ),
       )
       .returning({ id: scans.id }),
@@ -396,14 +268,4 @@ export async function deleteScanWithChildren(
 function boundedInt(value: number | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.floor(value));
-}
-
-function artifactsRemovedClaimToken(claimToken: string): string {
-  return isArtifactsRemovedClaimToken(claimToken)
-    ? claimToken
-    : `${ARTIFACTS_REMOVED_CLAIM_PREFIX}${claimToken}`;
-}
-
-function isArtifactsRemovedClaimToken(claimToken: string): boolean {
-  return claimToken.startsWith(ARTIFACTS_REMOVED_CLAIM_PREFIX);
 }

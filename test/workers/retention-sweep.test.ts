@@ -6,6 +6,10 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { AUTH_ROW_RETENTION_GRACE_MS, pruneExpiredAuthRows } from "../../server/db/auth-retention";
 import { listScansOlderThan } from "../../server/db/retention";
+import {
+  SCAN_MAINTENANCE_KINDS,
+  SCAN_MAINTENANCE_LEASE_MS,
+} from "../../server/db/scan-maintenance";
 import { enablePublicShare, revokePublicShare } from "../../server/db/scan-share";
 import { createScanJob, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
@@ -14,7 +18,6 @@ import {
   parseScanRetentionDays,
   resetRetentionMisconfigurationLatch,
   runRetentionSweep,
-  SCAN_RETENTION_CLAIM_LEASE_MS,
   SCAN_RETENTION_MIN_DAYS,
 } from "../../server/lib/retention";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
@@ -464,8 +467,8 @@ describe("scan retention", () => {
     expect(row?.artifactStorageVersion).toBeNull();
     expect(row?.reportArtifactKey).toBeNull();
     expect(row?.diffArtifactKey).toBeNull();
-    expect(row?.retentionClaimToken).toMatch(/^artifacts-removed:/);
-    expect(row?.retentionClaimedAt?.getTime()).toBe(0);
+    expect(row?.maintenanceKind).toBe(SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved);
+    expect(row?.maintenanceClaimedAt?.getTime()).toBe(0);
 
     // Evidence is already gone, so sharing stays fenced. A second failed tick
     // must preserve that tombstone even though artifactStorageVersion is now
@@ -486,8 +489,8 @@ describe("scan retention", () => {
       } as unknown as Cloudflare.Env),
     ).resolves.toMatchObject({ scans: { deleted: 0, deferred: 1 } });
     const [retried] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
-    expect(retried?.retentionClaimToken).toMatch(/^artifacts-removed:/);
-    expect(retried?.retentionClaimedAt?.getTime()).toBe(0);
+    expect(retried?.maintenanceKind).toBe(SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved);
+    expect(retried?.maintenanceClaimedAt?.getTime()).toBe(0);
     await expect(
       enablePublicShare(owner.db, {
         scanId,
@@ -766,8 +769,9 @@ describe("scan retention", () => {
     await owner.db
       .update(schema.scans)
       .set({
-        retentionClaimToken: "abandoned-claim",
-        retentionClaimedAt: new Date(Date.now() - SCAN_RETENTION_CLAIM_LEASE_MS - 1),
+        maintenanceKind: SCAN_MAINTENANCE_KINDS.retention,
+        maintenanceToken: "abandoned-claim",
+        maintenanceClaimedAt: new Date(Date.now() - SCAN_MAINTENANCE_LEASE_MS - 1),
       })
       .where(eq(schema.scans.id, scanId));
 
@@ -820,8 +824,9 @@ describe("scan retention", () => {
     const [row] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
     expect(row).toBeDefined();
     expect(await scanKeys(owner.organizationId, scanId)).toHaveLength(4);
-    expect(row?.retentionClaimToken).toBeNull();
-    expect(row?.retentionClaimedAt).toBeNull();
+    expect(row?.maintenanceKind).toBeNull();
+    expect(row?.maintenanceToken).toBeNull();
+    expect(row?.maintenanceClaimedAt).toBeNull();
 
     // A pre-R2 failure releases the lease, so disabling retention after an
     // outage does not leave an otherwise-readable scan permanently unshareable.
