@@ -254,9 +254,12 @@ export function selectAddedDependencies(
 ): AddedDependency[] {
   if (!manifestDiff.hasPreviousManifest && !options.includeWithoutBaseline) return [];
 
-  const relocated = new Set<string>();
+  const relocated = new Map<string, string[]>();
   for (const entry of manifestDiff.dependencies) {
-    if (entry.status === "removed" && isInstallingSection(entry.section)) relocated.add(entry.key);
+    if (entry.status !== "removed" || !isInstallingSection(entry.section)) continue;
+    const specs = relocated.get(entry.key) ?? [];
+    if (entry.previous !== undefined) specs.push(entry.previous);
+    relocated.set(entry.key, specs);
   }
 
   const byName = new Map<string, AddedDependency>();
@@ -298,7 +301,10 @@ function isBundledInStagedArtifact(
   return (options.stagedFiles ?? []).some((file) => file.path.startsWith(prefix));
 }
 
-function introducesInstalledCode(entry: PackageJsonDiffEntry, relocated: Set<string>): boolean {
+function introducesInstalledCode(
+  entry: PackageJsonDiffEntry,
+  relocated: Map<string, string[]>,
+): boolean {
   if (
     entry.section === "peerDependencies" &&
     entry.status === "modified" &&
@@ -308,19 +314,17 @@ function introducesInstalledCode(entry: PackageJsonDiffEntry, relocated: Set<str
     return !dependencySpecsEqual(entry.previousInstalledSpec, entry.staged);
   }
   if (entry.status !== "added") return false;
-  if (
-    (entry.section === "optionalDependencies" && entry.previouslyInstalled) ||
-    dependencyWasInstalledAtStagedSpec(entry) ||
-    relocated.has(entry.key)
-  ) {
-    return false;
-  }
+  const relocatedSpecs = relocated.get(entry.key);
+  const wasInstalledAtStagedSpec = relocatedSpecs?.length
+    ? relocatedSpecs.some((spec) => dependencySpecsEqual(spec, entry.staged))
+    : dependencyWasInstalledAtStagedSpec(entry);
+  if (wasInstalledAtStagedSpec) return false;
   if (isInstallingSection(entry.section)) return true;
-  // A required peer newly *declared* by this release. `previouslyDeclared`
-  // covers the peer that already existed in another section.
-  return (
-    entry.section === "peerDependencies" && !entry.stagedPeerOptional && !entry.previouslyDeclared
-  );
+  // A required peer newly declared at a spec that was not already installed.
+  // `dependencyWasInstalledAtStagedSpec` above handles the same-spec duplicate;
+  // a same-named runtime declaration at a different spec can coexist with an
+  // auto-installed peer and therefore does not cover the peer's bytes.
+  return entry.section === "peerDependencies" && !entry.stagedPeerOptional;
 }
 
 function isInstallingSection(section: DependencySection | undefined): boolean {

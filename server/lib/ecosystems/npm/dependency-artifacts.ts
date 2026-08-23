@@ -331,7 +331,7 @@ async function inspectOne(
     : download.archiveSha1
       ? { algorithm: "sha1", value: download.archiveSha1.toLowerCase() }
       : null;
-  const declared = declaredDigest(dist);
+  const declared = declaredDigest(dist, reviewedDigest);
 
   if (
     download.files.some(
@@ -444,17 +444,27 @@ export function resolveDependencyVersion(metadata: RegistryMetadata, spec: strin
  * review is honestly unverified rather than compared against a digest nothing
  * recomputed.
  */
-function declaredDigest(dist: { integrity?: string; shasum?: string } | undefined) {
+function declaredDigest(
+  dist: { integrity?: string; shasum?: string } | undefined,
+  reviewed: DependencyDigest | null = null,
+) {
   if (!dist) return null;
   const sri = sha512FromIntegrity(dist.integrity);
-  if (sri) return { algorithm: "sha512", value: sri };
+  if (sri.length) {
+    const matching =
+      reviewed?.algorithm === "sha512"
+        ? sri.find((value) => value === reviewed.value.toLowerCase())
+        : null;
+    return { algorithm: "sha512", value: matching ?? sri[0] };
+  }
   return dist.shasum && /^[0-9a-f]{40}$/i.test(dist.shasum)
     ? { algorithm: "sha1", value: dist.shasum.toLowerCase() }
     : null;
 }
 
-function sha512FromIntegrity(integrity: string | undefined): string | null {
-  if (!integrity || integrity.length > 4_096) return null;
+function sha512FromIntegrity(integrity: string | undefined): string[] {
+  if (!integrity || integrity.length > 4_096) return [];
+  const digests: string[] = [];
   // An SRI header may list several digests, each optionally carrying `?opts`.
   for (const token of integrity.trim().split(/\s+/)) {
     const metadata = token.split("?", 1)[0];
@@ -464,12 +474,12 @@ function sha512FromIntegrity(integrity: string | undefined): string | null {
         char.charCodeAt(0),
       );
       if (bytes.length !== 64) continue;
-      return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      digests.push([...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
     } catch {
       continue;
     }
   }
-  return null;
+  return digests;
 }
 
 /**

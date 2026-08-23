@@ -22,7 +22,7 @@ Dependency-artifact review closes that gap for **newly introduced direct depende
 Selected (`selectAddedDependencies`, `server/lib/review/dependency-evidence.ts`):
 
 - `dependencies` and `optionalDependencies` — a plain consumer install downloads both;
-- **required** peers — npm 7+ installs peers automatically, so a required peer this release newly declares, or changes from optional to required without the same runtime spec already installed, is code that starts arriving in consumer trees because of it;
+- **required** peers — npm 7+ installs peers automatically, so a required peer this release newly declares, or changes from optional to required without the same runtime spec already installed, is code that starts arriving in consumer trees because of it; a same-named runtime declaration suppresses review only when its effective spec matches the new peer;
 - a required peer moved into an installing section with a different spec — the changed range can resolve package bytes that were not covered by the previous release's peer declaration.
 
 When the same key appears in both `dependencies` and `optionalDependencies`, npm treats the optional declaration as the effective install spec. Selection follows that precedence so Drydock reviews the version consumers actually resolve.
@@ -31,7 +31,7 @@ Deliberately excluded:
 
 - `devDependencies` — no consumer install fetches them;
 - optional peers (`peerDependenciesMeta[name].optional`) — a consumer opts into those rather than inheriting them;
-- keys that were already installed at the same spec and merely moved between sections — a relocation ships no new code;
+- keys that were already installed at the same effective spec and merely moved between sections — a relocation ships no new code; moving to or adding an overriding declaration at a different spec is reviewed because npm can resolve different bytes;
 - dependencies declared through `bundleDependencies` / `bundledDependencies` whose package bytes are actually present under `node_modules/` in the staged artifact — those bytes are already part of the parent review;
 - every dependency of a first-ever release (no baseline manifest), where the whole list diffs as "added" and inspecting it would describe the package rather than the release.
 
@@ -78,7 +78,7 @@ Severity is set by two independent axes. **Proven** asks whether the install hoo
 
 Both `critical` and `high` land on "block manual approval", so an install-time download does hold the release — a newly added dependency that fetches on every consumer install is worth reading once. It sits a tier below the dropper because `prebuild-install` fetching a platform binary and a dropper fetching a payload look identical to a scanner, and spending `critical` on `sharp` leaves nothing for the dropper. `added-dependency-prebuilt-downloader` in the corpus is that call, written down.
 
-Reachability comes from `lifecycleReachablePaths` (`server/lib/review/rules/reachability.ts`), which seeds **only** from install/build entrypoints — narrower than the consumer-reachable walk, because "installing this runs it" and "requiring this can run it" are different claims. Named scripts reached through `npm run` / `npm run-script` are part of that install chain and are expanded recursively. Inline commands in the expanded chain are scanned separately: the whole manifest is one file, so a capability elsewhere in `scripts.test` or another unrelated field must not be attributed to every consumer install merely because its finding is filed against `package.json`. The walk follows relative specifiers only, so an unproven edge downgrades severity rather than disappearing.
+Reachability comes from `lifecycleReachablePaths` (`server/lib/review/rules/reachability.ts`), which seeds **only** from install/build entrypoints — narrower than the consumer-reachable walk, because "installing this runs it" and "requiring this can run it" are different claims. Named scripts reached through `npm run` / `npm run-script` are part of that install chain and are expanded recursively, including invocations with npm config flags before or after the subcommand. Inline commands in the expanded chain are scanned separately: the whole manifest is one file, so a capability elsewhere in `scripts.test` or another unrelated field must not be attributed to every consumer install merely because its finding is filed against `package.json`. The walk follows relative specifiers only, so an unproven edge downgrades severity rather than disappearing.
 
 The whole family is release-scoped (`isReleaseScopedFinding`), so it counts toward `releaseRisk` and therefore reaches the workflow gate. A `critical` install-risk finding puts the release at "block manual approval".
 
@@ -98,7 +98,7 @@ A review-time resolution is a **snapshot**, never permanent provenance. The repo
 - **exact version** — the declaration fixes the version coordinate, but not the bytes; the recomputed digest remains the byte-level review evidence (`"exact"`);
 - **unresolved / uninspected** — no artifact was read, so the release cannot be represented as fully reviewed (`"unusual"`, or any `uninspectable` reason).
 
-`digestVerified` is three-valued on purpose: `true` when the registry's advertised digest and the recomputed digest agree, `false` when they disagree, and `null` when one was missing. A missing digest is unverified, never a match.
+`digestVerified` is three-valued on purpose: `true` when the registry's advertised digest and the recomputed digest agree, `false` when they disagree, and `null` when one was missing. A missing digest is unverified, never a match. When an SRI lists several SHA-512 digests, matching any one follows npm's integrity semantics; the matching digest is the one retained in the evidence row.
 
 ## Failing visibly
 
