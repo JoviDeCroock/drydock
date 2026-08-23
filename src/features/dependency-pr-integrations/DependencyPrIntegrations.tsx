@@ -1,6 +1,6 @@
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
-import { SectionLabel } from "../../components/Typography";
+import { MonoDetail, SectionLabel } from "../../components/Typography";
 
 const RENOVATE_PRESET = '"github>JoviDeCroock/drydock//renovate/diff-links"';
 
@@ -21,13 +21,13 @@ export function DependencyPrIntegrations() {
         </p>
       </div>
 
-      <div class="grid max-w-[920px] grid-cols-1 gap-3 md:grid-cols-2">
-        <Card as="article" class="min-w-0 p-4 flex flex-col gap-3">
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <Card as="article" padding="compact" class="min-w-0 flex flex-col gap-3">
           <h3 class="m-0 text-base font-medium">Renovate preset</h3>
           <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
             Extend one shared preset to add a Drydock column to npm and PyPI update tables.
           </p>
-          <code class="block rounded-md bg-surface-raised border border-border px-3 py-2 font-mono text-[11px] leading-[1.55] overflow-x-auto">
+          <code class="block rounded-md bg-surface-2 border border-border px-3 py-2 font-mono text-[11px] leading-[1.55] overflow-x-auto">
             {RENOVATE_PRESET}
           </code>
           <LinkButton
@@ -40,15 +40,13 @@ export function DependencyPrIntegrations() {
           </LinkButton>
         </Card>
 
-        <Card as="article" class="min-w-0 p-4 flex flex-col gap-3">
+        <Card as="article" padding="compact" class="min-w-0 flex flex-col gap-3">
           <h3 class="m-0 text-base font-medium">Dependabot workflow</h3>
           <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
             Copy a workflow that verifies Dependabot&apos;s signed commit, then upserts one
             diff-link comment for single or grouped updates without checking out PR code.
           </p>
-          <div class="font-mono text-[11px] text-ink-subtle">
-            npm + PyPI · grouped PRs supported
-          </div>
+          <MonoDetail parts={["npm + PyPI", "grouped PRs supported"]} />
           <LinkButton
             href="/docs#dependabot-diff-links"
             variant="secondary"
