@@ -213,7 +213,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.36.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.37.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -610,6 +610,14 @@ runtime spec stays a declaration-only change. Install hooks delegated through `n
 inline capabilities into the install-reachable set, and npm comparator whitespace resolves through the
 same bounded range parser. The required-peer transition, spec-change, and delegated-downloader fixtures
 pin these boundaries.
+
+`1.37.0` closes the remaining same-name dependency-review bypasses and integrity false positive. An
+optional override or installing-section relocation suppresses review only when its effective spec is
+unchanged; a newly required peer is likewise covered only by a same-spec runtime declaration. npm config
+flags around `npm run` can no longer hide a delegated install downloader, and a multi-hash SRI verifies
+when any advertised SHA-512 digest matches the reviewed bytes. The optional-override, different-spec peer,
+and flagged delegated-downloader dependency fixtures pin the gate-facing semantics; the SRI list behavior
+is pinned at the registry-resolution layer.
 
 ### Fixture format
 

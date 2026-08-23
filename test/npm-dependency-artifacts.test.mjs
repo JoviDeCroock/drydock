@@ -193,6 +193,31 @@ describe("inspectAddedNpmDependencies", () => {
     expect(review.dependencies[0].digestVerified).toBe(true);
   });
 
+  test("any matching SHA-512 entry satisfies a multi-hash SRI", async () => {
+    const url = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
+    const wrong = `sha512-${btoa(String.fromCharCode(...Array.from({ length: 64 }, () => 0x11)))}`;
+    const broker = brokerStub({
+      metadata: {
+        "proc-macro1": packument("proc-macro1", {
+          "0.1.0": { integrity: `${wrong} ${DROPPER_SRI}` },
+        }),
+      },
+      downloads: { [url]: DROPPER_TARBALL },
+    });
+
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
+    );
+
+    expect(review.dependencies[0].declaredDigest).toEqual({
+      algorithm: "sha512",
+      value: "ab".repeat(64),
+    });
+    expect(review.dependencies[0].digestVerified).toBe(true);
+  });
+
   test("persisted artifact provenance drops registry-controlled URL secrets", async () => {
     const safeUrl = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
     const fetchedUrl = `${safeUrl}?X-Amz-Credential=fake#fragment`;
