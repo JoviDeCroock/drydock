@@ -5,8 +5,18 @@ vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
 }));
 
+const npmConnectionMock = vi.hoisted(() => ({
+  getNpmConnection: vi.fn(),
+}));
+
+vi.mock("../server/db/npm-connections.ts", async () => ({
+  ...(await vi.importActual("../server/db/npm-connections.ts")),
+  getNpmConnection: npmConnectionMock.getNpmConnection,
+}));
+
 const { inspectAddedNpmDependencies, resolveDependencyVersion } =
   await import("../server/lib/ecosystems/npm/dependency-artifacts");
+const { createNpmBroker } = await import("../server/lib/ecosystems/npm/broker");
 const { summarizePackageJsonDiff } = await import("../server/lib/review");
 const { SandboxError } = await import("../server/lib/sandbox");
 
@@ -119,7 +129,19 @@ describe("resolveDependencyVersion", () => {
     expect(resolveDependencyVersion(metadata, "next")).toBe("1.4.7");
   });
 
-  test("a range resolves to the highest published version it admits", () => {
+  test("a range prefers the default tag when it satisfies the range", () => {
+    expect(
+      resolveDependencyVersion(
+        {
+          versions: { "1.0.0": {}, "1.4.7": {} },
+          "dist-tags": { latest: "1.0.0", next: "1.4.7" },
+        },
+        "^1.0.0",
+      ),
+    ).toBe("1.0.0");
+  });
+
+  test("a range falls back to its highest match when latest is outside it", () => {
     expect(resolveDependencyVersion(metadata, "^1.0.0")).toBe("1.4.7");
   });
 
@@ -130,6 +152,25 @@ describe("resolveDependencyVersion", () => {
         "latest",
       ),
     ).toBeNull();
+  });
+});
+
+describe("NpmBroker registry snapshot", () => {
+  test("keeps one registry URL for every anonymous read in a broker lifetime", async () => {
+    npmConnectionMock.getNpmConnection
+      .mockResolvedValueOnce({ validationStatus: "valid", registryUrl: "https://registry-a.test" })
+      .mockResolvedValueOnce({ validationStatus: "valid", registryUrl: "https://registry-b.test" });
+    const broker = createNpmBroker(
+      { env: {}, executionCtx: {}, db: {}, session: {} },
+      { organizationId: "org-1" },
+    );
+
+    await expect(Promise.all([broker.registryUrl(), broker.registryUrl()])).resolves.toEqual([
+      "https://registry-a.test",
+      "https://registry-a.test",
+    ]);
+    await expect(broker.registryUrl()).resolves.toBe("https://registry-a.test");
+    expect(npmConnectionMock.getNpmConnection).toHaveBeenCalledTimes(1);
   });
 });
 
