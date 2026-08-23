@@ -401,6 +401,8 @@ export interface DependencyArtifactAssessment {
   automaticExecution: DependencyExecutionEntrypoint[];
   capabilities: string[];
   installReachableCapabilities: string[];
+  /** Install-reachable files whose bodies the parser deliberately did not retain. */
+  installReachableUninspectedFiles: string[];
   verdict: DependencyVerdict;
   /**
    * True when a danger capability exists in the artifact but no automatic
@@ -452,6 +454,14 @@ export function assessDependencyArtifact(
       ...inlineInstallCapabilities,
     ]),
   ].sort();
+  const installReachableUninspectedFiles = files
+    .filter(
+      (file) =>
+        file.flags.includes("text-sample-skipped") &&
+        reachable.has(normalizeReachabilityPath(file.path)),
+    )
+    .map((file) => file.path)
+    .sort();
 
   const hasAutomaticExecution = automaticExecution.length > 0;
   const reachableDanger = installReachableCapabilities.some(
@@ -470,10 +480,68 @@ export function assessDependencyArtifact(
     automaticExecution,
     capabilities,
     installReachableCapabilities,
+    installReachableUninspectedFiles,
     verdict,
     installReachUnproven: hasAutomaticExecution && anyDanger && !reachableDanger,
     findings,
   };
+}
+
+export interface DependencyInstallRiskClassification {
+  severity: "medium" | "high" | "critical";
+  proven: boolean;
+  strong: boolean;
+  observedCapabilities: string[];
+}
+
+/**
+ * Classify the two independent axes behind an `install-risk` verdict.
+ *
+ * Shared by finding projection and the report UI so a row cannot claim a
+ * critical proven install path when the deterministic finding deliberately
+ * reports only medium unproven network capability.
+ */
+export function classifyDependencyInstallRisk(
+  evidence: Pick<DependencyEvidence, "verdict" | "capabilities" | "installReachableCapabilities">,
+): DependencyInstallRiskClassification | null {
+  if (evidence.verdict !== "install-risk") return null;
+  const proven = evidence.installReachableCapabilities.some((ruleId) =>
+    INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
+  );
+  const observedCapabilities = proven
+    ? evidence.installReachableCapabilities
+    : evidence.capabilities;
+  const strong = observedCapabilities.some((ruleId) => STRONG_INSTALL_DANGER_RULE_IDS.has(ruleId));
+  return {
+    severity: strong ? (proven ? "critical" : "high") : proven ? "high" : "medium",
+    proven,
+    strong,
+    observedCapabilities,
+  };
+}
+
+const SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.dependencyAdded,
+  DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
+]);
+
+/**
+ * Replace the manifest-only "this dependency was not inspected" signal once
+ * the dependency pass has a more precise terminal record for that declaration.
+ */
+export function reconcileDependencyReviewFindings<T extends Finding>(
+  findings: T[],
+  review: DependencyReview,
+): T[] {
+  const reviewedDeclarations = new Set(
+    review.dependencies.map((dependency) => `${dependency.name}: ${dependency.declaredSpec}`),
+  );
+  if (!reviewedDeclarations.size) return findings;
+  return findings.filter(
+    (finding) =>
+      !SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS.has(finding.ruleId ?? "") ||
+      !reviewedDeclarations.has(finding.evidence),
+  );
 }
 
 /**
@@ -632,16 +700,13 @@ export function dependencyEvidenceFindings(
       // reachability can miss a dynamic edge, so an unproven reach is demoted
       // rather than dropped. `strong` is "does this behavior have a benign
       // reading?" — a remote shell does not, an HTTPS download does.
-      const proven = evidence.installReachableCapabilities.some((ruleId) =>
-        INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
-      );
-      const observed = proven ? evidence.installReachableCapabilities : evidence.capabilities;
-      const strong = observed.some((ruleId) => STRONG_INSTALL_DANGER_RULE_IDS.has(ruleId));
+      const classification = classifyDependencyInstallRisk(evidence)!;
+      const { proven, strong, observedCapabilities: observed } = classification;
       const behaviors =
         describeCapabilities(observed) ||
         "install-time behavior Drydock flags as downloader-shaped";
       findings.push({
-        severity: strong ? (proven ? "critical" : "high") : proven ? "high" : "medium",
+        severity: classification.severity,
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
         ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallRisk,
         evidence: `${path} → ${behaviors}`,

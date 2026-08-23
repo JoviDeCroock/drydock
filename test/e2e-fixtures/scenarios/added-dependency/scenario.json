@@ -20,7 +20,7 @@
     "packageName": "@drydock/e2e-dependency-parent",
     "stagedVersion": "1.0.1",
     "previousVersion": "1.0.0",
-    "ruleIds": ["dependency.added", "dependency-artifact.install-risk"],
+    "ruleIds": ["dependency-artifact.install-risk"],
     "baseline": {
       "version": "1.0.0",
       "source": "dist-tag",

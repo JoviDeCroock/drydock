@@ -71,6 +71,7 @@ export {
 export { annotateFindingsWithDiffStatus, normalizeFindingDiffStatus } from "./diff-annotation";
 export {
   assessDependencyArtifact,
+  classifyDependencyInstallRisk,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
   dependencyEvidenceFindings,
@@ -80,6 +81,7 @@ export {
   MAX_RECORDED_DEPENDENCIES,
   type DependencySelectionOptions,
   normalizeDependencyReview,
+  reconcileDependencyReviewFindings,
   sanitizeDependencyArtifactUrl,
   selectAddedDependencies,
 } from "./dependency-evidence";

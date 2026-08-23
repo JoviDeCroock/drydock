@@ -21,7 +21,6 @@
     "previousVersion": "1.0.0",
     "ruleIds": [
       "install-script.implicit-node-gyp",
-      "dependency.added",
       "dependency.major-bump",
       "dependency-artifact.uninspectable"
     ],

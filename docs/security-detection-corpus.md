@@ -70,7 +70,7 @@ The first corpus slice covers:
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
-- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
+- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency initially raises `dependency.added` (replaced by the terminal dependency-artifact result when that review runs) and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code outside the parent artifact — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
 ## Known coverage gaps
@@ -145,7 +145,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.35.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.36.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -440,6 +440,15 @@ flags around `npm run` can no longer hide a delegated install downloader, and a 
 when any advertised SHA-512 digest matches the reviewed bytes. The optional-override, different-spec peer,
 and flagged delegated-downloader dependency fixtures pin the gate-facing semantics; the SRI list behavior
 is pinned at the registry-resolution layer.
+
+`1.36.0` closes a dependency-artifact completeness gap and aligns the gate and report with the precise
+review result. A minified JavaScript file or source map whose text the parser deliberately omits now
+fails visibly when an install hook can reach it, pinned by
+`added-dependency-install-skipped-content`; unrelated omitted assets remain valid hard negatives. Once a
+dependency has a terminal inspected or uninspectable record, that evidence replaces the older
+declaration-only `dependency.added` / `dependency.optional-added` finding, so a clean reviewed dependency
+can remain low risk. Finding projection and the report UI now share the same proven/unproven install-risk
+classifier, keeping their severity and claims aligned.
 
 ### Fixture format
 
