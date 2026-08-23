@@ -10,7 +10,7 @@ import {
 
 const SHA = "ab".repeat(32);
 
-function manifestFile(overrides = {}) {
+function manifestFile(overrides = {}, pretty = false) {
   const manifest = {
     manifest_version: 3,
     name: "Tab helper",
@@ -21,10 +21,10 @@ function manifestFile(overrides = {}) {
   };
   return {
     path: "manifest.json",
-    size: JSON.stringify(manifest).length,
+    size: JSON.stringify(manifest, null, pretty ? 2 : undefined).length,
     sha256: "11".repeat(32),
     flags: [],
-    textSample: JSON.stringify(manifest),
+    textSample: JSON.stringify(manifest, null, pretty ? 2 : undefined),
   };
 }
 
@@ -136,5 +136,49 @@ describe("browser extension review adapter", () => {
       ]),
     );
     expect(review.risk).toBe("high");
+  });
+
+  test.each([
+    "default-src 'self' cdn.example.invalid",
+    "script-src 'self' cdn.example.invalid; object-src 'self'",
+  ])("flags effective non-package script sources in CSP: %s", (contentSecurityPolicy) => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ content_security_policy: contentSecurityPolicy })],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toContain(
+      "browser.unsafe-extension-csp",
+    );
+  });
+
+  test("anchors optional permissions to the manifest property that supplied them", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile(
+      {
+        optional_permissions: ["nativeMessaging"],
+        host_permissions: ["https://example.invalid/*"],
+        optional_host_permissions: ["<all_urls>"],
+      },
+      true,
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files: [manifestRecord] },
+    });
+    const lines = manifestRecord.textSample.split("\n");
+    expect(
+      review.ruleFindings.find((finding) => finding.ruleId === "browser.privileged-permission")
+        ?.line,
+    ).toBe(lines.findIndex((line) => line.includes('"optional_permissions"')) + 1);
+    expect(
+      review.ruleFindings.find((finding) => finding.ruleId === "browser.broad-host-access")?.line,
+    ).toBe(lines.findIndex((line) => line.includes('"optional_host_permissions"')) + 1);
   });
 });

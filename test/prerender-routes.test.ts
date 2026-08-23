@@ -57,7 +57,9 @@ describe("page SEO metadata", () => {
     expect(homePageSeo).toMatchObject({
       title: "Drydock Package Review: pre-publish package security",
     });
-    expect(homePageSeo.description).toContain("exact npm, PyPI, or VS Code artifact");
+    expect(homePageSeo.description).toContain(
+      "exact npm, PyPI, VS Code, or browser-extension artifact",
+    );
   });
 
   it("gives each incident analysis distinct canonical metadata", () => {

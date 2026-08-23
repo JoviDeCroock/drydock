@@ -126,11 +126,11 @@ review sat just past the limit.
   `drydock (beta)`, so a README carrying several rows can be read apart;
   `drydock (rc, unverified)` when the pick is also manifest-claimed.
 - A review with **no** tag answers only the default badge. Two populations are
-  untagged — ecosystems without dist-tags (all PyPI and VS Code reviews, all
+  untagged — ecosystems without dist-tags (all PyPI, VS Code, and browser-extension reviews, all
   gate scans) and staged scans predating tag capture — and all of them describe
   the release a consumer installs by default. Admitting them into a `?tag=beta`
   request would answer a question about the beta line with a review of
-  something else, so on PyPI and VS Code every non-default tag is
+  something else, so on PyPI, VS Code, and browser extensions every non-default tag is
   `not reviewed`.
 - A malformed tag (empty, longer than 64 characters, or containing characters
   outside npm's URI-safe dist-tag alphabet) is a `400`, not a silent fall back
@@ -149,7 +149,7 @@ candidates the newest **registry-verified** review wins (see package identity
 below), so on npm a workflow-gate scan claiming someone else's name cannot
 displace the real maintainer's staged review. That preference is only a
 tiebreak, and it does not generalize: only npm has a staged adapter, so every
-PyPI and VS Code review is a workflow gate and is _always_ manifest-claimed —
+PyPI, VS Code, and browser-extension review is a workflow gate and is _always_ manifest-claimed —
 there is never a registry-verified row to prefer. A manifest-claimed pick
 therefore renders as `drydock (unverified)` and never takes the clean green
 low-risk color, because anyone can build an artifact whose manifest claims any
@@ -170,7 +170,7 @@ Without that, a maintainer who lists a prerelease review would paste a badge
 that never shows it. The badge image always reflects the newest listed review
 _on that line_, so the click target is chosen to not pin what the badge does
 not: npm links the evergreen package-only `/diff/<name>` page (it resolves the
-latest published pair on load), while PyPI and VS Code — which have no
+latest published pair on load), while PyPI, VS Code, and browser extensions — which have no
 package-only diff form — link the share URL the maintainer copied, correct at
 copy time but version-pinned.
 
@@ -232,7 +232,7 @@ Each feed entry carries `packageIdentity`:
 `ecosystem` is `null` when a gate scan's provenance snapshot never established
 one — a legacy pre-provenance record, or a redaction that failed. Such a scan
 can still be feed-listed, but it is not badge-discoverable under any ecosystem:
-defaulting an unknown to npm would let a PyPI or VS Code release take the npm
+defaulting an unknown to npm would let a PyPI, VS Code, or browser release take the npm
 badge for its own name, in the one ecosystem where a registry-verified review
 exists to be displaced. Partners should treat a null `ecosystem` as unknown
 rather than assuming npm.
@@ -249,7 +249,7 @@ participates because it is the one parameter that changes the body. A listing
 change purges the entry for the scan's own tag (the default entry when the scan
 has none), not a guessed set of tags. Case is part of that key for npm — the registry treats
 existing names case-sensitively, so `JSONStream` and `jsonstream` are different
-packages and must not share a badge — while PyPI (PEP 503) and VS Code fold, as
+packages and must not share a badge — while PyPI (PEP 503), VS Code, and browser ids fold, as
 `publicPackageLookupKey` documents. Two consequences: `/badge/npm/React` is its
 own entry and resolves to "not reviewed", and the origin must be the _canonical_
 one on both the write and the purge, or a second bound hostname builds entries

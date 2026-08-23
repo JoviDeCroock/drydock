@@ -1,0 +1,23 @@
+{
+  "id": "browser-csp-default-source",
+  "title": "WebExtension with a bare remote host in default-src",
+  "category": "browser-extension",
+  "intent": "The effective script policy must fall back to default-src and bare CSP host sources must not bypass the remote-script finding.",
+  "slug": "csp-helper",
+  "extensionId": "csp-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "6767676767676767676767676767676767676767676767676767676767676767",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 300,
+      "sha256": "7878787878787878787878787878787878787878787878787878787878787878",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"CSP helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"csp-helper@example.invalid\" } },\n  \"content_security_policy\": \"default-src 'self' cdn.example.invalid\"\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.unsafe-extension-csp", "severity": "high", "file": "manifest.json" }
+  ]
+}

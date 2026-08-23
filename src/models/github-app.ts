@@ -16,7 +16,7 @@ export interface PublicGithubAppInstallation {
   updatedAt: string;
 }
 
-type SupportedEcosystem = "pypi" | "npm" | "vscode" | "browser";
+export type SupportedEcosystem = "pypi" | "npm" | "vscode" | "browser";
 
 export interface PublicReleaseTarget {
   id: string;
@@ -203,6 +203,21 @@ export function selectUnmappedRepositories(
   return repositories.filter((repo) => !mapped.has(repo.id));
 }
 
+export function buildReleaseTargetPayload(input: {
+  installationRowId: string;
+  repositoryFullName: string;
+  environment: string;
+  ecosystem: SupportedEcosystem | null;
+}): Record<string, string> {
+  const payload: Record<string, string> = {
+    installationRowId: input.installationRowId.trim(),
+    repositoryFullName: input.repositoryFullName.trim(),
+    environment: input.environment.trim(),
+  };
+  if (input.ecosystem) payload.ecosystem = input.ecosystem;
+  return payload;
+}
+
 export const GithubAppModel = createModel(() => {
   const config = signal<GithubAppConfigState | null>(null);
   const installations = signal<PublicGithubAppInstallation[]>([]);
@@ -220,6 +235,7 @@ export const GithubAppModel = createModel(() => {
   const formInstallationRowId = signal<string>("");
   const formRepositoryFullName = signal<string>("");
   const formEnvironment = signal<string>("");
+  const formEcosystem = signal<SupportedEcosystem | null>(null);
   const formStatus = signal<ReleaseTargetFormStatus>("idle");
   const formError = signal<string | null>(null);
 
@@ -311,6 +327,7 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId.value = "";
     formRepositoryFullName.value = "";
     formEnvironment.value = "";
+    formEcosystem.value = null;
     formError.value = null;
   }
 
@@ -334,6 +351,7 @@ export const GithubAppModel = createModel(() => {
     formInstallationRowId,
     formRepositoryFullName,
     formEnvironment,
+    formEcosystem,
     formStatus,
     formError,
     formSubmitting,
@@ -464,20 +482,25 @@ export const GithubAppModel = createModel(() => {
       formError.value = null;
     },
 
+    selectEcosystem(ecosystem: SupportedEcosystem | null) {
+      formEcosystem.value = ecosystem;
+      formError.value = null;
+    },
+
     async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
       if (formSubmitting.value) return null;
       formStatus.value = "submitting";
       formError.value = null;
       try {
-        // Ecosystem and artifact name are intentionally omitted: the server
-        // treats both as auto-detect (null), deriving each package's ecosystem
-        // from the uploaded artifacts and scanning every artifact the held run
-        // uploads — the monorepo-friendly default, now the only behavior.
-        const payload: Record<string, string> = {
-          installationRowId: formInstallationRowId.value.trim(),
-          repositoryFullName: formRepositoryFullName.value.trim(),
-          environment: formEnvironment.value.trim(),
-        };
+        // Artifact name stays auto-detected. Ecosystem is omitted for the
+        // monorepo-friendly default, but may be pinned when a generic archive
+        // suffix (notably browser-extension ZIP) is intentionally ambiguous.
+        const payload = buildReleaseTargetPayload({
+          installationRowId: formInstallationRowId.value,
+          repositoryFullName: formRepositoryFullName.value,
+          environment: formEnvironment.value,
+          ecosystem: formEcosystem.value,
+        });
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",
           payload,

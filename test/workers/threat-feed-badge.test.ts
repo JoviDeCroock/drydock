@@ -72,7 +72,7 @@ async function seedCompletedScan(
     version?: string;
     risk?: string;
     releaseRisk?: string;
-    ecosystem?: "npm" | "pypi" | "vscode";
+    ecosystem?: "npm" | "pypi" | "vscode" | "browser";
     source?: "manual" | "workflow_gate";
     registryUrl?: string;
     // The dist-tag the release was staged under. Only npm staged-publish scans
@@ -126,11 +126,7 @@ async function seedCompletedScan(
               provenance: {
                 ecosystem: gateEcosystem,
                 mode: "workflow_gate",
-                artifacts: [
-                  gateEcosystem === "npm"
-                    ? { path: "pkg.tgz", kind: "tarball", sha256: "a".repeat(64) }
-                    : { path: "dist/a.whl", kind: "wheel", sha256: "a".repeat(64) },
-                ],
+                artifacts: [gateArtifact(gateEcosystem)],
               },
             },
           }
@@ -151,6 +147,20 @@ async function seedCompletedScan(
     report: { version: 1, digest: "abc123" },
   });
   return scanId;
+}
+
+function gateArtifact(ecosystem: "npm" | "pypi" | "vscode" | "browser") {
+  const sha256 = "a".repeat(64);
+  switch (ecosystem) {
+    case "npm":
+      return { path: "pkg.tgz", kind: "tarball", sha256 };
+    case "pypi":
+      return { path: "dist/a.whl", kind: "wheel", sha256 };
+    case "vscode":
+      return { path: "dist/a.vsix", kind: "vsix", sha256 };
+    case "browser":
+      return { path: "dist/a.zip", kind: "zip", sha256 };
+  }
 }
 
 async function share(
@@ -381,12 +391,12 @@ describe("shields badge endpoint", () => {
     });
   });
 
-  test("PyPI and VS Code badges are always labelled unverified", async () => {
-    // Only npm has a staged adapter, so every PyPI and VS Code review is a
+  test("PyPI, VS Code, and browser badges are always labelled unverified", async () => {
+    // Only npm has a staged adapter, so every PyPI, VS Code, and browser review is a
     // workflow gate and can never be registry-verified. The "verified wins"
     // tiebreak has nothing to prefer there, which makes the label the only
     // thing separating a maintainer's review from anyone's claim on the name.
-    for (const ecosystem of ["pypi", "vscode"] as const) {
+    for (const ecosystem of ["pypi", "vscode", "browser"] as const) {
       const claimant = await seedUser();
       const claimantApp = buildTestApp(claimant);
       const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -401,6 +411,10 @@ describe("shields badge endpoint", () => {
       const badge = await fetchBadge(claimantApp, ecosystem, packageName);
       expect(badge.body.label).toBe("drydock (unverified)");
       expect(badge.body.color).toBe("lightgrey");
+      const feed = await fetchFeed(claimantApp);
+      expect(feed.entries.find((entry) => entry.package === packageName)?.ecosystem).toBe(
+        ecosystem,
+      );
     }
   });
 
@@ -659,10 +673,10 @@ describe("shields badge endpoint", () => {
     });
     await share(app, scanId, { threatFeed: true });
 
-    // Defaulting an unknowable ecosystem to npm would hand a PyPI or VS Code
+    // Defaulting an unknowable ecosystem to npm would hand another ecosystem's
     // release the npm badge for its own name — the one ecosystem where a real
     // registry-verified review exists to be displaced.
-    for (const ecosystem of ["npm", "pypi", "vscode"] as const) {
+    for (const ecosystem of ["npm", "pypi", "vscode", "browser"] as const) {
       expect((await fetchBadge(app, ecosystem, packageName)).body.message).toBe("not reviewed");
     }
 
@@ -691,6 +705,15 @@ describe("shields badge endpoint", () => {
     });
     await share(app, vscodeScan, { threatFeed: true });
     expect((await fetchBadge(app, "vscode", "publisher.powershell")).body.message).toContain(
+      "reviewed",
+    );
+
+    const browserScan = await seedCompletedScan(owner, {
+      packageName: "Tab-Helper@Example.Invalid",
+      ecosystem: "browser",
+    });
+    await share(app, browserScan, { threatFeed: true });
+    expect((await fetchBadge(app, "browser", "tab-helper@example.invalid")).body.message).toContain(
       "reviewed",
     );
   });

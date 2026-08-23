@@ -1,6 +1,11 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
-import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
+import { ECOSYSTEM_LABELS } from "../../../../server/lib/ecosystems/labels";
+import {
+  GithubAppModel,
+  type PublicGithubAppInstallation,
+  type SupportedEcosystem,
+} from "../../../models/github-app";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { SettingsCardForm } from "../../../components/Card";
@@ -39,9 +44,10 @@ export function ReleaseTargetForm({
 
   return (
     <SettingsCardForm onSubmit={onSubmit}>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <RepositorySelector githubApp={githubApp} />
         <EnvironmentSelector githubApp={githubApp} />
+        <EcosystemSelector githubApp={githubApp} />
       </div>
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
@@ -52,6 +58,33 @@ export function ReleaseTargetForm({
         </Button>
       </div>
     </SettingsCardForm>
+  );
+}
+
+function EcosystemSelector({ githubApp }: { githubApp: GithubApp }) {
+  const ecosystem = githubApp.formEcosystem.value;
+  const submitting = githubApp.formSubmitting.value;
+
+  return (
+    <Field label="Artifact ecosystem" for="releaseTargetEcosystem">
+      <Select
+        id="releaseTargetEcosystem"
+        value={ecosystem ?? "auto"}
+        disabled={submitting}
+        onChange={(value) =>
+          githubApp.selectEcosystem(value === "auto" ? null : (value as SupportedEcosystem))
+        }
+      >
+        <option value="auto">Auto-detect</option>
+        <option value="npm">{ECOSYSTEM_LABELS.npm}</option>
+        <option value="pypi">{ECOSYSTEM_LABELS.pypi}</option>
+        <option value="vscode">{ECOSYSTEM_LABELS.vscode}</option>
+        <option value="browser">{ECOSYSTEM_LABELS.browser} (ZIP/XPI)</option>
+      </Select>
+      <Muted class="text-[12px] mt-1.5">
+        Choose Browser extension for a .zip; generic ZIP artifacts are not auto-detected.
+      </Muted>
+    </Field>
   );
 }
 

@@ -3,13 +3,14 @@ import { coloCacheDelete } from "./platform/colo-cache";
 
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
 
-export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode"] as const;
+export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode", "browser"] as const;
 export type PublicEcosystem = (typeof PUBLIC_ECOSYSTEMS)[number];
 
 const PUBLIC_PACKAGE_NAME_MAX: Record<PublicEcosystem, number> = {
   npm: 214,
   pypi: 214,
   vscode: 257,
+  browser: 255,
 };
 
 export function publicPackageNameMax(ecosystem: PublicEcosystem): number {
@@ -20,7 +21,7 @@ export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: 
   const normalized =
     ecosystem === "pypi"
       ? packageName.toLowerCase().replace(/[-_.]+/g, "-")
-      : ecosystem === "vscode"
+      : ecosystem === "vscode" || ecosystem === "browser"
         ? packageName.toLowerCase()
         : packageName;
   return `${ecosystem}:${normalized}`;
@@ -108,13 +109,15 @@ function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
       const provenance = (stagedPublish as { provenance?: unknown }).provenance;
       if (provenance && typeof provenance === "object" && !Array.isArray(provenance)) {
         const ecosystem = (provenance as { ecosystem?: unknown }).ecosystem;
-        if (ecosystem === "pypi" || ecosystem === "vscode" || ecosystem === "npm") {
-          return ecosystem;
-        }
+        if (isPublicEcosystem(ecosystem)) return ecosystem;
       }
     }
   }
   return null;
+}
+
+function isPublicEcosystem(value: unknown): value is PublicEcosystem {
+  return typeof value === "string" && (PUBLIC_ECOSYSTEMS as readonly string[]).includes(value);
 }
 
 // Never guess an ecosystem for a gate scan with missing provenance.

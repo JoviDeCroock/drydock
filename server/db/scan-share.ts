@@ -5,6 +5,7 @@ import {
   publicPackageLookupKey,
   scanDistTag,
   scanEcosystem,
+  type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -420,7 +421,7 @@ export function threatFeedNextCursor(
 export async function listBadgeCandidateScans(
   db: AppDb,
   packageName: string,
-  ecosystem: "npm" | "pypi" | "vscode",
+  ecosystem: PublicEcosystem,
   tag: string = DEFAULT_BADGE_TAG,
   limit = 20,
 ): Promise<SharedScanRow[]> {

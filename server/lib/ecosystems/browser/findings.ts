@@ -77,13 +77,17 @@ function browserManifestFindings(
     );
   }
 
-  for (const permission of unique([...manifest.permissions, ...manifest.optionalPermissions])) {
+  const permissions = uniqueManifestValues([
+    ["permissions", manifest.permissions],
+    ["optional_permissions", manifest.optionalPermissions],
+  ]);
+  for (const { value: permission, property } of permissions) {
     if (!PRIVILEGED_PERMISSIONS.has(permission)) continue;
     findings.push(
       browserTag("privilegedPermission", {
         severity: "high",
         file: "manifest.json",
-        line: firstJsonPropertyLine(manifestFile?.textSample, "permissions", permission),
+        line: firstJsonPropertyLine(manifestFile?.textSample, property, permission),
         evidence: `extension requests privileged permission ${permission}`,
         reason:
           "this permission grants control over browser or host capabilities that can materially expand the impact of compromised extension code",
@@ -91,18 +95,18 @@ function browserManifestFindings(
     );
   }
 
-  const broadHost = unique([
-    ...manifest.hostPermissions,
-    ...manifest.optionalHostPermissions,
-    ...manifest.permissions,
-  ]).find(isAllUrlsPattern);
+  const broadHost = uniqueManifestValues([
+    ["host_permissions", manifest.hostPermissions],
+    ["optional_host_permissions", manifest.optionalHostPermissions],
+    ["permissions", manifest.permissions],
+  ]).find(({ value }) => isAllUrlsPattern(value));
   if (broadHost) {
     findings.push(
       browserTag("broadHostAccess", {
         severity: "high",
         file: "manifest.json",
-        line: firstJsonPropertyLine(manifestFile?.textSample, "host_permissions", broadHost),
-        evidence: `extension requests host access ${broadHost}`,
+        line: firstJsonPropertyLine(manifestFile?.textSample, broadHost.property, broadHost.value),
+        evidence: `extension requests host access ${broadHost.value}`,
         reason:
           "access to every site lets extension code read or alter sensitive browser content across unrelated origins",
       }),
@@ -172,15 +176,47 @@ function isBroadExternalOrigin(value: string): boolean {
 function unsafeExtensionCspEvidence(value: string | null): string | null {
   if (!value) return null;
   if (/['"]unsafe-eval['"]/i.test(value)) return "extension CSP permits unsafe-eval";
-  const scriptSource = /(?:^|;)\s*script-src\s+([^;]+)/i.exec(value)?.[1] ?? "";
-  const remote = scriptSource
-    .split(/\s+/)
-    .find((source) => source === "*" || /^https?:$/i.test(source) || /^https?:\/\//i.test(source));
-  return remote ? `extension CSP permits remote script source ${remote}` : null;
+  const directives = parseCspDirectives(value);
+  const scriptSources = directives.get("script-src") ?? directives.get("default-src") ?? [];
+  const nonPackageSource = scriptSources.find(isNonPackageScriptSource);
+  return nonPackageSource
+    ? `extension CSP permits non-package script source ${nonPackageSource}`
+    : null;
 }
 
-function unique(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+function parseCspDirectives(value: string): Map<string, string[]> {
+  const directives = new Map<string, string[]>();
+  for (const segment of value.split(";")) {
+    const [rawName, ...sources] = segment.trim().split(/\s+/);
+    if (!rawName) continue;
+    const name = rawName.toLowerCase();
+    if (!directives.has(name)) directives.set(name, sources.filter(Boolean));
+  }
+  return directives;
+}
+
+function isNonPackageScriptSource(source: string): boolean {
+  const normalized = source.trim().toLowerCase();
+  if (!normalized || normalized === "'self'" || normalized === "'none'") return false;
+  if (/^'(?:nonce-|sha(?:256|384|512)-)/.test(normalized)) return false;
+  // Other quoted tokens are CSP keywords rather than remote source expressions.
+  return !normalized.startsWith("'");
+}
+
+function uniqueManifestValues(
+  fields: Array<readonly [property: string, values: string[]]>,
+): Array<{ value: string; property: string }> {
+  const seen = new Set<string>();
+  const values: Array<{ value: string; property: string }> = [];
+  for (const [property, fieldValues] of fields) {
+    for (const rawValue of fieldValues) {
+      const value = rawValue.trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      values.push({ value, property });
+    }
+  }
+  return values;
 }
 
 function browserTag(

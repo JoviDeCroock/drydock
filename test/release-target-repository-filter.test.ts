@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildReleaseTargetPayload,
   selectUnmappedRepositories,
   type InstallationRepository,
   type PublicReleaseTarget,
@@ -17,6 +18,7 @@ function target(repositoryId: number): PublicReleaseTarget {
     organizationId: "org_1",
     installationRowId: "inst_1",
     ecosystem: "pypi",
+    artifactName: null,
     repositoryId,
     repositoryFullName: "octo/whatever",
     environment: "pypi-release",
@@ -45,5 +47,27 @@ describe("selectUnmappedRepositories", () => {
   test("returns an empty list once every accessible repo is mapped", () => {
     const allMapped = selectUnmappedRepositories(repos, [target(1), target(2), target(3)]);
     expect(allMapped).toEqual([]);
+  });
+});
+
+describe("buildReleaseTargetPayload", () => {
+  const form = {
+    installationRowId: " inst_1 ",
+    repositoryFullName: " octo/alpha ",
+    environment: " release ",
+  };
+
+  test("omits ecosystem for auto-detection", () => {
+    expect(buildReleaseTargetPayload({ ...form, ecosystem: null })).toEqual({
+      installationRowId: "inst_1",
+      repositoryFullName: "octo/alpha",
+      environment: "release",
+    });
+  });
+
+  test("pins browser archives when selected", () => {
+    expect(buildReleaseTargetPayload({ ...form, ecosystem: "browser" })).toMatchObject({
+      ecosystem: "browser",
+    });
   });
 });

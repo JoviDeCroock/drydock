@@ -161,7 +161,7 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 
 Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives identity from `browser_specific_settings.gecko.id` (or the legacy `applications.gecko.id`) when present and otherwise uses the manifest name; the version always comes from `manifest.json`.
 
-Pin the release target's ecosystem to **Browser extensions** when publishing a `.zip`. ZIP is also a generic CI/source-artifact extension, so unpinned auto-detection deliberately ignores it instead of letting an unrelated ZIP block another ecosystem's gate. Browser-specific `.xpi` artifacts remain safe to auto-detect.
+Choose **Browser extension** in the release target's **Artifact ecosystem** selector when publishing a `.zip`. ZIP is also a generic CI/source-artifact extension, so unpinned auto-detection deliberately ignores it instead of letting an unrelated ZIP block another ecosystem's gate. Browser-specific `.xpi` artifacts remain safe to auto-detect.
 
 The browser adapter (`server/lib/ecosystems/browser/`):
 
