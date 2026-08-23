@@ -67,11 +67,13 @@ export {
   failedDependencyReview,
   MAX_INSPECTED_DEPENDENCIES,
   MAX_RECORDED_DEPENDENCIES,
+  mergeDependencyReviews,
   type DependencySelectionOptions,
   normalizeDependencyReview,
   reconcileDependencyReviewFindings,
-  sanitizeDependencyArtifactUrl,
+  sanitizeDependencyArtifactOrigin,
   selectAddedDependencies,
+  selectBundledAddedDependencies,
 } from "./dependency-evidence";
 export type {
   AddedDependency,

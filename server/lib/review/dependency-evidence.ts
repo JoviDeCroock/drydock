@@ -48,6 +48,7 @@ import {
 } from "./rules/reachability";
 import { normalizeStringRecord } from "../tar-parser.js";
 import { isRecord } from "../platform/guards";
+import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
 
 /**
  * Synthetic file-label prefix for a dependency finding. The cited path is
@@ -131,7 +132,8 @@ export interface DependencyEvidence {
   resolvedVersion: string | null;
   /** Registry host the artifact was resolved from, for provenance context. */
   registryHost: string | null;
-  artifactUrl: string | null;
+  /** HTTP(S) origin only. Registry-controlled paths may themselves carry signed credentials. */
+  artifactOrigin: string | null;
   /** Digest the registry advertised for the resolved version. */
   declaredDigest: DependencyDigest | null;
   /** Digest recomputed from the bytes Drydock actually fetched and parsed. */
@@ -176,6 +178,31 @@ export const EMPTY_DEPENDENCY_REVIEW: DependencyReview = {
   omittedCount: 0,
   dependencies: [],
 };
+
+/** Merge exact embedded evidence with registry-fetched evidence under one report budget. */
+export function mergeDependencyReviews(...reviews: DependencyReview[]): DependencyReview {
+  const applicable = reviews.filter(
+    (review) => review.status !== "not-applicable" || review.selectedCount > 0,
+  );
+  if (!applicable.length) return EMPTY_DEPENDENCY_REVIEW;
+
+  const allDependencies = applicable.flatMap((review) => review.dependencies);
+  const dependencies = allDependencies.slice(0, MAX_RECORDED_DEPENDENCIES);
+  const overflowCount = allDependencies.length - dependencies.length;
+  const omittedCount =
+    applicable.reduce((total, review) => total + (review.omittedCount ?? 0), 0) + overflowCount;
+  return {
+    status:
+      omittedCount > 0 || applicable.some((review) => review.status === "partial")
+        ? "partial"
+        : "complete",
+    selectedCount: applicable.reduce((total, review) => total + review.selectedCount, 0),
+    inspectedCount: applicable.reduce((total, review) => total + review.inspectedCount, 0),
+    uninspectableCount: applicable.reduce((total, review) => total + review.uninspectableCount, 0),
+    omittedCount,
+    dependencies,
+  };
+}
 
 /**
  * How many newly added dependencies one release will fetch and parse.
@@ -233,7 +260,8 @@ export interface AddedDependency {
  *   - keys that were already installed and merely moved between sections — a
  *     relocation ships no new code;
  *   - dependencies declared as bundled whose bytes are present in the staged
- *     artifact, because the parent review already covers those exact bytes;
+ *     artifact; the npm adapter assesses those exact child subtrees separately
+ *     because npm still executes bundled-child lifecycle scripts;
  *   - every dependency of a first-ever release (no baseline manifest), where
  *     the whole list diffs as "added" and inspecting it would describe the
  *     package rather than the release.
@@ -254,6 +282,25 @@ export function selectAddedDependencies(
   manifestDiff: PackageJsonDiff,
   options: DependencySelectionOptions = {},
 ): AddedDependency[] {
+  return selectIntroducedDependencies(manifestDiff, options).filter(
+    (dependency) => !isBundledInStagedArtifact(dependency, options),
+  );
+}
+
+/** Newly introduced dependencies whose exact bytes are embedded in the parent artifact. */
+export function selectBundledAddedDependencies(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions = {},
+): AddedDependency[] {
+  return selectIntroducedDependencies(manifestDiff, options).filter((dependency) =>
+    isBundledInStagedArtifact(dependency, options),
+  );
+}
+
+function selectIntroducedDependencies(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions,
+): AddedDependency[] {
   if (!manifestDiff.hasPreviousManifest && !options.includeWithoutBaseline) return [];
 
   const relocated = new Map<string, string[]>();
@@ -268,7 +315,6 @@ export function selectAddedDependencies(
   for (const entry of manifestDiff.dependencies) {
     if (entry.staged === undefined) continue;
     if (!introducesInstalledCode(entry, relocated)) continue;
-    if (isBundledInStagedArtifact(entry, options)) continue;
     const candidate: AddedDependency = {
       name: entry.key,
       section: entry.section ?? "dependencies",
@@ -286,21 +332,21 @@ export function selectAddedDependencies(
 }
 
 function isBundledInStagedArtifact(
-  entry: PackageJsonDiffEntry,
+  entry: Pick<AddedDependency, "name" | "section">,
   options: DependencySelectionOptions,
 ): boolean {
   if (!isInstallingSection(entry.section)) return false;
   const manifest = options.stagedManifest;
   const declarations = [manifest?.bundleDependencies, manifest?.bundledDependencies];
   const declared = declarations.some(
-    (value) => value === true || (Array.isArray(value) && value.includes(entry.key)),
+    (value) => value === true || (Array.isArray(value) && value.includes(entry.name)),
   );
   if (!declared) return false;
 
   // Do not trust the manifest or a placeholder directory alone. npm only uses
   // an embedded bundle when its direct child package has a loadable identity;
   // otherwise it fetches the declared dependency from the registry.
-  const packageJsonPath = `node_modules/${entry.key}/package.json`;
+  const packageJsonPath = `node_modules/${entry.name}/package.json`;
   const packageJson = (options.stagedFiles ?? []).find(
     (file) => file.path === packageJsonPath && file.textSample,
   );
@@ -308,7 +354,7 @@ function isBundledInStagedArtifact(
   const identity = safeJson(packageJson.textSample);
   return (
     isRecord(identity) &&
-    identity.name === entry.key &&
+    identity.name === entry.name &&
     typeof identity.version === "string" &&
     identity.version.trim().length > 0
   );
@@ -466,7 +512,7 @@ export function assessDependencyArtifact(
       ...inlineInstallCapabilities,
     ]),
   ].sort();
-  const installReachableUninspectedFiles = files
+  const directlyReachableUninspectedFiles = files
     .filter(
       (file) =>
         file.flags.includes("text-sample-skipped") &&
@@ -476,6 +522,32 @@ export function assessDependencyArtifact(
     .sort();
 
   const hasAutomaticExecution = automaticExecution.length > 0;
+  // Node treats unknown extensions (including `.map`) as JavaScript under
+  // CommonJS. If an install-reachable loader computes a module specifier at
+  // runtime, a generated file whose text the parser deliberately omitted is a
+  // possible install target even though the literal-only graph cannot name it.
+  // Preserve the unrelated-source-map hard negative when every module edge is
+  // static, but fail visibly once the reachable path contains a dynamic load.
+  const dynamicallyLoadableUninspectedFiles = files.filter(
+    (file) =>
+      file.flags.includes("text-sample-skipped") && isNodeExecutableGeneratedPath(file.path),
+  );
+  const filesByPath = new Map(
+    files.map((file) => [normalizeReachabilityPath(file.path), file] as const),
+  );
+  const hasDynamicInstallModuleLoad =
+    hasAutomaticExecution &&
+    dynamicallyLoadableUninspectedFiles.length > 0 &&
+    [...reachable].some((path) => {
+      const file = filesByPath.get(path);
+      return file?.textSample ? hasDynamicModuleLoad(file.textSample) : false;
+    });
+  const dynamicallyReachableUninspectedFiles = hasDynamicInstallModuleLoad
+    ? dynamicallyLoadableUninspectedFiles.map((file) => file.path)
+    : [];
+  const installReachableUninspectedFiles = [
+    ...new Set([...directlyReachableUninspectedFiles, ...dynamicallyReachableUninspectedFiles]),
+  ].sort();
   const reachableDanger =
     installReachableCapabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId)) ||
     hasNativeExecutionPair(installReachableCapabilities);
@@ -496,6 +568,39 @@ export function assessDependencyArtifact(
     installReachUnproven: hasAutomaticExecution && anyDanger && !reachableDanger,
     findings,
   };
+}
+
+function hasDynamicModuleLoad(text: string): boolean {
+  const tokens = tokenizeJs(text).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type !== "ident") continue;
+    const callee = jsTokenText(text, token);
+    if (callee !== "require" && callee !== "import") continue;
+    const previous = tokens[index - 1];
+    if (previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous))) {
+      continue;
+    }
+    const open = tokens[index + 1];
+    if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
+    const argument = tokens[index + 2];
+    if (!argument || (argument.type === "punct" && jsTokenText(text, argument) === ")")) continue;
+    const afterArgument = tokens[index + 3];
+    const argumentEndsSpecifier =
+      afterArgument?.type === "punct" && [")", ","].includes(jsTokenText(text, afterArgument));
+    const staticSpecifier =
+      argument.type === "string" ||
+      (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
+    if (!staticSpecifier || !argumentEndsSpecifier) return true;
+  }
+  return false;
+}
+
+function isNodeExecutableGeneratedPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".map") || /\.min\.(?:js|mjs|cjs)$/.test(lower);
 }
 
 export interface DependencyInstallRiskClassification {
@@ -874,7 +979,7 @@ function uninspectableEvidence(
     reason,
     resolvedVersion: null,
     registryHost: null,
-    artifactUrl: null,
+    artifactOrigin: null,
     declaredDigest: null,
     reviewedDigest: null,
     digestVerified: null,
@@ -947,21 +1052,21 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
 /**
  * Persistable provenance for a fetched dependency artifact.
  *
- * Registry-controlled tarball URLs may carry basic-auth userinfo, signed
- * query parameters, or fragments. None are needed to identify the artifact
- * in a report, and retaining them would turn a public export into a credential
- * disclosure. Keep only the HTTP(S) origin and path.
+ * Registry-controlled tarball URLs may carry credentials in userinfo, query,
+ * fragments, or opaque same-origin path segments. None are needed to identify
+ * the artifact in a report, and retaining them would turn a public export into
+ * a credential disclosure. Keep only the HTTP(S) origin.
  */
-export function sanitizeDependencyArtifactUrl(value: unknown): string | null {
+export function sanitizeDependencyArtifactOrigin(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return boundedText(url.toString(), 2_048);
+    // Keep no registry-controlled path material. Signed download capabilities
+    // are commonly placed in query/userinfo, but custom registries may put the
+    // opaque credential in a same-origin path segment instead. The package
+    // coordinate and reviewed digest already identify the artifact precisely.
+    return boundedText(url.origin, 2_048);
   } catch {
     return null;
   }
@@ -988,7 +1093,7 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
     reason: reasonOf(value.reason),
     resolvedVersion: boundedStringOrNull(value.resolvedVersion, 256),
     registryHost: boundedStringOrNull(value.registryHost, 256),
-    artifactUrl: sanitizeDependencyArtifactUrl(value.artifactUrl),
+    artifactOrigin: sanitizeDependencyArtifactOrigin(value.artifactOrigin ?? value.artifactUrl),
     declaredDigest: digestOf(value.declaredDigest),
     reviewedDigest: digestOf(value.reviewedDigest),
     digestVerified: typeof value.digestVerified === "boolean" ? value.digestVerified : null,

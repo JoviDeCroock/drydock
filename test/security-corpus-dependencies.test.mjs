@@ -2,16 +2,24 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   assessDependencyArtifact,
   computeRisk,
   dependencyEvidenceFindings,
   DETERMINISTIC_RULES_VERSION,
+  mergeDependencyReviews,
   selectAddedDependencies,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
 import { getReleaseRecommendation } from "../src/pages/Dashboard/recommendation";
+
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {},
+}));
+
+const { inspectBundledNpmDependenciesForAdapter } =
+  await import("../server/lib/ecosystems/npm/dependency-artifacts");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases-dependencies");
@@ -26,6 +34,12 @@ const cases = readdirSync(casesDir)
 // test/npm-dependency-artifacts.test.mjs and test/npm-semver.test.mjs.
 function buildReview(fixture) {
   const diff = summarizePackageJsonDiff(fixture.previousPackageJson, fixture.stagedPackageJson);
+  const embeddedReview = inspectBundledNpmDependenciesForAdapter({
+    manifestDiff: diff,
+    baselineManifestUnavailable: false,
+    stagedManifest: fixture.stagedPackageJson,
+    stagedFiles: fixture.stagedFiles ?? [],
+  });
   const selected = selectAddedDependencies(diff, {
     stagedManifest: fixture.stagedPackageJson,
     stagedFiles: fixture.stagedFiles ?? [],
@@ -92,13 +106,14 @@ function buildReview(fixture) {
     };
   });
   const inspectedCount = dependencies.filter((entry) => entry.status === "inspected").length;
-  return {
+  const registryReview = {
     status: dependencies.length ? "complete" : "not-applicable",
     selectedCount: dependencies.length,
     inspectedCount,
     uninspectableCount: dependencies.length - inspectedCount,
     dependencies,
   };
+  return mergeDependencyReviews(embeddedReview, registryReview);
 }
 
 function emptyEvidence(dependency) {
@@ -111,7 +126,7 @@ function emptyEvidence(dependency) {
     reason: null,
     resolvedVersion: null,
     registryHost: null,
-    artifactUrl: null,
+    artifactOrigin: null,
     declaredDigest: null,
     reviewedDigest: null,
     digestVerified: null,
