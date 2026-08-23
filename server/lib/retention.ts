@@ -292,27 +292,28 @@ async function deleteOneExpiredScan(
   auditEvents: Date,
   now: Date,
 ): Promise<number | null> {
-  const claimToken = crypto.randomUUID();
   const claimed = await claimScanForRetention(db, {
     scanId: candidate.id,
     organizationId: candidate.organizationId,
-    claimToken,
+    claimToken: crypto.randomUUID(),
     claimedAt: now,
     staleBefore: new Date(now.getTime() - SCAN_RETENTION_CLAIM_LEASE_MS),
   });
   if (!claimed) return null;
 
+  const claimToken = claimed.claimToken;
   let deleted = false;
-  let artifactEvidenceRemoved = false;
+  let artifactEvidenceRemoved = claimed.artifactEvidenceRemoved;
   try {
     // Order is load-bearing; see clearScanArtifactMetadata. The D1 lease above
     // is equally load-bearing: sharing checks it before minting a capability.
     const swept = await deleteScanArtifacts(bucket, candidate.organizationId, candidate.id);
     if (!swept.ok) {
-      artifactEvidenceRemoved = claimed.artifactStorageVersion !== null && swept.objectsDeleted > 0;
+      artifactEvidenceRemoved ||=
+        claimed.artifactStorageVersion !== null && swept.objectsDeleted > 0;
       return null;
     }
-    artifactEvidenceRemoved = claimed.artifactStorageVersion !== null;
+    artifactEvidenceRemoved ||= claimed.artifactStorageVersion !== null;
     if (claimed.artifactStorageVersion !== null) {
       await clearScanArtifactMetadata(db, candidate.id, candidate.organizationId, claimToken);
     }

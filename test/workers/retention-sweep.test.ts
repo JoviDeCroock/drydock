@@ -464,11 +464,13 @@ describe("scan retention", () => {
     expect(row?.artifactStorageVersion).toBeNull();
     expect(row?.reportArtifactKey).toBeNull();
     expect(row?.diffArtifactKey).toBeNull();
-    expect(row?.retentionClaimToken).toEqual(expect.any(String));
+    expect(row?.retentionClaimToken).toMatch(/^artifacts-removed:/);
     expect(row?.retentionClaimedAt?.getTime()).toBe(0);
 
-    // Evidence is already gone, so sharing stays fenced; the expired claim lets
-    // the next tick finish immediately instead of waiting out the normal lease.
+    // Evidence is already gone, so sharing stays fenced. A second failed tick
+    // must preserve that tombstone even though artifactStorageVersion is now
+    // null; otherwise it would misclassify this as a pre-R2 failure and release
+    // the claim, making an evidence-less report shareable.
     await expect(
       enablePublicShare(owner.db, {
         scanId,
@@ -476,6 +478,26 @@ describe("scan retention", () => {
         actorUserId: owner.userId,
       }),
     ).resolves.toBeNull();
+    await expect(
+      runRetentionSweep({
+        ...env,
+        DB: failingDb,
+        SCAN_RETENTION_DAYS: "365",
+      } as unknown as Cloudflare.Env),
+    ).resolves.toMatchObject({ scans: { deleted: 0, deferred: 1 } });
+    const [retried] = await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
+    expect(retried?.retentionClaimToken).toMatch(/^artifacts-removed:/);
+    expect(retried?.retentionClaimedAt?.getTime()).toBe(0);
+    await expect(
+      enablePublicShare(owner.db, {
+        scanId,
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+      }),
+    ).resolves.toBeNull();
+
+    // The expired tombstone still lets the next healthy tick finish immediately
+    // instead of waiting out the normal lease.
     await expect(
       runRetentionSweep({
         ...env,

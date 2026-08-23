@@ -12,6 +12,7 @@ import { githubWorkflowGates, scanEvents, scans } from "./schema";
 
 const RETENTION_DEFAULT_BATCH_SIZE = 200;
 const RETENTION_DEFAULT_MAX_BATCHES = 10;
+const ARTIFACTS_REMOVED_CLAIM_PREFIX = "artifacts-removed:";
 
 export interface BoundedSweepOptions {
   /** Rows deleted per statement. */
@@ -143,6 +144,8 @@ export async function listScansOlderThan(
 
 export interface ClaimedExpiredScan {
   artifactStorageVersion: number | null;
+  claimToken: string;
+  artifactEvidenceRemoved: boolean;
 }
 
 /**
@@ -164,12 +167,19 @@ export async function claimScanForRetention(
     staleBefore: Date;
   },
 ): Promise<ClaimedExpiredScan | null> {
+  // SQLite evaluates all SET expressions against the pre-update row. Preserve a
+  // post-R2 tombstone while atomically rotating ownership to a fresh token; the
+  // claimed_at = epoch check also carries forward tombstones written before the
+  // token prefix existed.
+  const claimedToken = sql<string>`case
+    when ${scans.retentionClaimToken} like ${`${ARTIFACTS_REMOVED_CLAIM_PREFIX}%`}
+      or ${scans.retentionClaimedAt} = 0
+    then ${artifactsRemovedClaimToken(input.claimToken)}
+    else ${input.claimToken}
+  end`;
   const claimed = await db
     .update(scans)
-    .set({
-      retentionClaimToken: input.claimToken,
-      retentionClaimedAt: input.claimedAt,
-    })
+    .set({ retentionClaimToken: claimedToken, retentionClaimedAt: input.claimedAt })
     .where(
       and(
         eq(scans.id, input.scanId),
@@ -196,8 +206,17 @@ export async function claimScanForRetention(
         ),
       ),
     )
-    .returning({ artifactStorageVersion: scans.artifactStorageVersion });
-  return claimed[0] ?? null;
+    .returning({
+      artifactStorageVersion: scans.artifactStorageVersion,
+      claimToken: scans.retentionClaimToken,
+    });
+  const row = claimed[0];
+  if (!row?.claimToken) return null;
+  return {
+    artifactStorageVersion: row.artifactStorageVersion,
+    claimToken: row.claimToken,
+    artifactEvidenceRemoved: isArtifactsRemovedClaimToken(row.claimToken),
+  };
 }
 
 /** Release a failed/deferred teardown without disturbing a newer claimant. */
@@ -235,7 +254,10 @@ export async function expireScanRetentionClaim(
 ): Promise<boolean> {
   const expired = await db
     .update(scans)
-    .set({ retentionClaimedAt: new Date(0) })
+    .set({
+      retentionClaimToken: artifactsRemovedClaimToken(claimToken),
+      retentionClaimedAt: new Date(0),
+    })
     .where(
       and(
         eq(scans.id, scanId),
@@ -374,4 +396,14 @@ export async function deleteScanWithChildren(
 function boundedInt(value: number | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.max(1, Math.floor(value));
+}
+
+function artifactsRemovedClaimToken(claimToken: string): string {
+  return isArtifactsRemovedClaimToken(claimToken)
+    ? claimToken
+    : `${ARTIFACTS_REMOVED_CLAIM_PREFIX}${claimToken}`;
+}
+
+function isArtifactsRemovedClaimToken(claimToken: string): boolean {
+  return claimToken.startsWith(ARTIFACTS_REMOVED_CLAIM_PREFIX);
 }
