@@ -75,12 +75,21 @@ interface ResolvedCredentials {
   registry: string;
 }
 
+function createNpmRegistryUrlSnapshot(resolve: () => Promise<string>): () => Promise<string> {
+  let snapshot: Promise<string> | undefined;
+  return () => (snapshot ??= resolve());
+}
+
 // Same-script WorkerEntrypoint. The pipeline asks for a broker through the
 // npm adapter; in the deployed Worker the call is routed via
 // `ctx.exports.NpmAdapterBroker({ props: { organizationId } })`, which means
 // the decrypted npm token only exists inside this class's method-local scope.
 // The orchestrator never sees it.
 export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBrokerProps> {
+  private readonly registryUrlSnapshot = createNpmRegistryUrlSnapshot(() =>
+    resolveNpmRegistryUrl(createDb(this.env.DB), this.ctx.props.organizationId),
+  );
+
   dispose(): void {}
 
   async fetchPackageMetadata(name: string): Promise<RegistryMetadata | null> {
@@ -151,7 +160,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
   }
 
   async registryUrl(): Promise<string> {
-    return resolveNpmRegistryUrl(createDb(this.env.DB), this.ctx.props.organizationId);
+    return this.registryUrlSnapshot();
   }
 
   private async resolveCredentials(): Promise<ResolvedCredentials> {
@@ -268,6 +277,10 @@ async function runRpcSafe<T>(fn: () => Promise<T>): Promise<T> {
 // behavior but lets vitest mock the credential resolution and downstream
 // fetchers at module boundaries.
 class LocalNpmBroker implements NpmBroker {
+  private readonly registryUrlSnapshot = createNpmRegistryUrlSnapshot(() =>
+    resolveNpmRegistryUrl(this.ctx.db, this.props.organizationId),
+  );
+
   constructor(
     private readonly ctx: AdapterContext,
     private readonly props: NpmBrokerProps,
@@ -343,7 +356,7 @@ class LocalNpmBroker implements NpmBroker {
   }
 
   async registryUrl(): Promise<string> {
-    return resolveNpmRegistryUrl(this.ctx.db, this.props.organizationId);
+    return this.registryUrlSnapshot();
   }
 
   private async resolve(): Promise<ResolvedCredentials> {

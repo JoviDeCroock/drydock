@@ -46,6 +46,7 @@ import {
   normalizeReachabilityPath,
 } from "./rules/reachability";
 import { normalizeStringRecord } from "../tar-parser.js";
+import { isRecord } from "../platform/guards";
 
 /**
  * Synthetic file-label prefix for a dependency finding. The cited path is
@@ -884,6 +885,13 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
   const { name, declaredSpec } = value;
   if (typeof name !== "string" || typeof declaredSpec !== "string") return null;
   const status = value.status === "inspected" ? "inspected" : "uninspectable";
+  const verdict =
+    value.verdict === "clean" ||
+    value.verdict === "install-risk" ||
+    value.verdict === "install-execution"
+      ? value.verdict
+      : null;
+  if (status === "inspected" && verdict === null) return null;
   return {
     name: boundedText(name, 256),
     section: sectionOf(value.section),
@@ -912,10 +920,7 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
       : [],
     capabilities: stringList(value.capabilities),
     installReachableCapabilities: stringList(value.installReachableCapabilities),
-    verdict:
-      value.verdict === "install-risk" || value.verdict === "install-execution"
-        ? value.verdict
-        : "clean",
+    verdict: verdict ?? "clean",
   };
 }
 
@@ -954,8 +959,4 @@ function boundedStringOrNull(value: unknown, limit: number): string | null {
 
 function countOf(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
