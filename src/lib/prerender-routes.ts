@@ -1,4 +1,4 @@
-import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./seo-metadata";
+import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./public-content-routes.ts";
 
 const HYDRATED_PRERENDER_ROUTES = [
   "/",

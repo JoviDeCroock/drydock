@@ -61,6 +61,7 @@ describe("page SEO metadata", () => {
   });
 
   it("gives each incident analysis distinct canonical metadata", () => {
+    expect(Object.keys(incidentCaseSeoByPath)).toEqual(INCIDENT_CASE_PATHS);
     const titles = new Set<string>();
     for (const path of INCIDENT_CASE_PATHS) {
       const metadata = incidentCaseSeoByPath[path];
@@ -90,6 +91,7 @@ describe("page SEO metadata", () => {
   });
 
   it("gives every focused guide distinct canonical metadata", () => {
+    expect(Object.keys(discoveryGuideSeoByPath)).toEqual(DISCOVERY_GUIDE_PATHS);
     const titles = new Set<string>();
     for (const path of DISCOVERY_GUIDE_PATHS) {
       const metadata = discoveryGuideSeoByPath[path];

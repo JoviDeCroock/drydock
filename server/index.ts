@@ -56,7 +56,7 @@ import { slackRoutes } from "./routes/slack";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
-import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "../src/lib/seo-metadata";
+import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "../src/lib/public-content-routes";
 
 export { NpmStageGateway } from "./lib/sandbox";
 export { NpmAdapterBroker } from "./lib/ecosystems/npm";

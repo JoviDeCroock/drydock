@@ -162,7 +162,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Deterministic review",
-        heading: "The same version pair produces the same report.",
+        heading: "Every signal comes from a named, inspectable check.",
         body: "The anonymous surface runs deterministic checks only. Package code is treated as hostile evidence, never executed, and every signal remains inspectable in the underlying file diff.",
       },
       {
@@ -188,7 +188,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       {
         label: "Artifact isolation",
         heading: "Archives are parsed, not installed.",
-        body: "Drydock never runs lifecycle scripts, imports package modules, invokes package builds, renders package-provided active content, or shells out to package tooling. Archive traversal, links, malformed structures, and resource limits fail closed.",
+        body: "Drydock never runs lifecycle scripts, imports package modules, invokes package builds, renders package-provided active content, or shells out to package tooling. Traversal paths and non-regular entries are rejected; malformed archives fail the scan. Inspection caps produce explicit content-skipped findings or hash-only evidence so reviewers can see where full inspection stopped.",
       },
       {
         label: "Credentials",
