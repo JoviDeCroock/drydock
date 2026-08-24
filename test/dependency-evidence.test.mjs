@@ -559,6 +559,101 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
   });
 
+  test.each(["module.require(target)", "module?.require(target)", "require?.(target)"])(
+    "fails completeness for the dynamic Node loader %s",
+    (load) => {
+      const manifest = {
+        name: "n",
+        version: "1.0.0",
+        scripts: { postinstall: "node install.js" },
+      };
+      const assessment = assessDependencyArtifact(
+        [
+          file("package.json", JSON.stringify(manifest)),
+          file("install.js", `const target = './payload.' + 'data'; ${load}`),
+          {
+            path: "payload.data",
+            size: 1024,
+            sha256: "skipped-dynamic-payload",
+            flags: ["text-sample-skipped"],
+          },
+        ],
+        manifest,
+        { codePatternSet: "javascript", entrypointResolution: "npm" },
+      );
+
+      expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
+    },
+  );
+
+  test("an implicit node-gyp action makes its omitted script install-reachable", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { install: "node-gyp rebuild" },
+      implicitScripts: { install: "node-gyp rebuild" },
+      gypfile: true,
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("binding.gyp", '{"variables":{"generated":"<!(node install.min.js)"}}'),
+        {
+          path: "install.min.js",
+          size: 1024,
+          sha256: "skipped-gyp-action",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.automaticExecution).toEqual([{ kind: "node-gyp", name: "binding.gyp" }]);
+    expect(assessment.installReachableUninspectedFiles).toEqual(["install.min.js"]);
+  });
+
+  test("an implicit node-gyp action keeps its dependency capability reachable", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { install: "node-gyp rebuild" },
+      implicitScripts: { install: "node-gyp rebuild" },
+      gypfile: true,
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("binding.gyp", '{"variables":{"generated":"<!(node tools/generate.js)"}}'),
+        file("tools/generate.js", DROPPER),
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
+    expect(assessment.installReachableCapabilities).toContain("code.remote-shell");
+  });
+
+  test("a dormant gyp command does not imply automatic install execution", () => {
+    const manifest = { name: "n", version: "1.0.0", scripts: {}, gypfile: false };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("binding.gyp", '{"variables":{"generated":"<!(node tools/generate.js)"}}'),
+        file("tools/generate.js", DROPPER),
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.automaticExecution).toEqual([]);
+    expect(assessment.observation).toEqual({
+      execution: "not-observed",
+      risk: "not-observed",
+    });
+  });
+
   test("a danger capability the install hook cannot reach remains unknown", () => {
     const assessment = assessDependencyArtifact(
       [
