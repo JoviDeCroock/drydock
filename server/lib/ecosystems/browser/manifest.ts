@@ -14,6 +14,9 @@ import {
 
 const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
+const GECKO_EMAIL_ID_RE = /^[A-Za-z0-9._-]*@[A-Za-z0-9._-]+$/;
+const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
+const GECKO_EMAIL_ID_MAX_LENGTH = 80;
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -43,7 +46,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     throw new Error("manifest.json manifest_version must be 2 or 3");
   }
 
-  const extensionId = geckoExtensionId(raw);
+  const extensionId = geckoExtensionId(raw, raw.manifest_version);
   const background = isRecord(raw.background) ? raw.background : {};
   const declaredBackgroundEntrypoints = [
     ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
@@ -241,15 +244,25 @@ function safeIdentityText(value: unknown, field: string, maxLength: number): str
   return text;
 }
 
-function geckoExtensionId(raw: Record<string, unknown>): string | null {
-  const settings = isRecord(raw.browser_specific_settings)
+function geckoExtensionId(raw: Record<string, unknown>, manifestVersion: 2 | 3): string | null {
+  const browserSettings = isRecord(raw.browser_specific_settings)
     ? raw.browser_specific_settings
-    : isRecord(raw.applications)
-      ? raw.applications
-      : {};
-  const gecko = isRecord(settings.gecko) ? settings.gecko : {};
-  if (gecko.id === undefined) return null;
-  return safeIdentityText(gecko.id, "manifest.json Gecko extension id", 255);
+    : null;
+  const legacyApplications =
+    manifestVersion === 2 && isRecord(raw.applications) ? raw.applications : null;
+  const gecko = isRecord(browserSettings?.gecko)
+    ? browserSettings.gecko
+    : isRecord(legacyApplications?.gecko)
+      ? legacyApplications.gecko
+      : null;
+  if (!gecko || typeof gecko.id !== "string") return null;
+
+  const extensionId = gecko.id;
+  if (!extensionId || hasAsciiControlCharacter(extensionId)) return null;
+  if (GECKO_GUID_ID_RE.test(extensionId)) return extensionId;
+  return extensionId.length <= GECKO_EMAIL_ID_MAX_LENGTH && GECKO_EMAIL_ID_RE.test(extensionId)
+    ? extensionId
+    : null;
 }
 
 function stringList(value: unknown): string[] {
@@ -372,11 +385,76 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
 
 function htmlScriptSources(html: string): string[] {
   const sources: string[] = [];
-  const scriptSourcePattern =
-    /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))[^>]*>/gi;
-  for (const match of html.matchAll(scriptSourcePattern)) {
-    const source = match[1] ?? match[2] ?? match[3];
-    if (source) sources.push(decodeHTMLAttribute(source));
+  let index = 0;
+  while (index < html.length) {
+    const tagStart = html.indexOf("<", index);
+    if (tagStart === -1) break;
+    if (html.startsWith("<!--", tagStart)) {
+      const commentEnd = html.indexOf("-->", tagStart + 4);
+      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      continue;
+    }
+
+    let cursor = tagStart + 1;
+    const nameStart = cursor;
+    while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
+    const tagName = html.slice(nameStart, cursor).toLowerCase();
+    if (tagName !== "script" || !/[\s/>]/.test(html[cursor] ?? "")) {
+      index = Math.max(cursor, tagStart + 1);
+      continue;
+    }
+
+    let source: string | null = null;
+    let sourceSeen = false;
+    let tagClosed = false;
+    while (cursor < html.length) {
+      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+      if (html[cursor] === ">") {
+        cursor += 1;
+        tagClosed = true;
+        break;
+      }
+      if (html[cursor] === "/" && html[cursor + 1] === ">") {
+        cursor += 2;
+        tagClosed = true;
+        break;
+      }
+
+      const attributeStart = cursor;
+      while (cursor < html.length && !/[\s=/>]/.test(html[cursor])) cursor += 1;
+      if (cursor === attributeStart) {
+        cursor += 1;
+        continue;
+      }
+      const attributeName = html.slice(attributeStart, cursor).toLowerCase();
+      while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+
+      let value: string | null = null;
+      if (html[cursor] === "=") {
+        cursor += 1;
+        while (/\s/.test(html[cursor] ?? "")) cursor += 1;
+        const quote = html[cursor];
+        if (quote === '"' || quote === "'") {
+          cursor += 1;
+          const valueStart = cursor;
+          while (cursor < html.length && html[cursor] !== quote) cursor += 1;
+          if (cursor >= html.length) break;
+          value = html.slice(valueStart, cursor);
+          cursor += 1;
+        } else {
+          const valueStart = cursor;
+          while (cursor < html.length && !/[\s>]/.test(html[cursor])) cursor += 1;
+          value = html.slice(valueStart, cursor);
+        }
+      }
+
+      if (attributeName === "src" && !sourceSeen) {
+        sourceSeen = true;
+        source = value;
+      }
+    }
+    if (tagClosed && source) sources.push(decodeHTMLAttribute(source));
+    index = Math.max(cursor, tagStart + 1);
   }
   return sources;
 }

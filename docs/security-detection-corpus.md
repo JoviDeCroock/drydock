@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.33.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -442,6 +442,12 @@ root-relative content scripts, Manifest V2 `user_scripts.api_script`, and HTML
 script sources containing character references now resolve to their packaged
 files before shared `code.*` capability severity is computed. The
 `browser-entrypoint-path-aliases` golden case pins all three paths.
+
+`1.33.0` makes browser extension-page reachability parsing quote-aware, so a
+greater-than character inside an earlier quoted HTML attribute cannot hide a
+later script source and incorrectly apply test-only capability demotion. The
+`browser-entrypoint-path-aliases` golden case pins the HTML tokenizer edge, and
+the detection eval now consumes the complete browser-extension golden corpus.
 
 ### Fixture format
 

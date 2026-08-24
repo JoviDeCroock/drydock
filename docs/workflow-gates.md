@@ -159,14 +159,14 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 
 ## Browser-extension workflow-gate notes
 
-Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives a stable identity from `browser_specific_settings.gecko.id` (or the legacy `applications.gecko.id`) when present and otherwise uses the manifest name only as the current review's display label; the version always comes from `manifest.json`. Because a Chrome display name is neither unique nor stable, name-only archives are kept separate by release artifact, excluded from cross-release package history, and may appear in the chronological threat feed, but they are not exposed through the name-indexed public badge endpoint.
+Browser-extension gates review packed WebExtension `.zip` and `.xpi` archives before a workflow uploads them to the Chrome Web Store, Firefox Add-ons, or another compatible store. The archive must contain `manifest.json` at its root. Drydock derives a stable identity from a valid email-style or GUID `browser_specific_settings.gecko.id`, falling back to the legacy `applications.gecko.id` only for Manifest V2, and otherwise uses the manifest name only as the current review's display label; the version always comes from `manifest.json`. Because a Chrome display name is neither unique nor stable, name-only archives are kept separate by release artifact, excluded from cross-release package history, and may appear in the chronological threat feed, but they are not exposed through the name-indexed public badge endpoint.
 
 Choose **Browser extension** in the release target's **Artifact ecosystem** selector when publishing a `.zip`. ZIP is also a generic CI/source-artifact extension, so unpinned auto-detection deliberately ignores it instead of letting an unrelated ZIP block another ecosystem's gate. Browser-specific `.xpi` artifacts remain safe to auto-detect.
 
 The browser adapter (`server/lib/ecosystems/browser/`):
 
 - parses ZIP/XPI bytes in the shared credential-free sandbox and retains root `manifest.json` as identity evidence;
-- supports Manifest V2 and V3, and rejects missing/invalid identity, version, or manifest version;
+- supports Manifest V2 and V3, requires a valid display name, version, and manifest version, and treats only validated Gecko IDs as stable identities;
 - requires one archive per stable extension identity in a release target and keeps name-only archives distinct by verified artifact digest, so unrelated Chrome archives with the same display name cannot be merged;
 - runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules, treating manifest-loaded background scripts, content scripts, popups, options pages, developer-tools pages, sidebars, side panels, and URL overrides as consumer entrypoints regardless of their directory names;
 - reports privileged browser/data permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;

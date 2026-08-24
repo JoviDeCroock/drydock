@@ -51,6 +51,45 @@ describe("browser extension review adapter", () => {
     expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
   });
 
+  test("uses Gecko identity fields according to the manifest version", () => {
+    const legacyId = "legacy-helper@example.invalid";
+    const manifestV2 = parseBrowserExtensionManifest([
+      manifestFile({
+        manifest_version: 2,
+        browser_specific_settings: { safari: { strict_min_version: "16" } },
+        applications: { gecko: { id: legacyId } },
+      }),
+    ]).manifest;
+    expect(manifestV2.extensionId).toBe(legacyId);
+
+    const manifestV3 = parseBrowserExtensionManifest([
+      manifestFile({
+        manifest_version: 3,
+        applications: { gecko: { id: "ignored-legacy@example.invalid" } },
+      }),
+    ]).manifest;
+    expect(manifestV3.extensionId).toBeNull();
+    expect(browserExtensionCandidateName(manifestV3)).toBe("Tab helper");
+  });
+
+  test.each([
+    ["valid email-style id", "tab-helper@example.invalid", "tab-helper@example.invalid"],
+    [
+      "valid GUID id",
+      "{12345678-1234-1234-1234-123456789abc}",
+      "{12345678-1234-1234-1234-123456789abc}",
+    ],
+    ["display text", "Tab helper", null],
+    ["surrounding whitespace", " tab-helper@example.invalid ", null],
+    ["overlong email-style id", `${"a".repeat(65)}@example.invalid`, null],
+    ["malformed GUID id", "{12345678-1234-1234-1234-invalid}", null],
+  ])("validates Gecko stable identity: %s", (_label, extensionId, expected) => {
+    const { manifest } = parseBrowserExtensionManifest([
+      manifestFile({ browser_specific_settings: { gecko: { id: extensionId } } }),
+    ]);
+    expect(manifest.extensionId).toBe(expected);
+  });
+
   test("accepts manifest line comments without treating URL text as a comment", () => {
     const textSample = `{
       // Firefox permits line comments in extension manifests.
@@ -332,6 +371,64 @@ describe("browser extension review adapter", () => {
     );
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("parses script src attributes without losing quoted greater-than characters", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ manifest_version: 2, background: { page: "pages/background.html" } }),
+          {
+            path: "pages/background.html",
+            size: 180,
+            sha256: "4b".repeat(32),
+            flags: [],
+            textSample:
+              '<script data-description=">" src="../tests/payload.js"></script>' +
+              "<script src='../tests/single-quoted.js'></script>" +
+              "<script src=../tests/unquoted.js></script>",
+          },
+          {
+            path: "tests/payload.js",
+            size: 14,
+            sha256: "4c".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+          {
+            path: "tests/single-quoted.js",
+            size: 14,
+            sha256: "4d".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+          {
+            path: "tests/unquoted.js",
+            size: 14,
+            sha256: "4e".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const findings = review.ruleFindings.filter(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/payload.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/single-quoted.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/unquoted.js" }),
+      ]),
+    );
+    expect(findings).toHaveLength(3);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {

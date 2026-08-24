@@ -2,13 +2,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import {
-  BROWSER_RULE_IDS,
-  BROWSER_RULES_VERSION,
-  buildBrowserReleaseManifest,
-  createBrowserExtensionReview,
-} from "../server/lib/ecosystems/browser";
+import { BROWSER_RULE_IDS, BROWSER_RULES_VERSION } from "../server/lib/ecosystems/browser";
 import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review";
+import { createBrowserCorpusReview } from "./helpers/browser-security-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases-browser");
@@ -33,23 +29,7 @@ describe("browser extension security detection golden corpus", () => {
 
   for (const fixture of cases) {
     test(`${fixture.id}: ${fixture.title}`, () => {
-      const path = fixture.artifactPath ?? `dist/${fixture.slug}.${fixture.artifactKind ?? "zip"}`;
-      const release = buildBrowserReleaseManifest(fixture.extensionId, fixture.version, [
-        { path, sha256: fixture.sha256 },
-      ]);
-      const review = createBrowserExtensionReview({
-        manifest: release,
-        artifact: { path, sha256: fixture.sha256, files: fixture.stagedFiles },
-        ...(fixture.previousFiles
-          ? {
-              previousArtifact: {
-                path,
-                sha256: fixture.previousSha256,
-                files: fixture.previousFiles,
-              },
-            }
-          : {}),
-      });
+      const review = createBrowserCorpusReview(fixture);
 
       expect(review.risk).toBe(fixture.expectedRisk);
       expect(comparableFindings(review.ruleFindings)).toEqual(

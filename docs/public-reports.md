@@ -111,7 +111,8 @@ the threat feed — a report shared privately by link never becomes queryable by
 package name.
 
 Browser-extension badges require a stable ID from
-`browser_specific_settings.gecko.id` (or legacy `applications.gecko.id`). Chrome
+`browser_specific_settings.gecko.id` (or, for Manifest V2 only, legacy
+`applications.gecko.id`) in Firefox's email-style or GUID format. Chrome
 archives that only declare a display name can still be shared and feed-listed,
 but return `not reviewed` from name lookup because localized or reused names do
 not establish a global package identity.

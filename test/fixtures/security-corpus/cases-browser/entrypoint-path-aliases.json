@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest and HTML path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, and HTML character-reference paths.",
+  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, and HTML script attributes containing character references or quoted greater-than characters.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 70,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
       "flags": [],
-      "textSample": "<script src=\"../tests&#x2f;page.js\"></script>"
+      "textSample": "<script data-description=\">\" src=\"../tests&#x2f;page.js\"></script>"
     },
     {
       "path": "tests/content.js",
