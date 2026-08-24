@@ -52,7 +52,7 @@
       "declarationKind": "range",
       "status": "inspected",
       "resolvedVersion": "2.1.4",
-      "verdict": "install-risk",
+      "observation": { "execution": "observed", "risk": "observed" },
       "automaticExecution": [{ "kind": "script", "name": "install" }]
     }
   ],

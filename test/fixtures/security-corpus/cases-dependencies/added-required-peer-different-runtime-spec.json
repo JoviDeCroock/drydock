@@ -48,7 +48,7 @@
       "declarationKind": "range",
       "status": "inspected",
       "resolvedVersion": "2.0.0",
-      "verdict": "install-risk",
+      "observation": { "execution": "observed", "risk": "observed" },
       "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
     }
   ],

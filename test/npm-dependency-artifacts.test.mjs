@@ -14,8 +14,11 @@ vi.mock("../server/db/npm-connections.ts", async () => ({
   getNpmConnection: npmConnectionMock.getNpmConnection,
 }));
 
-const { inspectAddedNpmDependencies, resolveDependencyVersion } =
-  await import("../server/lib/ecosystems/npm/dependency-artifacts");
+const {
+  inspectAddedNpmDependencies,
+  inspectBundledNpmDependenciesForAdapter,
+  resolveDependencyVersion,
+} = await import("../server/lib/ecosystems/npm/dependency-artifacts");
 const { createNpmBroker } = await import("../server/lib/ecosystems/npm/broker");
 const { summarizePackageJsonDiff } = await import("../server/lib/review");
 const { SandboxError } = await import("../server/lib/sandbox");
@@ -238,7 +241,7 @@ describe("inspectAddedNpmDependencies", () => {
       resolvedVersion: "0.1.0",
       declarationKind: "exact",
       status: "inspected",
-      verdict: "install-risk",
+      observation: { execution: "observed", risk: "observed" },
       registryHost: "registry.npmjs.org",
       artifactOrigin: "https://registry.npmjs.org",
       fileCount: 2,
@@ -646,6 +649,29 @@ describe("inspectAddedNpmDependencies", () => {
     expect(review.dependencies[0].digestVerified).toBeNull();
   });
 
+  test("a projected oversized SRI cannot fall through to a matching legacy shasum", async () => {
+    const url = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
+    const broker = brokerStub({
+      metadata: {
+        "proc-macro1": packument("proc-macro1", {
+          "0.1.0": {
+            integrityPresent: true,
+            shasum: "AA".repeat(20),
+          },
+        }),
+      },
+      downloads: { [url]: DROPPER_TARBALL },
+    });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
+    );
+
+    expect(review.dependencies[0].declaredDigest).toBeNull();
+    expect(review.dependencies[0].digestVerified).toBeNull();
+  });
+
   test("does not persist malformed registry digests", async () => {
     const broker = brokerStub({
       metadata: {
@@ -844,7 +870,7 @@ describe("inspectAddedNpmDependencies", () => {
 
     expect(review.dependencies[0]).toMatchObject({
       status: "inspected",
-      verdict: "install-execution",
+      observation: { execution: "observed", risk: "not-observed" },
       resolvedVersion: "1.0.0",
       fileCount: 3,
     });
@@ -919,6 +945,49 @@ describe("inspectAddedNpmDependencies", () => {
       reason: "manifest-unavailable",
       reviewedDigest: { algorithm: "sha512", value: "ab".repeat(64) },
       automaticExecution: [],
+    });
+  });
+});
+
+describe("inspectBundledNpmDependenciesForAdapter", () => {
+  test("a suspicious entry inside a bundled child makes its evidence uninspectable", () => {
+    const stagedManifest = {
+      name: "parent",
+      version: "1.0.1",
+      dependencies: { embedded: "1.0.0" },
+      bundleDependencies: ["embedded"],
+    };
+    const stagedFiles = [
+      file("package.json", JSON.stringify(stagedManifest)),
+      file(
+        "node_modules/embedded/package.json",
+        JSON.stringify({ name: "embedded", version: "1.0.0" }),
+      ),
+    ];
+
+    const review = inspectBundledNpmDependenciesForAdapter({
+      manifestDiff: summarizePackageJsonDiff({ name: "parent", version: "1.0.0" }, stagedManifest),
+      baselineManifestUnavailable: false,
+      stagedManifest,
+      stagedFiles,
+      stagedSuspiciousEntries: [
+        {
+          kind: "non-regular",
+          path: "node_modules/embedded/install.js",
+          detail: "symbolic link (symlink)",
+        },
+      ],
+    });
+
+    expect(review).toMatchObject({
+      status: "partial",
+      selectedCount: 1,
+      inspectedCount: 0,
+      uninspectableCount: 1,
+    });
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-ambiguous",
     });
   });
 });

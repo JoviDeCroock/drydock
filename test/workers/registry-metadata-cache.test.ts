@@ -247,4 +247,22 @@ describe("projectRegistryMetadata", () => {
     expect(projectRegistryMetadata(null)).toEqual({});
     expect(projectRegistryMetadata("nope")).toEqual({});
   });
+
+  test("preserves oversized integrity presence so it cannot fall through to shasum", () => {
+    const projected = projectRegistryMetadata({
+      versions: {
+        "1.0.0": {
+          dist: {
+            integrity: `sha512-${"A".repeat(600)}`,
+            shasum: "ab".repeat(20),
+          },
+        },
+      },
+    });
+
+    expect(projected.versions?.["1.0.0"]?.dist).toEqual({
+      integrityPresent: true,
+      shasum: "ab".repeat(20),
+    });
+  });
 });

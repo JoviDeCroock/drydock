@@ -48,7 +48,7 @@
       "declarationKind": "range",
       "status": "inspected",
       "resolvedVersion": "2.0.0",
-      "verdict": "install-execution"
+      "observation": { "execution": "observed", "risk": "not-observed" }
     }
   ],
   "expectedFindings": [

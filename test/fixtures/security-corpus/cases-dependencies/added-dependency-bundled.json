@@ -29,7 +29,7 @@
       "declarationKind": "exact",
       "status": "inspected",
       "resolvedVersion": "1.0.0",
-      "verdict": "clean",
+      "observation": { "execution": "not-observed", "risk": "not-observed" },
       "automaticExecution": []
     }
   ],

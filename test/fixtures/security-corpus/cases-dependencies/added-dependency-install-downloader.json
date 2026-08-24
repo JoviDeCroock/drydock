@@ -56,7 +56,7 @@
       "declarationKind": "exact",
       "status": "inspected",
       "resolvedVersion": "0.1.0",
-      "verdict": "install-risk",
+      "observation": { "execution": "observed", "risk": "observed" },
       "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
     }
   ],

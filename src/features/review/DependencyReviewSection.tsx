@@ -51,7 +51,7 @@ function DependencyRow(dependency: DependencyEvidence) {
   return (
     <li class="flex flex-col gap-2 px-3 py-3 min-w-0">
       <div class="flex flex-wrap items-center gap-2 min-w-0">
-        <Badge tone={verdictTone(dependency)}>{verdictLabel(dependency)}</Badge>
+        <Badge tone={observationTone(dependency)}>{observationLabel(dependency)}</Badge>
         <code class="font-mono text-[13px] text-ink break-all min-w-0">
           {dependency.name}
           <span class="text-ink-subtle">@{dependency.declaredSpec}</span>
@@ -110,20 +110,21 @@ function countLabel(review: DependencyReview): string {
   return `${review.inspectedCount}/${review.selectedCount} ${noun} reviewed`;
 }
 
-function verdictTone(dependency: DependencyEvidence): BadgeTone {
+function observationTone(dependency: DependencyEvidence): BadgeTone {
   if (dependency.digestVerified === false) return "critical";
   if (dependency.status === "uninspectable") return "medium";
   const installRisk = classifyDependencyInstallRisk(dependency);
   if (installRisk) return installRisk.severity;
-  if (dependency.verdict === "install-execution") return "medium";
+  if (dependency.observation.execution === "observed") return "medium";
   return "ok";
 }
 
-function verdictLabel(dependency: DependencyEvidence): string {
+function observationLabel(dependency: DependencyEvidence): string {
   if (dependency.digestVerified === false) return "integrity mismatch";
   if (dependency.status === "uninspectable") return "not reviewed";
-  if (dependency.verdict === "install-risk") return "install-time risk";
-  if (dependency.verdict === "install-execution") return "runs on install";
+  if (dependency.observation.risk === "observed") return "install-time risk";
+  if (dependency.observation.risk === "unknown") return "risk unknown";
+  if (dependency.observation.execution === "observed") return "runs on install";
   return "reviewed";
 }
 
@@ -137,7 +138,7 @@ function describeDependency(dependency: DependencyEvidence): string {
   if (installRisk?.nativeExecution) {
     return "Installing this package can invoke a native executable. Confirm that the binary and process launch are expected before approving the release.";
   }
-  if (installRisk?.proven) {
+  if (installRisk?.certainty === "observed") {
     return installRisk.strong
       ? "Installing this package reaches remote-shell, credential-access, dynamic-evaluation, or embedded-secret behavior. Review it directly before approving the release."
       : "Installing this package reaches network-capable code. Confirm what it downloads and from where before approving the release.";
@@ -147,10 +148,10 @@ function describeDependency(dependency: DependencyEvidence): string {
       ? "This package runs code during install and also contains remote-shell, credential-access, dynamic-evaluation, or embedded-secret behavior, but Drydock could not prove the install hook reaches it. Review the package directly before approving."
       : "This package runs code during install and contains network-capable code elsewhere, but Drydock could not prove the install hook reaches it.";
   }
-  if (dependency.verdict === "install-execution") {
+  if (dependency.observation.execution === "observed") {
     return "Installing this package executes a lifecycle or build step. Nothing in that step matched a downloader or credential pattern.";
   }
-  return "Nothing in this package runs automatically on install.";
+  return "Drydock did not observe automatic install execution in the reviewed bytes.";
 }
 
 // Keyed by `DependencyUninspectableReason`, plus an `other` fallback for a

@@ -14,6 +14,8 @@ interface RegistryVersionDist {
   tarball?: string;
   shasum?: string;
   integrity?: string;
+  /** Preserve authoritative-SRI presence even when its value exceeds the retained bound. */
+  integrityPresent?: true;
 }
 
 export interface RegistryMetadata {
@@ -229,8 +231,9 @@ function projectVersionDist(dist: unknown): RegistryVersionDist | null {
   // Bounded on purpose: these are package-controlled strings that ride into the
   // cached document and the persisted report, and a real digest is far shorter.
   if (typeof raw.shasum === "string" && raw.shasum.length <= 128) projected.shasum = raw.shasum;
-  if (typeof raw.integrity === "string" && raw.integrity.length <= 512) {
-    projected.integrity = raw.integrity;
+  if (typeof raw.integrity === "string") {
+    projected.integrityPresent = true;
+    if (raw.integrity.length <= 512) projected.integrity = raw.integrity;
   }
   return Object.keys(projected).length ? projected : null;
 }
