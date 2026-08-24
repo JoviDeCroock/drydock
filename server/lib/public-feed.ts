@@ -22,7 +22,7 @@ export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: 
   const normalized =
     ecosystem === "pypi"
       ? packageName.toLowerCase().replace(/[-_.]+/g, "-")
-      : ecosystem === "vscode" || ecosystem === "browser"
+      : ecosystem === "vscode"
         ? packageName.toLowerCase()
         : packageName;
   return `${ecosystem}:${normalized}`;

@@ -2,17 +2,19 @@ import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
-// Static require/import edges between files inside the package. The walk is a
-// conservative over-approximation built from relative specifiers only: bare
-// (dependency) imports and dynamic expressions cannot pull a packaged file into
-// the consumer graph, and any file we cannot prove reachable simply keeps full
-// finding severity, so misses fail toward louder findings, never quieter ones.
+// Static require/import/importScripts edges between files inside the package.
+// The walk is a conservative over-approximation: bare dependency imports and
+// dynamic expressions cannot pull a packaged file into the consumer graph, and
+// any file we cannot prove reachable simply keeps full finding severity, so
+// misses fail toward louder findings, never quieter ones.
 const RELATIVE_SPECIFIER_PATTERNS = [
   /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
 ];
+const IMPORT_SCRIPTS_CALL_PATTERN = /\bimportScripts\s*\(([^)]*)\)/g;
+const STATIC_STRING_PATTERN = /["']([^"'\n]+)["']/g;
 
 const RESOLUTION_SUFFIXES = [
   "",
@@ -262,6 +264,13 @@ function relativeSpecifiers(text: string): string[] {
       specifiers.push(match[1]);
     }
   }
+  IMPORT_SCRIPTS_CALL_PATTERN.lastIndex = 0;
+  for (const call of text.matchAll(IMPORT_SCRIPTS_CALL_PATTERN)) {
+    STATIC_STRING_PATTERN.lastIndex = 0;
+    for (const argument of call[1].matchAll(STATIC_STRING_PATTERN)) {
+      specifiers.push(argument[1]);
+    }
+  }
   return specifiers;
 }
 
@@ -279,6 +288,7 @@ function resolveModulePath(
 }
 
 function joinRelative(fromPath: string, specifier: string): string {
+  if (specifier.startsWith("/")) return specifier.replace(/^\/+/, "");
   const directory = fromPath.split("/").slice(0, -1).join("/");
   return directory ? `${directory}/${specifier}` : specifier;
 }

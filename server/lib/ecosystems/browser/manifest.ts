@@ -360,31 +360,43 @@ function backgroundConsumerEntrypoints(
   backgroundPage: string | null,
 ): string[] {
   const entrypoints = new Set(declaredEntrypoints);
-  if (!backgroundPage) return [...entrypoints];
-  const page = files.find((file) => file.path === backgroundPage);
-  if (!page?.textSample) return [...entrypoints];
-  for (const { source, baseHref } of htmlScriptSources(page.textSample)) {
-    const path = resolveExtensionResourcePath(backgroundPage, source, baseHref);
-    if (path) entrypoints.add(path);
+  if (backgroundPage) {
+    for (const path of htmlPageConsumerEntrypoints(files, [backgroundPage])) {
+      entrypoints.add(path);
+    }
   }
   return [...entrypoints];
 }
 
 function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): string[] {
   const entrypoints = new Set(pagePaths);
-  for (const pagePath of pagePaths) {
-    const page = files.find((file) => file.path === pagePath);
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const inspectedPages = new Set<string>();
+  const pageQueue = [...pagePaths];
+  while (pageQueue.length) {
+    const pagePath = pageQueue.pop();
+    if (!pagePath || inspectedPages.has(pagePath)) continue;
+    inspectedPages.add(pagePath);
+    const page = filesByPath.get(pagePath);
     if (!page?.textSample) continue;
-    for (const { source, baseHref } of htmlScriptSources(page.textSample)) {
+    for (const { kind, source, baseHref } of htmlConsumerSources(page.textSample)) {
       const path = resolveExtensionResourcePath(pagePath, source, baseHref);
-      if (path) entrypoints.add(path);
+      if (!path) continue;
+      entrypoints.add(path);
+      if (kind === "page" && !inspectedPages.has(path)) pageQueue.push(path);
     }
   }
   return [...entrypoints];
 }
 
-function htmlScriptSources(html: string): Array<{ source: string; baseHref: string | null }> {
-  const sources: Array<{ source: string; baseHref: string | null }> = [];
+function htmlConsumerSources(
+  html: string,
+): Array<{ kind: "script" | "page"; source: string; baseHref: string | null }> {
+  const sources: Array<{
+    kind: "script" | "page";
+    source: string;
+    baseHref: string | null;
+  }> = [];
   const closingScriptPattern = /<\/script(?=[\s/>])/gi;
   let baseHref: string | null = null;
   let baseSeen = false;
@@ -402,12 +414,15 @@ function htmlScriptSources(html: string): Array<{ source: string; baseHref: stri
     const nameStart = cursor;
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const tagName = html.slice(nameStart, cursor).toLowerCase();
-    if ((tagName !== "script" && tagName !== "base") || !/[\s/>]/.test(html[cursor] ?? "")) {
+    if (
+      (tagName !== "script" && tagName !== "base" && tagName !== "iframe") ||
+      !/[\s/>]/.test(html[cursor] ?? "")
+    ) {
       index = Math.max(cursor, tagStart + 1);
       continue;
     }
 
-    const targetAttribute = tagName === "script" ? "src" : "href";
+    const targetAttribute = tagName === "base" ? "href" : "src";
     let targetValue: string | null = null;
     let targetSeen = false;
     let tagClosed = false;
@@ -460,8 +475,12 @@ function htmlScriptSources(html: string): Array<{ source: string; baseHref: stri
     if (tagClosed && tagName === "base" && targetSeen && !baseSeen) {
       baseHref = decodeHTMLAttribute(targetValue ?? "");
       baseSeen = true;
-    } else if (tagClosed && tagName === "script" && targetValue) {
-      sources.push({ source: decodeHTMLAttribute(targetValue), baseHref });
+    } else if (tagClosed && (tagName === "script" || tagName === "iframe") && targetValue) {
+      sources.push({
+        kind: tagName === "iframe" ? "page" : "script",
+        source: decodeHTMLAttribute(targetValue),
+        baseHref,
+      });
     }
     if (tagClosed && tagName === "script") {
       // Script data is raw text in HTML. A base-looking string inside JavaScript

@@ -527,6 +527,50 @@ describe("browser extension review adapter", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test("follows packaged iframe pages from manifest-declared extension pages", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 42,
+        sha256: "7a".repeat(32),
+        flags: [],
+        textSample: '<iframe src="tests/frame.html"></iframe>',
+      },
+      {
+        path: "tests/frame.html",
+        size: 38,
+        sha256: "7b".repeat(32),
+        flags: [],
+        textSample: '<script src="payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "7c".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "tests/frame.html", "tests/payload.js"]),
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("rejects adapter inputs that are not bound to the declared archive", () => {
     const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
       { path: "dist/tab-helper.zip", sha256: SHA },
@@ -580,7 +624,7 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
-  test.each(["*://*/", "https://*/", "http://*/", "https://*/sensitive/*"])(
+  test.each(["*://*/", "https://*/", "http://*/", "https://*/sensitive/*", "file:///*"])(
     "flags scheme-wide match pattern %s",
     (matchPattern) => {
       const path = "dist/tab-helper.zip";

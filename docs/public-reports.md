@@ -258,8 +258,9 @@ participates because it is the one parameter that changes the body. A listing
 change purges the entry for the scan's own tag (the default entry when the scan
 has none), not a guessed set of tags. Case is part of that key for npm — the registry treats
 existing names case-sensitively, so `JSONStream` and `jsonstream` are different
-packages and must not share a badge — while PyPI (PEP 503), VS Code, and browser ids fold, as
-`publicPackageLookupKey` documents. Two consequences: `/badge/npm/React` is its
+packages and must not share a badge — and for browser extensions, whose Gecko IDs preserve
+their declared casing. PyPI (PEP 503) and VS Code fold case, as `publicPackageLookupKey`
+documents. Two consequences: `/badge/npm/React` is its
 own entry and resolves to "not reviewed", and the origin must be the _canonical_
 one on both the write and the purge, or a second bound hostname builds entries
 the purge never visits.

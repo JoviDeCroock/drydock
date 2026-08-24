@@ -2450,6 +2450,21 @@ describe("test-scoped capability findings", () => {
     });
   });
 
+  test("follows static importScripts calls from an ecosystem-provided consumer entrypoint", () => {
+    const staged = [
+      pkg(),
+      file("worker.js", 'importScripts("test/payload.js");\n'),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["worker.js"],
+    });
+    const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("keeps full severity when a lifecycle script points into the test tree", () => {
     const staged = [
       {

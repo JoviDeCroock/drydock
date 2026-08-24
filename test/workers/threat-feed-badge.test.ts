@@ -743,7 +743,7 @@ describe("shields badge endpoint", () => {
     expect(entry?.ecosystem).toBeNull();
   });
 
-  test("canonical ecosystem aliases resolve to the same public badge", async () => {
+  test("canonical case-insensitive ecosystem aliases resolve to the same public badge", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
 
@@ -762,14 +762,18 @@ describe("shields badge endpoint", () => {
     expect((await fetchBadge(app, "vscode", "publisher.powershell")).body.message).toContain(
       "reviewed",
     );
+  });
 
-    const browserScan = await seedCompletedScan(owner, {
-      packageName: "Tab-Helper@Example.Invalid",
-      ecosystem: "browser",
-    });
+  test("browser badges preserve Gecko extension ID casing", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = "Tab-Helper@Example.Invalid";
+    const browserScan = await seedCompletedScan(owner, { packageName, ecosystem: "browser" });
     await share(app, browserScan, { threatFeed: true });
-    expect((await fetchBadge(app, "browser", "tab-helper@example.invalid")).body.message).toContain(
-      "reviewed",
+
+    expect((await fetchBadge(app, "browser", packageName)).body.message).toContain("reviewed");
+    expect((await fetchBadge(app, "browser", packageName.toLowerCase())).body.message).toBe(
+      "not reviewed",
     );
   });
 

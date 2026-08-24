@@ -100,14 +100,26 @@ describe("browser extension workflow-gate adapter", () => {
       ]),
     );
   });
+
+  test("keeps case-distinct Gecko extension ids separate", () => {
+    const candidates = browserWorkflowGateAdapter.prepareReleaseCandidates([
+      parsedArtifact("dist/upper.xpi", [manifestFile("Tab-Helper@Example.Invalid")]),
+      parsedArtifact("dist/lower.xpi", [manifestFile("tab-helper@example.invalid")], OTHER_SHA),
+    ]);
+
+    expect(candidates.map((candidate) => candidate.package.name)).toEqual([
+      "Tab-Helper@Example.Invalid",
+      "tab-helper@example.invalid",
+    ]);
+  });
 });
 
-function manifestFile() {
+function manifestFile(extensionId = "tab-helper@example.invalid") {
   const value = {
     manifest_version: 3,
     name: "Tab helper",
     version: "1.2.0",
-    browser_specific_settings: { gecko: { id: "tab-helper@example.invalid" } },
+    browser_specific_settings: { gecko: { id: extensionId } },
   };
   return {
     path: "manifest.json",

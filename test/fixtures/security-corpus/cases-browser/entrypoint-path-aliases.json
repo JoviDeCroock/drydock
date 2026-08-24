@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest and HTML path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, and HTML script attributes resolved through character references, quoted greater-than characters, and a local base URL.",
+  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, classic-worker imports, and HTML script or iframe paths resolved through character references, quoted greater-than characters, and local base URLs.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 70,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
       "flags": [],
-      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><script data-description=\">\" src=\"page&#46;js\"></script>"
+      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><script data-description=\">\" src=\"page&#46;js\"></script><iframe src=\"frame.html\"></iframe>"
     },
     {
       "path": "tests/content.js",
@@ -41,13 +41,36 @@
       "size": 42,
       "sha256": "5656565656565656565656565656565656565656565656565656565656565656",
       "flags": [],
-      "textSample": "const cp = require('child_process'); cp.exec(command);"
+      "textSample": "const cp = require('child_process'); cp.exec(command); importScripts('nested.js');"
+    },
+    {
+      "path": "tests/nested.js",
+      "size": 14,
+      "sha256": "5757575757575757575757575757575757575757575757575757575757575757",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/frame.html",
+      "size": 35,
+      "sha256": "5858585858585858585858585858585858585858585858585858585858585858",
+      "flags": [],
+      "textSample": "<script src=\"framed.js\"></script>"
+    },
+    {
+      "path": "tests/framed.js",
+      "size": 41,
+      "sha256": "5959595959595959595959595959595959595959595959595959595959595959",
+      "flags": [],
+      "textSample": "fetch('https://example.invalid/framed');"
     }
   ],
   "expectedRisk": "high",
   "expectedFindings": [
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/content.js" },
     { "ruleId": "code.network-access", "severity": "medium", "file": "tests/user-api.js" },
-    { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" }
+    { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/nested.js" },
+    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/framed.js" }
   ]
 }

@@ -65,9 +65,10 @@ export const browserWorkflowGateAdapter: WorkflowGateAdapter = {
       const candidateName = browserExtensionCandidateName(parsed);
       // Gecko IDs are stable store identities. Chrome archives commonly omit
       // one, so keep name-only artifacts separate by their verified digest
-      // instead of merging unrelated same-name extensions.
+      // instead of merging unrelated same-name extensions. Preserve Gecko ID
+      // casing because a casing change denotes a different extension identity.
       const identityKey = parsed.extensionId
-        ? `extension:${parsed.extensionId.toLowerCase()}`
+        ? `extension:${parsed.extensionId}`
         : `artifact:${artifact.sha256}`;
       const group = groups.get(identityKey);
       if (group) {

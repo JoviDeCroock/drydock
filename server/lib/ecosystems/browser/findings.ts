@@ -85,6 +85,7 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "webRequestFilterResponse.serviceWorkerScript",
 ]);
 const BROAD_HOST_MATCH_PATTERN_RE = /^(?:\*|[a-z][a-z0-9+.-]*):\/\/\*(?::(?:\*|\d+))?\//i;
+const BROAD_FILE_MATCH_PATTERN_RE = /^file:\/\/\/\*$/i;
 
 const EXECUTABLE_CSP_DIRECTIVE_CHAINS = [
   ["script-src", "default-src"],
@@ -235,7 +236,11 @@ function browserManifestFindings(
 
 function isBroadHostPattern(value: string): boolean {
   const normalized = value.trim().toLowerCase();
-  return normalized === "<all_urls>" || BROAD_HOST_MATCH_PATTERN_RE.test(normalized);
+  return (
+    normalized === "<all_urls>" ||
+    BROAD_HOST_MATCH_PATTERN_RE.test(normalized) ||
+    BROAD_FILE_MATCH_PATTERN_RE.test(normalized)
+  );
 }
 
 function isBroadExternalOrigin(value: string): boolean {
