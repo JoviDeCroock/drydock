@@ -158,11 +158,17 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
           <a href="/privacy" class={linkClass}>
             Privacy
           </a>
+          <a href="/security" class={linkClass}>
+            Security model
+          </a>
+          <a href="/open-source" class={linkClass}>
+            Open source
+          </a>
           <a href={FEEDBACK_MAILTO} class={linkClass}>
             Feedback
           </a>
           <a href={SECURITY_MAILTO} class={linkClass}>
-            Security
+            Report security
           </a>
           <AikidoFootnote />
         </nav>

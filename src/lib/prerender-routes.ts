@@ -1,3 +1,5 @@
+import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./public-content-routes.ts";
+
 const HYDRATED_PRERENDER_ROUTES = [
   "/",
   "/login",
@@ -6,6 +8,8 @@ const HYDRATED_PRERENDER_ROUTES = [
   "/privacy",
   "/diff",
   "/reports",
+  ...DISCOVERY_GUIDE_PATHS,
+  ...INCIDENT_CASE_PATHS,
 ] as const;
 
 const DASHBOARD_SHELL_ROUTES = [
@@ -26,6 +30,8 @@ export const ADDITIONAL_PRERENDER_ROUTES = [
   // prerendered landing page, so a shared report link unfurls with the
   // marketing card and flashes marketing copy before client routing.
   "/reports",
+  ...DISCOVERY_GUIDE_PATHS,
+  ...INCIDENT_CASE_PATHS,
   ...DASHBOARD_SHELL_ROUTES,
 ] as const;
 

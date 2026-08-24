@@ -7,13 +7,14 @@ import { packageDiffPath, type DiffSpec } from "../../lib/package-diff-path";
 // colors sabotage are all gone). Before adding a row, verify both versions
 // still resolve AND that the pair surfaces findings — a card that opens a
 // clean report undersells the review.
-const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
+const INCIDENT_DIFFS: Array<DiffSpec & { note: string; caseStudyPath?: string }> = [
   {
     ecosystem: "npm",
     packageName: "node-ipc",
     fromVersion: "9.2.1",
     toVersion: "11.0.0",
-    note: "protestware arrives as a new dependency (peacenotwar)",
+    note: "a new runtime dependency appears: peacenotwar",
+    caseStudyPath: "/incidents/node-ipc-peacenotwar",
   },
   {
     ecosystem: "npm",
@@ -27,7 +28,8 @@ const INCIDENT_DIFFS: Array<DiffSpec & { note: string }> = [
     packageName: "es5-ext",
     fromVersion: "0.10.53",
     toVersion: "0.10.54",
-    note: "real protestware: a postinstall hook lands in a routine patch, still live on npm",
+    note: "a postinstall hook appears in a patch release, still live on npm",
+    caseStudyPath: "/incidents/es5-ext-postinstall",
   },
 ];
 
@@ -45,12 +47,15 @@ export function IncidentDiffCards() {
           class="p-5 flex flex-col gap-2 hover:border-accent transition-colors duration-150"
         >
           <a
-            href={packageDiffPath(
-              incident.ecosystem,
-              incident.packageName,
-              incident.fromVersion,
-              incident.toVersion,
-            )}
+            href={
+              incident.caseStudyPath ??
+              packageDiffPath(
+                incident.ecosystem,
+                incident.packageName,
+                incident.fromVersion,
+                incident.toVersion,
+              )
+            }
             class="flex flex-col gap-2 no-underline text-inherit"
           >
             <h2 class="text-base font-medium tracking-[-0.005em] m-0 break-all">

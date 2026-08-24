@@ -1,5 +1,9 @@
 import { packageDiffCardPath, packageDiffPath, type DiffEcosystem } from "./package-diff-path";
 import { diffRefLabel } from "./pkg-pr-new";
+import { type DiscoveryGuidePath, type IncidentCasePath } from "./public-content-routes";
+
+export { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./public-content-routes";
+export type { DiscoveryGuidePath, IncidentCasePath } from "./public-content-routes";
 
 export const SITE_NAME = "Drydock";
 export const PRODUCT_NAME = "Drydock Package Review";
@@ -18,6 +22,66 @@ export interface PageSeoMetadata {
   description: string;
   path: string;
 }
+
+export const discoveryGuideSeoByPath = {
+  "/npm-staged-publishing": {
+    title: "npm staged publishing security review | Drydock",
+    description:
+      "Review an npm staged package tarball against its published baseline before completing publication with npm 2FA.",
+    path: "/npm-staged-publishing",
+  },
+  "/github-actions-package-gate": {
+    title: "GitHub Actions package release gate | Drydock",
+    description:
+      "Hold npm, PyPI, or VS Code publication in a GitHub Environment until the exact built artifacts pass human review.",
+    path: "/github-actions-package-gate",
+  },
+  "/pypi-release-security": {
+    title: "PyPI release security for wheels and sdists | Drydock",
+    description:
+      "Review Python wheels and source distributions before a GitHub Actions trusted-publishing workflow uploads them to PyPI.",
+    path: "/pypi-release-security",
+  },
+  "/vscode-extension-security": {
+    title: "VS Code extension pre-publish security | Drydock",
+    description:
+      "Review the packaged VSIX, activation changes, entrypoints, and risky capabilities before marketplace publication.",
+    path: "/vscode-extension-security",
+  },
+  "/package-tarball-diff": {
+    title: "Package tarball diff for npm, PyPI, and atpm | Drydock",
+    description:
+      "Compare package artifacts file by file with deterministic supply-chain findings. No account or package installation required.",
+    path: "/package-tarball-diff",
+  },
+  "/security": {
+    title: "Drydock package-review security model",
+    description:
+      "How Drydock isolates hostile package artifacts, keeps publish credentials outside the sandbox, and preserves human release decisions.",
+    path: "/security",
+  },
+  "/open-source": {
+    title: "Open-source pre-publish package review | Drydock",
+    description:
+      "Audit Drydock's Apache-2.0 detection rules and security boundaries, or self-host package review in your own Cloudflare account.",
+    path: "/open-source",
+  },
+} as const satisfies Record<DiscoveryGuidePath, PageSeoMetadata>;
+
+export const incidentCaseSeoByPath = {
+  "/incidents/node-ipc-peacenotwar": {
+    title: "node-ipc 11.0.0 package diff: peacenotwar added | Drydock",
+    description:
+      "Inspect the surviving node-ipc 9.2.1 to 11.0.0 artifact diff and the new peacenotwar runtime dependency without installing either release.",
+    path: "/incidents/node-ipc-peacenotwar",
+  },
+  "/incidents/es5-ext-postinstall": {
+    title: "es5-ext 0.10.54 package diff: postinstall added | Drydock",
+    description:
+      "Inspect the es5-ext 0.10.53 to 0.10.54 artifact diff that introduced a postinstall hook in a patch release.",
+    path: "/incidents/es5-ext-postinstall",
+  },
+} as const satisfies Record<IncidentCasePath, PageSeoMetadata>;
 
 // Per-diff share card. Every shared diff otherwise unfurls with the same
 // site-wide image, so a timeline reader cannot tell which package a link is
@@ -98,5 +162,11 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/docs") return docsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
   if (canonicalPathname === "/diff") return packageDiffSeo();
+  if (canonicalPathname in discoveryGuideSeoByPath) {
+    return discoveryGuideSeoByPath[canonicalPathname as DiscoveryGuidePath];
+  }
+  if (canonicalPathname in incidentCaseSeoByPath) {
+    return incidentCaseSeoByPath[canonicalPathname as IncidentCasePath];
+  }
   return undefined;
 }
