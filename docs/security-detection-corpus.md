@@ -202,8 +202,10 @@ The corpus includes calibration cases that should stay that way:
 - `added-dependency-dynamic-skipped-content` and
   `added-dependency-computed-execfile-skipped-content` pin dynamic execution: computed module loads in
   inline lifecycle code and renamed child-process targets make every omitted dependency body a visible
-  coverage gap. `added-dependency-aliased-require-skipped-content` also pins renamed ESM
-  `createRequire` factories.
+  coverage gap. `added-dependency-aliased-require-skipped-content` pins renamed ESM
+  `createRequire` factories, `added-dependency-bound-require-skipped-content` pins bound
+  `module.require`, and `added-dependency-node-argv-skipped-content` pins multiple static Node argv
+  targets.
 - `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
   genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
   second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
@@ -227,7 +229,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.47.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.48.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -725,6 +727,12 @@ already recognizes. Optional, bracketed, template-literal, and import-attributes
 their named omitted targets visible; renamed ESM `createRequire` factories remain conservative dynamic
 loaders; and `fork()` targets plus relative scripts passed in a Node interpreter argv join the install
 graph. Computed Node argv remains fail-closed.
+
+`1.48.0` closes two remaining omitted-body bypasses in dependency install reachability. Static Node
+interpreter argv now contributes every relative preload, import, and entry script instead of only the
+first path, and functions bound from `module.require` remain conservative loader aliases.
+`added-dependency-node-argv-skipped-content` and
+`added-dependency-bound-require-skipped-content` pin the fail-visible results.
 
 ### Fixture format
 
