@@ -2,7 +2,7 @@ import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 
 export const VSCODE_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
-export const VSCODE_RULES_VERSION = "0.1.0";
+export const VSCODE_RULES_VERSION = "0.2.0";
 
 export const VSCODE_RULE_IDS = {
   metadataMismatch: "vscode.metadata-mismatch",

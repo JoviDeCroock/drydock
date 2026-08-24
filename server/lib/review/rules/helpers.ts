@@ -1,6 +1,10 @@
 import type { Finding } from "..";
 import { firstMatchingLine, matchesAnyPattern } from "../../platform/text-utils";
-import { FINDING_SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from "./patterns";
+import {
+  FINDING_SECRET_PATTERNS,
+  firstPrivateKeyBlockIndex,
+  HIGH_CONFIDENCE_SECRET_PATTERNS,
+} from "./patterns";
 import { DETERMINISTIC_RULE_IDS, type DeterministicRuleKey } from "./rule-ids";
 
 // Family modules tag findings with a rule ID only; the deterministic ruleset
@@ -39,9 +43,12 @@ interface SecretTextOptions {
 }
 
 export function containsSecretLikeText(text: string, options: SecretTextOptions = {}): boolean {
-  return matchesAnyPattern(
-    text,
-    secretPatternsFor(options).map(([pattern]) => pattern),
+  return (
+    firstPrivateKeyBlockIndex(text) !== undefined ||
+    matchesAnyPattern(
+      text,
+      secretPatternsFor(options).map(([pattern]) => pattern),
+    )
   );
 }
 
@@ -50,10 +57,16 @@ export function firstSecretLine(
   options: SecretTextOptions = {},
 ): number | undefined {
   if (!text) return undefined;
-  return firstMatchingLine(
+  const patternLine = firstMatchingLine(
     text,
     secretPatternsFor(options).map(([pattern]) => pattern),
   );
+  const privateKeyIndex = firstPrivateKeyBlockIndex(text);
+  const privateKeyLine =
+    privateKeyIndex === undefined ? undefined : text.slice(0, privateKeyIndex).split("\n").length;
+  if (patternLine === undefined) return privateKeyLine;
+  if (privateKeyLine === undefined) return patternLine;
+  return Math.min(patternLine, privateKeyLine);
 }
 
 function secretPatternsFor(options: SecretTextOptions): Array<[RegExp, string]> {

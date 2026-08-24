@@ -16,15 +16,16 @@
  * whatever shape a pattern has, and the worst a future quadratic pattern can do
  * is pay its quadratic cost against a fixed 8 KB window.
  *
- * Windows overlap by `SCAN_WINDOW_OVERLAP_CHARS` so ordinary matches that
- * straddle a seam are still found. Patterns that intentionally recognize a
- * larger payload must also expose a bounded prefix or suffix signal that fits in
- * the overlap; regex windowing cannot preserve an arbitrarily long match while
- * also bounding the input handed to the regex engine.
+ * Each window reserves `SCAN_WINDOW_CONTEXT_CHARS` on both sides of its core.
+ * Only matches that start in the core are accepted, so `^`, `$`, word
+ * boundaries, and lookarounds see real neighboring source instead of a slice
+ * seam. Patterns that intentionally recognize a larger payload must also expose
+ * a linear composite matcher; regex windowing cannot preserve an arbitrarily
+ * long match while also bounding the input handed to the regex engine.
  */
 const SCAN_WINDOW_CHARS = 8 * 1024;
-const SCAN_WINDOW_OVERLAP_CHARS = 1024;
-const SCAN_WINDOW_STRIDE = SCAN_WINDOW_CHARS - SCAN_WINDOW_OVERLAP_CHARS;
+const SCAN_WINDOW_CONTEXT_CHARS = 1024;
+const SCAN_WINDOW_CORE_CHARS = SCAN_WINDOW_CHARS - 2 * SCAN_WINDOW_CONTEXT_CHARS;
 
 /**
  * Whether any pattern matches, scanning long input in bounded windows. Short
@@ -32,19 +33,7 @@ const SCAN_WINDOW_STRIDE = SCAN_WINDOW_CHARS - SCAN_WINDOW_OVERLAP_CHARS;
  * path costs no slicing.
  */
 export function matchesAnyPattern(text: string, patterns: RegExp[]): boolean {
-  if (text.length <= SCAN_WINDOW_CHARS) return testAll(text, patterns);
-  for (let offset = 0; offset < text.length; offset += SCAN_WINDOW_STRIDE) {
-    if (testAll(text.slice(offset, offset + SCAN_WINDOW_CHARS), patterns)) return true;
-  }
-  return false;
-}
-
-function testAll(window: string, patterns: RegExp[]): boolean {
-  for (const pattern of patterns) {
-    pattern.lastIndex = 0;
-    if (pattern.test(window)) return true;
-  }
-  return false;
+  return firstMatchIndex(text, patterns) !== undefined;
 }
 
 /**
@@ -55,13 +44,60 @@ function testAll(window: string, patterns: RegExp[]): boolean {
  */
 function firstMatchIndex(text: string, patterns: RegExp[]): number | undefined {
   if (text.length <= SCAN_WINDOW_CHARS) return earliestIn(text, patterns, 0);
+  const scanningPatterns = patterns.map(withGlobalFlag);
+  for (let coreStart = 0; coreStart < text.length; coreStart += SCAN_WINDOW_CORE_CHARS) {
+    const coreEnd = Math.min(text.length, coreStart + SCAN_WINDOW_CORE_CHARS);
+    const windowStart = Math.max(0, coreStart - SCAN_WINDOW_CONTEXT_CHARS);
+    const windowEnd = Math.min(text.length, coreEnd + SCAN_WINDOW_CONTEXT_CHARS);
+    const index = earliestInCore(
+      text.slice(windowStart, windowEnd),
+      scanningPatterns,
+      windowStart,
+      coreStart,
+      coreEnd,
+      windowEnd < text.length,
+    );
+    if (index !== undefined) return index;
+  }
+  return undefined;
+}
+
+function earliestInCore(
+  window: string,
+  patterns: RegExp[],
+  windowOffset: number,
+  coreStart: number,
+  coreEnd: number,
+  hasArtificialRightBoundary: boolean,
+): number | undefined {
   let earliest: number | undefined;
-  for (let offset = 0; offset < text.length; offset += SCAN_WINDOW_STRIDE) {
-    const index = earliestIn(text.slice(offset, offset + SCAN_WINDOW_CHARS), patterns, offset);
-    if (index !== undefined && (earliest === undefined || index < earliest)) earliest = index;
-    if (earliest !== undefined && earliest < offset + SCAN_WINDOW_STRIDE) return earliest;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(window))) {
+      const start = windowOffset + match.index;
+      const touchesArtificialRightBoundary =
+        hasArtificialRightBoundary && match.index + match[0].length === window.length;
+      if (
+        start >= coreStart &&
+        start < coreEnd &&
+        !touchesArtificialRightBoundary &&
+        (earliest === undefined || start < earliest)
+      ) {
+        earliest = start;
+      }
+      if (start >= coreEnd || earliest !== undefined) break;
+      if (match[0].length === 0) pattern.lastIndex += 1;
+    }
   }
   return earliest;
+}
+
+function withGlobalFlag(pattern: RegExp): RegExp {
+  return new RegExp(
+    pattern.source,
+    pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+  );
 }
 
 function earliestIn(window: string, patterns: RegExp[], offset: number): number | undefined {

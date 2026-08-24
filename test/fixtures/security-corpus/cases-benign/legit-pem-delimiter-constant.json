@@ -1,0 +1,45 @@
+{
+  "id": "legit-pem-delimiter-constant",
+  "title": "PEM parser embeds private-key delimiter constants (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-credential-parser",
+  "source": "synthetic-benign",
+  "intent": "PEM parsers and serializers need to recognize armor delimiters. A BEGIN marker without a matching END marker and key body is syntax metadata, not leaked private material, and must not raise file.secret-content.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": { "name": "pem-codec", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": { "name": "pem-codec", "version": "1.1.0", "main": "index.js" },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 55,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"pem-codec\",\"version\":\"1.0.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 43,
+      "sha256": "prev-index-js",
+      "flags": [],
+      "textSample": "export function decodePem(value) { return value; }\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 55,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"pem-codec\",\"version\":\"1.1.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 158,
+      "sha256": "staged-index-js",
+      "flags": [],
+      "textSample": "const PRIVATE_KEY_HEADER = \"-----BEGIN PRIVATE KEY-----\";\nexport function decodePem(value) {\n  return value.startsWith(PRIVATE_KEY_HEADER) ? value : null;\n}\n"
+    }
+  ]
+}

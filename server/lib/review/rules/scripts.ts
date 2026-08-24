@@ -88,6 +88,37 @@ const ROTATING_STRING_TABLE_SIGNALS = [
 ];
 const ROTATING_STRING_TABLE_SIGNAL_THRESHOLD = 5;
 
+interface OrderedShellSignal {
+  prefix: RegExp;
+  suffix: RegExp | "pipe-interpreter";
+  statementBarriers?: string;
+}
+
+// Composite commands can be arbitrarily long while each meaningful shell token
+// stays small. Keep the ordinary regexes for the common path, then use these
+// linear prefix/suffix scans when fixed regex windows cannot carry both ends of
+// the command. Only curl/wget treat `;` and `&` as statement barriers, matching
+// the semantics of SHELL_DOWNLOAD_EXECUTE_PATTERN_SET.
+const ORDERED_SHELL_DOWNLOAD_EXECUTE_SIGNALS: OrderedShellSignal[] = [
+  {
+    prefix: /\b(?:curl|wget)\b/gi,
+    suffix: "pipe-interpreter",
+    statementBarriers: ";&",
+  },
+  {
+    prefix: /\bnc\s/gi,
+    suffix: /\s-e\s/gi,
+  },
+  {
+    prefix: /(?:\bInvoke-WebRequest\b|\.DownloadString\s*\(|\biwr\b)/gi,
+    suffix: /\|\s*(?:iex|Invoke-Expression)\b/gi,
+  },
+  {
+    prefix: /\bpowershell\b/gi,
+    suffix: /\s-(?:enc|EncodedCommand)\b/gi,
+  },
+];
+
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a registry tarball install.
 export function scriptFindings(ctx: RuleContext): Finding[] {
@@ -179,7 +210,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       false,
       true,
     );
-    const downloadExecute = matchCategory(
+    const downloadExecute = matchDownloadExecute(
       SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
       sample,
       normalized,
@@ -244,11 +275,12 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const downloadExecuteCapability = downloadExecute.matched && !buildInfrastructure;
     const shellExecutable =
       processExecution.matched || lifecycleScriptFile || downloadExecuteCapability;
-    if (remoteShell.matched && shellExecutable) {
+    if ((remoteShell.matched || downloadExecute.matched) && shellExecutable) {
+      const remoteShellObfuscated = remoteShell.obfuscated || downloadExecute.obfuscated;
       findings.push(
         testScope(
           testScoped,
-          remoteShell.obfuscated,
+          remoteShellObfuscated,
           tag("codeRemoteShell", {
             // Download-and-execute has no benign reading; a bare shell tool
             // paired with a spawn API does, so it sits one step below.
@@ -261,7 +293,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
             reason: downloadExecuteCapability
               ? "the command fetches code over the network and pipes it straight into an interpreter, so the package runs bytes it never shipped and no reviewer can see"
               : "shell commands reach the network and re-enter an interpreter outside the language-level APIs the other capability rules model, so this executes code the package did not ship",
-            ...(remoteShell.obfuscated ? { obfuscated: true } : {}),
+            ...(remoteShellObfuscated ? { obfuscated: true } : {}),
           }),
         ),
       );
@@ -380,6 +412,128 @@ function matchCategory(
       return { matched: true, line: normalizedLine, obfuscated: true };
   }
   return { matched: false, line: undefined, obfuscated: false };
+}
+
+function matchDownloadExecute(
+  patterns: RegExp[],
+  sample: string,
+  normalized: string,
+  sourceObfuscated: boolean,
+): { matched: boolean; line: number | undefined; obfuscated: boolean } {
+  const bounded = matchCategory(patterns, sample, normalized, sourceObfuscated);
+  if (bounded.matched) return bounded;
+  const rawLine = firstOrderedShellSignalLine(sample);
+  if (rawLine !== undefined) {
+    return { matched: true, line: rawLine, obfuscated: sourceObfuscated };
+  }
+  if (normalized !== sample) {
+    const normalizedLine = firstOrderedShellSignalLine(normalized);
+    if (normalizedLine !== undefined) {
+      return { matched: true, line: normalizedLine, obfuscated: true };
+    }
+  }
+  return { matched: false, line: undefined, obfuscated: false };
+}
+
+function firstOrderedShellSignalLine(source: string): number | undefined {
+  const lines = source.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (
+      ORDERED_SHELL_DOWNLOAD_EXECUTE_SIGNALS.some((pair) => hasOrderedSignals(lines[index], pair))
+    ) {
+      return index + 1;
+    }
+  }
+  return undefined;
+}
+
+function hasOrderedSignals(line: string, pair: OrderedShellSignal): boolean {
+  pair.prefix.lastIndex = 0;
+  let prefix = pair.prefix.exec(line);
+  let suffixCursor = 0;
+  let suffix = nextOrderedSuffix(line, pair.suffix, suffixCursor);
+  while (prefix && suffix !== undefined) {
+    const prefixEnd = prefix.index + prefix[0].length;
+    if (suffix < prefixEnd) {
+      suffixCursor = suffix + 1;
+      suffix = nextOrderedSuffix(line, pair.suffix, suffixCursor);
+      continue;
+    }
+    const barrier = firstStatementBarrier(line, prefixEnd, suffix, pair.statementBarriers);
+    if (barrier === undefined) return true;
+    pair.prefix.lastIndex = Math.max(pair.prefix.lastIndex, barrier + 1);
+    prefix = pair.prefix.exec(line);
+  }
+  return false;
+}
+
+function nextOrderedSuffix(
+  line: string,
+  suffix: OrderedShellSignal["suffix"],
+  from: number,
+): number | undefined {
+  if (suffix === "pipe-interpreter") return nextPipeInterpreter(line, from);
+  suffix.lastIndex = from;
+  return suffix.exec(line)?.index;
+}
+
+const SHELL_COMMAND_WRAPPERS = new Set(["sudo", "env", "command", "exec", "xargs"]);
+const SHELL_INTERPRETER_COMMAND = /^(?:(?:ba|z|k|da)?sh|python[\d.]*|perl|ruby|node)\b/i;
+
+function nextPipeInterpreter(line: string, from: number): number | undefined {
+  let pipe = line.indexOf("|", from);
+  while (pipe !== -1) {
+    if (isInterpreterAfterPipe(line, pipe + 1)) return pipe;
+    pipe = line.indexOf("|", pipe + 1);
+  }
+  return undefined;
+}
+
+function isInterpreterAfterPipe(line: string, from: number): boolean {
+  let cursor = skipShellWhitespace(line, from);
+  for (;;) {
+    const word = shellWordAt(line, cursor);
+    if (!word) return false;
+    const basename = word.value.split("/").at(-1) ?? "";
+    if (SHELL_INTERPRETER_COMMAND.test(basename)) return true;
+    if (!SHELL_COMMAND_WRAPPERS.has(word.value)) return false;
+    cursor = skipShellWhitespace(line, word.end);
+    for (;;) {
+      const flag = shellWordAt(line, cursor);
+      if (!flag?.value.startsWith("-")) break;
+      cursor = skipShellWhitespace(line, flag.end);
+    }
+  }
+}
+
+function skipShellWhitespace(line: string, from: number): number {
+  let cursor = from;
+  while (cursor < line.length && /\s/.test(line[cursor])) cursor += 1;
+  return cursor;
+}
+
+function shellWordAt(line: string, from: number): { value: string; end: number } | undefined {
+  if (from >= line.length || line[from] === "|") return undefined;
+  let end = from;
+  while (end < line.length && !/\s/.test(line[end]) && line[end] !== "|") end += 1;
+  return end === from ? undefined : { value: line.slice(from, end), end };
+}
+
+function firstStatementBarrier(
+  line: string,
+  from: number,
+  to: number,
+  barriers: string | undefined,
+): number | undefined {
+  if (!barriers) return undefined;
+  let earliest: number | undefined;
+  for (const barrier of barriers) {
+    const index = line.indexOf(barrier, from);
+    if (index !== -1 && index < to && (earliest === undefined || index < earliest)) {
+      earliest = index;
+    }
+  }
+  return earliest;
 }
 
 function hasRotatingStringTableObfuscation(source: string): boolean {

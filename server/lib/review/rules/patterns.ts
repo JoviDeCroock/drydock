@@ -202,8 +202,10 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
 const URL_CREDENTIALS_REDACTION_PATTERN = /\b(?:[A-Za-z]+:\/\/)[^\s/@:]+:[^\s/@]+@[^\s'"\\]+/g;
 const PRIVATE_KEY_REDACTION_PATTERN =
   /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----)[\s\S])*?-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g;
-const PRIVATE_KEY_FINDING_PATTERN =
+const PRIVATE_KEY_BEGIN_PATTERN =
   /-----BEGIN (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g;
+const PRIVATE_KEY_END_PATTERN =
+  /-----END (?:RSA |OPENSSH |EC |DSA |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g;
 const PLACEHOLDER_USERNAME_SEGMENT = [
   "user(?:name)?",
   "usr",
@@ -271,19 +273,40 @@ export const SECRET_PATTERNS: Array<[RegExp, string]> = [
   ...genericSecretPatterns(),
 ];
 
-// Detection-side view of SECRET_PATTERNS: identical except the URL-credentials
-// pattern requires a non-placeholder password. Redaction stays on the broad set.
-export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.map(
-  ([pattern, label]) =>
+// Detection-side view of SECRET_PATTERNS: URL credentials require a
+// non-placeholder password, while private keys use the ordered marker scan below
+// so a delimiter constant alone stays quiet. Redaction stays on the broad set.
+export const FINDING_SECRET_PATTERNS: Array<[RegExp, string]> = SECRET_PATTERNS.flatMap(
+  ([pattern, label]): Array<[RegExp, string]> =>
     pattern === URL_CREDENTIALS_REDACTION_PATTERN
-      ? [URL_CREDENTIALS_FINDING_PATTERN, label]
+      ? [[URL_CREDENTIALS_FINDING_PATTERN, label]]
       : pattern === PRIVATE_KEY_REDACTION_PATTERN
-        ? [PRIVATE_KEY_FINDING_PATTERN, label]
-        : [pattern, label],
+        ? []
+        : [[pattern, label]],
 );
 
 export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[RegExp, string]> =
   FINDING_SECRET_PATTERNS.slice(0, -1);
+
+// Detection requires a complete armored block, not merely a delimiter string a
+// PEM parser or serializer legitimately embeds. The two marker scans remain
+// linear for arbitrarily large keys and mirror the redactor's rule that a
+// malformed opener cannot consume a later complete block.
+export function firstPrivateKeyBlockIndex(text: string): number | undefined {
+  PRIVATE_KEY_BEGIN_PATTERN.lastIndex = 0;
+  PRIVATE_KEY_END_PATTERN.lastIndex = 0;
+  let begin = PRIVATE_KEY_BEGIN_PATTERN.exec(text);
+  let end = PRIVATE_KEY_END_PATTERN.exec(text);
+  while (begin) {
+    while (end && end.index < begin.index + begin[0].length) {
+      end = PRIVATE_KEY_END_PATTERN.exec(text);
+    }
+    const nextBegin = PRIVATE_KEY_BEGIN_PATTERN.exec(text);
+    if (end && (!nextBegin || end.index < nextBegin.index)) return begin.index;
+    begin = nextBegin;
+  }
+  return undefined;
+}
 
 function genericSecretPatterns(): Array<[RegExp, string]> {
   return [
