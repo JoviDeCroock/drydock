@@ -641,6 +641,7 @@ describe("assessDependencyArtifact", () => {
     'module?.["require"](target)',
     "module['require']?.(target)",
     "require?.(target)",
+    'require(/* package-controlled gap */ "./payload.data")',
   ])("fails completeness for the dynamic Node loader %s", (load) => {
     const manifest = {
       name: "n",
@@ -669,6 +670,8 @@ describe("assessDependencyArtifact", () => {
     "const load = require; load('./payload.min.js')",
     "const first = require; const load = first; load('./payload.min.js')",
     "const load = createRequire(import.meta.url); load('./payload.min.js')",
+    'import { createRequire as cr } from "node:module"; const load = cr(import.meta.url); load("./payload.min.js")',
+    'import { createRequire as cr } from "node:module"; const factory = cr; const load = factory(import.meta.url); load("./payload.min.js")',
   ])("fails completeness for the aliased Node loader in %s", (load) => {
     const manifest = {
       name: "n",
@@ -731,6 +734,9 @@ describe("assessDependencyArtifact", () => {
     'const run = require("child_process").execFileSync; run("./payload.min.js")',
     'const { execFile: run } = require("node:child_process"); run(getTarget())',
     'import { execFile as run } from "node:child_process"; run(getTarget())',
+    'require("node:child_process").fork(/* package-controlled gap */ "./payload.min.js")',
+    'require("node:child_process").spawn("node", getArguments())',
+    'require("node:child_process").spawn("node", ["./" + name])',
     'source "$PAYLOAD"',
   ])("fails completeness for the dynamic local execution edge in %s", (source) => {
     const manifest = {
@@ -781,8 +787,18 @@ describe("assessDependencyArtifact", () => {
   });
 
   test.each([
+    ["node install.js", "install.js", "require(`./payload.min.js`)"],
+    ["node install.js", "install.js", 'require?.("./payload.min.js")'],
+    ["node install.js", "install.js", 'module["require"]("./payload.min.js")'],
+    ["node install.js", "install.js", 'import("./payload.min.js", { with: { type: "json" } })'],
     ["node install.js", "install.js", 'require("child_process").execFileSync("./payload.min.js")'],
+    ["node install.js", "install.js", 'require("child_process").fork("./payload.min.js")'],
     ["node install.js", "install.js", 'require("child_process").spawn("./payload.min.js")'],
+    [
+      "node install.js",
+      "install.js",
+      'require("child_process").spawn("node", ["./payload.min.js"])',
+    ],
     [
       "node install.js",
       "install.js",

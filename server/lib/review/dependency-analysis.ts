@@ -218,7 +218,14 @@ function hasDynamicModuleLoad(text: string): boolean {
     const staticSpecifier =
       argument.type === "string" ||
       (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
-    if (!staticSpecifier || !argumentEndsSpecifier) return true;
+    if (
+      !staticSpecifier ||
+      !argumentEndsSpecifier ||
+      !onlyWhitespaceBetween(text, open, argument) ||
+      !onlyWhitespaceBetween(text, argument, afterArgument)
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -229,13 +236,32 @@ function hasDynamicModuleLoad(text: string): boolean {
  * loader value even though the factory call itself is not a module load.
  */
 function moduleLoaderAliases(text: string, tokens: JsToken[]): Set<string> {
+  const renamedFactories = destructuredModuleAliases(
+    text,
+    tokens,
+    new Set(["module", "node:module"]),
+    new Set(["createRequire"]),
+  );
+  const factoryAliases = simpleAliases(
+    text,
+    tokens,
+    (sourceIndex) => {
+      const sourceName = jsTokenText(text, tokens[sourceIndex]);
+      const afterSource = tokens[sourceIndex + 1];
+      return (
+        sourceName === "createRequire" &&
+        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")
+      );
+    },
+    renamedFactories,
+  );
   return simpleAliases(text, tokens, (sourceIndex) => {
     const sourceName = jsTokenText(text, tokens[sourceIndex]);
     const afterSource = tokens[sourceIndex + 1];
     return (
       (sourceName === "require" &&
         !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")) ||
-      (sourceName === "createRequire" &&
+      ((sourceName === "createRequire" || factoryAliases.has(sourceName)) &&
         afterSource?.type === "punct" &&
         jsTokenText(text, afterSource) === "(")
     );
@@ -291,9 +317,46 @@ function hasDynamicLocalExecution(text: string): boolean {
     const staticTarget =
       argument.type === "string" ||
       (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
-    if (!staticTarget || !argumentEndsTarget) return true;
+    if (
+      !staticTarget ||
+      !argumentEndsTarget ||
+      !onlyWhitespaceBetween(text, open, argument) ||
+      !onlyWhitespaceBetween(text, argument, afterArgument)
+    ) {
+      return true;
+    }
+    if (
+      argument.type === "string" &&
+      ["node", "nodejs"].includes(argument.value ?? "") &&
+      afterArgument?.type === "punct" &&
+      jsTokenText(text, afterArgument) === "," &&
+      hasDynamicNodeArguments(text, tokens, openIndex + 3)
+    ) {
+      return true;
+    }
   }
   return false;
+}
+
+function hasDynamicNodeArguments(text: string, tokens: JsToken[], startIndex: number): boolean {
+  const first = tokens[startIndex];
+  if (first?.type === "punct" && jsTokenText(text, first) === "{") return false;
+  if (first?.type !== "punct" || jsTokenText(text, first) !== "[") return true;
+
+  for (let index = startIndex + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const value = jsTokenText(text, token);
+    if (token.type === "punct" && value === "]") return false;
+    if (token.type === "punct" && value === ",") continue;
+    if (token.type === "string") continue;
+    if (token.type === "template" && !value.includes("${")) continue;
+    return true;
+  }
+  return true;
+}
+
+function onlyWhitespaceBetween(text: string, before: JsToken, after: JsToken | undefined): boolean {
+  return after !== undefined && /^\s*$/.test(text.slice(before.end, after.start));
 }
 
 function localExecutionAliases(text: string, tokens: JsToken[]): Set<string> {

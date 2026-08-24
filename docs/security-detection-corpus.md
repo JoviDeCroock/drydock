@@ -202,7 +202,8 @@ The corpus includes calibration cases that should stay that way:
 - `added-dependency-dynamic-skipped-content` and
   `added-dependency-computed-execfile-skipped-content` pin dynamic execution: computed module loads in
   inline lifecycle code and renamed child-process targets make every omitted dependency body a visible
-  coverage gap.
+  coverage gap. `added-dependency-aliased-require-skipped-content` also pins renamed ESM
+  `createRequire` factories.
 - `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
   genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
   second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
@@ -226,7 +227,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.46.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.47.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -718,6 +719,12 @@ forms also remain range declarations even when a registry advertises same-named 
 `added-dependency-bundled-mismatched-manifest`, `added-dependency-dynamic-skipped-content`,
 `added-dependency-computed-execfile-skipped-content`, and
 `added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing changes.
+
+`1.47.0` aligns static install reachability with the loader and process forms the completeness detector
+already recognizes. Optional, bracketed, template-literal, and import-attributes module loads now keep
+their named omitted targets visible; renamed ESM `createRequire` factories remain conservative dynamic
+loaders; and `fork()` targets plus relative scripts passed in a Node interpreter argv join the install
+graph. Computed Node argv remains fail-closed.
 
 ### Fixture format
 

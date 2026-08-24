@@ -1,35 +1,35 @@
 {
-  "id": "added-dependency-aliased-require-skipped-content",
-  "title": "A renamed createRequire loader keeps omitted bodies visible",
+  "id": "added-dependency-static-import-skipped-content",
+  "title": "A static import with attributes keeps its omitted target visible",
   "category": "dependency-introduction",
-  "intent": "An install hook can rename an imported createRequire factory before loading a packaged file. Drydock must report incomplete evidence when that target body was deliberately omitted.",
+  "intent": "A static relative dynamic import remains a graph edge when it includes import attributes. Drydock must report incomplete evidence when the named target body was deliberately omitted.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
     "version": "1.1.0",
-    "dependencies": { "aliased-install": "1.0.0" }
+    "dependencies": { "static-import-install": "1.0.0" }
   },
   "dependencyArtifacts": {
-    "aliased-install": {
+    "static-import-install": {
       "version": "1.0.0",
       "packageJson": {
-        "name": "aliased-install",
+        "name": "static-import-install",
         "version": "1.0.0",
         "scripts": { "postinstall": "node install.js" }
       },
       "files": [
         {
           "path": "package.json",
-          "size": 104,
+          "size": 112,
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "textSample": "{\"name\":\"aliased-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "textSample": "{\"name\":\"static-import-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
           "flags": []
         },
         {
           "path": "install.js",
-          "size": 119,
+          "size": 63,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "import { createRequire as cr } from 'node:module'; const load = cr(import.meta.url); load('./payload.min.js')",
+          "textSample": "import('./payload.min.js', { with: { type: 'json' } })",
           "flags": []
         },
         {
@@ -43,22 +43,18 @@
   },
   "expectedDependencies": [
     {
-      "name": "aliased-install",
-      "section": "dependencies",
-      "declaredSpec": "1.0.0",
-      "declarationKind": "exact",
+      "name": "static-import-install",
       "status": "uninspectable",
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
-      "fileCount": 3,
-      "observation": { "execution": "observed", "risk": "not-observed" }
+      "fileCount": 3
     }
   ],
   "expectedFindings": [
     {
       "ruleId": "dependency-artifact.uninspectable",
       "severity": "medium",
-      "file": "<dependency>aliased-install@1.0.0"
+      "file": "<dependency>static-import-install@1.0.0"
     }
   ],
   "expectedRisk": "medium",
