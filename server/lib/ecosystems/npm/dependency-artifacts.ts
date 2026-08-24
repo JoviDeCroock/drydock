@@ -34,6 +34,7 @@ import {
   type DependencyEvidence,
   type DependencyReview,
   type DependencyUninspectableReason,
+  type FileRecord,
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
@@ -102,12 +103,12 @@ export function inspectBundledNpmDependenciesForAdapter(
 
   const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
   const dependencies = recorded.map((dependency) =>
-    inspectBundledDependency(dependency, args.stagedFiles),
+    inspectBundledDependency(dependency, args.stagedFiles, args.stagedSuspiciousEntries),
   );
   const inspectedCount = dependencies.filter((entry) => entry.status === "inspected").length;
   const omittedCount = selected.length - recorded.length;
   return {
-    status: omittedCount ? "partial" : "complete",
+    status: omittedCount || inspectedCount !== selected.length ? "partial" : "complete",
     selectedCount: selected.length,
     inspectedCount,
     uninspectableCount: selected.length - inspectedCount,
@@ -119,80 +120,28 @@ export function inspectBundledNpmDependenciesForAdapter(
 function inspectBundledDependency(
   dependency: AddedDependency,
   stagedFiles: EmbeddedDependencyInspectionArgs["stagedFiles"],
+  stagedSuspiciousEntries: EmbeddedDependencyInspectionArgs["stagedSuspiciousEntries"],
 ): DependencyEvidence {
   const prefix = `node_modules/${dependency.name}/`;
   const files = stagedFiles
     .filter((file) => file.path.startsWith(prefix))
     .map((file) => ({ ...file, path: file.path.slice(prefix.length) }));
+  const suspiciousEntries = (stagedSuspiciousEntries ?? [])
+    .filter((entry) => entry.path.startsWith(prefix))
+    .map((entry) => ({ ...entry, path: entry.path.slice(prefix.length) }));
   const manifest = parsePackageJson(files);
   const version = typeof manifest?.version === "string" ? manifest.version : null;
-  if (!manifest) {
-    return uninspectable(
-      dependency,
-      null,
-      "manifest-unavailable",
-      version,
-      null,
-      null,
-      null,
-      null,
-      files.length,
-    );
-  }
-  if (
-    files.some(
-      (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
-    )
-  ) {
-    return uninspectable(
-      dependency,
-      null,
-      "artifact-truncated",
-      version,
-      null,
-      null,
-      null,
-      null,
-      files.length,
-    );
-  }
-
-  const assessment = assessDependencyArtifact(files, manifest as PackageJsonSummary, {
-    codePatternSet: "javascript",
-    entrypointResolution: "npm",
-  });
-  if (assessment.installReachableUninspectedFiles.length) {
-    return uninspectable(
-      dependency,
-      null,
-      "artifact-truncated",
-      version,
-      null,
-      null,
-      null,
-      null,
-      files.length,
-    );
-  }
-  return {
-    name: boundedText(dependency.name, 256),
-    section: dependency.section,
-    declaredSpec: boundedText(dependency.spec, 512),
-    declarationKind: dependency.declarationKind,
-    status: "inspected",
-    reason: null,
-    resolvedVersion: version ? boundedText(version, 256) : null,
+  return inspectAcquiredDependency(dependency, {
+    files,
+    manifest: manifest as PackageJsonSummary | null,
+    suspiciousEntries,
+    resolvedVersion: version,
     registryHost: null,
-    artifactOrigin: null,
+    artifactUrl: null,
     declaredDigest: null,
     reviewedDigest: null,
-    digestVerified: null,
-    fileCount: files.length,
-    automaticExecution: assessment.automaticExecution,
-    capabilities: assessment.capabilities,
-    installReachableCapabilities: assessment.installReachableCapabilities,
-    verdict: assessment.verdict,
-  };
+    reviewedSha1: null,
+  });
 }
 
 export interface InspectDependenciesArgs {
@@ -312,11 +261,13 @@ function completeReview(
     uninspectableCount,
     omittedCount,
     skippedCount: skipped,
-    riskCount: dependencies.filter((entry) => entry.verdict === "install-risk").length,
+    riskCount: dependencies.filter(
+      (entry) => entry.status === "inspected" && entry.observation.risk !== "not-observed",
+    ).length,
   });
 
   return {
-    status: skipped ? "partial" : "complete",
+    status: skipped || uninspectableCount ? "partial" : "complete",
     selectedCount: selected.length,
     inspectedCount,
     uninspectableCount,
@@ -446,68 +397,56 @@ async function inspectOne(
       : null;
   const declared = declaredDigest(dist, reviewedDigest);
 
+  return inspectAcquiredDependency(dependency, {
+    files: download.files,
+    manifest: download.packageJson ?? null,
+    suspiciousEntries: download.suspiciousEntries ?? [],
+    resolvedVersion: resolved,
+    registryHost,
+    artifactUrl: tarballUrl,
+    declaredDigest: declared,
+    reviewedDigest,
+    reviewedSha1: download.archiveSha1,
+  });
+}
+
+interface AcquiredDependencyArtifact {
+  files: FileRecord[];
+  manifest: PackageJsonSummary | null;
+  suspiciousEntries: TarSuspiciousEntry[];
+  resolvedVersion: string | null;
+  registryHost: string | null;
+  artifactUrl: string | null;
+  declaredDigest: DependencyDigest | null;
+  reviewedDigest: DependencyDigest | null;
+  reviewedSha1: string | null | undefined;
+}
+
+/** Apply one completeness contract to embedded and registry-backed bytes. */
+function inspectAcquiredDependency(
+  dependency: AddedDependency,
+  artifact: AcquiredDependencyArtifact,
+): DependencyEvidence {
   if (
-    download.files.some(
+    artifact.files.some(
       (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
     )
   ) {
-    return uninspectable(
-      dependency,
-      registryHost,
-      "artifact-truncated",
-      resolved,
-      tarballUrl,
-      declared,
-      reviewedDigest,
-      download.archiveSha1,
-      download.files.length,
-    );
+    return uninspectableAcquired(dependency, "artifact-truncated", artifact);
+  }
+  if (artifact.suspiciousEntries.some(isAmbiguousDependencyArchiveEntry)) {
+    return uninspectableAcquired(dependency, "artifact-ambiguous", artifact);
+  }
+  if (!artifact.manifest) {
+    return uninspectableAcquired(dependency, "manifest-unavailable", artifact);
   }
 
-  if (download.suspiciousEntries?.some(isAmbiguousDependencyArchiveEntry)) {
-    return uninspectable(
-      dependency,
-      registryHost,
-      "artifact-ambiguous",
-      resolved,
-      tarballUrl,
-      declared,
-      reviewedDigest,
-      download.archiveSha1,
-      download.files.length,
-    );
-  }
-
-  if (!download.packageJson) {
-    return uninspectable(
-      dependency,
-      registryHost,
-      "manifest-unavailable",
-      resolved,
-      tarballUrl,
-      declared,
-      reviewedDigest,
-      download.archiveSha1,
-      download.files.length,
-    );
-  }
-
-  const assessment = assessDependencyArtifact(download.files, download.packageJson, {
+  const assessment = assessDependencyArtifact(artifact.files, artifact.manifest, {
     codePatternSet: "javascript",
     entrypointResolution: "npm",
   });
   if (assessment.installReachableUninspectedFiles.length) {
-    return uninspectable(
-      dependency,
-      registryHost,
-      "artifact-truncated",
-      resolved,
-      tarballUrl,
-      declared,
-      reviewedDigest,
-      download.archiveSha1,
-      download.files.length,
-    );
+    return uninspectableAcquired(dependency, "artifact-truncated", artifact);
   }
 
   return {
@@ -517,18 +456,40 @@ async function inspectOne(
     declarationKind: dependency.declarationKind,
     status: "inspected",
     reason: null,
-    resolvedVersion: boundedText(resolved, 256),
-    registryHost,
-    artifactOrigin: sanitizeDependencyArtifactOrigin(tarballUrl),
-    declaredDigest: declared,
-    reviewedDigest,
-    digestVerified: compareDigests(declared, reviewedDigest, download.archiveSha1),
-    fileCount: download.files.length,
+    resolvedVersion: artifact.resolvedVersion ? boundedText(artifact.resolvedVersion, 256) : null,
+    registryHost: artifact.registryHost,
+    artifactOrigin: sanitizeDependencyArtifactOrigin(artifact.artifactUrl),
+    declaredDigest: artifact.declaredDigest,
+    reviewedDigest: artifact.reviewedDigest,
+    digestVerified: compareDigests(
+      artifact.declaredDigest,
+      artifact.reviewedDigest,
+      artifact.reviewedSha1,
+    ),
+    fileCount: artifact.files.length,
     automaticExecution: assessment.automaticExecution,
     capabilities: assessment.capabilities,
     installReachableCapabilities: assessment.installReachableCapabilities,
-    verdict: assessment.verdict,
+    observation: assessment.observation,
   };
+}
+
+function uninspectableAcquired(
+  dependency: AddedDependency,
+  reason: DependencyUninspectableReason,
+  artifact: AcquiredDependencyArtifact,
+): DependencyEvidence {
+  return uninspectable(
+    dependency,
+    artifact.registryHost,
+    reason,
+    artifact.resolvedVersion,
+    artifact.artifactUrl,
+    artifact.declaredDigest,
+    artifact.reviewedDigest,
+    artifact.reviewedSha1,
+    artifact.files.length,
+  );
 }
 
 function isAmbiguousDependencyArchiveEntry(entry: TarSuspiciousEntry): boolean {
@@ -585,7 +546,7 @@ export function resolveDependencyVersion(metadata: RegistryMetadata, spec: strin
  * matching legacy SHA-1 must not hide a mismatch in the authoritative SRI.
  */
 function declaredDigest(
-  dist: { integrity?: string; shasum?: string } | undefined,
+  dist: { integrity?: string; integrityPresent?: true; shasum?: string } | undefined,
   reviewed: DependencyDigest | null = null,
 ) {
   if (!dist) return null;
@@ -597,7 +558,7 @@ function declaredDigest(
         : null;
     return { algorithm: "sha512", value: matching ?? sri[0] };
   }
-  if (dist.integrity !== undefined) return null;
+  if (dist.integrity !== undefined || dist.integrityPresent) return null;
   return dist.shasum && /^[0-9a-f]{40}$/i.test(dist.shasum)
     ? { algorithm: "sha1", value: dist.shasum.toLowerCase() }
     : null;
@@ -680,7 +641,7 @@ function uninspectable(
     automaticExecution: [],
     capabilities: [],
     installReachableCapabilities: [],
-    verdict: "clean",
+    observation: { execution: "unknown", risk: "unknown" },
   };
 }
 

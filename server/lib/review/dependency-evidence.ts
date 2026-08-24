@@ -11,8 +11,8 @@
 //
 //   - `selectAddedDependencies` — which manifest-diff rows are newly introduced
 //     code a consumer install would actually fetch;
-//   - `assessDependencyArtifact` — what the fetched bytes do, expressed as an
-//     automatic-execution + capability verdict rather than a raw finding dump;
+//   - `assessDependencyArtifact` — what the fetched bytes do, expressed as
+//     separate execution and risk observations rather than a safety verdict;
 //   - `dependencyEvidenceFindings` — the bounded, path-namespaced findings the
 //     review packet shows and the risk roll-up scores.
 //
@@ -25,30 +25,20 @@
 //   - a dependency that could not be inspected fails visibly into manual
 //     review instead of silently reading as clean.
 
-import {
-  dependencySpecsEqual,
-  dependencyWasInstalledAtStagedSpec,
-  type DependencySection,
-  type PackageJsonDiff,
-  type PackageJsonDiffEntry,
-} from "./serialize";
-import type { FileRecord, Finding, PackageJsonSummary } from "./";
-import { unusualDependencySpecKind } from "./dependency-specs";
-import {
-  DETERMINISTIC_RULE_IDS,
-  DETERMINISTIC_RULES_VERSION,
-  deterministicFindings,
-  safeJson,
-  type DeterministicFindingOptions,
-} from "./rules";
-import {
-  consumerInstallScriptCommands,
-  lifecycleReachablePaths,
-  normalizeReachabilityPath,
-} from "./rules/reachability";
-import { normalizeStringRecord } from "../tar-parser.js";
+import { type DependencySection, type PackageJsonDiff } from "./serialize";
+import type { Finding } from "./";
+import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./rules";
 import { isRecord } from "../platform/guards";
-import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
+import { classifyDependencyInstallRisk, hasObservedInstallRisk } from "./dependency-analysis";
+import {
+  selectAddedDependencies,
+  type AddedDependency,
+  type DependencySelectionOptions,
+} from "./dependency-selection";
+
+export { assessDependencyArtifact, classifyDependencyInstallRisk } from "./dependency-analysis";
+export { selectAddedDependencies, selectBundledAddedDependencies } from "./dependency-selection";
+export type { AddedDependency } from "./dependency-selection";
 
 /**
  * Synthetic file-label prefix for a dependency finding. The cited path is
@@ -74,8 +64,6 @@ function dependencyFindingFile(name: string, version: string | null, path?: stri
  * artifact bytes: custom registries can mutate a version in place. Everything
  * else additionally admits a version that did not exist at review time.
  */
-type DependencyDeclarationKind = "exact" | "range" | "tag" | "unusual";
-
 type DependencyEvidenceStatus = "inspected" | "uninspectable";
 
 /**
@@ -96,19 +84,20 @@ export type DependencyUninspectableReason =
   | "budget-exhausted"
   | "review-failed";
 
-type DependencyVerdict = "clean" | "install-execution" | "install-risk";
-
 export interface DependencyDigest {
   algorithm: string;
   value: string;
 }
 
 /** One automatic (install/build-time) execution entrypoint of a dependency. */
-interface DependencyExecutionEntrypoint {
-  /** `script` for a package.json lifecycle hook, `node-gyp` for an implicit native build. */
+export interface DependencyExecutionEntrypoint {
   kind: "script" | "node-gyp";
-  /** Lifecycle name (`preinstall`/`install`/`postinstall`) or the gyp file path. */
   name: string;
+}
+
+export interface DependencyInstallObservation {
+  execution: "observed" | "not-observed" | "unknown";
+  risk: "observed" | "not-observed" | "unknown";
 }
 
 /**
@@ -117,14 +106,14 @@ interface DependencyExecutionEntrypoint {
  * Persisted with the scan so a later unpublish cannot erase the review: the
  * declaration, the version selected at review time, the digest the registry
  * advertised, the digest recomputed from the bytes actually fetched, and the
- * verdict all survive the artifact disappearing.
+ * install observations all survive the artifact disappearing.
  */
 export interface DependencyEvidence {
   name: string;
   /** Manifest section that introduced it (this is the graph edge's label). */
   section: DependencySection;
   declaredSpec: string;
-  declarationKind: DependencyDeclarationKind;
+  declarationKind: AddedDependency["declarationKind"];
   status: DependencyEvidenceStatus;
   /** Set only when `status === "uninspectable"`. */
   reason: DependencyUninspectableReason | null;
@@ -152,14 +141,15 @@ export interface DependencyEvidence {
    * subset of `capabilities`; empty when nothing runs on install.
    */
   installReachableCapabilities: string[];
-  verdict: DependencyVerdict;
+  /** Observations stay separate from completeness and gate policy. */
+  observation: DependencyInstallObservation;
 }
 
 export interface DependencyReview {
   /**
    * `not-applicable` — this release added no installable direct dependency.
-   * `complete` — every selected dependency reached a terminal evidence record.
-   * `partial` — a deadline, record cap, or unexpected failure stopped the pass.
+   * `complete` — every selected dependency's bytes were fully inspected.
+   * `partial` — at least one dependency was uninspectable or omitted.
    */
   status: "not-applicable" | "complete" | "partial";
   selectedCount: number;
@@ -193,7 +183,8 @@ export function mergeDependencyReviews(...reviews: DependencyReview[]): Dependen
     applicable.reduce((total, review) => total + (review.omittedCount ?? 0), 0) + overflowCount;
   return {
     status:
-      omittedCount > 0 || applicable.some((review) => review.status === "partial")
+      omittedCount > 0 ||
+      applicable.some((review) => review.status === "partial" || review.uninspectableCount > 0)
         ? "partial"
         : "complete",
     selectedCount: applicable.reduce((total, review) => total + review.selectedCount, 0),
@@ -233,415 +224,6 @@ export const DEPENDENCY_ARTIFACT_MAX_FILES = 600;
  */
 export const DEPENDENCY_TEXT_SAMPLE_LIMIT = 256 * 1024;
 
-/** A manifest section whose contents a plain `npm install` downloads. */
-// npm gives optionalDependencies precedence when the same key also appears in
-// dependencies, so this order is also the effective-spec order.
-const INSTALLING_SECTIONS: DependencySection[] = ["optionalDependencies", "dependencies"];
-
-export interface AddedDependency {
-  name: string;
-  section: DependencySection;
-  spec: string;
-  declarationKind: DependencyDeclarationKind;
-}
-
-/**
- * Newly introduced direct dependencies whose code a consumer install pulls in.
- *
- * Included: `dependencies`, `optionalDependencies`, and *required* peers — npm
- * 7+ installs peers automatically, so a required peer added by this release or
- * changed from optional to required is third-party code that starts arriving
- * in consumer trees because of it.
- *
- * Excluded, deliberately:
- *   - `devDependencies`, which no consumer install fetches;
- *   - optional peers (`peerDependenciesMeta[name].optional`), which a consumer
- *     opts into rather than inherits;
- *   - keys that were already installed and merely moved between sections — a
- *     relocation ships no new code;
- *   - dependencies declared as bundled whose bytes are present in the staged
- *     artifact; the npm adapter assesses those exact child subtrees separately
- *     because npm still executes bundled-child lifecycle scripts;
- *   - every dependency of a first-ever release (no baseline manifest), where
- *     the whole list diffs as "added" and inspecting it would describe the
- *     package rather than the release.
- *
- * The same relocation and previously-installed signals the `dependency.added`
- * rule reads are reused here on purpose: a release must not be told "no new
- * dependency" by one surface and "new dependency" by the other.
- */
-export interface DependencySelectionOptions {
-  /** A missing manifest is an acquisition gap rather than a true first release. */
-  includeWithoutBaseline?: boolean;
-  /** Needed to distinguish registry dependencies from bytes bundled in the parent tarball. */
-  stagedManifest?: PackageJsonSummary | null;
-  stagedFiles?: FileRecord[];
-}
-
-export function selectAddedDependencies(
-  manifestDiff: PackageJsonDiff,
-  options: DependencySelectionOptions = {},
-): AddedDependency[] {
-  return selectIntroducedDependencies(manifestDiff, options).filter(
-    (dependency) => !isBundledInStagedArtifact(dependency, options),
-  );
-}
-
-/** Newly introduced dependencies whose exact bytes are embedded in the parent artifact. */
-export function selectBundledAddedDependencies(
-  manifestDiff: PackageJsonDiff,
-  options: DependencySelectionOptions = {},
-): AddedDependency[] {
-  return selectIntroducedDependencies(manifestDiff, options).filter((dependency) =>
-    isBundledInStagedArtifact(dependency, options),
-  );
-}
-
-function selectIntroducedDependencies(
-  manifestDiff: PackageJsonDiff,
-  options: DependencySelectionOptions,
-): AddedDependency[] {
-  if (!manifestDiff.hasPreviousManifest && !options.includeWithoutBaseline) return [];
-
-  const relocated = new Map<string, string[]>();
-  for (const entry of manifestDiff.dependencies) {
-    if (entry.status !== "removed" || !isInstallingSection(entry.section)) continue;
-    const specs = relocated.get(entry.key) ?? [];
-    if (entry.previous !== undefined) specs.push(entry.previous);
-    relocated.set(entry.key, specs);
-  }
-
-  const byName = new Map<string, AddedDependency>();
-  for (const entry of manifestDiff.dependencies) {
-    if (entry.staged === undefined) continue;
-    if (!introducesInstalledCode(entry, relocated)) continue;
-    const candidate: AddedDependency = {
-      name: entry.key,
-      section: entry.section ?? "dependencies",
-      spec: entry.staged,
-      declarationKind: declarationKind(entry.staged),
-    };
-    // A key declared in more than one section is one dependency; keep the
-    // installing declaration so the recorded edge is the one that fetches code.
-    const existing = byName.get(entry.key);
-    if (!existing || sectionRank(candidate.section) < sectionRank(existing.section)) {
-      byName.set(entry.key, candidate);
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function isBundledInStagedArtifact(
-  entry: Pick<AddedDependency, "name" | "section">,
-  options: DependencySelectionOptions,
-): boolean {
-  if (!isInstallingSection(entry.section)) return false;
-  const manifest = options.stagedManifest;
-  const declarations = [manifest?.bundleDependencies, manifest?.bundledDependencies];
-  const declared = declarations.some(
-    (value) => value === true || (Array.isArray(value) && value.includes(entry.name)),
-  );
-  if (!declared) return false;
-
-  // Do not trust the manifest or a placeholder directory alone. npm only uses
-  // an embedded bundle when its direct child package has a loadable identity;
-  // otherwise it fetches the declared dependency from the registry.
-  const packageJsonPath = `node_modules/${entry.name}/package.json`;
-  const packageJson = (options.stagedFiles ?? []).find(
-    (file) => file.path === packageJsonPath && file.textSample,
-  );
-  if (!packageJson?.textSample) return false;
-  const identity = safeJson(packageJson.textSample);
-  return (
-    isRecord(identity) &&
-    identity.name === entry.name &&
-    typeof identity.version === "string" &&
-    identity.version.trim().length > 0
-  );
-}
-
-function introducesInstalledCode(
-  entry: PackageJsonDiffEntry,
-  relocated: Map<string, string[]>,
-): boolean {
-  if (
-    entry.section === "peerDependencies" &&
-    entry.status === "modified" &&
-    entry.previousPeerOptional &&
-    !entry.stagedPeerOptional
-  ) {
-    return !dependencySpecsEqual(entry.previousInstalledSpec, entry.staged);
-  }
-  if (entry.status !== "added") return false;
-  const relocatedSpecs = relocated.get(entry.key);
-  const wasInstalledAtStagedSpec = relocatedSpecs?.length
-    ? relocatedSpecs.some((spec) => dependencySpecsEqual(spec, entry.staged))
-    : dependencyWasInstalledAtStagedSpec(entry);
-  if (wasInstalledAtStagedSpec) return false;
-  if (isInstallingSection(entry.section)) return true;
-  // A required peer newly declared at a spec that was not already installed.
-  // `dependencyWasInstalledAtStagedSpec` above handles the same-spec duplicate;
-  // a same-named runtime declaration at a different spec can coexist with an
-  // auto-installed peer and therefore does not cover the peer's bytes.
-  return entry.section === "peerDependencies" && !entry.stagedPeerOptional;
-}
-
-function isInstallingSection(section: DependencySection | undefined): boolean {
-  return section === "dependencies" || section === "optionalDependencies";
-}
-
-function sectionRank(section: DependencySection): number {
-  return INSTALLING_SECTIONS.indexOf(section) === -1 ? 2 : INSTALLING_SECTIONS.indexOf(section);
-}
-
-/**
- * Classify how a spec pins its version. Only a fully exact spec earns `exact`;
- * everything else keeps the report honest about what a future install may
- * resolve.
- */
-function declarationKind(spec: string): DependencyDeclarationKind {
-  const trimmed = spec.trim();
-  if (unusualDependencySpecKind(trimmed)) return "unusual";
-  if (/^(?:=\s*)?v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(trimmed)) return "exact";
-  // A dist-tag (`latest`, `next`) is a moving pointer, not a range: the bytes a
-  // consumer installs can change without the manifest changing at all. A bare
-  // `x`/`X` looks tag-shaped but is npm's any-version wildcard, so it stays a
-  // range — mislabelling it would tell a reviewer the wrong thing about what
-  // the declaration admits.
-  if (trimmed !== "x" && trimmed !== "X" && /^[A-Za-z][\w.-]*$/.test(trimmed)) return "tag";
-  return "range";
-}
-
-// Rule IDs that mean "installing this package runs code without anyone asking".
-const AUTOMATIC_EXECUTION_RULE_IDS = new Set<string>([
-  DETERMINISTIC_RULE_IDS.installScript,
-  DETERMINISTIC_RULE_IDS.installScriptPreinstall,
-  DETERMINISTIC_RULE_IDS.installScriptImplicitNodeGyp,
-  DETERMINISTIC_RULE_IDS.installScriptGypCommandSubstitution,
-]);
-
-/**
- * Install-time behaviors with no benign reading.
- *
- * A package that pipes a remote script into a shell, reads credentials,
- * evaluates code it assembled, or ships an embedded secret is not doing any of
- * that as a build step. When one of these runs on install, the release is not
- * approvable without someone reading the dependency.
- */
-const STRONG_INSTALL_DANGER_RULE_IDS = new Set<string>([
-  DETERMINISTIC_RULE_IDS.codeRemoteShell,
-  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
-  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
-  DETERMINISTIC_RULE_IDS.fileSecretContent,
-]);
-
-/**
- * Behaviors that turn automatic execution into something a reviewer has to
- * look at.
- *
- * Plain network access is in the set but scores a tier lower than the group
- * above, because it has two readings that look identical to a scanner:
- * `prebuild-install` / `node-pre-gyp` fetching a prebuilt binary, and a dropper
- * fetching a payload. Both are "this release starts downloading code on every
- * consumer install", which is worth a maintainer's attention the first time a
- * dependency is added — but calling it `critical` would spend the word on
- * `sharp` and leave nothing for the dropper.
- *
- * Process execution is deliberately absent entirely: prebuilt-binary packages
- * spawn `node-gyp` on install by design. It still contributes as a *capability*.
- */
-const INSTALL_TIME_DANGER_RULE_IDS = new Set<string>([
-  ...STRONG_INSTALL_DANGER_RULE_IDS,
-  DETERMINISTIC_RULE_IDS.codeNetworkAccess,
-]);
-
-export interface DependencyArtifactAssessment {
-  automaticExecution: DependencyExecutionEntrypoint[];
-  capabilities: string[];
-  installReachableCapabilities: string[];
-  /** Install-reachable files whose bodies the parser deliberately did not retain. */
-  installReachableUninspectedFiles: string[];
-  verdict: DependencyVerdict;
-  /**
-   * True when a danger capability exists in the artifact but no automatic
-   * entrypoint provably reaches it. Reachability is a static over-approximation
-   * that can miss a dynamic edge, so this state is reported one step below
-   * proven reach rather than dismissed.
-   */
-  installReachUnproven: boolean;
-  findings: Finding[];
-}
-
-/**
- * Run the deterministic rules over a fetched dependency artifact and reduce
- * them to a verdict about what installing it does.
- *
- * The rules are the same ones the reviewed release gets — a dependency's bytes
- * are no less hostile than the parent's — but the *roll-up* is different on
- * purpose. The parent's roll-up scores capability co-occurrence across a
- * release delta; here the question is narrower and sharper: does installing
- * this package run code, and does that code do something a downloader does?
- */
-export function assessDependencyArtifact(
-  files: FileRecord[],
-  manifest: PackageJsonSummary | null,
-  options: DeterministicFindingOptions = {},
-): DependencyArtifactAssessment {
-  const findings = deterministicFindings(files, [], manifest, options);
-  const scripts = normalizeStringRecord(manifest?.scripts);
-  const implicitScripts = normalizeStringRecord(manifest?.implicitScripts);
-
-  const automaticExecution = executionEntrypoints(findings, scripts, implicitScripts);
-  const capabilities = [
-    ...new Set(findings.flatMap((finding) => (finding.ruleId ? [finding.ruleId] : []))),
-  ].sort();
-
-  const reachable = lifecycleReachablePaths(files, scripts, implicitScripts);
-  // Inline install-hook commands need their own scan: the whole manifest is one
-  // file, so a package.json finding alone cannot distinguish `postinstall` from
-  // an unrelated `test` or `dev` script.
-  const inlineInstallCapabilities = installScriptCapabilities(scripts, implicitScripts, options);
-  const installReachable = (finding: Finding) =>
-    reachable.has(normalizeReachabilityPath(finding.file));
-
-  const installReachableCapabilities = [
-    ...new Set([
-      ...findings.flatMap((finding) =>
-        finding.ruleId && installReachable(finding) ? [finding.ruleId] : [],
-      ),
-      ...inlineInstallCapabilities,
-    ]),
-  ].sort();
-  const directlyReachableUninspectedFiles = files
-    .filter(
-      (file) =>
-        file.flags.includes("text-sample-skipped") &&
-        reachable.has(normalizeReachabilityPath(file.path)),
-    )
-    .map((file) => file.path)
-    .sort();
-
-  const hasAutomaticExecution = automaticExecution.length > 0;
-  // Node treats unknown extensions (including `.map`) as JavaScript under
-  // CommonJS. If an install-reachable loader computes a module specifier at
-  // runtime, a generated file whose text the parser deliberately omitted is a
-  // possible install target even though the literal-only graph cannot name it.
-  // Preserve the unrelated-source-map hard negative when every module edge is
-  // static, but fail visibly once the reachable path contains a dynamic load.
-  const dynamicallyLoadableUninspectedFiles = files.filter(
-    (file) =>
-      file.flags.includes("text-sample-skipped") && isNodeExecutableGeneratedPath(file.path),
-  );
-  const filesByPath = new Map(
-    files.map((file) => [normalizeReachabilityPath(file.path), file] as const),
-  );
-  const hasDynamicInstallModuleLoad =
-    hasAutomaticExecution &&
-    dynamicallyLoadableUninspectedFiles.length > 0 &&
-    [...reachable].some((path) => {
-      const file = filesByPath.get(path);
-      return file?.textSample ? hasDynamicModuleLoad(file.textSample) : false;
-    });
-  const dynamicallyReachableUninspectedFiles = hasDynamicInstallModuleLoad
-    ? dynamicallyLoadableUninspectedFiles.map((file) => file.path)
-    : [];
-  const installReachableUninspectedFiles = [
-    ...new Set([...directlyReachableUninspectedFiles, ...dynamicallyReachableUninspectedFiles]),
-  ].sort();
-  const reachableDanger =
-    installReachableCapabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId)) ||
-    hasNativeExecutionPair(installReachableCapabilities);
-  const anyDanger = capabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId));
-
-  const verdict: DependencyVerdict = !hasAutomaticExecution
-    ? "clean"
-    : reachableDanger || anyDanger
-      ? "install-risk"
-      : "install-execution";
-
-  return {
-    automaticExecution,
-    capabilities,
-    installReachableCapabilities,
-    installReachableUninspectedFiles,
-    verdict,
-    installReachUnproven: hasAutomaticExecution && anyDanger && !reachableDanger,
-    findings,
-  };
-}
-
-function hasDynamicModuleLoad(text: string): boolean {
-  const tokens = tokenizeJs(text).filter(
-    (token) => token.type !== "ws" && token.type !== "comment",
-  );
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token.type !== "ident") continue;
-    const callee = jsTokenText(text, token);
-    if (callee !== "require" && callee !== "import") continue;
-    const previous = tokens[index - 1];
-    if (previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous))) {
-      continue;
-    }
-    const open = tokens[index + 1];
-    if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
-    const argument = tokens[index + 2];
-    if (!argument || (argument.type === "punct" && jsTokenText(text, argument) === ")")) continue;
-    const afterArgument = tokens[index + 3];
-    const argumentEndsSpecifier =
-      afterArgument?.type === "punct" && [")", ","].includes(jsTokenText(text, afterArgument));
-    const staticSpecifier =
-      argument.type === "string" ||
-      (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
-    if (!staticSpecifier || !argumentEndsSpecifier) return true;
-  }
-  return false;
-}
-
-function isNodeExecutableGeneratedPath(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith(".map") || /\.min\.(?:js|mjs|cjs)$/.test(lower);
-}
-
-export interface DependencyInstallRiskClassification {
-  severity: "medium" | "high" | "critical";
-  proven: boolean;
-  strong: boolean;
-  /** The install path can invoke a native executable, rather than a downloader-shaped capability. */
-  nativeExecution: boolean;
-  observedCapabilities: string[];
-}
-
-/**
- * Classify the two independent axes behind an `install-risk` verdict.
- *
- * Shared by finding projection and the report UI so a row cannot claim a
- * critical proven install path when the deterministic finding deliberately
- * reports only medium unproven network capability.
- */
-export function classifyDependencyInstallRisk(
-  evidence: Pick<DependencyEvidence, "verdict" | "capabilities" | "installReachableCapabilities">,
-): DependencyInstallRiskClassification | null {
-  if (evidence.verdict !== "install-risk") return null;
-  const provenDanger = evidence.installReachableCapabilities.some((ruleId) =>
-    INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
-  );
-  const nativeExecution =
-    !provenDanger && hasNativeExecutionPair(evidence.installReachableCapabilities);
-  const proven = provenDanger || nativeExecution;
-  const observedCapabilities = proven
-    ? evidence.installReachableCapabilities
-    : evidence.capabilities;
-  const strong = observedCapabilities.some((ruleId) => STRONG_INSTALL_DANGER_RULE_IDS.has(ruleId));
-  return {
-    severity: strong ? (proven ? "critical" : "high") : proven ? "high" : "medium",
-    proven,
-    strong,
-    nativeExecution,
-    observedCapabilities,
-  };
-}
-
 const SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.dependencyAdded,
   DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
@@ -664,79 +246,6 @@ export function reconcileDependencyReviewFindings<T extends Finding>(
       !SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS.has(finding.ruleId ?? "") ||
       !reviewedDeclarations.has(finding.evidence),
   );
-}
-
-/**
- * Capabilities present directly in an explicit install-hook command.
- *
- * The ordinary deterministic pass scans the whole package.json text, so a
- * capability finding filed against that path may come from `scripts.test`,
- * `scripts.dev`, or another field that npm never executes during a consumer
- * install. Re-scan only the three install-hook values as synthetic source
- * records instead of treating every package.json finding as reachable. npm
- * scripts delegated through `npm run` are expanded first because they execute
- * in the same consumer-install chain.
- */
-function installScriptCapabilities(
-  scripts: Record<string, string>,
-  implicitScripts: Record<string, string>,
-  options: DeterministicFindingOptions,
-): string[] {
-  const capabilities = new Set<string>();
-  for (const [index, { command }] of consumerInstallScriptCommands(
-    scripts,
-    implicitScripts,
-  ).entries()) {
-    const findings = deterministicFindings(
-      [
-        {
-          path: `<install-script>/${index}.js`,
-          size: command.length,
-          sha256: "",
-          textSample: command,
-          flags: [],
-        },
-      ],
-      [],
-      null,
-      options,
-    );
-    for (const finding of findings) {
-      if (finding.ruleId && INSTALL_TIME_DANGER_RULE_IDS.has(finding.ruleId)) {
-        capabilities.add(finding.ruleId);
-      }
-    }
-  }
-  return [...capabilities];
-}
-
-// A native artifact is only an install-time execution concern when the same
-// install-reachable path can spawn a process to use it; on its own it is an
-// ordinary prebuilt binary, and unrelated process execution is not proof.
-function hasNativeExecutionPair(capabilities: string[]): boolean {
-  return (
-    capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact) &&
-    capabilities.includes(DETERMINISTIC_RULE_IDS.codeProcessExecution)
-  );
-}
-
-function executionEntrypoints(
-  findings: Finding[],
-  scripts: Record<string, string>,
-  implicitScripts: Record<string, string>,
-): DependencyExecutionEntrypoint[] {
-  const entrypoints: DependencyExecutionEntrypoint[] = [];
-  for (const script of ["preinstall", "install", "postinstall"]) {
-    if (!scripts[script] || implicitScripts[script] === scripts[script]) continue;
-    entrypoints.push({ kind: "script", name: script });
-  }
-  for (const finding of findings) {
-    if (!finding.ruleId || !AUTOMATIC_EXECUTION_RULE_IDS.has(finding.ruleId)) continue;
-    if (finding.ruleId === DETERMINISTIC_RULE_IDS.installScript) continue;
-    if (finding.ruleId === DETERMINISTIC_RULE_IDS.installScriptPreinstall) continue;
-    entrypoints.push({ kind: "node-gyp", name: finding.file });
-  }
-  return entrypoints;
 }
 
 /**
@@ -765,23 +274,24 @@ function dependencyPathLabel(
 /**
  * Project dependency evidence into the findings the review packet shows.
  *
- * Bounded on purpose — one verdict finding per dependency plus at most one
+ * Bounded on purpose — one policy finding per dependency plus at most one
  * aggregated capability finding — so a release that adds a dependency with a
  * hundred internal matches does not bury its own diff. The dependency's raw
  * findings stay on the evidence record for the report.
  *
  * Severity ladder, and why:
- *   - `install-risk` with a proven strong install-time reach → `critical`. This
+ *   - observed strong install-time risk → `critical`. This
  *     is the arrayref shape: adding the dependency runs a dropper on every
  *     consumer install. A release carrying it cannot be recommended for approval.
- *   - `install-risk` with a proven weak install-time reach → `high`. This covers
+ *   - observed weak install-time risk → `high`. This covers
  *     both downloads and a process launch paired with a native executable.
- *   - `install-risk` whose reach is unproven → `high`. The capability is in the
+ *   - unknown install-time risk → `high` for strong behavior and `medium` for
+ *     network behavior. The capability is in the
  *     artifact and something runs on install; static reachability just could not
  *     draw the edge. Failing quiet here would be the wrong direction.
- *   - `install-execution` → `medium`. Something runs on install, but nothing in
+ *   - observed install execution with no observed risk → `medium`. Something runs on install, but nothing in
  *     it looks like a downloader.
- *   - `clean` → one `info` capability finding if the artifact has any capability
+ *   - no observed install execution → one `info` capability finding if the artifact has any capability
  *     at all, so "we looked, here is what it can do" is visible without a benign
  *     new dependency inflating the release's risk.
  *   - `uninspectable` → `medium`, which floors the release at manual review.
@@ -819,14 +329,14 @@ export function dependencyEvidenceFindings(
     }
     const entrypoint = evidence.automaticExecution[0];
     const path = dependencyPathLabel(parent, evidence, entrypoint);
-    if (evidence.verdict === "install-risk") {
+    const classification = classifyDependencyInstallRisk(evidence);
+    if (classification) {
       // Two independent axes, because they answer different questions.
       // `proven` is "can the install hook actually reach this?" — static
       // reachability can miss a dynamic edge, so an unproven reach is demoted
       // rather than dropped. `strong` is "does this behavior have a benign
       // reading?" — a remote shell does not, an HTTPS download does.
-      const classification = classifyDependencyInstallRisk(evidence)!;
-      const { proven, strong, nativeExecution, observedCapabilities: observed } = classification;
+      const { certainty, strong, nativeExecution, observedCapabilities: observed } = classification;
       const behaviors =
         describeCapabilities(observed) ||
         "install-time behavior Drydock flags as downloader-shaped";
@@ -838,14 +348,14 @@ export function dependencyEvidenceFindings(
         reason: nativeExecution
           ? "this release introduces a dependency whose install-time path can invoke a native executable; confirm that the binary and the process launch are expected before approving, because every consumer install inherits that native execution"
           : !strong
-            ? proven
+            ? certainty === "observed"
               ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"
               : "this release introduces a dependency that runs automatically on install and also contains network-capable code; Drydock could not statically prove the install hook reaches that code, so confirm whether it is an install-time download or unrelated package behavior before approving"
-            : proven
+            : certainty === "observed"
               ? "this release introduces a dependency that runs automatically on install and whose install-time code path pipes remote code into a shell, evaluates assembled code, or reads credentials — the arrayref/proc-macro1 shape, where a compromised parent added a dependency whose build step fetched the payload; the dependency's own bytes were reviewed and are recorded with this scan"
               : "this release introduces a dependency that runs automatically on install and also carries remote-shell, credential-access, or dynamic-evaluation code; Drydock could not statically prove the install hook reaches it, so this is reported one step below a proven install-time path rather than dismissed",
       });
-    } else if (evidence.verdict === "install-execution") {
+    } else if (evidence.observation.execution === "observed") {
       findings.push({
         severity: "medium",
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
@@ -987,7 +497,7 @@ function uninspectableEvidence(
     automaticExecution: [],
     capabilities: [],
     installReachableCapabilities: [],
-    verdict: "clean",
+    observation: { execution: "unknown", risk: "unknown" },
   };
 }
 
@@ -1040,7 +550,10 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
     return normalized ? [normalized] : [];
   });
   return {
-    status: overflowCount ? "partial" : status,
+    status:
+      overflowCount || dependencies.some((dependency) => dependency.status === "uninspectable")
+        ? "partial"
+        : status,
     selectedCount: countOf(value.selectedCount),
     inspectedCount: countOf(value.inspectedCount),
     uninspectableCount: countOf(value.uninspectableCount),
@@ -1077,13 +590,8 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
   const { name, declaredSpec } = value;
   if (typeof name !== "string" || typeof declaredSpec !== "string") return null;
   const status = value.status === "inspected" ? "inspected" : "uninspectable";
-  const verdict =
-    value.verdict === "clean" ||
-    value.verdict === "install-risk" ||
-    value.verdict === "install-execution"
-      ? value.verdict
-      : null;
-  if (status === "inspected" && verdict === null) return null;
+  const observation = dependencyInstallObservationOf(value, status);
+  if (!observation) return null;
   return {
     name: boundedText(name, 256),
     section: sectionOf(value.section),
@@ -1112,15 +620,46 @@ function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null 
       : [],
     capabilities: stringList(value.capabilities),
     installReachableCapabilities: stringList(value.installReachableCapabilities),
-    verdict: verdict ?? "clean",
+    observation,
   };
+}
+
+function dependencyInstallObservationOf(
+  value: Record<string, unknown>,
+  status: DependencyEvidenceStatus,
+): DependencyInstallObservation | null {
+  if (status === "uninspectable") return { execution: "unknown", risk: "unknown" };
+  if (isRecord(value.observation)) {
+    const execution = observationOf(value.observation.execution);
+    const risk = observationOf(value.observation.risk);
+    if (execution && risk) return { execution, risk };
+  }
+
+  // Backward compatibility for reports written before observations were split
+  // from policy. An unproven legacy install-risk becomes unknown, not observed.
+  if (value.verdict === "clean") return { execution: "not-observed", risk: "not-observed" };
+  if (value.verdict === "install-execution") {
+    return { execution: "observed", risk: "not-observed" };
+  }
+  if (value.verdict === "install-risk") {
+    const reachable = stringList(value.installReachableCapabilities);
+    return {
+      execution: "observed",
+      risk: hasObservedInstallRisk(reachable) ? "observed" : "unknown",
+    };
+  }
+  return null;
+}
+
+function observationOf(value: unknown): DependencyInstallObservation["risk"] | null {
+  return value === "observed" || value === "not-observed" || value === "unknown" ? value : null;
 }
 
 function sectionOf(value: unknown): DependencySection {
   return value === "optionalDependencies" || value === "peerDependencies" ? value : "dependencies";
 }
 
-function kindOf(value: unknown): DependencyDeclarationKind {
+function kindOf(value: unknown): AddedDependency["declarationKind"] {
   return value === "exact" || value === "tag" || value === "unusual" ? value : "range";
 }
 

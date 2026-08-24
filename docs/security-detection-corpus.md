@@ -179,7 +179,7 @@ Fields, in addition to the shared `id` / `title` / `category` / `intent`:
 - `uninspectableReasons` — dependency name → `DependencyUninspectableReason` for dependencies with no
   entry in `dependencyArtifacts`.
 - `expectedDependencies` — per-dependency evidence assertions (declaration kind, resolved version,
-  verdict, automatic-execution entrypoints).
+  coverage status, install observations, automatic-execution entrypoints).
 - `expectedFindings` / `expectedRisk` — as in the npm corpus.
 - `expectedRecommendation` — the maintainer-facing verdict label from
   `getReleaseRecommendation`. "Reaches critical" and "cannot be recommended for approval" are two
@@ -627,9 +627,9 @@ review result. A minified JavaScript file or source map whose text the parser de
 fails visibly when an install hook can reach it, pinned by
 `added-dependency-install-skipped-content`; unrelated omitted assets remain valid hard negatives. Once a
 dependency has a terminal inspected or uninspectable record, that evidence replaces the older
-declaration-only `dependency.added` / `dependency.optional-added` finding, so a clean reviewed dependency
-can remain low risk. Finding projection and the report UI now share the same proven/unproven install-risk
-classifier, keeping their severity and claims aligned.
+declaration-only `dependency.added` / `dependency.optional-added` finding, so a dependency with no observed
+install behavior can remain low risk. Finding projection and the report UI share one install-risk policy
+mapping, keeping their severity and claims aligned.
 
 `1.39.0` closes registry-resolution and dependency-evidence trust gaps. Published versions and ranges
 with non-canonical or unsafe numeric identifiers are rejected instead of selecting bytes npm ignores;
@@ -654,6 +654,19 @@ covered by root-manifest review. Install-reachable dynamic module loads also mak
 `.map` / minified JavaScript text fail visibly instead of recording partial bytes as inspected. The
 `added-dependency-bundled-install-downloader` fixture and focused skipped-text regressions pin both
 boundaries.
+
+`1.40.0` separates dependency coverage, install execution, and risk observations from gate policy.
+Unproven static reach is now recorded as `unknown` instead of an install-risk verdict, aggregate review
+coverage is partial whenever any selected dependency is uninspectable, and a computed install-time module
+load treats every omitted body as a possible target regardless of extension. The
+`added-dependency-dynamic-skipped-content` fixture pins the widened fail-visible boundary.
+
+`1.41.0` closes three durable dependency-evidence trust gaps. Registry projection preserves the presence
+of an oversized authoritative SRI so it cannot silently fall through to a matching legacy SHA-1; adapter
+evidence is secret-redacted before finding projection or persistence; and suspicious archive entries
+inside bundled child subtrees now make those dependencies visibly uninspectable. The existing
+`added-dependency-integrity-mismatch` and bundled-dependency corpus cases continue to pin the rule family,
+with focused registry, pipeline, and bundled-artifact regressions covering the new acquisition boundaries.
 
 ### Fixture format
 

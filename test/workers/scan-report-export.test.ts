@@ -228,7 +228,7 @@ describe("scan report JSON export", () => {
               automaticExecution: [{ kind: "script", name: "postinstall" }],
               capabilities: ["code.remote-shell"],
               installReachableCapabilities: ["code.remote-shell"],
-              verdict: "install-risk",
+              observation: { execution: "observed", risk: "observed" },
             },
           ],
         },
@@ -257,7 +257,7 @@ describe("scan report JSON export", () => {
       declaredSpec: "0.1.0",
       resolvedVersion: "0.1.0",
       digestVerified: true,
-      verdict: "install-risk",
+      observation: { execution: "observed", risk: "observed" },
     });
   });
 

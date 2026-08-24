@@ -61,7 +61,7 @@ export interface NpmBrokerDownloadOptions {
   maxTextSampleChars?: number;
 }
 
-export interface NpmBrokerAnonymousFetchOptions {
+interface NpmBrokerAnonymousFetchOptions {
   /** Remaining dependency-review deadline, enforced inside the broker. */
   timeoutMs?: number;
 }

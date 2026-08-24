@@ -102,7 +102,7 @@ function buildReview(fixture) {
       automaticExecution: assessment.automaticExecution,
       capabilities: assessment.capabilities,
       installReachableCapabilities: assessment.installReachableCapabilities,
-      verdict: assessment.verdict,
+      observation: assessment.observation,
     };
   });
   const inspectedCount = dependencies.filter((entry) => entry.status === "inspected").length;
@@ -134,7 +134,7 @@ function emptyEvidence(dependency) {
     automaticExecution: [],
     capabilities: [],
     installReachableCapabilities: [],
-    verdict: "clean",
+    observation: { execution: "unknown", risk: "unknown" },
   };
 }
 
@@ -180,7 +180,7 @@ describe("dependency-artifact detection corpus", () => {
       }
       expect(computeRisk(findings)).toBe(fixture.expectedRisk);
 
-      // Pin the artifact-family calibration and its maintainer-facing verdict.
+      // Pin the artifact-family calibration and its maintainer-facing recommendation.
       // The scan-pipeline suite separately proves that this precise evidence
       // replaces the declaration-only dependency finding before release risk is
       // composed.
