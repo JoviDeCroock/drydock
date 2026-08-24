@@ -197,6 +197,10 @@ The corpus includes calibration cases that should stay that way:
   one most likely to be argued with, so it is written down rather than left implicit.
 - `added-dependency-integrity-mismatch` pins the fail-closed boundary: inert dependency contents still
   block when their recomputed digest disagrees with what the registry advertised.
+- `added-dependency-truncated-install-dropper` pins the two-axis boundary: an unrelated coverage gap is
+  reported without erasing critical install behavior already proven by retained bytes.
+- `added-dependency-computed-execfile-skipped-content` pins dynamic local execution: a computed
+  child-process target makes every omitted dependency body a visible coverage gap.
 - `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
   genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
   second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
@@ -216,7 +220,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.44.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.45.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -690,6 +694,14 @@ targets passed to child-process execution APIs or shell `source` commands now jo
 simple aliases of `require` or `createRequire(...)` fail visibly when an omitted body could be their
 target. `added-dependency-execfile-skipped-content` and
 `added-dependency-aliased-require-skipped-content` pin these completeness boundaries.
+
+`1.45.0` keeps partial dependency evidence fail-closed without erasing stronger retained-byte signals.
+Known install risk survives unrelated truncation, computed or aliased child-process and shell targets make
+omitted bodies visible, and omitted-only record counts still project an aggregate coverage gap. Alias
+propagation is bounded by a linear worklist, exact/range declarations cannot be reinterpreted through
+registry-controlled tag keys, and malformed persisted rows reject the review as a unit.
+`added-dependency-truncated-install-dropper` and
+`added-dependency-computed-execfile-skipped-content` pin the gate-facing coverage changes.
 
 ### Fixture format
 

