@@ -838,6 +838,47 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
+  test.each([
+    ["an aliased loader", "const load = require; load('./payload.min.js')"],
+    ["a child process", 'require("child_process").execFileSync("./payload.min.js")'],
+  ])("a skipped payload reached by %s is uninspectable", async (_kind, installSource) => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const manifest = {
+      name: "clipped",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", installSource),
+        {
+          path: "payload.min.js",
+          size: 4096,
+          sha256: "skipped-executed-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      resolvedVersion: "1.0.0",
+      fileCount: 3,
+    });
+  });
+
   test("a skipped script invoked by implicit node-gyp is uninspectable", async () => {
     const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
     const manifest = {

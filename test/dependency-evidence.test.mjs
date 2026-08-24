@@ -616,6 +616,68 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
   });
 
+  test.each([
+    "const load = require; load('./payload.min.js')",
+    "const first = require; const load = first; load('./payload.min.js')",
+    "const load = createRequire(import.meta.url); load('./payload.min.js')",
+  ])("fails completeness for the aliased Node loader in %s", (load) => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", load),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-aliased-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+  });
+
+  test.each([
+    ["node install.js", "install.js", 'require("child_process").execFileSync("./payload.min.js")'],
+    ["node install.js", "install.js", 'require("child_process").spawn("./payload.min.js")'],
+    [
+      "node install.js",
+      "install.js",
+      'require("child_process").execSync("./payload.min.js --prepare")',
+    ],
+    ["sh install.sh", "install.sh", ". ./payload.min.js"],
+    ["sh install.sh", "install.sh", "source './payload.min.js'"],
+  ])("follows the static install execution edge in %s", (postinstall, installPath, command) => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file(installPath, command),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-executed-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+  });
+
   test("an implicit node-gyp action makes its omitted script install-reachable", () => {
     const manifest = {
       name: "n",

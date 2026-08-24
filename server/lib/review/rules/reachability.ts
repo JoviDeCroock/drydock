@@ -3,16 +3,23 @@ import { isRootGypPath } from "../../tar-parser.js";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
-// Static require/import edges between files inside the package. The walk is a
-// conservative over-approximation built from relative specifiers only: bare
-// (dependency) imports and dynamic expressions cannot pull a packaged file into
-// the consumer graph, and any file we cannot prove reachable simply keeps full
-// finding severity, so misses fail toward louder findings, never quieter ones.
+// Static code-loading and execution edges between files inside the package.
+// The walk is a conservative over-approximation built from relative targets:
+// bare dependency imports and dynamic expressions cannot pull a packaged file
+// into the consumer graph, and any file we cannot prove reachable simply keeps
+// full finding severity, so misses fail toward louder findings, never quieter
+// ones.
 const RELATIVE_SPECIFIER_PATTERNS = [
   /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
+  // Install hooks commonly split their work across executable files without a
+  // module import. Keep statically named child-process and shell-source targets
+  // in the same conservative graph so a skipped body cannot look inspected.
+  /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
+  /(?:^|[;\n&|]\s*)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
 
 const RESOLUTION_SUFFIXES = [
@@ -69,9 +76,18 @@ export function installReachablePaths(
 }
 
 /**
- * JavaScript dependency-artifact spelling for the automatic install/build
- * reachability set. Dependency artifacts are npm packages, while the shared
- * install helper also supports Python sdists for top-level review rules.
+ * Files an *automatic* install/build entrypoint can execute, and nothing else.
+ *
+ * Deliberately narrower than {@link consumerReachablePaths}: that set also
+ * seeds from `main`/`bin`/`exports`, which is right for "can a consumer run
+ * this at all" but wrong for "does installing this package run this". The
+ * dependency-artifact review needs the second question — a newly introduced
+ * dependency whose dropper only runs when you `require()` it is a different
+ * (and lesser) claim than one that runs on `npm install`.
+ *
+ * Same conservative posture as the consumer walk: relative static targets
+ * only, so an unproven edge keeps a finding at full severity rather than
+ * escalating it.
  */
 export function lifecycleReachablePaths(
   files: FileRecord[],
