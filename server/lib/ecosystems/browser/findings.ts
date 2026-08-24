@@ -21,6 +21,8 @@ import {
 } from "./types";
 
 const PRIVILEGED_PERMISSIONS = new Set([
+  "accessibilityFeatures.modify",
+  "accessibilityFeatures.read",
   "bookmarks",
   "browserSettings",
   "browsingData",
@@ -63,6 +65,7 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "printingMetrics",
   "processes",
   "proxy",
+  "readingList",
   "scripting",
   "search",
   "sessions",
@@ -74,6 +77,7 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "tabHide",
   "tabs",
   "topSites",
+  "ttsEngine",
   "userScripts",
   "vpnProvider",
   "webAuthenticationProxy",
@@ -201,19 +205,21 @@ function browserManifestFindings(
   }
 
   const externalMatch = manifest.externallyConnectableMatches.find(isBroadExternalOrigin);
-  if (externalMatch) {
+  const externalId = manifest.externallyConnectableIds.find((id) => id.trim() === "*");
+  if (externalMatch || externalId) {
+    const externalValue = externalMatch ?? externalId;
+    const property = externalMatch ? "matches" : "ids";
     findings.push(
       browserTag("externallyConnectable", {
         severity: "high",
         file: "manifest.json",
-        line: firstJsonPropertyLine(
-          manifestFile?.textSample,
-          "externally_connectable",
-          externalMatch,
-        ),
-        evidence: `external pages may connect from ${externalMatch}`,
-        reason:
-          "a broad externally_connectable origin lets arbitrary sites send messages into privileged extension code",
+        line: firstJsonPropertyLine(manifestFile?.textSample, property, externalValue),
+        evidence: externalMatch
+          ? `external pages may connect from ${externalMatch}`
+          : "all extensions and apps may connect through externally_connectable.ids",
+        reason: externalMatch
+          ? "a broad externally_connectable origin lets arbitrary sites send messages into privileged extension code"
+          : "a wildcard externally_connectable extension ID lets arbitrary extensions and apps send messages into privileged extension code",
       }),
     );
   }

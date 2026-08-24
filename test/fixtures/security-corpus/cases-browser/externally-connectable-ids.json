@@ -1,0 +1,23 @@
+{
+  "id": "browser-externally-connectable-ids",
+  "title": "WebExtension accepts connections from every extension and app",
+  "category": "browser-extension",
+  "intent": "A wildcard externally_connectable extension ID must remain authoritative deterministic evidence even without a matches field.",
+  "slug": "external-messaging-helper",
+  "extensionId": "external-messaging-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 234,
+      "sha256": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"External messaging helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"external-messaging-helper@example.invalid\" } },\n  \"externally_connectable\": { \"ids\": [\"*\"] }\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.externally-connectable", "severity": "high", "file": "manifest.json" }
+  ]
+}

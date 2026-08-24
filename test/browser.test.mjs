@@ -43,6 +43,10 @@ describe("browser extension review adapter", () => {
         browser_specific_settings: { gecko: { id: "tab-helper@example.invalid" } },
         host_permissions: ["https://example.invalid/*"],
         content_scripts: [{ matches: ["https://example.invalid/*"], js: ["content.js"] }],
+        externally_connectable: {
+          matches: ["https://example.invalid/*"],
+          ids: ["companion@example.invalid"],
+        },
       }),
     ]);
     expect(browserExtensionCandidateName(manifest)).toBe("tab-helper@example.invalid");
@@ -50,6 +54,8 @@ describe("browser extension review adapter", () => {
     expect(manifest.contentScriptEntrypoints).toEqual(["content.js"]);
     expect(manifest.hostPermissions).toEqual(["https://example.invalid/*"]);
     expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
+    expect(manifest.externallyConnectableMatches).toEqual(["https://example.invalid/*"]);
+    expect(manifest.externallyConnectableIds).toEqual(["companion@example.invalid"]);
   });
 
   test("uses Gecko identity fields according to the manifest version", () => {
@@ -315,15 +321,49 @@ describe("browser extension review adapter", () => {
           manifestRecord,
           {
             path: "scripts/background.js",
-            size: 27,
+            size: 42,
             sha256: "5a".repeat(32),
             flags: [],
-            textSample: 'import "/tests/payload.js";',
+            textSample: 'import "/tests/payload.js?build=1#worker";',
           },
           {
             path: "tests/payload.js",
             size: 14,
             sha256: "5b".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows a query- and fragment-qualified relative module import", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ background: { service_worker: "scripts/background.js", type: "module" } }),
+          {
+            path: "scripts/background.js",
+            size: 40,
+            sha256: "6a".repeat(32),
+            flags: [],
+            textSample: 'import "../tests/payload.js?v=1#worker";',
+          },
+          {
+            path: "tests/payload.js",
+            size: 14,
+            sha256: "6b".repeat(32),
             flags: [],
             textSample: "eval(payload);",
           },
@@ -695,6 +735,26 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
+  test("flags wildcard externally connectable extension IDs", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ externally_connectable: { ids: ["*"] } }, true);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files: [manifestRecord] },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "browser.externally-connectable",
+    );
+    expect(finding).toMatchObject({
+      severity: "high",
+      evidence: "all extensions and apps may connect through externally_connectable.ids",
+    });
+    expect(finding?.line).toBe(
+      manifestRecord.textSample.split("\n").findIndex((line) => line.includes('"ids"')) + 1,
+    );
+  });
+
   test.each(["*://*/", "https://*/", "http://*/", "https://*/sensitive/*", "file:///*"])(
     "flags scheme-wide match pattern %s",
     (matchPattern) => {
@@ -720,6 +780,8 @@ describe("browser extension review adapter", () => {
   );
 
   test.each([
+    "accessibilityFeatures.modify",
+    "accessibilityFeatures.read",
     "bookmarks",
     "browserSettings",
     "browsingData",
@@ -762,6 +824,7 @@ describe("browser extension review adapter", () => {
     "printingMetrics",
     "processes",
     "proxy",
+    "readingList",
     "scripting",
     "search",
     "sessions",
@@ -773,6 +836,7 @@ describe("browser extension review adapter", () => {
     "tabHide",
     "tabs",
     "topSites",
+    "ttsEngine",
     "userScripts",
     "vpnProvider",
     "webAuthenticationProxy",

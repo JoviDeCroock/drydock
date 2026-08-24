@@ -2,7 +2,7 @@
   "id": "browser-root-relative-background-module",
   "title": "root-relative browser background modules remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity when a root-relative service worker imports a packaged test-path module through an artifact-root ESM specifier.",
+  "intent": "Pins full shared capability severity when a root-relative service worker imports a packaged test-path module through a query- and fragment-qualified artifact-root ESM specifier.",
   "slug": "root-relative-module-helper",
   "extensionId": "root-relative-module-helper@example.invalid",
   "version": "1.0.0",
@@ -17,10 +17,10 @@
     },
     {
       "path": "scripts/background.js",
-      "size": 27,
+      "size": 42,
       "sha256": "6363636363636363636363636363636363636363636363636363636363636363",
       "flags": [],
-      "textSample": "import \"/tests/payload.js\";"
+      "textSample": "import \"/tests/payload.js?build=1#worker\";"
     },
     {
       "path": "tests/payload.js",

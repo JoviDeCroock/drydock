@@ -100,6 +100,9 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       externallyConnectableMatches: isRecord(raw.externally_connectable)
         ? stringList(raw.externally_connectable.matches)
         : [],
+      externallyConnectableIds: isRecord(raw.externally_connectable)
+        ? stringList(raw.externally_connectable.ids)
+        : [],
       backgroundEntrypoints,
       extensionPageEntrypoints,
       contentSecurityPolicy,

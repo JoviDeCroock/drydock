@@ -58,7 +58,7 @@ export function consumerReachablePaths(
 
   const queue: string[] = [];
   for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
-    const resolved = resolveModulePath(candidate, byNormalizedPath);
+    const resolved = resolveModulePath(candidate, byNormalizedPath, rootRelativeModuleImports);
     if (resolved) queue.push(resolved);
   }
 
@@ -70,7 +70,11 @@ export function consumerReachablePaths(
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
     for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
-      const resolved = resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
+      const resolved = resolveModulePath(
+        joinRelative(path, specifier),
+        byNormalizedPath,
+        rootRelativeModuleImports,
+      );
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
   }
@@ -286,14 +290,21 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
 function resolveModulePath(
   candidate: string,
   byNormalizedPath: Map<string, FileRecord>,
+  browserUrlSemantics = false,
 ): string | null {
-  const base = normalizePathSegments(stripPackagePrefix(candidate));
+  const pathCandidate = browserUrlSemantics ? stripUrlSearchAndHash(candidate) : candidate;
+  const base = normalizePathSegments(stripPackagePrefix(pathCandidate));
   if (!base) return null;
   for (const suffix of RESOLUTION_SUFFIXES) {
     const resolved = base + suffix;
     if (byNormalizedPath.has(resolved)) return resolved;
   }
   return null;
+}
+
+function stripUrlSearchAndHash(value: string): string {
+  const delimiter = value.search(/[?#]/);
+  return delimiter === -1 ? value : value.slice(0, delimiter);
 }
 
 function joinRelative(fromPath: string, specifier: string): string {
