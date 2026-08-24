@@ -89,25 +89,28 @@ export function assessDependencyArtifact(
     )
     .map((file) => file.path);
 
-  // A computed require/import can target any omitted file. Do not guess from
-  // extensions: Node loaders and package hooks can execute extensionless or
-  // custom-extension content. Once the install path contains a dynamic module
-  // edge, every deliberately omitted body is an unresolved coverage gap.
+  // A computed module load or local execution target can select any omitted
+  // file. Do not guess from extensions: Node loaders, child processes, and
+  // package hooks can execute extensionless or custom-extension content. Once
+  // the install path contains a dynamic edge, every deliberately omitted body
+  // is an unresolved coverage gap.
   const omittedFiles = files.filter((file) => file.flags.includes("text-sample-skipped"));
   const filesByPath = new Map(
     files.map((file) => [normalizeReachabilityPath(file.path), file] as const),
   );
-  const hasDynamicInstallModuleLoad =
+  const hasDynamicInstallEdge =
     automaticExecution.length > 0 &&
     omittedFiles.length > 0 &&
     [...reachable].some((path) => {
       const file = filesByPath.get(path);
-      return file?.textSample ? hasDynamicModuleLoad(file.textSample) : false;
+      return file?.textSample
+        ? hasDynamicModuleLoad(file.textSample) || hasDynamicLocalExecution(file.textSample)
+        : false;
     });
   const installReachableUninspectedFiles = [
     ...new Set([
       ...directlyReachableUninspectedFiles,
-      ...(hasDynamicInstallModuleLoad ? omittedFiles.map((file) => file.path) : []),
+      ...(hasDynamicInstallEdge ? omittedFiles.map((file) => file.path) : []),
     ]),
   ].sort();
 
@@ -224,47 +227,171 @@ function hasDynamicModuleLoad(text: string): boolean {
  * loader value even though the factory call itself is not a module load.
  */
 function moduleLoaderAliases(text: string, tokens: JsToken[]): Set<string> {
-  const aliases = new Set<string>();
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let index = 0; index < tokens.length - 2; index += 1) {
-      const target = tokens[index];
-      const equals = tokens[index + 1];
-      const source = tokens[index + 2];
-      if (
-        target.type !== "ident" ||
-        equals?.type !== "punct" ||
-        jsTokenText(text, equals) !== "=" ||
-        source?.type !== "ident"
-      ) {
-        continue;
-      }
-      const targetPrevious = tokens[index - 1];
-      if (
-        targetPrevious?.type === "punct" &&
-        [".", "?."].includes(jsTokenText(text, targetPrevious))
-      ) {
-        continue;
-      }
-      const sourceName = jsTokenText(text, source);
-      const afterSource = tokens[index + 3];
-      const sourceIsRequireReference =
-        sourceName === "require" &&
-        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(");
-      const sourceIsCreateRequireCall =
-        sourceName === "createRequire" &&
+  return simpleAliases(text, tokens, (sourceIndex) => {
+    const sourceName = jsTokenText(text, tokens[sourceIndex]);
+    const afterSource = tokens[sourceIndex + 1];
+    return (
+      (sourceName === "require" &&
+        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")) ||
+      (sourceName === "createRequire" &&
         afterSource?.type === "punct" &&
-        jsTokenText(text, afterSource) === "(";
-      if (!sourceIsRequireReference && !sourceIsCreateRequireCall && !aliases.has(sourceName)) {
-        continue;
-      }
-      const targetName = jsTokenText(text, target);
-      if (!aliases.has(targetName)) {
-        aliases.add(targetName);
-        changed = true;
-      }
+        jsTokenText(text, afterSource) === "(")
+    );
+  });
+}
+
+const LOCAL_EXECUTION_CALLEES = new Set([
+  "exec",
+  "execFile",
+  "execFileSync",
+  "execSync",
+  "fork",
+  "spawn",
+  "spawnSync",
+]);
+
+/** True when an install-reachable process or shell edge has no static target. */
+function hasDynamicLocalExecution(text: string): boolean {
+  // Shell variables and substitutions can select a packaged executable even
+  // when the static reachability expressions cannot name it.
+  if (/(?:^|[;\n&|]\s*)(?:source|\.)\s+(?:["']?\$|["'][^"']*\$)/m.test(text)) return true;
+
+  const tokens = tokenizeJs(text).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  const aliases = localExecutionAliases(text, tokens);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type !== "ident") continue;
+    const callee = jsTokenText(text, token);
+    if (!LOCAL_EXECUTION_CALLEES.has(callee) && !aliases.has(callee)) continue;
+
+    const previous = tokens[index - 1];
+    const memberAccess =
+      previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
+    if (memberAccess && aliases.has(callee)) continue;
+    const optionalCall = tokens[index + 1];
+    const openIndex =
+      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+        ? index + 2
+        : index + 1;
+    const open = tokens[openIndex];
+    if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
+
+    // Alias calls are unresolved by the bounded path graph, including when a
+    // literal is passed through them.
+    if (aliases.has(callee) && !memberAccess) return true;
+    const argument = tokens[openIndex + 1];
+    if (!argument || (argument.type === "punct" && jsTokenText(text, argument) === ")")) continue;
+    const afterArgument = tokens[openIndex + 2];
+    const argumentEndsTarget =
+      afterArgument?.type === "punct" && [")", ","].includes(jsTokenText(text, afterArgument));
+    const staticTarget =
+      argument.type === "string" ||
+      (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
+    if (!staticTarget || !argumentEndsTarget) return true;
+  }
+  return false;
+}
+
+function localExecutionAliases(text: string, tokens: JsToken[]): Set<string> {
+  return simpleAliases(text, tokens, (sourceIndex) => {
+    const source = tokens[sourceIndex];
+    const sourceName = jsTokenText(text, source);
+    const afterSource = tokens[sourceIndex + 1];
+    if (
+      LOCAL_EXECUTION_CALLEES.has(sourceName) &&
+      !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")
+    ) {
+      return true;
     }
+
+    const member = tokens[sourceIndex + 2];
+    const afterMember = tokens[sourceIndex + 3];
+    if (
+      afterSource?.type === "punct" &&
+      [".", "?."].includes(jsTokenText(text, afterSource)) &&
+      member?.type === "ident" &&
+      LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, member)) &&
+      !(afterMember?.type === "punct" && jsTokenText(text, afterMember) === "(")
+    ) {
+      return true;
+    }
+
+    const requiredModule = tokens[sourceIndex + 2];
+    const close = tokens[sourceIndex + 3];
+    const dot = tokens[sourceIndex + 4];
+    const method = tokens[sourceIndex + 5];
+    return (
+      sourceName === "require" &&
+      afterSource?.type === "punct" &&
+      jsTokenText(text, afterSource) === "(" &&
+      requiredModule?.type === "string" &&
+      ["child_process", "node:child_process"].includes(requiredModule.value ?? "") &&
+      close?.type === "punct" &&
+      jsTokenText(text, close) === ")" &&
+      dot?.type === "punct" &&
+      [".", "?."].includes(jsTokenText(text, dot)) &&
+      method?.type === "ident" &&
+      LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, method)) &&
+      !(
+        tokens[sourceIndex + 6]?.type === "punct" &&
+        jsTokenText(text, tokens[sourceIndex + 6]) === "("
+      )
+    );
+  });
+}
+
+/**
+ * Resolve simple assignment aliases in O(tokens + edges) with a worklist.
+ * Reverse-ordered chains are common in generated code and must not turn one
+ * synchronous dependency assessment into an unbounded quadratic scan.
+ */
+function simpleAliases(
+  text: string,
+  tokens: JsToken[],
+  isSeed: (sourceIndex: number) => boolean,
+): Set<string> {
+  const aliases = new Set<string>();
+  const downstream = new Map<string, string[]>();
+  const queue: string[] = [];
+  for (let index = 0; index < tokens.length - 2; index += 1) {
+    const target = tokens[index];
+    const equals = tokens[index + 1];
+    const source = tokens[index + 2];
+    if (
+      target.type !== "ident" ||
+      equals?.type !== "punct" ||
+      jsTokenText(text, equals) !== "=" ||
+      source?.type !== "ident"
+    ) {
+      continue;
+    }
+    const targetPrevious = tokens[index - 1];
+    if (
+      targetPrevious?.type === "punct" &&
+      [".", "?."].includes(jsTokenText(text, targetPrevious))
+    ) {
+      continue;
+    }
+    const targetName = jsTokenText(text, target);
+    if (isSeed(index + 2)) {
+      queue.push(targetName);
+      continue;
+    }
+    const afterSource = tokens[index + 3];
+    if (afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(") continue;
+    const sourceName = jsTokenText(text, source);
+    const targets = downstream.get(sourceName) ?? [];
+    targets.push(targetName);
+    downstream.set(sourceName, targets);
+  }
+
+  while (queue.length) {
+    const alias = queue.pop();
+    if (!alias || aliases.has(alias)) continue;
+    aliases.add(alias);
+    queue.push(...(downstream.get(alias) ?? []));
   }
   return aliases;
 }

@@ -72,6 +72,7 @@ export { annotateFindingsWithDiffStatus, normalizeFindingDiffStatus } from "./di
 export {
   assessDependencyArtifact,
   classifyDependencyInstallRisk,
+  dependencyDeclarationKind,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
   dependencyEvidenceFindings,
