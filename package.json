@@ -50,6 +50,7 @@
     "better-auth": "^1.6.29",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
+    "entities": "4.5.0",
     "hono": "^4.13.2",
     "hoofd": "^1.7.3",
     "multiformats": "14.0.5",

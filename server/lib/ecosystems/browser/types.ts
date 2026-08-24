@@ -53,6 +53,7 @@ export interface BrowserExtensionManifest {
   optionalHostPermissions: string[];
   contentScriptMatches: string[];
   contentScriptEntrypoints: string[];
+  userScriptEntrypoints: string[];
   externallyConnectableMatches: string[];
   backgroundEntrypoints: string[];
   extensionPageEntrypoints: string[];
@@ -75,6 +76,7 @@ export interface BrowserAdapterDetails {
     optionalHostPermissions: string[];
     contentScriptMatches: string[];
     contentScriptEntrypoints: string[];
+    userScriptEntrypoints: string[];
     externallyConnectableMatches: string[];
     backgroundEntrypoints: string[];
     extensionPageEntrypoints: string[];

@@ -15,10 +15,10 @@ keep the version and model that actually produced them; regenerate and
 adjudicate the corpus before marking a new contract as recorded. Historical
 rows without a version parse as `null` and analytics labels them `legacy`.
 
-Version `1.3.0` adds browser-extension-specific evidence guidance for WebExtension permissions,
-content-script match patterns, privileged background entrypoints, external messaging, and reviewed-byte
-escapes. The deterministic `browser.*` findings remain authoritative; the AI reviewer only adds
-context and cannot downgrade them.
+Browser-extension candidates currently use the generic ecosystem prompt. The
+deterministic `browser.*` findings remain authoritative; a browser-specific AI
+prompt should ship only with a reviewer-version bump and newly issued gated
+outputs from that prompt.
 
 ## Submission bounds
 

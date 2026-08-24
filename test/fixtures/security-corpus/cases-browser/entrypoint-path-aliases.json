@@ -1,0 +1,53 @@
+{
+  "id": "browser-entrypoint-path-aliases",
+  "title": "browser-loaded scripts remain reachable through manifest and HTML path aliases",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, and HTML character-reference paths.",
+  "slug": "path-alias-helper",
+  "extensionId": "path-alias-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "5151515151515151515151515151515151515151515151515151515151515151",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 420,
+      "sha256": "5252525252525252525252525252525252525252525252525252525252525252",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
+    },
+    {
+      "path": "pages/background.html",
+      "size": 70,
+      "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
+      "flags": [],
+      "textSample": "<script src=\"../tests&#x2f;page.js\"></script>"
+    },
+    {
+      "path": "tests/content.js",
+      "size": 14,
+      "sha256": "5454545454545454545454545454545454545454545454545454545454545454",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/user-api.js",
+      "size": 42,
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "flags": [],
+      "textSample": "fetch(\"https://example.invalid/payload\");"
+    },
+    {
+      "path": "tests/page.js",
+      "size": 42,
+      "sha256": "5656565656565656565656565656565656565656565656565656565656565656",
+      "flags": [],
+      "textSample": "const cp = require('child_process'); cp.exec(command);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/content.js" },
+    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/user-api.js" },
+    { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" }
+  ]
+}

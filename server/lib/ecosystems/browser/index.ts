@@ -134,6 +134,7 @@ function acquireBrowserArtifact(
         optionalHostPermissions: manifest.optionalHostPermissions,
         contentScriptMatches: manifest.contentScriptMatches,
         contentScriptEntrypoints: manifest.contentScriptEntrypoints,
+        userScriptEntrypoints: manifest.userScriptEntrypoints,
         externallyConnectableMatches: manifest.externallyConnectableMatches,
         backgroundEntrypoints: manifest.backgroundEntrypoints,
         extensionPageEntrypoints: manifest.extensionPageEntrypoints,

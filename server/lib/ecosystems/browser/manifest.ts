@@ -1,3 +1,4 @@
+import { decodeHTMLAttribute } from "entities";
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
 import { isSafeManifestPath } from "../../platform/path-safety";
 import type { FileRecord, PackageJsonSummary } from "../../review";
@@ -60,6 +61,10 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     files,
     manifestExtensionPagePaths(raw),
   );
+  const userScriptEntrypoints =
+    raw.manifest_version === 2 && isRecord(raw.user_scripts)
+      ? manifestResourcePaths([manifestRecordString(raw.user_scripts, "api_script")])
+      : [];
   const csp = raw.content_security_policy;
   const contentSecurityPolicy =
     typeof csp === "string"
@@ -80,9 +85,10 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       hostPermissions: stringList(raw.host_permissions),
       optionalHostPermissions: stringList(raw.optional_host_permissions),
       contentScriptMatches: nestedStringList(raw.content_scripts, "matches"),
-      contentScriptEntrypoints: nestedStringList(raw.content_scripts, "js").filter(
-        isSafeManifestPath,
-      ),
+      contentScriptEntrypoints: manifestResourcePaths(nestedStringList(raw.content_scripts, "js"), {
+        trimLeadingSlash: true,
+      }),
+      userScriptEntrypoints,
       externallyConnectableMatches: isRecord(raw.externally_connectable)
         ? stringList(raw.externally_connectable.matches)
         : [],
@@ -257,6 +263,17 @@ function nestedStringList(value: unknown, key: string): string[] {
   return value.flatMap((item) => (isRecord(item) ? stringList(item[key]) : []));
 }
 
+function manifestResourcePaths(
+  paths: Array<string | null>,
+  options: { trimLeadingSlash?: boolean } = {},
+): string[] {
+  return paths.flatMap((path) => {
+    if (path === null) return [];
+    const normalized = options.trimLeadingSlash && path.startsWith("/") ? path.slice(1) : path;
+    return isSafeManifestPath(normalized) ? [normalized] : [];
+  });
+}
+
 function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
   return [
     manifestRecordString(raw.action, "default_popup"),
@@ -359,7 +376,7 @@ function htmlScriptSources(html: string): string[] {
     /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))[^>]*>/gi;
   for (const match of html.matchAll(scriptSourcePattern)) {
     const source = match[1] ?? match[2] ?? match[3];
-    if (source) sources.push(source);
+    if (source) sources.push(decodeHTMLAttribute(source));
   }
   return sources;
 }

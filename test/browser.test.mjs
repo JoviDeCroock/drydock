@@ -193,6 +193,75 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
+  test("normalizes root-relative content script paths before reachability analysis", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({
+      content_scripts: [{ matches: ["https://example.invalid/*"], js: ["/tests/content.js"] }],
+    });
+    expect(
+      parseBrowserExtensionManifest([manifestRecord]).manifest.contentScriptEntrypoints,
+    ).toEqual(["tests/content.js"]);
+
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestRecord,
+          {
+            path: "tests/content.js",
+            size: 14,
+            sha256: "47".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/content.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("treats Manifest V2 user_scripts api_script as consumer reachable", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({
+      manifest_version: 2,
+      user_scripts: { api_script: "tests/user-api.js" },
+    });
+    expect(parseBrowserExtensionManifest([manifestRecord]).manifest.userScriptEntrypoints).toEqual([
+      "tests/user-api.js",
+    ]);
+
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestRecord,
+          {
+            path: "tests/user-api.js",
+            size: 14,
+            sha256: "48".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/user-api.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("follows scripts loaded by a manifest background page", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -228,6 +297,40 @@ describe("browser extension review adapter", () => {
       (candidate) => candidate.ruleId === "code.dynamic-evaluation",
     );
     expect(finding).toMatchObject({ severity: "high", file: "tests/background.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("decodes HTML character references before resolving packaged script paths", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ manifest_version: 2, background: { page: "pages/background.html" } }),
+          {
+            path: "pages/background.html",
+            size: 70,
+            sha256: "49".repeat(32),
+            flags: [],
+            textSample: '<script src="../tests&#x2f;payload&#46;js"></script>',
+          },
+          {
+            path: "tests/payload.js",
+            size: 14,
+            sha256: "4a".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
   });
 

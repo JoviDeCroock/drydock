@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.31.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -436,6 +436,12 @@ regression matrix in `test/workers/release-fingerprint.test.ts` pins the opt-out
 content scripts. Scripts loaded by manifest-declared popups, options pages,
 developer-tools pages, sidebars, side panels, and URL overrides now keep full
 capability severity even when their packaged path looks test-scoped.
+
+`1.32.0` closes browser-manifest reachability aliases: Chrome-style
+root-relative content scripts, Manifest V2 `user_scripts.api_script`, and HTML
+script sources containing character references now resolve to their packaged
+files before shared `code.*` capability severity is computed. The
+`browser-entrypoint-path-aliases` golden case pins all three paths.
 
 ### Fixture format
 

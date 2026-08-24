@@ -114,6 +114,7 @@ export function buildBrowserFindings(args: {
       consumerEntrypointPaths: [
         ...extensionManifest.backgroundEntrypoints,
         ...extensionManifest.contentScriptEntrypoints,
+        ...extensionManifest.userScriptEntrypoints,
         ...extensionManifest.extensionPageEntrypoints,
       ],
     }),
