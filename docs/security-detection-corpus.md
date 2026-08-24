@@ -131,13 +131,19 @@ The corpus includes calibration cases that should stay that way:
   block when their recomputed digest disagrees with what the registry advertised.
 - `added-dependency-truncated-install-dropper` pins the two-axis boundary: an unrelated coverage gap is
   reported without erasing critical install behavior already proven by retained bytes.
-- `added-dependency-computed-execfile-skipped-content` pins dynamic local execution: a computed
-  child-process target makes every omitted dependency body a visible coverage gap.
+- `added-dependency-dynamic-skipped-content` and
+  `added-dependency-computed-execfile-skipped-content` pin dynamic execution: computed module loads in
+  inline lifecycle code and renamed child-process targets make every omitted dependency body a visible
+  coverage gap.
 - `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
   genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
   second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
   manifest is part of that assessment, while `added-dependency-bundled-placeholder` proves an arbitrary
-  file under the declared `node_modules` path cannot impersonate that identity and suppress registry review.
+  file under the declared `node_modules` path cannot impersonate that identity and suppress registry
+  review. `added-dependency-bundled-mismatched-manifest` pins the adjacent boundary: once a declared
+  child manifest exists, an invalid identity must fail in place rather than redirect review to different
+  registry bytes. `added-dependency-bundled-ambiguous-install-dropper` proves archive ambiguity does not
+  erase stronger behavior already visible in readable child files.
 
 ## PyPI corpus
 
@@ -152,7 +158,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.45.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.46.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -524,6 +530,16 @@ propagation is bounded by a linear worklist, exact/range declarations cannot be 
 registry-controlled tag keys, and malformed persisted rows reject the review as a unit.
 `added-dependency-truncated-install-dropper` and
 `added-dependency-computed-execfile-skipped-content` pin the gate-facing coverage changes.
+
+`1.46.0` keeps dependency evidence attached to the code consumers actually receive across additional
+manifest, lifecycle, and archive edges. Malformed or mismatched bundled child manifests now remain
+embedded coverage gaps instead of redirecting review to registry bytes; computed loads inside inline
+Node lifecycle commands and renamed CommonJS/ESM child-process bindings make omitted bodies visible; and
+archive ambiguity no longer erases behavior proven by readable files. npm's `v1` and `v1.2` partial
+forms also remain range declarations even when a registry advertises same-named tags.
+`added-dependency-bundled-mismatched-manifest`, `added-dependency-dynamic-skipped-content`,
+`added-dependency-computed-execfile-skipped-content`, and
+`added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing changes.
 
 ### Fixture format
 
