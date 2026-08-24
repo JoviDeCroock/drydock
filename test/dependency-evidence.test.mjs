@@ -295,6 +295,32 @@ describe("selectAddedDependencies", () => {
     ).toEqual(["embedded"]);
   });
 
+  test("keeps a declared bundled dependency embedded when its manifest body was not retained", () => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0" },
+      bundleDependencies: ["embedded"],
+    };
+    const options = {
+      stagedManifest: staged,
+      stagedFiles: [
+        {
+          path: "node_modules/embedded/package.json",
+          size: 4096,
+          sha256: "hash-only-manifest",
+          flags: ["content-skipped"],
+        },
+      ],
+    };
+
+    expect(selectAddedDependencies(diffOf({ name: "p" }, staged), options)).toEqual([]);
+    expect(
+      selectBundledAddedDependencies(diffOf({ name: "p" }, staged), options).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["embedded"]);
+  });
+
   test("boolean bundledDependencies excludes all embedded install dependencies", () => {
     const staged = {
       name: "p",
@@ -559,32 +585,36 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
   });
 
-  test.each(["module.require(target)", "module?.require(target)", "require?.(target)"])(
-    "fails completeness for the dynamic Node loader %s",
-    (load) => {
-      const manifest = {
-        name: "n",
-        version: "1.0.0",
-        scripts: { postinstall: "node install.js" },
-      };
-      const assessment = assessDependencyArtifact(
-        [
-          file("package.json", JSON.stringify(manifest)),
-          file("install.js", `const target = './payload.' + 'data'; ${load}`),
-          {
-            path: "payload.data",
-            size: 1024,
-            sha256: "skipped-dynamic-payload",
-            flags: ["text-sample-skipped"],
-          },
-        ],
-        manifest,
-        { codePatternSet: "javascript", entrypointResolution: "npm" },
-      );
+  test.each([
+    "module.require(target)",
+    "module?.require(target)",
+    "module['require'](target)",
+    'module?.["require"](target)',
+    "module['require']?.(target)",
+    "require?.(target)",
+  ])("fails completeness for the dynamic Node loader %s", (load) => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", `const target = './payload.' + 'data'; ${load}`),
+        {
+          path: "payload.data",
+          size: 1024,
+          sha256: "skipped-dynamic-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
 
-      expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
-    },
-  );
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
+  });
 
   test("an implicit node-gyp action makes its omitted script install-reachable", () => {
     const manifest = {
@@ -670,7 +700,7 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.observation).toEqual({ execution: "observed", risk: "unknown" });
   });
 
-  test("an unrelated process launch cannot pair with an install-reachable native artifact", () => {
+  test("an install-reachable native artifact does not need an unrelated process launch", () => {
     const manifest = {
       name: "n",
       version: "1.0.0",
@@ -689,7 +719,32 @@ describe("assessDependencyArtifact", () => {
 
     expect(assessment.installReachableCapabilities).toContain("file.native-artifact");
     expect(assessment.installReachableCapabilities).not.toContain("code.process-execution");
-    expect(assessment.observation).toEqual({ execution: "observed", risk: "not-observed" });
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
+  });
+
+  test("a lifecycle hook that directly invokes a native executable is observed risk", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "./bin/installer" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "bin/installer",
+          size: 4096,
+          sha256: "native-installer",
+          flags: ["binary", "native-elf"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableCapabilities).toContain("file.native-artifact");
+    expect(assessment.installReachableCapabilities).not.toContain("code.process-execution");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
   });
 
   test("a capability in a non-install package script is not proven install-reachable", () => {

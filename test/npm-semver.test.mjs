@@ -45,6 +45,11 @@ describe("npm range satisfaction", () => {
     expect(parseRange("<1.x.2")).toBeNull();
     expect(matches("1.4.0", "^1.x.2")).toBe(true);
     expect(matches("2.0.0", "^1.x.2")).toBe(false);
+    expect(matches("1.2.0", "1.2.x-beta")).toBe(true);
+    expect(matches("1.2.0-beta", "1.2.x-beta")).toBe(false);
+    expect(parseRange("1.2-beta")).toBeNull();
+    expect(maxSatisfyingVersion(["1.1.3", "1.2.0-a", "1.2.0-beta"], "1.2.x-beta")).toBeNull();
+    expect(maxSatisfyingVersion(["1.1.3", "1.2.0-a", "1.2.0-beta"], "<1.2.x-beta")).toBe("1.1.3");
   });
 
   test("strict major wildcards match nothing while inclusive ones match anything", () => {

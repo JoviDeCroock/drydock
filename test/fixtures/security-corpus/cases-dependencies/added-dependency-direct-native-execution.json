@@ -1,0 +1,58 @@
+{
+  "id": "added-dependency-direct-native-execution",
+  "title": "An install hook directly invokes a bundled native executable",
+  "category": "dependency-introduction",
+  "intent": "A lifecycle command that names a bundled native executable already proves the process-launch edge. Drydock must block for the reachable opaque code without requiring the binary itself to call a second process API.",
+  "previousPackageJson": { "name": "image-tool", "version": "4.0.0" },
+  "stagedPackageJson": {
+    "name": "image-tool",
+    "version": "4.1.0",
+    "dependencies": { "direct-native-installer": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "direct-native-installer": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "direct-native-installer",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "./bin/installer" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 116,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "flags": [],
+          "textSample": "{\"name\":\"direct-native-installer\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"./bin/installer\"}}"
+        },
+        {
+          "path": "bin/installer",
+          "size": 4096,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "flags": ["binary", "native-elf"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "direct-native-installer",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-risk",
+      "severity": "high",
+      "file": "<dependency>direct-native-installer@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}
