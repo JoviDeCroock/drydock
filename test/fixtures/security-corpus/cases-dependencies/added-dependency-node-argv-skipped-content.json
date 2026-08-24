@@ -1,35 +1,35 @@
 {
-  "id": "added-dependency-aliased-require-skipped-content",
-  "title": "A renamed createRequire loader keeps omitted bodies visible",
+  "id": "added-dependency-node-argv-skipped-content",
+  "title": "A Node interpreter argv keeps its omitted script visible",
   "category": "dependency-introduction",
-  "intent": "An install hook can rename an imported createRequire factory before loading a packaged file. Drydock must report incomplete evidence when that target body was deliberately omitted.",
+  "intent": "An install hook can launch a packaged script as an argument to the Node interpreter. Drydock must report incomplete evidence when that named script body was deliberately omitted.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
     "version": "1.1.0",
-    "dependencies": { "aliased-install": "1.0.0" }
+    "dependencies": { "node-argv-install": "1.0.0" }
   },
   "dependencyArtifacts": {
-    "aliased-install": {
+    "node-argv-install": {
       "version": "1.0.0",
       "packageJson": {
-        "name": "aliased-install",
+        "name": "node-argv-install",
         "version": "1.0.0",
         "scripts": { "postinstall": "node install.js" }
       },
       "files": [
         {
           "path": "package.json",
-          "size": 104,
+          "size": 108,
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "textSample": "{\"name\":\"aliased-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "textSample": "{\"name\":\"node-argv-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
           "flags": []
         },
         {
           "path": "install.js",
-          "size": 119,
+          "size": 82,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "import { createRequire as cr } from 'node:module'; const load = cr(import.meta.url); load('./payload.min.js')",
+          "textSample": "require('node:child_process').spawn('node', ['./payload.min.js'])",
           "flags": []
         },
         {
@@ -43,22 +43,18 @@
   },
   "expectedDependencies": [
     {
-      "name": "aliased-install",
-      "section": "dependencies",
-      "declaredSpec": "1.0.0",
-      "declarationKind": "exact",
+      "name": "node-argv-install",
       "status": "uninspectable",
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
-      "fileCount": 3,
-      "observation": { "execution": "observed", "risk": "not-observed" }
+      "fileCount": 3
     }
   ],
   "expectedFindings": [
     {
       "ruleId": "dependency-artifact.uninspectable",
       "severity": "medium",
-      "file": "<dependency>aliased-install@1.0.0"
+      "file": "<dependency>node-argv-install@1.0.0"
     }
   ],
   "expectedRisk": "medium",

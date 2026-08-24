@@ -10,14 +10,16 @@ import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 // full finding severity, so misses fail toward louder findings, never quieter
 // ones.
 const RELATIVE_SPECIFIER_PATTERNS = [
-  /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
-  /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
+  /\brequire(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
+  /\bmodule(?:\?\.)?\s*\[\s*["']require["']\s*\](?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
+  /\bimport\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
   // Install hooks commonly split their work across executable files without a
   // module import. Keep statically named child-process and shell-source targets
   // in the same conservative graph so a skipped body cannot look inspected.
-  /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\b(?:execFile|execFileSync|fork|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\b(?:execFile|execFileSync|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[[^\]\n]*?["'`](\.\.?\/[^"'`\n]+)["'`]/g,
   /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
   /(?:^|[;\n&|]\s*)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
