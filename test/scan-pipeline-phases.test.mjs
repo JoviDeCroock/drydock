@@ -259,7 +259,7 @@ describe("runDeterministicFindings", () => {
             declarationKind: "exact",
             status: "inspected",
             reason: null,
-            resolvedVersion: "1.0.0",
+            resolvedVersion: NPM_TOKEN,
             registryHost: null,
             artifactOrigin: null,
             declaredDigest: null,
@@ -269,7 +269,7 @@ describe("runDeterministicFindings", () => {
             automaticExecution: [{ kind: "script", name: "postinstall" }],
             capabilities: ["code.network-access"],
             installReachableCapabilities: ["code.network-access"],
-            verdict: "install-risk",
+            observation: { execution: "observed", risk: "observed" },
           },
         ],
       };
@@ -283,9 +283,12 @@ describe("runDeterministicFindings", () => {
       expect.objectContaining({
         baselineManifestUnavailable: false,
         stagedFiles: stagedArtifact.files,
+        stagedSuspiciousEntries: stagedArtifact.suspiciousTarEntries,
       }),
     );
     expect(out.dependencyReview.dependencies).toHaveLength(1);
+    expect(JSON.stringify(out.dependencyReview)).not.toContain(NPM_TOKEN);
+    expect(JSON.stringify(out.ruleFindings)).not.toContain(NPM_TOKEN);
     expect(out.ruleFindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -535,7 +538,7 @@ describe("analyzeRelease", () => {
           declarationKind: "exact",
           status: "inspected",
           reason: null,
-          resolvedVersion: "0.1.0",
+          resolvedVersion: NPM_TOKEN,
           registryHost: "registry.npmjs.org",
           artifactOrigin: "https://registry.npmjs.org",
           declaredDigest: null,
@@ -545,7 +548,7 @@ describe("analyzeRelease", () => {
           automaticExecution: [{ kind: "script", name: "postinstall" }],
           capabilities: ["code.remote-shell"],
           installReachableCapabilities: ["code.remote-shell"],
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "observed" },
         },
       ],
     }));
@@ -589,6 +592,8 @@ describe("analyzeRelease", () => {
       "dependency-artifact.install-risk",
     );
     expect(out.findings.dependencyReview.dependencies).toHaveLength(1);
+    expect(JSON.stringify(out.findings.dependencyReview)).not.toContain(NPM_TOKEN);
+    expect(JSON.stringify(out.findings.ruleFindings)).not.toContain(NPM_TOKEN);
   });
 
   test.each([
@@ -640,7 +645,7 @@ describe("analyzeRelease", () => {
               automaticExecution: [],
               capabilities: [],
               installReachableCapabilities: [],
-              verdict: "clean",
+              observation: { execution: "not-observed", risk: "not-observed" },
             },
           ],
         })),

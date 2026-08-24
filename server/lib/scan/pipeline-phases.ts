@@ -169,13 +169,15 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 ): DeterministicFindings {
   const { staged, baseline } = resolved;
 
-  const embeddedDependencyReview =
+  const embeddedDependencyReview = redactJson(
     adapter.inspectEmbeddedAddedDependencies?.({
       manifestDiff: diff.manifestDiff,
       baselineManifestUnavailable: baselineManifestUnavailable(diff, baseline.baseline),
       stagedManifest: staged.artifact.manifest,
       stagedFiles: staged.artifact.files,
-    }) ?? EMPTY_DEPENDENCY_REVIEW;
+      stagedSuspiciousEntries: staged.artifact.suspiciousTarEntries,
+    }) ?? EMPTY_DEPENDENCY_REVIEW,
+  );
   const adapterFindings = reconcileDependencyReviewFindings(
     adapter.runFindings({
       staged: staged.artifact,
@@ -425,14 +427,16 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
     stagedFiles: findings.redactedStagedFiles,
   };
   try {
-    return await adapter.inspectAddedDependencies(ctx, broker, {
-      manifestDiff: diff.manifestDiff,
-      baselineManifestUnavailable: selectionOptions.includeWithoutBaseline,
-      stagedManifest: selectionOptions.stagedManifest,
-      stagedFiles: selectionOptions.stagedFiles,
-      scanId: identity.scanId,
-      organizationId: identity.organizationId,
-    });
+    return redactJson(
+      await adapter.inspectAddedDependencies(ctx, broker, {
+        manifestDiff: diff.manifestDiff,
+        baselineManifestUnavailable: selectionOptions.includeWithoutBaseline,
+        stagedManifest: selectionOptions.stagedManifest,
+        stagedFiles: selectionOptions.stagedFiles,
+        scanId: identity.scanId,
+        organizationId: identity.organizationId,
+      }),
+    );
   } catch (err) {
     emitOperationalEvent("warn", "scan.dependency_review.failed", {
       scanId: identity.scanId,

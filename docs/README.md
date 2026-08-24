@@ -16,7 +16,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — shared GitHub Environment gate flow for PyPI, npm, and VS Code releases.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
-- [`dependency-review.md`](./dependency-review.md) — reviewing the artifacts of dependencies a release newly introduces: selection, credential-free resolution, install-time verdicts, resolution honesty, and the coverage gaps that fail visibly.
+- [`dependency-review.md`](./dependency-review.md) — reviewing the artifacts of dependencies a release newly introduces: selection, credential-free resolution, install-time observations, resolution honesty, and the coverage gaps that fail visibly.
 - [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
 - [`atpm-trusted-publishing.md`](./atpm-trusted-publishing.md) — atpm's OIDC trusted publishing, the Sigstore bundles Drydock re-verifies against a pinned root, and the anonymous public-diff link atpm's own dashboard uses to hand a maintainer a pre-publish review with no account. Review only: Drydock does not approve, gate, or watch an atpm release.
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.

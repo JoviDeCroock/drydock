@@ -6,7 +6,7 @@
   - `routes/scans/` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`. Split by what the caller is doing with a scan: `lifecycle` / `decisions` / `sharing` / `compare`, mounted by `index.ts`.
   - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
   - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
-  - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, dependency-artifact evidence (`dependency-evidence.ts`), and shared UI types. `lib/review/index.ts` is the public entry.
+  - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, dependency selection (`dependency-selection.ts`), install observations (`dependency-analysis.ts`), durable dependency evidence (`dependency-evidence.ts`), and shared UI types. `lib/review/index.ts` is the public entry.
   - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
   - `lib/scan/` — scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.
   - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract. The atpm ecosystem resolves releases over AT Protocol rather than through a registry; see `docs/atpm-public-diff.md`.

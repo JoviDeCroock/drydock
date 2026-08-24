@@ -45,7 +45,7 @@
       "declarationKind": "range",
       "status": "inspected",
       "resolvedVersion": "0.9.3",
-      "verdict": "install-execution",
+      "observation": { "execution": "observed", "risk": "not-observed" },
       "automaticExecution": [{ "kind": "script", "name": "install" }]
     }
   ],

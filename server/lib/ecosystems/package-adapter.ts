@@ -202,4 +202,5 @@ export interface EmbeddedDependencyInspectionArgs {
   baselineManifestUnavailable: boolean;
   stagedManifest: PackageJsonSummary | null;
   stagedFiles: FileRecord[];
+  stagedSuspiciousEntries?: TarSuspiciousEntry[];
 }

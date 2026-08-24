@@ -80,7 +80,6 @@ export {
   MAX_INSPECTED_DEPENDENCIES,
   MAX_RECORDED_DEPENDENCIES,
   mergeDependencyReviews,
-  type DependencySelectionOptions,
   normalizeDependencyReview,
   reconcileDependencyReviewFindings,
   sanitizeDependencyArtifactOrigin,

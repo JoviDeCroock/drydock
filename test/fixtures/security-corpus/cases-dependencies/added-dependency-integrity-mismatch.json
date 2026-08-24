@@ -48,7 +48,7 @@
       "status": "inspected",
       "resolvedVersion": "1.0.0",
       "digestVerified": false,
-      "verdict": "clean",
+      "observation": { "execution": "not-observed", "risk": "not-observed" },
       "automaticExecution": []
     }
   ],

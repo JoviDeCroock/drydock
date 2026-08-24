@@ -40,7 +40,7 @@
       "declarationKind": "range",
       "status": "inspected",
       "resolvedVersion": "1.2.4",
-      "verdict": "clean",
+      "observation": { "execution": "not-observed", "risk": "not-observed" },
       "automaticExecution": []
     }
   ],
