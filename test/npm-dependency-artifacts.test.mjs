@@ -838,6 +838,46 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
+  test("a skipped script invoked by implicit node-gyp is uninspectable", async () => {
+    const url = "https://registry.npmjs.org/clipped/-/clipped-1.0.0.tgz";
+    const manifest = {
+      name: "clipped",
+      version: "1.0.0",
+      scripts: { install: "node-gyp rebuild" },
+      implicitScripts: { install: "node-gyp rebuild" },
+      gypfile: true,
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file("binding.gyp", '{"variables":{"generated":"<!(node install.min.js)"}}'),
+        {
+          path: "install.min.js",
+          size: 4096,
+          sha256: "skipped-gyp-action",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      packageJson: manifest,
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { clipped: packument("clipped", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { clipped: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-truncated",
+      resolvedVersion: "1.0.0",
+      fileCount: 3,
+    });
+  });
+
   test("an unrelated skipped source map does not invalidate complete install evidence", async () => {
     const url = "https://registry.npmjs.org/complete/-/complete-1.0.0.tgz";
     const manifest = {
