@@ -148,7 +148,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.42.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.43.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -497,6 +497,15 @@ Dynamic `module.require()` and optional CommonJS calls receive the same omitted-
 `require()`, while a dormant GYP command with `gypfile: false` no longer invents automatic execution.
 `added-dependency-node-gyp-skipped-content`, `added-dependency-module-require-skipped-content`, and
 `added-dependency-dormant-gyp` pin the two fail-visible boundaries and the false-positive calibration.
+
+`1.43.0` keeps dependency evidence bound to the bytes consumers install. A declared bundled child whose
+manifest body was retained hash-only now fails visibly as embedded evidence instead of being replaced by
+registry bytes, computed `module["require"]()` calls close the same omitted-body boundary as dot-member
+loaders, and a lifecycle path that directly invokes or loads a bundled native artifact is high risk
+without requiring an unrelated second process API call. npm wildcard ranges with prerelease suffixes no
+longer select prerelease bytes npm excludes. `added-dependency-bundled-skipped-manifest`,
+`added-dependency-module-require-skipped-content`, and `added-dependency-direct-native-execution` pin the
+gate-facing changes; focused semver tests pin version-selection parity.
 
 ### Fixture format
 
