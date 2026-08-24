@@ -216,7 +216,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.43.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.44.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -684,6 +684,12 @@ without requiring an unrelated second process API call. npm wildcard ranges with
 longer select prerelease bytes npm excludes. `added-dependency-bundled-skipped-manifest`,
 `added-dependency-module-require-skipped-content`, and `added-dependency-direct-native-execution` pin the
 gate-facing changes; focused semver tests pin version-selection parity.
+
+`1.44.0` closes two more install-reachability gaps for omitted dependency bodies. Statically named local
+targets passed to child-process execution APIs or shell `source` commands now join the install graph, and
+simple aliases of `require` or `createRequire(...)` fail visibly when an omitted body could be their
+target. `added-dependency-execfile-skipped-content` and
+`added-dependency-aliased-require-skipped-content` pin these completeness boundaries.
 
 ### Fixture format
 

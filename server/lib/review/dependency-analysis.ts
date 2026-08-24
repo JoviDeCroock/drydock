@@ -10,7 +10,7 @@ import {
   normalizeReachabilityPath,
 } from "./rules/reachability";
 import { normalizeStringRecord } from "../tar-parser.js";
-import { jsTokenText, tokenizeJs } from "../platform/js-lexer";
+import { jsTokenText, tokenizeJs, type JsToken } from "../platform/js-lexer";
 import type {
   DependencyExecutionEntrypoint,
   DependencyInstallObservation,
@@ -139,12 +139,13 @@ function hasDynamicModuleLoad(text: string): boolean {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
+  const loaderAliases = moduleLoaderAliases(text, tokens);
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     let openIndex: number;
     if (token.type === "ident") {
       const callee = jsTokenText(text, token);
-      if (callee !== "require" && callee !== "import") continue;
+      if (callee !== "require" && callee !== "import" && !loaderAliases.has(callee)) continue;
       const previous = tokens[index - 1];
       const memberAccess =
         previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
@@ -201,6 +202,9 @@ function hasDynamicModuleLoad(text: string): boolean {
     }
     const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
+    // Alias calls are deliberately treated as dynamic: the bounded static
+    // reachability graph does not resolve their arguments, even when literal.
+    if (token.type === "ident" && loaderAliases.has(jsTokenText(text, token))) return true;
     const argument = tokens[openIndex + 1];
     if (!argument || (argument.type === "punct" && jsTokenText(text, argument) === ")")) continue;
     const afterArgument = tokens[openIndex + 2];
@@ -212,6 +216,57 @@ function hasDynamicModuleLoad(text: string): boolean {
     if (!staticSpecifier || !argumentEndsSpecifier) return true;
   }
   return false;
+}
+
+/**
+ * Discover simple aliases for CommonJS loaders without executing package code.
+ * The fixpoint also covers `const second = first`; `createRequire(...)` is a
+ * loader value even though the factory call itself is not a module load.
+ */
+function moduleLoaderAliases(text: string, tokens: JsToken[]): Set<string> {
+  const aliases = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let index = 0; index < tokens.length - 2; index += 1) {
+      const target = tokens[index];
+      const equals = tokens[index + 1];
+      const source = tokens[index + 2];
+      if (
+        target.type !== "ident" ||
+        equals?.type !== "punct" ||
+        jsTokenText(text, equals) !== "=" ||
+        source?.type !== "ident"
+      ) {
+        continue;
+      }
+      const targetPrevious = tokens[index - 1];
+      if (
+        targetPrevious?.type === "punct" &&
+        [".", "?."].includes(jsTokenText(text, targetPrevious))
+      ) {
+        continue;
+      }
+      const sourceName = jsTokenText(text, source);
+      const afterSource = tokens[index + 3];
+      const sourceIsRequireReference =
+        sourceName === "require" &&
+        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(");
+      const sourceIsCreateRequireCall =
+        sourceName === "createRequire" &&
+        afterSource?.type === "punct" &&
+        jsTokenText(text, afterSource) === "(";
+      if (!sourceIsRequireReference && !sourceIsCreateRequireCall && !aliases.has(sourceName)) {
+        continue;
+      }
+      const targetName = jsTokenText(text, target);
+      if (!aliases.has(targetName)) {
+        aliases.add(targetName);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
 }
 
 interface DependencyInstallRiskClassification {

@@ -1,0 +1,66 @@
+{
+  "id": "added-dependency-execfile-skipped-content",
+  "title": "A child-process target keeps omitted bodies visible",
+  "category": "dependency-introduction",
+  "intent": "An install hook can execute a packaged file without importing it. Drydock must report incomplete evidence when that statically named target body was deliberately omitted.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "execfile-install": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "execfile-install": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "execfile-install",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 105,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "textSample": "{\"name\":\"execfile-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 78,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "textSample": "require('child_process').execFileSync('./payload.min.js')",
+          "flags": []
+        },
+        {
+          "path": "payload.min.js",
+          "size": 4096,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "flags": ["text-sample-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "execfile-install",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 3,
+      "observation": { "execution": "unknown", "risk": "unknown" }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>execfile-install@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}
