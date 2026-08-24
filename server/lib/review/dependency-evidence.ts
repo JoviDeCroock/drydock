@@ -37,8 +37,12 @@ import {
 } from "./dependency-selection";
 
 export { assessDependencyArtifact, classifyDependencyInstallRisk } from "./dependency-analysis";
-export { selectAddedDependencies, selectBundledAddedDependencies } from "./dependency-selection";
-export type { AddedDependency } from "./dependency-selection";
+export {
+  dependencyDeclarationKind,
+  selectAddedDependencies,
+  selectBundledAddedDependencies,
+} from "./dependency-selection";
+export type { AddedDependency, DependencyDeclarationKind } from "./dependency-selection";
 
 /**
  * Synthetic file-label prefix for a dependency finding. The cited path is
@@ -315,6 +319,9 @@ export function dependencyEvidenceFindings(
   if (reviewFailed.length) {
     findings.push(aggregatedGapFinding(reviewFailed, reviewFailed.length + omittedCount));
   }
+  if (!overBudget.length && !reviewFailed.length && omittedCount) {
+    findings.push(aggregatedGapFinding([], omittedCount));
+  }
   for (const evidence of review.dependencies) {
     if (evidence.reason === "budget-exhausted" || evidence.reason === "review-failed") continue;
     // Integrity binds the review to the bytes the registry advertised. A
@@ -323,13 +330,12 @@ export function dependencyEvidenceFindings(
     if (evidence.digestVerified === false) {
       findings.push(integrityMismatchFinding(evidence, parent));
     }
-    if (evidence.status === "uninspectable") {
-      findings.push(uninspectableFinding(evidence, parent));
-      continue;
-    }
     const entrypoint = evidence.automaticExecution[0];
     const path = dependencyPathLabel(parent, evidence, entrypoint);
-    const classification = classifyDependencyInstallRisk(evidence);
+    const classification =
+      evidence.observation.execution === "observed"
+        ? classifyDependencyInstallRisk(evidence)
+        : null;
     if (classification) {
       // Two independent axes, because they answer different questions.
       // `proven` is "can the install hook actually reach this?" — static
@@ -355,7 +361,7 @@ export function dependencyEvidenceFindings(
               ? "this release introduces a dependency that runs automatically on install and whose install-time code path pipes remote code into a shell, evaluates assembled code, or reads credentials — the arrayref/proc-macro1 shape, where a compromised parent added a dependency whose build step fetched the payload; the dependency's own bytes were reviewed and are recorded with this scan"
               : "this release introduces a dependency that runs automatically on install and also carries remote-shell, credential-access, or dynamic-evaluation code; Drydock could not statically prove the install hook reaches it, so this is reported one step below a proven install-time path rather than dismissed",
       });
-    } else if (evidence.observation.execution === "observed") {
+    } else if (evidence.status === "inspected" && evidence.observation.execution === "observed") {
       findings.push({
         severity: "medium",
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
@@ -364,7 +370,7 @@ export function dependencyEvidenceFindings(
         reason:
           "a newly introduced dependency executes code on every consumer install; nothing in its install path matched a downloader or credential pattern, but the execution itself is new behavior this release adds to consumer machines",
       });
-    } else if (describeCapabilities(evidence.capabilities)) {
+    } else if (evidence.status === "inspected" && describeCapabilities(evidence.capabilities)) {
       findings.push({
         severity: "info",
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
@@ -373,6 +379,12 @@ export function dependencyEvidenceFindings(
         reason:
           "recorded so the newly introduced dependency's reviewed contents are visible; nothing in it runs automatically on install, so being new is not by itself a reason to hold the release",
       });
+    }
+    // A completeness gap does not revoke what the retained bytes already
+    // proved. Project both axes so unrelated truncation cannot downgrade a
+    // critical install path to a generic manual-review floor.
+    if (evidence.status === "uninspectable") {
+      findings.push(uninspectableFinding(evidence, parent));
     }
   }
   // Same stamp every deterministic family carries, so a dependency finding can
@@ -545,10 +557,14 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
       : null;
   if (!status) return null;
   const overflowCount = Math.max(0, value.dependencies.length - MAX_RECORDED_DEPENDENCIES);
-  const dependencies = value.dependencies.slice(0, MAX_RECORDED_DEPENDENCIES).flatMap((entry) => {
+  const dependencies: DependencyEvidence[] = [];
+  for (const entry of value.dependencies.slice(0, MAX_RECORDED_DEPENDENCIES)) {
     const normalized = normalizeDependencyEvidence(entry);
-    return normalized ? [normalized] : [];
-  });
+    // Dropping one registry-controlled row while retaining the raw complete
+    // status/counts fabricates a clean review. Reject the blob as a unit.
+    if (!normalized) return null;
+    dependencies.push(normalized);
+  }
   return {
     status:
       overflowCount || dependencies.some((dependency) => dependency.status === "uninspectable")
@@ -628,12 +644,12 @@ function dependencyInstallObservationOf(
   value: Record<string, unknown>,
   status: DependencyEvidenceStatus,
 ): DependencyInstallObservation | null {
-  if (status === "uninspectable") return { execution: "unknown", risk: "unknown" };
   if (isRecord(value.observation)) {
     const execution = observationOf(value.observation.execution);
     const risk = observationOf(value.observation.risk);
     if (execution && risk) return { execution, risk };
   }
+  if (status === "uninspectable") return { execution: "unknown", risk: "unknown" };
 
   // Backward compatibility for reports written before observations were split
   // from policy. An unproven legacy install-risk becomes unknown, not observed.

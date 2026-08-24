@@ -1,19 +1,19 @@
 {
-  "id": "added-dependency-module-require-skipped-content",
-  "title": "A computed module require target keeps omitted dependency bytes incomplete",
+  "id": "added-dependency-computed-execfile-skipped-content",
+  "title": "A computed child-process target keeps omitted bodies visible",
   "category": "dependency-introduction",
-  "intent": "Node exposes module bracket require as the same CommonJS loader as module.require. When an install hook selects its target dynamically, any deliberately omitted dependency body can execute and must make the review visibly incomplete.",
+  "intent": "An install hook can compute a packaged executable path before passing it to child_process. Every deliberately omitted body must remain a visible coverage gap when the target cannot be resolved statically.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
     "version": "1.1.0",
-    "dependencies": { "member-loader": "1.0.0" }
+    "dependencies": { "computed-exec": "1.0.0" }
   },
   "dependencyArtifacts": {
-    "member-loader": {
+    "computed-exec": {
       "version": "1.0.0",
       "packageJson": {
-        "name": "member-loader",
+        "name": "computed-exec",
         "version": "1.0.0",
         "scripts": { "postinstall": "node install.js" }
       },
@@ -22,18 +22,18 @@
           "path": "package.json",
           "size": 103,
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "textSample": "{\"name\":\"member-loader\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "textSample": "{\"name\":\"computed-exec\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
           "flags": []
         },
         {
           "path": "install.js",
-          "size": 68,
+          "size": 130,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "const target = './payload.' + 'data'; module['require'](target)",
+          "textSample": "const path = require('node:path'); const cp = require('node:child_process'); cp.execFileSync(path.join(__dirname, payloadName));",
           "flags": []
         },
         {
-          "path": "payload.data",
+          "path": "payload.min.js",
           "size": 4096,
           "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "flags": ["text-sample-skipped"]
@@ -43,22 +43,18 @@
   },
   "expectedDependencies": [
     {
-      "name": "member-loader",
-      "section": "dependencies",
-      "declaredSpec": "1.0.0",
-      "declarationKind": "exact",
+      "name": "computed-exec",
       "status": "uninspectable",
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
-      "fileCount": 3,
-      "observation": { "execution": "observed", "risk": "not-observed" }
+      "fileCount": 3
     }
   ],
   "expectedFindings": [
     {
       "ruleId": "dependency-artifact.uninspectable",
       "severity": "medium",
-      "file": "<dependency>member-loader@1.0.0"
+      "file": "<dependency>computed-exec@1.0.0"
     }
   ],
   "expectedRisk": "medium",

@@ -53,11 +53,16 @@ function buildReview(fixture) {
         reason: fixture.uninspectableReasons?.[dependency.name] ?? "metadata-unavailable",
       };
     }
+    const assessment = assessDependencyArtifact(resolved.files, resolved.packageJson, {
+      codePatternSet: "javascript",
+      entrypointResolution: "npm",
+    });
     if (
       resolved.files.some(
         (file) =>
           file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
-      )
+      ) ||
+      assessment.installReachableUninspectedFiles.length
     ) {
       return {
         ...emptyEvidence(dependency),
@@ -70,24 +75,10 @@ function buildReview(fixture) {
         digestVerified:
           typeof resolved.digestVerified === "boolean" ? resolved.digestVerified : null,
         fileCount: resolved.files.length,
-      };
-    }
-    const assessment = assessDependencyArtifact(resolved.files, resolved.packageJson, {
-      codePatternSet: "javascript",
-      entrypointResolution: "npm",
-    });
-    if (assessment.installReachableUninspectedFiles.length) {
-      return {
-        ...emptyEvidence(dependency),
-        status: "uninspectable",
-        reason: "artifact-truncated",
-        resolvedVersion: resolved.version,
-        registryHost: "registry.npmjs.org",
-        declaredDigest: resolved.declaredDigest ?? null,
-        reviewedDigest: resolved.reviewedDigest ?? null,
-        digestVerified:
-          typeof resolved.digestVerified === "boolean" ? resolved.digestVerified : null,
-        fileCount: resolved.files.length,
+        automaticExecution: assessment.automaticExecution,
+        capabilities: assessment.capabilities,
+        installReachableCapabilities: assessment.installReachableCapabilities,
+        observation: assessment.observation,
       };
     }
     return {

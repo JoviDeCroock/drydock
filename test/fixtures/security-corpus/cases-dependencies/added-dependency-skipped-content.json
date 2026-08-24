@@ -45,7 +45,7 @@
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
       "fileCount": 2,
-      "automaticExecution": []
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
     }
   ],
   "expectedFindings": [

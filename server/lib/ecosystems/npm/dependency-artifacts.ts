@@ -20,6 +20,7 @@
 
 import {
   assessDependencyArtifact,
+  dependencyDeclarationKind,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
   EMPTY_DEPENDENCY_REVIEW,
@@ -38,6 +39,7 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
+import { exactDependencyVersion } from "../../review/dependency-specs";
 import {
   describeOperationalError,
   durationMsSince,
@@ -427,26 +429,32 @@ function inspectAcquiredDependency(
   dependency: AddedDependency,
   artifact: AcquiredDependencyArtifact,
 ): DependencyEvidence {
-  if (
-    artifact.files.some(
-      (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
-    )
-  ) {
-    return uninspectableAcquired(dependency, "artifact-truncated", artifact);
+  const hasIncompleteBody = artifact.files.some(
+    (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
+  );
+  if (!artifact.manifest) {
+    return uninspectableAcquired(
+      dependency,
+      hasIncompleteBody ? "artifact-truncated" : "manifest-unavailable",
+      artifact,
+    );
   }
   if (artifact.suspiciousEntries.some(isAmbiguousDependencyArchiveEntry)) {
     return uninspectableAcquired(dependency, "artifact-ambiguous", artifact);
   }
-  if (!artifact.manifest) {
-    return uninspectableAcquired(dependency, "manifest-unavailable", artifact);
-  }
 
+  // Completeness and known behavior are separate axes. Assess every retained
+  // body before projecting the coverage gap so a large unrelated file cannot
+  // erase a lifecycle downloader already proven by the readable bytes.
   const assessment = assessDependencyArtifact(artifact.files, artifact.manifest, {
     codePatternSet: "javascript",
     entrypointResolution: "npm",
   });
+  if (hasIncompleteBody) {
+    return uninspectableAcquired(dependency, "artifact-truncated", artifact, assessment);
+  }
   if (assessment.installReachableUninspectedFiles.length) {
-    return uninspectableAcquired(dependency, "artifact-truncated", artifact);
+    return uninspectableAcquired(dependency, "artifact-truncated", artifact, assessment);
   }
 
   return {
@@ -478,6 +486,10 @@ function uninspectableAcquired(
   dependency: AddedDependency,
   reason: DependencyUninspectableReason,
   artifact: AcquiredDependencyArtifact,
+  assessment?: Pick<
+    DependencyEvidence,
+    "automaticExecution" | "capabilities" | "installReachableCapabilities" | "observation"
+  >,
 ): DependencyEvidence {
   return uninspectable(
     dependency,
@@ -489,6 +501,7 @@ function uninspectableAcquired(
     artifact.reviewedDigest,
     artifact.reviewedSha1,
     artifact.files.length,
+    assessment,
   );
 }
 
@@ -512,8 +525,16 @@ export function resolveDependencyVersion(metadata: RegistryMetadata, spec: strin
   const versions = Object.keys(metadata.versions ?? {});
   if (!versions.length) return null;
   const trimmed = spec.trim();
-  const tagged = trimmed && metadata["dist-tags"]?.[trimmed];
-  if (tagged && versions.includes(tagged)) return tagged;
+  const kind = dependencyDeclarationKind(trimmed);
+  if (kind === "unusual") return null;
+  if (kind === "exact") {
+    const exact = exactDependencyVersion(trimmed);
+    return exact && versions.includes(exact) ? exact : null;
+  }
+  if (kind === "tag") {
+    const tagged = metadata["dist-tags"]?.[trimmed];
+    return tagged && versions.includes(tagged) ? tagged : null;
+  }
   const latest = metadata["dist-tags"]?.latest;
   if (
     latest &&
@@ -623,6 +644,10 @@ function uninspectable(
   reviewed: DependencyDigest | null = null,
   reviewedSha1: string | null | undefined = null,
   fileCount: number | null = null,
+  assessment?: Pick<
+    DependencyEvidence,
+    "automaticExecution" | "capabilities" | "installReachableCapabilities" | "observation"
+  >,
 ): DependencyEvidence {
   return {
     name: boundedText(dependency.name, 256),
@@ -638,10 +663,10 @@ function uninspectable(
     reviewedDigest: reviewed,
     digestVerified: compareDigests(declared, reviewed, reviewedSha1),
     fileCount,
-    automaticExecution: [],
-    capabilities: [],
-    installReachableCapabilities: [],
-    observation: { execution: "unknown", risk: "unknown" },
+    automaticExecution: assessment?.automaticExecution ?? [],
+    capabilities: assessment?.capabilities ?? [],
+    installReachableCapabilities: assessment?.installReachableCapabilities ?? [],
+    observation: assessment?.observation ?? { execution: "unknown", risk: "unknown" },
   };
 }
 

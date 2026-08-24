@@ -51,7 +51,7 @@
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
       "fileCount": 3,
-      "observation": { "execution": "unknown", "risk": "unknown" }
+      "observation": { "execution": "observed", "risk": "not-observed" }
     }
   ],
   "expectedFindings": [

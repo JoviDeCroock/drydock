@@ -644,6 +644,91 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
   });
 
+  test("resolves a long reverse-ordered loader alias chain with bounded work", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const last = 2_000;
+    const aliases = Array.from(
+      { length: last },
+      (_, index) => `const loader${index} = loader${index + 1};`,
+    ).join("\n");
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file(
+          "install.js",
+          `${aliases}\nconst loader${last} = require; loader0('./payload.min.js')`,
+        ),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-reverse-alias-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+  });
+
+  test.each([
+    'const cp = require("node:child_process"); cp.execFileSync(path.join(__dirname, name))',
+    'const cp = require("node:child_process"); const run = cp.spawn; run("./payload.min.js")',
+    'const run = require("child_process").execFileSync; run("./payload.min.js")',
+    'source "$PAYLOAD"',
+  ])("fails completeness for the dynamic local execution edge in %s", (source) => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", source),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-dynamic-process-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+  });
+
+  test("does not expand omitted bodies for a static external process target", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", 'require("node:child_process").spawn("node", ["--version"])'),
+        {
+          path: "unrelated.map",
+          size: 1024,
+          sha256: "skipped-unrelated-map",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual([]);
+  });
+
   test.each([
     ["node install.js", "install.js", 'require("child_process").execFileSync("./payload.min.js")'],
     ["node install.js", "install.js", 'require("child_process").spawn("./payload.min.js")'],
@@ -1161,6 +1246,28 @@ describe("dependencyEvidenceFindings", () => {
     expect(computeRisk([finding])).toBe("medium");
   });
 
+  test("an uninspectable dependency keeps install risk proven by retained bytes", () => {
+    const findings = dependencyEvidenceFindings(
+      review([
+        evidence({
+          status: "uninspectable",
+          reason: "artifact-truncated",
+          automaticExecution: [{ kind: "script", name: "postinstall" }],
+          capabilities: ["code.remote-shell", "code.process-execution"],
+          installReachableCapabilities: ["code.remote-shell", "code.process-execution"],
+          observation: { execution: "observed", risk: "observed" },
+        }),
+      ]),
+      parent,
+    );
+
+    expect(findings.map((finding) => [finding.ruleId, finding.severity])).toEqual([
+      ["dependency-artifact.install-risk", "critical"],
+      ["dependency-artifact.uninspectable", "medium"],
+    ]);
+    expect(computeRisk(findings)).toBe("critical");
+  });
+
   test("budget-skipped dependencies aggregate into one finding", () => {
     const findings = dependencyEvidenceFindings(
       review([
@@ -1193,6 +1300,26 @@ describe("dependencyEvidenceFindings", () => {
     expect(findings[0].evidence).toContain("68 more omitted");
   });
 
+  test("omitted-only dependency records still produce one aggregate gap", () => {
+    const findings = dependencyEvidenceFindings(
+      {
+        status: "partial",
+        selectedCount: 70,
+        inspectedCount: 64,
+        uninspectableCount: 6,
+        omittedCount: 6,
+        dependencies: [],
+      },
+      parent,
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      ruleId: "dependency-artifact.uninspectable",
+      severity: "medium",
+    });
+    expect(findings[0].evidence).toContain("6 newly added dependencies were not reviewed");
+  });
+
   test("a release with no added dependency produces nothing", () => {
     expect(
       dependencyEvidenceFindings(
@@ -1217,7 +1344,7 @@ describe("normalizeDependencyReview", () => {
     expect(normalizeDependencyReview({ status: "bogus", dependencies: [] })).toBeNull();
   });
 
-  test("drops malformed entries instead of half-rendering them", () => {
+  test("rejects a complete blob containing a malformed entry", () => {
     const review = normalizeDependencyReview({
       status: "complete",
       selectedCount: 2,
@@ -1228,13 +1355,7 @@ describe("normalizeDependencyReview", () => {
         { declaredSpec: "^1.0.0" },
       ],
     });
-    expect(review.dependencies).toHaveLength(1);
-    expect(review.dependencies[0]).toMatchObject({
-      name: "ok",
-      section: "dependencies",
-      declarationKind: "range",
-      observation: { execution: "observed", risk: "unknown" },
-    });
+    expect(review).toBeNull();
   });
 
   test("an unrecognized uninspectable reason normalizes to null, never a pass", () => {
@@ -1248,14 +1369,30 @@ describe("normalizeDependencyReview", () => {
     expect(review.dependencies[0].reason).toBeNull();
   });
 
+  test("preserves valid retained-byte observations on an uninspectable row", () => {
+    const review = normalizeDependencyReview({
+      status: "partial",
+      dependencies: [
+        {
+          name: "x",
+          declaredSpec: "1.0.0",
+          status: "uninspectable",
+          reason: "artifact-truncated",
+          observation: { execution: "observed", risk: "observed" },
+        },
+      ],
+    });
+    expect(review.dependencies[0].observation).toEqual({ execution: "observed", risk: "observed" });
+  });
+
   test.each([undefined, "bogus"])(
-    "drops inspected evidence without an explicit valid verdict (%s)",
+    "rejects inspected evidence without an explicit valid verdict (%s)",
     (verdict) => {
       const review = normalizeDependencyReview({
         status: "complete",
         dependencies: [{ name: "x", declaredSpec: "1.0.0", status: "inspected", verdict }],
       });
-      expect(review.dependencies).toEqual([]);
+      expect(review).toBeNull();
     },
   );
 

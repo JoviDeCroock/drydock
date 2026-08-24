@@ -10,7 +10,7 @@ import {
 } from "./serialize";
 import { isRecord } from "../platform/guards";
 
-type DependencyDeclarationKind = "exact" | "range" | "tag" | "unusual";
+export type DependencyDeclarationKind = "exact" | "range" | "tag" | "unusual";
 
 export interface AddedDependency {
   name: string;
@@ -68,7 +68,7 @@ function selectIntroducedDependencies(
       name: entry.key,
       section: entry.section ?? "dependencies",
       spec: entry.staged,
-      declarationKind: declarationKind(entry.staged),
+      declarationKind: dependencyDeclarationKind(entry.staged),
     };
     const existing = byName.get(entry.key);
     if (!existing || sectionRank(candidate.section) < sectionRank(existing.section)) {
@@ -140,7 +140,8 @@ function sectionRank(section: DependencySection): number {
   return rank === -1 ? 2 : rank;
 }
 
-function declarationKind(spec: string): DependencyDeclarationKind {
+/** Classify npm declarations before consulting registry-controlled dist-tags. */
+export function dependencyDeclarationKind(spec: string): DependencyDeclarationKind {
   const trimmed = spec.trim();
   if (unusualDependencySpecKind(trimmed)) return "unusual";
   if (/^(?:=\s*)?v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(trimmed)) return "exact";
