@@ -13,6 +13,7 @@ import {
   summarizePackageJsonDiff,
 } from "../server/lib/review";
 import { DETERMINISTIC_RULES_VERSION } from "../server/lib/review/rules";
+import { analyzeNodeInterpreterArgs } from "../server/lib/review/rules/reachability";
 
 function diffOf(previous, staged) {
   return summarizePackageJsonDiff(previous, staged);
@@ -670,6 +671,8 @@ describe("assessDependencyArtifact", () => {
     "const load = require; load('./payload.min.js')",
     "const first = require; const load = first; load('./payload.min.js')",
     "const load = createRequire(import.meta.url); load('./payload.min.js')",
+    'const load = module.require.bind(module); load("./payload.min.js")',
+    'const bound = module["require"].bind(module); const load = bound; load("./payload.min.js")',
     'import { createRequire as cr } from "node:module"; const load = cr(import.meta.url); load("./payload.min.js")',
     'import { createRequire as cr } from "node:module"; const factory = cr; const load = factory(import.meta.url); load("./payload.min.js")',
   ])("fails completeness for the aliased Node loader in %s", (load) => {
@@ -784,6 +787,38 @@ describe("assessDependencyArtifact", () => {
     );
 
     expect(assessment.installReachableUninspectedFiles).toEqual([]);
+  });
+
+  test("retains every packaged path in a static Node interpreter argv", () => {
+    const source =
+      'require("node:child_process").spawn("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])';
+    expect(analyzeNodeInterpreterArgs(source)).toEqual({
+      paths: ["./retained.js", "./payload.min.js", "../bootstrap.mjs"],
+      hasDynamic: false,
+    });
+
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.js", source),
+        file("retained.js", "console.log('retained');"),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-second-node-argv-target",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
   });
 
   test.each([

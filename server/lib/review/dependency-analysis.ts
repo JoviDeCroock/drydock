@@ -5,6 +5,7 @@ import {
   type DeterministicFindingOptions,
 } from "./rules";
 import {
+  analyzeNodeInterpreterArgs,
   consumerInstallScriptCommands,
   lifecycleReachablePaths,
   normalizeReachabilityPath,
@@ -255,17 +256,81 @@ function moduleLoaderAliases(text: string, tokens: JsToken[]): Set<string> {
     },
     renamedFactories,
   );
-  return simpleAliases(text, tokens, (sourceIndex) => {
-    const sourceName = jsTokenText(text, tokens[sourceIndex]);
-    const afterSource = tokens[sourceIndex + 1];
-    return (
-      (sourceName === "require" &&
-        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")) ||
-      ((sourceName === "createRequire" || factoryAliases.has(sourceName)) &&
-        afterSource?.type === "punct" &&
-        jsTokenText(text, afterSource) === "(")
-    );
-  });
+  return simpleAliases(
+    text,
+    tokens,
+    (sourceIndex) => {
+      const sourceName = jsTokenText(text, tokens[sourceIndex]);
+      const afterSource = tokens[sourceIndex + 1];
+      return (
+        (sourceName === "require" &&
+          !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")) ||
+        ((sourceName === "createRequire" || factoryAliases.has(sourceName)) &&
+          afterSource?.type === "punct" &&
+          jsTokenText(text, afterSource) === "(")
+      );
+    },
+    boundModuleRequireAliases(text, tokens),
+  );
+}
+
+/** Bindings created from `module.require.bind(module)` remain module loaders. */
+function boundModuleRequireAliases(text: string, tokens: JsToken[]): Set<string> {
+  const aliases = new Set<string>();
+  for (let index = 0; index < tokens.length - 7; index += 1) {
+    const target = tokens[index];
+    const equals = tokens[index + 1];
+    const module = tokens[index + 2];
+    if (
+      target.type !== "ident" ||
+      equals?.type !== "punct" ||
+      jsTokenText(text, equals) !== "=" ||
+      module?.type !== "ident" ||
+      jsTokenText(text, module) !== "module"
+    ) {
+      continue;
+    }
+    const previous = tokens[index - 1];
+    if (previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous))) continue;
+
+    let memberEnd: number;
+    const memberOpen = tokens[index + 3];
+    const member = tokens[index + 4];
+    if (
+      memberOpen?.type === "punct" &&
+      [".", "?."].includes(jsTokenText(text, memberOpen)) &&
+      member?.type === "ident" &&
+      jsTokenText(text, member) === "require"
+    ) {
+      memberEnd = index + 5;
+    } else if (
+      memberOpen?.type === "punct" &&
+      jsTokenText(text, memberOpen) === "[" &&
+      member?.type === "string" &&
+      member.value === "require" &&
+      tokens[index + 5]?.type === "punct" &&
+      jsTokenText(text, tokens[index + 5]) === "]"
+    ) {
+      memberEnd = index + 6;
+    } else {
+      continue;
+    }
+
+    const dot = tokens[memberEnd];
+    const bind = tokens[memberEnd + 1];
+    const open = tokens[memberEnd + 2];
+    if (
+      dot?.type === "punct" &&
+      [".", "?."].includes(jsTokenText(text, dot)) &&
+      bind?.type === "ident" &&
+      jsTokenText(text, bind) === "bind" &&
+      open?.type === "punct" &&
+      jsTokenText(text, open) === "("
+    ) {
+      aliases.add(jsTokenText(text, target));
+    }
+  }
+  return aliases;
 }
 
 const LOCAL_EXECUTION_CALLEES = new Set([
@@ -330,29 +395,12 @@ function hasDynamicLocalExecution(text: string): boolean {
       ["node", "nodejs"].includes(argument.value ?? "") &&
       afterArgument?.type === "punct" &&
       jsTokenText(text, afterArgument) === "," &&
-      hasDynamicNodeArguments(text, tokens, openIndex + 3)
+      analyzeNodeInterpreterArgs(text, tokens).hasDynamic
     ) {
       return true;
     }
   }
   return false;
-}
-
-function hasDynamicNodeArguments(text: string, tokens: JsToken[], startIndex: number): boolean {
-  const first = tokens[startIndex];
-  if (first?.type === "punct" && jsTokenText(text, first) === "{") return false;
-  if (first?.type !== "punct" || jsTokenText(text, first) !== "[") return true;
-
-  for (let index = startIndex + 1; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    const value = jsTokenText(text, token);
-    if (token.type === "punct" && value === "]") return false;
-    if (token.type === "punct" && value === ",") continue;
-    if (token.type === "string") continue;
-    if (token.type === "template" && !value.includes("${")) continue;
-    return true;
-  }
-  return true;
 }
 
 function onlyWhitespaceBetween(text: string, before: JsToken, after: JsToken | undefined): boolean {
