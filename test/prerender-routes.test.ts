@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import {
@@ -60,6 +61,7 @@ describe("page SEO metadata", () => {
   });
 
   it("gives each incident analysis distinct canonical metadata", () => {
+    expect(Object.keys(incidentCaseSeoByPath)).toEqual(INCIDENT_CASE_PATHS);
     const titles = new Set<string>();
     for (const path of INCIDENT_CASE_PATHS) {
       const metadata = incidentCaseSeoByPath[path];
@@ -89,6 +91,7 @@ describe("page SEO metadata", () => {
   });
 
   it("gives every focused guide distinct canonical metadata", () => {
+    expect(Object.keys(discoveryGuideSeoByPath)).toEqual(DISCOVERY_GUIDE_PATHS);
     const titles = new Set<string>();
     for (const path of DISCOVERY_GUIDE_PATHS) {
       const metadata = discoveryGuideSeoByPath[path];
@@ -98,5 +101,16 @@ describe("page SEO metadata", () => {
       titles.add(metadata.title);
     }
     expect(titles.size).toBe(DISCOVERY_GUIDE_PATHS.length);
+  });
+});
+
+describe("sitemap", () => {
+  it("wraps every sitemap location in a url entry", () => {
+    const sitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
+    const entries = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/g)];
+    const locations = [...sitemap.matchAll(/<loc>[^<]+<\/loc>/g)];
+
+    expect(entries).toHaveLength(locations.length);
+    expect(entries.every((entry) => /<loc>[^<]+<\/loc>/.test(entry[1]))).toBe(true);
   });
 });

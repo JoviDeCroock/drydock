@@ -1,5 +1,9 @@
 import { packageDiffCardPath, packageDiffPath, type DiffEcosystem } from "./package-diff-path";
 import { diffRefLabel } from "./pkg-pr-new";
+import { type DiscoveryGuidePath, type IncidentCasePath } from "./public-content-routes";
+
+export { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./public-content-routes";
+export type { DiscoveryGuidePath, IncidentCasePath } from "./public-content-routes";
 
 export const SITE_NAME = "Drydock";
 export const PRODUCT_NAME = "Drydock Package Review";
@@ -62,10 +66,8 @@ export const discoveryGuideSeoByPath = {
       "Audit Drydock's Apache-2.0 detection rules and security boundaries, or self-host package review in your own Cloudflare account.",
     path: "/open-source",
   },
-} as const satisfies Record<string, PageSeoMetadata>;
+} as const satisfies Record<DiscoveryGuidePath, PageSeoMetadata>;
 
-export type DiscoveryGuidePath = keyof typeof discoveryGuideSeoByPath;
-export const DISCOVERY_GUIDE_PATHS = Object.keys(discoveryGuideSeoByPath) as DiscoveryGuidePath[];
 export const incidentCaseSeoByPath = {
   "/incidents/node-ipc-peacenotwar": {
     title: "node-ipc 11.0.0 package diff: peacenotwar added | Drydock",
@@ -79,10 +81,7 @@ export const incidentCaseSeoByPath = {
       "Inspect the es5-ext 0.10.53 to 0.10.54 artifact diff that introduced a postinstall hook in a patch release.",
     path: "/incidents/es5-ext-postinstall",
   },
-} as const satisfies Record<string, PageSeoMetadata>;
-
-export type IncidentCasePath = keyof typeof incidentCaseSeoByPath;
-export const INCIDENT_CASE_PATHS = Object.keys(incidentCaseSeoByPath) as IncidentCasePath[];
+} as const satisfies Record<IncidentCasePath, PageSeoMetadata>;
 
 // Per-diff share card. Every shared diff otherwise unfurls with the same
 // site-wide image, so a timeline reader cannot tell which package a link is
