@@ -64,12 +64,13 @@ export function assessDependencyArtifact(
   const scripts = normalizeStringRecord(manifest?.scripts);
   const implicitScripts = normalizeStringRecord(manifest?.implicitScripts);
   const automaticExecution = executionEntrypoints(findings, scripts, implicitScripts);
+  const installCommands = consumerInstallScriptCommands(scripts, implicitScripts);
   const capabilities = [
     ...new Set(findings.flatMap((finding) => (finding.ruleId ? [finding.ruleId] : []))),
   ].sort();
 
   const reachable = lifecycleReachablePaths(files, scripts, implicitScripts);
-  const inlineInstallCapabilities = installScriptCapabilities(scripts, implicitScripts, options);
+  const inlineInstallCapabilities = installScriptCapabilities(installCommands, options);
   const installReachable = (finding: Finding) =>
     reachable.has(normalizeReachabilityPath(finding.file));
   const installReachableCapabilities = [
@@ -101,12 +102,13 @@ export function assessDependencyArtifact(
   const hasDynamicInstallEdge =
     automaticExecution.length > 0 &&
     omittedFiles.length > 0 &&
-    [...reachable].some((path) => {
-      const file = filesByPath.get(path);
-      return file?.textSample
-        ? hasDynamicModuleLoad(file.textSample) || hasDynamicLocalExecution(file.textSample)
-        : false;
-    });
+    (installCommands.some(({ command }) => hasDynamicInstallCommand(command)) ||
+      [...reachable].some((path) => {
+        const file = filesByPath.get(path);
+        return file?.textSample
+          ? hasDynamicModuleLoad(file.textSample) || hasDynamicLocalExecution(file.textSample)
+          : false;
+      }));
   const installReachableUninspectedFiles = [
     ...new Set([
       ...directlyReachableUninspectedFiles,
@@ -295,51 +297,140 @@ function hasDynamicLocalExecution(text: string): boolean {
 }
 
 function localExecutionAliases(text: string, tokens: JsToken[]): Set<string> {
-  return simpleAliases(text, tokens, (sourceIndex) => {
-    const source = tokens[sourceIndex];
-    const sourceName = jsTokenText(text, source);
-    const afterSource = tokens[sourceIndex + 1];
-    if (
-      LOCAL_EXECUTION_CALLEES.has(sourceName) &&
-      !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")
-    ) {
-      return true;
+  const renamedBindings = destructuredModuleAliases(
+    text,
+    tokens,
+    new Set(["child_process", "node:child_process"]),
+    LOCAL_EXECUTION_CALLEES,
+  );
+  return simpleAliases(
+    text,
+    tokens,
+    (sourceIndex) => {
+      const source = tokens[sourceIndex];
+      const sourceName = jsTokenText(text, source);
+      const afterSource = tokens[sourceIndex + 1];
+      if (
+        LOCAL_EXECUTION_CALLEES.has(sourceName) &&
+        !(afterSource?.type === "punct" && jsTokenText(text, afterSource) === "(")
+      ) {
+        return true;
+      }
+
+      const member = tokens[sourceIndex + 2];
+      const afterMember = tokens[sourceIndex + 3];
+      if (
+        afterSource?.type === "punct" &&
+        [".", "?."].includes(jsTokenText(text, afterSource)) &&
+        member?.type === "ident" &&
+        LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, member)) &&
+        !(afterMember?.type === "punct" && jsTokenText(text, afterMember) === "(")
+      ) {
+        return true;
+      }
+
+      const requiredModule = tokens[sourceIndex + 2];
+      const close = tokens[sourceIndex + 3];
+      const dot = tokens[sourceIndex + 4];
+      const method = tokens[sourceIndex + 5];
+      return (
+        sourceName === "require" &&
+        afterSource?.type === "punct" &&
+        jsTokenText(text, afterSource) === "(" &&
+        requiredModule?.type === "string" &&
+        ["child_process", "node:child_process"].includes(requiredModule.value ?? "") &&
+        close?.type === "punct" &&
+        jsTokenText(text, close) === ")" &&
+        dot?.type === "punct" &&
+        [".", "?."].includes(jsTokenText(text, dot)) &&
+        method?.type === "ident" &&
+        LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, method)) &&
+        !(
+          tokens[sourceIndex + 6]?.type === "punct" &&
+          jsTokenText(text, tokens[sourceIndex + 6]) === "("
+        )
+      );
+    },
+    renamedBindings,
+  );
+}
+
+/** Renamed CommonJS destructuring and ESM imports from a known module. */
+function destructuredModuleAliases(
+  text: string,
+  tokens: JsToken[],
+  modules: Set<string>,
+  exports: Set<string>,
+): Set<string> {
+  const aliases = new Set<string>();
+  for (let openIndex = 0; openIndex < tokens.length; openIndex += 1) {
+    const open = tokens[openIndex];
+    if (open.type !== "punct" || jsTokenText(text, open) !== "{") continue;
+
+    let depth = 1;
+    let closeIndex = openIndex + 1;
+    for (; closeIndex < tokens.length && depth > 0; closeIndex += 1) {
+      const value = jsTokenText(text, tokens[closeIndex]);
+      if (tokens[closeIndex].type !== "punct") continue;
+      if (value === "{") depth += 1;
+      if (value === "}") depth -= 1;
+    }
+    if (depth !== 0) continue;
+    closeIndex -= 1;
+
+    const afterClose = tokens[closeIndex + 1];
+    const source =
+      afterClose?.type === "ident" && jsTokenText(text, afterClose) === "from"
+        ? tokens[closeIndex + 2]
+        : afterClose?.type === "punct" && jsTokenText(text, afterClose) === "="
+          ? requiredModuleToken(text, tokens, closeIndex + 2)
+          : undefined;
+    if (source?.type !== "string" || !modules.has(source.value ?? "")) {
+      openIndex = closeIndex;
+      continue;
     }
 
-    const member = tokens[sourceIndex + 2];
-    const afterMember = tokens[sourceIndex + 3];
-    if (
-      afterSource?.type === "punct" &&
-      [".", "?."].includes(jsTokenText(text, afterSource)) &&
-      member?.type === "ident" &&
-      LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, member)) &&
-      !(afterMember?.type === "punct" && jsTokenText(text, afterMember) === "(")
-    ) {
-      return true;
+    let bindingDepth = 0;
+    for (let index = openIndex + 1; index < closeIndex; index += 1) {
+      const token = tokens[index];
+      const value = jsTokenText(text, token);
+      if (token.type === "punct" && ["{", "["].includes(value)) bindingDepth += 1;
+      if (token.type === "punct" && ["}", "]"].includes(value)) bindingDepth -= 1;
+      if (bindingDepth !== 0 || token.type !== "ident" || !exports.has(value)) continue;
+      const separator = tokens[index + 1];
+      const renamed = tokens[index + 2];
+      const separatorText = separator ? jsTokenText(text, separator) : "";
+      if (
+        renamed?.type === "ident" &&
+        ((separator?.type === "punct" && separatorText === ":") ||
+          (separator?.type === "ident" && separatorText === "as"))
+      ) {
+        aliases.add(jsTokenText(text, renamed));
+      }
     }
+    openIndex = closeIndex;
+  }
+  return aliases;
+}
 
-    const requiredModule = tokens[sourceIndex + 2];
-    const close = tokens[sourceIndex + 3];
-    const dot = tokens[sourceIndex + 4];
-    const method = tokens[sourceIndex + 5];
-    return (
-      sourceName === "require" &&
-      afterSource?.type === "punct" &&
-      jsTokenText(text, afterSource) === "(" &&
-      requiredModule?.type === "string" &&
-      ["child_process", "node:child_process"].includes(requiredModule.value ?? "") &&
-      close?.type === "punct" &&
-      jsTokenText(text, close) === ")" &&
-      dot?.type === "punct" &&
-      [".", "?."].includes(jsTokenText(text, dot)) &&
-      method?.type === "ident" &&
-      LOCAL_EXECUTION_CALLEES.has(jsTokenText(text, method)) &&
-      !(
-        tokens[sourceIndex + 6]?.type === "punct" &&
-        jsTokenText(text, tokens[sourceIndex + 6]) === "("
-      )
-    );
-  });
+function requiredModuleToken(
+  text: string,
+  tokens: JsToken[],
+  startIndex: number,
+): JsToken | undefined {
+  const requireToken = tokens[startIndex];
+  const open = tokens[startIndex + 1];
+  const module = tokens[startIndex + 2];
+  const close = tokens[startIndex + 3];
+  return requireToken?.type === "ident" &&
+    jsTokenText(text, requireToken) === "require" &&
+    open?.type === "punct" &&
+    jsTokenText(text, open) === "(" &&
+    module?.type === "string" &&
+    close?.type === "punct" &&
+    jsTokenText(text, close) === ")"
+    ? module
+    : undefined;
 }
 
 /**
@@ -351,10 +442,11 @@ function simpleAliases(
   text: string,
   tokens: JsToken[],
   isSeed: (sourceIndex: number) => boolean,
+  initialAliases: Iterable<string> = [],
 ): Set<string> {
   const aliases = new Set<string>();
   const downstream = new Map<string, string[]>();
-  const queue: string[] = [];
+  const queue = [...initialAliases];
   for (let index = 0; index < tokens.length - 2; index += 1) {
     const target = tokens[index];
     const equals = tokens[index + 1];
@@ -433,15 +525,11 @@ export function classifyDependencyInstallRisk(
 }
 
 function installScriptCapabilities(
-  scripts: Record<string, string>,
-  implicitScripts: Record<string, string>,
+  installCommands: ReturnType<typeof consumerInstallScriptCommands>,
   options: DeterministicFindingOptions,
 ): string[] {
   const capabilities = new Set<string>();
-  for (const [index, { command }] of consumerInstallScriptCommands(
-    scripts,
-    implicitScripts,
-  ).entries()) {
+  for (const [index, { command }] of installCommands.entries()) {
     const findings = deterministicFindings(
       [
         {
@@ -463,6 +551,25 @@ function installScriptCapabilities(
     }
   }
   return [...capabilities];
+}
+
+function hasDynamicInstallCommand(command: string): boolean {
+  if (hasDynamicModuleLoad(command) || hasDynamicLocalExecution(command)) return true;
+  for (const program of inlineNodePrograms(command)) {
+    if (hasDynamicModuleLoad(program) || hasDynamicLocalExecution(program)) return true;
+  }
+  return false;
+}
+
+/** Extract bounded `node -e` / `node --eval` bodies without invoking a shell. */
+function inlineNodePrograms(command: string): string[] {
+  const programs: string[] = [];
+  const pattern =
+    /\b(?:node|nodejs)\s+(?:(?:--eval|--print)(?:=|\s+)|(?:-e|-p)\s+)(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^\s;&|]+))/g;
+  for (const match of command.matchAll(pattern)) {
+    programs.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return programs;
 }
 
 function hasReachableNativeExecution(capabilities: string[]): boolean {

@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-dynamic-skipped-content",
-  "title": "A dynamic install loader makes every omitted body a coverage gap",
+  "title": "A dynamic inline install loader makes every omitted body a coverage gap",
   "category": "dependency-introduction",
-  "intent": "A computed CommonJS module path can execute an omitted body regardless of its extension. Drydock must report incomplete evidence instead of guessing that only map or minified JavaScript files are executable.",
+  "intent": "A computed CommonJS module path inside a node -e lifecycle command can execute an omitted body regardless of its extension. Drydock must inspect inline install code and report incomplete evidence instead of guessing that only statically named files are executable.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
@@ -15,27 +15,20 @@
       "packageJson": {
         "name": "dynamic-install",
         "version": "1.0.0",
-        "scripts": { "postinstall": "node install.js" }
+        "scripts": { "postinstall": "node -e \"require('./' + Date.now())\"" }
       },
       "files": [
         {
           "path": "package.json",
-          "size": 104,
+          "size": 136,
           "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "textSample": "{\"name\":\"dynamic-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
-          "flags": []
-        },
-        {
-          "path": "install.js",
-          "size": 39,
-          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "require('./payload.' + process.env.KIND)",
+          "textSample": "{\"name\":\"dynamic-install\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node -e \\\"require('./' + Date.now())\\\"\"}}",
           "flags": []
         },
         {
           "path": "payload.data",
           "size": 4096,
-          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "flags": ["text-sample-skipped"]
         }
       ]
@@ -50,22 +43,17 @@
       "status": "uninspectable",
       "reason": "artifact-truncated",
       "resolvedVersion": "1.0.0",
-      "fileCount": 3,
-      "observation": { "execution": "observed", "risk": "observed" }
+      "fileCount": 2,
+      "observation": { "execution": "observed", "risk": "not-observed" }
     }
   ],
   "expectedFindings": [
-    {
-      "ruleId": "dependency-artifact.install-risk",
-      "severity": "critical",
-      "file": "<dependency>dynamic-install@1.0.0:package.json"
-    },
     {
       "ruleId": "dependency-artifact.uninspectable",
       "severity": "medium",
       "file": "<dependency>dynamic-install@1.0.0"
     }
   ],
-  "expectedRisk": "critical",
-  "expectedRecommendation": "block manual approval"
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
 }

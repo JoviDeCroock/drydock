@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-computed-execfile-skipped-content",
-  "title": "A computed child-process target keeps omitted bodies visible",
+  "title": "A renamed child-process target keeps omitted bodies visible",
   "category": "dependency-introduction",
-  "intent": "An install hook can compute a packaged executable path before passing it to child_process. Every deliberately omitted body must remain a visible coverage gap when the target cannot be resolved statically.",
+  "intent": "An install hook can rename a destructured child_process export before passing it a computed executable path. Every deliberately omitted body must remain a visible coverage gap when the target cannot be resolved statically.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
@@ -27,9 +27,9 @@
         },
         {
           "path": "install.js",
-          "size": 130,
+          "size": 134,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "const path = require('node:path'); const cp = require('node:child_process'); cp.execFileSync(path.join(__dirname, payloadName));",
+          "textSample": "const path = require('node:path'); const { execFileSync: run } = require('node:child_process'); run(path.join(__dirname, payloadName));",
           "flags": []
         },
         {

