@@ -84,15 +84,7 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "webRequestFilterResponse",
   "webRequestFilterResponse.serviceWorkerScript",
 ]);
-const ALL_URL_PATTERNS = new Set([
-  "<all_urls>",
-  "*://*/",
-  "*://*/*",
-  "https://*/",
-  "https://*/*",
-  "http://*/",
-  "http://*/*",
-]);
+const BROAD_HOST_MATCH_PATTERN_RE = /^(?:\*|[a-z][a-z0-9+.-]*):\/\/\*(?::(?:\*|\d+))?\//i;
 
 const EXECUTABLE_CSP_DIRECTIVE_CHAINS = [
   ["script-src", "default-src"],
@@ -178,7 +170,7 @@ function browserManifestFindings(
     ["optional_host_permissions", manifest.optionalHostPermissions],
     ["permissions", manifest.permissions],
     ["optional_permissions", manifest.optionalPermissions],
-  ]).find(({ value }) => isAllUrlsPattern(value));
+  ]).find(({ value }) => isBroadHostPattern(value));
   if (broadHost) {
     findings.push(
       browserTag("broadHostAccess", {
@@ -192,7 +184,7 @@ function browserManifestFindings(
     );
   }
 
-  const broadContentScript = manifest.contentScriptMatches.find(isAllUrlsPattern);
+  const broadContentScript = manifest.contentScriptMatches.find(isBroadHostPattern);
   if (broadContentScript) {
     findings.push(
       browserTag("broadContentScript", {
@@ -241,15 +233,14 @@ function browserManifestFindings(
   return findings;
 }
 
-function isAllUrlsPattern(value: string): boolean {
-  return ALL_URL_PATTERNS.has(value.trim().toLowerCase());
+function isBroadHostPattern(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "<all_urls>" || BROAD_HOST_MATCH_PATTERN_RE.test(normalized);
 }
 
 function isBroadExternalOrigin(value: string): boolean {
   const normalized = value.trim().toLowerCase();
-  return (
-    isAllUrlsPattern(normalized) || normalized === "https://*/*" || normalized === "http://*/*"
-  );
+  return isBroadHostPattern(normalized);
 }
 
 function unsafeExtensionCspEvidence(value: string | null): string | null {

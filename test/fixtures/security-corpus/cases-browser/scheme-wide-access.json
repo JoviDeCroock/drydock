@@ -13,7 +13,7 @@
       "size": 420,
       "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Scheme helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"scheme-helper@example.invalid\" } },\n  \"host_permissions\": [\"https://*/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://*/*\"], \"js\": [\"content.js\"] }],\n  \"content_security_policy\": \"script-src 'self' https:; object-src 'self'\"\n}\n"
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Scheme helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"scheme-helper@example.invalid\" } },\n  \"host_permissions\": [\"https://*/sensitive/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://*/sensitive/*\"], \"js\": [\"content.js\"] }],\n  \"content_security_policy\": \"script-src 'self' https:; object-src 'self'\"\n}\n"
     },
     {
       "path": "content.js",

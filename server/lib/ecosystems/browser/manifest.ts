@@ -363,8 +363,8 @@ function backgroundConsumerEntrypoints(
   if (!backgroundPage) return [...entrypoints];
   const page = files.find((file) => file.path === backgroundPage);
   if (!page?.textSample) return [...entrypoints];
-  for (const source of htmlScriptSources(page.textSample)) {
-    const path = resolveExtensionResourcePath(backgroundPage, source);
+  for (const { source, baseHref } of htmlScriptSources(page.textSample)) {
+    const path = resolveExtensionResourcePath(backgroundPage, source, baseHref);
     if (path) entrypoints.add(path);
   }
   return [...entrypoints];
@@ -375,16 +375,19 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   for (const pagePath of pagePaths) {
     const page = files.find((file) => file.path === pagePath);
     if (!page?.textSample) continue;
-    for (const source of htmlScriptSources(page.textSample)) {
-      const path = resolveExtensionResourcePath(pagePath, source);
+    for (const { source, baseHref } of htmlScriptSources(page.textSample)) {
+      const path = resolveExtensionResourcePath(pagePath, source, baseHref);
       if (path) entrypoints.add(path);
     }
   }
   return [...entrypoints];
 }
 
-function htmlScriptSources(html: string): string[] {
-  const sources: string[] = [];
+function htmlScriptSources(html: string): Array<{ source: string; baseHref: string | null }> {
+  const sources: Array<{ source: string; baseHref: string | null }> = [];
+  const closingScriptPattern = /<\/script(?=[\s/>])/gi;
+  let baseHref: string | null = null;
+  let baseSeen = false;
   let index = 0;
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
@@ -399,13 +402,14 @@ function htmlScriptSources(html: string): string[] {
     const nameStart = cursor;
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const tagName = html.slice(nameStart, cursor).toLowerCase();
-    if (tagName !== "script" || !/[\s/>]/.test(html[cursor] ?? "")) {
+    if ((tagName !== "script" && tagName !== "base") || !/[\s/>]/.test(html[cursor] ?? "")) {
       index = Math.max(cursor, tagStart + 1);
       continue;
     }
 
-    let source: string | null = null;
-    let sourceSeen = false;
+    const targetAttribute = tagName === "script" ? "src" : "href";
+    let targetValue: string | null = null;
+    let targetSeen = false;
     let tagClosed = false;
     while (cursor < html.length) {
       while (/\s/.test(html[cursor] ?? "")) cursor += 1;
@@ -448,35 +452,60 @@ function htmlScriptSources(html: string): string[] {
         }
       }
 
-      if (attributeName === "src" && !sourceSeen) {
-        sourceSeen = true;
-        source = value;
+      if (attributeName === targetAttribute && !targetSeen) {
+        targetSeen = true;
+        targetValue = value;
       }
     }
-    if (tagClosed && source) sources.push(decodeHTMLAttribute(source));
+    if (tagClosed && tagName === "base" && targetSeen && !baseSeen) {
+      baseHref = decodeHTMLAttribute(targetValue ?? "");
+      baseSeen = true;
+    } else if (tagClosed && tagName === "script" && targetValue) {
+      sources.push({ source: decodeHTMLAttribute(targetValue), baseHref });
+    }
+    if (tagClosed && tagName === "script") {
+      // Script data is raw text in HTML. A base-looking string inside JavaScript
+      // must not become the document base for a later packaged script.
+      closingScriptPattern.lastIndex = cursor;
+      const closingScript = closingScriptPattern.exec(html);
+      if (!closingScript) {
+        index = html.length;
+        continue;
+      }
+      const closingTagEnd = html.indexOf(">", closingScript.index + closingScript[0].length);
+      index = closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+      continue;
+    }
     index = Math.max(cursor, tagStart + 1);
   }
   return sources;
 }
 
-function resolveExtensionResourcePath(pagePath: string, rawSource: string): string | null {
-  let source = rawSource.trim().split(/[?#]/, 1)[0];
-  if (!source || source.includes("\\") || source.startsWith("//")) return null;
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(source)) return null;
+const EXTENSION_RESOURCE_ROOT = new URL("drydock-extension://artifact/");
 
-  const parts = source.startsWith("/") ? [] : pagePath.split("/").slice(0, -1);
-  if (source.startsWith("/")) source = source.slice(1);
-  for (const segment of source.split("/")) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") {
-      if (!parts.length) return null;
-      parts.pop();
-    } else {
-      parts.push(segment);
+function resolveExtensionResourcePath(
+  pagePath: string,
+  rawSource: string,
+  rawBaseHref: string | null,
+): string | null {
+  const source = rawSource.trim();
+  const baseHref = rawBaseHref?.trim() ?? null;
+  if (!source || source.includes("\\") || baseHref?.includes("\\")) return null;
+  try {
+    const pageUrl = new URL(pagePath, EXTENSION_RESOURCE_ROOT);
+    const documentBase = baseHref === null ? pageUrl : new URL(baseHref, pageUrl);
+    const resolved = new URL(source, documentBase);
+    if (
+      resolved.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
+      resolved.host !== EXTENSION_RESOURCE_ROOT.host
+    ) {
+      return null;
     }
+    const path = resolved.pathname.replace(/^\/+/, "");
+    return isSafeManifestPath(path) ? path : null;
+  } catch {
+    return null;
   }
-  const path = parts.join("/");
-  return isSafeManifestPath(path) ? path : null;
 }
 
 function assertUniqueBrowserPaths(files: FileRecord[]): void {

@@ -13,7 +13,7 @@
       "size": 280,
       "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Tab helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"tab-helper@example.invalid\" } },\n  \"permissions\": [\"storage\"],\n  \"host_permissions\": [\"https://example.invalid/*\"],\n  \"action\": { \"default_popup\": \"popup.html\" }\n}\n"
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Tab helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"tab-helper@example.invalid\" } },\n  \"permissions\": [\"storage\"],\n  \"host_permissions\": [\"https://*.example.invalid/*\"],\n  \"action\": { \"default_popup\": \"popup.html\" }\n}\n"
     },
     {
       "path": "popup.js",

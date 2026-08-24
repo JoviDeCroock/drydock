@@ -373,6 +373,42 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("honors an extension-local base URL when resolving page scripts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ manifest_version: 2, background: { page: "pages/background.html" } }),
+          {
+            path: "pages/background.html",
+            size: 70,
+            sha256: "4f".repeat(32),
+            flags: [],
+            textSample:
+              "<script>const decoy = '<base href=\"https://example.invalid/\">';</script>" +
+              '<base href="../tests/"><script src="payload.js"></script>',
+          },
+          {
+            path: "tests/payload.js",
+            size: 14,
+            sha256: "5f".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("parses script src attributes without losing quoted greater-than characters", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -544,8 +580,8 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
-  test.each(["*://*/", "https://*/", "http://*/"])(
-    "flags slash-only scheme-wide match pattern %s",
+  test.each(["*://*/", "https://*/", "http://*/", "https://*/sensitive/*"])(
+    "flags scheme-wide match pattern %s",
     (matchPattern) => {
       const path = "dist/tab-helper.zip";
       const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
