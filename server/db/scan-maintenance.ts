@@ -10,8 +10,7 @@ export const SCAN_MAINTENANCE_KINDS = {
   retentionArtifactsRemoved: "retention-artifacts-removed",
 } as const;
 
-export type ScanMaintenanceKind =
-  (typeof SCAN_MAINTENANCE_KINDS)[keyof typeof SCAN_MAINTENANCE_KINDS];
+type ScanMaintenanceKind = (typeof SCAN_MAINTENANCE_KINDS)[keyof typeof SCAN_MAINTENANCE_KINDS];
 
 export interface ClaimedScanMaintenance {
   artifactStorageVersion: number | null;
