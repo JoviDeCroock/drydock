@@ -136,6 +136,10 @@ function inspectBundledDependency(
   return inspectAcquiredDependency(dependency, {
     files,
     manifest: manifest as PackageJsonSummary | null,
+    manifestIdentityValid:
+      manifest?.name === dependency.name &&
+      typeof manifest.version === "string" &&
+      manifest.version.trim().length > 0,
     suspiciousEntries,
     resolvedVersion: version,
     registryHost: null,
@@ -415,6 +419,8 @@ async function inspectOne(
 interface AcquiredDependencyArtifact {
   files: FileRecord[];
   manifest: PackageJsonSummary | null;
+  /** Embedded children must prove that the manifest names the bytes at their declared path. */
+  manifestIdentityValid?: boolean;
   suspiciousEntries: TarSuspiciousEntry[];
   resolvedVersion: string | null;
   registryHost: string | null;
@@ -439,17 +445,20 @@ function inspectAcquiredDependency(
       artifact,
     );
   }
-  if (artifact.suspiciousEntries.some(isAmbiguousDependencyArchiveEntry)) {
-    return uninspectableAcquired(dependency, "artifact-ambiguous", artifact);
-  }
 
   // Completeness and known behavior are separate axes. Assess every retained
-  // body before projecting the coverage gap so a large unrelated file cannot
-  // erase a lifecycle downloader already proven by the readable bytes.
+  // body before projecting a coverage or identity gap so incomplete metadata
+  // cannot erase a lifecycle downloader already proven by readable bytes.
   const assessment = assessDependencyArtifact(artifact.files, artifact.manifest, {
     codePatternSet: "javascript",
     entrypointResolution: "npm",
   });
+  if (artifact.manifestIdentityValid === false) {
+    return uninspectableAcquired(dependency, "manifest-unavailable", artifact, assessment);
+  }
+  if (artifact.suspiciousEntries.some(isAmbiguousDependencyArchiveEntry)) {
+    return uninspectableAcquired(dependency, "artifact-ambiguous", artifact, assessment);
+  }
   if (hasIncompleteBody) {
     return uninspectableAcquired(dependency, "artifact-truncated", artifact, assessment);
   }

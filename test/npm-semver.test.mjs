@@ -40,6 +40,10 @@ describe("npm range satisfaction", () => {
     expect(matches("1.3.0", "1.2")).toBe(false);
     expect(matches("1.9.9", "1.x")).toBe(true);
     expect(matches("2.0.0", "1.x")).toBe(false);
+    expect(matches("1.9.9", "v1")).toBe(true);
+    expect(matches("2.0.0", "v1")).toBe(false);
+    expect(matches("1.2.9", "v1.2")).toBe(true);
+    expect(matches("1.3.0", "v1.2")).toBe(false);
     expect(matches("9.9.9", "*")).toBe(true);
     expect(parseRange("1.x.2")).toBeNull();
     expect(parseRange("<1.x.2")).toBeNull();
