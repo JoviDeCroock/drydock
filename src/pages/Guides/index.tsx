@@ -25,7 +25,12 @@ interface GuideContent {
    * pages repeating the landing's headline verbatim would read as template
    * filler and duplicate the landing as a search result.
    */
-  close: { heading: string; body: string; action: { href: string; label: string } };
+  close: {
+    heading: string;
+    body: string;
+    action: { href: string; label: string };
+    detail?: string[];
+  };
 }
 
 const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
@@ -42,8 +47,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "The review",
-        heading: "Risk signals stay pinned to the changed bytes.",
-        body: "Deterministic checks flag install hooks, process execution, network access, credential reads, new binaries, suspicious package shape, and other supply-chain changes. Each finding points back to the relevant file and line.",
+        heading: "Risk signals stay tied to inspected evidence.",
+        body: "Deterministic checks flag install hooks, process execution, network access, credential reads, new binaries, suspicious package shape, and other supply-chain changes. Each finding points back to the relevant artifact evidence, with file and line context when available.",
       },
       {
         label: "The decision",
@@ -55,6 +60,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       heading: "Stage your next npm publish.",
       body: "Connect a read-only npm token, run your usual publish with a stage flag, and read the candidate tarball before you finish it. The 2FA step stays with npm.",
       action: { href: "/docs#staged-publishing", label: "Set up npm staging" },
+      detail: ["read-only npm access", "you keep the final approval"],
     },
     primary: { href: "/docs#staged-publishing", label: "Set up npm staging" },
     secondary: { href: "/diff", label: "Read a public diff" },
@@ -152,7 +158,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   "/package-tarball-diff": {
     eyebrow: "Public package diff",
     heading: "Compare the package bytes that registries actually serve.",
-    lead: "Drydock can diff two public npm, PyPI, or atpm releases file by file, with deterministic supply-chain findings pinned to the changed lines. It requires no account and never installs the package.",
+    lead: "Drydock can diff two public npm, PyPI, or atpm releases file by file, with deterministic supply-chain findings tied to the relevant artifact evidence. It requires no account and never installs the package.",
     details: ["no account", "no installation", "npm, PyPI, and atpm"],
     sections: [
       {
@@ -297,7 +303,7 @@ export default function DiscoveryGuidePage() {
         heading={guide.close.heading}
         body={guide.close.body}
         actions={<LinkButton href={guide.close.action.href}>{guide.close.action.label}</LinkButton>}
-        detail={["read-only tokens", "you keep the final approval"]}
+        detail={guide.close.detail}
       />
 
       <ContentArticleLinks label="Explore Drydock" links={relatedGuides} />
