@@ -20,12 +20,19 @@ describe("scan detail recommendation", () => {
   test("names the missing baseline instead of blocking or clearing the release", () => {
     // Nothing was compared, so the verdict must not read as "no risk signals in
     // the changed files" (there are no known changed files) nor as a block.
-    const gate = getReleaseRecommendation("high", "low", 0, "gate", true);
+    const gate = getReleaseRecommendation("high", "low", 0, "gate", "baseline-too-large");
     expect(gate).toMatchObject({ label: "no baseline to compare", tone: "medium" });
     expect(gate.copy).toContain("too large to download");
-    expect(getReleaseRecommendation("high", "high", 3, "npm", true)).toMatchObject({
+    expect(getReleaseRecommendation("high", "high", 3, "npm", "baseline-too-large")).toMatchObject({
       label: "no baseline to compare",
       tone: "medium",
     });
+  });
+
+  test("distinguishes an unavailable baseline from an oversized one", () => {
+    const result = getReleaseRecommendation("high", "low", 0, "gate", "baseline-unavailable");
+    expect(result).toMatchObject({ label: "no baseline to compare", tone: "medium" });
+    expect(result.copy).toContain("No trustworthy published baseline was available");
+    expect(result.copy).not.toContain("too large");
   });
 });

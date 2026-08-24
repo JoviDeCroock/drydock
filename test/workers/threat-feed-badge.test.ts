@@ -84,6 +84,7 @@ async function seedCompletedScan(
     // Browser archives without a Gecko/store ID may be feed-listed by time,
     // but their display name is not safe for global badge lookup.
     withoutStablePublicIdentity?: boolean;
+    baselineComparisonSkipped?: "baseline-too-large" | "baseline-unavailable";
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -121,6 +122,9 @@ async function seedCompletedScan(
     status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
+      ...(options.baselineComparisonSkipped
+        ? { baseline: { comparisonSkipped: options.baselineComparisonSkipped } }
+        : {}),
       ...(!gateEcosystem && options.tag ? { stagedPublish: { tag: options.tag } } : {}),
       ...(gateEcosystem
         ? {
@@ -424,6 +428,32 @@ describe("shields badge endpoint", () => {
         ecosystem,
       );
     }
+  });
+
+  test("browser badges do not present context-only risk as a low-risk release", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `tab-helper-${crypto.randomUUID().slice(0, 8)}@example.invalid`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0",
+      ecosystem: "browser",
+      source: "workflow_gate",
+      risk: "high",
+      releaseRisk: "low",
+      baselineComparisonSkipped: "baseline-unavailable",
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "browser", packageName)).body).toMatchObject({
+      label: "drydock (unverified)",
+      message: "2.0.0 reviewed · high risk",
+      color: "red",
+    });
+    const feed = await fetchFeed(app);
+    expect(feed.entries.find((entry) => entry.package === packageName)).toMatchObject({
+      releaseRisk: "high",
+    });
   });
 
   test("name-only browser scans stay out of the package badge index", async () => {

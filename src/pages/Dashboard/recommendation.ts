@@ -6,6 +6,8 @@ export interface ReleaseRecommendationCopy {
   copy: string;
 }
 
+export type BaselineComparisonSkip = "baseline-too-large" | "baseline-unavailable";
+
 // `target` only shapes the trailing call-to-action copy: an npm scan ends in a
 // maintainer publishing with 2FA, while a workflow gate ends in the maintainer
 // releasing or blocking the held GitHub job (publishing then happens via PyPI
@@ -15,19 +17,23 @@ export function getReleaseRecommendation(
   releaseRisk: string,
   releaseFindingCount: number,
   target: "npm" | "gate" = "npm",
-  baselineComparisonSkipped = false,
+  baselineComparisonSkip?: BaselineComparisonSkip,
 ): ReleaseRecommendationCopy {
   const isGate = target === "gate";
-  // The published release was never downloaded, so every file reads as added
-  // and `releaseRisk` graded nothing. Neither a block nor an all-clear is
-  // supported by the evidence — name the gap instead.
-  if (baselineComparisonSkipped) {
+  // No trustworthy baseline was compared, so `releaseRisk` graded nothing.
+  // Neither a block nor an all-clear is supported by the evidence — name the
+  // exact gap instead.
+  if (baselineComparisonSkip) {
+    const explanation =
+      baselineComparisonSkip === "baseline-too-large"
+        ? "The published release is too large to download, so this report could not compare against it."
+        : "No trustworthy published baseline was available, so this report could not compare against one.";
     return {
       label: "no baseline to compare",
       tone: "medium",
       copy: isGate
-        ? "The published release is too large to download, so this report could not compare against it. Every signal below is package context, not a change this release introduced — review the artifact contents before releasing the job."
-        : "The published release is too large to download, so this report could not compare against it. Every signal below is package context, not a change this release introduced — review the artifact contents before approving.",
+        ? `${explanation} Every signal below is package context, not a change this release introduced — review the artifact contents before releasing the job.`
+        : `${explanation} Every signal below is package context, not a change this release introduced — review the artifact contents before approving.`,
     };
   }
   if (releaseRisk === "critical" || releaseRisk === "high") {

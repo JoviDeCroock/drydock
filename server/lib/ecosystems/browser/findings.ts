@@ -84,7 +84,21 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "webRequestFilterResponse",
   "webRequestFilterResponse.serviceWorkerScript",
 ]);
-const ALL_URL_PATTERNS = new Set(["<all_urls>", "*://*/*", "https://*/*", "http://*/*"]);
+const ALL_URL_PATTERNS = new Set([
+  "<all_urls>",
+  "*://*/",
+  "*://*/*",
+  "https://*/",
+  "https://*/*",
+  "http://*/",
+  "http://*/*",
+]);
+
+const EXECUTABLE_CSP_DIRECTIVE_CHAINS = [
+  ["script-src", "default-src"],
+  ["script-src-elem", "script-src", "default-src"],
+  ["worker-src", "child-src", "script-src", "default-src"],
+] as const;
 
 export function buildBrowserFindings(args: {
   staged: AcquiredArtifact;
@@ -241,11 +255,18 @@ function unsafeExtensionCspEvidence(value: string | null): string | null {
   if (!value) return null;
   if (/['"]unsafe-eval['"]/i.test(value)) return "extension CSP permits unsafe-eval";
   const directives = parseCspDirectives(value);
-  const scriptSources = directives.get("script-src") ?? directives.get("default-src") ?? [];
-  const nonPackageSource = scriptSources.find(isNonPackageScriptSource);
-  return nonPackageSource
-    ? `extension CSP permits non-package script source ${nonPackageSource}`
-    : null;
+  const inspected = new Set<string>();
+  for (const chain of EXECUTABLE_CSP_DIRECTIVE_CHAINS) {
+    const directive = chain.find((name) => directives.has(name));
+    if (!directive || inspected.has(directive)) continue;
+    inspected.add(directive);
+    const sources = directives.get(directive) ?? [];
+    const nonPackageSource = sources.find(isNonPackageScriptSource);
+    if (nonPackageSource) {
+      return `extension CSP ${directive} permits non-package script source ${nonPackageSource}`;
+    }
+  }
+  return null;
 }
 
 function parseCspDirectives(value: string): Map<string, string[]> {

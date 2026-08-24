@@ -344,6 +344,30 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
+  test.each(["*://*/", "https://*/", "http://*/"])(
+    "flags slash-only scheme-wide match pattern %s",
+    (matchPattern) => {
+      const path = "dist/tab-helper.zip";
+      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+      const review = createBrowserExtensionReview({
+        manifest,
+        artifact: {
+          path,
+          sha256: SHA,
+          files: [
+            manifestFile({
+              host_permissions: [matchPattern],
+              content_scripts: [{ matches: [matchPattern], js: ["content.js"] }],
+            }),
+          ],
+        },
+      });
+      expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+        expect.arrayContaining(["browser.broad-host-access", "browser.broad-content-script"]),
+      );
+    },
+  );
+
   test.each([
     "bookmarks",
     "browserSettings",
@@ -431,6 +455,9 @@ describe("browser extension review adapter", () => {
   test.each([
     "default-src 'self' cdn.example.invalid",
     "script-src 'self' cdn.example.invalid; object-src 'self'",
+    "script-src 'self'; script-src-elem https://cdn.example.invalid",
+    "script-src 'self'; worker-src blob:",
+    "script-src 'self'; child-src blob:",
   ])("flags effective non-package script sources in CSP: %s", (contentSecurityPolicy) => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

@@ -104,6 +104,8 @@ for the most recent **feed-listed** review of that package's release line:
   badge.
 - Listed, rejected (`no_publish`) → `<version> blocked` (red).
 
+When baseline comparison was skipped because the published artifact was unavailable or exceeded the download budget, release risk graded no deltas. Public feed entries and undecided badges therefore fall back to the artifact risk instead of presenting an unsupported lower-risk release claim.
+
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
 package name.

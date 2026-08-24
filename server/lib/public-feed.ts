@@ -153,7 +153,18 @@ export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
   );
 }
 
+function baselineComparisonWasSkipped(summaryJson: unknown): boolean {
+  if (!isRecord(summaryJson)) return false;
+  const baseline = summaryJson.baseline;
+  if (!isRecord(baseline)) return false;
+  return (
+    baseline.comparisonSkipped === "baseline-too-large" ||
+    baseline.comparisonSkipped === "baseline-unavailable"
+  );
+}
+
 function sharedScanReleaseRisk(row: SharedScanRow): string {
+  if (baselineComparisonWasSkipped(row.summaryJson)) return row.risk;
   const breakdown = row.riskSummaryJson;
   if (isRecord(breakdown)) {
     const releaseRisk = breakdown.releaseRisk;

@@ -1,0 +1,32 @@
+{
+  "id": "browser-slash-only-access-executable-csp",
+  "title": "WebExtension with slash-only all-site access and executable CSP escapes",
+  "category": "browser-extension",
+  "intent": "Equivalent slash-only match patterns and executable CSP directives must not bypass browser-specific findings.",
+  "slug": "alternate-source-helper",
+  "extensionId": "alternate-source-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "8989898989898989898989898989898989898989898989898989898989898989",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 460,
+      "sha256": "9090909090909090909090909090909090909090909090909090909090909090",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Alternate source helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"alternate-source-helper@example.invalid\" } },\n  \"host_permissions\": [\"https://*/\"],\n  \"content_scripts\": [{ \"matches\": [\"*://*/\"], \"js\": [\"content.js\"] }],\n  \"content_security_policy\": \"script-src 'self'; script-src-elem https://cdn.example.invalid; worker-src blob:\"\n}\n"
+    },
+    {
+      "path": "content.js",
+      "size": 34,
+      "sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+      "flags": [],
+      "textSample": "document.body.dataset.ready = '1';\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.broad-host-access", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.broad-content-script", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.unsafe-extension-csp", "severity": "high", "file": "manifest.json" }
+  ]
+}

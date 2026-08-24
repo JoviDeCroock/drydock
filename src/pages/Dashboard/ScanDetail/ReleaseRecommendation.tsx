@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
-import { getReleaseRecommendation } from "../recommendation";
+import { getReleaseRecommendation, type BaselineComparisonSkip } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { Badge } from "../../../components/Badge";
@@ -43,16 +43,18 @@ export function ReleaseRecommendation({
     usePersistedRiskSummary && detail.riskSummary
       ? detail.riskSummary.releaseFindingCount
       : changedFindings.length;
-  const baselineComparisonSkip = summary.baseline?.comparisonSkipped;
-  const baselineComparisonSkipped =
-    baselineComparisonSkip === "baseline-too-large" ||
-    baselineComparisonSkip === "baseline-unavailable";
+  const persistedComparisonSkip = summary.baseline?.comparisonSkipped;
+  const baselineComparisonSkip: BaselineComparisonSkip | undefined =
+    persistedComparisonSkip === "baseline-too-large" ||
+    persistedComparisonSkip === "baseline-unavailable"
+      ? persistedComparisonSkip
+      : undefined;
   const recommendation = getReleaseRecommendation(
     artifactRisk,
     releaseRisk,
     releaseFindingCount,
     isWorkflowGate ? "gate" : "npm",
-    baselineComparisonSkipped,
+    baselineComparisonSkip,
   );
   // `detail.findings` and `changedFindings` already include the AI reviewer's
   // findings (persisted as `source: "ai"` rows), so they are counted and shown
@@ -63,7 +65,7 @@ export function ReleaseRecommendation({
     summary,
     diffCount,
     changedFindings,
-    baselineComparisonSkipped ? baselineComparisonSkip : undefined,
+    baselineComparisonSkip,
   );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -136,7 +138,7 @@ function buildRecommendationEvidence(
   summary: PersistedSummary,
   diffCount: number,
   changedFindings: ReviewFinding[],
-  baselineComparisonSkip: string | undefined,
+  baselineComparisonSkip: BaselineComparisonSkip | undefined,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
   // Lead with the missing comparison: it explains why there are no release
