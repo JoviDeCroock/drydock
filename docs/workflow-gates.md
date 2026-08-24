@@ -168,7 +168,7 @@ The browser adapter (`server/lib/ecosystems/browser/`):
 - parses ZIP/XPI bytes in the shared credential-free sandbox and retains root `manifest.json` as identity evidence;
 - supports Manifest V2 and V3, and rejects missing/invalid identity, version, or manifest version;
 - requires one archive per stable extension identity in a release target and keeps name-only archives distinct by verified artifact digest, so unrelated Chrome archives with the same display name cannot be merged;
-- runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules, treating manifest-loaded background and content scripts as consumer entrypoints regardless of their directory names;
+- runs shared JavaScript, secret, native-artifact, suspicious-archive, and file-diff rules, treating manifest-loaded background scripts, content scripts, popups, options pages, developer-tools pages, sidebars, side panels, and URL overrides as consumer entrypoints regardless of their directory names;
 - reports privileged browser/data permissions, all-sites host access, all-sites content scripts, broad external messaging, unsafe extension CSP, and release/manifest identity mismatches;
 - records the exact archive kind and SHA-256 in report provenance;
 - does not invent a public baseline: Chrome packages usually do not embed a store id, and store download availability differs by channel. A gate without an explicit previous artifact records `comparisonSkipped: "baseline-unavailable"`, treats findings as package context rather than release deltas, and recommends manual review instead of grading an all-added diff as a release change.

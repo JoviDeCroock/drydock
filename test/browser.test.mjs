@@ -231,6 +231,66 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const extensionPages = [
+      ["tests/popup.html", "tests/popup.js"],
+      ["tests/browser-popup.html", "tests/browser-popup.js"],
+      ["tests/page-popup.html", "tests/page-popup.js"],
+      ["tests/options.html", "tests/options.js"],
+      ["tests/legacy-options.html", "tests/legacy-options.js"],
+      ["tests/devtools.html", "tests/devtools.js"],
+      ["tests/side-panel.html", "tests/side-panel.js"],
+      ["tests/sidebar.html", "tests/sidebar.js"],
+      ["tests/new-tab.html", "tests/new-tab.js"],
+    ];
+    const files = extensionPages.flatMap(([page, script], index) => [
+      {
+        path: page,
+        size: 40,
+        sha256: String(50 + index)
+          .repeat(64)
+          .slice(0, 64),
+        flags: [],
+        textSample: `<script src="${script.split("/").at(-1)}"></script>`,
+      },
+      {
+        path: script,
+        size: 14,
+        sha256: String(60 + index)
+          .repeat(64)
+          .slice(0, 64),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ]);
+    const manifestRecord = manifestFile({
+      action: { default_popup: "tests/popup.html" },
+      browser_action: { default_popup: "tests/browser-popup.html" },
+      page_action: { default_popup: "tests/page-popup.html" },
+      options_ui: { page: "tests/options.html" },
+      options_page: "tests/legacy-options.html",
+      devtools_page: "tests/devtools.html",
+      side_panel: { default_path: "tests/side-panel.html" },
+      sidebar_action: { default_panel: "tests/sidebar.html" },
+      chrome_url_overrides: { newtab: "tests/new-tab.html" },
+    });
+    const parsed = parseBrowserExtensionManifest([manifestRecord, ...files]).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(expect.arrayContaining(extensionPages.flat()));
+
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files: [manifestRecord, ...files] },
+    });
+    const findings = review.ruleFindings.filter(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(findings).toHaveLength(extensionPages.length);
+    expect(findings.every((finding) => finding.severity === "high")).toBe(true);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
   test("rejects adapter inputs that are not bound to the declared archive", () => {
     const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
       { path: "dist/tab-helper.zip", sha256: SHA },
@@ -288,6 +348,7 @@ describe("browser extension review adapter", () => {
     "bookmarks",
     "browserSettings",
     "browsingData",
+    "certificateProvider",
     "clipboardRead",
     "clipboardWrite",
     "contentSettings",
@@ -297,9 +358,19 @@ describe("browser extension review adapter", () => {
     "declarativeNetRequest",
     "declarativeNetRequestFeedback",
     "declarativeNetRequestWithHostAccess",
+    "declarativeWebRequest",
+    "desktopCapture",
     "dns",
+    "documentScan",
     "downloads",
     "downloads.open",
+    "downloads.ui",
+    "enterprise.deviceAttributes",
+    "enterprise.hardwarePlatform",
+    "enterprise.networkingAttributes",
+    "enterprise.platformKeys",
+    "fileBrowserHandler",
+    "fileSystemProvider",
     "geolocation",
     "history",
     "identity",
@@ -309,15 +380,27 @@ describe("browser extension review adapter", () => {
     "nativeMessaging",
     "pageCapture",
     "pkcs11",
+    "platformKeys",
     "privacy",
+    "printerProvider",
+    "printing",
+    "printingMetrics",
+    "processes",
     "proxy",
     "scripting",
     "search",
     "sessions",
+    "system.cpu",
+    "system.display",
+    "system.memory",
+    "system.storage",
+    "tabCapture",
     "tabHide",
     "tabs",
     "topSites",
     "userScripts",
+    "vpnProvider",
+    "webAuthenticationProxy",
     "webNavigation",
     "webRequest",
     "webRequestAuthProvider",

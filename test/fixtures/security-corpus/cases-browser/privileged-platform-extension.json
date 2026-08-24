@@ -1,0 +1,26 @@
+{
+  "id": "browser-privileged-platform-extension",
+  "title": "WebExtension with privileged platform and capture APIs",
+  "category": "browser-extension",
+  "intent": "Client-certificate, enterprise-key, screen-capture, and WebAuthn-proxy permissions must remain authoritative deterministic evidence.",
+  "slug": "platform-helper",
+  "extensionId": "platform-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "9595959595959595959595959595959595959595959595959595959595959595",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 340,
+      "sha256": "9696969696969696969696969696969696969696969696969696969696969696",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Platform helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"platform-helper@example.invalid\" } },\n  \"permissions\": [\"platformKeys\", \"enterprise.platformKeys\", \"desktopCapture\", \"webAuthenticationProxy\"]\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" }
+  ]
+}

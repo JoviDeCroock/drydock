@@ -56,6 +56,10 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       ? background.page
       : null,
   );
+  const extensionPageEntrypoints = htmlPageConsumerEntrypoints(
+    files,
+    manifestExtensionPagePaths(raw),
+  );
   const csp = raw.content_security_policy;
   const contentSecurityPolicy =
     typeof csp === "string"
@@ -83,6 +87,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
         ? stringList(raw.externally_connectable.matches)
         : [],
       backgroundEntrypoints,
+      extensionPageEntrypoints,
       contentSecurityPolicy,
     },
   };
@@ -252,6 +257,30 @@ function nestedStringList(value: unknown, key: string): string[] {
   return value.flatMap((item) => (isRecord(item) ? stringList(item[key]) : []));
 }
 
+function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
+  return [
+    manifestRecordString(raw.action, "default_popup"),
+    manifestRecordString(raw.browser_action, "default_popup"),
+    manifestRecordString(raw.page_action, "default_popup"),
+    manifestRecordString(raw.options_ui, "page"),
+    manifestRecordString(raw.side_panel, "default_path"),
+    manifestRecordString(raw.sidebar_action, "default_panel"),
+    typeof raw.options_page === "string" ? raw.options_page : null,
+    typeof raw.devtools_page === "string" ? raw.devtools_page : null,
+    ...manifestRecordStrings(raw.chrome_url_overrides),
+  ].filter((path): path is string => path !== null && isSafeManifestPath(path));
+}
+
+function manifestRecordString(value: unknown, key: string): string | null {
+  if (!isRecord(value)) return null;
+  return typeof value[key] === "string" ? value[key] : null;
+}
+
+function manifestRecordStrings(value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  return Object.values(value).filter((item): item is string => typeof item === "string");
+}
+
 function parseBrowserManifestJson(text: string): unknown | null {
   try {
     return JSON.parse(stripJsonLineComments(text));
@@ -307,6 +336,19 @@ function backgroundConsumerEntrypoints(
   for (const source of htmlScriptSources(page.textSample)) {
     const path = resolveExtensionResourcePath(backgroundPage, source);
     if (path) entrypoints.add(path);
+  }
+  return [...entrypoints];
+}
+
+function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): string[] {
+  const entrypoints = new Set(pagePaths);
+  for (const pagePath of pagePaths) {
+    const page = files.find((file) => file.path === pagePath);
+    if (!page?.textSample) continue;
+    for (const source of htmlScriptSources(page.textSample)) {
+      const path = resolveExtensionResourcePath(pagePath, source);
+      if (path) entrypoints.add(path);
+    }
   }
   return [...entrypoints];
 }

@@ -2,7 +2,7 @@ import type { DiffEntry, FileRecord, Finding, RiskLevel } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 
 export const BROWSER_RELEASE_MANIFEST_SCHEMA = "drydock.release-artifacts.v1";
-export const BROWSER_RULES_VERSION = "0.6.0";
+export const BROWSER_RULES_VERSION = "0.7.0";
 
 export const BROWSER_RULE_IDS = {
   metadataMismatch: "browser.metadata-mismatch",
@@ -55,6 +55,7 @@ export interface BrowserExtensionManifest {
   contentScriptEntrypoints: string[];
   externallyConnectableMatches: string[];
   backgroundEntrypoints: string[];
+  extensionPageEntrypoints: string[];
   contentSecurityPolicy: string | null;
 }
 
@@ -76,6 +77,7 @@ export interface BrowserAdapterDetails {
     contentScriptEntrypoints: string[];
     externallyConnectableMatches: string[];
     backgroundEntrypoints: string[];
+    extensionPageEntrypoints: string[];
     contentSecurityPolicy: string | null;
   };
 }
