@@ -346,7 +346,7 @@ export function dependencyEvidenceFindings(
         ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallRisk,
         evidence: `${path} → ${behaviors}`,
         reason: nativeExecution
-          ? "this release introduces a dependency whose install-time path can invoke a native executable; confirm that the binary and the process launch are expected before approving, because every consumer install inherits that native execution"
+          ? "this release introduces a dependency whose install-time path can invoke a native executable or load a native module; confirm that the binary and its install entrypoint are expected before approving, because every consumer install inherits that native execution"
           : !strong
             ? certainty === "observed"
               ? "this release introduces a dependency that fetches over the network while installing. That is how prebuilt-binary tooling works and also how a dropper works, and a scanner cannot tell them apart — confirm what it downloads and from where before approving, because after this release every consumer install makes that request"

@@ -91,10 +91,13 @@ function isBundledInStagedArtifact(
   if (!declared) return false;
 
   const packageJsonPath = `node_modules/${entry.name}/package.json`;
-  const packageJson = (options.stagedFiles ?? []).find(
-    (file) => file.path === packageJsonPath && file.textSample,
-  );
-  if (!packageJson?.textSample) return false;
+  const packageJson = (options.stagedFiles ?? []).find((file) => file.path === packageJsonPath);
+  if (!packageJson) return false;
+  // A declared child's manifest can be retained hash-only after the parent
+  // archive exhausts its nested-manifest headroom. Its presence still proves
+  // consumers receive embedded bytes; the bundled inspector will report the
+  // unreadable body as incomplete rather than substituting registry bytes.
+  if (!packageJson.textSample) return true;
   const identity = safeJson(packageJson.textSample);
   return (
     isRecord(identity) &&

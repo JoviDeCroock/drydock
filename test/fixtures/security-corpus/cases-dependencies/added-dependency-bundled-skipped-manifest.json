@@ -1,0 +1,44 @@
+{
+  "id": "added-dependency-bundled-skipped-manifest",
+  "title": "A bundled dependency with a hash-only manifest fails visibly",
+  "category": "dependency-introduction",
+  "intent": "A declared bundled child remains the exact code consumers receive even when archive retention cannot keep its nested manifest body. Drydock must report the embedded subtree as incomplete rather than substitute registry bytes for the review.",
+  "previousPackageJson": { "name": "bundled-parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "bundled-parent",
+    "version": "1.1.0",
+    "dependencies": { "embedded-unreadable": "1.0.0" },
+    "bundleDependencies": ["embedded-unreadable"]
+  },
+  "stagedFiles": [
+    {
+      "path": "node_modules/embedded-unreadable/package.json",
+      "size": 4096,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": ["content-skipped"]
+    }
+  ],
+  "dependencyArtifacts": {},
+  "expectedDependencies": [
+    {
+      "name": "embedded-unreadable",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": null,
+      "fileCount": 1,
+      "automaticExecution": []
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>embedded-unreadable"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

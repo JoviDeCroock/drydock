@@ -141,31 +141,64 @@ function hasDynamicModuleLoad(text: string): boolean {
   );
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token.type !== "ident") continue;
-    const callee = jsTokenText(text, token);
-    if (callee !== "require" && callee !== "import") continue;
-    const previous = tokens[index - 1];
-    const memberAccess =
-      previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
-    const receiver = tokens[index - 2];
-    const receiverPrevious = tokens[index - 3];
-    const moduleRequire =
-      callee === "require" &&
-      memberAccess &&
-      receiver?.type === "ident" &&
-      jsTokenText(text, receiver) === "module" &&
-      !(
-        receiverPrevious?.type === "punct" &&
-        [".", "?."].includes(jsTokenText(text, receiverPrevious))
-      );
-    if (memberAccess && !moduleRequire) {
+    let openIndex: number;
+    if (token.type === "ident") {
+      const callee = jsTokenText(text, token);
+      if (callee !== "require" && callee !== "import") continue;
+      const previous = tokens[index - 1];
+      const memberAccess =
+        previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
+      const receiver = tokens[index - 2];
+      const receiverPrevious = tokens[index - 3];
+      const moduleRequire =
+        callee === "require" &&
+        memberAccess &&
+        receiver?.type === "ident" &&
+        jsTokenText(text, receiver) === "module" &&
+        !(
+          receiverPrevious?.type === "punct" &&
+          [".", "?."].includes(jsTokenText(text, receiverPrevious))
+        );
+      if (memberAccess && !moduleRequire) continue;
+      const optionalCall = tokens[index + 1];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 2
+          : index + 1;
+    } else if (token.type === "string" && token.value === "require") {
+      const bracketOpen = tokens[index - 1];
+      const bracketClose = tokens[index + 1];
+      if (
+        bracketOpen?.type !== "punct" ||
+        jsTokenText(text, bracketOpen) !== "[" ||
+        bracketClose?.type !== "punct" ||
+        jsTokenText(text, bracketClose) !== "]"
+      ) {
+        continue;
+      }
+      const optionalMember = tokens[index - 2];
+      const receiverIndex =
+        optionalMember?.type === "punct" && jsTokenText(text, optionalMember) === "?."
+          ? index - 3
+          : index - 2;
+      const receiver = tokens[receiverIndex];
+      const receiverPrevious = tokens[receiverIndex - 1];
+      if (
+        receiver?.type !== "ident" ||
+        jsTokenText(text, receiver) !== "module" ||
+        (receiverPrevious?.type === "punct" &&
+          [".", "?."].includes(jsTokenText(text, receiverPrevious)))
+      ) {
+        continue;
+      }
+      const optionalCall = tokens[index + 2];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 3
+          : index + 2;
+    } else {
       continue;
     }
-    const optionalCall = tokens[index + 1];
-    const openIndex =
-      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-        ? index + 2
-        : index + 1;
     const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
     const argument = tokens[openIndex + 1];
@@ -185,7 +218,7 @@ interface DependencyInstallRiskClassification {
   severity: "medium" | "high" | "critical";
   certainty: "observed" | "unknown";
   strong: boolean;
-  /** The install path can invoke a native executable, rather than a downloader-shaped capability. */
+  /** The install path can invoke or load native code, rather than a downloader-shaped capability. */
   nativeExecution: boolean;
   observedCapabilities: string[];
 }
@@ -202,7 +235,7 @@ export function classifyDependencyInstallRisk(
     INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
   );
   const nativeExecution =
-    !provenDanger && hasNativeExecutionPair(evidence.installReachableCapabilities);
+    !provenDanger && hasReachableNativeExecution(evidence.installReachableCapabilities);
   const certainty = evidence.observation.risk === "observed" ? "observed" : "unknown";
   const observedCapabilities =
     certainty === "observed" ? evidence.installReachableCapabilities : evidence.capabilities;
@@ -250,18 +283,15 @@ function installScriptCapabilities(
   return [...capabilities];
 }
 
-function hasNativeExecutionPair(capabilities: string[]): boolean {
-  return (
-    capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact) &&
-    capabilities.includes(DETERMINISTIC_RULE_IDS.codeProcessExecution)
-  );
+function hasReachableNativeExecution(capabilities: string[]): boolean {
+  return capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact);
 }
 
 /** True only when a capability set proves danger on the install-reachable path. */
 export function hasObservedInstallRisk(capabilities: string[]): boolean {
   return (
     capabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId)) ||
-    hasNativeExecutionPair(capabilities)
+    hasReachableNativeExecution(capabilities)
   );
 }
 

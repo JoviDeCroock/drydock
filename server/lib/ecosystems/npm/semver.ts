@@ -193,7 +193,11 @@ function parseComparator(token: string): Comparator[] | null {
   }
   const minor = parsedMinor;
   const patch = wildcardIndex === 1 ? null : parsedPatch;
-  const pre = prerelease ? prerelease.split(".") : [];
+  // npm rejects prerelease suffixes on an omitted patch (`1.2-beta`) and
+  // ignores the suffix on an explicit wildcard (`1.2.x-beta`). Carrying that
+  // suffix into the wildcard floor would admit prereleases npm never installs.
+  if (prerelease && rawPatch === undefined) return null;
+  const pre = prerelease && wildcardIndex === -1 ? prerelease.split(".") : [];
 
   // Bare, equality, and inclusive major wildcards admit everything. Strict
   // major-wildcard comparators (`>x`, `<*`) are valid npm ranges that admit

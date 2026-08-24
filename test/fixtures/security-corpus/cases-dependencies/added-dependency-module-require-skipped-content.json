@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-module-require-skipped-content",
-  "title": "A dynamic module.require target keeps omitted dependency bytes incomplete",
+  "title": "A computed module require target keeps omitted dependency bytes incomplete",
   "category": "dependency-introduction",
-  "intent": "Node exposes module.require as a real CommonJS loader. When an install hook selects its target dynamically, any deliberately omitted dependency body can execute and must make the review visibly incomplete.",
+  "intent": "Node exposes module bracket require as the same CommonJS loader as module.require. When an install hook selects its target dynamically, any deliberately omitted dependency body can execute and must make the review visibly incomplete.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
@@ -29,7 +29,7 @@
           "path": "install.js",
           "size": 68,
           "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "textSample": "const target = './payload.' + 'data'; module.require(target)",
+          "textSample": "const target = './payload.' + 'data'; module['require'](target)",
           "flags": []
         },
         {
