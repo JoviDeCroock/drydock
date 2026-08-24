@@ -1,8 +1,13 @@
 import { useLocation } from "preact-iso";
-import { Card } from "../../components/Card";
 import { LinkButton } from "../../components/Button";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
+import {
+  ContentArticleCta,
+  ContentArticleHero,
+  ContentArticleLinks,
+  ContentArticleSections,
+  type ContentArticleSection,
+} from "../../features/public-content/ContentArticle";
 import { discoveryGuideSeoByPath, type DiscoveryGuidePath, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
@@ -12,9 +17,20 @@ interface GuideContent {
   heading: string;
   lead: string;
   details: string[];
-  sections: Array<{ label: string; heading: string; body: string }>;
+  sections: ContentArticleSection[];
   primary: { href: string; label: string };
   secondary: { href: string; label: string };
+  /**
+   * The closing ask. Written per guide rather than shared: seven prerendered
+   * pages repeating the landing's headline verbatim would read as template
+   * filler and duplicate the landing as a search result.
+   */
+  close: {
+    heading: string;
+    body: string;
+    action: { href: string; label: string };
+    detail?: string[];
+  };
 }
 
 const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
@@ -31,8 +47,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "The review",
-        heading: "Risk signals stay pinned to the changed bytes.",
-        body: "Deterministic checks flag install hooks, process execution, network access, credential reads, new binaries, suspicious package shape, and other supply-chain changes. Each finding points back to the relevant file and line.",
+        heading: "Risk signals stay tied to inspected evidence.",
+        body: "Deterministic checks flag install hooks, process execution, network access, credential reads, new binaries, suspicious package shape, and other supply-chain changes. Each finding points back to the relevant artifact evidence, with file and line context when available.",
       },
       {
         label: "The decision",
@@ -40,6 +56,12 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "The maintainer records a review decision, then completes or discards the stage through npm with npm's own 2FA step. Drydock needs read-only evidence access, not a token that can publish packages.",
       },
     ],
+    close: {
+      heading: "Stage your next npm publish.",
+      body: "Connect a read-only npm token, run your usual publish with a stage flag, and read the candidate tarball before you finish it. The 2FA step stays with npm.",
+      action: { href: "/docs#staged-publishing", label: "Set up npm staging" },
+      detail: ["read-only npm access", "you keep the final approval"],
+    },
     primary: { href: "/docs#staged-publishing", label: "Set up npm staging" },
     secondary: { href: "/diff", label: "Read a public diff" },
   },
@@ -65,6 +87,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "A monorepo upload can contain several packages. The workflow continues only after every package review is accepted; a rejection or malformed artifact prevents the protected publish job from proceeding.",
       },
     ],
+    close: {
+      heading: "Put a review between build and publish.",
+      body: "Add the Drydock protection rule to the environment your publish job already uses. The build keeps running; the upload just waits for a human before it reaches a registry.",
+      action: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
+    },
     primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
     secondary: { href: "/docs#gate-workflow", label: "See workflow examples" },
   },
@@ -90,6 +117,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "Drydock reviews the uploaded evidence and returns a gate decision. The workflow keeps its own trusted-publishing identity and uploads only after the human review succeeds.",
       },
     ],
+    close: {
+      heading: "Review the wheels before PyPI does.",
+      body: "Upload the built distributions from CI, gate the publish job on the review, and keep trusted publishing exactly where it is.",
+      action: { href: "/docs#workflow-gating", label: "Protect a PyPI workflow" },
+    },
     primary: { href: "/docs#workflow-gating", label: "Protect a PyPI workflow" },
     secondary: { href: "/diff", label: "Diff a PyPI project" },
   },
@@ -115,13 +147,18 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "GitHub holds the publish job and its credential. If the VSIX review is accepted, the workflow verifies and publishes the same uploaded artifact; rejection keeps the release out of the marketplace.",
       },
     ],
+    close: {
+      heading: "Read the VSIX your users will install.",
+      body: "Gate the marketplace publish job on a review of the packaged extension. The marketplace token never leaves your workflow.",
+      action: { href: "/docs#workflow-gating", label: "Protect a VS Code release" },
+    },
     primary: { href: "/docs#workflow-gating", label: "Protect a VS Code release" },
     secondary: { href: "/docs#gate-workflow", label: "Read the VS Code example" },
   },
   "/package-tarball-diff": {
     eyebrow: "Public package diff",
     heading: "Compare the package bytes that registries actually serve.",
-    lead: "Drydock can diff two public npm, PyPI, or atpm releases file by file, with deterministic supply-chain findings pinned to the changed lines. It requires no account and never installs the package.",
+    lead: "Drydock can diff two public npm, PyPI, or atpm releases file by file, with deterministic supply-chain findings tied to the relevant artifact evidence. It requires no account and never installs the package.",
     details: ["no account", "no installation", "npm, PyPI, and atpm"],
     sections: [
       {
@@ -131,7 +168,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Deterministic review",
-        heading: "The same version pair produces the same report.",
+        heading: "Every signal comes from a named, inspectable check.",
         body: "The anonymous surface runs deterministic checks only. Package code is treated as hostile evidence, never executed, and every signal remains inspectable in the underlying file diff.",
       },
       {
@@ -140,6 +177,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "Paste a pkg.pr.new URL to compare a pull-request preview with the latest public release. Maintainers can then use npm staging or a GitHub workflow gate to apply the same review to the final candidate.",
       },
     ],
+    close: {
+      heading: "Diff a package right now.",
+      body: "No account, no installation, no token. Pick two published versions and read what actually changed between the artifacts.",
+      action: { href: "/diff", label: "Diff a package" },
+    },
     primary: { href: "/diff", label: "Diff a package" },
     secondary: { href: "/docs#dependency-updates", label: "Add diffs to dependency PRs" },
   },
@@ -152,7 +194,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       {
         label: "Artifact isolation",
         heading: "Archives are parsed, not installed.",
-        body: "Drydock never runs lifecycle scripts, imports package modules, invokes package builds, renders package-provided active content, or shells out to package tooling. Archive traversal, links, malformed structures, and resource limits fail closed.",
+        body: "Drydock never runs lifecycle scripts, imports package modules, invokes package builds, renders package-provided active content, or shells out to package tooling. Traversal paths and non-regular entries are rejected; malformed archives fail the scan. Inspection caps produce explicit content-skipped findings or hash-only evidence so reviewers can see where full inspection stopped.",
       },
       {
         label: "Credentials",
@@ -165,6 +207,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "Optional AI review is advisory and cannot downgrade rule findings. Reports retain redacted evidence rather than raw archives by default, and Drydock never publishes a release or collects an approval code.",
       },
     ],
+    close: {
+      heading: "Check the boundary yourself.",
+      body: "The sandbox, the credential separation, and the fail-closed tests are all in the open repository. Read a public diff to see the same review boundary applied without an account.",
+      action: { href: "/diff", label: "Read a public diff" },
+    },
     primary: { href: "/docs#safety-model", label: "Read the safety guide" },
     secondary: {
       href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/security-model.md",
@@ -193,6 +240,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "The repository documents the Worker, D1, Dynamic Worker loader, optional queues and caches, GitHub App, npm connection, and deployment configuration needed to run an independent installation.",
       },
     ],
+    close: {
+      heading: "Run it, or read it.",
+      body: "Use the hosted service, deploy the same Worker in your own Cloudflare account, or start by reading the detection rules and deciding whether you agree with them.",
+      action: { href: "https://github.com/JoviDeCroock/drydock", label: "View the source" },
+    },
     primary: {
       href: "https://github.com/JoviDeCroock/drydock",
       label: "View the source",
@@ -212,6 +264,11 @@ export default function DiscoveryGuidePage() {
   const guide = GUIDES[path] ?? GUIDES["/package-tarball-diff"];
   const metadata =
     discoveryGuideSeoByPath[path] ?? discoveryGuideSeoByPath["/package-tarball-diff"];
+  const relatedGuides = GUIDE_PATHS.filter((guidePath) => guidePath !== path).map((guidePath) => ({
+    href: guidePath,
+    title: GUIDES[guidePath].eyebrow,
+    description: discoveryGuideSeoByPath[guidePath].description,
+  }));
 
   return (
     <PageShell
@@ -221,50 +278,35 @@ export default function DiscoveryGuidePage() {
       feedbackPosition="end"
     >
       <PageSeo metadata={metadata} />
-      <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">{guide.eyebrow}</Eyebrow>
-        <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          {guide.heading}
-        </h1>
-        <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">{guide.lead}</p>
-        <MonoDetail parts={guide.details} />
-        <div class="flex flex-wrap gap-3 mt-1">
-          <LinkButton href={guide.primary.href}>{guide.primary.label}</LinkButton>
-          <LinkButton href={guide.secondary.href} variant="secondary">
-            {guide.secondary.label}
-          </LinkButton>
-        </div>
-      </header>
+      <ContentArticleHero
+        eyebrow={guide.eyebrow}
+        heading={guide.heading}
+        lead={guide.lead}
+        details={guide.details}
+        actions={
+          <>
+            <LinkButton href={guide.primary.href}>{guide.primary.label}</LinkButton>
+            <LinkButton href={guide.secondary.href} variant="secondary">
+              {guide.secondary.label}
+            </LinkButton>
+          </>
+        }
+      />
 
-      <div class="flex flex-col gap-10">
-        {guide.sections.map((section) => (
-          <section key={section.label} class="flex flex-col gap-3">
-            <SectionLabel as="p">{section.label}</SectionLabel>
-            <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-              {section.heading}
-            </h2>
-            <p class="m-0 max-w-[680px] text-[14px] text-ink-muted leading-[1.65]">
-              {section.body}
-            </p>
-          </section>
-        ))}
-      </div>
+      <ContentArticleSections sections={guide.sections} />
 
-      <section class="flex flex-col gap-4">
-        <SectionLabel as="h2">Explore Drydock</SectionLabel>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {GUIDE_PATHS.filter((guidePath) => guidePath !== path).map((guidePath) => (
-            <a key={guidePath} href={guidePath} class="no-underline text-inherit">
-              <Card as="div" class="p-4 h-full flex flex-col gap-1.5 hover:border-border-strong">
-                <h3 class="m-0 text-[14px] font-medium">{GUIDES[guidePath].eyebrow}</h3>
-                <p class="m-0 text-[12px] leading-[1.55] text-ink-muted">
-                  {discoveryGuideSeoByPath[guidePath].description}
-                </p>
-              </Card>
-            </a>
-          ))}
-        </div>
-      </section>
+      {/* One button, not the hero's pair: repeating both a screen later reads
+          as a template, and a single decisive ask closes better. The close
+          names its own action so it can point somewhere the hero did not. */}
+      <ContentArticleCta
+        label="Get started"
+        heading={guide.close.heading}
+        body={guide.close.body}
+        actions={<LinkButton href={guide.close.action.href}>{guide.close.action.label}</LinkButton>}
+        detail={guide.close.detail}
+      />
+
+      <ContentArticleLinks label="Explore Drydock" links={relatedGuides} />
     </PageShell>
   );
 }

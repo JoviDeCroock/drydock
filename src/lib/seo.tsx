@@ -15,10 +15,12 @@ export {
   docsPageSeo,
   getPageSeoMetadata,
   homePageSeo,
+  INCIDENT_CASE_PATHS,
+  incidentCaseSeoByPath,
   packageDiffSeo,
   privacyPageSeo,
 } from "./seo-metadata";
-export type { DiscoveryGuidePath, PageSeoMetadata } from "./seo-metadata";
+export type { DiscoveryGuidePath, IncidentCasePath, PageSeoMetadata } from "./seo-metadata";
 
 interface PrerenderHeadElement {
   type: string;

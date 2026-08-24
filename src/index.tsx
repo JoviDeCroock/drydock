@@ -25,6 +25,7 @@ const GithubAppCallbackPage = lazy(() => import("./pages/Dashboard/GithubAppCall
 const PackageDiffPage = lazy(() => import("./pages/Diff"));
 const PublicReportPage = lazy(() => import("./pages/PublicReport"));
 const DiscoveryGuidePage = lazy(() => import("./pages/Guides"));
+const IncidentCasePage = lazy(() => import("./pages/Incidents"));
 const NotFoundPage = lazy(() => import("./pages/NotFound"));
 
 export function App() {
@@ -44,6 +45,8 @@ export function App() {
           <Route path="/open-source" component={DiscoveryGuidePage} />
           <Route path="/diff" component={PackageDiffPage} />
           <Route path="/diff/*" component={PackageDiffPage} />
+          <Route path="/incidents/node-ipc-peacenotwar" component={IncidentCasePage} />
+          <Route path="/incidents/es5-ext-postinstall" component={IncidentCasePage} />
           <Route path="/login" component={LoginPage} />
           <Route path="/register" component={RegisterPage} />
           <Route path="/verify-email" component={VerifyEmailPage} />
