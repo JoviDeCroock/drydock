@@ -1,4 +1,5 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
+import { isRootGypPath } from "../../tar-parser.js";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
@@ -238,22 +239,46 @@ export function lifecycleScriptSeedPaths(
   scripts: Record<string, string>,
   implicitScripts: Record<string, string>,
 ): string[] {
+  const installCommands = consumerInstallScriptCommands(scripts, implicitScripts);
   const tokens = new Set<string>();
-  for (const { command } of consumerInstallScriptCommands(scripts, implicitScripts)) {
+  for (const { command } of installCommands) {
     for (const token of scriptCommandTokens(command)) tokens.add(token);
   }
-  if (!tokens.size) return [];
-  const seeds: string[] = [];
+
+  // npm's implicit `node-gyp rebuild` does not name binding.gyp in the command,
+  // but node-gyp still reads every root gyp file and executes command
+  // substitutions inside it. Explicit lifecycle commands that invoke node-gyp
+  // have the same reachability. Seed the gyp files themselves and every package
+  // path they name so omitted action scripts cannot masquerade as complete
+  // install evidence.
+  const nodeGypRuns =
+    CONSUMER_INSTALL_LIFECYCLE_SCRIPTS.some((name) => invokesNodeGyp(implicitScripts[name])) ||
+    installCommands.some(({ command }) => invokesNodeGyp(command));
+  const seeds = new Set<string>();
+  if (nodeGypRuns) {
+    for (const file of files) {
+      if (!isRootGypPath(file.path)) continue;
+      seeds.add(stripPackagePrefix(file.path));
+      if (!file.textSample) continue;
+      for (const token of scriptCommandTokens(file.textSample)) tokens.add(token);
+    }
+  }
+
+  if (!tokens.size) return [...seeds];
   for (const file of files) {
     const candidates = scriptPathCandidates(file.path);
     for (const candidate of candidates) {
       if (tokens.has(candidate)) {
-        seeds.push(stripPackagePrefix(file.path));
+        seeds.add(stripPackagePrefix(file.path));
         break;
       }
     }
   }
-  return seeds;
+  return [...seeds];
+}
+
+function invokesNodeGyp(command: string | undefined): boolean {
+  return typeof command === "string" && /\bnode-gyp\b/i.test(command);
 }
 
 export interface ConsumerInstallScriptCommand {

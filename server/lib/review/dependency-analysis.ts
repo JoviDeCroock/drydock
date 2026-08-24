@@ -23,7 +23,6 @@ const AUTOMATIC_EXECUTION_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.installScript,
   DETERMINISTIC_RULE_IDS.installScriptPreinstall,
   DETERMINISTIC_RULE_IDS.installScriptImplicitNodeGyp,
-  DETERMINISTIC_RULE_IDS.installScriptGypCommandSubstitution,
 ]);
 
 /** Install-time behaviors with no benign reading. */
@@ -146,14 +145,32 @@ function hasDynamicModuleLoad(text: string): boolean {
     const callee = jsTokenText(text, token);
     if (callee !== "require" && callee !== "import") continue;
     const previous = tokens[index - 1];
-    if (previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous))) {
+    const memberAccess =
+      previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
+    const receiver = tokens[index - 2];
+    const receiverPrevious = tokens[index - 3];
+    const moduleRequire =
+      callee === "require" &&
+      memberAccess &&
+      receiver?.type === "ident" &&
+      jsTokenText(text, receiver) === "module" &&
+      !(
+        receiverPrevious?.type === "punct" &&
+        [".", "?."].includes(jsTokenText(text, receiverPrevious))
+      );
+    if (memberAccess && !moduleRequire) {
       continue;
     }
-    const open = tokens[index + 1];
+    const optionalCall = tokens[index + 1];
+    const openIndex =
+      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+        ? index + 2
+        : index + 1;
+    const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
-    const argument = tokens[index + 2];
+    const argument = tokens[openIndex + 1];
     if (!argument || (argument.type === "punct" && jsTokenText(text, argument) === ")")) continue;
-    const afterArgument = tokens[index + 3];
+    const afterArgument = tokens[openIndex + 2];
     const argumentEndsSpecifier =
       afterArgument?.type === "punct" && [")", ","].includes(jsTokenText(text, afterArgument));
     const staticSpecifier =
