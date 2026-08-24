@@ -110,6 +110,7 @@ export function buildBrowserFindings(args: {
         ...extensionManifest.userScriptEntrypoints,
         ...extensionManifest.extensionPageEntrypoints,
       ],
+      consumerRootRelativeModuleImports: true,
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),

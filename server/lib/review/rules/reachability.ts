@@ -3,15 +3,20 @@ import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
 // Static require/import/importScripts edges between files inside the package.
-// The walk is a conservative over-approximation: bare dependency imports and
-// dynamic expressions cannot pull a packaged file into the consumer graph, and
-// any file we cannot prove reachable simply keeps full finding severity, so
-// misses fail toward louder findings, never quieter ones.
+// The walk is conservative: bare dependency imports and dynamic expressions
+// cannot pull a packaged file into the consumer graph. An unproven test-path
+// edge receives the documented test-only demotion, so ecosystem-specific URL
+// resolution must be opted in when the runtime supports it.
 const RELATIVE_SPECIFIER_PATTERNS = [
   /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
+];
+const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [
+  /\bimport\s*\(\s*["'](\/[^"'\n]+)["']\s*\)/g,
+  /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\/[^"'\n]+)["']/g,
+  /\b(?:import|export)\s+["'](\/[^"'\n]+)["']/g,
 ];
 const IMPORT_SCRIPTS_CALL_PATTERN = /\bimportScripts\s*\(([^)]*)\)/g;
 const STATIC_STRING_PATTERN = /["']([^"'\n]+)["']/g;
@@ -42,6 +47,7 @@ export function consumerReachablePaths(
   packageJson: PackageJsonSummary | null,
   extraSeedPaths: string[] = [],
   codePatternSet: CodePatternSet | undefined = "javascript",
+  rootRelativeModuleImports = false,
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -63,7 +69,7 @@ export function consumerReachablePaths(
     reachable.add(path);
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
-    for (const specifier of relativeSpecifiers(file.textSample)) {
+    for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
       const resolved = resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
@@ -256,9 +262,12 @@ export function scriptCommandTokens(command: string): string[] {
   );
 }
 
-function relativeSpecifiers(text: string): string[] {
+function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): string[] {
   const specifiers: string[] = [];
-  for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
+  const patterns = rootRelativeModuleImports
+    ? [...RELATIVE_SPECIFIER_PATTERNS, ...ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS]
+    : RELATIVE_SPECIFIER_PATTERNS;
+  for (const pattern of patterns) {
     pattern.lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
       specifiers.push(match[1]);

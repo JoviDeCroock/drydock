@@ -48,17 +48,22 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
 
   const extensionId = geckoExtensionId(raw, raw.manifest_version);
   const background = isRecord(raw.background) ? raw.background : {};
-  const declaredBackgroundEntrypoints = [
-    ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
-    ...stringList(background.scripts),
-    ...(typeof background.page === "string" ? [background.page] : []),
-  ].filter(isSafeManifestPath);
+  const declaredBackgroundPage =
+    typeof background.page === "string"
+      ? (manifestResourcePaths([background.page], { trimLeadingSlash: true })[0] ?? null)
+      : null;
+  const declaredBackgroundEntrypoints = manifestResourcePaths(
+    [
+      ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
+      ...stringList(background.scripts),
+      ...(typeof background.page === "string" ? [background.page] : []),
+    ],
+    { trimLeadingSlash: true },
+  );
   const backgroundEntrypoints = backgroundConsumerEntrypoints(
     files,
     declaredBackgroundEntrypoints,
-    typeof background.page === "string" && isSafeManifestPath(background.page)
-      ? background.page
-      : null,
+    declaredBackgroundPage,
   );
   const extensionPageEntrypoints = htmlPageConsumerEntrypoints(
     files,

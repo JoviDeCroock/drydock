@@ -176,7 +176,18 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   const redactedPreviousFiles = baseline.artifact ? redactFileRecords(baseline.artifact.files) : [];
   const redactedStagedManifest = redactJson(staged.artifact.manifest ?? null);
   const redactedPreviousManifest = redactJson(baseline.artifact?.manifest ?? null);
-  const redactedDetails = redactJson(adapter.summarizeDetails(staged.details));
+  const summarizedDetails = adapter.summarizeDetails(staged.details);
+  const redactedDetails = redactJson(summarizedDetails);
+  const publicPackageIdentity = summarizedDetails?.publicPackageIdentity;
+  if (
+    redactedDetails &&
+    (typeof publicPackageIdentity === "string" || publicPackageIdentity === null)
+  ) {
+    // This adapter-designated value is intentionally public: name-indexed
+    // reports and badges must use the exact stable identity. Other copies in
+    // the opaque adapter details remain subject to ordinary secret redaction.
+    redactedDetails.publicPackageIdentity = publicPackageIdentity;
+  }
 
   const annotatedFindings = annotateFindingsWithDiffStatus(ruleFindings, diff.fileDiff, {
     previousFiles: redactedPreviousFiles,

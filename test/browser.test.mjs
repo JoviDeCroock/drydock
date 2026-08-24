@@ -7,6 +7,7 @@ import {
   inferBrowserArtifactKind,
   parseBrowserExtensionManifest,
 } from "../server/lib/ecosystems/browser";
+import { scanPublicPackageIdentity } from "../server/lib/public-feed";
 import { computeDiff, runDeterministicFindings } from "../server/lib/scan/pipeline-phases";
 
 const SHA = "ab".repeat(32);
@@ -131,6 +132,35 @@ describe("browser extension review adapter", () => {
     });
     const firefox = await browserAdapter.acquireStaged({}, firefoxInput, { dispose() {} });
     expect(browserAdapter.historyPackageName?.({ details: firefox.details })).toBe(geckoId);
+  });
+
+  test("preserves a token-shaped stable ID only in the designated public identity field", async () => {
+    const path = "dist/tab-helper.xpi";
+    const geckoId = `ghp_${"a".repeat(20)}@example.invalid`;
+    const input = browserAdapter.parseInput({
+      manifest: buildBrowserReleaseManifest(geckoId, "1.2.0", [{ path, sha256: SHA }]),
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ browser_specific_settings: { gecko: { id: geckoId } } })],
+      },
+    });
+    const staged = await browserAdapter.acquireStaged({}, input, { dispose() {} });
+    const baseline = await browserAdapter.acquireBaseline({}, input, { dispose() {} }, staged);
+    const resolved = { staged, baseline };
+    const findings = runDeterministicFindings(browserAdapter, resolved, computeDiff(resolved));
+
+    expect(findings.redactedDetails).toMatchObject({
+      artifact: { extensionId: "[REDACTED_GITHUB_TOKEN]@example.invalid" },
+      publicPackageIdentity: geckoId,
+    });
+    expect(
+      scanPublicPackageIdentity(
+        "workflow_gate",
+        { stagedPublish: findings.redactedDetails },
+        "Tab helper",
+      ),
+    ).toBe(geckoId);
   });
 
   test("fails closed without a root extension manifest", () => {
@@ -266,6 +296,47 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows a root-relative background module and its root-relative import", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({
+      background: { service_worker: "/scripts/background.js", type: "module" },
+    });
+    expect(parseBrowserExtensionManifest([manifestRecord]).manifest.backgroundEntrypoints).toEqual([
+      "scripts/background.js",
+    ]);
+
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestRecord,
+          {
+            path: "scripts/background.js",
+            size: 27,
+            sha256: "5a".repeat(32),
+            flags: [],
+            textSample: 'import "/tests/payload.js";',
+          },
+          {
+            path: "tests/payload.js",
+            size: 14,
+            sha256: "5b".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("treats Manifest V2 user_scripts api_script as consumer reachable", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -312,7 +383,7 @@ describe("browser extension review adapter", () => {
         files: [
           manifestFile({
             manifest_version: 2,
-            background: { page: "pages/background.html" },
+            background: { page: "/pages/background.html" },
           }),
           {
             path: "pages/background.html",

@@ -20,6 +20,12 @@ export interface DeterministicFindingOptions {
    */
   consumerEntrypointPaths?: string[];
   /**
+   * Follow `/path.js` ESM imports from consumer entrypoints as artifact-root
+   * resources. Browser extensions use URL resolution for these specifiers;
+   * npm packages must keep treating them as filesystem-absolute imports.
+   */
+  consumerRootRelativeModuleImports?: boolean;
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -80,6 +86,7 @@ export function buildRuleContext(
         ...(options.consumerEntrypointPaths ?? []),
       ],
       options.codePatternSet,
+      options.consumerRootRelativeModuleImports,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
