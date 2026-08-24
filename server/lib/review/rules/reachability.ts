@@ -1,5 +1,6 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
 import { isRootGypPath } from "../../tar-parser.js";
+import { jsTokenText, tokenizeJs, type JsToken } from "../../platform/js-lexer";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
@@ -19,10 +20,102 @@ const RELATIVE_SPECIFIER_PATTERNS = [
   // module import. Keep statically named child-process and shell-source targets
   // in the same conservative graph so a skipped body cannot look inspected.
   /\b(?:execFile|execFileSync|fork|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
-  /\b(?:execFile|execFileSync|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`]node(?:js)?["'`]\s*,\s*\[[^\]\n]*?["'`](\.\.?\/[^"'`\n]+)["'`]/g,
   /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
   /(?:^|[;\n&|]\s*)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
+
+const NODE_INTERPRETER_CALLEES = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
+
+export interface NodeInterpreterArgAnalysis {
+  paths: string[];
+  hasDynamic: boolean;
+}
+
+/** Static package paths and unresolved expressions passed through a Node child-process argv. */
+export function analyzeNodeInterpreterArgs(
+  text: string,
+  inputTokens?: JsToken[],
+): NodeInterpreterArgAnalysis {
+  const tokens =
+    inputTokens ??
+    tokenizeJs(text).filter((token) => token.type !== "ws" && token.type !== "comment");
+  const paths = new Set<string>();
+  let hasDynamic = false;
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const callee = tokens[index];
+    if (callee.type !== "ident" || !NODE_INTERPRETER_CALLEES.has(jsTokenText(text, callee))) {
+      continue;
+    }
+    const optionalCall = tokens[index + 1];
+    const openIndex =
+      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+        ? index + 2
+        : index + 1;
+    const open = tokens[openIndex];
+    const interpreter = tokens[openIndex + 1];
+    const comma = tokens[openIndex + 2];
+    if (
+      open?.type !== "punct" ||
+      jsTokenText(text, open) !== "(" ||
+      interpreter?.type !== "string" ||
+      !["node", "nodejs"].includes(interpreter.value ?? "") ||
+      comma?.type !== "punct" ||
+      jsTokenText(text, comma) !== ","
+    ) {
+      continue;
+    }
+
+    const argv = tokens[openIndex + 3];
+    // `spawn("node", options)` supplies no argv. Any other non-array value is
+    // computed and can select an omitted package file at runtime.
+    if (argv?.type === "punct" && jsTokenText(text, argv) === "{") continue;
+    if (argv?.type !== "punct" || jsTokenText(text, argv) !== "[") {
+      hasDynamic = true;
+      continue;
+    }
+
+    const literalArgs: string[] = [];
+    let closed = false;
+    for (let argIndex = openIndex + 4; argIndex < tokens.length; argIndex += 1) {
+      const arg = tokens[argIndex];
+      const value = jsTokenText(text, arg);
+      if (arg.type === "punct" && value === "]") {
+        closed = true;
+        break;
+      }
+      if (arg.type === "punct" && value === ",") continue;
+      if (arg.type === "string") {
+        literalArgs.push(arg.value ?? "");
+        continue;
+      }
+      if (arg.type === "template" && !value.includes("${")) {
+        literalArgs.push(value.slice(1, -1));
+        continue;
+      }
+      hasDynamic = true;
+    }
+    if (!closed) hasDynamic = true;
+
+    for (const [argIndex, arg] of literalArgs.entries()) {
+      const directPath = relativeNodeArgumentPath(arg);
+      if (directPath) paths.add(directPath);
+      if (["-e", "--eval", "-p", "--print"].includes(literalArgs[argIndex - 1] ?? "")) {
+        for (const path of regexRelativeSpecifiers(arg)) paths.add(path);
+      }
+    }
+  }
+
+  return { paths: [...paths], hasDynamic };
+}
+
+function relativeNodeArgumentPath(value: string): string | null {
+  if (value.startsWith("./") || value.startsWith("../")) return value;
+  const optionValue = value.slice(value.indexOf("=") + 1);
+  return optionValue !== value && (optionValue.startsWith("./") || optionValue.startsWith("../"))
+    ? optionValue
+    : null;
+}
 
 const RESOLUTION_SUFFIXES = [
   "",
@@ -385,6 +478,10 @@ export function scriptCommandTokens(command: string): string[] {
 }
 
 function relativeSpecifiers(text: string): string[] {
+  return [...regexRelativeSpecifiers(text), ...analyzeNodeInterpreterArgs(text).paths];
+}
+
+function regexRelativeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
   for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;
