@@ -1,0 +1,26 @@
+{
+  "id": "browser-optional-broad-browser-control",
+  "title": "Manifest V2 extension with optional all-sites and browser-control access",
+  "category": "browser-extension",
+  "intent": "Optional Manifest V2 host patterns and high-impact browser-control permissions must remain authoritative deterministic evidence.",
+  "slug": "optional-control-helper",
+  "extensionId": "optional-control-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "9393939393939393939393939393939393939393939393939393939393939393",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 330,
+      "sha256": "9494949494949494949494949494949494949494949494949494949494949494",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Optional control helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"optional-control-helper@example.invalid\" } },\n  \"permissions\": [\"browsingData\", \"declarativeNetRequestWithHostAccess\", \"webRequestAuthProvider\"],\n  \"optional_permissions\": [\"<all_urls>\"]\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.privileged-permission", "severity": "high", "file": "manifest.json" },
+    { "ruleId": "browser.broad-host-access", "severity": "high", "file": "manifest.json" }
+  ]
+}

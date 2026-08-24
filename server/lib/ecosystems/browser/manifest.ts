@@ -1,7 +1,6 @@
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
 import { isSafeManifestPath } from "../../platform/path-safety";
 import type { FileRecord, PackageJsonSummary } from "../../review";
-import { safeJson } from "../../review/rules";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
   BROWSER_RELEASE_MANIFEST_SCHEMA,
@@ -33,7 +32,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
   assertUniqueBrowserPaths(files);
   const file = findBrowserManifestFile(files);
   if (!file?.textSample) throw new Error("browser extension must include a root manifest.json");
-  const raw = safeJson(file.textSample);
+  const raw = parseBrowserManifestJson(file.textSample);
   if (!isRecord(raw)) throw new Error("browser extension manifest.json must be an object");
 
   const name = safeIdentityText(raw.name, "manifest.json name", 128);
@@ -45,11 +44,18 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
 
   const extensionId = geckoExtensionId(raw);
   const background = isRecord(raw.background) ? raw.background : {};
-  const backgroundEntrypoints = [
+  const declaredBackgroundEntrypoints = [
     ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
     ...stringList(background.scripts),
     ...(typeof background.page === "string" ? [background.page] : []),
   ].filter(isSafeManifestPath);
+  const backgroundEntrypoints = backgroundConsumerEntrypoints(
+    files,
+    declaredBackgroundEntrypoints,
+    typeof background.page === "string" && isSafeManifestPath(background.page)
+      ? background.page
+      : null,
+  );
   const csp = raw.content_security_policy;
   const contentSecurityPolicy =
     typeof csp === "string"
@@ -244,6 +250,96 @@ function stringList(value: unknown): string[] {
 function nestedStringList(value: unknown, key: string): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => (isRecord(item) ? stringList(item[key]) : []));
+}
+
+function parseBrowserManifestJson(text: string): unknown | null {
+  try {
+    return JSON.parse(stripJsonLineComments(text));
+  } catch {
+    return null;
+  }
+}
+
+// Firefox accepts line comments in manifest.json. Strip only comments outside
+// JSON strings, preserving newlines and character positions for finding lines.
+function stripJsonLineComments(text: string): string {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      output += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      output += character;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "/") {
+      output += "  ";
+      index += 2;
+      while (index < text.length && text[index] !== "\n" && text[index] !== "\r") {
+        output += " ";
+        index += 1;
+      }
+      if (index < text.length) output += text[index];
+      continue;
+    }
+    output += character;
+  }
+  return output;
+}
+
+function backgroundConsumerEntrypoints(
+  files: FileRecord[],
+  declaredEntrypoints: string[],
+  backgroundPage: string | null,
+): string[] {
+  const entrypoints = new Set(declaredEntrypoints);
+  if (!backgroundPage) return [...entrypoints];
+  const page = files.find((file) => file.path === backgroundPage);
+  if (!page?.textSample) return [...entrypoints];
+  for (const source of htmlScriptSources(page.textSample)) {
+    const path = resolveExtensionResourcePath(backgroundPage, source);
+    if (path) entrypoints.add(path);
+  }
+  return [...entrypoints];
+}
+
+function htmlScriptSources(html: string): string[] {
+  const sources: string[] = [];
+  const scriptSourcePattern =
+    /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))[^>]*>/gi;
+  for (const match of html.matchAll(scriptSourcePattern)) {
+    const source = match[1] ?? match[2] ?? match[3];
+    if (source) sources.push(source);
+  }
+  return sources;
+}
+
+function resolveExtensionResourcePath(pagePath: string, rawSource: string): string | null {
+  let source = rawSource.trim().split(/[?#]/, 1)[0];
+  if (!source || source.includes("\\") || source.startsWith("//")) return null;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(source)) return null;
+
+  const parts = source.startsWith("/") ? [] : pagePath.split("/").slice(0, -1);
+  if (source.startsWith("/")) source = source.slice(1);
+  for (const segment of source.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!parts.length) return null;
+      parts.pop();
+    } else {
+      parts.push(segment);
+    }
+  }
+  const path = parts.join("/");
+  return isSafeManifestPath(path) ? path : null;
 }
 
 function assertUniqueBrowserPaths(files: FileRecord[]): void {

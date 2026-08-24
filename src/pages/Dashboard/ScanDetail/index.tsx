@@ -305,11 +305,7 @@ export default function ScanDetailPage() {
       {isWorkflowGate && detail ? (
         <GateContextPanel
           gate={gate}
-          packageName={scanPublicPackageIdentity(
-            detail.scan.source ?? "",
-            detail.scan.summaryJson,
-            detail.scan.packageName,
-          )}
+          packageName={detail.scan.packageName}
           canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}
@@ -482,7 +478,11 @@ export default function ScanDetailPage() {
           errorSignal={model.shareError}
           attestationAvailableSignal={model.attestationAvailable}
           badgeEcosystem={scanEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
-          packageName={detail.scan.packageName}
+          packageName={scanPublicPackageIdentity(
+            detail.scan.source ?? "",
+            detail.scan.summaryJson,
+            detail.scan.packageName,
+          )}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}

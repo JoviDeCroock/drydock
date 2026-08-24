@@ -38,12 +38,11 @@ export const browserWorkflowGateAdapter: WorkflowGateAdapter = {
   },
 
   detectArtifact(contents: ArchiveContents): WorkflowArtifactKind | null {
-    try {
-      parseBrowserExtensionManifest(contents.files);
-      return "zip";
-    } catch {
-      return null;
-    }
+    void contents;
+    // Browser ZIP/XPI artifacts have unambiguous file extensions. Content
+    // detection only runs for extension-ambiguous tar archives, where a root
+    // manifest.json may legitimately belong to an npm package instead.
+    return null;
   },
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {

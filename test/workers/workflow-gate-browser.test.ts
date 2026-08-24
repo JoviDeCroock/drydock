@@ -26,6 +26,9 @@ describe("browser extension workflow-gate adapter", () => {
       ecosystem: "browser",
       kind: "xpi",
     });
+    expect(
+      browserWorkflowGateAdapter.detectArtifact({ files: [manifestFile()], packageJson: null }),
+    ).toBeNull();
   });
 
   test("parses extension bytes through the shared ZIP sandbox and prepares a candidate", async () => {

@@ -102,6 +102,27 @@ describe("workflow-gate registry with npm registered", () => {
     ).toEqual([{ ecosystem: "npm", kind: "tarball" }]);
   });
 
+  test("keeps npm routing when a tarball also contains a browser manifest", () => {
+    expect(
+      detectArchiveEcosystems({
+        files: [
+          {
+            path: "manifest.json",
+            size: 1,
+            sha256: "x",
+            flags: [],
+            textSample: JSON.stringify({
+              manifest_version: 3,
+              name: "Bundled browser fixture",
+              version: "1.0.0",
+            }),
+          },
+        ],
+        packageJson: { name: "left-pad", version: "1.0.0" },
+      }),
+    ).toEqual([{ ecosystem: "npm", kind: "tarball" }]);
+  });
+
   test("reports an archive that claims both ecosystems (root decoy PKG-INFO)", () => {
     // An npm tarball with a root PKG-INFO claims both ecosystems; the resolver
     // must refuse to guess rather than route by registration order.

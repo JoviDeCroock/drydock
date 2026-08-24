@@ -22,25 +22,44 @@ import {
 
 const PRIVILEGED_PERMISSIONS = new Set([
   "bookmarks",
+  "browserSettings",
+  "browsingData",
   "clipboardRead",
   "clipboardWrite",
+  "contentSettings",
+  "contextualIdentities",
   "cookies",
   "debugger",
+  "declarativeNetRequest",
+  "declarativeNetRequestFeedback",
+  "declarativeNetRequestWithHostAccess",
+  "dns",
   "downloads",
+  "downloads.open",
   "geolocation",
   "history",
   "identity",
   "identity.email",
+  "idle",
   "management",
   "nativeMessaging",
+  "pageCapture",
+  "pkcs11",
   "privacy",
   "proxy",
+  "scripting",
+  "search",
   "sessions",
+  "tabHide",
   "tabs",
   "topSites",
+  "userScripts",
   "webNavigation",
   "webRequest",
+  "webRequestAuthProvider",
   "webRequestBlocking",
+  "webRequestFilterResponse",
+  "webRequestFilterResponse.serviceWorkerScript",
 ]);
 const ALL_URL_PATTERNS = new Set(["<all_urls>", "*://*/*", "https://*/*", "http://*/*"]);
 
@@ -119,6 +138,7 @@ function browserManifestFindings(
     ["host_permissions", manifest.hostPermissions],
     ["optional_host_permissions", manifest.optionalHostPermissions],
     ["permissions", manifest.permissions],
+    ["optional_permissions", manifest.optionalPermissions],
   ]).find(({ value }) => isAllUrlsPattern(value));
   if (broadHost) {
     findings.push(

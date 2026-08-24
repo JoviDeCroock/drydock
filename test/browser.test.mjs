@@ -51,6 +51,27 @@ describe("browser extension review adapter", () => {
     expect(manifest.contentScriptMatches).toEqual(["https://example.invalid/*"]);
   });
 
+  test("accepts manifest line comments without treating URL text as a comment", () => {
+    const textSample = `{
+      // Firefox permits line comments in extension manifests.
+      "manifest_version": 3,
+      "name": "Tab helper // reviewed",
+      "version": "1.2.0",
+      "homepage_url": "https://example.invalid/project"
+    }`;
+    const { manifest } = parseBrowserExtensionManifest([
+      {
+        path: "manifest.json",
+        size: textSample.length,
+        sha256: "12".repeat(32),
+        flags: [],
+        textSample,
+      },
+    ]);
+    expect(manifest.name).toBe("Tab helper // reviewed");
+    expect(manifest.version).toBe("1.2.0");
+  });
+
   test("uses only an embedded stable ID for cross-scan history", async () => {
     const path = "dist/tab-helper.zip";
     const chromeInput = browserAdapter.parseInput({
@@ -172,6 +193,44 @@ describe("browser extension review adapter", () => {
     expect(review.risk).toBe("high");
   });
 
+  test("follows scripts loaded by a manifest background page", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({
+            manifest_version: 2,
+            background: { page: "pages/background.html" },
+          }),
+          {
+            path: "pages/background.html",
+            size: 120,
+            sha256: "45".repeat(32),
+            flags: [],
+            textSample:
+              '<script src="../tests/background.js?build=1"></script><script src="https://example.invalid/remote.js"></script>',
+          },
+          {
+            path: "tests/background.js",
+            size: 14,
+            sha256: "46".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/background.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("rejects adapter inputs that are not bound to the declared archive", () => {
     const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
       { path: "dist/tab-helper.zip", sha256: SHA },
@@ -227,25 +286,44 @@ describe("browser extension review adapter", () => {
 
   test.each([
     "bookmarks",
+    "browserSettings",
+    "browsingData",
     "clipboardRead",
     "clipboardWrite",
+    "contentSettings",
+    "contextualIdentities",
     "cookies",
     "debugger",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "declarativeNetRequestWithHostAccess",
+    "dns",
     "downloads",
+    "downloads.open",
     "geolocation",
     "history",
     "identity",
     "identity.email",
+    "idle",
     "management",
     "nativeMessaging",
+    "pageCapture",
+    "pkcs11",
     "privacy",
     "proxy",
+    "scripting",
+    "search",
     "sessions",
+    "tabHide",
     "tabs",
     "topSites",
+    "userScripts",
     "webNavigation",
     "webRequest",
+    "webRequestAuthProvider",
     "webRequestBlocking",
+    "webRequestFilterResponse",
+    "webRequestFilterResponse.serviceWorkerScript",
   ])("flags sensitive browser permission %s", (permission) => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
@@ -309,5 +387,26 @@ describe("browser extension review adapter", () => {
     expect(
       review.ruleFindings.find((finding) => finding.ruleId === "browser.broad-host-access")?.line,
     ).toBe(lines.findIndex((line) => line.includes('"optional_host_permissions"')) + 1);
+  });
+
+  test("flags Manifest V2 optional host access on its declaring property", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile(
+      { manifest_version: 2, optional_permissions: ["<all_urls>"] },
+      true,
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files: [manifestRecord] },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "browser.broad-host-access",
+    );
+    expect(finding?.line).toBe(
+      manifestRecord.textSample
+        .split("\n")
+        .findIndex((line) => line.includes('"optional_permissions"')) + 1,
+    );
   });
 });
