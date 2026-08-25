@@ -319,6 +319,11 @@ export const ScanListModel = createModel(() => {
         }
         this.scans.value = [...this.scans.value, ...data.scans];
         this.nextCursor.value = data.nextCursor;
+        // The owner can change the approval bar in another tab between pages.
+        // Each response carries the policy used to compute its counts, so keep
+        // the denominator aligned with the newest page instead of mixing new
+        // tallies with the first page's stale requirement.
+        this.requiredApprovals.value = data.requiredApprovals ?? 1;
         this.error.value = null;
       } catch (err) {
         if (mutationId === listMutationId && activeOrganizationId.peek() === organizationId) {

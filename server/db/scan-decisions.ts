@@ -30,7 +30,7 @@ import {
   type ScanApprovalVote,
 } from "./scan-approvals";
 import { getScan } from "./scan-detail";
-import { githubWorkflowGates, organizations, scanApprovals, scans } from "./schema";
+import { githubWorkflowGates, organizations, scanApprovals, scanEvents, scans } from "./schema";
 
 export const SCAN_DECISIONS = ["publish", "no_publish"] as const;
 export type ScanDecision = (typeof SCAN_DECISIONS)[number];
@@ -187,6 +187,7 @@ async function applyDecisionVote(
 ): Promise<RecordScanDecisionResult> {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
+  let decisionReason = reason;
 
   const vote = await upsertScanApproval(db, {
     scanId: input.scanId,
@@ -197,7 +198,8 @@ async function applyDecisionVote(
     now,
     hardenOnly,
   });
-  if (vote === "already_voted") return { outcome: "already_voted" };
+  if (vote === "not_member") return { outcome: "not_actionable" };
+  const approvalRecorded = vote === "recorded";
 
   // Read the policy only after the vote is durable. A concurrent policy batch
   // that commits just before this insert cannot otherwise see the new row, and
@@ -226,6 +228,12 @@ async function applyDecisionVote(
 
     policy = nextPolicy;
     votes = nextVotes;
+    // A retry of an already-durable gate vote must preserve the comment that
+    // was actually recorded, rather than replacing decision attribution with
+    // whatever the recovery request happened to submit.
+    decisionReason = approvalRecorded
+      ? reason
+      : (nextVotes.find((candidate) => candidate.userId === input.actorUserId)?.reason ?? reason);
     verdict = resolveApprovalVerdict(
       votes.filter((candidate) => candidate.eligible),
       policy.required,
@@ -253,7 +261,14 @@ async function applyDecisionVote(
         .returning({ id: scans.id });
       if (confirmed.length === 0) continue;
       verdictChanged = false;
-      resolvedScan = approvalScanAfter(live, verdict, false, input.actorUserId, reason, now);
+      resolvedScan = approvalScanAfter(
+        live,
+        verdict,
+        false,
+        input.actorUserId,
+        decisionReason,
+        now,
+      );
       break;
     }
 
@@ -262,7 +277,7 @@ async function applyDecisionVote(
         .update(scans)
         .set({
           decision: verdict,
-          decisionReason: reason,
+          decisionReason,
           // The member whose vote completed the bar owns the decision; the full
           // roster of who else approved lives in `scan_approvals`.
           decidedByUserId: input.actorUserId,
@@ -306,29 +321,36 @@ async function applyDecisionVote(
     }
 
     verdictChanged = true;
-    resolvedScan = approvalScanAfter(live, verdict, true, input.actorUserId, reason, now);
+    resolvedScan = approvalScanAfter(live, verdict, true, input.actorUserId, decisionReason, now);
     break;
   }
 
   if (!policy || !resolvedScan) return { outcome: "not_actionable" };
+
+  const eligibleApprovedCount = votes.filter(
+    (vote) => vote.eligible && vote.decision === "publish",
+  ).length;
+  await recordDecisionAuditTrail(db, {
+    input,
+    reason: decisionReason,
+    policy,
+    eligibleApprovedCount,
+    verdict,
+    verdictChanged,
+    approvalRecorded,
+  });
+
+  // A gate retry may find the durable vote left by an interrupted request. If
+  // it still did not move the verdict, preserve the duplicate-vote 409; if the
+  // saved roster was already sufficient, the transition above repairs the
+  // package and lets the route continue to aggregate the gate.
+  if (!approvalRecorded && !verdictChanged) return { outcome: "already_voted" };
 
   const approvals = buildScanApprovalState({
     votes,
     policy,
     viewerUserId: input.actorUserId,
     scan: resolvedScan,
-  });
-  const eligibleApprovedCount = votes.filter(
-    (vote) => vote.eligible && vote.decision === "publish",
-  ).length;
-
-  await recordDecisionAuditTrail(db, {
-    input,
-    reason,
-    policy,
-    eligibleApprovedCount,
-    verdict,
-    verdictChanged,
   });
 
   if (verdictChanged && verdict) {
@@ -438,9 +460,26 @@ async function recordDecisionAuditTrail(
     eligibleApprovedCount: number;
     verdict: ScanDecision | null;
     verdictChanged: boolean;
+    approvalRecorded: boolean;
   },
 ): Promise<void> {
-  if (input.policy.required > 1) {
+  let approvalEventMissing = input.approvalRecorded;
+  if (!approvalEventMissing && input.policy.required > 1) {
+    const [existing] = await db
+      .select({ id: scanEvents.id })
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, input.input.organizationId),
+          eq(scanEvents.scanId, input.input.scanId),
+          eq(scanEvents.actorUserId, input.input.actorUserId),
+          eq(scanEvents.type, "scan.approval_recorded"),
+        ),
+      )
+      .limit(1);
+    approvalEventMissing = !existing;
+  }
+  if (approvalEventMissing && input.policy.required > 1) {
     await recordScanEvent(db, {
       organizationId: input.input.organizationId,
       actorUserId: input.input.actorUserId,
@@ -454,7 +493,23 @@ async function recordDecisionAuditTrail(
       },
     });
   }
-  if (!input.verdictChanged || !input.verdict) return;
+  if (!input.verdict) return;
+  let decisionEventMissing = input.verdictChanged;
+  if (!decisionEventMissing) {
+    const [existing] = await db
+      .select({ id: scanEvents.id })
+      .from(scanEvents)
+      .where(
+        and(
+          eq(scanEvents.organizationId, input.input.organizationId),
+          eq(scanEvents.scanId, input.input.scanId),
+          eq(scanEvents.type, "scan.decided"),
+        ),
+      )
+      .limit(1);
+    decisionEventMissing = !existing;
+  }
+  if (!decisionEventMissing) return;
   await recordScanEvent(db, {
     organizationId: input.input.organizationId,
     actorUserId: input.input.actorUserId,
@@ -520,6 +575,14 @@ export async function recordGatePackageDecision(
     where ${organizations.id} = ${input.organizationId}
       and ${organizations.requiredReleaseApprovals} > 1
   )`;
+  const actorAlreadyCastDurableDecision = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${input.scanId}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.userId} = ${input.actorUserId}
+      and ${scanApprovals.decision} = ${input.decision}
+  )`;
   const decidable = and(
     eq(scans.id, input.scanId),
     eq(scans.organizationId, input.organizationId),
@@ -531,8 +594,15 @@ export async function recordGatePackageDecision(
 
   const blockableDecision =
     input.decision === "no_publish"
-      ? or(isNull(scans.decision), and(eq(scans.decision, "publish"), multiApprovalPolicyIsCurrent))
-      : isNull(scans.decision);
+      ? or(
+          isNull(scans.decision),
+          and(eq(scans.decision, "publish"), multiApprovalPolicyIsCurrent),
+          and(eq(scans.decision, "no_publish"), actorAlreadyCastDurableDecision),
+        )
+      : or(
+          isNull(scans.decision),
+          and(eq(scans.decision, "publish"), actorAlreadyCastDurableDecision),
+        );
   const [current] = await db
     .select(DECISION_TARGET_COLUMNS)
     .from(scans)

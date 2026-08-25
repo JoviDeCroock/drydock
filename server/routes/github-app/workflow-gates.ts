@@ -238,29 +238,56 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     scanArtifactReadBucket(c.env),
     c.env,
   );
-  if (recorded.outcome !== "recorded") {
-    const current = await getGateForOrganization(db, organizationId, gateId);
-    const currentPackages = await listGatePackageScans(db, organizationId, gateId);
+  const currentGate =
+    recorded.outcome === "recorded"
+      ? existing
+      : await getGateForOrganization(db, organizationId, gateId);
+  const packages = await listGatePackageScans(db, organizationId, gateId);
+  const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
+  const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
+  const aggregateResolved = anyRejected || allApproved;
+  // Never let a retry that asks to reject an already-approved package release
+  // the job as a side effect. A stored rejection remains fail-closed and may be
+  // delivered by any retry; recovering an approval requires an approve retry.
+  const recoveryMatchesRequest = anyRejected || (allApproved && decision === "approved");
+
+  if (
+    recorded.outcome !== "recorded" &&
+    (!currentGate ||
+      currentGate.status !== "pending" ||
+      !aggregateResolved ||
+      !recoveryMatchesRequest)
+  ) {
     return c.json(
       {
-        gate: current
+        gate: currentGate
           ? publicWorkflowGate(
-              current,
-              currentPackages,
-              await gateViewPolicy(db, organizationId, currentPackages, orgRequiresTwoFactor),
+              currentGate,
+              packages,
+              await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
             )
           : null,
         error:
           recorded.outcome === "already_voted"
             ? "you have already approved this package — it needs a different member's approval"
-            : current?.status === "pending"
+            : currentGate?.status === "pending"
               ? "package has already been decided"
               : "gate has already been decided",
       },
       409,
     );
   }
-  const decidedPackage = recorded.detail;
+  if (!currentGate) return c.json({ error: "not found" }, 404);
+
+  // A retry can arrive after the package verdict committed but before the gate
+  // aggregate CAS. Treat that durable package state as recovery work instead
+  // of rejecting it as a double-submit, and refresh any badge/feed entry the
+  // interrupted request may not have reached.
+  const decidedPackage = recorded.outcome === "recorded" ? recorded.detail : scan;
+  const packageVerdictMayHaveChanged =
+    recorded.outcome === "recorded"
+      ? recorded.verdictChanged
+      : decidedPackage.scan.decision === "publish" || decidedPackage.scan.decision === "no_publish";
 
   // A decision changes what a listed scan's cached badge and feed entry
   // assert ("reviewed · risk" → "approved"/"blocked"); drop both so the
@@ -268,7 +295,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // canonical-origin purge as the staged decision route and (un)listing. An
   // approval still short of the org's bar changed no verdict, so nothing
   // cached is stale yet.
-  if (recorded.verdictChanged && decidedPackage.scan.publicFeedListedAt) {
+  if (packageVerdictMayHaveChanged && decidedPackage.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
@@ -287,26 +314,23 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // moment any one is rejected. `pkg.decision` is the quorum-resolved verdict,
   // so a package one approval short reads here exactly like an undecided one —
   // the deployment stays held, which is the behavior we want.
-  const packages = await listGatePackageScans(db, organizationId, gateId);
-  const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
-  const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
     // Other packages (or other approvers) still owe a decision; keep the
     // deployment held.
     return c.json({
       gate: publicWorkflowGate(
-        existing,
+        currentGate,
         packages,
         await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
       ),
-      approvals: recorded.approvals,
+      approvals: recorded.outcome === "recorded" ? recorded.approvals : undefined,
     });
   }
-  if (allApproved && !existing.scanId) {
+  if (allApproved && !currentGate.scanId) {
     return c.json(
       {
         gate: publicWorkflowGate(
-          existing,
+          currentGate,
           packages,
           await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
         ),
@@ -317,7 +341,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   }
 
   const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";
-  const reportUrl = buildReportUrl(c.env, existing.scanId);
+  const reportUrl = buildReportUrl(c.env, currentGate.scanId);
   const decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
     organizationId,
@@ -393,7 +417,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       packages,
       await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
     ),
-    approvals: recorded.approvals,
+    approvals: recorded.outcome === "recorded" ? recorded.approvals : undefined,
   });
 });
 

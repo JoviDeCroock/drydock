@@ -46,6 +46,11 @@ won. The verdict update also re-proves the tally from the live rows inside the
 SQL predicate, so an approval computed just before a concurrent block cannot
 overwrite that block with a stale publish verdict.
 
+The vote insert itself selects from the live organization-membership row in the
+same SQL statement. A decision request authorized just before an owner removes
+that member therefore cannot land a stale vote after removal cleanup and have
+it become eligible again if the account is later re-invited.
+
 ## Where the policy lives
 
 `organizations.required_release_approvals`, an integer defaulting to 1, changed
@@ -109,7 +114,11 @@ historical count while dropping the identity. This is the same treatment
   direction. A second approval from the same member is a `409`. Under a
   multi-party policy this fail-closed path remains open when one package has
   reached its bar but sibling packages still keep the overall gate pending; a
-  late blocker can still stop the deployment before it releases.
+  late blocker can still stop the deployment before it releases. Submissions
+  are also recovery-safe across the package-verdict/gate-aggregate boundary: a
+  retry re-tallies an already-durable vote, and a matching retry finalizes a
+  still-pending gate whose package verdict committed before the request was
+  interrupted. A reject retry can never release an already-approved aggregate.
 
 Gate aggregation is unchanged and did not need to be: it releases only when
 every package's `decision` is `publish`, and a package one approval short reads
