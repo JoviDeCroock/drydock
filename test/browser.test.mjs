@@ -681,7 +681,7 @@ describe("browser extension review adapter", () => {
       },
     ]);
     const manifestRecord = manifestFile({
-      action: { default_popup: "tests/popup.html" },
+      action: { default_popup: "/tests/popup.html" },
       browser_action: { default_popup: "tests/browser-popup.html" },
       page_action: { default_popup: "tests/page-popup.html" },
       options_ui: { page: "tests/options.html" },

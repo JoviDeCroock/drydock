@@ -2480,6 +2480,73 @@ describe("test-scoped capability findings", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows a static Manifest V2 tabs.executeScript file", () => {
+    const staged = [
+      pkg(),
+      file("background.js", 'browser.tabs.executeScript(tabId, { file: "/test/payload.js" });\n'),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+    });
+    const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows static Manifest V3 scripting injection files", () => {
+    const staged = [
+      pkg(),
+      file(
+        "background.js",
+        [
+          'chrome.scripting.executeScript({ target: { tabId }, files: ["/test/execute.js"] });',
+          "browser.scripting.registerContentScripts([{ id: 'helper', js: [`test/register.js`] }]);",
+        ].join("\n"),
+      ),
+      file("test/execute.js", "eval(payload);\n"),
+      file("test/register.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "test/execute.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/register.js", severity: "medium" }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
+  test("ignores WebExtension injection shapes outside the named APIs", () => {
+    const staged = [
+      pkg(),
+      file(
+        "background.js",
+        [
+          'const config = { files: ["test/payload.js"] };',
+          "const example = 'browser.scripting.executeScript({ files: [\"test/payload.js\"] })';",
+          'tool.scripting.executeScript({ files: ["test/payload.js"] });',
+        ].join("\n"),
+      ),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+    });
+    expect(
+      findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation"),
+    ).toMatchObject({ file: "test/payload.js", severity: "low", testScoped: true });
+  });
+
   test("does not reinterpret root-relative ESM imports without ecosystem opt-in", () => {
     const staged = [
       pkg(),

@@ -1,4 +1,5 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
+import { jsTokenText, type JsToken, tokenizeJs } from "../../platform/js-lexer";
 import { decodeUrlPathForArchiveLookup } from "../../platform/path-safety";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
@@ -285,7 +286,155 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
       specifiers.push(argument[1] ?? argument[2]);
     }
   }
+  if (rootRelativeModuleImports) {
+    specifiers.push(...staticWebExtensionScriptSpecifiers(text));
+  }
   return specifiers;
+}
+
+type WebExtensionScriptProperty = "file" | "files" | "js";
+
+interface WebExtensionScriptCall {
+  openIndex: number;
+  property: WebExtensionScriptProperty;
+}
+
+// WebExtension APIs can make packaged scripts executable without a manifest or
+// module edge. Follow only literal `file`, `files`, and `js` properties on the
+// statically named APIs; dynamic expressions remain unproven. The shared lexer
+// keeps API-shaped text in comments, strings, and regular expressions inert.
+function staticWebExtensionScriptSpecifiers(text: string): string[] {
+  const tokens = tokenizeJs(text).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  const specifiers: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const call = webExtensionScriptCall(tokens, text, index);
+    if (!call) continue;
+    const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
+    if (closeIndex === null) continue;
+    specifiers.push(
+      ...staticPropertyScriptPaths(tokens, text, call.openIndex + 1, closeIndex, call.property),
+    );
+    index = closeIndex;
+  }
+
+  return specifiers;
+}
+
+function webExtensionScriptCall(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): WebExtensionScriptCall | null {
+  if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
+
+  let index = start;
+  const first = tokenText(tokens[index], text);
+  if (first === "chrome" || first === "browser") {
+    if (!isMemberSeparator(tokenText(tokens[index + 1], text))) return null;
+    index += 2;
+  }
+
+  const namespace = tokenText(tokens[index], text);
+  if (namespace !== "tabs" && namespace !== "scripting") return null;
+  if (!isMemberSeparator(tokenText(tokens[index + 1], text))) return null;
+
+  const method = tokenText(tokens[index + 2], text);
+  const openIndex = index + 3;
+  if (tokenText(tokens[openIndex], text) !== "(") return null;
+  if (namespace === "tabs" && method === "executeScript") {
+    return { openIndex, property: "file" };
+  }
+  if (namespace === "scripting" && method === "executeScript") {
+    return { openIndex, property: "files" };
+  }
+  if (namespace === "scripting" && method === "registerContentScripts") {
+    return { openIndex, property: "js" };
+  }
+  return null;
+}
+
+function staticPropertyScriptPaths(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+  property: WebExtensionScriptProperty,
+): string[] {
+  const paths: string[] = [];
+  for (let index = start; index < end; index += 1) {
+    if (staticPropertyName(tokens[index], text) !== property) continue;
+    if (tokenText(tokens[index + 1], text) !== ":") continue;
+
+    const valueIndex = index + 2;
+    if (property === "file") {
+      const value = staticScriptPath(tokens[valueIndex], text);
+      if (value !== null) paths.push(value);
+      continue;
+    }
+    if (tokenText(tokens[valueIndex], text) !== "[") continue;
+    const closeIndex = matchingPunctuation(tokens, text, valueIndex, "[", "]");
+    if (closeIndex === null || closeIndex > end) continue;
+    let nestedDepth = 0;
+    for (let itemIndex = valueIndex + 1; itemIndex < closeIndex; itemIndex += 1) {
+      const item = tokenText(tokens[itemIndex], text);
+      if (item === "[" || item === "{" || item === "(") {
+        nestedDepth += 1;
+        continue;
+      }
+      if (item === "]" || item === "}" || item === ")") {
+        nestedDepth -= 1;
+        continue;
+      }
+      const value = nestedDepth === 0 ? staticScriptPath(tokens[itemIndex], text) : null;
+      if (value !== null) paths.push(value);
+    }
+    index = closeIndex;
+  }
+  return paths;
+}
+
+function staticPropertyName(token: JsToken | undefined, text: string): string | null {
+  if (!token) return null;
+  if (token.type === "ident") return tokenText(token, text);
+  return token.type === "string" ? (token.value ?? null) : null;
+}
+
+function staticScriptPath(token: JsToken | undefined, text: string): string | null {
+  if (!token) return null;
+  if (token.type === "string") return token.value ?? null;
+  if (token.type !== "template") return null;
+  const raw = tokenText(token, text);
+  return raw.includes("${") ? null : raw.slice(1, -1);
+}
+
+function matchingPunctuation(
+  tokens: JsToken[],
+  text: string,
+  openIndex: number,
+  open: string,
+  close: string,
+): number | null {
+  let depth = 0;
+  for (let index = openIndex; index < tokens.length; index += 1) {
+    const value = tokenText(tokens[index], text);
+    if (value === open) depth += 1;
+    else if (value === close) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return null;
+}
+
+function isMemberSeparator(value: string): boolean {
+  return value === "." || value === "?.";
+}
+
+function tokenText(token: JsToken | undefined, text: string): string {
+  return token ? jsTokenText(text, token) : "";
 }
 
 function resolveModulePath(

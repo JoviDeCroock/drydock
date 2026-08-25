@@ -1,8 +1,8 @@
 {
   "id": "browser-entrypoint-path-aliases",
-  "title": "browser-loaded scripts remain reachable through manifest and HTML path aliases",
+  "title": "browser-loaded scripts remain reachable through manifest, HTML, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, classic-worker imports including static template literals, and HTML script or iframe paths resolved through character references, percent-encoded URLs, quoted greater-than characters, and local base URLs.",
+  "intent": "Pins full shared capability severity for root-relative content scripts and extension pages, Manifest V2 user script and static programmatic-injection APIs, classic-worker imports including static template literals, and HTML script or iframe paths resolved through character references, percent-encoded URLs, quoted greater-than characters, and local base URLs.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -13,7 +13,7 @@
       "size": 420,
       "sha256": "5252525252525252525252525252525252525252525252525252525252525252",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"browser_action\": { \"default_popup\": \"/tests/popup.html\" },\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
     },
     {
       "path": "pages/background.html",
@@ -70,6 +70,27 @@
       "sha256": "5959595959595959595959595959595959595959595959595959595959595959",
       "flags": [],
       "textSample": "fetch('https://example.invalid/framed');"
+    },
+    {
+      "path": "tests/popup.html",
+      "size": 32,
+      "sha256": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
+      "flags": [],
+      "textSample": "<script src=\"popup.js\"></script>"
+    },
+    {
+      "path": "tests/popup.js",
+      "size": 72,
+      "sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+      "flags": [],
+      "textSample": "browser.tabs.executeScript({ file: \"/tests/injected.js\" });"
+    },
+    {
+      "path": "tests/injected.js",
+      "size": 14,
+      "sha256": "5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -79,6 +100,7 @@
     { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/nested.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/encoded page.js" },
-    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/framed.js" }
+    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/framed.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/injected.js" }
   ]
 }

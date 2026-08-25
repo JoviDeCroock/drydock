@@ -296,17 +296,20 @@ function manifestResourcePaths(
 }
 
 function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
-  return [
-    manifestRecordString(raw.action, "default_popup"),
-    manifestRecordString(raw.browser_action, "default_popup"),
-    manifestRecordString(raw.page_action, "default_popup"),
-    manifestRecordString(raw.options_ui, "page"),
-    manifestRecordString(raw.side_panel, "default_path"),
-    manifestRecordString(raw.sidebar_action, "default_panel"),
-    typeof raw.options_page === "string" ? raw.options_page : null,
-    typeof raw.devtools_page === "string" ? raw.devtools_page : null,
-    ...manifestRecordStrings(raw.chrome_url_overrides),
-  ].filter((path): path is string => path !== null && isSafeManifestPath(path));
+  return manifestResourcePaths(
+    [
+      manifestRecordString(raw.action, "default_popup"),
+      manifestRecordString(raw.browser_action, "default_popup"),
+      manifestRecordString(raw.page_action, "default_popup"),
+      manifestRecordString(raw.options_ui, "page"),
+      manifestRecordString(raw.side_panel, "default_path"),
+      manifestRecordString(raw.sidebar_action, "default_panel"),
+      typeof raw.options_page === "string" ? raw.options_page : null,
+      typeof raw.devtools_page === "string" ? raw.devtools_page : null,
+      ...manifestRecordStrings(raw.chrome_url_overrides),
+    ],
+    { trimLeadingSlash: true },
+  );
 }
 
 function manifestRecordString(value: unknown, key: string): string | null {
