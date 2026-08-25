@@ -162,6 +162,7 @@ describe("ScanListModel decisions", () => {
     expect(updated?.approvals?.verdict).toBeNull();
     expect(model.scans.value[0]?.approvalCount).toBe(1);
     expect(model.scans.value[0]?.legacyDecision).toBe(false);
+    expect(model.scans.value[0]?.viewerDecision).toBe("publish");
   });
 });
 

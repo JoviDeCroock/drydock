@@ -336,7 +336,6 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
       decision: "approved",
       comment: buildHumanDecisionComment("approved", reportUrl),
       reportUrl,
-      requiredApprovals: requested,
     });
     if (!decided) continue;
 

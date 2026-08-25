@@ -39,6 +39,7 @@ import {
   type GatePackageScan,
   type WorkflowGateRecord,
   getGateByScanId,
+  getGateFirstBlockingVote,
   getGateForOrganization,
   listGatePackageScans,
   markGateDecidedForPackageAggregate,
@@ -348,33 +349,35 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // trigger may be another member attempting to approve a different package;
   // their comment must not become the explanation GitHub receives for a block
   // they did not cast.
-  const recoveredRejection =
-    gateDecision === "rejected" && (decision !== "rejected" || recorded.outcome !== "recorded")
-      ? packages
+  const decidingRejection =
+    gateDecision === "rejected"
+      ? ((await getGateFirstBlockingVote(db, organizationId, gateId)) ??
+        packages
           .filter((pkg) => pkg.decision === "no_publish")
           .sort(
             (a, b) =>
               (a.decidedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) -
               (b.decidedAt?.getTime() ?? Number.MAX_SAFE_INTEGER),
-          )[0]
+          )[0])
       : null;
-  const gateDecisionComment = recoveredRejection
-    ? recoveredRejection.decisionReason || buildHumanDecisionComment(gateDecision, reportUrl)
+  const recoveredRejection = Boolean(
+    decidingRejection &&
+    (recorded.outcome !== "recorded" ||
+      decidingRejection.scanId !== packageScanId ||
+      decidingRejection.decidedByUserId !== session.userId),
+  );
+  const gateDecisionComment = decidingRejection
+    ? decidingRejection.decisionReason || buildHumanDecisionComment(gateDecision, reportUrl)
     : comment || buildHumanDecisionComment(gateDecision, reportUrl);
-  const gateDecisionActorUserId = recoveredRejection
-    ? recoveredRejection.decidedByUserId
+  const gateDecisionActorUserId = decidingRejection
+    ? decidingRejection.decidedByUserId
     : session.userId;
-  const requiredApprovals =
-    recorded.outcome === "recorded"
-      ? recorded.approvals.required
-      : (await getOrganizationApprovalPolicy(db, organizationId)).required;
   const decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
     organizationId,
     decision: gateDecision,
     comment: gateDecisionComment,
     reportUrl,
-    requiredApprovals,
   });
   if (!decided) {
     // Lost a race to a concurrent finalize or a fail-closed artifact reject.

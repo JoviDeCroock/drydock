@@ -204,6 +204,44 @@ export async function listGatePackageScans(
     }));
 }
 
+/** The first durable human block across every package in one gate. */
+export async function getGateFirstBlockingVote(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<{
+  scanId: string;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date;
+} | null> {
+  const [row] = await db
+    .select({
+      scanId: scanApprovals.scanId,
+      decisionReason: scanApprovals.reason,
+      decidedByUserId: scanApprovals.userId,
+      decidedAt: scanApprovals.updatedAt,
+    })
+    .from(scanApprovals)
+    .innerJoin(
+      scans,
+      and(
+        eq(scans.id, scanApprovals.scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.gateId, gateId),
+      ),
+    )
+    .where(
+      and(
+        eq(scanApprovals.organizationId, organizationId),
+        eq(scanApprovals.decision, "no_publish"),
+      ),
+    )
+    .orderBy(scanApprovals.updatedAt, scanApprovals.id)
+    .limit(1);
+  return row ?? null;
+}
+
 function readReleaseRisk(riskSummaryJson: unknown): string | null {
   if (!riskSummaryJson || typeof riskSummaryJson !== "object" || Array.isArray(riskSummaryJson)) {
     return null;
@@ -381,7 +419,6 @@ export async function markGateDecided(
 
 interface DecideGateWithPackageAggregateInput extends DecideGateInput {
   organizationId: string;
-  requiredApprovals: number;
 }
 
 /**
@@ -424,7 +461,14 @@ export async function markGateDecidedForPackageAggregate(
       decision: input.decision,
       decisionComment: input.comment,
       reportUrl: input.reportUrl ?? null,
-      requiredReleaseApprovals: input.requiredApprovals,
+      // Snapshot the policy in the same statement that finalizes the gate. A
+      // vote request may have observed an older bar before an owner changed it;
+      // completed gates must describe the policy live at their final CAS.
+      requiredReleaseApprovals: sql<number>`(
+        select ${organizations.requiredReleaseApprovals}
+        from ${organizations}
+        where ${organizations.id} = ${githubWorkflowGates.organizationId}
+      )`,
       decidedAt: now,
       updatedAt: now,
     })
