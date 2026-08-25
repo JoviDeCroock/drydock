@@ -198,9 +198,7 @@ Codebase-shape skills:
 
 Signals and models:
 
-- `preact-signals-core` — core reactivity primitives and the runtime tracking model.
 - `preact-signals-preact-integration` — `useSignal`, JSX rendering choices, `Show`/`For`, `useLiveSignal`.
 - `preact-signals-models-utils` — `createModel`/`useModel` patterns and state shape.
 - `preact-signals-eslint-plugin` — what the rules catch.
 - `preact-signals-no-eager-unwrap` — eager-unwrap anti-patterns (conditional render → `Show`, text/attr → direct signal, derivations → `useComputed`) and the local lint rule.
-- `preact-signals-debugging` — triage map for stale renders, missing updates, SSR issues.
