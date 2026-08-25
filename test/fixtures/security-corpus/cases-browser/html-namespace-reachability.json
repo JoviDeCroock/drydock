@@ -1,0 +1,53 @@
+{
+  "id": "browser-html-namespace-reachability",
+  "title": "WebExtension HTML reachability respects inert templates and SVG script links",
+  "category": "browser-extension",
+  "intent": "Inert template content must not change the document base, while href and xlink:href scripts in inline SVG remain executable consumer entrypoints.",
+  "slug": "html-namespace-helper",
+  "extensionId": "html-namespace-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 233,
+      "sha256": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"HTML namespace helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"html-namespace-helper@example.invalid\" } },\n  \"action\": { \"default_popup\": \"tests/popup.html\" }\n}\n"
+    },
+    {
+      "path": "tests/popup.html",
+      "size": 190,
+      "sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "flags": [],
+      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><script src=\"live.js\"></script><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script></svg>"
+    },
+    {
+      "path": "tests/live.js",
+      "size": 14,
+      "sha256": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/href.js",
+      "size": 14,
+      "sha256": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/xlink.js",
+      "size": 14,
+      "sha256": "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/href.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/live.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xlink.js" }
+  ]
+}

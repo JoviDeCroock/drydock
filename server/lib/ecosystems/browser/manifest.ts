@@ -26,6 +26,7 @@ const GECKO_EMAIL_ID_MAX_LENGTH = 80;
 const LOCALIZED_MESSAGE_NAME_RE = /^__MSG_([A-Za-z0-9_@]+)__$/i;
 const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
 const HTML_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+const HTML_INERT_CONTENT_ELEMENTS = new Set(["noscript", "template"]);
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -542,6 +543,10 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
   let baseHref: string | null = null;
   let baseSeen = false;
+  const namespaceBoundaries: Array<{
+    tagName: "foreignobject" | "svg";
+    namespace: "html" | "svg";
+  }> = [];
   let index = 0;
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
@@ -553,38 +558,68 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     }
 
     let cursor = tagStart + 1;
+    const closingTag = html[cursor] === "/";
+    if (closingTag) cursor += 1;
     const nameStart = cursor;
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const tagName = html.slice(nameStart, cursor).toLowerCase();
+    if (!tagName || !/[\s/>]/.test(html[cursor] ?? "")) {
+      index = Math.max(cursor, tagStart + 1);
+      continue;
+    }
+    if (closingTag) {
+      const tagEnd = htmlTagEnd(html, cursor);
+      if (tagEnd === null) break;
+      let boundaryIndex = -1;
+      for (let candidate = namespaceBoundaries.length - 1; candidate >= 0; candidate -= 1) {
+        if (namespaceBoundaries[candidate].tagName !== tagName) continue;
+        boundaryIndex = candidate;
+        break;
+      }
+      if (boundaryIndex !== -1) namespaceBoundaries.length = boundaryIndex;
+      index = tagEnd;
+      continue;
+    }
+
+    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
+    const namespaceBoundary =
+      tagName === "svg"
+        ? { tagName: "svg" as const, namespace: "svg" as const }
+        : namespace === "svg" && tagName === "foreignobject"
+          ? { tagName: "foreignobject" as const, namespace: "html" as const }
+          : null;
     if (
-      (!HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
-        tagName !== "base" &&
-        tagName !== "embed" &&
-        tagName !== "frame" &&
-        tagName !== "iframe" &&
-        tagName !== "meta" &&
-        tagName !== "object") ||
-      !/[\s/>]/.test(html[cursor] ?? "")
+      !HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
+      !HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
+      tagName !== "base" &&
+      tagName !== "embed" &&
+      tagName !== "frame" &&
+      tagName !== "iframe" &&
+      tagName !== "meta" &&
+      tagName !== "object" &&
+      namespaceBoundary === null
     ) {
       index = Math.max(cursor, tagStart + 1);
       continue;
     }
 
-    const targetAttribute =
+    const targetAttributes =
       tagName === "base"
-        ? "href"
+        ? ["href"]
         : tagName === "object"
-          ? "data"
+          ? ["data"]
           : tagName === "meta"
-            ? null
-            : "src";
-    let targetValue: string | null = null;
-    let targetSeen = false;
+            ? []
+            : tagName === "script" && namespace === "svg"
+              ? ["href", "xlink:href"]
+              : ["src"];
+    const targetValues = new Map<string, string | null>();
     let metaHttpEquiv: string | null = null;
     let metaContent: string | null = null;
     let srcdocValue: string | null = null;
     let srcdocSeen = false;
     let tagClosed = false;
+    let selfClosing = false;
     while (cursor < html.length) {
       while (/\s/.test(html[cursor] ?? "")) cursor += 1;
       if (html[cursor] === ">") {
@@ -595,6 +630,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       if (html[cursor] === "/" && html[cursor + 1] === ">") {
         cursor += 2;
         tagClosed = true;
+        selfClosing = true;
         break;
       }
 
@@ -626,9 +662,8 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         }
       }
 
-      if (targetAttribute !== null && attributeName === targetAttribute && !targetSeen) {
-        targetSeen = true;
-        targetValue = value;
+      if (targetAttributes.includes(attributeName) && !targetValues.has(attributeName)) {
+        targetValues.set(attributeName, value);
       }
       if (tagName === "meta" && attributeName === "http-equiv" && metaHttpEquiv === null) {
         metaHttpEquiv = decodeHTMLAttribute(value ?? "");
@@ -641,7 +676,12 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         srcdocValue = value;
       }
     }
-    if (tagClosed && tagName === "base" && targetSeen && !baseSeen) {
+    const targetAttribute = targetAttributes.find((attribute) => targetValues.has(attribute));
+    const targetValue = targetAttribute ? (targetValues.get(targetAttribute) ?? null) : null;
+    if (tagClosed && namespaceBoundary && !selfClosing) {
+      namespaceBoundaries.push(namespaceBoundary);
+    }
+    if (tagClosed && namespace === "html" && tagName === "base" && targetAttribute && !baseSeen) {
       baseHref = decodeHTMLAttribute(targetValue ?? "");
       baseSeen = true;
     } else if (tagClosed && tagName === "iframe" && srcdocSeen) {
@@ -672,27 +712,96 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         baseHref,
       });
     }
-    if (tagClosed && HTML_TEXT_ONLY_ELEMENTS.has(tagName)) {
+    if (
+      tagClosed &&
+      namespace === "html" &&
+      HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
+      !selfClosing
+    ) {
+      // Template descendants are inert and noscript descendants are raw text
+      // when extension pages execute with scripting enabled. Neither may
+      // create consumer edges or change the document base.
+      index = htmlInertElementEnd(html, cursor, tagName) ?? html.length;
+      continue;
+    }
+    if (tagClosed && HTML_TEXT_ONLY_ELEMENTS.has(tagName) && !selfClosing) {
       // Raw-text and escapable raw-text contents do not create nested elements.
       // Skip them so tag-shaped CSS, JavaScript, titles, and textarea values
       // cannot invent consumer edges or document bases.
-      const closingTextElementPattern = new RegExp(`</${tagName}(?=[\\s/>])`, "gi");
-      closingTextElementPattern.lastIndex = cursor;
-      const closingTextElement = closingTextElementPattern.exec(html);
-      if (!closingTextElement) {
-        index = html.length;
-        continue;
-      }
-      const closingTagEnd = html.indexOf(
-        ">",
-        closingTextElement.index + closingTextElement[0].length,
-      );
-      index = closingTagEnd === -1 ? html.length : closingTagEnd + 1;
+      index = htmlTextElementEnd(html, cursor, tagName) ?? html.length;
       continue;
     }
     index = Math.max(cursor, tagStart + 1);
   }
   return sources;
+}
+
+function htmlTagEnd(html: string, cursor: number): number | null {
+  let quote: '"' | "'" | null = null;
+  while (cursor < html.length) {
+    const character = html[cursor];
+    if (quote) {
+      if (character === quote) quote = null;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return cursor + 1;
+    }
+    cursor += 1;
+  }
+  return null;
+}
+
+function htmlTextElementEnd(html: string, cursor: number, tagName: string): number | null {
+  const closingTextElementPattern = new RegExp(`</${tagName}(?=[\\s/>])`, "gi");
+  closingTextElementPattern.lastIndex = cursor;
+  const closingTextElement = closingTextElementPattern.exec(html);
+  if (!closingTextElement) return null;
+  return htmlTagEnd(html, closingTextElement.index + closingTextElement[0].length);
+}
+
+function htmlInertElementEnd(html: string, cursor: number, tagName: string): number | null {
+  if (tagName === "noscript") return htmlTextElementEnd(html, cursor, tagName);
+  let depth = 1;
+  while (cursor < html.length) {
+    const tagStart = html.indexOf("<", cursor);
+    if (tagStart === -1) return null;
+    if (html.startsWith("<!--", tagStart)) {
+      const commentEnd = htmlCommentEnd(html, tagStart);
+      if (commentEnd === null) return null;
+      cursor = commentEnd;
+      continue;
+    }
+    let nameCursor = tagStart + 1;
+    const closingTag = html[nameCursor] === "/";
+    if (closingTag) nameCursor += 1;
+    const nameStart = nameCursor;
+    while (nameCursor < html.length && /[A-Za-z0-9:-]/.test(html[nameCursor])) nameCursor += 1;
+    const nestedTagName = html.slice(nameStart, nameCursor).toLowerCase();
+    if (!nestedTagName || !/[\s/>]/.test(html[nameCursor] ?? "")) {
+      cursor = Math.max(nameCursor, tagStart + 1);
+      continue;
+    }
+    const tagEnd = htmlTagEnd(html, nameCursor);
+    if (tagEnd === null) return null;
+    const selfClosing = /\/\s*>$/.test(html.slice(tagStart, tagEnd));
+    if (!closingTag && HTML_TEXT_ONLY_ELEMENTS.has(nestedTagName) && !selfClosing) {
+      const textEnd = htmlTextElementEnd(html, tagEnd, nestedTagName);
+      if (textEnd === null) return null;
+      cursor = textEnd;
+      continue;
+    }
+    if (nestedTagName === tagName) {
+      if (closingTag) {
+        depth -= 1;
+        if (depth === 0) return tagEnd;
+      } else if (!selfClosing) {
+        depth += 1;
+      }
+    }
+    cursor = tagEnd;
+  }
+  return null;
 }
 
 function htmlCommentEnd(html: string, commentStart: number): number | null {

@@ -1,0 +1,21 @@
+{
+  "id": "browser-benign-non-script-unsafe-eval",
+  "title": "WebExtension with unsafe-eval outside the effective script policy",
+  "category": "benign",
+  "intent": "An unsafe-eval token in a non-script directive must not trigger the unsafe extension CSP rule when script-src remains package-only.",
+  "slug": "non-script-policy-helper",
+  "extensionId": "non-script-policy-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 278,
+      "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Non-script policy helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"non-script-policy-helper@example.invalid\" } },\n  \"content_security_policy\": \"script-src 'self'; img-src 'unsafe-eval'; object-src 'self'\"\n}\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

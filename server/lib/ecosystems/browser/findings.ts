@@ -261,8 +261,18 @@ function isBroadExternalOrigin(value: string): boolean {
 
 function unsafeExtensionCspEvidence(value: string | null): string | null {
   if (!value) return null;
-  if (/['"]unsafe-eval['"]/i.test(value)) return "extension CSP permits unsafe-eval";
   const directives = parseCspDirectives(value);
+  const evalDirective = directives.has("script-src")
+    ? "script-src"
+    : directives.has("default-src")
+      ? "default-src"
+      : null;
+  if (
+    evalDirective &&
+    directives.get(evalDirective)?.some((source) => source.trim().toLowerCase() === "'unsafe-eval'")
+  ) {
+    return `extension CSP ${evalDirective} permits 'unsafe-eval'`;
+  }
   const inspected = new Set<string>();
   for (const chain of EXECUTABLE_CSP_DIRECTIVE_CHAINS) {
     const directive = chain.find((name) => directives.has(name));

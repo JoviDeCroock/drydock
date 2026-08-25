@@ -727,6 +727,113 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("ignores inert template and noscript content when resolving page scripts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 170,
+        sha256: "70".repeat(32),
+        flags: [],
+        textSample:
+          '<template><base href="/decoy/"><script src="/tests/template.js"></script></template>' +
+          '<noscript><base href="/other-decoy/"><script src="/tests/noscript.js"></script></noscript>' +
+          '<script src="/tests/live.js"></script>',
+      },
+      ...["template", "noscript"].map((name, offset) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(71 + offset).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+      {
+        path: "tests/live.js",
+        size: 14,
+        sha256: "73".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(["popup.html", "tests/live.js"]);
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/template.js",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/noscript.js",
+          testScoped: true,
+        }),
+        expect.objectContaining({ severity: "high", file: "tests/live.js" }),
+      ]),
+    );
+    expect(findings).toHaveLength(3);
+  });
+
+  test("follows href and xlink:href scripts in inline SVG", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 120,
+        sha256: "74".repeat(32),
+        flags: [],
+        textSample:
+          '<script href="/tests/html-href.js"></script>' +
+          '<svg><script href="/tests/href.js"></script>' +
+          '<script xlink:href="/tests/xlink.js"></script>' +
+          '<foreignObject><script href="/tests/foreign.js"></script></foreignObject></svg>',
+      },
+      ...["href", "xlink", "html-href", "foreign"].map((name, offset) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(75 + offset).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "tests/href.js", "tests/xlink.js"]),
+    );
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/href.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/xlink.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/html-href.js",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/foreign.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(4);
+  });
+
   test("parses script src attributes without losing quoted greater-than characters", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -1864,24 +1971,23 @@ describe("browser extension review adapter", () => {
   test.each([
     "script-src 'self'; worker-src 'self' 'strict-dynamic'",
     "script-src 'self'; child-src 'self' 'strict-dynamic'",
-  ])(
-    "does not treat strict-dynamic in a worker URL directive as trust delegation: %s",
-    (contentSecurityPolicy) => {
-      const path = "dist/tab-helper.zip";
-      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
-      const review = createBrowserExtensionReview({
-        manifest,
-        artifact: {
-          path,
-          sha256: SHA,
-          files: [manifestFile({ content_security_policy: contentSecurityPolicy })],
-        },
-      });
-      expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toContain(
-        "browser.unsafe-extension-csp",
-      );
-    },
-  );
+    "script-src 'self'; img-src 'unsafe-eval'",
+    "default-src 'self'; script-src-elem 'unsafe-eval'",
+  ])("does not treat non-script CSP keywords as executable policy: %s", (contentSecurityPolicy) => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ content_security_policy: contentSecurityPolicy })],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toContain(
+      "browser.unsafe-extension-csp",
+    );
+  });
 
   test("anchors optional permissions to the manifest property that supplied them", () => {
     const path = "dist/tab-helper.zip";
