@@ -114,10 +114,12 @@ decisions, the former member stays in the historical roster but is excluded
 from the new live tally. If that member later accepts a new invitation, the
 membership write re-tallies retained votes in the same D1 batch: a tally that
 becomes sufficient is projected back to `scans.decision` immediately rather
-than waiting for another reviewer to submit. If that projection completes every
-package behind a pending workflow gate, invitation acceptance also finalizes and
-schedules delivery of the gate decision. A recorded block remains final after
-its voter leaves; changing the approval threshold cannot erase it.
+than waiting for another reviewer to submit. If that projection makes a pending
+workflow gate ready, invitation acceptance also finalizes and schedules its
+current aggregate decision: approval when every package is approved, or the
+fail-closed rejection when a sibling already carries a durable block. A recorded
+block remains final after its voter leaves; changing the approval threshold
+cannot erase it.
 
 Member removal and account deletion can reopen a package that was already
 projected as approved while its workflow gate remains pending. Both paths

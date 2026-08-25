@@ -375,6 +375,134 @@ describe("organization member routes", () => {
     expect(event.metadata).toMatchObject({ trigger: "member_joined", requiredApprovals: 2 });
   });
 
+  test("rejoining rejects a gate when a sibling package already has a durable block", async () => {
+    const owner = await seedUser();
+    const invitee = await seedUser();
+    const organizationId = await createOrganization(owner, "rejoin-blocked-gate");
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: invitee.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedPendingGateScan({
+      organizationId,
+      ownerUserId: owner.userId,
+    });
+    const blockedScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: blockedScanId,
+      stageId: `workflow-gate:${gateId}:blocked`,
+      organizationId,
+      ownerUserId: owner.userId,
+      source: "workflow_gate",
+      gateId,
+    });
+    await persistScan(db, {
+      id: blockedScanId,
+      stageId: `workflow-gate:${gateId}:blocked`,
+      organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "blocked-pkg", version: "1.0.0" },
+      risk: "high",
+      status: "complete",
+      summary: { diff: [] },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+    });
+    const now = new Date();
+    await db.insert(schema.scanApprovals).values([
+      {
+        id: crypto.randomUUID(),
+        scanId,
+        organizationId,
+        userId: owner.userId,
+        decision: "publish",
+        reason: "owner approval",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: crypto.randomUUID(),
+        scanId,
+        organizationId,
+        userId: invitee.userId,
+        decision: "publish",
+        reason: "retained approval",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: crypto.randomUUID(),
+        scanId: blockedScanId,
+        organizationId,
+        userId: owner.userId,
+        decision: "no_publish",
+        reason: "durable blocker",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db
+      .update(schema.scans)
+      .set({
+        decision: "no_publish",
+        decisionReason: "durable blocker",
+        decidedByUserId: owner.userId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.scans.id, blockedScanId));
+    await db
+      .delete(schema.organizationMembers)
+      .where(
+        and(
+          eq(schema.organizationMembers.organizationId, organizationId),
+          eq(schema.organizationMembers.userId, invitee.userId),
+        ),
+      );
+    const { token } = await seedInvitation({
+      owner,
+      organizationId,
+      email: invitee.email,
+      role: "member",
+    });
+
+    const accept = await call(
+      buildTestApp(invitee),
+      "POST",
+      "/api/v1/organizations/invitations/accept",
+      { body: { token } },
+    );
+
+    expect(accept.status).toBe(200);
+    const [gate] = await db
+      .select({ status: schema.githubWorkflowGates.status })
+      .from(schema.githubWorkflowGates)
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    expect(gate.status).toBe("rejected");
+    const [event] = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId),
+          eq(schema.scanEvents.type, "github_workflow_gate.rejected"),
+        ),
+      );
+    expect(event.actorUserId).toBe(owner.userId);
+    expect(event.metadata).toMatchObject({
+      trigger: "member_joined",
+      recoveredByUserId: invitee.userId,
+    });
+  });
+
   test("a leaked link cannot enroll a different account", async () => {
     const owner = await seedUser();
     const invitee = await seedUser();
