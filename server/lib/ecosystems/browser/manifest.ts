@@ -59,9 +59,10 @@ const HTML_TEXT_ONLY_ELEMENTS = new Set([
   "title",
   "xmp",
 ]);
-const SVG_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "title"]);
+const SVG_TEXT_ONLY_ELEMENTS = new Set(["script", "style"]);
 const HTML_INERT_CONTENT_ELEMENTS = new Set(["noscript", "template"]);
 const MATHML_TEXT_INTEGRATION_ELEMENTS = new Set(["mi", "mn", "mo", "ms", "mtext"]);
+const SVG_HTML_INTEGRATION_ELEMENTS = new Set(["desc", "foreignobject", "title"]);
 
 type HtmlNamespace = "html" | "mathml" | "svg";
 type HtmlNamespaceBoundary = {
@@ -543,7 +544,8 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
     const html = inlineHtml ?? filesByPath.get(pagePath)?.textSample;
     if (!html) continue;
     const namespace = inlineHtml === undefined ? browserDocumentNamespace(pagePath) : "html";
-    for (const consumer of htmlConsumerSources(html, namespace)) {
+    const xmlSyntax = inlineHtml === undefined && browserDocumentUsesXmlSyntax(pagePath);
+    for (const consumer of htmlConsumerSources(html, namespace, xmlSyntax)) {
       if (consumer.kind === "inline-page") {
         const documentBase = extensionDocumentBaseUrl(pagePath, consumer.baseHref, fallbackBaseUrl);
         if (documentBase) {
@@ -600,11 +602,18 @@ function browserHtmlConsumerDependencies(
     html: string;
     fallbackBaseUrl?: string;
     namespace: HtmlNamespace;
-  }> = [{ html, namespace: browserDocumentNamespace(pagePath) }];
+    xmlSyntax: boolean;
+  }> = [
+    {
+      html,
+      namespace: browserDocumentNamespace(pagePath),
+      xmlSyntax: browserDocumentUsesXmlSyntax(pagePath),
+    },
+  ];
   while (inlineQueue.length) {
     const inline = inlineQueue.pop();
     if (!inline) continue;
-    for (const consumer of htmlConsumerSources(inline.html, inline.namespace)) {
+    for (const consumer of htmlConsumerSources(inline.html, inline.namespace, inline.xmlSyntax)) {
       const documentBase = extensionDocumentBaseUrl(
         pagePath,
         consumer.baseHref,
@@ -616,6 +625,7 @@ function browserHtmlConsumerDependencies(
           html: consumer.html,
           fallbackBaseUrl: documentBase.href,
           namespace: "html",
+          xmlSyntax: false,
         });
         continue;
       }
@@ -636,6 +646,10 @@ export function isBrowserConsumerDocumentPath(path: string): boolean {
 
 function browserDocumentNamespace(path: string): HtmlNamespace {
   return /\.svg$/i.test(path) ? "svg" : "html";
+}
+
+function browserDocumentUsesXmlSyntax(path: string): boolean {
+  return /\.(?:xhtml|xht|svg)$/i.test(path);
 }
 
 function mergeDocumentBaseUrlsByPath(
@@ -659,6 +673,7 @@ type HtmlConsumerSource =
 function htmlConsumerSources(
   html: string,
   initialNamespace: HtmlNamespace = "html",
+  xmlSyntax = false,
 ): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
   let baseHref: string | null = null;
@@ -668,9 +683,15 @@ function htmlConsumerSources(
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
     if (tagStart === -1) break;
+    const namespace = namespaceBoundaries.at(-1)?.namespace ?? initialNamespace;
     if (html.startsWith("<!--", tagStart)) {
       const commentEnd = htmlCommentEnd(html, tagStart);
       index = commentEnd ?? html.length;
+      continue;
+    }
+    if (html.startsWith("<!", tagStart) || html.startsWith("<?", tagStart)) {
+      const declarationEnd = htmlMarkupDeclarationEnd(html, tagStart, namespace);
+      index = declarationEnd ?? html.length;
       continue;
     }
 
@@ -692,7 +713,6 @@ function htmlConsumerSources(
       continue;
     }
 
-    const namespace = namespaceBoundaries.at(-1)?.namespace ?? initialNamespace;
     if (!htmlElementNeedsInspection(namespace, tagName)) {
       const tagEnd = htmlTagEnd(html, cursor);
       if (tagEnd === null) break;
@@ -723,7 +743,7 @@ function htmlConsumerSources(
       if (html[cursor] === "/" && html[cursor + 1] === ">") {
         cursor += 2;
         tagClosed = true;
-        selfClosing = htmlStartTagCanSelfClose(namespace, tagName);
+        selfClosing = htmlStartTagCanSelfClose(namespace, tagName, xmlSyntax);
         break;
       }
 
@@ -919,6 +939,13 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
       cursor = commentEnd;
       continue;
     }
+    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
+    if (html.startsWith("<!", tagStart) || html.startsWith("<?", tagStart)) {
+      const declarationEnd = htmlMarkupDeclarationEnd(html, tagStart, namespace);
+      if (declarationEnd === null) return null;
+      cursor = declarationEnd;
+      continue;
+    }
     let nameCursor = tagStart + 1;
     const closingTag = html[nameCursor] === "/";
     if (closingTag) nameCursor += 1;
@@ -931,7 +958,6 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
     }
     const tagEnd = htmlTagEnd(html, nameCursor);
     if (tagEnd === null) return null;
-    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
     if (closingTag) {
       if (namespace === "html" && nestedTagName === tagName) {
         depth -= 1;
@@ -944,7 +970,7 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
     const namespaceBoundary = htmlNamespaceBoundary(namespace, nestedTagName, null);
     const selfClosing =
       /\/\s*>$/.test(html.slice(tagStart, tagEnd)) &&
-      htmlStartTagCanSelfClose(namespace, nestedTagName);
+      htmlStartTagCanSelfClose(namespace, nestedTagName, false);
     if (htmlElementHasTextOnlyContent(namespace, nestedTagName) && !selfClosing) {
       const textEnd = htmlTextElementEnd(html, tagEnd, nestedTagName);
       if (textEnd === null) return null;
@@ -972,8 +998,10 @@ function htmlElementCanChangeNamespace(namespace: HtmlNamespace, tagName: string
   return (
     (namespace === "html" && (tagName === "math" || tagName === "svg")) ||
     (namespace === "mathml" &&
-      (tagName === "annotation-xml" || MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName))) ||
-    (namespace === "svg" && tagName === "foreignobject")
+      (tagName === "annotation-xml" ||
+        tagName === "svg" ||
+        MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName))) ||
+    (namespace === "svg" && SVG_HTML_INTEGRATION_ELEMENTS.has(tagName))
   );
 }
 
@@ -988,8 +1016,11 @@ function htmlNamespaceBoundary(
   if (namespace === "html" && tagName === "math") {
     return { tagName: "math", namespace: "mathml" };
   }
-  if (namespace === "svg" && tagName === "foreignobject") {
-    return { tagName: "foreignobject", namespace: "html" };
+  if (namespace === "mathml" && tagName === "svg") {
+    return { tagName: "svg", namespace: "svg" };
+  }
+  if (namespace === "svg" && SVG_HTML_INTEGRATION_ELEMENTS.has(tagName)) {
+    return { tagName, namespace: "html" };
   }
   if (namespace === "mathml" && MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName)) {
     return { tagName, namespace: "html" };
@@ -1048,10 +1079,15 @@ function closeHtmlNamespaceBoundary(
   }
 }
 
-function htmlStartTagCanSelfClose(namespace: HtmlNamespace, tagName: string): boolean {
+function htmlStartTagCanSelfClose(
+  namespace: HtmlNamespace,
+  tagName: string,
+  xmlSyntax: boolean,
+): boolean {
   // A trailing slash closes foreign elements, including the <svg>/<math>
-  // elements that enter a foreign namespace. Other HTML start tags ignore it.
-  return namespace !== "html" || tagName === "svg" || tagName === "math";
+  // elements that enter a foreign namespace. HTML start tags ignore it unless
+  // the whole document is XML-parsed XHTML.
+  return xmlSyntax || namespace !== "html" || tagName === "svg" || tagName === "math";
 }
 
 function htmlElementHasTextOnlyContent(namespace: HtmlNamespace, tagName: string): boolean {
@@ -1067,6 +1103,19 @@ function htmlCommentEnd(html: string, commentStart: number): number | null {
   if (normalEnd === -1) return bangEnd === -1 ? null : bangEnd + 4;
   if (bangEnd === -1) return normalEnd + 3;
   return normalEnd < bangEnd ? normalEnd + 3 : bangEnd + 4;
+}
+
+function htmlMarkupDeclarationEnd(
+  html: string,
+  declarationStart: number,
+  namespace: HtmlNamespace,
+): number | null {
+  if (namespace !== "html" && html.startsWith("<![CDATA[", declarationStart)) {
+    const cdataEnd = html.indexOf("]]>", declarationStart + 9);
+    return cdataEnd === -1 ? null : cdataEnd + 3;
+  }
+  const declarationEnd = html.indexOf(">", declarationStart + 2);
+  return declarationEnd === -1 ? null : declarationEnd + 1;
 }
 
 function metaRefreshUrl(content: string): string | null {

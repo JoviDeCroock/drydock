@@ -1596,6 +1596,39 @@ describe("browser extension review adapter", () => {
     ]);
   });
 
+  test("matches XHTML self-closing scripts and foreign-content parsing boundaries", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.xhtml",
+        size: 1,
+        sha256: "97".repeat(32),
+        flags: [],
+        textSample: '<script src="first.js"/><script src="second.js"/>',
+      },
+      {
+        path: "page.html",
+        size: 1,
+        sha256: "98".repeat(32),
+        flags: [],
+        textSample:
+          '<svg><title><script src="title.js"></script></title>' +
+          '<desc><script src="desc.js"></script></desc>' +
+          '<![CDATA[<script href="cdata-decoy.js"/>]]></svg>' +
+          '<math><annotation-xml><svg><script href="math-svg.js"/></svg></annotation-xml></math>',
+      },
+    ]);
+
+    expect(dependencies("page.xhtml")).toEqual([
+      { path: "first.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+      { path: "second.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+    ]);
+    expect(dependencies("page.html")).toEqual([
+      { path: "title.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+      { path: "desc.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+      { path: "math-svg.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+    ]);
+  });
+
   test("respects executable script types and HTML, SVG, and MathML namespaces", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

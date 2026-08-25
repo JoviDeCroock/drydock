@@ -2,7 +2,7 @@
   "id": "browser-html-namespace-reachability",
   "title": "WebExtension document reachability respects HTML, SVG, and MathML parsing",
   "category": "browser-extension",
-  "intent": "Inert templates, non-executable script types, MathML scripts, SVG iframes, raw-text iframe contents, and trailing solidus on HTML start tags must not invent consumer edges, while executable MathML integration-point scripts and href or xlink:href SVG scripts and links remain consumer entrypoints.",
+  "intent": "Inert templates, non-executable script types, MathML scripts, SVG iframes, CDATA sections, raw-text iframe contents, and trailing solidus on HTML start tags must not invent consumer edges, while MathML-to-SVG content, SVG HTML integration points, executable MathML integration-point scripts, and href or xlink:href SVG scripts and links remain consumer entrypoints.",
   "slug": "html-namespace-helper",
   "extensionId": "html-namespace-helper@example.invalid",
   "version": "1.0.0",
@@ -17,10 +17,10 @@
     },
     {
       "path": "tests/popup.html",
-      "size": 790,
+      "size": 886,
       "sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
       "flags": [],
-      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><iframe><script src=\"raw-decoy.js\"></script></iframe><script src=\"live.js\" /><script src=\"slash-decoy.js\"></script></script><template><template/></template><script src=\"nested-template-decoy.js\"></script></template><script type=\"application/json\" src=\"data-decoy.js\"></script><math><script src=\"math-decoy.js\"></script><annotation-xml encoding=\"text/html\"><script src=\"math-live.js\"></script></annotation-xml></math><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script><iframe src=\"svg-frame.html\"></iframe><a xlink:href=\"svg-linked.html\">Open</a></svg>"
+      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><iframe><script src=\"raw-decoy.js\"></script></iframe><script src=\"live.js\" /><script src=\"slash-decoy.js\"></script></script><template><template/></template><script src=\"nested-template-decoy.js\"></script></template><script type=\"application/json\" src=\"data-decoy.js\"></script><math><script src=\"math-decoy.js\"></script><annotation-xml encoding=\"text/html\"><script src=\"math-live.js\"></script></annotation-xml><annotation-xml><svg><script href=\"math-svg-live.js\"/></svg></annotation-xml></math><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script><iframe src=\"svg-frame.html\"></iframe><a xlink:href=\"svg-linked.html\">Open</a><title><script src=\"svg-title-live.js\"></script></title><desc><script src=\"svg-desc-live.js\"></script></desc><![CDATA[<script href=\"svg-cdata-decoy.js\"/>]]></svg>"
     },
     {
       "path": "tests/live.js",
@@ -87,7 +87,7 @@
     },
     {
       "path": "tests/svg-frame.html",
-      "size": 39,
+      "size": 38,
       "sha256": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
       "flags": [],
       "textSample": "<script src=\"frame-decoy.js\"></script>"
@@ -112,6 +112,34 @@
       "sha256": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/math-svg-live.js",
+      "size": 14,
+      "sha256": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/svg-title-live.js",
+      "size": 14,
+      "sha256": "b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/svg-desc-live.js",
+      "size": 14,
+      "sha256": "b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/svg-cdata-decoy.js",
+      "size": 14,
+      "sha256": "babababababababababababababababababababababababababababababababa",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -120,12 +148,20 @@
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/live.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/linked.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/math-live.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/math-svg-live.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg-desc-live.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg-title-live.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xlink.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/data-decoy.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/frame-decoy.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/math-decoy.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/raw-decoy.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/slash-decoy.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/svg-cdata-decoy.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "medium",
