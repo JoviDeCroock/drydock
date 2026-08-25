@@ -104,6 +104,29 @@ describe("npm range satisfaction", () => {
     expect(matches("1.5.0-rc.2", ">=1.5.0-rc.1 <2.0.0")).toBe(true);
   });
 
+  test("generated exclusive upper bounds stop before the next tuple's prereleases", () => {
+    expect(matches("1.0.0-beta", ">=1.0.0-alpha <1")).toBe(false);
+    expect(matches("2.0.0-beta", "1.x >=2.0.0-alpha")).toBe(false);
+    expect(matches("2.0.0-beta", "<=1.x >=2.0.0-alpha")).toBe(false);
+    expect(parseRange("1.0.0 - 1")).toEqual([
+      [
+        {
+          operator: ">=",
+          version: { major: 1, minor: 0, patch: 0, prerelease: [] },
+        },
+        {
+          operator: "<",
+          version: { major: 2, minor: 0, patch: 0, prerelease: ["0"] },
+        },
+      ],
+    ]);
+    expect(matches("2.0.0-beta", "^1.2.3 >=2.0.0-alpha")).toBe(false);
+    expect(matches("2.0.0-beta", "~1 >=2.0.0-alpha")).toBe(false);
+    expect(
+      maxSatisfyingVersion(["0.9.9", "1.0.0-alpha", "1.0.0-beta"], "^0.9 || >=1.0.0-alpha <1"),
+    ).toBe("0.9.9");
+  });
+
   test("specs the parser cannot represent are unresolvable, not unmatched", () => {
     // Returning an empty range here would silently mean "matches nothing",
     // which reads as a clean dependency. Null makes the caller record a gap.

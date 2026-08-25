@@ -153,7 +153,7 @@ function hasDynamicModuleLoad(text: string): boolean {
   const loaderAliases = moduleLoaderAliases(text, tokens);
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    let openIndex: number;
+    let callSite: JsCallSite;
     if (token.type === "ident") {
       const callee = jsTokenText(text, token);
       if (callee !== "require" && callee !== "import" && !loaderAliases.has(callee)) continue;
@@ -172,11 +172,8 @@ function hasDynamicModuleLoad(text: string): boolean {
           [".", "?."].includes(jsTokenText(text, receiverPrevious))
         );
       if (memberAccess && !moduleRequire) continue;
-      const optionalCall = tokens[index + 1];
-      openIndex =
-        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-          ? index + 2
-          : index + 1;
+      const expressionStart = moduleRequire ? index - 2 : index;
+      callSite = findJsCallSite(text, tokens, expressionStart, index + 1);
     } else if (token.type === "string" && token.value === "require") {
       const bracketOpen = tokens[index - 1];
       const bracketClose = tokens[index + 1];
@@ -203,16 +200,16 @@ function hasDynamicModuleLoad(text: string): boolean {
       ) {
         continue;
       }
-      const optionalCall = tokens[index + 2];
-      openIndex =
-        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-          ? index + 3
-          : index + 2;
+      callSite = findJsCallSite(text, tokens, receiverIndex, index + 2);
     } else {
       continue;
     }
+    const { openIndex, wrapped } = callSite;
     const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
+    // The bounded static graph does not resolve transparent/sequence-wrapped
+    // callees, so retain every package body as a possible target.
+    if (wrapped) return true;
     // Alias calls are deliberately treated as dynamic: the bounded static
     // reachability graph does not resolve their arguments, even when literal.
     if (token.type === "ident" && loaderAliases.has(jsTokenText(text, token))) return true;
@@ -232,6 +229,64 @@ function hasDynamicModuleLoad(text: string): boolean {
     }
   }
   return false;
+}
+
+interface JsCallSite {
+  openIndex: number;
+  wrapped: boolean;
+}
+
+/** Locate direct calls plus the transparent wrappers emitted by transpilers. */
+function findJsCallSite(
+  text: string,
+  tokens: JsToken[],
+  expressionStart: number,
+  expressionEnd: number,
+): JsCallSite {
+  let start = expressionStart;
+  let after = expressionEnd;
+  let wrapped = false;
+  while (tokens[after]?.type === "punct" && jsTokenText(text, tokens[after]) === ")") {
+    const directOpen = tokens[start - 1];
+    const sequenceOpen = tokens[start - 3];
+    const sequenceZero = tokens[start - 2];
+    const sequenceComma = tokens[start - 1];
+    if (
+      directOpen?.type === "punct" &&
+      jsTokenText(text, directOpen) === "(" &&
+      isGroupingOpen(text, tokens, start - 1)
+    ) {
+      start -= 1;
+    } else if (
+      sequenceOpen?.type === "punct" &&
+      jsTokenText(text, sequenceOpen) === "(" &&
+      isGroupingOpen(text, tokens, start - 3) &&
+      sequenceZero?.type === "number" &&
+      jsTokenText(text, sequenceZero) === "0" &&
+      sequenceComma?.type === "punct" &&
+      jsTokenText(text, sequenceComma) === ","
+    ) {
+      start -= 3;
+    } else {
+      break;
+    }
+    after += 1;
+    wrapped = true;
+  }
+  const optionalCall = tokens[after];
+  if (optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?.") after += 1;
+  return { openIndex: after, wrapped };
+}
+
+function isGroupingOpen(text: string, tokens: JsToken[], openIndex: number): boolean {
+  const previous = tokens[openIndex - 1];
+  if (!previous) return true;
+  if (previous.type === "ident") {
+    return ["await", "delete", "return", "throw", "typeof", "void", "yield"].includes(
+      jsTokenText(text, previous),
+    );
+  }
+  return previous.type === "punct" && ![")", "]", "}"].includes(jsTokenText(text, previous));
 }
 
 /** True only when the bounded static graph can represent this literal exactly. */
@@ -374,18 +429,14 @@ function hasDynamicLocalExecution(text: string): boolean {
     const token = tokens[index];
     let callee: string;
     let memberAccess: boolean;
-    let openIndex: number;
+    let callSite: JsCallSite;
     if (token.type === "ident") {
       callee = jsTokenText(text, token);
       if (!LOCAL_EXECUTION_CALLEES.has(callee) && !aliases.has(callee)) continue;
       const previous = tokens[index - 1];
       memberAccess =
         previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
-      const optionalCall = tokens[index + 1];
-      openIndex =
-        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-          ? index + 2
-          : index + 1;
+      callSite = findJsCallSite(text, tokens, memberAccess ? index - 2 : index, index + 1);
     } else if (token.type === "string" && LOCAL_EXECUTION_CALLEES.has(token.value ?? "")) {
       const bracketOpen = tokens[index - 1];
       const bracketClose = tokens[index + 1];
@@ -399,17 +450,16 @@ function hasDynamicLocalExecution(text: string): boolean {
       }
       callee = token.value!;
       memberAccess = true;
-      const optionalCall = tokens[index + 2];
-      openIndex =
-        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-          ? index + 3
-          : index + 2;
+      callSite = findJsCallSite(text, tokens, index - 2, index + 2);
     } else {
       continue;
     }
     if (memberAccess && aliases.has(callee)) continue;
+    const { openIndex, wrapped } = callSite;
     const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
+
+    if (wrapped) return true;
 
     // Alias calls are unresolved by the bounded path graph, including when a
     // literal is passed through them.
@@ -775,6 +825,9 @@ function hasDynamicShellCommand(command: string): boolean {
       (program === "source" || program === ".") &&
       hasShellExpansion(words[programIndex + 1] ?? "")
     ) {
+      return true;
+    }
+    if (program === "eval" && words.slice(programIndex + 1, commandEnd).some(hasShellExpansion)) {
       return true;
     }
 

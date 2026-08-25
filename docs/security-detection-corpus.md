@@ -233,7 +233,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.51.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.52.0`).
 
 `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
@@ -904,6 +904,15 @@ unbounded wildcard hyphen endpoints while rejecting partial prerelease endpoints
 `added-dependency-folded-callee-skipped-content`,
 `added-dependency-direct-node-skipped-content`, and
 `added-dependency-shell-wrapper-skipped-content` fixtures pin the gate-facing completeness changes.
+
+`1.52.0` closes dependency selection and install completeness gaps at syntax and version boundaries.
+Generated npm range ceilings now use npm's exclusive `-0` prerelease boundary, so a partial upper
+bound cannot select a prerelease from the next tuple. Parenthesized and transpiler-style `(0, callee)`
+module/process calls remain conservative install edges, and computed shell `eval` arguments retain
+every possible package target. `added-dependency-parenthesized-loader-skipped-content`,
+`added-dependency-parenthesized-native-execution`, and
+`added-dependency-shell-eval-native-execution` pin the gate-facing coverage and risk changes; focused
+semver tests pin version-selection parity.
 
 ### Fixture format
 

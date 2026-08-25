@@ -221,7 +221,7 @@ function parseComparator(token: string): Comparator[] | null {
   if (operator === "=") {
     return [
       { operator: ">=", version: floor },
-      { operator: "<", version: nextAfterWildcard(floor, wildcardIndex) },
+      { operator: "<", version: nextAfterWildcardUpperBound(floor, wildcardIndex) },
     ];
   }
   if (operator === ">") {
@@ -230,7 +230,10 @@ function parseComparator(token: string): Comparator[] | null {
   }
   if (operator === "<=") {
     // `<=1.2` admits all of 1.2.x.
-    return [{ operator: "<", version: nextAfterWildcard(floor, wildcardIndex) }];
+    return [{ operator: "<", version: nextAfterWildcardUpperBound(floor, wildcardIndex) }];
+  }
+  if (operator === "<") {
+    return [{ operator: "<", version: { ...floor, prerelease: ["0"] } }];
   }
   return [{ operator: operator as ComparatorOperator, version: floor }];
 }
@@ -241,7 +244,7 @@ function tildeOrCaretCeiling(
   minor: number | null,
   patch: number | null,
 ): ParsedSemver {
-  const zero: string[] = [];
+  const zero = ["0"];
   if (operator !== "^") {
     // `~1` is `>=1.0.0 <2.0.0`; `~1.2` and `~1.2.3` are both `<1.3.0`.
     return minor === null
@@ -262,6 +265,10 @@ function nextAfterWildcard(floor: ParsedSemver, wildcardIndex: number): ParsedSe
   return wildcardIndex === 1
     ? { major: floor.major + 1, minor: 0, patch: 0, prerelease: zero }
     : { major: floor.major, minor: floor.minor + 1, patch: 0, prerelease: zero };
+}
+
+function nextAfterWildcardUpperBound(floor: ParsedSemver, wildcardIndex: number): ParsedSemver {
+  return { ...nextAfterWildcard(floor, wildcardIndex), prerelease: ["0"] };
 }
 
 function hyphenLowerBound(token: string): Comparator[] | null {
@@ -310,8 +317,8 @@ function hyphenUpperBound(token: string): Comparator[] | null {
   const patch = minor === null ? null : numericPart(rawPatch);
   if (match[5] && rawPatch === undefined) return null;
   // `1.2.3 - 2.3` admits every 2.3.x; `1.2.3 - 2` admits every 2.x.
-  if (minor === null) return [{ operator: "<", version: zeroed(major + 1, 0) }];
-  if (patch === null) return [{ operator: "<", version: zeroed(major, minor + 1) }];
+  if (minor === null) return [{ operator: "<", version: upperBound(major + 1, 0) }];
+  if (patch === null) return [{ operator: "<", version: upperBound(major, minor + 1) }];
   return [
     {
       operator: "<=",
@@ -320,8 +327,8 @@ function hyphenUpperBound(token: string): Comparator[] | null {
   ];
 }
 
-function zeroed(major: number, minor: number): ParsedSemver {
-  return { major, minor, patch: 0, prerelease: [] };
+function upperBound(major: number, minor: number): ParsedSemver {
+  return { major, minor, patch: 0, prerelease: ["0"] };
 }
 
 function numericPart(value: string | undefined): number | null {
