@@ -132,12 +132,13 @@ All recorded via `recordScanEvent` into `scan_events`:
 
 ## Removal and release approvals
 
-Removing a member deletes their votes on releases that are still undecided
-(`dropPendingApprovalsForMember`, called from `removeOrganizationMember`).
-Someone who has left must not keep counting toward the org's release quorum —
-otherwise removing a member leaves every release they half-approved one click
-from shipping, approved in part by a non-member. Already-decided releases keep
-their full roster. Removal can also drop the member count below the org's
+`removeOrganizationMember` delegates to `removeMemberAndReconcileApprovals`,
+which removes the membership and live approvals in one D1 batch. Someone who
+has left must not keep counting toward the org's release quorum — including on
+a package that met its own bar while sibling packages keep the overall workflow
+gate pending. Such a package is reopened when its remaining approvals fall
+short. Durable blocks, final staged decisions, and completed gates keep their
+historical roster. Removal can also drop the member count below the org's
 required-approvals bar; that is surfaced as a warning rather than silently
 clamped. See [`release-approvals.md`](./release-approvals.md).
 

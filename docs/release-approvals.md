@@ -86,15 +86,23 @@ Gate finalization and delivery scheduling happen before the policy-change audit
 event is written. Audit bookkeeping is contained so a transient event-write
 failure cannot leave a fully approved gate in `pending`.
 
-Removing a member deletes their votes on releases that are **still undecided**
-(`dropPendingApprovalsForMember`): someone who has left must not keep counting
-toward the quorum. Decided releases keep their full roster — that approval was
-real when it was given, and the audit trail has to keep saying so. If a later
-policy increase reopens one of those staged decisions, the former member stays
-in the historical roster but is excluded from the new live tally.
+Removing a member deletes their approvals on releases that are **still unfinished**:
+someone who has left must not keep counting toward the quorum. A package that
+has met its own bar while a sibling keeps the overall workflow gate pending is
+still live release state, so member removal also drops that vote and reopens the
+package if the remaining current-member approvals no longer meet the bar. The
+membership deletion, vote cleanup, and package reconciliation are one D1 batch;
+an interrupted removal cannot leave a stale vote that becomes eligible after a
+later re-invite. Final staged decisions and completed gates keep their full
+roster — that approval was real when it was given, and the audit trail has to
+keep saying so. If a later policy increase reopens one of those staged approval
+decisions, the former member stays in the historical roster but is excluded
+from the new live tally. A recorded block remains final after its voter leaves;
+changing the approval threshold cannot erase it.
 
-Account deletion follows the same pending/decided split. Votes on undecided
-releases are deleted before the membership disappears; votes on decided
+Account deletion follows the same unfinished/final split. Approvals on
+undecided releases, including packages behind a still-pending gate, are deleted
+before the membership disappears; durable blocks are retained. Votes on final
 releases are scrubbed by setting `scan_approvals.user_id` to null, keeping the
 historical count while dropping the identity. This is the same treatment
 `scans.decided_by_user_id` gets.
@@ -133,7 +141,7 @@ their own second factor. See [`two-factor-auth.md`](./two-factor-auth.md).
 
 - `GET /api/v1/scans/:id` returns an `approvals` object: `required`,
   `approvedCount`, `blockedCount`, `verdict`, `legacyDecision`, the `approvals`
-  roster (member, decision, reason, timestamp), `viewerDecision`, and
+  roster (member, current decision, reason, latest submission timestamp), `viewerDecision`, and
   `eligibleApproverCount`.
   It is attached in the route rather than inside `getScan`, because the same
   reader backs the public report export, which must never carry reviewer
@@ -163,6 +171,10 @@ Under a one-approval policy none of it renders.
   waits on a co-approver.
 - `scan.approval_recorded` records each individual vote, and is written only
   when `required > 1`, where "who else signed off" is the point of the policy.
+- Gate retries identify approval and verdict events by the durable vote and
+  decision transition timestamps. If a request commits a vote and then loses
+  its audit write, retrying repairs that exact transition rather than mistaking
+  an older opposite decision for the missing event.
 - The `scan.decided` Analytics Engine event carries `approvalCount` and
   `requiredApprovals` as `double2`/`double3`. Without both, a rising
   time-to-decision reads as reviewer apathy when it is really a second approver

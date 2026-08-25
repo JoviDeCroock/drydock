@@ -166,13 +166,16 @@ export async function setRequiredReleaseApprovals(
     where ${scanApprovals.scanId} = ${scans.id}
       and ${scanApprovals.organizationId} = ${organizationId}
   )`;
+  // A recorded block is final even if its voter later leaves. Approvals are
+  // live quorum contributions and therefore require current membership; a
+  // block is a durable release verdict that only its voter can clear by
+  // revising the staged-review vote while they are still a member.
   const hasBlock = sql`exists (
     select 1
     from ${scanApprovals}
     where ${scanApprovals.scanId} = ${scans.id}
       and ${scanApprovals.organizationId} = ${organizationId}
       and ${scanApprovals.decision} = 'no_publish'
-      and ${voterIsCurrentMember}
   )`;
   const approvalCount = sql`(
     select count(*)
@@ -207,14 +210,18 @@ export async function setRequiredReleaseApprovals(
     policyStillApplies,
     policyIsCurrent,
   )!;
-  const latestVote = (decision: ScanDecision, column: "reason" | "user_id" | "updated_at") =>
+  const latestVote = (
+    decision: ScanDecision,
+    column: "reason" | "user_id" | "updated_at",
+    currentMemberOnly = true,
+  ) =>
     sql`(
       select ${sql.identifier(column)}
       from ${scanApprovals}
       where ${scanApprovals.scanId} = ${scans.id}
         and ${scanApprovals.organizationId} = ${organizationId}
         and ${scanApprovals.decision} = ${decision}
-        and ${voterIsCurrentMember}
+        ${currentMemberOnly ? sql`and ${voterIsCurrentMember}` : sql``}
       order by ${scanApprovals.updatedAt} desc, ${scanApprovals.id} desc
       limit 1
     )`;
@@ -239,8 +246,8 @@ export async function setRequiredReleaseApprovals(
       .update(scans)
       .set({
         decision: "no_publish",
-        decisionReason: latestVote("no_publish", "reason"),
-        decidedByUserId: latestVote("no_publish", "user_id"),
+        decisionReason: latestVote("no_publish", "reason", false),
+        decidedByUserId: latestVote("no_publish", "user_id", false),
         decidedAt: now,
         updatedAt: now,
       })
@@ -346,11 +353,13 @@ export interface ScanApprovalVote {
   decision: ScanDecision;
   reason: string | null;
   createdAt: Date;
+  /** The current vote's submission time; changes whenever a staged vote is revised. */
+  updatedAt: Date;
   /** False after the voter leaves the organization; retained for historical display only. */
   eligible: boolean;
 }
 
-/** Every vote cast on one scan, oldest first, with the voter's identity. */
+/** Every current vote on one scan, ordered by latest submission time, with voter identity. */
 export async function listScanApprovalVotes(
   db: AppDb,
   scanId: string,
@@ -362,6 +371,7 @@ export async function listScanApprovalVotes(
       decision: scanApprovals.decision,
       reason: scanApprovals.reason,
       createdAt: scanApprovals.createdAt,
+      updatedAt: scanApprovals.updatedAt,
       name: user.name,
       email: user.email,
       eligibleUserId: organizationMembers.userId,
@@ -376,7 +386,7 @@ export async function listScanApprovalVotes(
       ),
     )
     .where(and(eq(scanApprovals.scanId, scanId), eq(scanApprovals.organizationId, organizationId)))
-    .orderBy(scanApprovals.createdAt);
+    .orderBy(scanApprovals.updatedAt, scanApprovals.id);
   return rows.map((row) => ({
     userId: row.userId,
     name: row.name ?? null,
@@ -384,6 +394,7 @@ export async function listScanApprovalVotes(
     decision: row.decision === "no_publish" ? "no_publish" : "publish",
     reason: row.reason,
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
     eligible: row.eligibleUserId !== null,
   }));
 }
@@ -477,7 +488,10 @@ export function buildScanApprovalState(input: BuildScanApprovalStateInput): Scan
         email: vote.email,
         decision: vote.decision,
         reason: vote.reason,
-        createdAt: vote.createdAt,
+        // The roster displays the time attached to the vote it is showing. A
+        // staged reviewer may replace their decision and reason, so the
+        // original insert time would misdate the revised vote.
+        createdAt: vote.updatedAt,
         eligible: vote.eligible,
       }))
     : decision
@@ -628,38 +642,163 @@ export async function upsertScanApproval(
 }
 
 /**
- * Drop a departing member's votes on releases that are still undecided.
+ * Remove a member and every vote that can still affect an unfinished release.
  *
- * Someone who has left the organization must not keep counting toward its
- * quorum — otherwise removing a member silently leaves the release they
- * half-approved one click from shipping. Already-decided releases keep their
- * full roster: that decision was real when it was made and the audit trail has
- * to keep saying so.
+ * This is one D1 batch so a transient cleanup failure cannot leave the member
+ * deleted but their pending vote ready to become eligible on a later re-invite.
+ * A package may already read `publish` while a sibling keeps its workflow gate
+ * pending; those package approvals are still live release state, so delete the
+ * departing member's vote and reopen the package when the remaining roster no
+ * longer meets the bar. Final staged decisions and completed gates keep their
+ * historical roster, and blocks remain final.
  */
-export async function dropPendingApprovalsForMember(
+export async function removeMemberAndReconcileApprovals(
   db: AppDb,
   organizationId: string,
   userId: string,
-): Promise<void> {
-  const undecided = db
+): Promise<boolean> {
+  const now = new Date();
+  const pendingGate = sql`exists (
+    select 1
+    from ${githubWorkflowGates}
+    where ${githubWorkflowGates.id} = ${scans.gateId}
+      and ${githubWorkflowGates.organizationId} = ${organizationId}
+      and ${githubWorkflowGates.status} = 'pending'
+  )`;
+  const mutableScans = db
     .select({ id: scans.id })
     .from(scans)
-    .where(and(eq(scans.organizationId, organizationId), isNull(scans.decision)));
-  await db
-    .delete(scanApprovals)
     .where(
+      and(
+        eq(scans.organizationId, organizationId),
+        or(
+          isNull(scans.decision),
+          and(eq(scans.source, "workflow_gate"), eq(scans.decision, "publish"), pendingGate),
+        ),
+      ),
+    );
+  const remainingApprovalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${organizationId}
+      and ${scanApprovals.decision} = 'publish'
+      and ${approvalVoterIsCurrentMember(organizationId)}
+  )`;
+  const requiredApprovals = sql`(
+    select ${organizations.requiredReleaseApprovals}
+    from ${organizations}
+    where ${organizations.id} = ${organizationId}
+  )`;
+
+  const [removed] = await db.batch([
+    db
+      .delete(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.userId, userId),
+        ),
+      )
+      .returning({ id: organizationMembers.id }),
+    // Run even when the membership row was already removed by an interrupted
+    // request. That makes retrying the operation repair stale approval state.
+    db.delete(scanApprovals).where(
       and(
         eq(scanApprovals.organizationId, organizationId),
         eq(scanApprovals.userId, userId),
-        inArray(scanApprovals.scanId, undecided),
+        // A block is durable even when its scan projection has not caught up
+        // yet (for example, interruption immediately after the vote insert).
+        // Departures invalidate approvals, never fail-closed blocks.
+        eq(scanApprovals.decision, "publish"),
+        inArray(scanApprovals.scanId, mutableScans),
       ),
-    );
+    ),
+    db
+      .update(scans)
+      .set({
+        decision: null,
+        decisionReason: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(scans.organizationId, organizationId),
+          eq(scans.source, "workflow_gate"),
+          eq(scans.decision, "publish"),
+          pendingGate,
+          sql`${remainingApprovalCount} < ${requiredApprovals}`,
+        ),
+      ),
+  ]);
+  return removed.length > 0;
 }
 
-/** Remove every still-pending vote before an account's surviving rows are anonymized. */
+/** Remove every still-live approval before an account's surviving rows are anonymized. */
 export async function dropPendingApprovalsForUser(db: AppDb, userId: string): Promise<void> {
-  const undecided = db.select({ id: scans.id }).from(scans).where(isNull(scans.decision));
-  await db
-    .delete(scanApprovals)
-    .where(and(eq(scanApprovals.userId, userId), inArray(scanApprovals.scanId, undecided)));
+  const now = new Date();
+  const pendingGate = sql`exists (
+    select 1
+    from ${githubWorkflowGates}
+    where ${githubWorkflowGates.id} = ${scans.gateId}
+      and ${githubWorkflowGates.organizationId} = ${scans.organizationId}
+      and ${githubWorkflowGates.status} = 'pending'
+  )`;
+  const mutableScans = db
+    .select({ id: scans.id })
+    .from(scans)
+    .where(
+      or(
+        isNull(scans.decision),
+        and(eq(scans.source, "workflow_gate"), eq(scans.decision, "publish"), pendingGate),
+      ),
+    );
+  const remainingApprovalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${scans.organizationId}
+      and ${scanApprovals.decision} = 'publish'
+      and exists (
+        select 1
+        from ${organizationMembers}
+        where ${organizationMembers.organizationId} = ${scans.organizationId}
+          and ${organizationMembers.userId} = ${scanApprovals.userId}
+      )
+  )`;
+  const requiredApprovals = sql`(
+    select ${organizations.requiredReleaseApprovals}
+    from ${organizations}
+    where ${organizations.id} = ${scans.organizationId}
+  )`;
+  await db.batch([
+    db
+      .delete(scanApprovals)
+      .where(
+        and(
+          eq(scanApprovals.userId, userId),
+          eq(scanApprovals.decision, "publish"),
+          inArray(scanApprovals.scanId, mutableScans),
+        ),
+      ),
+    db
+      .update(scans)
+      .set({
+        decision: null,
+        decisionReason: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(scans.source, "workflow_gate"),
+          eq(scans.decision, "publish"),
+          pendingGate,
+          sql`${remainingApprovalCount} < ${requiredApprovals}`,
+        ),
+      ),
+  ]);
 }

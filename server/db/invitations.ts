@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { normalizeRole, type OrganizationRole } from "../lib/auth/roles";
 import type { AppDb } from "./client";
-import { dropPendingApprovalsForMember } from "./scan-approvals";
+import { removeMemberAndReconcileApprovals } from "./scan-approvals";
 import { organizationInvitations, organizationMembers, organizations, user } from "./schema";
 
 export function normalizeEmail(email: string): string {
@@ -114,22 +114,7 @@ export async function removeOrganizationMember(
   organizationId: string,
   userId: string,
 ): Promise<boolean> {
-  const result = await db
-    .delete(organizationMembers)
-    .where(
-      and(
-        eq(organizationMembers.organizationId, organizationId),
-        eq(organizationMembers.userId, userId),
-      ),
-    )
-    .returning({ id: organizationMembers.id });
-  if (result.length === 0) return false;
-  // Someone who has left must stop counting toward the org's release quorum:
-  // otherwise removing a member leaves every release they half-approved one
-  // click from shipping, approved in part by a non-member. Decided releases
-  // keep their full roster — that approval was real when it was given.
-  await dropPendingApprovalsForMember(db, organizationId, userId);
-  return true;
+  return removeMemberAndReconcileApprovals(db, organizationId, userId);
 }
 
 export interface InvitationRecord {
