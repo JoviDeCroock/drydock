@@ -26,6 +26,7 @@ import {
   upsertScanApproval,
   type OrganizationApprovalPolicy,
   type ScanApprovalState,
+  type ScanApprovalVote,
 } from "./scan-approvals";
 import { getScan } from "./scan-detail";
 import { githubWorkflowGates, organizations, scanApprovals, scans } from "./schema";
@@ -185,7 +186,6 @@ async function applyDecisionVote(
 ): Promise<RecordScanDecisionResult> {
   const now = new Date();
   const reason = input.reason?.trim() ? input.reason.trim() : null;
-  const policy = await getOrganizationApprovalPolicy(db, input.organizationId);
 
   const vote = await upsertScanApproval(db, {
     scanId: input.scanId,
@@ -198,86 +198,121 @@ async function applyDecisionVote(
   });
   if (vote === "already_voted") return { outcome: "already_voted" };
 
-  const votes = await listScanApprovalVotes(db, input.scanId, input.organizationId);
-  const verdict = resolveApprovalVerdict(votes, policy.required);
-  const previousVerdict =
-    current.decision === "publish" || current.decision === "no_publish"
-      ? (current.decision as ScanDecision)
-      : null;
-  let verdictChanged = verdict !== previousVerdict;
+  // Read the policy only after the vote is durable. A concurrent policy batch
+  // that commits just before this insert cannot otherwise see the new row, and
+  // this request could keep an old, higher bar and leave a now-sufficient tally
+  // undecided. Every write below proves both the live policy and roster; a lost
+  // compare-and-set retries from fresh state rather than treating the stale
+  // tally as success.
+  let policy: OrganizationApprovalPolicy | null = null;
+  let votes: ScanApprovalVote[] = [];
+  let verdict: ScanDecision | null = null;
+  let verdictChanged = false;
+  let resolvedScan: BuildApprovalScan | null = null;
 
-  if (verdictChanged && verdict) {
-    const applied = await db
-      .update(scans)
-      .set({
-        decision: verdict,
-        decisionReason: reason,
-        // The member whose vote completed the bar owns the decision; the full
-        // roster of who else approved lives in `scan_approvals`.
-        decidedByUserId: input.actorUserId,
-        decidedAt: now,
-        updatedAt: now,
-      })
-      // The in-memory tally can go stale while this request is between its read
-      // and write. Re-prove the verdict from the live roster in the UPDATE so a
-      // concurrent block can never be overwritten by an older approval tally.
-      .where(and(applyVerdictWhere(verdict), approvalVerdictIsSupported(input, policy, verdict)))
-      .returning({ id: scans.id });
-    if (applied.length === 0) {
-      // Lost the write. Two co-approvers submitting at the same instant both
-      // tally the same quorum and both try to finalize; the loser's vote is
-      // still recorded and the release still reached the verdict it computed,
-      // so reporting a conflict would be wrong. Only a *different* state means
-      // this submission genuinely did not apply.
-      const [after] = await db
-        .select({ decision: scans.decision })
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const [nextPolicy, nextVotes, liveRows] = await Promise.all([
+      getOrganizationApprovalPolicy(db, input.organizationId),
+      listScanApprovalVotes(db, input.scanId, input.organizationId),
+      db
+        .select(DECISION_TARGET_COLUMNS)
         .from(scans)
         .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
-        .limit(1);
-      if (after?.decision !== verdict) return { outcome: "not_actionable" };
+        .limit(1),
+    ]);
+    const live = liveRows[0];
+    if (!live) return { outcome: "not_actionable" };
+
+    policy = nextPolicy;
+    votes = nextVotes;
+    verdict = resolveApprovalVerdict(votes, policy.required);
+    const previousVerdict = scanDecision(live.decision);
+    const expectedDecision = previousVerdict
+      ? eq(scans.decision, previousVerdict)
+      : isNull(scans.decision);
+
+    if (verdict === previousVerdict) {
+      // Even a semantic no-op must prove the policy is still current. This is
+      // the branch that used to strand a two-vote tally when the owner lowered
+      // the bar from three to two between the request's read and write.
+      const confirmed = await db
+        .update(scans)
+        .set({ updatedAt: now })
+        .where(
+          and(
+            eq(scans.id, input.scanId),
+            eq(scans.organizationId, input.organizationId),
+            expectedDecision,
+            approvalVerdictIsSupported(input, policy, verdict),
+          ),
+        )
+        .returning({ id: scans.id });
+      if (confirmed.length === 0) continue;
       verdictChanged = false;
+      resolvedScan = approvalScanAfter(live, verdict, false, input.actorUserId, reason, now);
+      break;
     }
-  } else if (verdictChanged && previousVerdict) {
-    // Verdict fell back to undecided — only reachable when the approval bar was
-    // raised above what an already-approved release had cleared. Reverting the
-    // columns keeps "approved" from outliving the policy that granted it. The
-    // predicate is a compare-and-set on the verdict we read, not
-    // `applyVerdictWhere`, whose gate variant asserts the row is *undecided*
-    // and would silently no-op exactly here.
-    await db
-      .update(scans)
-      .set({
-        decision: null,
-        decisionReason: null,
-        decidedByUserId: null,
-        decidedAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(scans.id, input.scanId),
-          eq(scans.organizationId, input.organizationId),
-          eq(scans.decision, previousVerdict),
-          approvalVerdictIsSupported(input, policy, null),
-        ),
-      );
-  } else {
-    await db
-      .update(scans)
-      .set({ updatedAt: now })
-      .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)));
+
+    if (verdict) {
+      const applied = await db
+        .update(scans)
+        .set({
+          decision: verdict,
+          decisionReason: reason,
+          // The member whose vote completed the bar owns the decision; the full
+          // roster of who else approved lives in `scan_approvals`.
+          decidedByUserId: input.actorUserId,
+          decidedAt: now,
+          updatedAt: now,
+        })
+        // Compare against the verdict read above as well as the live roster.
+        // Without this staged co-approvers could both update null -> publish and
+        // both emit the one logical `scan.decided` transition.
+        .where(
+          and(
+            applyVerdictWhere(verdict),
+            expectedDecision,
+            approvalVerdictIsSupported(input, policy, verdict),
+          ),
+        )
+        .returning({ id: scans.id });
+      if (applied.length === 0) continue;
+    } else {
+      // Verdict fell back to undecided — reachable when the approval bar was
+      // raised above what an already-approved release had cleared.
+      const applied = await db
+        .update(scans)
+        .set({
+          decision: null,
+          decisionReason: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(scans.id, input.scanId),
+            eq(scans.organizationId, input.organizationId),
+            expectedDecision,
+            approvalVerdictIsSupported(input, policy, null),
+          ),
+        )
+        .returning({ id: scans.id });
+      if (applied.length === 0) continue;
+    }
+
+    verdictChanged = true;
+    resolvedScan = approvalScanAfter(live, verdict, true, input.actorUserId, reason, now);
+    break;
   }
+
+  if (!policy || !resolvedScan) return { outcome: "not_actionable" };
 
   const approvals = buildScanApprovalState({
     votes,
     policy,
     viewerUserId: input.actorUserId,
-    scan: {
-      decision: verdict,
-      decisionReason: verdictChanged ? reason : current.decisionReason,
-      decidedByUserId: verdictChanged ? input.actorUserId : current.decidedByUserId,
-      decidedAt: verdictChanged ? now : current.decidedAt,
-    },
+    scan: resolvedScan,
   });
 
   await recordDecisionAuditTrail(db, {
@@ -306,6 +341,28 @@ async function applyDecisionVote(
   // so it must describe the row that is actually persisted now.
   verdictChanged = verdictChanged && (detail.scan.decision ?? null) === verdict;
   return { outcome: "recorded", detail, approvals, verdict, verdictChanged };
+}
+
+type BuildApprovalScan = Parameters<typeof buildScanApprovalState>[0]["scan"];
+
+function scanDecision(value: string | null): ScanDecision | null {
+  return value === "publish" || value === "no_publish" ? value : null;
+}
+
+function approvalScanAfter(
+  current: DecisionTargetRow,
+  verdict: ScanDecision | null,
+  changed: boolean,
+  actorUserId: string,
+  reason: string | null,
+  now: Date,
+): BuildApprovalScan {
+  return {
+    decision: verdict,
+    decisionReason: changed ? reason : current.decisionReason,
+    decidedByUserId: changed ? actorUserId : current.decidedByUserId,
+    decidedAt: changed ? now : current.decidedAt,
+  };
 }
 
 /**

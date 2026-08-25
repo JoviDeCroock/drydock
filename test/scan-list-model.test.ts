@@ -143,6 +143,7 @@ describe("ScanListModel decisions", () => {
       approvedCount: 1,
       blockedCount: 0,
       verdict: null,
+      legacyDecision: false,
       approvals: [],
       viewerDecision: "publish",
       eligibleApproverCount: 2,
@@ -153,13 +154,14 @@ describe("ScanListModel decisions", () => {
     );
 
     model = new ScanListModel();
-    model.scans.value = [{ ...scanDetail(null).scan, approvalCount: 0 }];
+    model.scans.value = [{ ...scanDetail(null).scan, approvalCount: 0, legacyDecision: true }];
     model.filter.value = "undecided";
 
     const updated = await model.setDecision("scan-1", "publish", "reviewed");
 
     expect(updated?.approvals?.verdict).toBeNull();
     expect(model.scans.value[0]?.approvalCount).toBe(1);
+    expect(model.scans.value[0]?.legacyDecision).toBe(false);
   });
 });
 

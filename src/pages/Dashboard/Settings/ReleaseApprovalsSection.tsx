@@ -1,11 +1,13 @@
 import { useModel, useSignal } from "@preact/signals";
 import type { OrganizationRole } from "../../../../server/lib/auth/roles";
 import { OrganizationModel } from "../../../models/organization";
+import { sessionModel } from "../../../models/auth";
 import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { Field } from "../../../components/Field";
+import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
 import { Muted, SectionLabel } from "../../../components/Typography";
 
@@ -43,6 +45,7 @@ export function ReleaseApprovalsSection({
   const draftValue = draft.value;
   const activeDraft =
     draftValue && draftValue.organizationId === active?.id ? draftValue.value : null;
+  const codeDraft = useSignal("");
   const selected = activeDraft ?? String(required);
   // The server caps the bar at the member count, so offering higher values here
   // would just be a guaranteed error. Until the member list loads we offer the
@@ -51,11 +54,23 @@ export function ReleaseApprovalsSection({
   const options = Array.from({ length: Math.max(ceiling, required) }, (_, index) => index + 1);
   const changed = selected !== String(required);
   const lowering = Number(selected) < required;
+  const enrolled = sessionModel.user.value?.twoFactorEnabled === true;
+  const code = codeDraft.value.trim();
+  const blockedOnCode = lowering && code.length === 0;
 
   const save = async () => {
-    if (!active || !isOwner || saving || !changed) return;
-    const ok = await organizations.setRequiredReleaseApprovals(active.id, Number(selected));
-    if (ok) draft.value = null;
+    if (!active || !isOwner || saving || !changed || (lowering && !enrolled) || blockedOnCode) {
+      return;
+    }
+    const ok = await organizations.setRequiredReleaseApprovals(
+      active.id,
+      Number(selected),
+      lowering ? code : null,
+    );
+    if (ok) {
+      draft.value = null;
+      codeDraft.value = "";
+    }
   };
 
   return (
@@ -87,7 +102,8 @@ export function ReleaseApprovalsSection({
             {lowering ? (
               <Alert tone="warn">
                 Lowering this bar can immediately approve releases that already have enough votes,
-                including held GitHub Actions deployments.
+                including held GitHub Actions deployments. Confirm the change with a fresh
+                authenticator code.
               </Alert>
             ) : null}
             <Field label="Required approvals" for="requiredApprovals">
@@ -112,11 +128,40 @@ export function ReleaseApprovalsSection({
                 </Muted>
               ) : null}
             </Field>
+            {lowering ? (
+              enrolled ? (
+                <Field label="Authentication code" for="releaseApprovalsTotp">
+                  <Input
+                    id="releaseApprovalsTotp"
+                    type="text"
+                    value={codeDraft.value}
+                    placeholder="6-digit code"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxLength={8}
+                    spellcheck={false}
+                    disabled={saving}
+                    onInput={(e) => (codeDraft.value = (e.target as HTMLInputElement).value)}
+                  />
+                  <Muted class="m-0 mt-1 text-[12px]">
+                    Enter the code from your authenticator app to lower the release approval bar.
+                  </Muted>
+                </Field>
+              ) : (
+                <Alert tone="warn">
+                  Enable two-factor authentication in{" "}
+                  <a class="underline text-accent" href="/dashboard/account">
+                    Account
+                  </a>{" "}
+                  before lowering the release approval bar.
+                </Alert>
+              )
+            ) : null}
             <Button
               variant="primary"
               size="sm"
               onClick={save}
-              disabled={saving || !changed}
+              disabled={saving || !changed || (lowering && !enrolled) || blockedOnCode}
               class="self-end"
             >
               {saving ? "Saving…" : "Save"}

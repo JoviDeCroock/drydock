@@ -3,11 +3,14 @@ import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
 import worker from "../../server";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
 import {
+  createOrganization,
   ensurePersonalOrganization,
   organizationRequiresTwoFactorForReleaseDecisions,
   setRequireTwoFactorForReleaseDecisions,
 } from "../../server/db/organizations";
+import { getOrganizationApprovalPolicy, setRequiredReleaseApprovals } from "../../server/db/scans";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 
 // The owner-only release-two-factor toggle is itself 2FA-guarded, mirroring the
@@ -104,6 +107,8 @@ async function setUpOwner(): Promise<{ jar: Jar; userId: string; organizationId:
 
 const releasePath = (organizationId: string) =>
   `/api/v1/organizations/${organizationId}/release-two-factor`;
+const approvalPath = (organizationId: string) =>
+  `/api/v1/organizations/${organizationId}/release-approvals`;
 
 describe("release-two-factor toggle 2FA guard", () => {
   test("an enrolled owner enables the policy without a code", { timeout: 30_000 }, async () => {
@@ -187,4 +192,37 @@ describe("release-two-factor toggle 2FA guard", () => {
       await organizationRequiresTwoFactorForReleaseDecisions(createDb(env.DB), organizationId),
     ).toBe(false);
   });
+});
+
+describe("release approval policy 2FA guard", () => {
+  test(
+    "an enrolled owner lowers the approval bar with a fresh code",
+    { timeout: 30_000 },
+    async () => {
+      const owner = await setUpOwner();
+      const totpURI = await enrollTwoFactor(owner.jar);
+      const memberJar: Jar = new Map();
+      const memberUserId = await signUp(memberJar);
+      const db = createDb(env.DB);
+      const organizationId = await createOrganization(db, {
+        ownerUserId: owner.userId,
+        name: `Approval Org ${crypto.randomUUID().slice(0, 8)}`,
+      });
+      await addOrganizationMember(db, {
+        organizationId,
+        userId: memberUserId,
+        role: "member",
+      });
+      await setRequiredReleaseApprovals(db, organizationId, 2);
+
+      const res = await call("PUT", approvalPath(organizationId), {
+        body: { requiredApprovals: 1, totpCode: totpFor(totpURI) },
+        jar: owner.jar,
+      });
+
+      expect(res.res.status).toBe(200);
+      expect(res.json).toMatchObject({ requiredApprovals: 1 });
+      expect((await getOrganizationApprovalPolicy(db, organizationId)).required).toBe(1);
+    },
+  );
 });
