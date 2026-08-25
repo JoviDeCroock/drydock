@@ -1,0 +1,162 @@
+{
+  "id": "browser-navigation-runtime-reachability",
+  "title": "browser runtime and page navigation edges remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins Manifest V3 generated background pages, runtime.getURL importScripts, literal DOM navigation, and HTML navigation elements while keeping service-worker-relative, dynamic, and download paths test-scoped.",
+  "slug": "navigation-runtime-reachability",
+  "extensionId": "navigation-runtime-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 342,
+      "sha256": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Navigation runtime reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"navigation-runtime-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"background\": { \"scripts\": [\"background/generated.js\"], \"service_worker\": \"background.js\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 241,
+      "sha256": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+      "flags": [],
+      "textSample": "<script src=\"popup.js\"></script><area href=\"tests/html.html\"><form action=\"tests/html.html\"></form><button formaction=\"tests/html.html\">Open</button><input type=\"submit\" formaction=\"tests/html.html\"><area download href=\"tests/download.html\">"
+    },
+    {
+      "path": "popup.js",
+      "size": 94,
+      "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+      "flags": [],
+      "textSample": "window.location.assign(\"tests/dom.html\");\nlocation.assign(\"tests/dynamic-dom.html\" + suffix);\n"
+    },
+    {
+      "path": "background.js",
+      "size": 174,
+      "sha256": "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5",
+      "flags": [],
+      "textSample": "importScripts(chrome.runtime.getURL(\"tests/runtime.js\"));\nimportScripts(chrome.runtime.getURL(\"tests/dynamic-runtime.js\") + suffix);\nnew Worker(\"tests/service-relative.js\");\n"
+    },
+    {
+      "path": "background/generated.js",
+      "size": 34,
+      "sha256": "d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6",
+      "flags": [],
+      "textSample": "new Worker(\"tests/generated.js\");\n"
+    },
+    {
+      "path": "tests/html.html",
+      "size": 32,
+      "sha256": "d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7",
+      "flags": [],
+      "textSample": "<script src=\"html.js\"></script>\n"
+    },
+    {
+      "path": "tests/html.js",
+      "size": 15,
+      "sha256": "d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/dom.html",
+      "size": 31,
+      "sha256": "d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9",
+      "flags": [],
+      "textSample": "<script src=\"dom.js\"></script>\n"
+    },
+    {
+      "path": "tests/dom.js",
+      "size": 15,
+      "sha256": "dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/runtime.js",
+      "size": 15,
+      "sha256": "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/generated.js",
+      "size": 15,
+      "sha256": "dcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/download.html",
+      "size": 36,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "flags": [],
+      "textSample": "<script src=\"download.js\"></script>\n"
+    },
+    {
+      "path": "tests/download.js",
+      "size": 16,
+      "sha256": "dededededededededededededededededededededededededededededededededede",
+      "flags": [],
+      "textSample": "eval(download);\n"
+    },
+    {
+      "path": "tests/dynamic-dom.html",
+      "size": 39,
+      "sha256": "dfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdfdf",
+      "flags": [],
+      "textSample": "<script src=\"dynamic-dom.js\"></script>\n"
+    },
+    {
+      "path": "tests/dynamic-dom.js",
+      "size": 18,
+      "sha256": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0",
+      "flags": [],
+      "textSample": "eval(dynamicDom);\n"
+    },
+    {
+      "path": "tests/dynamic-runtime.js",
+      "size": 22,
+      "sha256": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+      "flags": [],
+      "textSample": "eval(dynamicRuntime);\n"
+    },
+    {
+      "path": "tests/service-relative.js",
+      "size": 23,
+      "sha256": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+      "flags": [],
+      "textSample": "eval(serviceRelative);\n"
+    },
+    {
+      "path": "background/tests/generated.js",
+      "size": 22,
+      "sha256": "e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3",
+      "flags": [],
+      "textSample": "eval(moduleRelative);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dom.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/generated.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/html.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/runtime.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "background/tests/generated.js"
+    },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/download.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/dynamic-dom.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/dynamic-runtime.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/service-relative.js"
+    }
+  ]
+}

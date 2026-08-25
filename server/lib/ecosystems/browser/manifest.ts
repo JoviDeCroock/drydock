@@ -72,7 +72,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     files,
     declaredBackgroundEntrypoints,
     declaredBackgroundPage,
-    raw.manifest_version === 2 ? declaredBackgroundScripts : [],
+    declaredBackgroundScripts,
   );
   const webAccessibleResources = manifestWebAccessibleResourcePaths(raw, files);
   const extensionPageConsumers = htmlPageConsumerEntrypoints(files, [
@@ -595,10 +595,14 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       !HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
       !HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
       tagName !== "a" &&
+      tagName !== "area" &&
       tagName !== "base" &&
+      tagName !== "button" &&
       tagName !== "embed" &&
+      tagName !== "form" &&
       tagName !== "frame" &&
       tagName !== "iframe" &&
+      tagName !== "input" &&
       tagName !== "meta" &&
       tagName !== "object" &&
       namespaceBoundary === null
@@ -610,21 +614,27 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     }
 
     const targetAttributes =
-      tagName === "base" || tagName === "a"
+      tagName === "base" || tagName === "a" || tagName === "area"
         ? ["href"]
-        : tagName === "object"
-          ? ["data"]
-          : tagName === "meta"
-            ? []
-            : tagName === "script" && namespace === "svg"
-              ? ["href", "xlink:href"]
-              : ["src"];
+        : tagName === "form"
+          ? ["action"]
+          : tagName === "button" || tagName === "input"
+            ? ["formaction"]
+            : tagName === "object"
+              ? ["data"]
+              : tagName === "meta"
+                ? []
+                : tagName === "script" && namespace === "svg"
+                  ? ["href", "xlink:href"]
+                  : ["src"];
     const targetValues = new Map<string, string | null>();
     let metaHttpEquiv: string | null = null;
     let metaContent: string | null = null;
     let srcdocValue: string | null = null;
     let srcdocSeen = false;
-    let anchorDownload = false;
+    let downloadNavigation = false;
+    let formMethod: string | null = null;
+    let controlType: string | null = null;
     let tagClosed = false;
     let selfClosing = false;
     while (cursor < html.length) {
@@ -682,7 +692,19 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         srcdocSeen = true;
         srcdocValue = value;
       }
-      if (tagName === "a" && attributeName === "download") anchorDownload = true;
+      if ((tagName === "a" || tagName === "area") && attributeName === "download") {
+        downloadNavigation = true;
+      }
+      if (tagName === "form" && attributeName === "method" && formMethod === null) {
+        formMethod = decodeHTMLAttribute(value ?? "");
+      }
+      if (
+        (tagName === "button" || tagName === "input") &&
+        attributeName === "type" &&
+        controlType === null
+      ) {
+        controlType = decodeHTMLAttribute(value ?? "");
+      }
     }
     const targetAttribute = targetAttributes.find((attribute) => targetValues.has(attribute));
     const targetValue = targetAttribute ? (targetValues.get(targetAttribute) ?? null) : null;
@@ -709,15 +731,33 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       tagClosed &&
       (tagName === "script" ||
         tagName === "a" ||
+        tagName === "area" ||
+        tagName === "button" ||
         tagName === "embed" ||
+        tagName === "form" ||
         tagName === "frame" ||
         tagName === "iframe" ||
+        tagName === "input" ||
         tagName === "object") &&
-      (tagName !== "a" || !anchorDownload) &&
+      !downloadNavigation &&
+      (tagName !== "form" || formMethod?.trim().toLowerCase() !== "dialog") &&
+      (tagName !== "button" ||
+        !["button", "reset"].includes(controlType?.trim().toLowerCase() ?? "")) &&
+      (tagName !== "input" ||
+        ["image", "submit"].includes(controlType?.trim().toLowerCase() ?? "text")) &&
       targetValue
     ) {
       sources.push({
-        kind: tagName === "script" ? "script" : tagName === "a" ? "linked-page" : "page",
+        kind:
+          tagName === "script"
+            ? "script"
+            : tagName === "a" ||
+                tagName === "area" ||
+                tagName === "button" ||
+                tagName === "form" ||
+                tagName === "input"
+              ? "linked-page"
+              : "page",
         source: decodeHTMLAttribute(targetValue),
         baseHref,
       });

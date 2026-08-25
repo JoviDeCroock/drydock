@@ -774,7 +774,7 @@ describe("browser extension review adapter", () => {
     );
   });
 
-  test("follows packaged HTML linked from a manifest-declared extension page", () => {
+  test("follows packaged HTML navigations from a manifest-declared extension page", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const files = [
@@ -785,7 +785,15 @@ describe("browser extension review adapter", () => {
         sha256: "6d".repeat(32),
         flags: [],
         textSample:
-          '<a href="tests/helper.html">Open helper</a><a download href="tests/download.html">Download source</a>',
+          '<a href="tests/helper.html">Open helper</a>' +
+          '<area href="tests/area.html">' +
+          '<form action="tests/form.html"></form>' +
+          '<button formaction="tests/button.html">Open button helper</button>' +
+          '<input type="submit" formaction="tests/input.html">' +
+          '<a download href="tests/download.html">Download source</a>' +
+          '<area download href="tests/area-download.html">' +
+          '<button type="button" formaction="tests/inert-button.html">No navigation</button>' +
+          '<input formaction="tests/inert-input.html">',
       },
       {
         path: "tests/helper.html",
@@ -801,6 +809,22 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: "eval(payload);",
       },
+      ...["area", "form", "button", "input"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 40,
+          sha256: String(75 + index).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: String(79 + index).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
       {
         path: "tests/download.html",
         size: 41,
@@ -815,13 +839,40 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: "eval(download);",
       },
+      ...["area-download", "inert-button", "inert-input"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 40,
+          sha256: String(83 + index).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: String(86 + index).repeat(32),
+          flags: [],
+          textSample: "eval(inert);",
+        },
+      ]),
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
     expect(parsed.extensionPageEntrypoints).toEqual(
-      expect.arrayContaining(["popup.html", "tests/helper.html", "tests/payload.js"]),
+      expect.arrayContaining([
+        "popup.html",
+        "tests/helper.html",
+        "tests/payload.js",
+        ...["area", "form", "button", "input"].flatMap((name) => [
+          `tests/${name}.html`,
+          `tests/${name}.js`,
+        ]),
+      ]),
     );
     expect(parsed.extensionPageEntrypoints).not.toContain("tests/download.html");
+    expect(parsed.extensionPageEntrypoints).not.toContain("tests/area-download.html");
+    expect(parsed.extensionPageEntrypoints).not.toContain("tests/inert-button.html");
+    expect(parsed.extensionPageEntrypoints).not.toContain("tests/inert-input.html");
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
@@ -829,13 +880,24 @@ describe("browser extension review adapter", () => {
     expect(findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ severity: "high", file: "tests/payload.js" }),
+        ...["area", "form", "button", "input"].map((name) =>
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
+        ),
         expect.objectContaining({
           severity: "medium",
           file: "tests/download.js",
           testScoped: true,
         }),
+        ...["area-download", "inert-button", "inert-input"].map((name) =>
+          expect.objectContaining({
+            severity: "medium",
+            file: `tests/${name}.js`,
+            testScoped: true,
+          }),
+        ),
       ]),
     );
+    expect(findings).toHaveLength(9);
   });
 
   test.each(["0.5; url=tests/helper.html", "0; tests/helper.html"])(
@@ -1609,6 +1671,61 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({
           severity: "medium",
           file: "background/tests/payload.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+  });
+
+  test("resolves plain Worker URLs from generated Manifest V3 background scripts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        background: {
+          scripts: ["background/main.js"],
+          service_worker: "service-worker.js",
+        },
+      }),
+      {
+        path: "background/main.js",
+        size: 38,
+        sha256: "8c".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/from-script.js");',
+      },
+      {
+        path: "service-worker.js",
+        size: 46,
+        sha256: "8d".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/from-service-worker.js");',
+      },
+      ...["from-script", "from-service-worker"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(88 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.consumerDocumentBaseUrlsByPath["background/main.js"]).toEqual([
+      "drydock-extension://artifact/",
+    ]);
+    expect(parsed.consumerDocumentBaseUrlsByPath["service-worker.js"]).toBeUndefined();
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/from-script.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/from-service-worker.js",
           testScoped: true,
         }),
       ]),

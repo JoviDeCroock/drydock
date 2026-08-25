@@ -117,16 +117,35 @@ export function consumerReachablePaths(
         : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
       if (resolved) queue.push({ path: resolved, documentBaseUrl });
     }
+    for (const imported of staticImportScriptsSpecifiers(file.textSample)) {
+      if (!rootRelativeModuleImports && imported.resolution === "extension-root") continue;
+      const resolved = rootRelativeModuleImports
+        ? imported.resolution === "extension-root"
+          ? resolveBrowserDocumentModulePath(
+              imported.path,
+              BROWSER_ARCHIVE_ROOT.href,
+              byNormalizedPath,
+            )
+          : resolveBrowserScriptModulePath(path, imported.path, byNormalizedPath)
+        : resolveModulePath(joinRelative(path, imported.path), byNormalizedPath);
+      if (resolved) queue.push({ path: resolved, documentBaseUrl });
+    }
     if (rootRelativeModuleImports) {
       for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
         // Registration and explicit runtime.getURL()/extension.getURL()
         // resources are rooted at the extension origin. Direct relative tab URLs and Manifest V2
         // injection files differ across browser runtimes, so follow both the
         // extension root and the owning extension document when one is known.
-        const baseUrls = [BROWSER_ARCHIVE_ROOT.href];
-        if (resource.resolution === "document-or-root" && documentBaseUrl) {
-          baseUrls.push(documentBaseUrl);
-        }
+        const baseUrls =
+          resource.resolution === "root"
+            ? [BROWSER_ARCHIVE_ROOT.href]
+            : resource.resolution === "document"
+              ? documentBaseUrl
+                ? [documentBaseUrl]
+                : []
+              : documentBaseUrl
+                ? [BROWSER_ARCHIVE_ROOT.href, documentBaseUrl]
+                : [BROWSER_ARCHIVE_ROOT.href];
         for (const baseUrl of new Set(baseUrls)) {
           const resolved = resolveBrowserDocumentModulePath(
             resource.path,
@@ -359,7 +378,6 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
       specifiers.push(match[1]);
     }
   }
-  specifiers.push(...staticImportScriptsSpecifiers(text));
   return specifiers;
 }
 
@@ -370,11 +388,16 @@ type WebExtensionScriptValueShape =
   | "string-or-string-array"
   | "file-object-array";
 type WebExtensionResourceArgument = "first" | "first-object";
-type WebExtensionResourceResolution = "document-or-root" | "root";
+type WebExtensionResourceResolution = "document" | "document-or-root" | "root";
 
 interface WebExtensionResourceSpecifier {
   path: string;
   resolution: WebExtensionResourceResolution;
+}
+
+interface ImportScriptsSpecifier {
+  path: string;
+  resolution: "extension-root" | "script";
 }
 
 type WebExtensionResourceCall =
@@ -393,11 +416,11 @@ const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "self", "window"]);
 // Classic workers may load more packaged scripts without a module edge. Parse
 // only literal arguments on the worker-global call so API-shaped text in
 // strings, comments, regexes, or unrelated object methods stays inert.
-function staticImportScriptsSpecifiers(text: string): string[] {
+function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
-  const specifiers: string[] = [];
+  const specifiers: ImportScriptsSpecifier[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const current = tokenText(tokens[index], text);
     let callIndex: number | null = null;
@@ -417,7 +440,17 @@ function staticImportScriptsSpecifiers(text: string): string[] {
     if (openIndex === null) continue;
     const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
     if (closeIndex === null) continue;
-    specifiers.push(...staticLiteralCallArguments(tokens, text, openIndex + 1, closeIndex));
+    for (const [start, end] of staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)) {
+      if (end === start + 1) {
+        const path = staticScriptPath(tokens[start], text);
+        if (path !== null) specifiers.push({ path, resolution: "script" });
+        continue;
+      }
+      const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
+      if (runtimeUrl?.nextIndex === end) {
+        specifiers.push({ path: runtimeUrl.path, resolution: "extension-root" });
+      }
+    }
     index = closeIndex;
   }
   return specifiers;
@@ -434,6 +467,8 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   const specifiers: WebExtensionResourceSpecifier[] = [];
 
   for (let index = 0; index < tokens.length; index += 1) {
+    const navigation = staticBrowserNavigationResource(tokens, text, index);
+    if (navigation) specifiers.push(navigation);
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
@@ -470,6 +505,69 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   }
 
   return specifiers;
+}
+
+function staticBrowserNavigationResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): WebExtensionResourceSpecifier | null {
+  if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
+
+  let index = start;
+  const first = tokenText(tokens[index], text);
+  if (first === "window") {
+    const member = staticMemberAccess(tokens, text, index + 1);
+    if (!member) return null;
+    if (member.name === "open") {
+      const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+      if (openIndex === null) return null;
+      const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+      if (closeIndex === null) return null;
+      const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+      return path === null ? null : { path, resolution: "document" };
+    }
+    if (member.name !== "location") return null;
+    index = member.nextIndex;
+  } else if (first === "document") {
+    const member = staticMemberAccess(tokens, text, index + 1);
+    if (member?.name !== "location") return null;
+    index = member.nextIndex;
+  } else if (first === "location") {
+    index += 1;
+  } else {
+    return null;
+  }
+
+  if (tokenText(tokens[index], text) === "=") {
+    const path = staticNavigationAssignmentPath(tokens, text, index + 1);
+    return path === null ? null : { path, resolution: "document" };
+  }
+  const member = staticMemberAccess(tokens, text, index);
+  if (!member) return null;
+  if (member.name === "href" && tokenText(tokens[member.nextIndex], text) === "=") {
+    const path = staticNavigationAssignmentPath(tokens, text, member.nextIndex + 1);
+    return path === null ? null : { path, resolution: "document" };
+  }
+  if (member.name !== "assign" && member.name !== "replace") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  if (closeIndex === null) return null;
+  const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+  return path === null ? null : { path, resolution: "document" };
+}
+
+function staticNavigationAssignmentPath(
+  tokens: JsToken[],
+  text: string,
+  valueIndex: number,
+): string | null {
+  const path = staticScriptPath(tokens[valueIndex], text);
+  if (path === null) return null;
+  return ["", ",", ";", ")", "]", "}"].includes(tokenText(tokens[valueIndex + 1], text))
+    ? path
+    : null;
 }
 
 function webExtensionScriptCall(
@@ -977,29 +1075,6 @@ function staticCallOpenIndex(tokens: JsToken[], text: string, index: number): nu
   return tokenText(tokens[index], text) === "?." && tokenText(tokens[index + 1], text) === "("
     ? index + 1
     : null;
-}
-
-function staticLiteralCallArguments(
-  tokens: JsToken[],
-  text: string,
-  start: number,
-  end: number,
-): string[] {
-  const paths: string[] = [];
-  let argumentStart = start;
-  let depth = 0;
-  for (let index = start; index <= end; index += 1) {
-    const value = index === end ? "," : tokenText(tokens[index], text);
-    if (value === "[" || value === "{" || value === "(") depth += 1;
-    else if (value === "]" || value === "}" || value === ")") depth -= 1;
-    if (value !== "," || depth !== 0) continue;
-    if (index === argumentStart + 1) {
-      const path = staticScriptPath(tokens[argumentStart], text);
-      if (path !== null) paths.push(path);
-    }
-    argumentStart = index + 1;
-  }
-  return paths;
 }
 
 function staticLiteralCallArgument(

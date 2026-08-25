@@ -2480,6 +2480,56 @@ describe("test-scoped capability findings", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows importScripts resources wrapped in runtime.getURL", () => {
+    const staged = [
+      pkg(),
+      file(
+        "worker.js",
+        [
+          'importScripts(chrome.runtime.getURL("test/chrome.js"));',
+          "self.importScripts(browser['extension'].getURL('test/browser.js'));",
+          'importScripts(tool.runtime.getURL("test/decoy.js"));',
+          'importScripts(chrome.runtime.getURL("test/dynamic.js") + suffix);',
+        ].join("\n"),
+      ),
+      file("test/chrome.js", "eval(payload);\n"),
+      file("test/browser.js", "eval(payload);\n"),
+      file("test/decoy.js", "eval(payload);\n"),
+      file("test/dynamic.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["worker.js"],
+      consumerRootRelativeModuleImports: true,
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "test/chrome.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/browser.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/decoy.js", severity: "low", testScoped: true }),
+        expect.objectContaining({ file: "test/dynamic.js", severity: "low", testScoped: true }),
+      ]),
+    );
+    expect(findings).toHaveLength(4);
+
+    const nonBrowserFindings = deterministicFindings(
+      staged,
+      createPackageDiff(staged, staged),
+      undefined,
+      {
+        codePatternSet: "javascript",
+        consumerEntrypointPaths: ["worker.js"],
+      },
+    ).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(nonBrowserFindings).toHaveLength(4);
+    expect(
+      nonBrowserFindings.every(
+        (finding) => finding.severity === "low" && finding.testScoped === true,
+      ),
+    ).toBe(true);
+  });
+
   test("ignores importScripts-shaped text outside executable calls", () => {
     const staged = [
       pkg(),
@@ -2587,6 +2637,74 @@ describe("test-scoped capability findings", () => {
       ]),
     );
     expect(findings).toHaveLength(5);
+  });
+
+  test("follows literal extension-page DOM navigation", () => {
+    const staged = [
+      pkg(),
+      file(
+        "pages/controller.js",
+        [
+          'window.location.assign("test/assigned.html");',
+          'document.location.replace("/test/replaced.html");',
+          'location.href = "test/href.html";',
+          'window.location = "test/window.html";',
+          'window.open("test/opened.html");',
+          'tool.location.assign("test/decoy.html");',
+          'location.assign("test/dynamic.html" + suffix);',
+          'location.href = "test/dynamic-assignment.html" + suffix;',
+        ].join("\n"),
+      ),
+      ...["assigned", "href", "window", "opened"].flatMap((name) => [
+        file(`pages/test/${name}.html`, `<script src="${name}.js"></script>\n`),
+        file(`pages/test/${name}.js`, "eval(payload);\n"),
+      ]),
+      file("test/replaced.html", '<script src="replaced.js"></script>\n'),
+      file("test/replaced.js", "eval(payload);\n"),
+      file("pages/test/decoy.html", '<script src="decoy.js"></script>\n'),
+      file("pages/test/decoy.js", "eval(payload);\n"),
+      file("pages/test/dynamic.html", '<script src="dynamic.js"></script>\n'),
+      file("pages/test/dynamic.js", "eval(payload);\n"),
+      file("pages/test/dynamic-assignment.html", '<script src="dynamic-assignment.js"></script>\n'),
+      file("pages/test/dynamic-assignment.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["pages/controller.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerDocumentBaseUrlsByPath: {
+        "pages/controller.js": ["drydock-extension://artifact/pages/popup.html"],
+      },
+      consumerFileDependencyPaths: (path) => {
+        if (!path.endsWith(".html")) return [];
+        return [{ path: path.replace(/\.html$/, ".js") }];
+      },
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        ...["assigned", "href", "window", "opened"].map((name) =>
+          expect.objectContaining({ file: `pages/test/${name}.js`, severity: "medium" }),
+        ),
+        expect.objectContaining({ file: "test/replaced.js", severity: "medium" }),
+        expect.objectContaining({
+          file: "pages/test/decoy.js",
+          severity: "low",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          file: "pages/test/dynamic.js",
+          severity: "low",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          file: "pages/test/dynamic-assignment.js",
+          severity: "low",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(8);
   });
 
   test("follows static Manifest V3 scripting injection files", () => {
