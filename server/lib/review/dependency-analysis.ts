@@ -11,6 +11,7 @@ import {
   normalizeReachabilityPath,
   shellCommandWords,
 } from "./rules/reachability";
+import { normalizeCodeForScanning } from "./rules/normalize";
 import { normalizeStringRecord } from "../tar-parser.js";
 import { jsTokenText, tokenizeJs, type JsToken } from "../platform/js-lexer";
 import type {
@@ -109,9 +110,7 @@ export function assessDependencyArtifact(
     (installCommands.some(({ command }) => hasDynamicInstallCommand(command)) ||
       [...reachable].some((path) => {
         const file = filesByPath.get(path);
-        return file?.textSample
-          ? hasDynamicModuleLoad(file.textSample) || hasDynamicLocalExecution(file.textSample)
-          : false;
+        return file?.textSample ? hasDynamicJavaScriptEdge(file.textSample) : false;
       }));
   const installReachableUninspectedFiles = [
     ...new Set([
@@ -723,21 +722,40 @@ function installScriptCapabilities(
 }
 
 function hasDynamicInstallCommand(command: string): boolean {
-  if (
-    hasDynamicModuleLoad(command) ||
-    hasDynamicLocalExecution(command) ||
-    hasDynamicShellCommand(command)
-  ) {
+  if (hasDynamicJavaScriptEdge(command) || hasDynamicShellCommand(command)) {
     return true;
   }
   for (const program of inlineNodePrograms(command)) {
-    if (hasDynamicModuleLoad(program) || hasDynamicLocalExecution(program)) return true;
+    if (hasDynamicJavaScriptEdge(program)) return true;
   }
   return false;
 }
 
+function hasDynamicJavaScriptEdge(source: string): boolean {
+  if (hasDynamicModuleLoad(source) || hasDynamicLocalExecution(source)) return true;
+  const normalized = normalizeCodeForScanning(source);
+  return (
+    normalized !== source &&
+    (hasDynamicModuleLoad(normalized) || hasDynamicLocalExecution(normalized))
+  );
+}
+
 const SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
+const SHELL_CONTROL_PREFIXES = new Set([
+  "!",
+  "(",
+  "{",
+  "do",
+  "elif",
+  "else",
+  "if",
+  "then",
+  "time",
+  "until",
+  "while",
+]);
+const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec", "nohup"]);
 
 /** True when a shell command chooses the executable at runtime. */
 function hasDynamicShellCommand(command: string): boolean {
@@ -745,17 +763,23 @@ function hasDynamicShellCommand(command: string): boolean {
   const words = shellCommandWords(command);
   for (let index = 0; index < words.length;) {
     while (SHELL_COMMAND_OPERATORS.has(words[index] ?? "")) index += 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index += 1;
-    const program = words[index];
-    if (!program) break;
-    if (hasShellExpansion(program)) return true;
-
     const end = words.findIndex(
       (word, wordIndex) => wordIndex > index && SHELL_COMMAND_OPERATORS.has(word),
     );
     const commandEnd = end === -1 ? words.length : end;
+    const programIndex = shellProgramIndex(words, index, commandEnd);
+    const program = words[programIndex];
+    if (!program) break;
+    if (hasShellExpansion(program)) return true;
+    if (
+      (program === "source" || program === ".") &&
+      hasShellExpansion(words[programIndex + 1] ?? "")
+    ) {
+      return true;
+    }
+
     if (SHELL_INTERPRETERS.has(program)) {
-      const args = words.slice(index + 1, commandEnd);
+      const args = words.slice(programIndex + 1, commandEnd);
       if (hasDynamicShellStartupFile(args)) return true;
       const commandFlag = args.findIndex((word) => /^-[^-]*c/.test(word));
       if (commandFlag !== -1) {
@@ -766,9 +790,41 @@ function hasDynamicShellCommand(command: string): boolean {
         if (script && hasShellExpansion(script)) return true;
       }
     }
+    if (["node", "nodejs"].includes(program)) {
+      const args = words.slice(programIndex + 1, commandEnd);
+      if (hasDynamicNodeTarget(args)) return true;
+    }
     index = commandEnd + 1;
   }
   return false;
+}
+
+function shellProgramIndex(words: string[], start: number, end: number): number {
+  let index = start;
+  while (index < end) {
+    while (
+      SHELL_CONTROL_PREFIXES.has(words[index] ?? "") ||
+      /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")
+    ) {
+      index += 1;
+    }
+    const wrapper = words[index];
+    if (!wrapper) return index;
+    if (wrapper === "env") {
+      index += 1;
+      while (
+        index < end &&
+        (words[index].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index]))
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+    if (!SHELL_COMMAND_WRAPPERS.has(wrapper)) return index;
+    index += 1;
+    while (index < end && words[index].startsWith("-")) index += 1;
+  }
+  return index;
 }
 
 function hasShellExpansion(value: string): boolean {
@@ -776,7 +832,9 @@ function hasShellExpansion(value: string): boolean {
 }
 
 function hasDynamicShellSourceTarget(value: string): boolean {
-  return /(?:^|[;\n&|]\s*)(?:source|\.)\s+(?:["']?\$|["'][^"']*\$)/m.test(value);
+  return /(?:^|[;\n&|]\s*|\b(?:then|do|else|elif)\s+)(?:source|\.)\s+(?:["']?\$|["'][^"']*\$)/m.test(
+    value,
+  );
 }
 
 function hasDynamicShellStartupFile(args: string[]): boolean {
@@ -804,6 +862,30 @@ function shellScriptOperand(args: string[]): string | null {
     return readsStdin ? null : arg;
   }
   return null;
+}
+
+/** Node CLI arguments that select code, excluding arguments passed to the entry script. */
+function hasDynamicNodeTarget(args: string[]): boolean {
+  const pathOptions = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader"]);
+  const inlineOptions = new Set(["-e", "--eval", "-p", "--print"]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") return hasShellExpansion(args[index + 1] ?? "");
+    if (inlineOptions.has(arg)) return false;
+    if ([...inlineOptions].some((option) => arg.startsWith(`${option}=`))) return false;
+    if (pathOptions.has(arg)) {
+      if (hasShellExpansion(args[index + 1] ?? "")) return true;
+      index += 1;
+      continue;
+    }
+    if ([...pathOptions].some((option) => arg.startsWith(`${option}=`))) {
+      if (hasShellExpansion(arg.slice(arg.indexOf("=") + 1))) return true;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return hasShellExpansion(arg);
+  }
+  return false;
 }
 
 /** Extract bounded `node -e` / `node --eval` bodies without invoking a shell. */

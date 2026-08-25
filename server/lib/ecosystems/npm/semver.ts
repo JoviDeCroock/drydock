@@ -139,7 +139,7 @@ function parseComparatorSet(branch: string): ComparatorSet | null {
   if (hyphen.length === 2) {
     const low = hyphenLowerBound(hyphen[0]);
     const high = hyphenUpperBound(hyphen[1]);
-    return low && high ? [low, high] : null;
+    return low && high ? [...low, ...high] : null;
   }
   if (hyphen.length > 2) return null;
 
@@ -177,20 +177,6 @@ function parseComparator(token: string): Comparator[] | null {
   const parsedPatch = numericPart(rawPatch);
   const parts = [major, parsedMinor, parsedPatch];
   const wildcardIndex = parts.findIndex((part) => part === null);
-  // npm's bare/comparator grammar rejects a numeric component after a
-  // wildcard (`1.x.2`, `<1.x.2`) instead of silently broadening it to `1.x`.
-  // Caret and tilde ranges deliberately retain npm's permissive partial-range
-  // behavior (`^1.x.2` is equivalent to `^1.x`).
-  if (
-    parsedMinor === null &&
-    rawMinor !== undefined &&
-    parsedPatch !== null &&
-    operator !== "^" &&
-    operator !== "~" &&
-    operator !== "~>"
-  ) {
-    return null;
-  }
   const minor = parsedMinor;
   const patch = wildcardIndex === 1 ? null : parsedPatch;
   // npm rejects prerelease suffixes on an omitted patch (`1.2-beta`) and
@@ -278,7 +264,7 @@ function nextAfterWildcard(floor: ParsedSemver, wildcardIndex: number): ParsedSe
     : { major: floor.major, minor: floor.minor + 1, patch: 0, prerelease: zero };
 }
 
-function hyphenLowerBound(token: string): Comparator | null {
+function hyphenLowerBound(token: string): Comparator[] | null {
   const match = PARTIAL_RE.exec(token.trim());
   if (
     !match ||
@@ -289,19 +275,25 @@ function hyphenLowerBound(token: string): Comparator | null {
     return null;
   }
   const major = numericPart(match[2]);
-  if (major === null) return null;
-  return {
-    operator: ">=",
-    version: {
-      major,
-      minor: numericPart(match[3]) ?? 0,
-      patch: numericPart(match[4]) ?? 0,
-      prerelease: match[5] ? match[5].split(".") : [],
+  if (major === null) return [];
+  const minor = numericPart(match[3]);
+  const rawPatch = match[4];
+  const patch = minor === null ? null : numericPart(rawPatch);
+  if (match[5] && rawPatch === undefined) return null;
+  return [
+    {
+      operator: ">=",
+      version: {
+        major,
+        minor: minor ?? 0,
+        patch: patch ?? 0,
+        prerelease: match[5] && patch !== null ? match[5].split(".") : [],
+      },
     },
-  };
+  ];
 }
 
-function hyphenUpperBound(token: string): Comparator | null {
+function hyphenUpperBound(token: string): Comparator[] | null {
   const match = PARTIAL_RE.exec(token.trim());
   if (
     !match ||
@@ -312,16 +304,20 @@ function hyphenUpperBound(token: string): Comparator | null {
     return null;
   }
   const major = numericPart(match[2]);
-  if (major === null) return null;
+  if (major === null) return [];
   const minor = numericPart(match[3]);
-  const patch = numericPart(match[4]);
+  const rawPatch = match[4];
+  const patch = minor === null ? null : numericPart(rawPatch);
+  if (match[5] && rawPatch === undefined) return null;
   // `1.2.3 - 2.3` admits every 2.3.x; `1.2.3 - 2` admits every 2.x.
-  if (minor === null) return { operator: "<", version: zeroed(major + 1, 0) };
-  if (patch === null) return { operator: "<", version: zeroed(major, minor + 1) };
-  return {
-    operator: "<=",
-    version: { major, minor, patch, prerelease: match[5] ? match[5].split(".") : [] },
-  };
+  if (minor === null) return [{ operator: "<", version: zeroed(major + 1, 0) }];
+  if (patch === null) return [{ operator: "<", version: zeroed(major, minor + 1) }];
+  return [
+    {
+      operator: "<=",
+      version: { major, minor, patch, prerelease: match[5] ? match[5].split(".") : [] },
+    },
+  ];
 }
 
 function zeroed(major: number, minor: number): ParsedSemver {
