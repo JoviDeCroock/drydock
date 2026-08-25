@@ -10,6 +10,8 @@ export interface Organization {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  /** Distinct members who must approve a release before it counts as approved. 1 = today's default. */
+  requiredReleaseApprovals: number;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -190,6 +192,33 @@ export const OrganizationModel = createModel(() => {
         return true;
       } catch (err) {
         this.error.value = releaseTwoFactorErrorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    // Raise or lower how many distinct members must approve a release. The
+    // route caps this at the org's member count, so the one error worth its
+    // own copy is "you don't have that many people".
+    async setRequiredReleaseApprovals(
+      organizationId: string,
+      requiredApprovals: number,
+    ): Promise<boolean> {
+      this.status.value = "updating";
+      this.error.value = null;
+      try {
+        await apiJson<{ requiredApprovals: number }>(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-approvals`,
+          { requiredApprovals },
+          { method: "PUT" },
+        );
+        // Reload so `active.requiredReleaseApprovals` is right everywhere that
+        // reads the org list.
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = errorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

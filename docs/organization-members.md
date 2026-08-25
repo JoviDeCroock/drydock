@@ -130,6 +130,17 @@ All recorded via `recordScanEvent` into `scan_events`:
 - `organization.member_joined`
 - `organization.member_removed`
 
+## Removal and release approvals
+
+Removing a member deletes their votes on releases that are still undecided
+(`dropPendingApprovalsForMember`, called from `removeOrganizationMember`).
+Someone who has left must not keep counting toward the org's release quorum —
+otherwise removing a member leaves every release they half-approved one click
+from shipping, approved in part by a non-member. Already-decided releases keep
+their full roster. Removal can also drop the member count below the org's
+required-approvals bar; that is surfaced as a warning rather than silently
+clamped. See [`release-approvals.md`](./release-approvals.md).
+
 ## Tests
 
 `test/workers/organization-members-routes.test.ts` covers invite creation,

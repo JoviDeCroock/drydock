@@ -27,6 +27,7 @@ import { EmailVerificationBanner } from "../../../features/account/EmailVerifica
 import { Muted } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection } from "./GeneralSection";
+import { ReleaseApprovalsSection } from "./ReleaseApprovalsSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
@@ -178,6 +179,11 @@ export default function SettingsPage() {
                   organizations={organizations}
                   currentUserRole={activeRole(organizations)}
                   onDeleted={reloadActiveOrgScopedData}
+                />
+                <ReleaseApprovalsSection
+                  organizations={organizations}
+                  currentUserRole={activeRole(organizations)}
+                  memberCount={members.loaded.value ? members.members.value.length : null}
                 />
                 <ReleaseSecuritySection
                   organizations={organizations}

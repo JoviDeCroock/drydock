@@ -44,6 +44,23 @@ const REGISTRY: Record<string, AuditEventDef> = {
       return reason ? `${decision} · ${reason}` : decision;
     },
   },
+  // Only written under a multi-approval policy, where "who else signed off"
+  // is the point of the policy. `scan.decided` above stays the record of the
+  // release's verdict, and fires once, when the bar is actually met.
+  "scan.approval_recorded": {
+    category: "release_decision",
+    label: "Release approval added",
+    severity: "notice",
+    summarize: (m) => {
+      const decision = m.decision === "publish" ? "approved" : "blocked";
+      const progress =
+        typeof m.approvedCount === "number" && typeof m.requiredApprovals === "number"
+          ? `${decision} · ${m.approvedCount} of ${m.requiredApprovals} approvals`
+          : decision;
+      const reason = str(m.reason);
+      return reason ? `${progress} · ${reason}` : progress;
+    },
+  },
   "github_workflow_gate.requested": {
     category: "release_decision",
     label: "Release gate opened",
@@ -133,6 +150,17 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release two-factor policy changed",
     severity: "security",
     summarize: (m) => (m.enabled ? "required" : "not required"),
+  },
+  "organization.release_approvals_changed": {
+    category: "security",
+    label: "Required release approvals changed",
+    severity: "security",
+    summarize: (m) =>
+      typeof m.requiredApprovals === "number"
+        ? m.requiredApprovals === 1
+          ? "one approval"
+          : `${m.requiredApprovals} approvals`
+        : null,
   },
   "npm_connection.token_expired": {
     category: "security",

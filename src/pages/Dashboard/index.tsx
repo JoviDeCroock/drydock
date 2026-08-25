@@ -366,6 +366,7 @@ function RecentReviewsSection({
         {scans.scans.value.length ? (
           <ScanRows
             scans={scans.scans.value}
+            requiredApprovals={scans.requiredApprovals.value}
             quickDecisionScanId={quickDecisionScan.value?.id ?? null}
             decisionSaving={scans.decisionStatus.value === "saving"}
             deleteBusy={scans.deleteStatus.value === "deleting"}
@@ -580,6 +581,7 @@ function NpmSetupCallout() {
  */
 function ScanRows({
   scans,
+  requiredApprovals,
   quickDecisionScanId,
   decisionSaving,
   deleteBusy,
@@ -587,6 +589,7 @@ function ScanRows({
   onDelete,
 }: {
   scans: ScanListItem[];
+  requiredApprovals: number;
   quickDecisionScanId: string | null;
   decisionSaving: boolean;
   deleteBusy: boolean;
@@ -616,7 +619,11 @@ function ScanRows({
                   </span>
                 ) : null}
                 <ScanDiffSummary scan={scan} />
-                <DecisionBadge decision={scan.decision} />
+                <DecisionBadge
+                  decision={scan.decision}
+                  approvalCount={scan.approvalCount}
+                  requiredApprovals={requiredApprovals}
+                />
                 <RegistryStatusBadge scan={scan} />
               </div>
               <p class="m-0 font-mono text-[11px] text-ink-subtle">{scanMetaLine(scan)}</p>
@@ -735,9 +742,24 @@ function RegistryStatusBadge({ scan }: { scan: ScanListItem }) {
   return <Badge tone={badge.tone}>{badge.label}</Badge>;
 }
 
-function DecisionBadge({ decision }: { decision?: string | null }) {
+function DecisionBadge({
+  decision,
+  approvalCount = 0,
+  requiredApprovals = 1,
+}: {
+  decision?: string | null;
+  approvalCount?: number;
+  requiredApprovals?: number;
+}) {
   if (decision === "publish") return <Badge tone="ok">approved</Badge>;
   if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
+  if (requiredApprovals > 1 && approvalCount > 0) {
+    return (
+      <Badge tone="medium">
+        {approvalCount} of {requiredApprovals}
+      </Badge>
+    );
+  }
   return <Badge tone="neutral">undecided</Badge>;
 }
 

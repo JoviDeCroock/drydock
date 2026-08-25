@@ -1,6 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
-import type { DecisionStatus } from "../../../models/scan";
+import type { DecisionStatus, ScanApprovalState } from "../../../models/scan";
 import type {
   GatePackageDecision,
   GatePackageScan,
@@ -14,6 +14,7 @@ import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { LoadingLine, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
+import { ApprovalRoster, QuorumUnreachableNotice, isMultiApproval } from "./ApprovalRoster";
 
 function gateStatusTone(status: PublicWorkflowGate["status"]) {
   switch (status) {
@@ -48,11 +49,16 @@ function packageDecisionTone(pkg: GatePackageScan) {
   return "medium" as const;
 }
 
-function packageDecisionLabel(pkg: GatePackageScan): string {
+function packageDecisionLabel(pkg: GatePackageScan, requiredApprovals: number): string {
   if (pkg.decision === "publish") return "approved";
   if (pkg.decision === "no_publish") return "rejected";
   if (pkg.status === "failed") return "review failed";
   if (pkg.status !== "complete") return "reviewing";
+  // Approved by someone, still short of the bar — the state that would
+  // otherwise read as "nobody has looked at this yet".
+  if (requiredApprovals > 1 && pkg.approvalCount > 0) {
+    return `${pkg.approvalCount} of ${requiredApprovals} approvals`;
+  }
   return "awaiting decision";
 }
 
@@ -98,8 +104,9 @@ export function GatePackagesPanel({
         </span>
       </div>
       <p class="m-0 max-w-[760px] text-[13px] leading-[1.55] text-ink-muted">
-        This release publishes {packages.length} packages. Every one must be approved before the
-        held deployment releases; rejecting any single package blocks the whole release.
+        This release publishes {packages.length} packages. Every one must be approved
+        {gate.requiredApprovals > 1 ? ` by ${gate.requiredApprovals} different members` : ""} before
+        the held deployment releases; rejecting any single package blocks the whole release.
       </p>
       <ul class="m-0 p-0 list-none flex flex-col">
         {packages.map((pkg) => {
@@ -117,7 +124,9 @@ export function GatePackagesPanel({
                 {isCurrent ? <Badge tone="neutral">this package</Badge> : null}
               </div>
               <div class="flex items-center gap-3 shrink-0">
-                <Badge tone={packageDecisionTone(pkg)}>{packageDecisionLabel(pkg)}</Badge>
+                <Badge tone={packageDecisionTone(pkg)}>
+                  {packageDecisionLabel(pkg, gate.requiredApprovals)}
+                </Badge>
                 {isCurrent ? (
                   onDecide && pending && !pkg.decision ? (
                     <button
@@ -213,12 +222,35 @@ export function GateContextPanel({
   );
 }
 
+/**
+ * What the approve button promises.
+ *
+ * The distinction that matters under a multi-approval policy is whether this
+ * click releases the deployment or just adds a name to the roster — labelling
+ * both "Approve & release" would be a lie half the time.
+ */
+function approveLabel(input: {
+  multi: boolean;
+  multiApproval: boolean;
+  approvalDecidesPackage: boolean;
+  reviewFailed: boolean;
+}): string {
+  if (input.multiApproval && !input.approvalDecidesPackage) {
+    return input.reviewFailed ? "Add my approval anyway" : "Add my approval";
+  }
+  if (input.reviewFailed)
+    return input.multi ? "Approve package anyway" : "Approve anyway & release";
+  return input.multi ? "Approve package" : "Approve & release";
+}
+
 export function GateDecisionDialog({
   open,
   onClose,
   gate,
   packageName,
   packageDecision,
+  approvals,
+  viewerUserId,
   status,
   error,
   canApprove,
@@ -232,6 +264,9 @@ export function GateDecisionDialog({
   packageName: string | null;
   /** This package's recorded decision, if it has already been decided. */
   packageDecision: GatePackageDecision | null;
+  /** Who has approved this package so far, against the org's bar. */
+  approvals?: ScanApprovalState | null;
+  viewerUserId?: string | null;
   status: DecisionStatus;
   error: string | null;
   canApprove: boolean;
@@ -251,6 +286,19 @@ export function GateDecisionDialog({
   const packages = gate.packages;
   const multi = packages.length > 1;
   const approvedCount = packages.filter((pkg) => pkg.decision === "publish").length;
+  const multiApproval = isMultiApproval(approvals);
+  // This member has already approved this package. The route rejects a second
+  // approval from the same person (that is the whole point of the bar), so the
+  // approve action is closed off here rather than left to fail — but blocking
+  // stays open, because a reviewer who has since seen something bad must be
+  // able to stop a release they helped along.
+  const alreadyApproved = approvals?.viewerDecision === "publish" && !packageAlreadyDecided;
+  // Whether *this* approval is the one that decides the package.
+  const approvalDecidesPackage = Boolean(
+    approvals &&
+    approvals.approvedCount + (approvals.viewerDecision === "publish" ? 0 : 1) >=
+      approvals.required,
+  );
   const needsCode = requireTwoFactor && !gateDecided;
   const code = codeDraft.value.trim();
   const blockedOnCode = needsCode && code.length === 0;
@@ -274,6 +322,7 @@ export function GateDecisionDialog({
 
   const submit = (next: WorkflowGateDecision) => {
     if (saving || gateDecided || packageAlreadyDecided || blockedOnCode || mustEnroll) return;
+    if (next === "approved" && alreadyApproved) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
@@ -289,9 +338,11 @@ export function GateDecisionDialog({
       onClose={handleClose}
       title={multi ? "Package decision" : "Release decision"}
       description={
-        multi
-          ? "Decide this package. The held GitHub Actions job releases only after every package is approved; rejecting any one blocks the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
-          : "Approve to release the held GitHub Actions job. Reject to block it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
+        multiApproval
+          ? `Record your review. This ${multi ? "package" : "release"} counts as approved once ${gate.requiredApprovals} different members approve it, and only then does the held GitHub Actions job release${multi ? " — along with every other package" : ""}. A rejection blocks it immediately. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials.`
+          : multi
+            ? "Decide this package. The held GitHub Actions job releases only after every package is approved; rejecting any one blocks the whole release. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials."
+            : "Approve to release the held GitHub Actions job. Reject to block it. Publishing still runs through your workflow's own publish step, such as Trusted Publishing or OIDC. Drydock never holds your registry credentials or uploads the package."
       }
     >
       <div class="flex flex-col gap-2 border border-border rounded-md p-3">
@@ -311,6 +362,13 @@ export function GateDecisionDialog({
           </Badge>
         ) : null}
       </div>
+
+      {multiApproval && approvals && !gateDecided ? (
+        <>
+          <QuorumUnreachableNotice approvals={approvals} />
+          <ApprovalRoster approvals={approvals} viewerUserId={viewerUserId} />
+        </>
+      ) : null}
 
       {multi && !gateDecided ? (
         <Muted class="m-0 text-[13px]">
@@ -385,17 +443,16 @@ export function GateDecisionDialog({
           {canApprove ? (
             <Button
               onClick={() => submit("approved")}
-              disabled={saving || blockedOnCode || mustEnroll}
+              disabled={saving || blockedOnCode || mustEnroll || alreadyApproved}
             >
               {saving
                 ? "Submitting…"
-                : reviewFailed
-                  ? multi
-                    ? "Approve package anyway"
-                    : "Approve anyway & release"
-                  : multi
-                    ? "Approve package"
-                    : "Approve & release"}
+                : approveLabel({
+                    multi,
+                    multiApproval,
+                    approvalDecidesPackage,
+                    reviewFailed: Boolean(reviewFailed),
+                  })}
             </Button>
           ) : null}
           <Button
@@ -407,6 +464,12 @@ export function GateDecisionDialog({
           </Button>
         </div>
       )}
+      {alreadyApproved ? (
+        <Muted class="m-0 text-[13px]">
+          You have already approved this {multi ? "package" : "release"}. It needs a different
+          member's approval to release — you can still reject it.
+        </Muted>
+      ) : null}
       {!gateDecided && !canApprove ? (
         <Muted class="m-0 text-[13px]">
           Approval requires a completed review batch. Retry the review or reject to block the held

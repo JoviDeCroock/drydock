@@ -26,6 +26,7 @@ import {
   getScan,
   getScanFile,
   getScanStatus,
+  loadScanApprovalState,
   listScans,
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
@@ -273,6 +274,7 @@ scanLifecycleRoutes.get("/", async (c) => {
     nextCursor: encodeListScansCursor(result.nextCursor),
     filter: decisionFilter,
     limit,
+    requiredApprovals: result.requiredApprovals,
   });
 });
 
@@ -306,13 +308,24 @@ scanLifecycleRoutes.delete("/:id", async (c) => {
 
 scanLifecycleRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
+  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
     files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
+  // Who has approved so far, and how many the org requires. Attached here
+  // rather than inside `getScan` on purpose: the same reader backs the public
+  // report export, which must never carry reviewer identities.
+  const approvals = await loadScanApprovalState(db, {
+    scanId: scan.scan.id,
+    organizationId,
+    viewerUserId: session.userId,
+    scan: scan.scan,
+  });
   return c.json({
     ...scan,
+    approvals,
     scan: {
       ...scan.scan,
       publicShareUrl: scan.scan.publicShareToken

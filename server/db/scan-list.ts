@@ -13,6 +13,7 @@ import {
   type NpmReleaseOutcome,
 } from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
+import { countScanApprovals, getOrganizationApprovalPolicy } from "./scan-approvals";
 import type { ScanDecisionFilter } from "./scan-decisions";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
 import { scans } from "./schema";
@@ -24,6 +25,8 @@ export interface ListScansOptions {
 }
 
 export interface ListScansResult {
+  /** The org's approval bar, so the list can render "1 of 2 approved". */
+  requiredApprovals: number;
   scans: Array<{
     id: string;
     stageId: string;
@@ -40,6 +43,8 @@ export interface ListScansResult {
     decisionReason: string | null;
     decidedByUserId: string | null;
     decidedAt: Date | null;
+    /** Distinct members who have approved so far — 0 or 1 unless the org requires more. */
+    approvalCount: number;
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
@@ -158,9 +163,21 @@ export async function listScans(
   const nextCursor =
     hasMore && last ? { createdAtMs: new Date(last.createdAt).getTime(), id: last.id } : null;
 
-  if (!page.length) return { scans: [], nextCursor };
+  const [policy, approvals] = await Promise.all([
+    getOrganizationApprovalPolicy(db, organizationId),
+    // One grouped read over the page's ids rather than a per-row subquery, so
+    // the review queue costs the same one extra query at any page size.
+    countScanApprovals(
+      db,
+      organizationId,
+      page.map((row) => row.id),
+    ),
+  ]);
+
+  if (!page.length) return { scans: [], nextCursor, requiredApprovals: policy.required };
 
   return {
+    requiredApprovals: policy.required,
     scans: page.map((row) => ({
       id: row.id,
       stageId: row.stageId,
@@ -177,6 +194,7 @@ export async function listScans(
       decisionReason: row.decisionReason,
       decidedByUserId: row.decidedByUserId,
       decidedAt: row.decidedAt,
+      approvalCount: approvals.get(row.id)?.approved ?? (row.decision === "publish" ? 1 : 0),
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,

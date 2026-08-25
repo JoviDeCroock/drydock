@@ -17,11 +17,32 @@ import {
   renameOrganization,
   setRequireTwoFactorForReleaseDecisions,
 } from "../db/organizations";
+import {
+  MAX_REQUIRED_RELEASE_APPROVALS,
+  getOrganizationApprovalPolicy,
+  setRequiredReleaseApprovals,
+} from "../db/scans";
 import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/notify/email";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { purgePublicFeedCache, scanDistTag } from "../lib/public-feed";
+import { badgeLookupKey } from "../db/scan-share";
+import {
+  getGateForOrganization,
+  listGatePackageScans,
+  markGateDecidedForPackageAggregate,
+} from "../lib/github-app/webhook-gates";
+import {
+  buildHumanDecisionComment,
+  buildReportUrl,
+  executeWorkflowGateJob,
+} from "../lib/workflow-gate-job";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
@@ -188,6 +209,144 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
   });
   return c.json({ requireTwoFactorForReleaseDecisions: enabled });
 });
+
+// Set how many distinct members must approve a release before it counts as
+// approved. Owner-only for the same reason as the two-factor policy: it binds
+// every member, and an admin must not be able to lower a bar the owner raised.
+//
+// The bar is capped at the org's current member count. A three-approval policy
+// in a two-person org is not a stricter policy, it is a release process that
+// can never complete — and the failure would surface later, as a deployment
+// that silently never releases, rather than here.
+organizationsRoutes.put("/:id/release-approvals", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { requiredApprovals?: unknown };
+  const requested = Number(body.requiredApprovals);
+  if (!Number.isInteger(requested) || requested < 1 || requested > MAX_REQUIRED_RELEASE_APPROVALS) {
+    return c.json(
+      { error: `requiredApprovals must be an integer from 1 to ${MAX_REQUIRED_RELEASE_APPROVALS}` },
+      400,
+    );
+  }
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  try {
+    await enforceRateLimit(c.env, {
+      key: `organizations:release-approvals:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "release approvals rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const policy = await getOrganizationApprovalPolicy(db, organizationId);
+  if (requested > policy.memberCount) {
+    return c.json(
+      {
+        error: `this organization has ${policy.memberCount} member${
+          policy.memberCount === 1 ? "" : "s"
+        } — invite more before requiring ${requested} approvals`,
+        code: "not_enough_members",
+        memberCount: policy.memberCount,
+      },
+      409,
+    );
+  }
+
+  const reconciliation = await setRequiredReleaseApprovals(db, organizationId, requested);
+  for (const scan of reconciliation.changedScans) {
+    if (!scan.publicFeedListedAt) continue;
+    purgePublicFeedCache(
+      optionalWorkerExecutionContext(c),
+      canonicalOrigin(c),
+      badgeLookupKey(scan),
+      scanDistTag(scan.summaryJson),
+    );
+  }
+  await recordScanEvent(db, {
+    organizationId,
+    actorUserId: session.userId,
+    type: "organization.release_approvals_changed",
+    metadata: { requiredApprovals: requested, previousRequiredApprovals: policy.required },
+  });
+  for (const gateId of reconciliation.readyGateIds) {
+    const gate = await getGateForOrganization(db, organizationId, gateId);
+    if (!gate) continue;
+    const reportUrl = buildReportUrl(c.env, gate.scanId);
+    const decided = await markGateDecidedForPackageAggregate(db, {
+      gateId,
+      organizationId,
+      decision: "approved",
+      comment: buildHumanDecisionComment("approved", reportUrl),
+      reportUrl,
+    });
+    if (!decided) continue;
+
+    // Schedule delivery immediately after the durable CAS. Audit/analytics
+    // bookkeeping below must not be able to strand a decided GitHub job.
+    const message = { kind: "workflow_gate" as const, organizationId, gateId };
+    c.executionCtx.waitUntil(
+      deliverReconciledWorkflowGate(c.env, workerExecutionContext(c.executionCtx), message, db),
+    );
+    try {
+      const packages = await listGatePackageScans(db, organizationId, gateId);
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        scanId: decided.scanId,
+        type: "github_workflow_gate.approved",
+        metadata: {
+          gateId,
+          decidedBy: "approval_policy",
+          packageCount: packages.length,
+          requiredApprovals: requested,
+        },
+      });
+      recordProductEvent(c.env, {
+        name: "workflow_gate.decided",
+        organizationId,
+        surface: "human",
+        decision: "approved",
+        packageCount: packages.length,
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
+        organizationId,
+        gateId,
+        decision: "approved",
+        trigger: "approval_policy",
+        error: describeOperationalError(err),
+      });
+    }
+  }
+  return c.json({ requiredApprovals: requested });
+});
+
+async function deliverReconciledWorkflowGate(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
+  db: ReturnType<typeof createDb>,
+): Promise<void> {
+  if (env.SCAN_QUEUE) {
+    try {
+      await env.SCAN_QUEUE.send(message);
+      return;
+    } catch {
+      // The durable gate decision is already stored. Fall through to an inline
+      // redelivery attempt so a transient queue failure cannot strand GitHub.
+    }
+  }
+  await executeWorkflowGateJob(env, executionCtx, message, db);
+}
 
 organizationsRoutes.delete("/:id", async (c) => {
   const db = createDb(c.env.DB);
