@@ -128,6 +128,11 @@ historical count while dropping the identity. This is the same treatment
   still-pending gate whose package verdict committed before the request was
   interrupted. A reject retry can never release an already-approved aggregate.
 
+A failed workflow-gate review batch can be retried only before any package has
+received a human vote. Retrying replaces the batch's package scans, so once an
+approval exists the original review state is kept and the retry endpoint fails
+closed rather than erasing that approval and its audit trail.
+
 Gate aggregation is unchanged and did not need to be: it releases only when
 every package's `decision` is `publish`, and a package one approval short reads
 there exactly like an undecided one, so the deployment stays held. Under a

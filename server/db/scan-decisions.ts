@@ -154,6 +154,8 @@ interface ApplyDecisionVoteInput {
   ecosystem: string;
   artifactBucket?: R2Bucket;
   env?: Cloudflare.Env;
+  /** Present only for gate votes, whose row write must prove the gate is still pending. */
+  pendingGateId?: string;
   /**
    * The predicate the verdict write must still satisfy. Re-checked at write
    * time rather than trusted from the read above, so a concurrent finalize
@@ -182,6 +184,7 @@ async function applyDecisionVote(
     ecosystem,
     artifactBucket,
     env,
+    pendingGateId,
     applyVerdictWhere,
   }: ApplyDecisionVoteInput,
 ): Promise<RecordScanDecisionResult> {
@@ -197,8 +200,11 @@ async function applyDecisionVote(
     reason,
     now,
     hardenOnly,
+    pendingGateId,
   });
-  if (vote === "not_member") return { outcome: "not_actionable" };
+  if (vote === "not_member" || vote === "not_actionable") {
+    return { outcome: "not_actionable" };
+  }
   const approvalRecorded = vote === "recorded";
 
   // Read the policy only after the vote is durable. A concurrent policy batch
@@ -263,9 +269,22 @@ async function applyDecisionVote(
       // Even a semantic no-op must prove the policy is still current. This is
       // the branch that used to strand a two-vote tally when the owner lowered
       // the bar from three to two between the request's read and write.
+      const refreshSingleApproverProjection =
+        approvalRecorded &&
+        policy.required === 1 &&
+        verdict !== null &&
+        decisionActorUserId === input.actorUserId;
       const confirmed = await db
         .update(scans)
-        .set({ updatedAt: now })
+        .set(
+          refreshSingleApproverProjection
+            ? {
+                decisionReason,
+                decidedByUserId: decisionActorUserId,
+                updatedAt: now,
+              }
+            : { updatedAt: now },
+        )
         .where(
           and(
             eq(scans.id, input.scanId),
@@ -277,14 +296,13 @@ async function applyDecisionVote(
         .returning({ id: scans.id });
       if (confirmed.length === 0) continue;
       verdictChanged = false;
-      resolvedScan = approvalScanAfter(
-        live,
-        verdict,
-        false,
-        decisionActorUserId,
-        decisionReason,
-        now,
-      );
+      resolvedScan = refreshSingleApproverProjection
+        ? {
+            ...approvalScanAfter(live, verdict, false, decisionActorUserId, decisionReason, now),
+            decisionReason,
+            decidedByUserId: decisionActorUserId,
+          }
+        : approvalScanAfter(live, verdict, false, decisionActorUserId, decisionReason, now);
       break;
     }
 
@@ -656,6 +674,7 @@ export async function recordGatePackageDecision(
     ecosystem: "gate",
     artifactBucket,
     env,
+    pendingGateId: input.gateId,
     // The package must still be undecided when the verdict lands — except for a
     // block, which is allowed to override an approval that has not yet released
     // the deployment. Both re-assert that the gate is still pending, so a

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { addOrganizationMember, removeOrganizationMember } from "../../server/db/invitations";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { upsertScanApproval } from "../../server/db/scan-approvals";
 import {
   createScanJob,
   markScanFailed,
@@ -840,6 +841,34 @@ async function seedGatePackageScan(input: {
 }
 
 describe("github-app workflow-gate decision route", () => {
+  test("does not persist a vote after the gate has finalized", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "approved", decision: "approved", decidedAt: new Date() })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+
+    const outcome = await upsertScanApproval(db, {
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "publish",
+      reason: null,
+      now: new Date(),
+      hardenOnly: true,
+      pendingGateId: gateId,
+    });
+
+    expect(outcome).toBe("not_actionable");
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId!)),
+    ).toHaveLength(0);
+  });
+
   test("rejects a decision that is not approved/rejected", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId } = await seedGate(organizationId);
@@ -1825,6 +1854,53 @@ describe("github-app workflow-gate decision route", () => {
     });
     const gate = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
     expect(gate?.scanId).toBeNull();
+  });
+
+  test("refuses to retry a failed gate after a partial approval", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await markScanFailed(db, scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+
+    const approval = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(approval.status).toBe(200);
+    expect(await approval.json()).toMatchObject({
+      gate: { status: "pending" },
+      approvals: { approvedCount: 1, required: 2, verdict: null },
+    });
+
+    const queueSend = vi.fn(async () => undefined);
+    const retry = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/retry`,
+      {},
+      { SCAN_QUEUE: { send: queueSend } as unknown as Queue },
+    );
+
+    expect(retry.status).toBe(409);
+    expect(await retry.json()).toMatchObject({ error: "gate review is not retryable" });
+    expect(queueSend).not.toHaveBeenCalled();
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId!)),
+    ).toHaveLength(1);
   });
 });
 

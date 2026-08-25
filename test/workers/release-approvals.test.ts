@@ -120,7 +120,11 @@ async function decide(
   );
   await waitOnExecutionContext(ctx);
   const body = (await res.json()) as {
-    scan?: { decision: string | null; decidedByUserId: string | null };
+    scan?: {
+      decision: string | null;
+      decisionReason: string | null;
+      decidedByUserId: string | null;
+    };
     approvals?: {
       required: number;
       approvedCount: number;
@@ -129,6 +133,7 @@ async function decide(
       approvals: Array<{
         userId: string | null;
         decision: string;
+        reason: string | null;
         createdAt: string | number | Date;
       }>;
       eligibleApproverCount: number;
@@ -141,7 +146,11 @@ async function decide(
 async function readDecision(scanId: string) {
   const db = createDb(env.DB);
   const [row] = await db
-    .select({ decision: schema.scans.decision, decidedByUserId: schema.scans.decidedByUserId })
+    .select({
+      decision: schema.scans.decision,
+      decisionReason: schema.scans.decisionReason,
+      decidedByUserId: schema.scans.decidedByUserId,
+    })
     .from(schema.scans)
     .where(eq(schema.scans.id, scanId))
     .limit(1);
@@ -294,6 +303,38 @@ describe("multi-party release approval", () => {
 
     expect(only.body.approvals).toMatchObject({ required: 1, verdict: "publish" });
     expect((await readDecision(scanId))?.decision).toBe("publish");
+  });
+
+  test("a one-approval resubmission refreshes the canonical decision reason", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 1);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+
+    await decide({ ...users[0], organizationId }, scanId, "publish", "first look");
+    const revised = await decide(
+      { ...users[0], organizationId },
+      scanId,
+      "publish",
+      "reviewed again",
+    );
+
+    expect(revised.status).toBe(200);
+    expect(revised.body.scan).toMatchObject({
+      decision: "publish",
+      decisionReason: "reviewed again",
+      decidedByUserId: users[0].userId,
+    });
+    expect(revised.body.approvals?.approvals).toContainEqual(
+      expect.objectContaining({
+        userId: users[0].userId,
+        decision: "publish",
+        reason: "reviewed again",
+      }),
+    );
+    expect(await readDecision(scanId)).toMatchObject({
+      decision: "publish",
+      decisionReason: "reviewed again",
+      decidedByUserId: users[0].userId,
+    });
   });
 
   test("the staged decision route cannot add a workflow-gate approval", async () => {

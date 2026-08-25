@@ -567,9 +567,15 @@ export interface UpsertScanApprovalInput {
    * withdrawn or re-cast.
    */
   hardenOnly?: boolean;
+  /** Gate votes may only be written while this organization-scoped gate is pending. */
+  pendingGateId?: string;
 }
 
-export type UpsertScanApprovalOutcome = "recorded" | "already_voted" | "not_member";
+export type UpsertScanApprovalOutcome =
+  | "recorded"
+  | "already_voted"
+  | "not_member"
+  | "not_actionable";
 
 /**
  * Record (or replace) this member's vote.
@@ -583,10 +589,10 @@ export async function upsertScanApproval(
   input: UpsertScanApprovalInput,
 ): Promise<UpsertScanApprovalOutcome> {
   // Select the candidate row from live membership instead of inserting plain
-  // values. The membership proof and the write are now one SQLite statement:
-  // a decision request authorized just before an owner removes the member
-  // cannot race the removal cleanup and leave a vote that becomes eligible if
-  // that account is invited back later.
+  // values. The membership proof, optional pending-gate proof, and write are
+  // one SQLite statement: a request authorized just before member removal or
+  // gate finalization cannot leave a vote that becomes eligible after a later
+  // re-invite or appears in a completed gate's historical roster.
   const candidate = db
     .select({
       id: sql<string>`${crypto.randomUUID()}`.as("id"),
@@ -605,6 +611,15 @@ export async function upsertScanApproval(
       and(
         eq(organizationMembers.organizationId, input.organizationId),
         eq(organizationMembers.userId, input.userId),
+        input.pendingGateId
+          ? sql`exists (
+              select 1
+              from ${githubWorkflowGates}
+              where ${githubWorkflowGates.id} = ${input.pendingGateId}
+                and ${githubWorkflowGates.organizationId} = ${input.organizationId}
+                and ${githubWorkflowGates.status} = 'pending'
+            )`
+          : undefined,
       ),
     )
     .limit(1);
@@ -638,7 +653,22 @@ export async function upsertScanApproval(
       ),
     )
     .limit(1);
-  return member ? "already_voted" : "not_member";
+  if (!member) return "not_member";
+  if (input.pendingGateId) {
+    const [pendingGate] = await db
+      .select({ id: githubWorkflowGates.id })
+      .from(githubWorkflowGates)
+      .where(
+        and(
+          eq(githubWorkflowGates.id, input.pendingGateId),
+          eq(githubWorkflowGates.organizationId, input.organizationId),
+          eq(githubWorkflowGates.status, "pending"),
+        ),
+      )
+      .limit(1);
+    if (!pendingGate) return "not_actionable";
+  }
+  return "already_voted";
 }
 
 /**
