@@ -1626,6 +1626,13 @@ describe("github-app workflow-gate decision route", () => {
     const db = createDb(env.DB);
     const second = await seedUser();
     await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    // Only the recovery trigger has 2FA enabled. The final gate event belongs
+    // to the durable blocker, so this proof must stay explicitly attributed to
+    // the recovering member rather than being stamped on the blocker.
+    await db
+      .update(schema.user)
+      .set({ twoFactorEnabled: true })
+      .where(eq(schema.user.id, second.userId));
     const { gateId, scanId } = await seedGate(organizationId, {
       attachScan: { ownerUserId: userId },
     });
@@ -1667,7 +1674,12 @@ describe("github-app workflow-gate decision route", () => {
       buildTestApp(second.userId, organizationId),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
-      { decision: "approved", scanId: scanId!, comment: "looks good to me" },
+      {
+        decision: "approved",
+        scanId: scanId!,
+        comment: "looks good to me",
+        totpCode: "123456",
+      },
     );
 
     expect(recovered.status).toBe(200);
@@ -1691,8 +1703,16 @@ describe("github-app workflow-gate decision route", () => {
       );
     expect(gateEvent).toMatchObject({
       actorUserId: userId,
-      metadata: expect.objectContaining({ recoveredByUserId: second.userId }),
+      metadata: expect.objectContaining({
+        recoveredByUserId: second.userId,
+        recoveryTwoFactor: true,
+        recoveryTwoFactorMethod: "totp",
+        recoveryTwoFactorRequiredByOrg: false,
+      }),
     });
+    expect(gateEvent.metadata).not.toHaveProperty("twoFactor");
+    expect(gateEvent.metadata).not.toHaveProperty("twoFactorMethod");
+    expect(gateEvent.metadata).not.toHaveProperty("twoFactorRequiredByOrg");
   });
 
   test("a later package rejection preserves the first durable blocker's attribution", async () => {

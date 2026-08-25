@@ -103,6 +103,12 @@ the encrypted secret is never decrypted in app code. Outcomes:
   `github_workflow_gate.approved` / `.rejected` scan event (`twoFactor`,
   `twoFactorMethod: "totp"`).
 
+If a later request recovers a durable rejection whose gate transition was
+interrupted, the event actor remains the original blocker. The recovery
+request's authentication facts are therefore recorded separately as
+`recoveredByUserId`, `recoveryTwoFactor`, `recoveryTwoFactorMethod`, and
+`recoveryTwoFactorRequiredByOrg`; they are never attributed to the blocker.
+
 A failed/missing step-up never mutates the gate (it stays `pending`) and never posts
 to GitHub. Step-up attempts have their own rate-limit bucket
 (`github-app:gate-decision-2fa:<userId>`, 10 per 15 min) on top of the route's
