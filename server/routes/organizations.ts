@@ -32,8 +32,7 @@ import {
   workerExecutionContext,
 } from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
-import { purgePublicFeedCache, scanDistTag } from "../lib/public-feed";
-import { badgeLookupKey } from "../db/scan-share";
+import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
 import {
   getGateForOrganization,
   listGatePackageScans,
@@ -316,15 +315,11 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
       409,
     );
   }
-  for (const scan of reconciliation.changedScans) {
-    if (!scan.publicFeedListedAt) continue;
-    purgePublicFeedCache(
-      optionalWorkerExecutionContext(c),
-      canonicalOrigin(c),
-      badgeLookupKey(scan),
-      scanDistTag(scan.summaryJson),
-    );
-  }
+  purgeReconciledPublicFeedCaches(
+    optionalWorkerExecutionContext(c),
+    canonicalOrigin(c),
+    reconciliation.changedScans,
+  );
   for (const gateId of reconciliation.readyGateIds) {
     const gate = await getGateForOrganization(db, organizationId, gateId);
     if (!gate) continue;

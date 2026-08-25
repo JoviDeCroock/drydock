@@ -97,8 +97,18 @@ later re-invite. Final staged decisions and completed gates keep their full
 roster — that approval was real when it was given, and the audit trail has to
 keep saying so. If a later policy increase reopens one of those staged approval
 decisions, the former member stays in the historical roster but is excluded
-from the new live tally. A recorded block remains final after its voter leaves;
-changing the approval threshold cannot erase it.
+from the new live tally. If that member later accepts a new invitation, the
+membership write re-tallies retained votes in the same D1 batch: a tally that
+becomes sufficient is projected back to `scans.decision` immediately rather
+than waiting for another reviewer to submit. A recorded block remains final
+after its voter leaves; changing the approval threshold cannot erase it.
+
+Member removal and account deletion can reopen a package that was already
+projected as approved while its workflow gate remains pending. Both paths
+return those changed scan projections to their request boundary so the
+colo-local badge and threat-feed entries are purged just like a direct decision
+or policy reconciliation; other colos and shields.io remain bounded by the
+documented short cache TTL.
 
 Account deletion follows the same unfinished/final split. Approvals on
 undecided releases, including packages behind a still-pending gate, are deleted
@@ -126,7 +136,10 @@ historical count while dropping the identity. This is the same treatment
   are also recovery-safe across the package-verdict/gate-aggregate boundary: a
   retry re-tallies an already-durable vote, and a matching retry finalizes a
   still-pending gate whose package verdict committed before the request was
-  interrupted. A reject retry can never release an already-approved aggregate.
+  interrupted. A durable rejection may be delivered by a later request, but
+  the gate comment and audit actor come from the persisted blocking vote rather
+  than from that recovery trigger. A reject retry can never release an
+  already-approved aggregate.
 
 A failed workflow-gate review batch can be retried only before any package has
 received a human vote. Retrying replaces the batch's package scans, so once an

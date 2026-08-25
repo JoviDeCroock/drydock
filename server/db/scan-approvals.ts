@@ -14,6 +14,7 @@
  *     not by application code), so one reviewer cannot clear a two-person bar.
  */
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import type { OrganizationRole } from "../lib/auth/roles";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import type { ScanDecision } from "./scan-decisions";
@@ -67,12 +68,13 @@ export interface OrganizationApprovalPolicy {
   memberCount: number;
 }
 
-export interface ReconciledScanDecision {
+export interface ReconciledScanProjection {
   id: string;
   source: string;
   packageName: string | null;
   summaryJson: unknown;
   publicFeedListedAt: Date | null;
+  publicPackageKey: string | null;
   decision: string | null;
   decisionReason: string | null;
   decidedByUserId: string | null;
@@ -81,6 +83,9 @@ export interface ReconciledScanDecision {
   risk: string;
   riskSummaryJson: unknown;
   aiJson: unknown;
+}
+
+export interface ReconciledScanDecision extends ReconciledScanProjection {
   /** Current-member approvals after the policy transaction committed. */
   approvalCount: number;
 }
@@ -336,6 +341,7 @@ const RECONCILED_SCAN_COLUMNS = {
   packageName: scans.packageName,
   summaryJson: scans.summaryJson,
   publicFeedListedAt: scans.publicFeedListedAt,
+  publicPackageKey: scans.publicPackageKey,
   decision: scans.decision,
   decisionReason: scans.decisionReason,
   decidedByUserId: scans.decidedByUserId,
@@ -345,6 +351,118 @@ const RECONCILED_SCAN_COLUMNS = {
   riskSummaryJson: scans.riskSummaryJson,
   aiJson: scans.aiJson,
 } as const;
+
+/**
+ * Add (or restore) a member and immediately re-project any retained approvals
+ * that become eligible because of that membership row.
+ *
+ * Final staged decisions keep their historical vote roster when someone
+ * leaves. If a later policy increase reopens one of those releases, accepting
+ * a new invitation can make the former member's retained vote live again. The
+ * membership write and the resulting null -> publish transitions therefore
+ * belong in one D1 batch; otherwise the approval state can report a sufficient
+ * tally while `scans.decision` remains null indefinitely.
+ */
+export async function addMemberAndReconcileApprovals(
+  db: AppDb,
+  input: { organizationId: string; userId: string; role: OrganizationRole },
+): Promise<ReconciledScanDecision[]> {
+  const now = new Date();
+  const voterIsCurrentMember = approvalVoterIsCurrentMember(input.organizationId);
+  const hasBlock = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'no_publish'
+  )`;
+  const approvalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'publish'
+      and ${voterIsCurrentMember}
+  )`;
+  const requiredApprovals = sql`(
+    select ${organizations.requiredReleaseApprovals}
+    from ${organizations}
+    where ${organizations.id} = ${input.organizationId}
+  )`;
+  const addedMemberHasVote = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.userId} = ${input.userId}
+      and ${scanApprovals.decision} = 'publish'
+  )`;
+  const pendingGate = sql`exists (
+    select 1
+    from ${githubWorkflowGates}
+    where ${githubWorkflowGates.id} = ${scans.gateId}
+      and ${githubWorkflowGates.organizationId} = ${input.organizationId}
+      and ${githubWorkflowGates.status} = 'pending'
+  )`;
+  const addedMemberApprovalReason = sql`(
+    select ${scanApprovals.reason}
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.userId} = ${input.userId}
+      and ${scanApprovals.decision} = 'publish'
+    limit 1
+  )`;
+
+  const [, approved] = await db.batch([
+    db
+      .insert(organizationMembers)
+      .values({
+        id: `member:${input.organizationId}:${input.userId}`,
+        organizationId: input.organizationId,
+        userId: input.userId,
+        role: input.role,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [organizationMembers.organizationId, organizationMembers.userId],
+        set: { role: input.role, updatedAt: now },
+      }),
+    db
+      .update(scans)
+      .set({
+        decision: "publish",
+        decisionReason: addedMemberApprovalReason,
+        // This retained vote became decisive when its voter rejoined. Keep the
+        // canonical projection and the member-joined audit event attributed to
+        // the same person rather than to an unrelated, more recent approver.
+        decidedByUserId: input.userId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(scans.organizationId, input.organizationId),
+          isNull(scans.decision),
+          addedMemberHasVote,
+          sql`not ${hasBlock}`,
+          sql`${approvalCount} >= ${requiredApprovals}`,
+          or(ne(scans.source, "workflow_gate"), pendingGate),
+        ),
+      )
+      .returning(RECONCILED_SCAN_COLUMNS),
+  ]);
+  const counts = await countScanApprovals(
+    db,
+    input.organizationId,
+    approved.map((scan) => scan.id),
+  );
+  return approved.map((scan) => ({
+    ...scan,
+    approvalCount: counts.get(scan.id)?.eligibleApproved ?? 0,
+  }));
+}
 
 export interface ScanApprovalVote {
   userId: string | null;
@@ -686,7 +804,7 @@ export async function removeMemberAndReconcileApprovals(
   db: AppDb,
   organizationId: string,
   userId: string,
-): Promise<boolean> {
+): Promise<{ removed: boolean; changedScans: ReconciledScanProjection[] }> {
   const now = new Date();
   const pendingGate = sql`exists (
     select 1
@@ -721,7 +839,7 @@ export async function removeMemberAndReconcileApprovals(
     where ${organizations.id} = ${organizationId}
   )`;
 
-  const [removed] = await db.batch([
+  const [removed, , reopened] = await db.batch([
     db
       .delete(organizationMembers)
       .where(
@@ -761,13 +879,17 @@ export async function removeMemberAndReconcileApprovals(
           pendingGate,
           sql`${remainingApprovalCount} < ${requiredApprovals}`,
         ),
-      ),
+      )
+      .returning(RECONCILED_SCAN_COLUMNS),
   ]);
-  return removed.length > 0;
+  return { removed: removed.length > 0, changedScans: reopened };
 }
 
 /** Remove every still-live approval before an account's surviving rows are anonymized. */
-export async function dropPendingApprovalsForUser(db: AppDb, userId: string): Promise<void> {
+export async function dropPendingApprovalsForUser(
+  db: AppDb,
+  userId: string,
+): Promise<ReconciledScanProjection[]> {
   const now = new Date();
   const pendingGate = sql`exists (
     select 1
@@ -803,7 +925,7 @@ export async function dropPendingApprovalsForUser(db: AppDb, userId: string): Pr
     from ${organizations}
     where ${organizations.id} = ${scans.organizationId}
   )`;
-  await db.batch([
+  const [, reopened] = await db.batch([
     db
       .delete(scanApprovals)
       .where(
@@ -829,6 +951,8 @@ export async function dropPendingApprovalsForUser(db: AppDb, userId: string): Pr
           pendingGate,
           sql`${remainingApprovalCount} < ${requiredApprovals}`,
         ),
-      ),
+      )
+      .returning(RECONCILED_SCAN_COLUMNS),
   ]);
+  return reopened;
 }

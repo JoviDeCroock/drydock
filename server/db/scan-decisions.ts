@@ -371,8 +371,11 @@ async function applyDecisionVote(
   await recordDecisionAuditTrail(db, {
     input,
     approvalReason: actorVote.reason,
-    decisionReason,
-    decisionActorUserId,
+    // A no-op retry can be repairing bookkeeping for a verdict another
+    // co-approver already persisted. Attribute that recovered event to the
+    // canonical scan projection, not to whichever member happened to retry.
+    decisionReason: resolvedScan.decisionReason,
+    decisionActorUserId: resolvedScan.decidedByUserId,
     policy,
     eligibleApprovedCount,
     verdict,

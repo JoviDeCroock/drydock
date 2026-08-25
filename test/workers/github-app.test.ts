@@ -1508,6 +1508,80 @@ describe("github-app workflow-gate decision route", () => {
     });
   });
 
+  test("an approval retry recovers a durable rejection with the blocker's attribution", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+
+    const transitionAt = new Date("2030-02-03T04:05:06.000Z");
+    await db.insert(schema.scanApprovals).values({
+      id: crypto.randomUUID(),
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "no_publish",
+      reason: "found a release blocker",
+      createdAt: transitionAt,
+      updatedAt: transitionAt,
+    });
+    // The vote is durable, but the package projection and aggregate gate CAS
+    // were both interrupted. Another member's approval retry repairs both.
+
+    const decisionCalls: Array<{ state: string; comment?: string }> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string; comment?: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in attributed recovery test: ${request.url}`);
+    });
+
+    const recovered = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId!, comment: "looks good to me" },
+    );
+
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({
+      gate: { status: "rejected", decisionComment: "found a release blocker" },
+    });
+    expect(decisionCalls).toEqual([
+      expect.objectContaining({ state: "rejected", comment: "found a release blocker" }),
+    ]);
+    const [gateEvent] = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId!),
+          eq(schema.scanEvents.type, "github_workflow_gate.rejected"),
+        ),
+      );
+    expect(gateEvent).toMatchObject({
+      actorUserId: userId,
+      metadata: expect.objectContaining({ recoveredByUserId: second.userId }),
+    });
+  });
+
   test("lowering the approval bar releases a gate whose existing votes now meet it", async () => {
     const { userId, organizationId } = await seedUser();
     const db = createDb(env.DB);
