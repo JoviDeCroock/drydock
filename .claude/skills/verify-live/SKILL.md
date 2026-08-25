@@ -15,9 +15,9 @@ Run `pnpm run e2e:dev:seed` in the background and wait for the seed summary bloc
 
 Read `git diff origin/main...HEAD` and list the user-visible surfaces it touches: which pages, which scan states, which API behaviors the UI reflects. Verification means exercising *those*, not a generic smoke pass.
 
-If a target needs a scan state the default seed doesn't cover, seed more fixtures against the running server: `pnpm run e2e:seed -- stage-<scenario>-000001`, with scenarios from `test/e2e-fixtures/scenarios/` (e.g. `stage-secret-file-added-000001`, `stage-registry-failure-000001`). Every `e2e:seed` run signs up a fresh throwaway account, so pass all needed stage ids in one command — two runs put the scans in two different organizations. A change that no existing fixture can reach usually means the branch is missing a scenario — add one; it doubles as the regression test.
+If a target needs a scan state the default seed doesn't cover, seed more fixtures against the running server: `pnpm run e2e:seed -- <stageId>`, taking stage ids from the `scenario.json` files under `test/e2e-fixtures/scenarios/` (e.g. `stage-secret-file-added-000001`, `stage-registry-failure-000001` — the id does not always match the directory name). Every `e2e:seed` run signs up a fresh throwaway account, so pass all needed stage ids in one command — two runs put the scans in two different organizations. A change that no existing fixture can reach usually means the branch is missing a scenario — add one; it doubles as the regression test.
 
-State that production fills in via the discovery cron has an on-demand trigger here too: the dashboard's "Check npm" button runs the same sweep against the fake registry. If a surface stays empty after seeding, trigger the flow that populates it before concluding it is broken.
+App state that production fills in via the discovery cron has an on-demand trigger here too: the dashboard's "Check npm" button runs the same sweep against the fake registry. If a surface stays empty after seeding, trigger the flow that populates it before concluding it is broken.
 
 ## 3. Drive the browser
 
