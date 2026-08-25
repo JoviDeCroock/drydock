@@ -643,6 +643,9 @@ describe("assessDependencyArtifact", () => {
     'module?.["require"](target)',
     "module['require']?.(target)",
     "require?.(target)",
+    "(require)(target)",
+    "(0, require)(target)",
+    "(module.require)(target)",
     'require(/* package-controlled gap */ "./payload.data")',
     String.raw`require("\x2e/payload.data")`,
     String.raw`import("\u002e/payload.data")`,
@@ -746,6 +749,8 @@ describe("assessDependencyArtifact", () => {
     'const cp = require("node:child_process"); cp["spawn"](process.argv[2])',
     'const cp = require("node:child_process"); cp["sp" + "awn"](getTarget())',
     'const cp = require("node:child_process"); cp["execFileSync"](getTarget())',
+    'const { spawn } = require("node:child_process"); (spawn)("./payload.min.js")',
+    'const { spawn } = require("node:child_process"); (0, spawn)("./payload.min.js")',
     'source "$PAYLOAD"',
   ])("fails completeness for the dynamic local execution edge in %s", (source) => {
     const manifest = {
@@ -782,6 +787,7 @@ describe("assessDependencyArtifact", () => {
     'node "$PAYLOAD"',
     'node --require "$PAYLOAD" install.js',
     'exec "$PAYLOAD"',
+    "eval \"$(printf './pay%s' load.min.js)\"",
     'if true; then source "$PAYLOAD"; fi',
   ])("fails completeness for the computed lifecycle executable in %s", (postinstall) => {
     const manifest = {
