@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-shell-target-skipped-content",
-  "title": "A shell-expanded lifecycle executable keeps omitted bodies in scope",
+  "title": "A shell-expanded lifecycle script keeps omitted bodies in scope",
   "category": "dependency-introduction",
-  "intent": "A lifecycle command can choose its executable from package or environment variables. Drydock must not let a shell-expanded target make deliberately omitted package content appear irrelevant to install execution.",
+  "intent": "A lifecycle command can choose the script interpreted by a shell from package or environment variables. Drydock must not let that shell-expanded target make deliberately omitted package content appear irrelevant to install execution.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
@@ -15,14 +15,14 @@
       "packageJson": {
         "name": "shell-runner",
         "version": "1.0.0",
-        "scripts": { "postinstall": "sh -c \"./$TARGET\"" }
+        "scripts": { "postinstall": "sh \"$PAYLOAD\"" }
       },
       "files": [
         {
           "path": "package.json",
           "size": 112,
           "sha256": "shell-runner-package-json",
-          "textSample": "{\"name\":\"shell-runner\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"sh -c \\\"./$TARGET\\\"\"}}",
+          "textSample": "{\"name\":\"shell-runner\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"sh \\\"$PAYLOAD\\\"\"}}",
           "flags": []
         },
         {

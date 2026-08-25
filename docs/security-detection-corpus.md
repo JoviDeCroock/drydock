@@ -229,7 +229,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.50.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -742,6 +742,15 @@ bundled native artifact remains unknown rather than proven, but projects high na
 `added-dependency-bracket-process-skipped-content`,
 `added-dependency-shell-target-skipped-content`, and
 `added-dependency-dynamic-native-execution` pin the coverage and gate-facing results.
+
+`1.50.0` closes the cross-syntax edges left in dependency install completeness. Shell interpreters
+whose script operand is selected through expansion, shell `-c` bodies that dynamically source a file,
+and bracket-property Node process calls with static argv now keep deliberately omitted bodies visible.
+Bundled-child archive ambiguity also includes an entry at the child directory itself, not only its
+descendants, and persisted dependency-review status/counts are derived or rejected when they contradict
+the retained rows. `added-dependency-shell-target-skipped-content`,
+`added-dependency-bracket-process-skipped-content`, and
+`added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing coverage changes.
 
 ### Fixture format
 

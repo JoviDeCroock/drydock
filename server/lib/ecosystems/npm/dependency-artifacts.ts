@@ -125,12 +125,16 @@ function inspectBundledDependency(
   stagedSuspiciousEntries: EmbeddedDependencyInspectionArgs["stagedSuspiciousEntries"],
 ): DependencyEvidence {
   const prefix = `node_modules/${dependency.name}/`;
+  const root = prefix.slice(0, -1);
   const files = stagedFiles
     .filter((file) => file.path.startsWith(prefix))
     .map((file) => ({ ...file, path: file.path.slice(prefix.length) }));
   const suspiciousEntries = (stagedSuspiciousEntries ?? [])
-    .filter((entry) => entry.path.startsWith(prefix))
-    .map((entry) => ({ ...entry, path: entry.path.slice(prefix.length) }));
+    .filter((entry) => entry.path === root || entry.path.startsWith(prefix))
+    .map((entry) => ({
+      ...entry,
+      path: entry.path === root ? "" : entry.path.slice(prefix.length),
+    }));
   const manifest = parsePackageJson(files);
   const version = typeof manifest?.version === "string" ? manifest.version : null;
   return inspectAcquiredDependency(dependency, {

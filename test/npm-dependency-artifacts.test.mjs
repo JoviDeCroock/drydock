@@ -1156,44 +1156,50 @@ describe("inspectBundledNpmDependenciesForAdapter", () => {
     });
   });
 
-  test("a suspicious entry inside a bundled child makes its evidence uninspectable", () => {
-    const stagedManifest = {
-      name: "parent",
-      version: "1.0.1",
-      dependencies: { embedded: "1.0.0" },
-      bundleDependencies: ["embedded"],
-    };
-    const stagedFiles = [
-      file("package.json", JSON.stringify(stagedManifest)),
-      file(
-        "node_modules/embedded/package.json",
-        JSON.stringify({ name: "embedded", version: "1.0.0" }),
-      ),
-    ];
+  test.each(["node_modules/embedded/install.js", "node_modules/embedded"])(
+    "a suspicious entry at %s makes its bundled child evidence uninspectable",
+    (suspiciousPath) => {
+      const stagedManifest = {
+        name: "parent",
+        version: "1.0.1",
+        dependencies: { embedded: "1.0.0" },
+        bundleDependencies: ["embedded"],
+      };
+      const stagedFiles = [
+        file("package.json", JSON.stringify(stagedManifest)),
+        file(
+          "node_modules/embedded/package.json",
+          JSON.stringify({ name: "embedded", version: "1.0.0" }),
+        ),
+      ];
 
-    const review = inspectBundledNpmDependenciesForAdapter({
-      manifestDiff: summarizePackageJsonDiff({ name: "parent", version: "1.0.0" }, stagedManifest),
-      baselineManifestUnavailable: false,
-      stagedManifest,
-      stagedFiles,
-      stagedSuspiciousEntries: [
-        {
-          kind: "non-regular",
-          path: "node_modules/embedded/install.js",
-          detail: "symbolic link (symlink)",
-        },
-      ],
-    });
+      const review = inspectBundledNpmDependenciesForAdapter({
+        manifestDiff: summarizePackageJsonDiff(
+          { name: "parent", version: "1.0.0" },
+          stagedManifest,
+        ),
+        baselineManifestUnavailable: false,
+        stagedManifest,
+        stagedFiles,
+        stagedSuspiciousEntries: [
+          {
+            kind: "non-regular",
+            path: suspiciousPath,
+            detail: "symbolic link (symlink)",
+          },
+        ],
+      });
 
-    expect(review).toMatchObject({
-      status: "partial",
-      selectedCount: 1,
-      inspectedCount: 0,
-      uninspectableCount: 1,
-    });
-    expect(review.dependencies[0]).toMatchObject({
-      status: "uninspectable",
-      reason: "artifact-ambiguous",
-    });
-  });
+      expect(review).toMatchObject({
+        status: "partial",
+        selectedCount: 1,
+        inspectedCount: 0,
+        uninspectableCount: 1,
+      });
+      expect(review.dependencies[0]).toMatchObject({
+        status: "uninspectable",
+        reason: "artifact-ambiguous",
+      });
+    },
+  );
 });

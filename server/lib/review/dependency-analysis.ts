@@ -365,7 +365,7 @@ const LOCAL_EXECUTION_CALLEES = new Set([
 function hasDynamicLocalExecution(text: string): boolean {
   // Shell variables and substitutions can select a packaged executable even
   // when the static reachability expressions cannot name it.
-  if (/(?:^|[;\n&|]\s*)(?:source|\.)\s+(?:["']?\$|["'][^"']*\$)/m.test(text)) return true;
+  if (hasDynamicShellSourceTarget(text)) return true;
 
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
@@ -740,7 +740,8 @@ const SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
 
 /** True when a shell command chooses the executable at runtime. */
-function hasDynamicShellCommand(command: string, inspectInlineShell = true): boolean {
+function hasDynamicShellCommand(command: string): boolean {
+  if (hasDynamicShellSourceTarget(command)) return true;
   const words = shellCommandWords(command);
   for (let index = 0; index < words.length;) {
     while (SHELL_COMMAND_OPERATORS.has(words[index] ?? "")) index += 1;
@@ -753,11 +754,16 @@ function hasDynamicShellCommand(command: string, inspectInlineShell = true): boo
       (word, wordIndex) => wordIndex > index && SHELL_COMMAND_OPERATORS.has(word),
     );
     const commandEnd = end === -1 ? words.length : end;
-    if (inspectInlineShell && SHELL_INTERPRETERS.has(program)) {
-      const commandFlag = words.slice(index + 1, commandEnd).findIndex((word) => word === "-c");
+    if (SHELL_INTERPRETERS.has(program)) {
+      const args = words.slice(index + 1, commandEnd);
+      if (hasDynamicShellStartupFile(args)) return true;
+      const commandFlag = args.findIndex((word) => /^-[^-]*c/.test(word));
       if (commandFlag !== -1) {
-        const inline = words[index + 1 + commandFlag + 1];
-        if (inline && hasDynamicShellCommand(inline, false)) return true;
+        const inline = args[commandFlag + 1];
+        if (inline && hasDynamicShellCommand(inline)) return true;
+      } else {
+        const script = shellScriptOperand(args);
+        if (script && hasShellExpansion(script)) return true;
       }
     }
     index = commandEnd + 1;
@@ -767,6 +773,37 @@ function hasDynamicShellCommand(command: string, inspectInlineShell = true): boo
 
 function hasShellExpansion(value: string): boolean {
   return /`|\$\(|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(value);
+}
+
+function hasDynamicShellSourceTarget(value: string): boolean {
+  return /(?:^|[;\n&|]\s*)(?:source|\.)\s+(?:["']?\$|["'][^"']*\$)/m.test(value);
+}
+
+function hasDynamicShellStartupFile(args: string[]): boolean {
+  return args.some(
+    (arg, index) =>
+      (arg === "--init-file" || arg === "--rcfile") && hasShellExpansion(args[index + 1] ?? ""),
+  );
+}
+
+/** The shell file operand, excluding `-c` bodies and stdin-mode arguments. */
+function shellScriptOperand(args: string[]): string | null {
+  let readsStdin = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") return readsStdin ? null : (args[index + 1] ?? null);
+    if (arg.startsWith("--")) {
+      if (arg === "--init-file" || arg === "--rcfile") index += 1;
+      continue;
+    }
+    if (/^[-+][^-]/.test(arg)) {
+      if (/^-[^-]*s/.test(arg)) readsStdin = true;
+      if (arg === "-o" || arg === "+o") index += 1;
+      continue;
+    }
+    return readsStdin ? null : arg;
+  }
+  return null;
 }
 
 /** Extract bounded `node -e` / `node --eval` bodies without invoking a shell. */
