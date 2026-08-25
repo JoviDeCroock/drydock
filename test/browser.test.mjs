@@ -1307,6 +1307,58 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(2);
   });
 
+  test("resolves plain Worker URLs from a generated Manifest V2 background page", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        manifest_version: 2,
+        background: { scripts: ["background/main.js"] },
+      }),
+      {
+        path: "background/main.js",
+        size: 38,
+        sha256: "7b".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/payload.js");',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "7c".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "background/tests/payload.js",
+        size: 14,
+        sha256: "7d".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.consumerDocumentBaseUrlsByPath["background/main.js"]).toEqual([
+      "drydock-extension://artifact/",
+    ]);
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/payload.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "background/tests/payload.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+  });
+
   test("does not resolve Worker URLs against an unrelated extension document", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

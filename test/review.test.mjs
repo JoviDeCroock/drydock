@@ -2537,6 +2537,58 @@ describe("test-scoped capability findings", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows tab resources through document-relative paths and runtime.getURL", () => {
+    const staged = [
+      pkg(),
+      file(
+        "pages/controller.js",
+        [
+          'browser.tabs.update(tabId, { url: "test/update.html" });',
+          'browser.tabs.executeScript(tabId, { file: "test/injected.js" });',
+          'chrome.tabs.create({ url: chrome.runtime.getURL("test/runtime.html") });',
+          'chrome.tabs.create({ url: chrome.runtime.getURL("test/dynamic.html") + suffix });',
+        ].join("\n"),
+      ),
+      file("test/injected.js", "eval(payload);\n"),
+      file("pages/test/injected.js", "eval(payload);\n"),
+      file("pages/test/update.html", '<script src="update-payload.js"></script>\n'),
+      file("pages/test/update-payload.js", "eval(payload);\n"),
+      file("test/runtime.html", '<script src="runtime-payload.js"></script>\n'),
+      file("test/runtime-payload.js", "eval(payload);\n"),
+      file("test/dynamic.html", '<script src="dynamic-payload.js"></script>\n'),
+      file("test/dynamic-payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["pages/controller.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerDocumentBaseUrlsByPath: {
+        "pages/controller.js": ["drydock-extension://artifact/pages/popup.html"],
+      },
+      consumerFileDependencyPaths: (path) => {
+        if (path === "pages/test/update.html") return [{ path: "pages/test/update-payload.js" }];
+        if (path === "test/runtime.html") return [{ path: "test/runtime-payload.js" }];
+        if (path === "test/dynamic.html") return [{ path: "test/dynamic-payload.js" }];
+        return [];
+      },
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "test/injected.js", severity: "medium" }),
+        expect.objectContaining({ file: "pages/test/injected.js", severity: "medium" }),
+        expect.objectContaining({ file: "pages/test/update-payload.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/runtime-payload.js", severity: "medium" }),
+        expect.objectContaining({
+          file: "test/dynamic-payload.js",
+          severity: "low",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(5);
+  });
+
   test("follows static Manifest V3 scripting injection files", () => {
     const staged = [
       pkg(),

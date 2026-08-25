@@ -61,15 +61,17 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     typeof background.page === "string"
       ? (manifestResourcePaths([background.page])[0] ?? null)
       : null;
+  const declaredBackgroundScripts = manifestResourcePaths(stringList(background.scripts));
   const declaredBackgroundEntrypoints = manifestResourcePaths([
     ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
-    ...stringList(background.scripts),
+    ...declaredBackgroundScripts,
     ...(typeof background.page === "string" ? [background.page] : []),
   ]);
   const backgroundConsumers = backgroundConsumerEntrypoints(
     files,
     declaredBackgroundEntrypoints,
     declaredBackgroundPage,
+    raw.manifest_version === 2 ? declaredBackgroundScripts : [],
   );
   const webAccessibleResources = manifestWebAccessibleResourcePaths(raw, files);
   const extensionPageConsumers = htmlPageConsumerEntrypoints(files, [
@@ -429,15 +431,21 @@ function backgroundConsumerEntrypoints(
   files: FileRecord[],
   declaredEntrypoints: string[],
   backgroundPage: string | null,
+  backgroundScripts: string[],
 ): HtmlPageConsumers {
   const entrypoints = new Set(declaredEntrypoints);
-  let documentBaseUrlsByPath: Record<string, string[]> = {};
+  let documentBaseUrlsByPath = Object.fromEntries(
+    backgroundScripts.map((path) => [path, [EXTENSION_RESOURCE_ROOT.href]]),
+  );
   if (backgroundPage) {
     const pageConsumers = htmlPageConsumerEntrypoints(files, [backgroundPage]);
     for (const path of pageConsumers.entrypoints) {
       entrypoints.add(path);
     }
-    documentBaseUrlsByPath = pageConsumers.documentBaseUrlsByPath;
+    documentBaseUrlsByPath = mergeDocumentBaseUrlsByPath(
+      documentBaseUrlsByPath,
+      pageConsumers.documentBaseUrlsByPath,
+    );
   }
   return { entrypoints: [...entrypoints], documentBaseUrlsByPath };
 }

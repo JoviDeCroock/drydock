@@ -1,0 +1,94 @@
+{
+  "id": "browser-generated-background-reachability",
+  "title": "generated background pages and static tab resources stay reachable",
+  "category": "browser-extension",
+  "intent": "Pins the Manifest V2 generated background document base, tabs.update navigation, root and document relative Manifest V2 injection paths, literal runtime.getURL wrappers, and a dynamic wrapper hard negative.",
+  "slug": "generated-background-reachability",
+  "extensionId": "generated-background-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 259,
+      "sha256": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Generated background reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"generated-background-reachability@example.invalid\" } },\n  \"background\": { \"scripts\": [\"background/main.js\"] }\n}\n"
+    },
+    {
+      "path": "background/main.js",
+      "size": 311,
+      "sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "flags": [],
+      "textSample": "new Worker(\"tests/worker.js\");\nbrowser.tabs.update(tabId, { url: \"tests/update.html\" });\nbrowser.tabs.executeScript(tabId, { file: \"tests/injected.js\" });\nchrome.tabs.create({ url: chrome.runtime.getURL(\"tests/runtime.html\") });\nchrome.tabs.create({ url: chrome.runtime.getURL(\"tests/dynamic.html\") + suffix });"
+    },
+    {
+      "path": "tests/worker.js",
+      "size": 14,
+      "sha256": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/injected.js",
+      "size": 14,
+      "sha256": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/update.html",
+      "size": 41,
+      "sha256": "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "flags": [],
+      "textSample": "<script src=\"update-payload.js\"></script>"
+    },
+    {
+      "path": "tests/update-payload.js",
+      "size": 14,
+      "sha256": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/runtime.html",
+      "size": 42,
+      "sha256": "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+      "flags": [],
+      "textSample": "<script src=\"runtime-payload.js\"></script>"
+    },
+    {
+      "path": "tests/runtime-payload.js",
+      "size": 14,
+      "sha256": "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dynamic.html",
+      "size": 42,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": [],
+      "textSample": "<script src=\"dynamic-payload.js\"></script>"
+    },
+    {
+      "path": "tests/dynamic-payload.js",
+      "size": 14,
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/injected.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/runtime-payload.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/update-payload.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/worker.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/dynamic-payload.js"
+    }
+  ]
+}
