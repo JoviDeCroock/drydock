@@ -26,6 +26,7 @@ import {
 } from "../../server/lib/github-app/persistence";
 import {
   getGateForOrganization,
+  markGateDecidedForPackageAggregate,
   resetGateReviewForRetry,
 } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
@@ -905,6 +906,140 @@ describe("github-app workflow-gate decision route", () => {
     expect(
       await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId!)),
     ).toHaveLength(0);
+  });
+
+  test("does not persist a vote after an approval-policy change advances the gate generation", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    const observed = await getGateForOrganization(db, organizationId, gateId);
+    expect(observed).not.toBeNull();
+
+    await setRequiredReleaseApprovals(db, organizationId, 1, 2);
+    const reconciled = await getGateForOrganization(db, organizationId, gateId);
+    expect(reconciled!.updatedAt.getTime()).toBeGreaterThan(observed!.updatedAt.getTime());
+
+    const outcome = await upsertScanApproval(db, {
+      scanId: scanId!,
+      organizationId,
+      userId: second.userId,
+      decision: "no_publish",
+      reason: "stale block request",
+      now: new Date(),
+      hardenOnly: true,
+      pendingGateId: gateId,
+      pendingGateUpdatedAt: observed!.updatedAt,
+    });
+
+    expect(outcome).toBe("not_actionable");
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId!)),
+    ).toHaveLength(0);
+  });
+
+  test("does not approve a legacy package projection under a multi-approval policy", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    // Simulate the old one-click path committing its package projection before
+    // the aggregate gate CAS, before scan_approvals existed.
+    await db
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: userId,
+        decidedAt: new Date(),
+      })
+      .where(eq(schema.scans.id, scanId!));
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in legacy policy test: ${request.url}`);
+    });
+
+    const raised = await callGithubAppRoute(
+      buildTestApp(userId),
+      "PUT",
+      `/api/v1/organizations/${organizationId}/release-approvals`,
+      { requiredApprovals: 2 },
+    );
+
+    expect(raised.status).toBe(200);
+    expect(await raised.json()).toEqual({ requiredApprovals: 2 });
+    expect(await getGateForOrganization(db, organizationId, gateId)).toMatchObject({
+      status: "pending",
+      decision: null,
+    });
+    expect(decisionCalls).toHaveLength(0);
+  });
+
+  test("does not approve a published projection with a durable blocking vote", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    const now = new Date();
+    await db
+      .update(schema.scans)
+      .set({ decision: "publish", decidedByUserId: userId, decidedAt: now })
+      .where(eq(schema.scans.id, scanId!));
+    await db.insert(schema.scanApprovals).values({
+      id: crypto.randomUUID(),
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "no_publish",
+      reason: "durable block",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const decided = await markGateDecidedForPackageAggregate(db, {
+      gateId,
+      organizationId,
+      decision: "approved",
+      comment: "must not release",
+    });
+
+    expect(decided).toBeNull();
+    expect((await getGateForOrganization(db, organizationId, gateId))?.status).toBe("pending");
   });
 
   test("rejects a decision that is not approved/rejected", async () => {
@@ -2036,6 +2171,23 @@ describe("github-app workflow-gate decision route", () => {
         decidedBy: "human",
         trigger: "approval_policy",
         recoveredByUserId: userId,
+      }),
+    });
+    const [scanEvent] = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(
+        and(eq(schema.scanEvents.scanId, scanId!), eq(schema.scanEvents.type, "scan.decided")),
+      );
+    expect(scanEvent).toMatchObject({
+      actorUserId: blocker.userId,
+      metadata: expect.objectContaining({
+        decision: "no_publish",
+        trigger: "approval_policy",
+        reconciledByUserId: userId,
       }),
     });
   });

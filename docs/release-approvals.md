@@ -80,10 +80,19 @@ cannot strand a now-ready gate. Completed gates are immutable and snapshot the
 policy and roster that actually released them; later organization changes never
 rewrite the threshold returned for that historical gate.
 
+The same transaction advances every pending gate's decision generation. A vote
+authorized before the policy change therefore cannot land after reconciliation
+has already evaluated the roster. The gate's final approval CAS also proves that
+each package has no blocking vote and enough current-member approvals for the
+live bar; a stale projection or pre-roster package decision cannot release a
+deployment under a stricter policy.
+
 When reconciliation itself moves a scan to a verdict, `decided_at` is the
 policy-change time rather than the older vote time. The route emits the same
 per-scan `scan.decided` audit and analytics events as a vote-triggered verdict,
-with `trigger: approval_policy` in the audit metadata.
+with `trigger: approval_policy` in the audit metadata. The event actor remains
+the member whose stored vote became decisive; `reconciledByUserId` identifies
+the owner request that applied the policy transition.
 
 Gate finalization and delivery scheduling happen before the policy-change audit
 event is written. Audit bookkeeping is contained so a transient event-write

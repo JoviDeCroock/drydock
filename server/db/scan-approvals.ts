@@ -235,7 +235,7 @@ export async function setRequiredReleaseApprovals(
   // D1 batches are transactional: readers never observe the new policy paired
   // with verdicts derived from the old one. Blocks are applied first, approvals
   // second, and the remaining unsupported verdicts are cleared last.
-  const [updatedPolicy, blocked, approved, undecided] = await db.batch([
+  const [updatedPolicy, , blocked, approved, undecided] = await db.batch([
     db
       .update(organizations)
       .set({ requiredReleaseApprovals: normalized, updatedAt: now })
@@ -248,6 +248,22 @@ export async function setRequiredReleaseApprovals(
         ),
       )
       .returning({ id: organizations.id }),
+    // A gate decision request authorizes one exact pending-gate generation
+    // before its TOTP step-up. Advance that generation in the same transaction
+    // as the policy so a vote cannot land after reconciliation has already
+    // evaluated the old roster under the new bar.
+    db
+      .update(githubWorkflowGates)
+      .set({
+        updatedAt: sql`max(${githubWorkflowGates.updatedAt} + 1, ${now.getTime()})`,
+      })
+      .where(
+        and(
+          eq(githubWorkflowGates.organizationId, organizationId),
+          eq(githubWorkflowGates.status, "pending"),
+          policyIsCurrent,
+        ),
+      ),
     db
       .update(scans)
       .set({
