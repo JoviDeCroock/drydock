@@ -25,8 +25,24 @@ const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const GECKO_EMAIL_ID_MAX_LENGTH = 80;
 const LOCALIZED_MESSAGE_NAME_RE = /^__MSG_([A-Za-z0-9_@]+)__$/i;
 const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
-const HTML_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+const HTML_TEXT_ONLY_ELEMENTS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+]);
+const SVG_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "title"]);
 const HTML_INERT_CONTENT_ELEMENTS = new Set(["noscript", "template"]);
+
+type HtmlNamespace = "html" | "svg";
+type HtmlNamespaceBoundary = {
+  tagName: "foreignobject" | "svg";
+  namespace: HtmlNamespace;
+};
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -546,10 +562,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
   let baseHref: string | null = null;
   let baseSeen = false;
-  const namespaceBoundaries: Array<{
-    tagName: "foreignobject" | "svg";
-    namespace: "html" | "svg";
-  }> = [];
+  const namespaceBoundaries: HtmlNamespaceBoundary[] = [];
   let index = 0;
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
@@ -573,26 +586,15 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     if (closingTag) {
       const tagEnd = htmlTagEnd(html, cursor);
       if (tagEnd === null) break;
-      let boundaryIndex = -1;
-      for (let candidate = namespaceBoundaries.length - 1; candidate >= 0; candidate -= 1) {
-        if (namespaceBoundaries[candidate].tagName !== tagName) continue;
-        boundaryIndex = candidate;
-        break;
-      }
-      if (boundaryIndex !== -1) namespaceBoundaries.length = boundaryIndex;
+      closeHtmlNamespaceBoundary(namespaceBoundaries, tagName);
       index = tagEnd;
       continue;
     }
 
     const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
-    const namespaceBoundary =
-      tagName === "svg"
-        ? { tagName: "svg" as const, namespace: "svg" as const }
-        : namespace === "svg" && tagName === "foreignobject"
-          ? { tagName: "foreignobject" as const, namespace: "html" as const }
-          : null;
+    const namespaceBoundary = htmlNamespaceBoundary(namespace, tagName);
     if (
-      !HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
+      !htmlElementHasTextOnlyContent(namespace, tagName) &&
       !HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
       tagName !== "a" &&
       tagName !== "area" &&
@@ -647,7 +649,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       if (html[cursor] === "/" && html[cursor + 1] === ">") {
         cursor += 2;
         tagClosed = true;
-        selfClosing = true;
+        selfClosing = htmlStartTagCanSelfClose(namespace, tagName);
         break;
       }
 
@@ -774,7 +776,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       index = htmlInertElementEnd(html, cursor, tagName) ?? html.length;
       continue;
     }
-    if (tagClosed && HTML_TEXT_ONLY_ELEMENTS.has(tagName) && !selfClosing) {
+    if (tagClosed && htmlElementHasTextOnlyContent(namespace, tagName) && !selfClosing) {
       // Raw-text and escapable raw-text contents do not create nested elements.
       // Skip them so tag-shaped CSS, JavaScript, titles, and textarea values
       // cannot invent consumer edges or document bases.
@@ -812,6 +814,7 @@ function htmlTextElementEnd(html: string, cursor: number, tagName: string): numb
 
 function htmlInertElementEnd(html: string, cursor: number, tagName: string): number | null {
   if (tagName === "noscript") return htmlTextElementEnd(html, cursor, tagName);
+  const namespaceBoundaries: HtmlNamespaceBoundary[] = [];
   let depth = 1;
   while (cursor < html.length) {
     const tagStart = html.indexOf("<", cursor);
@@ -834,24 +837,63 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
     }
     const tagEnd = htmlTagEnd(html, nameCursor);
     if (tagEnd === null) return null;
-    const selfClosing = /\/\s*>$/.test(html.slice(tagStart, tagEnd));
-    if (!closingTag && HTML_TEXT_ONLY_ELEMENTS.has(nestedTagName) && !selfClosing) {
+    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
+    if (closingTag) {
+      if (namespace === "html" && nestedTagName === tagName) {
+        depth -= 1;
+        if (depth === 0) return tagEnd;
+      }
+      closeHtmlNamespaceBoundary(namespaceBoundaries, nestedTagName);
+      cursor = tagEnd;
+      continue;
+    }
+    const namespaceBoundary = htmlNamespaceBoundary(namespace, nestedTagName);
+    const selfClosing =
+      /\/\s*>$/.test(html.slice(tagStart, tagEnd)) &&
+      htmlStartTagCanSelfClose(namespace, nestedTagName);
+    if (htmlElementHasTextOnlyContent(namespace, nestedTagName) && !selfClosing) {
       const textEnd = htmlTextElementEnd(html, tagEnd, nestedTagName);
       if (textEnd === null) return null;
       cursor = textEnd;
       continue;
     }
-    if (nestedTagName === tagName) {
-      if (closingTag) {
-        depth -= 1;
-        if (depth === 0) return tagEnd;
-      } else if (!selfClosing) {
-        depth += 1;
-      }
-    }
+    if (namespace === "html" && nestedTagName === tagName) depth += 1;
+    if (namespaceBoundary && !selfClosing) namespaceBoundaries.push(namespaceBoundary);
     cursor = tagEnd;
   }
   return null;
+}
+
+function htmlNamespaceBoundary(
+  namespace: HtmlNamespace,
+  tagName: string,
+): HtmlNamespaceBoundary | null {
+  if (tagName === "svg") return { tagName: "svg", namespace: "svg" };
+  if (namespace === "svg" && tagName === "foreignobject") {
+    return { tagName: "foreignobject", namespace: "html" };
+  }
+  return null;
+}
+
+function closeHtmlNamespaceBoundary(
+  namespaceBoundaries: HtmlNamespaceBoundary[],
+  tagName: string,
+): void {
+  for (let index = namespaceBoundaries.length - 1; index >= 0; index -= 1) {
+    if (namespaceBoundaries[index].tagName !== tagName) continue;
+    namespaceBoundaries.length = index;
+    return;
+  }
+}
+
+function htmlStartTagCanSelfClose(namespace: HtmlNamespace, tagName: string): boolean {
+  // A trailing slash closes foreign elements, including the <svg> element that
+  // enters the SVG namespace. HTML start tags ignore it.
+  return namespace === "svg" || tagName === "svg";
+}
+
+function htmlElementHasTextOnlyContent(namespace: HtmlNamespace, tagName: string): boolean {
+  return (namespace === "html" ? HTML_TEXT_ONLY_ELEMENTS : SVG_TEXT_ONLY_ELEMENTS).has(tagName);
 }
 
 function htmlCommentEnd(html: string, commentStart: number): number | null {

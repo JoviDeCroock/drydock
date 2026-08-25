@@ -1151,17 +1151,23 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample:
           '<style>.example { content: "<script src=tests/style.js>"; }</style>' +
+          '<iframe><script src="tests/iframe.js"></script></iframe>' +
+          '<noembed><script src="tests/noembed.js"></script></noembed>' +
+          '<noframes><script src="tests/noframes.js"></script></noframes>' +
           '<textarea><script src="tests/textarea.js"></script></textarea>' +
           '<title><script src="tests/title.js"></script></title>' +
+          '<xmp><script src="tests/xmp.js"></script></xmp>' +
           '<script src="tests/live.js"></script>',
       },
-      ...["style", "textarea", "title", "live"].map((name, index) => ({
-        path: `tests/${name}.js`,
-        size: 14,
-        sha256: String(77 + index).repeat(32),
-        flags: [],
-        textSample: "eval(payload);",
-      })),
+      ...["style", "iframe", "noembed", "noframes", "textarea", "title", "xmp", "live"].map(
+        (name, index) => ({
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: String(77 + index).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        }),
+      ),
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
@@ -1172,17 +1178,73 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ severity: "medium", file: "tests/style.js", testScoped: true }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/textarea.js",
-          testScoped: true,
-        }),
-        expect.objectContaining({ severity: "medium", file: "tests/title.js", testScoped: true }),
+        ...["style", "iframe", "noembed", "noframes", "textarea", "title", "xmp"].map((name) =>
+          expect.objectContaining({
+            severity: "medium",
+            file: `tests/${name}.js`,
+            testScoped: true,
+          }),
+        ),
         expect.objectContaining({ severity: "high", file: "tests/live.js" }),
       ]),
     );
-    expect(findings).toHaveLength(4);
+    expect(findings).toHaveLength(8);
+  });
+
+  test("ignores trailing solidus on HTML start tags while preserving SVG self-closing tags", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 320,
+        sha256: "85".repeat(32),
+        flags: [],
+        textSample:
+          '<script src="tests/live.js" /><script src="tests/script-decoy.js"></script></script>' +
+          '<template><template/></template><script src="tests/template-decoy.js"></script></template>' +
+          '<svg><script href="tests/svg.js"/></svg>' +
+          '<script src="tests/after.js"></script>',
+      },
+      ...["live", "script-decoy", "template-decoy", "svg", "after"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(86 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual([
+      "popup.html",
+      "tests/live.js",
+      "tests/svg.js",
+      "tests/after.js",
+    ]);
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/live.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/svg.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/after.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/script-decoy.js",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/template-decoy.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(5);
   });
 
   test("follows scripts loaded by a reachable offscreen document", () => {

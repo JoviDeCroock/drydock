@@ -1,8 +1,8 @@
 {
   "id": "browser-html-namespace-reachability",
-  "title": "WebExtension HTML reachability respects inert templates and SVG script links",
+  "title": "WebExtension HTML reachability respects browser parsing and SVG script links",
   "category": "browser-extension",
-  "intent": "Inert template content must not change the document base, while href and xlink:href scripts in inline SVG remain executable consumer entrypoints.",
+  "intent": "Inert templates, raw-text iframe contents, and trailing solidus on HTML start tags must not invent consumer edges, while href and xlink:href scripts in inline SVG remain executable consumer entrypoints.",
   "slug": "html-namespace-helper",
   "extensionId": "html-namespace-helper@example.invalid",
   "version": "1.0.0",
@@ -17,10 +17,10 @@
     },
     {
       "path": "tests/popup.html",
-      "size": 190,
+      "size": 430,
       "sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
       "flags": [],
-      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><script src=\"live.js\"></script><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script></svg>"
+      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><iframe><script src=\"raw-decoy.js\"></script></iframe><script src=\"live.js\" /><script src=\"slash-decoy.js\"></script></script><template><template/></template><script src=\"nested-template-decoy.js\"></script></template><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script></svg>"
     },
     {
       "path": "tests/live.js",
@@ -42,12 +42,40 @@
       "sha256": "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/raw-decoy.js",
+      "size": 14,
+      "sha256": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/slash-decoy.js",
+      "size": 14,
+      "sha256": "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/nested-template-decoy.js",
+      "size": 14,
+      "sha256": "a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
   "expectedFindings": [
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/href.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xlink.js" }
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xlink.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/raw-decoy.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/slash-decoy.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/nested-template-decoy.js"
+    }
   ]
 }
