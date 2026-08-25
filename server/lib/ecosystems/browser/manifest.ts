@@ -1,4 +1,5 @@
 import { decodeHTMLAttribute } from "entities";
+import { SaxesParser } from "saxes";
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
 import {
   decodeUrlPathForArchiveLookup,
@@ -28,6 +29,7 @@ const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
 const MAX_WEB_ACCESSIBLE_RESOURCE_DECLARATIONS = 10_000;
 const MAX_WEB_ACCESSIBLE_RESOURCE_WILDCARD_CHECKS = 1_000_000;
 const BROWSER_DOCUMENT_PATH_RE = /\.(?:html?|xhtml|xht|svg)$/i;
+const BROWSER_XML_DOCUMENT_PATH_RE = /\.(?:xhtml|xht|svg)$/i;
 // URL-valued attribute local names that can make some engine fetch, navigate
 // to, or execute a packaged resource. Collected on every tag-shaped token —
 // consumer-edge extraction is a deliberate over-approximation of browser
@@ -38,6 +40,9 @@ const CONSUMER_URL_ATTRIBUTE_LOCAL_NAMES = new Set(["src", "href", "data", "acti
 // dropping a base candidate, which could hide a real consumer edge.
 const MAX_DOCUMENT_BASE_CANDIDATES = 16;
 const MAX_DOCUMENT_CONSUMER_RESOLUTIONS = 1_000_000;
+const MAX_XML_GENERAL_ENTITIES = 1_024;
+const MAX_XML_ENTITY_EXPANSION_DEPTH = 32;
+const MAX_XML_ENTITY_EXPANDED_CHARACTERS = 1_000_000;
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -556,19 +561,25 @@ function browserDocumentConsumerEdges(
       throw new Error(`document ${pagePath} exceeds the consumer resolution work budget`);
     }
   };
-  const inlineQueue: Array<{ html: string; fallbackBases: URL[] }> = [
-    { html: text, fallbackBases: [pageUrl] },
+  const inlineQueue: Array<{ html: string; fallbackBases: URL[]; xmlSyntax: boolean }> = [
+    {
+      html: text,
+      fallbackBases: [pageUrl],
+      xmlSyntax: BROWSER_XML_DOCUMENT_PATH_RE.test(pagePath),
+    },
   ];
   while (inlineQueue.length) {
     const inline = inlineQueue.pop();
     if (!inline) continue;
-    const tokens = scanDocumentConsumerTokens(inline.html);
+    const tokens = scanDocumentConsumerTokens(inline.html, inline.xmlSyntax);
     spendResolutionBudget(tokens.baseHrefs.length * inline.fallbackBases.length);
     const bases = documentBaseCandidates(inline.fallbackBases, tokens.baseHrefs);
     spendResolutionBudget(
       (tokens.scriptSources.length + tokens.resourceSources.length) * bases.length,
     );
-    for (const html of tokens.inlineDocuments) inlineQueue.push({ html, fallbackBases: bases });
+    for (const html of tokens.inlineDocuments) {
+      inlineQueue.push({ html, fallbackBases: bases, xmlSyntax: false });
+    }
     for (const source of tokens.scriptSources) {
       for (const base of bases) {
         const path = resolveExtensionResourcePath(source, base);
@@ -586,7 +597,8 @@ function browserDocumentConsumerEdges(
 }
 
 export function isBrowserConsumerDocumentPath(path: string): boolean {
-  return BROWSER_DOCUMENT_PATH_RE.test(path);
+  const basename = path.slice(path.lastIndexOf("/") + 1);
+  return BROWSER_DOCUMENT_PATH_RE.test(path) || (basename.length > 0 && !basename.includes("."));
 }
 
 function mergeDocumentBaseUrlsByPath(
@@ -626,7 +638,7 @@ interface DocumentConsumerTokens {
 // would follow is by design, not a bug; only a missed edge is a bug. See the
 // precision-boundary note in docs/security-detection-corpus.md before
 // narrowing this.
-function scanDocumentConsumerTokens(html: string): DocumentConsumerTokens {
+function scanDocumentConsumerTokens(html: string, xmlSyntax = false): DocumentConsumerTokens {
   const tokens: DocumentConsumerTokens = {
     scriptSources: [],
     resourceSources: [],
@@ -640,7 +652,7 @@ function scanDocumentConsumerTokens(html: string): DocumentConsumerTokens {
     let cursor = tagStart + 1;
     if (html[cursor] === "/") cursor += 1;
     const nameStart = cursor;
-    while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
+    while (cursor < html.length && /[A-Za-z0-9:_.-]/.test(html[cursor])) cursor += 1;
     const rawTagName = html.slice(nameStart, cursor).toLowerCase();
     if (!rawTagName || !/[\s/>]/.test(html[cursor] ?? "")) {
       index = Math.max(cursor, tagStart + 1);
@@ -690,31 +702,163 @@ function scanDocumentConsumerTokens(html: string): DocumentConsumerTokens {
       }
       if (value === null) continue;
 
-      if (attributeName === "srcdoc") {
-        tokens.inlineDocuments.push(decodeHTMLAttribute(value));
-        continue;
-      }
-      if (attributeName === "content") {
-        // Meta-refresh URLs live inside the content attribute's own grammar.
-        // Matching the grammar on any element keeps the edge tag-independent.
-        const refreshUrl = metaRefreshUrl(decodeHTMLAttribute(value));
-        if (refreshUrl) tokens.resourceSources.push(refreshUrl);
-        continue;
-      }
-      if (!CONSUMER_URL_ATTRIBUTE_LOCAL_NAMES.has(attributeName)) continue;
-      const source = decodeHTMLAttribute(value);
-      if (tagName === "base") {
-        // A base element is never fetched itself; it only changes resolution.
-        if (attributeName === "href") tokens.baseHrefs.push(source);
-      } else if (tagName === "script") {
-        tokens.scriptSources.push(source);
-      } else {
-        tokens.resourceSources.push(source);
-      }
+      collectDocumentConsumerAttribute(tokens, tagName, attributeName, decodeHTMLAttribute(value));
     }
     index = Math.max(cursor, tagStart + 1);
   }
+  if (xmlSyntax) scanXmlDocumentConsumerTokens(html, tokens);
   return tokens;
+}
+
+function collectDocumentConsumerAttribute(
+  tokens: DocumentConsumerTokens,
+  tagName: string,
+  attributeName: string,
+  value: string,
+): void {
+  if (attributeName === "srcdoc") {
+    tokens.inlineDocuments.push(value);
+    return;
+  }
+  if (attributeName === "content") {
+    // Meta-refresh URLs live inside the content attribute's own grammar.
+    // Matching the grammar on any element keeps the edge tag-independent.
+    const refreshUrl = metaRefreshUrl(value);
+    if (refreshUrl) tokens.resourceSources.push(refreshUrl);
+    return;
+  }
+  if (!CONSUMER_URL_ATTRIBUTE_LOCAL_NAMES.has(attributeName)) return;
+  if (tagName === "base") {
+    // A base element is never fetched itself; it only changes resolution.
+    if (attributeName === "href") tokens.baseHrefs.push(value);
+  } else if (tagName === "script") {
+    tokens.scriptSources.push(value);
+  } else {
+    tokens.resourceSources.push(value);
+  }
+}
+
+// The flat scanner intentionally ignores tree-construction details, but XML
+// names and internal entities have grammars that a byte-level token scan cannot
+// safely approximate. Supplement valid XHTML/SVG documents with a non-executing
+// XML parse; malformed documents retain the flat scan's conservative edges.
+function scanXmlDocumentConsumerTokens(xml: string, tokens: DocumentConsumerTokens): void {
+  const supplemental: DocumentConsumerTokens = {
+    scriptSources: [],
+    resourceSources: [],
+    inlineDocuments: [],
+    baseHrefs: [],
+  };
+  const parser = new SaxesParser({ xmlns: true });
+  let fatalError: Error | null = null;
+  parser.on("doctype", (doctype) => {
+    try {
+      for (const [name, replacement] of xmlGeneralEntityReplacements(doctype)) {
+        Object.defineProperty(parser.ENTITIES, name, {
+          configurable: true,
+          enumerable: true,
+          value: replacement,
+          writable: true,
+        });
+        // Entity replacement text may become an attribute URL or parsed markup.
+        // Following both shapes is conservative and avoids depending on where
+        // the document references the entity.
+        supplemental.resourceSources.push(replacement);
+        supplemental.inlineDocuments.push(replacement);
+      }
+    } catch (error) {
+      fatalError =
+        error instanceof Error ? error : new Error("browser XML entity processing failed");
+      throw error;
+    }
+  });
+  parser.on("opentag", (tag) => {
+    for (const attribute of Object.values(tag.attributes)) {
+      collectDocumentConsumerAttribute(supplemental, tag.local, attribute.local, attribute.value);
+    }
+  });
+  // XML parse failures mean the browser will not construct an executable XML
+  // document. The flat scan above still preserves any tag-shaped evidence.
+  parser.on("error", () => {});
+  try {
+    parser.write(xml).close();
+  } catch {
+    // Event-handler budget failures are rethrown below; syntax failures merely
+    // suppress this supplemental exact-name pass.
+  }
+  if (fatalError) throw fatalError;
+  mergeSupplementalDocumentConsumerTokens(tokens, supplemental);
+}
+
+function mergeSupplementalDocumentConsumerTokens(
+  tokens: DocumentConsumerTokens,
+  supplemental: DocumentConsumerTokens,
+): void {
+  for (const key of ["scriptSources", "resourceSources", "inlineDocuments", "baseHrefs"] as const) {
+    const seen = new Set(tokens[key]);
+    for (const value of supplemental[key]) {
+      if (seen.has(value)) continue;
+      seen.add(value);
+      tokens[key].push(value);
+    }
+  }
+}
+
+function xmlGeneralEntityReplacements(doctype: string): Map<string, string> {
+  const declarationStarts = [...doctype.matchAll(/<!ENTITY\s+/g)];
+  if (declarationStarts.length > MAX_XML_GENERAL_ENTITIES) {
+    throw new Error("browser XML document declares too many general entities");
+  }
+  const declarations = new Map<string, string>();
+  const declarationPattern = /<!ENTITY\s+(?!%)([^\s]+)\s+(["'])(.*?)\2\s*>/gs;
+  for (const match of doctype.matchAll(declarationPattern)) {
+    const [, name, , replacement] = match;
+    if (declarations.has(name)) throw new Error(`browser XML entity ${name} is duplicated`);
+    declarations.set(name, replacement);
+  }
+  if (declarations.size !== declarationStarts.length) {
+    throw new Error("browser XML document uses an unsupported entity declaration");
+  }
+
+  const expanded = new Map<string, string>();
+  let expandedCharacters = 0;
+  const expand = (name: string, stack: string[]): string => {
+    const cached = expanded.get(name);
+    if (cached !== undefined) return cached;
+    if (stack.includes(name)) throw new Error(`browser XML entity ${name} is recursive`);
+    if (stack.length >= MAX_XML_ENTITY_EXPANSION_DEPTH) {
+      throw new Error("browser XML entity expansion is too deeply nested");
+    }
+    const raw = declarations.get(name) ?? "";
+    let output = "";
+    let cursor = 0;
+    for (const match of raw.matchAll(/&([^\s;]+);/g)) {
+      const index = match.index;
+      const reference = match[1];
+      const replacement = declarations.has(reference)
+        ? expand(reference, [...stack, name])
+        : match[0];
+      const fragment = raw.slice(cursor, index) + replacement;
+      if (output.length + fragment.length > MAX_XML_ENTITY_EXPANDED_CHARACTERS) {
+        throw new Error("browser XML entity expansion exceeds the character budget");
+      }
+      output += fragment;
+      cursor = index + match[0].length;
+    }
+    const tail = raw.slice(cursor);
+    if (output.length + tail.length > MAX_XML_ENTITY_EXPANDED_CHARACTERS) {
+      throw new Error("browser XML entity expansion exceeds the character budget");
+    }
+    output += tail;
+    expandedCharacters += output.length;
+    if (expandedCharacters > MAX_XML_ENTITY_EXPANDED_CHARACTERS) {
+      throw new Error("browser XML entity expansion exceeds the character budget");
+    }
+    expanded.set(name, output);
+    return output;
+  };
+  for (const name of declarations.keys()) expand(name, []);
+  return expanded;
 }
 
 function metaRefreshUrl(content: string): string | null {

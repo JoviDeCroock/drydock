@@ -1655,7 +1655,9 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample:
           '<h:script xmlns:h="http://www.w3.org/1999/xhtml" src="prefixed.js"/>' +
-          '<svg:script xl:href="xlinked.js"/>',
+          '<_svg:script xmlns:_svg="http://www.w3.org/2000/svg" href="underscored.js"/>' +
+          '<s.vg:script xmlns:s.vg="http://www.w3.org/2000/svg" href="dotted.js"/>' +
+          '<π:script xmlns:π="http://www.w3.org/2000/svg" href="unicode.js"/>',
       },
     ]);
 
@@ -1669,10 +1671,35 @@ describe("browser extension review adapter", () => {
     expect(dependencies("page.xhtml")).toEqual(
       expect.arrayContaining([
         { path: "prefixed.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
-        { path: "xlinked.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+        { path: "underscored.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+        { path: "dotted.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+        { path: "unicode.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
       ]),
     );
-    expect(dependencies("page.xhtml")).toHaveLength(2);
+    expect(dependencies("page.xhtml")).toHaveLength(4);
+  });
+
+  test("follows XML scripts hidden behind internal general entities", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.svg",
+        size: 1,
+        sha256: "9e".repeat(32),
+        flags: [],
+        textSample:
+          '<!DOCTYPE svg [<!ENTITY dir "tests"><!ENTITY payload "&dir;/payload.js">]>' +
+          '<svg xmlns="http://www.w3.org/2000/svg"><script href="&payload;"/></svg>',
+      },
+    ]);
+
+    expect(dependencies("page.svg")).toEqual(
+      expect.arrayContaining([
+        {
+          path: "tests/payload.js",
+          documentBaseUrl: "drydock-extension://artifact/page.svg",
+        },
+      ]),
+    );
   });
 
   test("follows scripts from a manifest-declared page without a document extension", () => {
@@ -1706,6 +1733,58 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows scripts from a runtime-opened page without a document extension", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ background: { service_worker: "background.js" } }),
+      {
+        path: "background.js",
+        size: 1,
+        sha256: "9f".repeat(32),
+        flags: [],
+        textSample: 'chrome.tabs.create({ url: "tests/popup" });',
+      },
+      {
+        path: "tests/popup",
+        size: 1,
+        sha256: "a0".repeat(32),
+        flags: [],
+        textSample: '<script src="payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "a1".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("fails loudly on recursive XML general entities", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.svg",
+        size: 1,
+        sha256: "a2".repeat(32),
+        flags: [],
+        textSample:
+          '<!DOCTYPE svg [<!ENTITY first "&second;"><!ENTITY second "&first;">]>' +
+          '<svg xmlns="http://www.w3.org/2000/svg"><script href="&first;"/></svg>',
+      },
+    ]);
+
+    expect(() => dependencies("page.svg")).toThrow(/entity .* recursive/);
   });
 
   test("fails loudly when a document declares too many distinct base candidates", () => {

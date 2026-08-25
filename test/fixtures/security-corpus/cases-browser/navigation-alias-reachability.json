@@ -2,7 +2,7 @@
   "id": "browser-navigation-alias-reachability",
   "title": "browser navigation and extension URL aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins linked, download-linked, and meta-refreshed extension pages, legacy extension.getURL Worker paths, and tag-shaped ordinary attribute text that must remain inert.",
+  "intent": "Pins linked, download-linked, meta-refreshed, and runtime-opened suffixless extension pages, legacy extension.getURL Worker paths, and tag-shaped ordinary attribute text that must remain inert.",
   "slug": "navigation-alias-reachability",
   "extensionId": "navigation-alias-reachability@example.invalid",
   "version": "1.0.0",
@@ -24,10 +24,10 @@
     },
     {
       "path": "background.js",
-      "size": 72,
+      "size": 129,
       "sha256": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
       "flags": [],
-      "textSample": "new Worker(browser.extension.getURL(\"tests/legacy-worker.js\"));"
+      "textSample": "new Worker(browser.extension.getURL(\"tests/legacy-worker.js\")); chrome.tabs.create({ url: \"tests/runtime-popup\" });"
     },
     {
       "path": "tests/direct.js",
@@ -91,6 +91,20 @@
       "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
       "flags": [],
       "textSample": "eval(download);"
+    },
+    {
+      "path": "tests/runtime-popup",
+      "size": 42,
+      "sha256": "cececececececececececececececececececececececececececececececece",
+      "flags": [],
+      "textSample": "<script src=\"runtime-payload.js\"></script>"
+    },
+    {
+      "path": "tests/runtime-payload.js",
+      "size": 14,
+      "sha256": "cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -124,6 +138,11 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/download.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/runtime-payload.js"
     }
   ]
 }
