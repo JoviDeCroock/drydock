@@ -49,4 +49,4 @@ Expect these outputs after a run:
 - `agent-tour-output/test-results/` — traces, videos, and per-test artifacts
 - `agent-tour-output/registry-state/requests.jsonl` — fake npm registry journal
 
-Do not treat the tour as a replacement for `pnpm run verify` or `pnpm run test:e2e`. Use it when the task asks what the flow feels like, whether the full local product path is understandable, or when screenshots/traces are useful evidence.
+Do not treat the tour as a replacement for `pnpm run verify` or `pnpm run test:e2e`. Use it when the task asks what the flow feels like, whether the full local product path is understandable, or when screenshots/traces are useful evidence. For verifying a specific branch's changes rather than the fixed canonical path, use `.claude/skills/verify-live`.
