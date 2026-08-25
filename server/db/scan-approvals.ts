@@ -51,6 +51,8 @@ export interface ScanApprovalState {
   blockedCount: number;
   /** The verdict these votes produce — mirrors the scan's `decision` column. */
   verdict: ScanDecision | null;
+  /** The verdict predates (or was produced outside) the member vote roster. */
+  legacyDecision: boolean;
   approvals: ScanApprovalRecord[];
   /** The requesting member's own recorded vote, if any. */
   viewerDecision: ScanDecision | null;
@@ -116,7 +118,10 @@ export async function setRequiredReleaseApprovals(
   db: AppDb,
   organizationId: string,
   required: number,
+  expectedRequired?: number,
 ): Promise<{
+  /** False when a conditional policy write lost to another owner request. */
+  applied: boolean;
   readyGateIds: string[];
   changedScans: Array<{
     id: string;
@@ -127,6 +132,8 @@ export async function setRequiredReleaseApprovals(
   }>;
 }> {
   const normalized = normalizeRequiredApprovals(required);
+  const normalizedExpected =
+    expectedRequired === undefined ? null : normalizeRequiredApprovals(expectedRequired);
   const now = new Date();
   const hasVotes = sql`exists (
     select 1
@@ -161,7 +168,18 @@ export async function setRequiredReleaseApprovals(
         and ${githubWorkflowGates.status} = 'pending'
     )`,
   )!;
-  const target = and(eq(scans.organizationId, organizationId), hasVotes, policyStillApplies)!;
+  const policyIsCurrent = sql`exists (
+    select 1
+    from ${organizations}
+    where ${organizations.id} = ${organizationId}
+      and ${organizations.requiredReleaseApprovals} = ${normalized}
+  )`;
+  const target = and(
+    eq(scans.organizationId, organizationId),
+    hasVotes,
+    policyStillApplies,
+    policyIsCurrent,
+  )!;
   const latestVote = (decision: ScanDecision, column: "reason" | "user_id" | "updated_at") =>
     sql`(
       select ${sql.identifier(column)}
@@ -176,11 +194,19 @@ export async function setRequiredReleaseApprovals(
   // D1 batches are transactional: readers never observe the new policy paired
   // with verdicts derived from the old one. Blocks are applied first, approvals
   // second, and the remaining unsupported verdicts are cleared last.
-  const [, blocked, approved, undecided] = await db.batch([
+  const [updatedPolicy, blocked, approved, undecided] = await db.batch([
     db
       .update(organizations)
       .set({ requiredReleaseApprovals: normalized, updatedAt: now })
-      .where(eq(organizations.id, organizationId)),
+      .where(
+        and(
+          eq(organizations.id, organizationId),
+          normalizedExpected === null
+            ? undefined
+            : eq(organizations.requiredReleaseApprovals, normalizedExpected),
+        ),
+      )
+      .returning({ id: organizations.id }),
     db
       .update(scans)
       .set({
@@ -254,6 +280,7 @@ export async function setRequiredReleaseApprovals(
       ),
     );
   return {
+    applied: updatedPolicy.length > 0,
     readyGateIds: readyGates.map((gate) => gate.id),
     changedScans: [...blocked, ...approved, ...undecided],
   };
@@ -388,11 +415,13 @@ export function buildScanApprovalState(input: BuildScanApprovalStateInput): Scan
           },
         ]
       : [];
+  const legacyDecision = votes.length === 0 && decision !== null;
   return {
     required: policy.required,
     approvedCount: approvals.filter((entry) => entry.decision === "publish").length,
     blockedCount: approvals.filter((entry) => entry.decision === "no_publish").length,
     verdict: decision,
+    legacyDecision,
     approvals,
     viewerDecision:
       (viewerUserId && votes.find((vote) => vote.userId === viewerUserId)?.decision) || null,

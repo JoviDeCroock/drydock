@@ -38,6 +38,13 @@ function ApprovalProgress({
   class?: string;
 }) {
   if (approvals.verdict === "no_publish") return null;
+  if (approvals.legacyDecision) {
+    return (
+      <Badge tone="neutral" class={className}>
+        recorded decision
+      </Badge>
+    );
+  }
   const met = approvals.verdict === "publish";
   return (
     <Badge tone={met ? "ok" : "medium"} class={className}>
@@ -127,7 +134,12 @@ export function ApprovalRoster({
       ) : (
         <Muted class="m-0 text-[13px]">Nobody has reviewed this release yet.</Muted>
       )}
-      {blocked ? (
+      {approvals.legacyDecision ? (
+        <Muted class="m-0 text-[12px]">
+          This decision was recorded without an approval roster, so it is not compared with today's
+          approval threshold.
+        </Muted>
+      ) : blocked ? (
         <Muted class="m-0 text-[12px]">
           A block is final — it does not need a second reviewer to agree.
         </Muted>

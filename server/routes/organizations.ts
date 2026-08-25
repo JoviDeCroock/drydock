@@ -219,7 +219,10 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
 // can never complete — and the failure would surface later, as a deployment
 // that silently never releases, rather than here.
 organizationsRoutes.put("/:id/release-approvals", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { requiredApprovals?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    requiredApprovals?: unknown;
+    totpCode?: unknown;
+  };
   const requested = Number(body.requiredApprovals);
   if (!Number.isInteger(requested) || requested < 1 || requested > MAX_REQUIRED_RELEASE_APPROVALS) {
     return c.json(
@@ -261,7 +264,57 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
     );
   }
 
-  const reconciliation = await setRequiredReleaseApprovals(db, organizationId, requested);
+  // Lowering the bar weakens the same release control that gate decisions
+  // enforce, and can immediately release a held deployment during the
+  // reconciliation below. A live owner session is therefore not enough: match
+  // the release-two-factor relax path and require a fresh second factor.
+  const lowering = requested < policy.required;
+  let twoFactorVerified = false;
+  if (lowering) {
+    if (!(await userHasTwoFactor(db, session.userId))) {
+      return c.json(
+        {
+          error:
+            "enable two-factor authentication on your account before lowering required release approvals",
+          code: "two_factor_enrollment_required",
+        },
+        403,
+      );
+    }
+    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
+    if (!totpCode) {
+      return c.json(
+        { error: "two-factor verification required", code: "two_factor_required" },
+        401,
+      );
+    }
+    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
+      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    }
+    twoFactorVerified = true;
+  }
+
+  const reconciliation = await setRequiredReleaseApprovals(
+    db,
+    organizationId,
+    requested,
+    policy.required,
+  );
+  if (!reconciliation.applied) {
+    const currentPolicy = await getOrganizationApprovalPolicy(db, organizationId);
+    // A concurrent identical request already achieved this state and owns its
+    // gate finalization/audit work. A different state must be re-submitted so
+    // its live direction (and therefore TOTP requirement) is evaluated again.
+    if (currentPolicy.required === requested) return c.json({ requiredApprovals: requested });
+    return c.json(
+      {
+        error: "the release approval policy changed while this request was being applied",
+        code: "approval_policy_changed",
+        requiredApprovals: currentPolicy.required,
+      },
+      409,
+    );
+  }
   for (const scan of reconciliation.changedScans) {
     if (!scan.publicFeedListedAt) continue;
     purgePublicFeedCache(
@@ -271,12 +324,6 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
       scanDistTag(scan.summaryJson),
     );
   }
-  await recordScanEvent(db, {
-    organizationId,
-    actorUserId: session.userId,
-    type: "organization.release_approvals_changed",
-    metadata: { requiredApprovals: requested, previousRequiredApprovals: policy.required },
-  });
   for (const gateId of reconciliation.readyGateIds) {
     const gate = await getGateForOrganization(db, organizationId, gateId);
     if (!gate) continue;
@@ -326,6 +373,30 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
         error: describeOperationalError(err),
       });
     }
+  }
+  // The policy and any gate decisions above are already durable. Audit
+  // bookkeeping must not strand a gate whose packages were reconciled to
+  // approved, so contain it after every ready gate has been finalized and
+  // scheduled for delivery.
+  try {
+    await recordScanEvent(db, {
+      organizationId,
+      actorUserId: session.userId,
+      type: "organization.release_approvals_changed",
+      metadata: {
+        requiredApprovals: requested,
+        previousRequiredApprovals: policy.required,
+        twoFactor: twoFactorVerified,
+        twoFactorMethod: twoFactorVerified ? "totp" : null,
+      },
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "organization.release_approvals_bookkeeping_failed", {
+      organizationId,
+      requiredApprovals: requested,
+      previousRequiredApprovals: policy.required,
+      error: describeOperationalError(err),
+    });
   }
   return c.json({ requiredApprovals: requested });
 });

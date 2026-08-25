@@ -742,6 +742,33 @@ function RegistryStatusBadge({ scan }: { scan: ScanListItem }) {
   return <Badge tone={badge.tone}>{badge.label}</Badge>;
 }
 
+/**
+ * The approval state the quick-decide dialog can honestly show from a list row.
+ *
+ * A row carries the tally but not the roster or the member list, so the roster
+ * degrades to "approved by N of M" and the can-never-be-met warning is
+ * suppressed rather than guessed. Null under the default one-approval policy,
+ * which keeps the dialog exactly as it was.
+ */
+function quickDecisionApprovals(
+  scan: ScanListItem,
+  requiredApprovals: number,
+): ScanApprovalState | null {
+  if (requiredApprovals <= 1) return null;
+  const verdict =
+    scan.decision === "publish" || scan.decision === "no_publish" ? scan.decision : null;
+  return {
+    required: requiredApprovals,
+    approvedCount: scan.approvalCount ?? (verdict === "publish" ? 1 : 0),
+    blockedCount: verdict === "no_publish" ? 1 : 0,
+    verdict,
+    legacyDecision: scan.legacyDecision,
+    approvals: [],
+    viewerDecision: null,
+    eligibleApproverCount: null,
+  };
+}
+
 function DecisionBadge({
   decision,
   approvalCount = 0,

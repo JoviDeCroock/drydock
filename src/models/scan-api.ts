@@ -72,6 +72,8 @@ export interface ScanApprovalState {
   approvedCount: number;
   blockedCount: number;
   verdict: ScanDecision | null;
+  /** True when the verdict predates, or was produced outside, the member vote roster. */
+  legacyDecision?: boolean;
   approvals: ScanApprovalRecord[];
   viewerDecision: ScanDecision | null;
   /**
@@ -110,6 +112,7 @@ export interface ScanListItem {
   decidedByUserId?: string | null;
   decidedAt?: string | number | Date | null;
   approvalCount?: number;
+  legacyDecision?: boolean;
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;

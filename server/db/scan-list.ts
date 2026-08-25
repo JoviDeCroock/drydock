@@ -45,6 +45,8 @@ export interface ListScansResult {
     decidedAt: Date | null;
     /** Distinct members who have approved so far — 0 or 1 unless the org requires more. */
     approvalCount: number;
+    /** The verdict exists without a member vote roster and must not be compared to today's bar. */
+    legacyDecision: boolean;
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
@@ -195,6 +197,8 @@ export async function listScans(
       decidedByUserId: row.decidedByUserId,
       decidedAt: row.decidedAt,
       approvalCount: approvals.get(row.id)?.approved ?? (row.decision === "publish" ? 1 : 0),
+      legacyDecision:
+        !approvals.has(row.id) && (row.decision === "publish" || row.decision === "no_publish"),
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,

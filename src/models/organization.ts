@@ -42,6 +42,24 @@ function releaseTwoFactorErrorMessage(err: unknown): string {
     if (err.code === "two_factor_invalid") {
       return "That authentication code is invalid or expired — enter the current code.";
     }
+    if (err.code === "approval_policy_changed") {
+      return "The approval requirement changed while you were saving. Reload and try again.";
+    }
+  }
+  return errorMessage(err);
+}
+
+function releaseApprovalsErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "two_factor_enrollment_required") {
+      return "Enable two-factor authentication on your own account before lowering the approval requirement.";
+    }
+    if (err.code === "two_factor_required") {
+      return "Enter the code from your authenticator app to lower the approval requirement.";
+    }
+    if (err.code === "two_factor_invalid") {
+      return "That authentication code is invalid or expired — enter the current code.";
+    }
   }
   return errorMessage(err);
 }
@@ -204,13 +222,14 @@ export const OrganizationModel = createModel(() => {
     async setRequiredReleaseApprovals(
       organizationId: string,
       requiredApprovals: number,
+      totpCode?: string | null,
     ): Promise<boolean> {
       this.status.value = "updating";
       this.error.value = null;
       try {
         await apiJson<{ requiredApprovals: number }>(
           `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-approvals`,
-          { requiredApprovals },
+          { requiredApprovals, totpCode: totpCode?.trim() || undefined },
           { method: "PUT" },
         );
         // Reload so `active.requiredReleaseApprovals` is right everywhere that
@@ -218,7 +237,7 @@ export const OrganizationModel = createModel(() => {
         await this.load();
         return true;
       } catch (err) {
-        this.error.value = errorMessage(err);
+        this.error.value = releaseApprovalsErrorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

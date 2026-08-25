@@ -92,6 +92,13 @@ function buildTestApp(userId: string, organizationId?: string) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
     c.set("authSession", { userId });
+    c.set("auth", {
+      api: {
+        verifyTOTP: async ({ body }: { body: { code: string } }) => {
+          if (body.code !== "123456") throw new Error("invalid code");
+        },
+      },
+    } as Variables["auth"]);
     if (organizationId) c.req.raw.headers.set("x-organization-id", organizationId);
     await next();
   });
@@ -1197,11 +1204,13 @@ describe("github-app workflow-gate decision route", () => {
     expect(first.status).toBe(200);
     expect(decisionCalls).toHaveLength(0);
 
+    await db.update(schema.user).set({ twoFactorEnabled: true }).where(eq(schema.user.id, userId));
+
     const lowered = await callGithubAppRoute(
       buildTestApp(userId),
       "PUT",
       `/api/v1/organizations/${organizationId}/release-approvals`,
-      { requiredApprovals: 1 },
+      { requiredApprovals: 1, totpCode: "123456" },
     );
     expect(lowered.status).toBe(200);
     expect(await lowered.json()).toEqual({ requiredApprovals: 1 });

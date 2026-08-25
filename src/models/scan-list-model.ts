@@ -349,6 +349,7 @@ export const ScanListModel = createModel(() => {
                   ...scan,
                   ...updated.scan,
                   approvalCount: updated.approvals?.approvedCount ?? scan.approvalCount,
+                  legacyDecision: updated.approvals?.legacyDecision ?? scan.legacyDecision,
                   riskSummary: updated.riskSummary ?? updated.scan.riskSummary ?? scan.riskSummary,
                 }
               : scan,

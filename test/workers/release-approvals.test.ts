@@ -124,6 +124,7 @@ async function decide(
       required: number;
       approvedCount: number;
       verdict: string | null;
+      legacyDecision?: boolean;
       approvals: Array<{ userId: string | null; decision: string }>;
       eligibleApproverCount: number;
     };
@@ -231,6 +232,23 @@ describe("multi-party release approval", () => {
     expect((await readDecision(scanId))?.decision).toBe("no_publish");
   });
 
+  test("concurrent co-approvers emit one logical decision event", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+
+    await Promise.all([
+      decide({ ...users[0], organizationId }, scanId, "publish"),
+      decide({ ...users[1], organizationId }, scanId, "publish"),
+    ]);
+
+    expect((await readDecision(scanId))?.decision).toBe("publish");
+    const decisionEvents = await createDb(env.DB)
+      .select()
+      .from(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+    expect(decisionEvents).toHaveLength(1);
+  });
+
   test("the default one-approval policy decides on the first vote, as before", async () => {
     const { organizationId, users } = await seedSharedOrganization(2, 1);
     const scanId = await seedCompletedScan(organizationId, users[0].userId);
@@ -269,6 +287,20 @@ describe("multi-party release approval", () => {
 
     await setRequiredReleaseApprovals(db, organizationId, 3);
     expect((await readDecision(scanId))?.decision).toBeNull();
+  });
+
+  test("a stale conditional policy write cannot lower the live bar", async () => {
+    const { organizationId } = await seedSharedOrganization(2, 2);
+    const db = createDb(env.DB);
+
+    const stale = await setRequiredReleaseApprovals(db, organizationId, 1, 1);
+
+    expect(stale.applied).toBe(false);
+    const [organization] = await db
+      .select({ required: schema.organizations.requiredReleaseApprovals })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, organizationId));
+    expect(organization?.required).toBe(2);
   });
 
   test("removing a member drops their approval from a release still awaiting one", async () => {
@@ -362,6 +394,53 @@ describe("multi-party release approval", () => {
         reason: "looks fine",
       }),
     ]);
+  });
+
+  test("the scan detail and list identify a pre-roster decision as legacy", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: users[0].userId,
+        decidedAt: new Date(),
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const app = buildTestApp({ ...users[1], organizationId });
+    const ctx = createExecutionContext();
+    const res = await app.fetch(new Request(`http://test.local/api/v1/scans/${scanId}`), env, ctx);
+    await waitOnExecutionContext(ctx);
+    const body = (await res.json()) as {
+      approvals: {
+        required: number;
+        approvedCount: number;
+        verdict: string | null;
+        legacyDecision: boolean;
+      };
+    };
+
+    expect(body.approvals).toMatchObject({
+      required: 2,
+      approvedCount: 1,
+      verdict: "publish",
+      legacyDecision: true,
+    });
+
+    const listCtx = createExecutionContext();
+    const listRes = await app.fetch(
+      new Request("http://test.local/api/v1/scans?filter=all"),
+      env,
+      listCtx,
+    );
+    await waitOnExecutionContext(listCtx);
+    const listBody = (await listRes.json()) as {
+      scans: Array<{ id: string; legacyDecision: boolean }>;
+    };
+    expect(listBody.scans.find((scan) => scan.id === scanId)).toMatchObject({
+      legacyDecision: true,
+    });
   });
 
   test("the scan list carries the tally and the bar", async () => {
