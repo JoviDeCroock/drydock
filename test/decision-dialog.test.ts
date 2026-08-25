@@ -49,4 +49,16 @@ describe("staged decision follow-up", () => {
     expect(approvalSubmissionCompletesRelease(partial)).toBe(false);
     expect(approvalSubmissionCompletesRelease({ ...partial, viewerDecision: null })).toBe(true);
   });
+
+  test("does not promise quorum while another review blocks the release", () => {
+    const blocked = result("no_publish", 1).approvals!;
+    expect(
+      approvalSubmissionCompletesRelease({
+        ...blocked,
+        required: 2,
+        approvedCount: 1,
+        viewerDecision: null,
+      }),
+    ).toBe(false);
+  });
 });

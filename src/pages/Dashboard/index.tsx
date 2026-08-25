@@ -657,7 +657,7 @@ function ScanRows({
                 <MenuLink href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
                   Open review
                 </MenuLink>
-                {scan.status === "failed" ? (
+                {scan.status === "failed" && scan.source !== "workflow_gate" ? (
                   <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
                     Delete review
                   </MenuItem>

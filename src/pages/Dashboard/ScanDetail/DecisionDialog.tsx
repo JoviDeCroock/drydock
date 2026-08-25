@@ -32,6 +32,8 @@ export function approvalSubmissionCompletesRelease(
 ): boolean {
   return Boolean(
     approvals &&
+    approvals.verdict !== "no_publish" &&
+    approvals.blockedCount === 0 &&
     approvals.approvedCount + (approvals.viewerDecision === "publish" ? 0 : 1) >=
       approvals.required,
   );

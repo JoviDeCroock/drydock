@@ -292,6 +292,12 @@ scanLifecycleRoutes.delete("/:id", async (c) => {
 
   const result = await deleteFailedScan(db, scanId, organizationId);
   if (result.outcome === "not_found") return c.json({ error: "not found" }, 404);
+  if (result.outcome === "workflow_gate_managed") {
+    return c.json(
+      { error: "workflow-gate package scans are managed by the gate review and cannot be deleted" },
+      409,
+    );
+  }
   if (result.outcome === "not_failed") {
     return c.json({ error: "only failed scans can be deleted" }, 409);
   }

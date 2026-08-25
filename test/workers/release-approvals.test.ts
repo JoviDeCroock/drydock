@@ -282,12 +282,18 @@ describe("multi-party release approval", () => {
     const { organizationId, users } = await seedSharedOrganization(2, 2);
     const scanId = await seedCompletedScan(organizationId, users[0].userId);
 
-    await Promise.all([
+    const responses = await Promise.all([
       decide({ ...users[0], organizationId }, scanId, "publish"),
       decide({ ...users[1], organizationId }, scanId, "publish"),
     ]);
 
     expect((await readDecision(scanId))?.decision).toBe("publish");
+    for (const response of responses) {
+      expect(response.body.approvals?.verdict).toBe(response.body.scan?.decision);
+      if (response.body.scan?.decision === "publish") {
+        expect(response.body.approvals?.approvedCount).toBe(2);
+      }
+    }
     const decisionEvents = await createDb(env.DB)
       .select()
       .from(schema.scanEvents)
@@ -366,6 +372,25 @@ describe("multi-party release approval", () => {
       decisionReason: "reviewed again",
       decidedByUserId: users[0].userId,
     });
+  });
+
+  test("a second member's same-verdict vote does not rewrite the canonical decision actor", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 1);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+
+    await decide({ ...users[0], organizationId }, scanId, "publish", "first approval");
+    await decide({ ...users[1], organizationId }, scanId, "publish", "same verdict");
+
+    expect(await readDecision(scanId)).toMatchObject({
+      decision: "publish",
+      decisionReason: "first approval",
+      decidedByUserId: users[0].userId,
+    });
+    const decisionEvents = await createDb(env.DB)
+      .select({ actorUserId: schema.scanEvents.actorUserId })
+      .from(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+    expect(decisionEvents).toEqual([{ actorUserId: users[0].userId }]);
   });
 
   test("the staged decision route cannot add a workflow-gate approval", async () => {

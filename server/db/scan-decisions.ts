@@ -17,12 +17,12 @@ import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
 import { recordProductEvent } from "../lib/platform/analytics";
 import type { AppDb } from "./client";
-import { recordScanEvent } from "./events";
 import {
   approvalVoterIsCurrentMember,
   buildScanApprovalState,
   getOrganizationApprovalPolicy,
   listScanApprovalVotes,
+  loadScanApprovalState,
   resolveApprovalVerdict,
   upsertScanApproval,
   type OrganizationApprovalPolicy,
@@ -277,7 +277,12 @@ async function applyDecisionVote(
         approvalRecorded &&
         policy.required === 1 &&
         verdict !== null &&
-        decisionActorUserId === input.actorUserId;
+        decisionActorUserId === input.actorUserId &&
+        // A same-verdict vote from a different member is additional roster
+        // history, not a new canonical decision. Re-attributing the scan here
+        // would leave the original decidedAt and scan.decided audit event
+        // attached to a different person.
+        live.decidedByUserId === input.actorUserId;
       const confirmed = await db
         .update(scans)
         .set(
@@ -383,8 +388,6 @@ async function applyDecisionVote(
     policy,
     eligibleApprovedCount,
     verdict,
-    verdictChanged,
-    approvalRecorded,
     voteUpdatedAt,
     decisionAt,
   });
@@ -394,13 +397,6 @@ async function applyDecisionVote(
   // saved roster was already sufficient, the transition above repairs the
   // package and lets the route continue to aggregate the gate.
   if (!approvalRecorded && !verdictChanged) return { outcome: "already_voted" };
-
-  const approvals = buildScanApprovalState({
-    votes,
-    policy,
-    viewerUserId: input.actorUserId,
-    scan: resolvedScan,
-  });
 
   if (verdictChanged && verdict) {
     recordScanDecisionProductEvents(env, current, {
@@ -415,10 +411,21 @@ async function applyDecisionVote(
 
   const detail = await getScan(db, input.scanId, input.organizationId, artifactBucket);
   if (!detail) return { outcome: "not_actionable" };
+  // Another approver can move the release between our tally and this final
+  // detail read. Reload the roster against the persisted scan projection so a
+  // response never combines `scan.decision = publish` with a stale one-of-two
+  // approval state from this request's earlier snapshot.
+  const approvals = await loadScanApprovalState(db, {
+    scanId: input.scanId,
+    organizationId: input.organizationId,
+    viewerUserId: input.actorUserId,
+    scan: detail.scan,
+  });
+  const persistedVerdict = approvals.verdict;
   // `verdictChanged` is what callers act on (purging caches, finalizing a gate),
   // so it must describe the row that is actually persisted now.
-  verdictChanged = verdictChanged && (detail.scan.decision ?? null) === verdict;
-  return { outcome: "recorded", detail, approvals, verdict, verdictChanged };
+  verdictChanged = verdictChanged && persistedVerdict === verdict;
+  return { outcome: "recorded", detail, approvals, verdict: persistedVerdict, verdictChanged };
 }
 
 type BuildApprovalScan = Parameters<typeof buildScanApprovalState>[0]["scan"];
@@ -509,83 +516,75 @@ async function recordDecisionAuditTrail(
     policy: OrganizationApprovalPolicy;
     eligibleApprovedCount: number;
     verdict: ScanDecision | null;
-    verdictChanged: boolean;
-    approvalRecorded: boolean;
     /** Stable identity of this exact vote revision, preserved across a gate retry. */
     voteUpdatedAt: string;
     /** Stable identity of the scan verdict transition being recovered, if any. */
     decisionAt: string | null;
   },
 ): Promise<void> {
-  let approvalEventMissing = input.approvalRecorded;
-  if (!approvalEventMissing && input.policy.required > 1) {
-    const [existing] = await db
-      .select({ id: scanEvents.id })
-      .from(scanEvents)
-      .where(
-        and(
-          eq(scanEvents.organizationId, input.input.organizationId),
-          eq(scanEvents.scanId, input.input.scanId),
-          eq(scanEvents.actorUserId, input.input.actorUserId),
-          eq(scanEvents.type, "scan.approval_recorded"),
-          sql`json_extract(${scanEvents.metadataJson}, '$.voteUpdatedAt') = ${input.voteUpdatedAt}`,
-          sql`json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.input.decision}`,
-        ),
-      )
-      .limit(1);
-    approvalEventMissing = !existing;
-  }
-  if (approvalEventMissing && input.policy.required > 1) {
-    await recordScanEvent(db, {
-      organizationId: input.input.organizationId,
-      actorUserId: input.input.actorUserId,
-      scanId: input.input.scanId,
-      type: "scan.approval_recorded",
-      metadata: {
-        decision: input.input.decision,
-        reason: input.approvalReason,
-        approvedCount: input.eligibleApprovedCount,
-        requiredApprovals: input.policy.required,
-        voteUpdatedAt: input.voteUpdatedAt,
-      },
-    });
-  }
-  if (!input.verdict) return;
-  let decisionEventMissing = input.verdictChanged;
-  if (!decisionEventMissing) {
-    const [existing] = await db
-      .select({ id: scanEvents.id })
-      .from(scanEvents)
-      .where(
-        and(
-          eq(scanEvents.organizationId, input.input.organizationId),
-          eq(scanEvents.scanId, input.input.scanId),
-          eq(scanEvents.type, "scan.decided"),
-          input.decisionAt
-            ? and(
-                sql`json_extract(${scanEvents.metadataJson}, '$.decisionAt') = ${input.decisionAt}`,
-                sql`json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.verdict}`,
-              )
-            : sql`0`,
-        ),
-      )
-      .limit(1);
-    decisionEventMissing = !existing;
-  }
-  if (!decisionEventMissing) return;
-  await recordScanEvent(db, {
-    organizationId: input.input.organizationId,
-    actorUserId: input.decisionActorUserId,
-    scanId: input.input.scanId,
-    type: "scan.decided",
-    metadata: {
-      decision: input.verdict,
-      reason: input.decisionReason,
+  if (input.policy.required > 1) {
+    const approvalMetadata = {
+      decision: input.input.decision,
+      reason: input.approvalReason,
       approvedCount: input.eligibleApprovedCount,
       requiredApprovals: input.policy.required,
-      decisionAt: input.decisionAt,
-    },
-  });
+      voteUpdatedAt: input.voteUpdatedAt,
+    };
+    // The existence proof and insert are one SQLite statement. Two recovery
+    // requests for the same durable vote can no longer both observe a missing
+    // event before either writes it.
+    await db.insert(scanEvents).select(sql`
+      select
+        ${crypto.randomUUID()},
+        ${input.input.organizationId},
+        ${input.input.actorUserId},
+        ${input.input.scanId},
+        ${"scan.approval_recorded"},
+        ${JSON.stringify(approvalMetadata)},
+        ${Date.now()}
+      where not exists (
+        select 1
+        from ${scanEvents}
+        where ${scanEvents.organizationId} = ${input.input.organizationId}
+          and ${scanEvents.scanId} = ${input.input.scanId}
+          and ${scanEvents.actorUserId} = ${input.input.actorUserId}
+          and ${scanEvents.type} = 'scan.approval_recorded'
+          and json_extract(${scanEvents.metadataJson}, '$.voteUpdatedAt') = ${input.voteUpdatedAt}
+          and json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.input.decision}
+      )
+    `);
+  }
+  if (!input.verdict) return;
+  const decisionMetadata = {
+    decision: input.verdict,
+    reason: input.decisionReason,
+    approvedCount: input.eligibleApprovedCount,
+    requiredApprovals: input.policy.required,
+    decisionAt: input.decisionAt,
+  };
+  await db.insert(scanEvents).select(sql`
+    select
+      ${crypto.randomUUID()},
+      ${input.input.organizationId},
+      ${input.decisionActorUserId},
+      ${input.input.scanId},
+      ${"scan.decided"},
+      ${JSON.stringify(decisionMetadata)},
+      ${Date.now()}
+    where ${
+      input.decisionAt
+        ? sql`not exists (
+            select 1
+            from ${scanEvents}
+            where ${scanEvents.organizationId} = ${input.input.organizationId}
+              and ${scanEvents.scanId} = ${input.input.scanId}
+              and ${scanEvents.type} = 'scan.decided'
+              and json_extract(${scanEvents.metadataJson}, '$.decisionAt') = ${input.decisionAt}
+              and json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.verdict}
+          )`
+        : sql`1 = 1`
+    }
+  `);
 }
 
 function toEpochMs(value: Date | number | string | null): number {
