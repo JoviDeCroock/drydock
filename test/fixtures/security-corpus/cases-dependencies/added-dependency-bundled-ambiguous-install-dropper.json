@@ -29,7 +29,7 @@
   "stagedSuspiciousEntries": [
     {
       "kind": "non-regular",
-      "path": "node_modules/embedded-dropper/unrelated",
+      "path": "node_modules/embedded-dropper",
       "detail": "symbolic link (symlink)"
     }
   ],

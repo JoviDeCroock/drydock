@@ -769,32 +769,37 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
   });
 
-  test.each(["./$npm_package_config_target", 'sh -c "./$TARGET"'])(
-    "fails completeness for the computed lifecycle executable in %s",
-    (postinstall) => {
-      const manifest = {
-        name: "n",
-        version: "1.0.0",
-        scripts: { postinstall },
-      };
-      const assessment = assessDependencyArtifact(
-        [
-          file("package.json", JSON.stringify(manifest)),
-          {
-            path: "payload.min.js",
-            size: 1024,
-            sha256: "skipped-shell-target",
-            flags: ["text-sample-skipped"],
-          },
-        ],
-        manifest,
-        { codePatternSet: "javascript", entrypointResolution: "npm" },
-      );
+  test.each([
+    "./$npm_package_config_target",
+    'sh -c "./$TARGET"',
+    'sh "$PAYLOAD"',
+    `sh -c 'source "$PAYLOAD"'`,
+    `sh -c 'sh "$PAYLOAD"'`,
+    'bash --noprofile "$PAYLOAD"',
+    'bash --rcfile "$PAYLOAD" -i',
+  ])("fails completeness for the computed lifecycle executable in %s", (postinstall) => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "payload.min.js",
+          size: 1024,
+          sha256: "skipped-shell-target",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
 
-      expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
-      expect(assessment.observation).toMatchObject({ dynamicInstallTarget: true });
-    },
-  );
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+    expect(assessment.observation).toMatchObject({ dynamicInstallTarget: true });
+  });
 
   test("does not expand omitted bodies for a static external process target", () => {
     const manifest = {
@@ -820,9 +825,34 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual([]);
   });
 
-  test("retains every packaged path in a static Node interpreter argv", () => {
-    const source =
-      'require("node:child_process").spawn("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])';
+  test("does not treat shell script arguments as executable targets", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: 'sh install.sh "$ARGUMENT"' },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file("install.sh", "echo installed"),
+        {
+          path: "unrelated.map",
+          size: 1024,
+          sha256: "skipped-unrelated-shell-argument",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual([]);
+  });
+
+  test.each([
+    'require("node:child_process").spawn("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])',
+    'require("node:child_process")["spawn"]("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])',
+  ])("retains every packaged path in a static Node interpreter argv: %s", (source) => {
     expect(analyzeNodeInterpreterArgs(source)).toEqual({
       paths: ["./retained.js", "./payload.min.js", "../bootstrap.mjs"],
       hasDynamic: false,
@@ -1531,6 +1561,39 @@ describe("normalizeDependencyReview", () => {
       ],
     });
     expect(review).toBeNull();
+  });
+
+  test("derives an applicable status from retained dependency rows", () => {
+    const review = normalizeDependencyReview({
+      status: "not-applicable",
+      selectedCount: 1,
+      inspectedCount: 1,
+      uninspectableCount: 0,
+      dependencies: [{ name: "x", declaredSpec: "1.0.0", status: "inspected", verdict: "clean" }],
+    });
+
+    expect(review).toMatchObject({
+      status: "complete",
+      selectedCount: 1,
+      inspectedCount: 1,
+      uninspectableCount: 0,
+    });
+  });
+
+  test("rejects counts that claim omitted evidence was retained", () => {
+    expect(
+      normalizeDependencyReview({
+        status: "complete",
+        selectedCount: 1,
+        inspectedCount: 1,
+        uninspectableCount: 0,
+        dependencies: [],
+      }),
+    ).toBeNull();
+  });
+
+  test("rejects an applicable status with no retained or omitted evidence", () => {
+    expect(normalizeDependencyReview({ status: "partial", dependencies: [] })).toBeNull();
   });
 
   test("an unrecognized uninspectable reason normalizes to null, never a pass", () => {
