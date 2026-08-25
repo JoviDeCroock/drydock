@@ -157,7 +157,8 @@ export async function setRequiredReleaseApprovals(
 ): Promise<{
   /** False when a conditional policy write lost to another owner request. */
   applied: boolean;
-  readyGateIds: string[];
+  /** Pending gates whose reconciled package verdicts now resolve the aggregate. */
+  readyGates: Array<{ id: string; decision: "approved" | "rejected" }>;
   changedScans: ReconciledScanDecision[];
 }> {
   const normalized = normalizeRequiredApprovals(required);
@@ -296,27 +297,47 @@ export async function setRequiredReleaseApprovals(
       .returning(RECONCILED_SCAN_COLUMNS),
   ]);
 
+  const gateHasDurableBlock = sql`exists (
+    select 1
+    from ${scans}
+    inner join ${scanApprovals} on ${scanApprovals.scanId} = ${scans.id}
+    where ${scans.gateId} = ${githubWorkflowGates.id}
+      and ${scans.organizationId} = ${organizationId}
+      and ${scans.decision} = 'no_publish'
+      and ${scanApprovals.organizationId} = ${organizationId}
+      and ${scanApprovals.decision} = 'no_publish'
+  )`;
+  const gateHasPackages = sql`exists (
+    select 1
+    from ${scans}
+    where ${scans.gateId} = ${githubWorkflowGates.id}
+      and ${scans.organizationId} = ${organizationId}
+  )`;
+  const gateHasUnapprovedPackage = sql`exists (
+    select 1
+    from ${scans}
+    where ${scans.gateId} = ${githubWorkflowGates.id}
+      and ${scans.organizationId} = ${organizationId}
+      and (${scans.decision} is null or ${scans.decision} <> 'publish')
+  )`;
   const readyGates = await db
-    .select({ id: githubWorkflowGates.id })
+    .select({
+      id: githubWorkflowGates.id,
+      decision: sql<"approved" | "rejected">`case
+        when ${gateHasDurableBlock} then 'rejected'
+        else 'approved'
+      end`,
+    })
     .from(githubWorkflowGates)
     .where(
       and(
         eq(githubWorkflowGates.organizationId, organizationId),
         eq(githubWorkflowGates.status, "pending"),
-        isNotNull(githubWorkflowGates.scanId),
-        sql`exists (
-          select 1
-          from ${scans}
-          where ${scans.gateId} = ${githubWorkflowGates.id}
-            and ${scans.organizationId} = ${organizationId}
-        )`,
-        sql`not exists (
-          select 1
-          from ${scans}
-          where ${scans.gateId} = ${githubWorkflowGates.id}
-            and ${scans.organizationId} = ${organizationId}
-            and (${scans.decision} is null or ${scans.decision} <> 'publish')
-        )`,
+        gateHasPackages,
+        or(
+          gateHasDurableBlock,
+          and(isNotNull(githubWorkflowGates.scanId), sql`not ${gateHasUnapprovedPackage}`),
+        ),
       ),
     );
   const changedScans = [...blocked, ...approved, ...undecided];
@@ -327,7 +348,7 @@ export async function setRequiredReleaseApprovals(
   );
   return {
     applied: updatedPolicy.length > 0,
-    readyGateIds: readyGates.map((gate) => gate.id),
+    readyGates,
     changedScans: changedScans.map((scan) => ({
       ...scan,
       approvalCount: changedCounts.get(scan.id)?.eligibleApproved ?? 0,

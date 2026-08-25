@@ -1947,6 +1947,99 @@ describe("github-app workflow-gate decision route", () => {
     });
   });
 
+  test("policy reconciliation delivers a durable rejection whose package verdict was interrupted", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const blocker = await seedUser();
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: blocker.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "blocked-pkg",
+    });
+    expect(
+      await upsertScanApproval(db, {
+        scanId: scanId!,
+        organizationId,
+        userId: blocker.userId,
+        decision: "no_publish",
+        reason: "durable blocker",
+        now: new Date(),
+        hardenOnly: true,
+        pendingGateId: gateId,
+      }),
+    ).toBe("recorded");
+    // Simulate interruption after the vote insert and before its scan projection.
+    const [before] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(before?.decision).toBeNull();
+
+    const decisionCalls: Array<{ state: string; comment: string }> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string; comment: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in rejected policy reconciliation test: ${request.url}`);
+    });
+    await db.update(schema.user).set({ twoFactorEnabled: true }).where(eq(schema.user.id, userId));
+
+    const lowered = await callGithubAppRoute(
+      buildTestApp(userId),
+      "PUT",
+      `/api/v1/organizations/${organizationId}/release-approvals`,
+      { requiredApprovals: 1, totpCode: "123456" },
+    );
+
+    expect(lowered.status).toBe(200);
+    expect(await lowered.json()).toEqual({ requiredApprovals: 1 });
+    expect(await getGateForOrganization(db, organizationId, gateId)).toMatchObject({
+      status: "rejected",
+      decision: "rejected",
+      decisionComment: "durable blocker",
+    });
+    expect(decisionCalls).toEqual([
+      expect.objectContaining({ state: "rejected", comment: "durable blocker" }),
+    ]);
+    const [gateEvent] = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId!),
+          eq(schema.scanEvents.type, "github_workflow_gate.rejected"),
+        ),
+      );
+    expect(gateEvent).toMatchObject({
+      actorUserId: blocker.userId,
+      metadata: expect.objectContaining({
+        decidedBy: "human",
+        trigger: "approval_policy",
+        recoveredByUserId: userId,
+      }),
+    });
+  });
+
   test("a reviewer who approved can still block before the bar is met", async () => {
     const { userId, organizationId } = await seedUser();
     const db = createDb(env.DB);
