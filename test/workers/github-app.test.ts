@@ -1207,6 +1207,78 @@ describe("github-app workflow-gate decision route", () => {
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
   });
 
+  test("opposite-decision recovery audits the durable gate vote", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    const now = new Date();
+    await db.insert(schema.scanApprovals).values({
+      id: crypto.randomUUID(),
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "no_publish",
+      reason: "durable block",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in opposite-decision recovery test: ${request.url}`);
+    });
+
+    const recovered = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({ gate: { status: "rejected" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
+    const approvalEvents = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId!),
+          eq(schema.scanEvents.type, "scan.approval_recorded"),
+        ),
+      );
+    expect(approvalEvents).toEqual([
+      {
+        metadata: expect.objectContaining({
+          decision: "no_publish",
+          reason: "durable block",
+        }),
+      },
+    ]);
+  });
+
   test("a retry finishes a gate after the package verdict committed before aggregation", async () => {
     const { userId, organizationId } = await seedUser();
     const db = createDb(env.DB);

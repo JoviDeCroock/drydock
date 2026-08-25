@@ -379,6 +379,7 @@ async function applyDecisionVote(
   const decisionAt = resolvedScan.decidedAt ? new Date(resolvedScan.decidedAt).toISOString() : null;
   await recordDecisionAuditTrail(db, {
     input,
+    approvalDecision: actorVote.decision,
     approvalReason: actorVote.reason,
     // A no-op retry can be repairing bookkeeping for a verdict another
     // co-approver already persisted. Attribute that recovered event to the
@@ -510,6 +511,8 @@ async function recordDecisionAuditTrail(
   db: AppDb,
   input: {
     input: RecordScanDecisionInput;
+    /** The durable vote being audited, which may differ from a recovery request. */
+    approvalDecision: ScanDecision;
     approvalReason: string | null;
     decisionReason: string | null;
     decisionActorUserId: string | null;
@@ -524,7 +527,7 @@ async function recordDecisionAuditTrail(
 ): Promise<void> {
   if (input.policy.required > 1) {
     const approvalMetadata = {
-      decision: input.input.decision,
+      decision: input.approvalDecision,
       reason: input.approvalReason,
       approvedCount: input.eligibleApprovedCount,
       requiredApprovals: input.policy.required,
@@ -550,7 +553,7 @@ async function recordDecisionAuditTrail(
           and ${scanEvents.actorUserId} = ${input.input.actorUserId}
           and ${scanEvents.type} = 'scan.approval_recorded'
           and json_extract(${scanEvents.metadataJson}, '$.voteUpdatedAt') = ${input.voteUpdatedAt}
-          and json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.input.decision}
+          and json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.approvalDecision}
       )
     `);
   }
