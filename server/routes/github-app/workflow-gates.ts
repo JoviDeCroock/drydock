@@ -532,7 +532,7 @@ interface GateViewPolicy {
   organizationRequiresTwoFactor: boolean;
   /** Distinct approvals each package of this gate needs before it counts as approved. */
   requiredApprovals: number;
-  approvalCounts: Map<string, { approved: number; blocked: number }>;
+  approvalCounts: Awaited<ReturnType<typeof countScanApprovals>>;
 }
 
 const SINGLE_APPROVER_VIEW: GateViewPolicy = {
@@ -573,7 +573,9 @@ function publicWorkflowGate(
       // undecided; the roster is what tells a reviewer whether their own click
       // will release the deployment or just move it one step closer.
       approvalCount:
-        approvalCounts.get(pkg.scanId)?.approved ?? (pkg.decision === "publish" ? 1 : 0),
+        (pkg.decision === null
+          ? approvalCounts.get(pkg.scanId)?.eligibleApproved
+          : approvalCounts.get(pkg.scanId)?.approved) ?? (pkg.decision === "publish" ? 1 : 0),
     })),
     requestedAt: record.requestedAt.toISOString(),
     decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,

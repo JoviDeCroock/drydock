@@ -19,6 +19,7 @@ import { recordProductEvent } from "../lib/platform/analytics";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import {
+  approvalVoterIsCurrentMember,
   buildScanApprovalState,
   getOrganizationApprovalPolicy,
   listScanApprovalVotes,
@@ -225,7 +226,10 @@ async function applyDecisionVote(
 
     policy = nextPolicy;
     votes = nextVotes;
-    verdict = resolveApprovalVerdict(votes, policy.required);
+    verdict = resolveApprovalVerdict(
+      votes.filter((candidate) => candidate.eligible),
+      policy.required,
+    );
     const previousVerdict = scanDecision(live.decision);
     const expectedDecision = previousVerdict
       ? eq(scans.decision, previousVerdict)
@@ -314,22 +318,25 @@ async function applyDecisionVote(
     viewerUserId: input.actorUserId,
     scan: resolvedScan,
   });
+  const eligibleApprovedCount = votes.filter(
+    (vote) => vote.eligible && vote.decision === "publish",
+  ).length;
 
   await recordDecisionAuditTrail(db, {
     input,
     reason,
     policy,
-    approvals,
+    eligibleApprovedCount,
     verdict,
     verdictChanged,
   });
 
   if (verdictChanged && verdict) {
-    recordDecisionEvent(env, current, {
+    recordScanDecisionProductEvents(env, current, {
       organizationId: input.organizationId,
       decision: verdict,
       ecosystem,
-      approvalCount: approvals.approvedCount,
+      approvalCount: eligibleApprovedCount,
       requiredApprovals: policy.required,
       now,
     });
@@ -381,6 +388,7 @@ function approvalVerdictIsSupported(
     where ${scanApprovals.scanId} = ${input.scanId}
       and ${scanApprovals.organizationId} = ${input.organizationId}
       and ${scanApprovals.decision} = 'no_publish'
+      and ${approvalVoterIsCurrentMember(input.organizationId)}
   )`;
   if (verdict === "no_publish") return blockExists;
 
@@ -400,6 +408,7 @@ function approvalVerdictIsSupported(
     where ${scanApprovals.scanId} = ${input.scanId}
       and ${scanApprovals.organizationId} = ${input.organizationId}
       and ${scanApprovals.decision} = 'publish'
+      and ${approvalVoterIsCurrentMember(input.organizationId)}
   )`;
   if (verdict === "publish") {
     return and(
@@ -426,7 +435,7 @@ async function recordDecisionAuditTrail(
     input: RecordScanDecisionInput;
     reason: string | null;
     policy: OrganizationApprovalPolicy;
-    approvals: ScanApprovalState;
+    eligibleApprovedCount: number;
     verdict: ScanDecision | null;
     verdictChanged: boolean;
   },
@@ -440,7 +449,7 @@ async function recordDecisionAuditTrail(
       metadata: {
         decision: input.input.decision,
         reason: input.reason,
-        approvedCount: input.approvals.approvedCount,
+        approvedCount: input.eligibleApprovedCount,
         requiredApprovals: input.policy.required,
       },
     });
@@ -454,7 +463,7 @@ async function recordDecisionAuditTrail(
     metadata: {
       decision: input.verdict,
       reason: input.reason,
-      approvedCount: input.approvals.approvedCount,
+      approvedCount: input.eligibleApprovedCount,
       requiredApprovals: input.policy.required,
     },
   });
@@ -505,6 +514,12 @@ export async function recordGatePackageDecision(
           where ${githubWorkflowGates.id} = ${input.gateId}
             and ${githubWorkflowGates.status} = 'pending'
         )`;
+  const multiApprovalPolicyIsCurrent = sql`exists (
+    select 1
+    from ${organizations}
+    where ${organizations.id} = ${input.organizationId}
+      and ${organizations.requiredReleaseApprovals} > 1
+  )`;
   const decidable = and(
     eq(scans.id, input.scanId),
     eq(scans.organizationId, input.organizationId),
@@ -514,10 +529,14 @@ export async function recordGatePackageDecision(
     gatePending,
   )!;
 
+  const blockableDecision =
+    input.decision === "no_publish"
+      ? or(isNull(scans.decision), and(eq(scans.decision, "publish"), multiApprovalPolicyIsCurrent))
+      : isNull(scans.decision);
   const [current] = await db
     .select(DECISION_TARGET_COLUMNS)
     .from(scans)
-    .where(and(decidable, isNull(scans.decision)))
+    .where(and(decidable, blockableDecision))
     .limit(1);
   if (!current) return { outcome: "not_actionable" };
 
@@ -536,7 +555,10 @@ export async function recordGatePackageDecision(
       and(
         decidable,
         verdict === "no_publish"
-          ? or(isNull(scans.decision), eq(scans.decision, "publish"))
+          ? or(
+              isNull(scans.decision),
+              and(eq(scans.decision, "publish"), multiApprovalPolicyIsCurrent),
+            )
           : isNull(scans.decision),
       )!,
   });
@@ -548,7 +570,7 @@ export async function recordGatePackageDecision(
  * risk split is the clearest available signal that a risk grade is
  * miscalibrated — so both paths have to report it the same way.
  */
-function recordDecisionEvent(
+export function recordScanDecisionProductEvents(
   env: Cloudflare.Env | undefined,
   row: {
     createdAt: Date | number | string | null;

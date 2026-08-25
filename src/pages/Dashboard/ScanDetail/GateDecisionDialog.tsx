@@ -287,6 +287,7 @@ export function GateDecisionDialog({
   const multi = packages.length > 1;
   const approvedCount = packages.filter((pkg) => pkg.decision === "publish").length;
   const multiApproval = isMultiApproval(approvals);
+  const canHardenPublishedPackage = multiApproval && packageDecision === "publish" && !gateDecided;
   // This member has already approved this package. The route rejects a second
   // approval from the same person (that is the whole point of the bar), so the
   // approve action is closed off here rather than left to fail — but blocking
@@ -307,11 +308,9 @@ export function GateDecisionDialog({
   // own enrollment, so this is exactly the case the route answers with 403
   // `two_factor_enrollment_required`. Decided gates/packages are read-only, so
   // there's nothing to block there.
+  const hasAvailableAction = !packageAlreadyDecided || canHardenPublishedPackage;
   const mustEnroll =
-    gate.organizationRequiresTwoFactor &&
-    !requireTwoFactor &&
-    !gateDecided &&
-    !packageAlreadyDecided;
+    gate.organizationRequiresTwoFactor && !requireTwoFactor && !gateDecided && hasAvailableAction;
 
   useEffect(() => {
     if (open) {
@@ -321,7 +320,16 @@ export function GateDecisionDialog({
   }, [open]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || gateDecided || packageAlreadyDecided || blockedOnCode || mustEnroll) return;
+    const hardeningPublishedPackage = next === "rejected" && canHardenPublishedPackage;
+    if (
+      saving ||
+      gateDecided ||
+      (packageAlreadyDecided && !hardeningPublishedPackage) ||
+      blockedOnCode ||
+      mustEnroll
+    ) {
+      return;
+    }
     if (next === "approved" && alreadyApproved) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
@@ -402,7 +410,12 @@ export function GateDecisionDialog({
           value={commentDraft.value}
           placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
-          disabled={saving || gateDecided || packageAlreadyDecided || mustEnroll}
+          disabled={
+            saving ||
+            gateDecided ||
+            (packageAlreadyDecided && !canHardenPublishedPackage) ||
+            mustEnroll
+          }
           maxLength={500}
           autoComplete="off"
           spellcheck={false}
@@ -433,14 +446,14 @@ export function GateDecisionDialog({
         <Muted class="m-0 text-[13px]">
           This gate has already been decided. The decision is final, and GitHub has been notified.
         </Muted>
-      ) : packageAlreadyDecided ? (
+      ) : packageAlreadyDecided && !canHardenPublishedPackage ? (
         <Muted class="m-0 text-[13px]">
           This package decision has been recorded. The held deployment stays pending until the
           remaining packages are decided.
         </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
-          {canApprove ? (
+          {canApprove && !packageAlreadyDecided ? (
             <Button
               onClick={() => submit("approved")}
               disabled={saving || blockedOnCode || mustEnroll || alreadyApproved}

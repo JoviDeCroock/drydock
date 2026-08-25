@@ -21,7 +21,8 @@ export function isMultiApproval(approvals: ScanApprovalState | null | undefined)
 function approverLabel(entry: ScanApprovalRecord, viewerUserId?: string | null): string {
   const name =
     entry.name ?? entry.email ?? (entry.legacy ? "recorded decision" : "removed account");
-  return entry.userId && entry.userId === viewerUserId ? `${name} (you)` : name;
+  if (entry.userId && entry.userId === viewerUserId) return `${name} (you)`;
+  return entry.eligible === false ? `${name} (former member)` : name;
 }
 
 /**

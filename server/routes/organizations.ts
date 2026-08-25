@@ -20,6 +20,7 @@ import {
 import {
   MAX_REQUIRED_RELEASE_APPROVALS,
   getOrganizationApprovalPolicy,
+  recordScanDecisionProductEvents,
   setRequiredReleaseApprovals,
 } from "../db/scans";
 import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
@@ -373,6 +374,40 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
         error: describeOperationalError(err),
       });
     }
+  }
+  for (const scan of reconciliation.changedScans) {
+    if (scan.decision !== "publish" && scan.decision !== "no_publish") continue;
+    try {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        scanId: scan.id,
+        type: "scan.decided",
+        metadata: {
+          decision: scan.decision,
+          reason: scan.decisionReason,
+          approvedCount: scan.approvalCount,
+          requiredApprovals: requested,
+          trigger: "approval_policy",
+        },
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "scan.decision_bookkeeping_failed", {
+        organizationId,
+        scanId: scan.id,
+        decision: scan.decision,
+        trigger: "approval_policy",
+        error: describeOperationalError(err),
+      });
+    }
+    recordScanDecisionProductEvents(c.env, scan, {
+      organizationId,
+      decision: scan.decision,
+      ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+      approvalCount: scan.approvalCount,
+      requiredApprovals: requested,
+      now: scan.decidedAt ?? new Date(),
+    });
   }
   // The policy and any gate decisions above are already durable. Audit
   // bookkeeping must not strand a gate whose packages were reconciled to

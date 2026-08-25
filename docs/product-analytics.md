@@ -96,10 +96,11 @@ correct — they were.
 **`scan.decided` fires on the verdict, not on the click.** Under a multi-party
 approval policy a release takes several submissions to decide, and only the one
 that meets the bar emits the event — so decision counts stay comparable across
-organizations with different bars. `double2`/`double3` carry the approvals it
-took and the bar it had to clear; without both, a rising time-to-decision reads
-as reviewer apathy when it is really a second approver being waited on. See
-[`release-approvals.md`](./release-approvals.md).
+organizations with different bars. A policy lowering that makes an existing
+tally sufficient emits the same event at reconciliation time.
+`double2`/`double3` carry the approvals it took and the bar it had to clear;
+without both, a rising time-to-decision reads as reviewer apathy when it is
+really a second approver being waited on. See [`release-approvals.md`](./release-approvals.md).
 
 ## Schema
 
@@ -129,10 +130,10 @@ low-volume one out of the dataset.
 | `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts                     |
 | `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                                    |
 | `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran                     |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade; approvals it took |
+| `scan.decided`             | decisions + policy reconcile  | time-to-decision; agreement with the grade; approvals it took |
 | `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate                 |
 | `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback             |
-| `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version                   |
+| `ai_review.decided`        | decisions + policy reconcile  | feedback by assessment and reviewer version                   |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                                             |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                           |
 | `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`)          |
