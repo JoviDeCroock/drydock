@@ -10,6 +10,7 @@ import { hasAsciiControlCharacter, isRecord } from "../server/lib/platform/guard
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
 import {
   decodeUrlPathForArchiveLookup,
+  encodeArchiveLookupPathForUrl,
   isSafeManifestPath,
 } from "../server/lib/platform/path-safety";
 import {
@@ -79,6 +80,17 @@ describe("decodeUrlPathForArchiveLookup", () => {
   test("matches URL percent-decoding for malformed escapes and invalid UTF-8", () => {
     expect(decodeUrlPathForArchiveLookup("tests/incomplete%2.js")).toBe("tests/incomplete%2.js");
     expect(decodeUrlPathForArchiveLookup("tests/invalid%C0%AF.js")).toBe("tests/invalid��.js");
+  });
+});
+
+describe("encodeArchiveLookupPathForUrl", () => {
+  test("preserves path separators while escaping URL syntax inside archive segments", () => {
+    expect(encodeArchiveLookupPathForUrl("pages#review/tests/payload 100%.js")).toBe(
+      "pages%23review/tests/payload%20100%25.js",
+    );
+    expect(encodeArchiveLookupPathForUrl("pages?review/payload.js")).toBe(
+      "pages%3Freview/payload.js",
+    );
   });
 });
 

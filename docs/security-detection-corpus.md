@@ -494,6 +494,12 @@ regular expressions, and unrelated object methods cannot create false
 reachability edges. The `browser-entrypoint-path-aliases` golden case pins both
 the executable aliases and the inert control.
 
+`1.42.0` preserves percent-encoded URL delimiters when resolving scripts from
+browser extension pages and resolves plain `Worker` or `SharedWorker` string
+URLs against the owning document base while keeping `import.meta.url` workers
+module-relative. The `browser-entrypoint-path-aliases` golden case pins both
+paths so executed test-tree payloads retain full capability severity.
+
 ### Fixture format
 
 Required fields:

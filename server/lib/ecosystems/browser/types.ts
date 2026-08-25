@@ -58,6 +58,7 @@ export interface BrowserExtensionManifest {
   externallyConnectableIds: string[];
   backgroundEntrypoints: string[];
   extensionPageEntrypoints: string[];
+  consumerDocumentBaseUrls: string[];
   contentSecurityPolicy: string | null;
 }
 

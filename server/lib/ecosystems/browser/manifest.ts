@@ -1,6 +1,10 @@
 import { decodeHTMLAttribute } from "entities";
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
-import { decodeUrlPathForArchiveLookup, isSafeManifestPath } from "../../platform/path-safety";
+import {
+  decodeUrlPathForArchiveLookup,
+  encodeArchiveLookupPathForUrl,
+  isSafeManifestPath,
+} from "../../platform/path-safety";
 import type { FileRecord, PackageJsonSummary } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
@@ -57,12 +61,12 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     ...stringList(background.scripts),
     ...(typeof background.page === "string" ? [background.page] : []),
   ]);
-  const backgroundEntrypoints = backgroundConsumerEntrypoints(
+  const backgroundConsumers = backgroundConsumerEntrypoints(
     files,
     declaredBackgroundEntrypoints,
     declaredBackgroundPage,
   );
-  const extensionPageEntrypoints = htmlPageConsumerEntrypoints(
+  const extensionPageConsumers = htmlPageConsumerEntrypoints(
     files,
     manifestExtensionPagePaths(raw),
   );
@@ -98,8 +102,14 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       externallyConnectableIds: isRecord(raw.externally_connectable)
         ? stringList(raw.externally_connectable.ids)
         : [],
-      backgroundEntrypoints,
-      extensionPageEntrypoints,
+      backgroundEntrypoints: backgroundConsumers.entrypoints,
+      extensionPageEntrypoints: extensionPageConsumers.entrypoints,
+      consumerDocumentBaseUrls: [
+        ...new Set([
+          ...backgroundConsumers.documentBaseUrls,
+          ...extensionPageConsumers.documentBaseUrls,
+        ]),
+      ],
       contentSecurityPolicy,
     },
   };
@@ -358,18 +368,27 @@ function backgroundConsumerEntrypoints(
   files: FileRecord[],
   declaredEntrypoints: string[],
   backgroundPage: string | null,
-): string[] {
+): HtmlPageConsumers {
   const entrypoints = new Set(declaredEntrypoints);
+  const documentBaseUrls = new Set<string>();
   if (backgroundPage) {
-    for (const path of htmlPageConsumerEntrypoints(files, [backgroundPage])) {
+    const pageConsumers = htmlPageConsumerEntrypoints(files, [backgroundPage]);
+    for (const path of pageConsumers.entrypoints) {
       entrypoints.add(path);
     }
+    for (const url of pageConsumers.documentBaseUrls) documentBaseUrls.add(url);
   }
-  return [...entrypoints];
+  return { entrypoints: [...entrypoints], documentBaseUrls: [...documentBaseUrls] };
 }
 
-function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): string[] {
+interface HtmlPageConsumers {
+  entrypoints: string[];
+  documentBaseUrls: string[];
+}
+
+function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): HtmlPageConsumers {
   const entrypoints = new Set(pagePaths);
+  const documentBaseUrls = new Set<string>();
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const inspectedPages = new Set<string>();
   const pageQueue: Array<{ pagePath: string; inlineHtml?: string }> = pagePaths.map((pagePath) => ({
@@ -391,13 +410,16 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
         continue;
       }
       const { kind, source, baseHref } = consumer;
-      const path = resolveExtensionResourcePath(pagePath, source, baseHref);
+      const documentBase = extensionDocumentBaseUrl(pagePath, baseHref);
+      if (!documentBase) continue;
+      const path = resolveExtensionResourcePath(source, documentBase);
       if (!path) continue;
       entrypoints.add(path);
+      if (kind === "script") documentBaseUrls.add(documentBase.href);
       if (kind === "page" && !inspectedPages.has(path)) pageQueue.push({ pagePath: path });
     }
   }
-  return [...entrypoints];
+  return { entrypoints: [...entrypoints], documentBaseUrls: [...documentBaseUrls] };
 }
 
 type HtmlConsumerSource =
@@ -537,17 +559,29 @@ function resolveExtensionRootResourcePath(rawPath: string): string | null {
   }
 }
 
-function resolveExtensionResourcePath(
-  pagePath: string,
-  rawSource: string,
-  rawBaseHref: string | null,
-): string | null {
-  const source = rawSource.trim();
+function extensionDocumentBaseUrl(pagePath: string, rawBaseHref: string | null): URL | null {
   const baseHref = rawBaseHref?.trim() ?? null;
-  if (!source || source.includes("\\") || baseHref?.includes("\\")) return null;
+  if (baseHref?.includes("\\")) return null;
   try {
-    const pageUrl = new URL(pagePath, EXTENSION_RESOURCE_ROOT);
+    // pagePath is already decoded for archive lookup. Re-encode each path
+    // segment before URL resolution so a literal archive `#`, `?`, or `%` does
+    // not become URL syntax and change the document base.
+    const encodedPagePath = encodeArchiveLookupPathForUrl(pagePath);
+    const pageUrl = new URL(encodedPagePath, EXTENSION_RESOURCE_ROOT);
     const documentBase = baseHref === null ? pageUrl : new URL(baseHref, pageUrl);
+    return documentBase.protocol === EXTENSION_RESOURCE_ROOT.protocol &&
+      documentBase.host === EXTENSION_RESOURCE_ROOT.host
+      ? documentBase
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveExtensionResourcePath(rawSource: string, documentBase: URL): string | null {
+  const source = rawSource.trim();
+  if (!source || source.includes("\\")) return null;
+  try {
     const resolved = new URL(source, documentBase);
     if (
       resolved.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||

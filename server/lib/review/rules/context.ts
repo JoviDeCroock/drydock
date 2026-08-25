@@ -26,6 +26,12 @@ export interface DeterministicFindingOptions {
    */
   consumerRootRelativeModuleImports?: boolean;
   /**
+   * Trusted document base URLs for consumer scripts that run in a browser page.
+   * Plain Worker constructor URLs resolve against these documents, while
+   * `new URL(..., import.meta.url)` remains relative to its JavaScript module.
+   */
+  consumerDocumentBaseUrls?: string[];
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -87,6 +93,7 @@ export function buildRuleContext(
       ],
       options.codePatternSet,
       options.consumerRootRelativeModuleImports,
+      options.consumerDocumentBaseUrls,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,

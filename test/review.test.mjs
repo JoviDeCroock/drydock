@@ -2618,6 +2618,51 @@ describe("test-scoped capability findings", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test("resolves plain Worker strings against a browser document base", () => {
+    const staged = [
+      pkg(),
+      file("scripts/popup.js", 'import "./controller.js";\n'),
+      file(
+        "scripts/controller.js",
+        [
+          'new Worker("test/document-worker.js");',
+          'new Worker(new URL("test/module-worker.js", import.meta.url));',
+        ].join("\n"),
+      ),
+      file("test/document-worker.js", "eval(payload);\n"),
+      file("scripts/test/module-worker.js", "eval(payload);\n"),
+      file("test/module-worker.js", "eval(decoy);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["scripts/popup.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerDocumentBaseUrls: ["drydock-extension://artifact/popup.html"],
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: "test/document-worker.js",
+          severity: "medium",
+        }),
+        expect.objectContaining({
+          file: "scripts/test/module-worker.js",
+          severity: "medium",
+        }),
+        expect.objectContaining({
+          file: "test/module-worker.js",
+          severity: "low",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(
+      findings
+        .filter((finding) => finding.file !== "test/module-worker.js")
+        .every((finding) => finding.testScoped !== true),
+    ).toBe(true);
+  });
+
   test("ignores WebExtension injection shapes outside the named APIs", () => {
     const staged = [
       pkg(),

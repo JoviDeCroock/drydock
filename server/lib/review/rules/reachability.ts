@@ -1,6 +1,9 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
 import { jsTokenText, type JsToken, tokenizeJs } from "../../platform/js-lexer";
-import { decodeUrlPathForArchiveLookup } from "../../platform/path-safety";
+import {
+  decodeUrlPathForArchiveLookup,
+  encodeArchiveLookupPathForUrl,
+} from "../../platform/path-safety";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
@@ -47,6 +50,7 @@ export function consumerReachablePaths(
   extraSeedPaths: string[] = [],
   codePatternSet: CodePatternSet | undefined = "javascript",
   rootRelativeModuleImports = false,
+  consumerDocumentBaseUrls: string[] = [],
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -57,7 +61,9 @@ export function consumerReachablePaths(
 
   const queue: string[] = [];
   for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
-    const resolved = resolveModulePath(candidate, byNormalizedPath, rootRelativeModuleImports);
+    // Entrypoints are already decoded, validated archive paths. URL semantics
+    // apply to specifiers discovered inside those files, not to the seeds.
+    const resolved = resolveModulePath(candidate, byNormalizedPath);
     if (resolved) queue.push(resolved);
   }
 
@@ -69,12 +75,26 @@ export function consumerReachablePaths(
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
     for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
-      const resolved = resolveModulePath(
-        joinRelative(path, specifier),
-        byNormalizedPath,
-        rootRelativeModuleImports,
-      );
+      const resolved = rootRelativeModuleImports
+        ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
+        : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
+    }
+    if (rootRelativeModuleImports) {
+      for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
+        const scriptResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
+        if (scriptResolved && !reachable.has(scriptResolved)) queue.push(scriptResolved);
+        if (worker.resolution === "document") {
+          for (const documentBaseUrl of consumerDocumentBaseUrls) {
+            const resolved = resolveBrowserDocumentModulePath(
+              worker.path,
+              documentBaseUrl,
+              byNormalizedPath,
+            );
+            if (resolved && !reachable.has(resolved)) queue.push(resolved);
+          }
+        }
+      }
     }
   }
   return reachable;
@@ -279,7 +299,6 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   specifiers.push(...staticImportScriptsSpecifiers(text));
   if (rootRelativeModuleImports) {
     specifiers.push(...staticWebExtensionScriptSpecifiers(text));
-    specifiers.push(...staticWorkerScriptSpecifiers(text));
   }
   return specifiers;
 }
@@ -477,21 +496,62 @@ function staticNamedPropertyPaths(
   return paths;
 }
 
-function staticWorkerScriptSpecifiers(text: string): string[] {
+interface WorkerScriptSpecifier {
+  path: string;
+  resolution: "document" | "module";
+}
+
+function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
-  const specifiers: string[] = [];
+  const specifiers: WorkerScriptSpecifier[] = [];
   for (let index = 0; index < tokens.length - 3; index += 1) {
     if (tokenText(tokens[index], text) !== "new") continue;
     const constructor = tokenText(tokens[index + 1], text);
     if (constructor !== "Worker" && constructor !== "SharedWorker") continue;
     if (tokenText(tokens[index + 2], text) !== "(") continue;
-    const value =
-      staticScriptPath(tokens[index + 3], text) ?? staticImportMetaUrlPath(tokens, text, index + 3);
-    if (value !== null) specifiers.push(value);
+    const documentPath = staticScriptPath(tokens[index + 3], text);
+    if (documentPath !== null) {
+      specifiers.push({ path: documentPath, resolution: "document" });
+      continue;
+    }
+    const modulePath = staticImportMetaUrlPath(tokens, text, index + 3);
+    if (modulePath !== null) specifiers.push({ path: modulePath, resolution: "module" });
   }
   return specifiers;
+}
+
+function resolveBrowserDocumentModulePath(
+  specifier: string,
+  documentBaseUrl: string,
+  byNormalizedPath: Map<string, FileRecord>,
+): string | null {
+  try {
+    const base = new URL(documentBaseUrl);
+    const resolved = new URL(specifier, base);
+    if (resolved.protocol !== base.protocol || resolved.host !== base.host) return null;
+    const path = decodeUrlPathForArchiveLookup(resolved.pathname.replace(/^\/+/, ""));
+    return resolveModulePath(path, byNormalizedPath);
+  } catch {
+    return null;
+  }
+}
+
+const BROWSER_ARCHIVE_ROOT = new URL("drydock-extension://artifact/");
+
+function resolveBrowserScriptModulePath(
+  fromPath: string,
+  specifier: string,
+  byNormalizedPath: Map<string, FileRecord>,
+): string | null {
+  try {
+    const encodedPath = encodeArchiveLookupPathForUrl(fromPath);
+    const base = new URL(encodedPath, BROWSER_ARCHIVE_ROOT);
+    return resolveBrowserDocumentModulePath(specifier, base.href, byNormalizedPath);
+  } catch {
+    return null;
+  }
 }
 
 function staticImportMetaUrlPath(tokens: JsToken[], text: string, start: number): string | null {
@@ -614,23 +674,14 @@ function tokenText(token: JsToken | undefined, text: string): string {
 function resolveModulePath(
   candidate: string,
   byNormalizedPath: Map<string, FileRecord>,
-  browserUrlSemantics = false,
 ): string | null {
-  const pathCandidate = browserUrlSemantics
-    ? decodeUrlPathForArchiveLookup(stripUrlSearchAndHash(candidate))
-    : candidate;
-  const base = normalizePathSegments(stripPackagePrefix(pathCandidate));
+  const base = normalizePathSegments(stripPackagePrefix(candidate));
   if (!base) return null;
   for (const suffix of RESOLUTION_SUFFIXES) {
     const resolved = base + suffix;
     if (byNormalizedPath.has(resolved)) return resolved;
   }
   return null;
-}
-
-function stripUrlSearchAndHash(value: string): string {
-  const delimiter = value.search(/[?#]/);
-  return delimiter === -1 ? value : value.slice(0, delimiter);
 }
 
 function joinRelative(fromPath: string, specifier: string): string {

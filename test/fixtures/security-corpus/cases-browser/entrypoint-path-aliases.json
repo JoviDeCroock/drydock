@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest, HTML, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, Manifest V2 user scripts, static programmatic-injection including bracket member access, direct and import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, iframe, or iframe srcdoc paths resolved through character references, percent-encoded URLs, quoted greater-than characters, and local base URLs; importScripts-shaped inert text remains unreachable.",
+  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, Manifest V2 user scripts, static programmatic-injection including bracket member access, document-relative and import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, iframe, or iframe srcdoc paths resolved through character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; importScripts-shaped inert text remains unreachable.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -13,7 +13,7 @@
       "size": 420,
       "sha256": "5252525252525252525252525252525252525252525252525252525252525252",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"browser_action\": { \"default_popup\": \"/tests/popup.html\" },\n  \"permissions\": [\"contentScripts\", \"https://example.invalid/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\", \"./tests/dot-content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"browser_action\": { \"default_popup\": \"/tests/popup.html\" },\n  \"options_page\": \"pages%23encoded/options.html\",\n  \"permissions\": [\"contentScripts\", \"https://example.invalid/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\", \"./tests/dot-content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
     },
     {
       "path": "pages/background.html",
@@ -83,7 +83,7 @@
       "size": 32,
       "sha256": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
       "flags": [],
-      "textSample": "<script src=\"popup.js\"></script><iframe srcdoc=\"&lt;script src=&quot;/tests/srcdoc.js&quot;&gt;&lt;/script&gt;\"></iframe>"
+      "textSample": "<script src=\"popup.js\"></script><script type=\"module\" src=\"/scripts/document-worker.js\"></script><iframe srcdoc=\"&lt;script src=&quot;/tests/srcdoc.js&quot;&gt;&lt;/script&gt;\"></iframe>"
     },
     {
       "path": "tests/popup.js",
@@ -133,6 +133,41 @@
       "sha256": "6363636363636363636363636363636363636363636363636363636363636363",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "scripts/document-worker.js",
+      "size": 37,
+      "sha256": "6464646464646464646464646464646464646464646464646464646464646464",
+      "flags": [],
+      "textSample": "import './document-worker-module.js';"
+    },
+    {
+      "path": "scripts/document-worker-module.js",
+      "size": 43,
+      "sha256": "6565656565656565656565656565656565656565656565656565656565656565",
+      "flags": [],
+      "textSample": "new Worker('worker-from-document.js');"
+    },
+    {
+      "path": "tests/worker-from-document.js",
+      "size": 14,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "pages#encoded/options.html",
+      "size": 53,
+      "sha256": "6767676767676767676767676767676767676767676767676767676767676767",
+      "flags": [],
+      "textSample": "<script src=\"./tests/encoded-delimiter.js\"></script>"
+    },
+    {
+      "path": "pages#encoded/tests/encoded-delimiter.js",
+      "size": 14,
+      "sha256": "6868686868686868686868686868686868686868686868686868686868686868",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -152,6 +187,16 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/bracket-injected.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/worker-from-document.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "pages#encoded/tests/encoded-delimiter.js"
     },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" }
   ]

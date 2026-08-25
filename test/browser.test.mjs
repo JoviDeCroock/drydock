@@ -589,6 +589,45 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("preserves encoded URL delimiters while resolving extension-page scripts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "pages%23review/popup.html" } }),
+      {
+        path: "pages#review/popup.html",
+        size: 48,
+        sha256: "6e".repeat(32),
+        flags: [],
+        textSample: '<script src="./tests/payload.js"></script>',
+      },
+      {
+        path: "pages#review/tests/payload.js",
+        size: 14,
+        sha256: "6f".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["pages#review/popup.html", "pages#review/tests/payload.js"]),
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({
+      severity: "high",
+      file: "pages#review/tests/payload.js",
+    });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("honors an extension-local base URL when resolving page scripts", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -741,6 +780,54 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(extensionPages.length);
     expect(findings.every((finding) => finding.severity === "high")).toBe(true);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
+  test("resolves plain Worker URLs against the owning extension document", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 58,
+        sha256: "70".repeat(32),
+        flags: [],
+        textSample: '<script type="module" src="scripts/popup.js"></script>',
+      },
+      {
+        path: "scripts/popup.js",
+        size: 25,
+        sha256: "71".repeat(32),
+        flags: [],
+        textSample: 'import "./controller.js";',
+      },
+      {
+        path: "scripts/controller.js",
+        size: 38,
+        sha256: "72".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/payload.js");',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "73".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.consumerDocumentBaseUrls).toContain("drydock-extension://artifact/popup.html");
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
   });
 
   test("follows packaged iframe pages from manifest-declared extension pages", () => {

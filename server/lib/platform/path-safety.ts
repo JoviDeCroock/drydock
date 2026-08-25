@@ -40,3 +40,8 @@ export function decodeUrlPathForArchiveLookup(path: string): string {
   }
   return URL_PATH_DECODER.decode(Uint8Array.from(bytes));
 }
+
+/** Encode a decoded archive lookup path for safe reuse as a relative URL path. */
+export function encodeArchiveLookupPathForUrl(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
