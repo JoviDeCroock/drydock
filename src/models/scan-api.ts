@@ -58,6 +58,8 @@ export interface ScanApprovalRecord {
   decision: ScanDecision;
   reason: string | null;
   createdAt: string | number | Date;
+  /** False when the voter has since left and remains only in the historical roster. */
+  eligible?: boolean;
   /** Synthesized from the scan's own columns — a decision made before, or outside, the vote roster. */
   legacy?: boolean;
 }

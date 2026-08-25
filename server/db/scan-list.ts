@@ -196,7 +196,10 @@ export async function listScans(
       decisionReason: row.decisionReason,
       decidedByUserId: row.decidedByUserId,
       decidedAt: row.decidedAt,
-      approvalCount: approvals.get(row.id)?.approved ?? (row.decision === "publish" ? 1 : 0),
+      approvalCount:
+        (row.decision === null
+          ? approvals.get(row.id)?.eligibleApproved
+          : approvals.get(row.id)?.approved) ?? (row.decision === "publish" ? 1 : 0),
       legacyDecision:
         !approvals.has(row.id) && (row.decision === "publish" || row.decision === "no_publish"),
       changedFileCount: row.changedFileCount ?? 0,

@@ -327,6 +327,38 @@ describe("multi-party release approval", () => {
     expect(next.body.approvals).toMatchObject({ approvedCount: 1, verdict: null });
   });
 
+  test("a former member does not count again when a policy increase reopens a release", async () => {
+    const { organizationId, users } = await seedSharedOrganization(4, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[0], organizationId }, scanId, "publish");
+    await decide({ ...users[1], organizationId }, scanId, "publish");
+    expect((await readDecision(scanId))?.decision).toBe("publish");
+
+    const db = createDb(env.DB);
+    // The decided roster remains historical when the member leaves.
+    await removeOrganizationMember(db, organizationId, users[1].userId);
+    await setRequiredReleaseApprovals(db, organizationId, 3);
+    expect((await readDecision(scanId))?.decision).toBeNull();
+
+    const third = await decide({ ...users[2], organizationId }, scanId, "publish");
+    expect(third.body.approvals).toMatchObject({ approvedCount: 2, verdict: null });
+    expect(third.body.approvals?.approvals).toContainEqual(
+      expect.objectContaining({ userId: users[1].userId, eligible: false }),
+    );
+
+    const fourth = await decide({ ...users[3], organizationId }, scanId, "publish");
+    expect(fourth.body.approvals).toMatchObject({ approvedCount: 4, verdict: "publish" });
+    expect((await readDecision(scanId))?.decision).toBe("publish");
+
+    const decisionEvents = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+    expect(decisionEvents).toContainEqual({
+      metadata: expect.objectContaining({ approvedCount: 3, requiredApprovals: 3 }),
+    });
+  });
+
   test("deleting an account drops its approval from a release still awaiting one", async () => {
     const { organizationId, users } = await seedSharedOrganization(3, 2);
     const scanId = await seedCompletedScan(organizationId, users[0].userId);

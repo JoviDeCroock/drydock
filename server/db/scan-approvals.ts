@@ -36,6 +36,8 @@ interface ScanApprovalRecord {
   decision: ScanDecision;
   reason: string | null;
   createdAt: Date | number | string;
+  /** Whether this voter is still eligible to contribute to a live quorum. */
+  eligible?: boolean;
   /**
    * True for the synthesized record standing in for a decision made before
    * multi-party approval existed (or for a gate auto-block), where the only
@@ -65,6 +67,24 @@ export interface OrganizationApprovalPolicy {
   memberCount: number;
 }
 
+export interface ReconciledScanDecision {
+  id: string;
+  source: string;
+  packageName: string | null;
+  summaryJson: unknown;
+  publicFeedListedAt: Date | null;
+  decision: string | null;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date | null;
+  createdAt: Date | null;
+  risk: string;
+  riskSummaryJson: unknown;
+  aiJson: unknown;
+  /** Current-member approvals after the policy transaction committed. */
+  approvalCount: number;
+}
+
 function normalizeRequiredApprovals(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed)) return 1;
@@ -84,6 +104,16 @@ export function resolveApprovalVerdict(
   if (votes.some((vote) => vote.decision === "no_publish")) return "no_publish";
   const approvals = votes.filter((vote) => vote.decision === "publish").length;
   return approvals >= normalizeRequiredApprovals(required) ? "publish" : null;
+}
+
+/** SQL proof that the current `scan_approvals` row still belongs to an org member. */
+export function approvalVoterIsCurrentMember(organizationId: string) {
+  return sql`exists (
+    select 1
+    from ${organizationMembers}
+    where ${organizationMembers.organizationId} = ${organizationId}
+      and ${organizationMembers.userId} = ${scanApprovals.userId}
+  )`;
 }
 
 /** The org's approval bar, plus the member pool it has to be met from. */
@@ -123,18 +153,13 @@ export async function setRequiredReleaseApprovals(
   /** False when a conditional policy write lost to another owner request. */
   applied: boolean;
   readyGateIds: string[];
-  changedScans: Array<{
-    id: string;
-    source: string;
-    packageName: string | null;
-    summaryJson: unknown;
-    publicFeedListedAt: Date | null;
-  }>;
+  changedScans: ReconciledScanDecision[];
 }> {
   const normalized = normalizeRequiredApprovals(required);
   const normalizedExpected =
     expectedRequired === undefined ? null : normalizeRequiredApprovals(expectedRequired);
   const now = new Date();
+  const voterIsCurrentMember = approvalVoterIsCurrentMember(organizationId);
   const hasVotes = sql`exists (
     select 1
     from ${scanApprovals}
@@ -147,6 +172,7 @@ export async function setRequiredReleaseApprovals(
     where ${scanApprovals.scanId} = ${scans.id}
       and ${scanApprovals.organizationId} = ${organizationId}
       and ${scanApprovals.decision} = 'no_publish'
+      and ${voterIsCurrentMember}
   )`;
   const approvalCount = sql`(
     select count(*)
@@ -154,6 +180,7 @@ export async function setRequiredReleaseApprovals(
     where ${scanApprovals.scanId} = ${scans.id}
       and ${scanApprovals.organizationId} = ${organizationId}
       and ${scanApprovals.decision} = 'publish'
+      and ${voterIsCurrentMember}
   )`;
   // A completed workflow gate is irreversible. Reconcile ordinary staged
   // decisions and packages whose held gate is still pending, but never rewrite
@@ -187,6 +214,7 @@ export async function setRequiredReleaseApprovals(
       where ${scanApprovals.scanId} = ${scans.id}
         and ${scanApprovals.organizationId} = ${organizationId}
         and ${scanApprovals.decision} = ${decision}
+        and ${voterIsCurrentMember}
       order by ${scanApprovals.updatedAt} desc, ${scanApprovals.id} desc
       limit 1
     )`;
@@ -213,7 +241,7 @@ export async function setRequiredReleaseApprovals(
         decision: "no_publish",
         decisionReason: latestVote("no_publish", "reason"),
         decidedByUserId: latestVote("no_publish", "user_id"),
-        decidedAt: latestVote("no_publish", "updated_at"),
+        decidedAt: now,
         updatedAt: now,
       })
       .where(and(target, hasBlock, or(isNull(scans.decision), ne(scans.decision, "no_publish"))))
@@ -224,7 +252,7 @@ export async function setRequiredReleaseApprovals(
         decision: "publish",
         decisionReason: latestVote("publish", "reason"),
         decidedByUserId: latestVote("publish", "user_id"),
-        decidedAt: latestVote("publish", "updated_at"),
+        decidedAt: now,
         updatedAt: now,
       })
       .where(
@@ -279,10 +307,19 @@ export async function setRequiredReleaseApprovals(
         )`,
       ),
     );
+  const changedScans = [...blocked, ...approved, ...undecided];
+  const changedCounts = await countScanApprovals(
+    db,
+    organizationId,
+    changedScans.map((scan) => scan.id),
+  );
   return {
     applied: updatedPolicy.length > 0,
     readyGateIds: readyGates.map((gate) => gate.id),
-    changedScans: [...blocked, ...approved, ...undecided],
+    changedScans: changedScans.map((scan) => ({
+      ...scan,
+      approvalCount: changedCounts.get(scan.id)?.eligibleApproved ?? 0,
+    })),
   };
 }
 
@@ -292,6 +329,14 @@ const RECONCILED_SCAN_COLUMNS = {
   packageName: scans.packageName,
   summaryJson: scans.summaryJson,
   publicFeedListedAt: scans.publicFeedListedAt,
+  decision: scans.decision,
+  decisionReason: scans.decisionReason,
+  decidedByUserId: scans.decidedByUserId,
+  decidedAt: scans.decidedAt,
+  createdAt: scans.createdAt,
+  risk: scans.risk,
+  riskSummaryJson: scans.riskSummaryJson,
+  aiJson: scans.aiJson,
 } as const;
 
 export interface ScanApprovalVote {
@@ -301,6 +346,8 @@ export interface ScanApprovalVote {
   decision: ScanDecision;
   reason: string | null;
   createdAt: Date;
+  /** False after the voter leaves the organization; retained for historical display only. */
+  eligible: boolean;
 }
 
 /** Every vote cast on one scan, oldest first, with the voter's identity. */
@@ -317,9 +364,17 @@ export async function listScanApprovalVotes(
       createdAt: scanApprovals.createdAt,
       name: user.name,
       email: user.email,
+      eligibleUserId: organizationMembers.userId,
     })
     .from(scanApprovals)
     .leftJoin(user, eq(user.id, scanApprovals.userId))
+    .leftJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.organizationId, organizationId),
+        eq(organizationMembers.userId, scanApprovals.userId),
+      ),
+    )
     .where(and(eq(scanApprovals.scanId, scanId), eq(scanApprovals.organizationId, organizationId)))
     .orderBy(scanApprovals.createdAt);
   return rows.map((row) => ({
@@ -329,7 +384,15 @@ export async function listScanApprovalVotes(
     decision: row.decision === "no_publish" ? "no_publish" : "publish",
     reason: row.reason,
     createdAt: row.createdAt,
+    eligible: row.eligibleUserId !== null,
   }));
+}
+
+export interface ScanApprovalCounts {
+  approved: number;
+  blocked: number;
+  eligibleApproved: number;
+  eligibleBlocked: number;
 }
 
 /** Approval counts for a page of scans, keyed by scan id. Empty ids → empty map. */
@@ -337,18 +400,22 @@ export async function countScanApprovals(
   db: AppDb,
   organizationId: string,
   scanIds: string[],
-): Promise<Map<string, { approved: number; blocked: number }>> {
-  const counts = new Map<string, { approved: number; blocked: number }>();
+): Promise<Map<string, ScanApprovalCounts>> {
+  const counts = new Map<string, ScanApprovalCounts>();
   if (!scanIds.length) return counts;
   // A full review page is 100 scans and D1 caps a statement at 100 bound
-  // parameters, so the id list has to be chunked (one slot reserved for the
-  // organization id) or the busiest page of the queue throws.
-  for (const chunk of chunkForD1([...new Set(scanIds)], 1, 1)) {
+  // parameters, so the id list has to be chunked (two slots reserved for the
+  // organization id in the outer filter and membership predicate) or the
+  // busiest page of the queue throws.
+  for (const chunk of chunkForD1([...new Set(scanIds)], 1, 2)) {
     const rows = await db
       .select({
         scanId: scanApprovals.scanId,
         decision: scanApprovals.decision,
         total: sql<number>`count(*)`,
+        eligibleTotal: sql<number>`sum(case when ${approvalVoterIsCurrentMember(
+          organizationId,
+        )} then 1 else 0 end)`,
       })
       .from(scanApprovals)
       .where(
@@ -356,9 +423,19 @@ export async function countScanApprovals(
       )
       .groupBy(scanApprovals.scanId, scanApprovals.decision);
     for (const row of rows) {
-      const entry = counts.get(row.scanId) ?? { approved: 0, blocked: 0 };
-      if (row.decision === "no_publish") entry.blocked += Number(row.total);
-      else entry.approved += Number(row.total);
+      const entry = counts.get(row.scanId) ?? {
+        approved: 0,
+        blocked: 0,
+        eligibleApproved: 0,
+        eligibleBlocked: 0,
+      };
+      if (row.decision === "no_publish") {
+        entry.blocked += Number(row.total);
+        entry.eligibleBlocked += Number(row.eligibleTotal);
+      } else {
+        entry.approved += Number(row.total);
+        entry.eligibleApproved += Number(row.eligibleTotal);
+      }
       counts.set(row.scanId, entry);
     }
   }
@@ -401,6 +478,7 @@ export function buildScanApprovalState(input: BuildScanApprovalStateInput): Scan
         decision: vote.decision,
         reason: vote.reason,
         createdAt: vote.createdAt,
+        eligible: vote.eligible,
       }))
     : decision
       ? [
@@ -416,10 +494,17 @@ export function buildScanApprovalState(input: BuildScanApprovalStateInput): Scan
         ]
       : [];
   const legacyDecision = votes.length === 0 && decision !== null;
+  // A decided release keeps its historical count. Once a policy change or
+  // revised vote reopens it, former members remain visible in the roster but
+  // stop contributing to the live quorum.
+  const countedApprovals =
+    votes.length && decision === null
+      ? approvals.filter((_, index) => votes[index]?.eligible)
+      : approvals;
   return {
     required: policy.required,
-    approvedCount: approvals.filter((entry) => entry.decision === "publish").length,
-    blockedCount: approvals.filter((entry) => entry.decision === "no_publish").length,
+    approvedCount: countedApprovals.filter((entry) => entry.decision === "publish").length,
+    blockedCount: countedApprovals.filter((entry) => entry.decision === "no_publish").length,
     verdict: decision,
     legacyDecision,
     approvals,

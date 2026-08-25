@@ -1,5 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
@@ -1204,6 +1204,12 @@ describe("github-app workflow-gate decision route", () => {
     expect(first.status).toBe(200);
     expect(decisionCalls).toHaveLength(0);
 
+    const oldVoteAt = new Date("2000-01-01T00:00:00.000Z");
+    await db
+      .update(schema.scanApprovals)
+      .set({ createdAt: oldVoteAt, updatedAt: oldVoteAt })
+      .where(eq(schema.scanApprovals.scanId, scanId!));
+
     await db.update(schema.user).set({ twoFactorEnabled: true }).where(eq(schema.user.id, userId));
 
     const lowered = await callGithubAppRoute(
@@ -1216,6 +1222,24 @@ describe("github-app workflow-gate decision route", () => {
     expect(await lowered.json()).toEqual({ requiredApprovals: 1 });
     expect((await getGateForOrganization(db, organizationId, gateId))?.status).toBe("approved");
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+    const [decidedScan] = await db
+      .select({ decidedAt: schema.scans.decidedAt })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(decidedScan?.decidedAt?.getTime()).toBeGreaterThan(oldVoteAt.getTime());
+    const decisionEvents = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(
+        and(eq(schema.scanEvents.scanId, scanId!), eq(schema.scanEvents.type, "scan.decided")),
+      );
+    expect(decisionEvents).toHaveLength(1);
+    expect(decisionEvents[0]?.metadata).toMatchObject({
+      decision: "publish",
+      trigger: "approval_policy",
+      approvedCount: 1,
+      requiredApprovals: 1,
+    });
   });
 
   test("a reviewer who approved can still block before the bar is met", async () => {
@@ -1261,6 +1285,71 @@ describe("github-app workflow-gate decision route", () => {
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "rejected", scanId: scanId!, comment: "spotted a postinstall" },
+    );
+    expect(blocked.status).toBe(200);
+    expect(await blocked.json()).toMatchObject({ gate: { status: "rejected" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
+  });
+
+  test("a reviewer can still block a published package while its multi-package gate is pending", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    const third = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await addOrganizationMember(db, { organizationId, userId: third.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "2.0.0",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in gate hardening test: ${request.url}`);
+    });
+
+    await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    const packageQuorum = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(packageQuorum.status).toBe(200);
+    expect(await packageQuorum.json()).toMatchObject({ gate: { status: "pending" } });
+
+    const blocked = await callGithubAppRoute(
+      buildTestApp(third.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId!, comment: "late blocker" },
     );
     expect(blocked.status).toBe(200);
     expect(await blocked.json()).toMatchObject({ gate: { status: "rejected" } });

@@ -33,7 +33,10 @@ Two rules are load-bearing:
   script.
 - **Approvals are per distinct member**, enforced by the
   `scan_approvals_scan_user_unique_idx` unique index rather than by application
-  code. One reviewer clicking twice cannot clear a two-person bar.
+  code. One reviewer clicking twice cannot clear a two-person bar. Live tallies
+  also prove that each voter is still an organization member; a departed
+  member stays visible in a decided release's history but cannot help a release
+  that is currently waiting for quorum.
 
 The tally is recomputed from all votes on every submission rather than
 incremented. Two members approving at the same instant land two rows with
@@ -69,6 +72,11 @@ two votes; if that resolves every package in a gate, the policy route finalizes
 and redelivers the GitHub decision. Completed gates are immutable and keep the
 policy and roster that actually released them.
 
+When reconciliation itself moves a scan to a verdict, `decided_at` is the
+policy-change time rather than the older vote time. The route emits the same
+per-scan `scan.decided` audit and analytics events as a vote-triggered verdict,
+with `trigger: approval_policy` in the audit metadata.
+
 Gate finalization and delivery scheduling happen before the policy-change audit
 event is written. Audit bookkeeping is contained so a transient event-write
 failure cannot leave a fully approved gate in `pending`.
@@ -76,7 +84,9 @@ failure cannot leave a fully approved gate in `pending`.
 Removing a member deletes their votes on releases that are **still undecided**
 (`dropPendingApprovalsForMember`): someone who has left must not keep counting
 toward the quorum. Decided releases keep their full roster — that approval was
-real when it was given, and the audit trail has to keep saying so.
+real when it was given, and the audit trail has to keep saying so. If a later
+policy increase reopens one of those staged decisions, the former member stays
+in the historical roster but is excluded from the new live tally.
 
 Account deletion follows the same pending/decided split. Votes on undecided
 releases are deleted before the membership disappears; votes on decided
@@ -96,7 +106,10 @@ historical count while dropping the identity. This is the same treatment
 - **Workflow gate** (`POST /api/v1/github-app/workflow-gates/:gateId/decision`)
   — approving helps release a held deployment, so a vote is not freely
   revisable: the only permitted change is approve → block, the fail-closed
-  direction. A second approval from the same member is a `409`.
+  direction. A second approval from the same member is a `409`. Under a
+  multi-party policy this fail-closed path remains open when one package has
+  reached its bar but sibling packages still keep the overall gate pending; a
+  late blocker can still stop the deployment before it releases.
 
 Gate aggregation is unchanged and did not need to be: it releases only when
 every package's `decision` is `publish`, and a package one approval short reads

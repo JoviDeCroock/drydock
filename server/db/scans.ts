@@ -49,6 +49,7 @@ export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-
 
 export {
   recordGatePackageDecision,
+  recordScanDecisionProductEvents,
   recordScanDecision,
   SCAN_DECISION_FILTERS,
   SCAN_DECISIONS,
