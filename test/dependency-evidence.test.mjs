@@ -643,6 +643,8 @@ describe("assessDependencyArtifact", () => {
     "module['require']?.(target)",
     "require?.(target)",
     'require(/* package-controlled gap */ "./payload.data")',
+    String.raw`require("\x2e/payload.data")`,
+    String.raw`import("\u002e/payload.data")`,
   ])("fails completeness for the dynamic Node loader %s", (load) => {
     const manifest = {
       name: "n",
@@ -740,6 +742,8 @@ describe("assessDependencyArtifact", () => {
     'require("node:child_process").fork(/* package-controlled gap */ "./payload.min.js")',
     'require("node:child_process").spawn("node", getArguments())',
     'require("node:child_process").spawn("node", ["./" + name])',
+    'const cp = require("node:child_process"); cp["spawn"](process.argv[2])',
+    'const cp = require("node:child_process"); cp["execFileSync"](getTarget())',
     'source "$PAYLOAD"',
   ])("fails completeness for the dynamic local execution edge in %s", (source) => {
     const manifest = {
@@ -764,6 +768,33 @@ describe("assessDependencyArtifact", () => {
 
     expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
   });
+
+  test.each(["./$npm_package_config_target", 'sh -c "./$TARGET"'])(
+    "fails completeness for the computed lifecycle executable in %s",
+    (postinstall) => {
+      const manifest = {
+        name: "n",
+        version: "1.0.0",
+        scripts: { postinstall },
+      };
+      const assessment = assessDependencyArtifact(
+        [
+          file("package.json", JSON.stringify(manifest)),
+          {
+            path: "payload.min.js",
+            size: 1024,
+            sha256: "skipped-shell-target",
+            flags: ["text-sample-skipped"],
+          },
+        ],
+        manifest,
+        { codePatternSet: "javascript", entrypointResolution: "npm" },
+      );
+
+      expect(assessment.installReachableUninspectedFiles).toEqual(["payload.min.js"]);
+      expect(assessment.observation).toMatchObject({ dynamicInstallTarget: true });
+    },
+  );
 
   test("does not expand omitted bodies for a static external process target", () => {
     const manifest = {
@@ -829,6 +860,7 @@ describe("assessDependencyArtifact", () => {
     ["node install.js", "install.js", 'require("child_process").execFileSync("./payload.min.js")'],
     ["node install.js", "install.js", 'require("child_process").fork("./payload.min.js")'],
     ["node install.js", "install.js", 'require("child_process").spawn("./payload.min.js")'],
+    ["node install.js", "install.js", 'require("child_process")["spawn"]("./payload.min.js")'],
     [
       "node install.js",
       "install.js",
@@ -996,6 +1028,37 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.observation).toEqual({ execution: "observed", risk: "observed" });
   });
 
+  test("a computed install target keeps a bundled native artifact at unknown high risk", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: "node install.js" },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        file(
+          "install.js",
+          'const { spawn } = require("node:child_process"); spawn(process.argv[2]);',
+        ),
+        { ...file("bin/installer.node", ""), flags: ["binary"] },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.observation).toEqual({
+      execution: "observed",
+      risk: "unknown",
+      dynamicInstallTarget: true,
+    });
+    expect(classifyDependencyInstallRisk(assessment)).toMatchObject({
+      severity: "high",
+      certainty: "unknown",
+      nativeExecution: true,
+    });
+  });
+
   test("a capability in a non-install package script is not proven install-reachable", () => {
     const manifest = {
       name: "n",
@@ -1101,6 +1164,16 @@ describe("classifyDependencyInstallRisk", () => {
         installReachableCapabilities: ["code.process-execution", "file.native-artifact"],
       }),
     ).toMatchObject({ severity: "high", certainty: "observed", nativeExecution: true });
+  });
+
+  test("classifies a computed install target with a bundled native artifact as unknown high risk", () => {
+    expect(
+      classifyDependencyInstallRisk({
+        observation: { execution: "observed", risk: "unknown", dynamicInstallTarget: true },
+        capabilities: ["file.native-artifact"],
+        installReachableCapabilities: [],
+      }),
+    ).toMatchObject({ severity: "high", certainty: "unknown", nativeExecution: true });
   });
 
   test("returns null when risk was not observed", () => {
