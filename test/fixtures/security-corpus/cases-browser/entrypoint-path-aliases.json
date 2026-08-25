@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest, HTML, navigation, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, manifest-declared sandbox pages, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including tabs.create navigation, bracket, nested, positional, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object-document, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
+  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, manifest-declared sandbox pages, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including tabs.create and windows.create navigation, bracket, nested, positional, callback-nested, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object, embed, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, nested callback metadata, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 70,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
       "flags": [],
-      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><style>.example{content:\"<script src=decoy.js>\"}</style><textarea><script src=\"decoy.js\"></script></textarea><title><script src=\"decoy.js\"></script></title><script data-description=\">\" src=\"page&#46;js\"></script><script src=\"encoded%20page.js\"></script><iframe src=\"frame.html\"></iframe><frame src=\"legacy-frame.html\"><object type=\"text/html\" data=\"object.html\"></object><meta content=\"0;url='refresh.html'\" http-equiv=\"refresh\"><meta name=\"description\" content=\"0;url=decoy.html\">"
+      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><style>.example{content:\"<script src=decoy.js>\"}</style><textarea><script src=\"decoy.js\"></script></textarea><title><script src=\"decoy.js\"></script></title><script data-description=\">\" src=\"page&#46;js\"></script><script src=\"encoded%20page.js\"></script><iframe src=\"frame.html\"></iframe><frame src=\"legacy-frame.html\"><object type=\"text/html\" data=\"object.html\"></object><embed type=\"text/html\" src=\"embed.html\"><meta content=\"0;url='refresh.html'\" http-equiv=\"refresh\"><meta name=\"description\" content=\"0;url=decoy.html\">"
     },
     {
       "path": "tests/content.js",
@@ -104,7 +104,7 @@
       "size": 72,
       "sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
       "flags": [],
-      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); new Worker(chrome.runtime.getURL('/tests/runtime-worker.js')); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); chrome.tabs.create({ url: '/tests/onboarding.html' }); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); chrome.action.setPopup({ popup: '/tests/action-api.html' }); browser.sidePanel.setOptions({ path: '/tests/side-panel-api.html' }); tool.action.setPopup({ popup: '/tests/decoy.html' }); const example = \"importScripts('/tests/decoy.js')\";"
+      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); new Worker(chrome.runtime.getURL('/tests/runtime-worker.js')); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); chrome.tabs.create({ url: '/tests/onboarding.html' }); chrome.windows.create({ url: ['/tests/window.html'] }); chrome.tabs.create({}, () => chrome.scripting.executeScript({ files: ['/tests/nested-api.js'] })); chrome.tabs.create({}, () => console.log({ url: '/tests/nested-decoy.html' })); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); chrome.action.setPopup({ popup: '/tests/action-api.html' }); browser.sidePanel.setOptions({ path: '/tests/side-panel-api.html' }); tool.action.setPopup({ popup: '/tests/decoy.html' }); const example = \"importScripts('/tests/decoy.js')\";"
     },
     {
       "path": "tests/injected.js",
@@ -350,6 +350,55 @@
       "sha256": "8787878787878787878787878787878787878787878787878787878787878787",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/embed.html",
+      "size": 35,
+      "sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+      "flags": [],
+      "textSample": "<script src=\"embed.js\"></script>"
+    },
+    {
+      "path": "tests/embed.js",
+      "size": 14,
+      "sha256": "9292929292929292929292929292929292929292929292929292929292929292",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/window.html",
+      "size": 36,
+      "sha256": "9393939393939393939393939393939393939393939393939393939393939393",
+      "flags": [],
+      "textSample": "<script src=\"window.js\"></script>"
+    },
+    {
+      "path": "tests/window.js",
+      "size": 14,
+      "sha256": "9494949494949494949494949494949494949494949494949494949494949494",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/nested-api.js",
+      "size": 14,
+      "sha256": "9595959595959595959595959595959595959595959595959595959595959595",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/nested-decoy.html",
+      "size": 42,
+      "sha256": "9696969696969696969696969696969696969696969696969696969696969696",
+      "flags": [],
+      "textSample": "<script src=\"nested-decoy.js\"></script>"
+    },
+    {
+      "path": "tests/nested-decoy.js",
+      "size": 14,
+      "sha256": "9797979797979797979797979797979797979797979797979797979797979797",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -446,6 +495,18 @@
       "severity": "high",
       "file": "tests/onboarding.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" }
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/embed.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/window.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/nested-api.js"
+    },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/nested-decoy.js"
+    }
   ]
 }

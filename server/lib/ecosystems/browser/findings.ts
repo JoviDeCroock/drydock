@@ -9,7 +9,7 @@ import {
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
-  browserHtmlConsumerEntrypoints,
+  browserHtmlConsumerDependencies,
   browserExtensionCandidateName,
   findBrowserManifestFile,
   parseBrowserExtensionManifest,
@@ -116,9 +116,9 @@ export function buildBrowserFindings(args: {
         ...extensionManifest.extensionPageEntrypoints,
       ],
       consumerRootRelativeModuleImports: true,
-      consumerDocumentBaseUrls: extensionManifest.consumerDocumentBaseUrls,
+      consumerDocumentBaseUrlsByPath: extensionManifest.consumerDocumentBaseUrlsByPath,
       consumerFileDependencyPaths: (path) =>
-        /\.html?$/i.test(path) ? browserHtmlConsumerEntrypoints(args.staged.files, path) : [],
+        /\.html?$/i.test(path) ? browserHtmlConsumerDependencies(args.staged.files, path) : [],
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),
@@ -269,7 +269,12 @@ function unsafeExtensionCspEvidence(value: string | null): string | null {
     if (!directive || inspected.has(directive)) continue;
     inspected.add(directive);
     const sources = directives.get(directive) ?? [];
-    if (sources.some((source) => source.trim().toLowerCase() === "'strict-dynamic'")) {
+    if (
+      (directive === "script-src" ||
+        directive === "script-src-elem" ||
+        directive === "default-src") &&
+      sources.some((source) => source.trim().toLowerCase() === "'strict-dynamic'")
+    ) {
       return `extension CSP ${directive} delegates script trust through 'strict-dynamic'`;
     }
     const nonPackageSource = sources.find(isNonPackageScriptSource);

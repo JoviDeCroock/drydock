@@ -916,6 +916,7 @@ describe("browser extension review adapter", () => {
       "side-panel",
       "devtools-panel",
       "tab-create",
+      "window-create",
     ];
     const files = [
       manifestFile({
@@ -933,6 +934,7 @@ describe("browser extension review adapter", () => {
           'globalThis.chrome.pageAction.setPopup({ popup: "tests/page-action.html" });',
           'chrome.sidePanel.setOptions({ path: "/tests/side-panel.html", enabled: true });',
           'chrome.tabs.create({ url: "/tests/tab-create.html" });',
+          'chrome.windows.create({ url: ["/tests/window-create.html"] });',
           'tool.action.setPopup({ popup: "/tests/decoy.html" });',
         ].join("\n"),
       },
@@ -1003,7 +1005,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(7);
+    expect(findings).toHaveLength(8);
   });
 
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
@@ -1104,7 +1106,9 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
-    expect(parsed.consumerDocumentBaseUrls).toContain("drydock-extension://artifact/popup.html");
+    expect(parsed.consumerDocumentBaseUrlsByPath["scripts/popup.js"]).toContain(
+      "drydock-extension://artifact/popup.html",
+    );
     const review = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
@@ -1114,6 +1118,51 @@ describe("browser extension review adapter", () => {
     );
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("does not resolve Worker URLs against an unrelated extension document", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        background: { service_worker: "background/main.js" },
+        options_page: "tests/options.html",
+      }),
+      {
+        path: "background/main.js",
+        size: 25,
+        sha256: "74".repeat(32),
+        flags: [],
+        textSample: 'new Worker("payload.js");',
+      },
+      {
+        path: "tests/options.html",
+        size: 38,
+        sha256: "75".repeat(32),
+        flags: [],
+        textSample: '<script src="options.js"></script>',
+      },
+      {
+        path: "tests/options.js",
+        size: 23,
+        sha256: "76".repeat(32),
+        flags: [],
+        textSample: "console.log('options');",
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "77".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.file === "tests/payload.js");
+    expect(finding).toMatchObject({ severity: "medium", testScoped: true });
   });
 
   test("follows packaged iframe pages from manifest-declared extension pages", () => {
@@ -1233,7 +1282,10 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(3);
   });
 
-  test("follows packaged object documents from manifest-declared extension pages", () => {
+  test.each([
+    ["object", '<object type="text/html" data="tests/frame.html"></object>'],
+    ["embed", '<embed type="text/html" src="tests/frame.html">'],
+  ])("follows packaged %s documents from manifest-declared extension pages", (_tag, markup) => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
@@ -1244,7 +1296,7 @@ describe("browser extension review adapter", () => {
         size: 64,
         sha256: "8a".repeat(32),
         flags: [],
-        textSample: '<object type="text/html" data="tests/frame.html"></object>',
+        textSample: markup,
       },
       {
         path: "tests/frame.html",
@@ -1569,6 +1621,28 @@ describe("browser extension review adapter", () => {
       "browser.unsafe-extension-csp",
     );
   });
+
+  test.each([
+    "script-src 'self'; worker-src 'self' 'strict-dynamic'",
+    "script-src 'self'; child-src 'self' 'strict-dynamic'",
+  ])(
+    "does not treat strict-dynamic in a worker URL directive as trust delegation: %s",
+    (contentSecurityPolicy) => {
+      const path = "dist/tab-helper.zip";
+      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+      const review = createBrowserExtensionReview({
+        manifest,
+        artifact: {
+          path,
+          sha256: SHA,
+          files: [manifestFile({ content_security_policy: contentSecurityPolicy })],
+        },
+      });
+      expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toContain(
+        "browser.unsafe-extension-csp",
+      );
+    },
+  );
 
   test("anchors optional permissions to the manifest property that supplied them", () => {
     const path = "dist/tab-helper.zip";

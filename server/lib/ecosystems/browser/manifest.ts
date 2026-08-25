@@ -109,12 +109,10 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
         : [],
       backgroundEntrypoints: backgroundConsumers.entrypoints,
       extensionPageEntrypoints: extensionPageConsumers.entrypoints,
-      consumerDocumentBaseUrls: [
-        ...new Set([
-          ...backgroundConsumers.documentBaseUrls,
-          ...extensionPageConsumers.documentBaseUrls,
-        ]),
-      ],
+      consumerDocumentBaseUrlsByPath: mergeDocumentBaseUrlsByPath(
+        backgroundConsumers.documentBaseUrlsByPath,
+        extensionPageConsumers.documentBaseUrlsByPath,
+      ),
       contentSecurityPolicy,
     },
   };
@@ -401,25 +399,25 @@ function backgroundConsumerEntrypoints(
   backgroundPage: string | null,
 ): HtmlPageConsumers {
   const entrypoints = new Set(declaredEntrypoints);
-  const documentBaseUrls = new Set<string>();
+  let documentBaseUrlsByPath: Record<string, string[]> = {};
   if (backgroundPage) {
     const pageConsumers = htmlPageConsumerEntrypoints(files, [backgroundPage]);
     for (const path of pageConsumers.entrypoints) {
       entrypoints.add(path);
     }
-    for (const url of pageConsumers.documentBaseUrls) documentBaseUrls.add(url);
+    documentBaseUrlsByPath = pageConsumers.documentBaseUrlsByPath;
   }
-  return { entrypoints: [...entrypoints], documentBaseUrls: [...documentBaseUrls] };
+  return { entrypoints: [...entrypoints], documentBaseUrlsByPath };
 }
 
 interface HtmlPageConsumers {
   entrypoints: string[];
-  documentBaseUrls: string[];
+  documentBaseUrlsByPath: Record<string, string[]>;
 }
 
 function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): HtmlPageConsumers {
   const entrypoints = new Set(pagePaths);
-  const documentBaseUrls = new Set<string>();
+  const documentBaseUrlsByPath = new Map<string, Set<string>>();
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const inspectedPages = new Set<string>();
   const pageQueue: Array<{
@@ -455,15 +453,45 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
       const path = resolveExtensionResourcePath(source, documentBase);
       if (!path) continue;
       entrypoints.add(path);
-      if (kind === "script") documentBaseUrls.add(documentBase.href);
+      if (kind === "script") {
+        const bases = documentBaseUrlsByPath.get(path) ?? new Set<string>();
+        bases.add(documentBase.href);
+        documentBaseUrlsByPath.set(path, bases);
+      }
       if (kind === "page" && !inspectedPages.has(path)) pageQueue.push({ pagePath: path });
     }
   }
-  return { entrypoints: [...entrypoints], documentBaseUrls: [...documentBaseUrls] };
+  return {
+    entrypoints: [...entrypoints],
+    documentBaseUrlsByPath: Object.fromEntries(
+      [...documentBaseUrlsByPath].map(([path, bases]) => [path, [...bases]]),
+    ),
+  };
 }
 
-export function browserHtmlConsumerEntrypoints(files: FileRecord[], pagePath: string): string[] {
-  return htmlPageConsumerEntrypoints(files, [pagePath]).entrypoints;
+export function browserHtmlConsumerDependencies(
+  files: FileRecord[],
+  pagePath: string,
+): Array<{ path: string; documentBaseUrl?: string }> {
+  const consumers = htmlPageConsumerEntrypoints(files, [pagePath]);
+  return consumers.entrypoints.flatMap((path) => {
+    const bases = consumers.documentBaseUrlsByPath[path];
+    return bases?.length ? bases.map((documentBaseUrl) => ({ path, documentBaseUrl })) : [{ path }];
+  });
+}
+
+function mergeDocumentBaseUrlsByPath(
+  ...values: Array<Record<string, string[]>>
+): Record<string, string[]> {
+  const merged = new Map<string, Set<string>>();
+  for (const value of values) {
+    for (const [path, urls] of Object.entries(value)) {
+      const bases = merged.get(path) ?? new Set<string>();
+      for (const url of urls) bases.add(url);
+      merged.set(path, bases);
+    }
+  }
+  return Object.fromEntries([...merged].map(([path, bases]) => [path, [...bases]]));
 }
 
 type HtmlConsumerSource =
@@ -491,6 +519,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     if (
       (!HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
         tagName !== "base" &&
+        tagName !== "embed" &&
         tagName !== "frame" &&
         tagName !== "iframe" &&
         tagName !== "meta" &&
@@ -591,6 +620,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     } else if (
       tagClosed &&
       (tagName === "script" ||
+        tagName === "embed" ||
         tagName === "frame" ||
         tagName === "iframe" ||
         tagName === "object") &&

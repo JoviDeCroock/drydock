@@ -39,6 +39,16 @@ const PYTHON_FROM_IMPORT_PATTERN =
   /^\s*from\s+([A-Za-z_][\w.]*|\.+[A-Za-z_][\w.]*|\.+)\s+import\s+([^#;\n]+)/gm;
 const PYTHON_IMPORT_PATTERN = /^\s*import\s+([^#;\n]+)/gm;
 
+export interface ConsumerReachabilityDependency {
+  path: string;
+  documentBaseUrl?: string;
+}
+
+interface ConsumerReachabilityQueueEntry {
+  path: string;
+  documentBaseUrl?: string;
+}
+
 // Files a registry tarball consumer install can execute: declared entrypoints
 // (main/module/browser/exports), bin targets, lifecycle script targets, and everything
 // statically importable from them. Seeding from lifecycle scripts matters for
@@ -50,8 +60,11 @@ export function consumerReachablePaths(
   extraSeedPaths: string[] = [],
   codePatternSet: CodePatternSet | undefined = "javascript",
   rootRelativeModuleImports = false,
-  consumerDocumentBaseUrls: string[] = [],
-  consumerFileDependencyPaths?: (path: string, file: FileRecord) => string[],
+  consumerDocumentBaseUrlsByPath: Record<string, string[]> = {},
+  consumerFileDependencyPaths?: (
+    path: string,
+    file: FileRecord,
+  ) => ConsumerReachabilityDependency[],
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -60,30 +73,41 @@ export function consumerReachablePaths(
     byNormalizedPath.set(stripPackagePrefix(file.path), file);
   }
 
-  const queue: string[] = [];
+  const queue: ConsumerReachabilityQueueEntry[] = [];
   for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
     // Entrypoints are already decoded, validated archive paths. URL semantics
     // apply to specifiers discovered inside those files, not to the seeds.
     const resolved = resolveModulePath(candidate, byNormalizedPath);
-    if (resolved) queue.push(resolved);
+    if (!resolved) continue;
+    const documentBases = consumerDocumentBaseUrlsByPath[resolved];
+    if (documentBases?.length) {
+      for (const documentBaseUrl of documentBases) queue.push({ path: resolved, documentBaseUrl });
+    } else {
+      queue.push({ path: resolved });
+    }
   }
 
   const reachable = new Set<string>();
+  const inspectedContexts = new Set<string>();
   while (queue.length) {
-    const path = queue.pop();
-    if (!path || reachable.has(path)) continue;
+    const queued = queue.pop();
+    if (!queued) continue;
+    const { path, documentBaseUrl } = queued;
+    const contextKey = `${path}\0${documentBaseUrl ?? ""}`;
+    if (inspectedContexts.has(contextKey)) continue;
+    inspectedContexts.add(contextKey);
     reachable.add(path);
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
     for (const dependency of consumerFileDependencyPaths?.(path, file) ?? []) {
-      const resolved = resolveModulePath(dependency, byNormalizedPath);
-      if (resolved && !reachable.has(resolved)) queue.push(resolved);
+      const resolved = resolveModulePath(dependency.path, byNormalizedPath);
+      if (resolved) queue.push({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
     }
     for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
       const resolved = rootRelativeModuleImports
         ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
         : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
-      if (resolved && !reachable.has(resolved)) queue.push(resolved);
+      if (resolved) queue.push({ path: resolved, documentBaseUrl });
     }
     if (rootRelativeModuleImports) {
       for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
@@ -95,7 +119,7 @@ export function consumerReachablePaths(
           BROWSER_ARCHIVE_ROOT.href,
           byNormalizedPath,
         );
-        if (resolved && !reachable.has(resolved)) queue.push(resolved);
+        if (resolved) queue.push({ path: resolved });
       }
       for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
         if (worker.resolution === "root") {
@@ -104,20 +128,18 @@ export function consumerReachablePaths(
             BROWSER_ARCHIVE_ROOT.href,
             byNormalizedPath,
           );
-          if (resolved && !reachable.has(resolved)) queue.push(resolved);
+          if (resolved) queue.push({ path: resolved });
           continue;
         }
         const moduleResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
-        if (moduleResolved && !reachable.has(moduleResolved)) queue.push(moduleResolved);
-        if (worker.resolution === "document") {
-          for (const documentBaseUrl of consumerDocumentBaseUrls) {
-            const resolved = resolveBrowserDocumentModulePath(
-              worker.path,
-              documentBaseUrl,
-              byNormalizedPath,
-            );
-            if (resolved && !reachable.has(resolved)) queue.push(resolved);
-          }
+        if (moduleResolved) queue.push({ path: moduleResolved });
+        if (worker.resolution === "document" && documentBaseUrl) {
+          const resolved = resolveBrowserDocumentModulePath(
+            worker.path,
+            documentBaseUrl,
+            byNormalizedPath,
+          );
+          if (resolved) queue.push({ path: resolved });
         }
       }
     }
@@ -326,7 +348,12 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
 }
 
 type WebExtensionResourceProperty = "file" | "files" | "js" | "path" | "popup" | "url";
-type WebExtensionScriptValueShape = "string" | "string-array" | "file-object-array";
+type WebExtensionScriptValueShape =
+  | "string"
+  | "string-array"
+  | "string-or-string-array"
+  | "file-object-array";
+type WebExtensionResourceArgument = "first" | "first-object";
 
 type WebExtensionResourceCall =
   | {
@@ -334,6 +361,7 @@ type WebExtensionResourceCall =
       source: "property";
       property: WebExtensionResourceProperty;
       valueShape: WebExtensionScriptValueShape;
+      argument: WebExtensionResourceArgument;
     }
   | { openIndex: number; source: "argument"; argumentIndex: number };
 
@@ -388,16 +416,16 @@ function staticWebExtensionResourceSpecifiers(text: string): string[] {
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
     if (closeIndex === null) continue;
     if (call.source === "property") {
-      specifiers.push(
-        ...staticPropertyScriptPaths(
-          tokens,
-          text,
-          call.openIndex + 1,
-          closeIndex,
-          call.property,
-          call.valueShape,
-        ),
-      );
+      const argumentRanges = staticCallArgumentRanges(tokens, text, call.openIndex + 1, closeIndex);
+      const selectedRanges =
+        call.argument === "first"
+          ? argumentRanges.slice(0, 1)
+          : argumentRanges.filter(([start]) => tokenText(tokens[start], text) === "{").slice(0, 1);
+      for (const [start, end] of selectedRanges) {
+        specifiers.push(
+          ...staticPropertyScriptPaths(tokens, text, start, end, call.property, call.valueShape),
+        );
+      }
     } else {
       const path = staticLiteralCallArgument(
         tokens,
@@ -408,7 +436,6 @@ function staticWebExtensionResourceSpecifiers(text: string): string[] {
       );
       if (path !== null) specifiers.push(path);
     }
-    index = closeIndex;
   }
 
   return specifiers;
@@ -465,6 +492,7 @@ function webExtensionScriptCall(
 
   if (
     namespace !== "tabs" &&
+    namespace !== "windows" &&
     namespace !== "scripting" &&
     namespace !== "contentScripts" &&
     namespace !== "userScripts" &&
@@ -483,40 +511,103 @@ function webExtensionScriptCall(
   const openIndex = staticCallOpenIndex(tokens, text, methodMember.nextIndex);
   if (openIndex === null) return null;
   if (namespace === "tabs" && method === "create") {
-    return { openIndex, source: "property", property: "url", valueShape: "string" };
+    return {
+      openIndex,
+      source: "property",
+      property: "url",
+      valueShape: "string",
+      argument: "first",
+    };
+  }
+  if (namespace === "windows" && method === "create") {
+    return {
+      openIndex,
+      source: "property",
+      property: "url",
+      valueShape: "string-or-string-array",
+      argument: "first",
+    };
   }
   if (namespace === "tabs" && method === "executeScript") {
-    return { openIndex, source: "property", property: "file", valueShape: "string" };
+    return {
+      openIndex,
+      source: "property",
+      property: "file",
+      valueShape: "string",
+      argument: "first-object",
+    };
   }
   if (namespace === "scripting" && method === "executeScript") {
-    return { openIndex, source: "property", property: "files", valueShape: "string-array" };
+    return {
+      openIndex,
+      source: "property",
+      property: "files",
+      valueShape: "string-array",
+      argument: "first",
+    };
   }
   if (
     namespace === "scripting" &&
     (method === "registerContentScripts" || method === "updateContentScripts")
   ) {
-    return { openIndex, source: "property", property: "js", valueShape: "string-array" };
+    return {
+      openIndex,
+      source: "property",
+      property: "js",
+      valueShape: "string-array",
+      argument: "first",
+    };
   }
   if (namespace === "contentScripts" && method === "register") {
-    return { openIndex, source: "property", property: "js", valueShape: "file-object-array" };
+    return {
+      openIndex,
+      source: "property",
+      property: "js",
+      valueShape: "file-object-array",
+      argument: "first",
+    };
   }
   if (
     namespace === "userScripts" &&
     (method === "register" || method === "update" || method === "execute")
   ) {
-    return { openIndex, source: "property", property: "js", valueShape: "file-object-array" };
+    return {
+      openIndex,
+      source: "property",
+      property: "js",
+      valueShape: "file-object-array",
+      argument: "first",
+    };
   }
   if (namespace === "offscreen" && method === "createDocument") {
-    return { openIndex, source: "property", property: "url", valueShape: "string" };
+    return {
+      openIndex,
+      source: "property",
+      property: "url",
+      valueShape: "string",
+      argument: "first",
+    };
   }
   if (
     (namespace === "action" || namespace === "browserAction" || namespace === "pageAction") &&
     method === "setPopup"
   ) {
-    return { openIndex, source: "property", property: "popup", valueShape: "string" };
+    return {
+      openIndex,
+      source: "property",
+      property: "popup",
+      valueShape: "string",
+      argument: "first",
+    };
   }
   if (namespace === "sidePanel" && method === "setOptions") {
-    return { openIndex, source: "property", property: "path", valueShape: "string" };
+    return {
+      openIndex,
+      source: "property",
+      property: "path",
+      valueShape: "string",
+      argument: "first",
+    };
   }
   if (namespace === "devtools" && subnamespace === "panels" && method === "create") {
     return { openIndex, source: "argument", argumentIndex: 2 };
@@ -533,15 +624,32 @@ function staticPropertyScriptPaths(
   valueShape: WebExtensionScriptValueShape,
 ): string[] {
   const paths: string[] = [];
+  const root = tokenText(tokens[start], text);
+  const propertyDepth = root === "{" ? 1 : root === "[" ? 2 : null;
+  if (propertyDepth === null) return paths;
+  let depth = 0;
   for (let index = start; index < end; index += 1) {
+    const token = tokenText(tokens[index], text);
+    if (token === "[" || token === "{" || token === "(") {
+      depth += 1;
+      continue;
+    }
+    if (token === "]" || token === "}" || token === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== propertyDepth) continue;
     if (staticPropertyName(tokens[index], text) !== property) continue;
     if (tokenText(tokens[index + 1], text) !== ":") continue;
 
     const valueIndex = index + 2;
-    if (valueShape === "string") {
+    if (valueShape === "string" || valueShape === "string-or-string-array") {
       const value = staticScriptPath(tokens[valueIndex], text);
-      if (value !== null) paths.push(value);
-      continue;
+      if (value !== null) {
+        paths.push(value);
+        continue;
+      }
+      if (valueShape === "string") continue;
     }
     if (tokenText(tokens[valueIndex], text) !== "[") continue;
     const closeIndex = matchingPunctuation(tokens, text, valueIndex, "[", "]");
@@ -578,13 +686,44 @@ function staticNamedPropertyPaths(
   property: string,
 ): string[] {
   const paths: string[] = [];
+  let depth = 0;
   for (let index = start; index < end; index += 1) {
+    const token = tokenText(tokens[index], text);
+    if (token === "[" || token === "{" || token === "(") {
+      depth += 1;
+      continue;
+    }
+    if (token === "]" || token === "}" || token === ")") {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 1) continue;
     if (staticPropertyName(tokens[index], text) !== property) continue;
     if (tokenText(tokens[index + 1], text) !== ":") continue;
     const value = staticScriptPath(tokens[index + 2], text);
     if (value !== null) paths.push(value);
   }
   return paths;
+}
+
+function staticCallArgumentRanges(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+): Array<[start: number, end: number]> {
+  const ranges: Array<[start: number, end: number]> = [];
+  let argumentStart = start;
+  let depth = 0;
+  for (let index = start; index <= end; index += 1) {
+    const value = index === end ? "," : tokenText(tokens[index], text);
+    if (value === "[" || value === "{" || value === "(") depth += 1;
+    else if (value === "]" || value === "}" || value === ")") depth -= 1;
+    if (value !== "," || depth !== 0) continue;
+    if (argumentStart < index) ranges.push([argumentStart, index]);
+    argumentStart = index + 1;
+  }
+  return ranges;
 }
 
 interface WorkerScriptSpecifier {

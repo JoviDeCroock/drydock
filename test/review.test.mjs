@@ -2530,7 +2530,7 @@ describe("test-scoped capability findings", () => {
       consumerEntrypointPaths: ["background.js"],
       consumerRootRelativeModuleImports: true,
       consumerFileDependencyPaths: (path) =>
-        path === "test/onboarding.html" ? ["test/payload.js"] : [],
+        path === "test/onboarding.html" ? [{ path: "test/payload.js" }] : [],
     });
     const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
@@ -2569,6 +2569,24 @@ describe("test-scoped capability findings", () => {
     );
     expect(findings).toHaveLength(4);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
+  test("continues scanning WebExtension calls nested inside another API callback", () => {
+    const staged = [
+      pkg(),
+      file(
+        "background.js",
+        'chrome.tabs.create({}, () => chrome.scripting.executeScript({ files: ["test/payload.js"] }));\n',
+      ),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const finding = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+    }).find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
   });
 
   test("follows static WebExtension registration script objects", () => {
@@ -2693,7 +2711,9 @@ describe("test-scoped capability findings", () => {
       codePatternSet: "javascript",
       consumerEntrypointPaths: ["scripts/popup.js"],
       consumerRootRelativeModuleImports: true,
-      consumerDocumentBaseUrls: ["drydock-extension://artifact/popup.html"],
+      consumerDocumentBaseUrlsByPath: {
+        "scripts/popup.js": ["drydock-extension://artifact/popup.html"],
+      },
     }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
@@ -2726,6 +2746,7 @@ describe("test-scoped capability findings", () => {
         "background.js",
         [
           'const config = { files: ["test/payload.js"] };',
+          'chrome.tabs.create({}, () => console.log({ url: "test/payload.js" }));',
           "const example = 'browser.scripting.executeScript({ files: [\"test/payload.js\"] })';",
           'tool.scripting.executeScript({ files: ["test/payload.js"] });',
           'tool.action.setPopup({ popup: "test/payload.js" });',

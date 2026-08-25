@@ -5,6 +5,7 @@ import {
   consumerReachablePaths,
   lifecycleScriptSeedPaths,
   normalizeReachabilityPath,
+  type ConsumerReachabilityDependency,
 } from "./reachability";
 import { isTestPath } from "./file-types";
 import { safeJson } from "./helpers";
@@ -26,17 +27,20 @@ export interface DeterministicFindingOptions {
    */
   consumerRootRelativeModuleImports?: boolean;
   /**
-   * Trusted document base URLs for consumer scripts that run in a browser page.
-   * Plain Worker constructor URLs resolve against these documents, while
-   * `new URL(..., import.meta.url)` remains relative to its JavaScript module.
+   * Trusted document base URLs keyed by the consumer script loaded in that
+   * browser page. Plain Worker constructor URLs resolve against their owning
+   * document, while `new URL(..., import.meta.url)` remains module-relative.
    */
-  consumerDocumentBaseUrls?: string[];
+  consumerDocumentBaseUrlsByPath?: Record<string, string[]>;
   /**
    * Additional package-relative dependencies discovered from a reachable file.
    * Browser extensions use this for packaged HTML documents that load scripts;
    * the resolver must return validated archive paths only.
    */
-  consumerFileDependencyPaths?: (path: string, file: FileRecord) => string[];
+  consumerFileDependencyPaths?: (
+    path: string,
+    file: FileRecord,
+  ) => ConsumerReachabilityDependency[];
   /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
@@ -99,7 +103,7 @@ export function buildRuleContext(
       ],
       options.codePatternSet,
       options.consumerRootRelativeModuleImports,
-      options.consumerDocumentBaseUrls,
+      options.consumerDocumentBaseUrlsByPath,
       options.consumerFileDependencyPaths,
     ),
     patterns: codePatternsFor(options.codePatternSet),

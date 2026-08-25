@@ -1,0 +1,21 @@
+{
+  "id": "browser-benign-worker-csp",
+  "title": "WebExtension worker URL policy with an inert strict-dynamic token",
+  "category": "benign",
+  "intent": "A strict-dynamic token in worker-src uses ordinary URL source matching and must not trigger the unsafe extension CSP rule.",
+  "slug": "worker-policy-helper",
+  "extensionId": "worker-policy-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "9898989898989898989898989898989898989898989898989898989898989898",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 320,
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Worker policy helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"worker-policy-helper@example.invalid\" } },\n  \"content_security_policy\": \"script-src 'self'; worker-src 'self' 'strict-dynamic'; object-src 'self'\"\n}\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}
