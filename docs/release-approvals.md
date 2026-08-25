@@ -74,8 +74,11 @@ Changing the bar reconciles every voted staged release and every package behind
 a still-pending workflow gate in the same D1 batch as the policy row. Lowering a
 bar from three to two therefore immediately approves a release that already has
 two votes; if that resolves every package in a gate, the policy route finalizes
-and redelivers the GitHub decision. Completed gates are immutable and keep the
-policy and roster that actually released them.
+and redelivers the GitHub decision. An identical concurrent policy request also
+runs that finalization idempotently, so an interruption after the policy batch
+cannot strand a now-ready gate. Completed gates are immutable and snapshot the
+policy and roster that actually released them; later organization changes never
+rewrite the threshold returned for that historical gate.
 
 When reconciliation itself moves a scan to a verdict, `decided_at` is the
 policy-change time rather than the older vote time. The route emits the same
@@ -165,10 +168,12 @@ their own second factor. See [`two-factor-auth.md`](./two-factor-auth.md).
   reader backs the public report export, which must never carry reviewer
   identities.
 - `GET /api/v1/scans` returns `requiredApprovals`, a per-row `approvalCount`,
-  and `legacyDecision`, so a partially-approved release renders as "1 of 2" in
-  the queue instead of "undecided" while a historical decision remains distinct.
-  A partial approval stays in the undecided filter, which is exactly where the
-  second approver needs to find it.
+  `viewerDecision`, and `legacyDecision`, so a partially-approved release renders
+  as "1 of 2" in the queue instead of "undecided" while a historical decision
+  remains distinct. The viewer vote keeps the quick-decision dialog from
+  promising that resubmitting the same approval will meet quorum. A partial
+  approval stays in the undecided filter, which is exactly where the second
+  approver needs to find it.
 - The gate payload carries `requiredApprovals` and a per-package
   `approvalCount`.
 - Scans decided before this existed have a decision and no votes. The readers

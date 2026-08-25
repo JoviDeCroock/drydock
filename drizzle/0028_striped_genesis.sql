@@ -1,0 +1,1 @@
+ALTER TABLE `github_workflow_gates` ADD `required_release_approvals` integer;

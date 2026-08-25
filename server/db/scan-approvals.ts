@@ -522,6 +522,7 @@ export interface ScanApprovalCounts {
   blocked: number;
   eligibleApproved: number;
   eligibleBlocked: number;
+  viewerDecision: ScanDecision | null;
 }
 
 /** Approval counts for a page of scans, keyed by scan id. Empty ids → empty map. */
@@ -529,14 +530,15 @@ export async function countScanApprovals(
   db: AppDb,
   organizationId: string,
   scanIds: string[],
+  viewerUserId?: string | null,
 ): Promise<Map<string, ScanApprovalCounts>> {
   const counts = new Map<string, ScanApprovalCounts>();
   if (!scanIds.length) return counts;
   // A full review page is 100 scans and D1 caps a statement at 100 bound
   // parameters, so the id list has to be chunked (two slots reserved for the
-  // organization id in the outer filter and membership predicate) or the
-  // busiest page of the queue throws.
-  for (const chunk of chunkForD1([...new Set(scanIds)], 1, 2)) {
+  // organization id in the outer filter and membership predicate, plus one
+  // when resolving the viewer's vote) or the busiest page of the queue throws.
+  for (const chunk of chunkForD1([...new Set(scanIds)], 1, viewerUserId ? 3 : 2)) {
     const rows = await db
       .select({
         scanId: scanApprovals.scanId,
@@ -545,6 +547,9 @@ export async function countScanApprovals(
         eligibleTotal: sql<number>`sum(case when ${approvalVoterIsCurrentMember(
           organizationId,
         )} then 1 else 0 end)`,
+        viewerTotal: viewerUserId
+          ? sql<number>`sum(case when ${scanApprovals.userId} = ${viewerUserId} then 1 else 0 end)`
+          : sql<number>`0`,
       })
       .from(scanApprovals)
       .where(
@@ -557,6 +562,7 @@ export async function countScanApprovals(
         blocked: 0,
         eligibleApproved: 0,
         eligibleBlocked: 0,
+        viewerDecision: null,
       };
       if (row.decision === "no_publish") {
         entry.blocked += Number(row.total);
@@ -564,6 +570,9 @@ export async function countScanApprovals(
       } else {
         entry.approved += Number(row.total);
         entry.eligibleApproved += Number(row.eligibleTotal);
+      }
+      if (Number(row.viewerTotal) > 0) {
+        entry.viewerDecision = row.decision === "no_publish" ? "no_publish" : "publish";
       }
       counts.set(row.scanId, entry);
     }
@@ -581,6 +590,8 @@ export interface BuildScanApprovalStateInput {
     decisionReason: string | null;
     decidedByUserId: string | null;
     decidedAt: Date | number | string | null;
+    source?: string | null;
+    gateId?: string | null;
   };
 }
 
@@ -657,12 +668,34 @@ export async function loadScanApprovalState(
     policy?: OrganizationApprovalPolicy;
   },
 ): Promise<ScanApprovalState> {
-  const [votes, policy] = await Promise.all([
+  const [votes, livePolicy, completedGate] = await Promise.all([
     listScanApprovalVotes(db, input.scanId, input.organizationId),
     input.policy
       ? Promise.resolve(input.policy)
       : getOrganizationApprovalPolicy(db, input.organizationId),
+    input.scan.source === "workflow_gate" && input.scan.gateId
+      ? db
+          .select({
+            status: githubWorkflowGates.status,
+            required: githubWorkflowGates.requiredReleaseApprovals,
+          })
+          .from(githubWorkflowGates)
+          .where(
+            and(
+              eq(githubWorkflowGates.id, input.scan.gateId),
+              eq(githubWorkflowGates.organizationId, input.organizationId),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+      : Promise.resolve(null),
   ]);
+  // Completed gates are historical release records. Rows completed before the
+  // snapshot column existed used the only policy available then: one approval.
+  const policy =
+    completedGate && completedGate.status !== "pending"
+      ? { ...livePolicy, required: completedGate.required ?? 1 }
+      : livePolicy;
   return buildScanApprovalState({
     votes,
     policy,
@@ -687,6 +720,8 @@ export interface UpsertScanApprovalInput {
   hardenOnly?: boolean;
   /** Gate votes may only be written while this organization-scoped gate is pending. */
   pendingGateId?: string;
+  /** Generation observed before the gate decision request performed step-up. */
+  pendingGateUpdatedAt?: Date;
 }
 
 export type UpsertScanApprovalOutcome =
@@ -736,6 +771,7 @@ export async function upsertScanApproval(
               where ${githubWorkflowGates.id} = ${input.pendingGateId}
                 and ${githubWorkflowGates.organizationId} = ${input.organizationId}
                 and ${githubWorkflowGates.status} = 'pending'
+                ${input.pendingGateUpdatedAt ? sql`and ${githubWorkflowGates.updatedAt} = ${input.pendingGateUpdatedAt.getTime()}` : sql``}
             )`
           : undefined,
       ),
@@ -781,6 +817,9 @@ export async function upsertScanApproval(
           eq(githubWorkflowGates.id, input.pendingGateId),
           eq(githubWorkflowGates.organizationId, input.organizationId),
           eq(githubWorkflowGates.status, "pending"),
+          input.pendingGateUpdatedAt
+            ? eq(githubWorkflowGates.updatedAt, input.pendingGateUpdatedAt)
+            : undefined,
         ),
       )
       .limit(1);

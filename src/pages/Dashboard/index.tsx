@@ -799,7 +799,7 @@ function quickDecisionApprovals(
     verdict,
     legacyDecision: scan.legacyDecision,
     approvals: [],
-    viewerDecision: null,
+    viewerDecision: scan.viewerDecision ?? null,
     eligibleApproverCount: null,
   };
 }

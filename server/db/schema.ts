@@ -532,6 +532,10 @@ export const githubWorkflowGates = sqliteTable(
     decision: text("decision"),
     decisionComment: text("decision_comment"),
     reportUrl: text("report_url"),
+    // Snapshot the approval bar when the gate leaves `pending`. Organization
+    // policy keeps evolving, but a completed gate must keep describing the
+    // quorum that actually released or blocked its deployment.
+    requiredReleaseApprovals: integer("required_release_approvals"),
     // Representative (highest-risk) package scan for the gate. The full set of
     // per-package scans is found via `scans.gate_id = github_workflow_gates.id`.
     scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),

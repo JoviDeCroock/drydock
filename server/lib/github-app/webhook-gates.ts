@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubWorkflowGates, scanApprovals, scans } from "../../db/schema";
+import { githubWorkflowGates, organizations, scanApprovals, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -23,6 +23,8 @@ export interface WorkflowGateRecord {
   decision: "approved" | "rejected" | null;
   decisionComment: string | null;
   reportUrl: string | null;
+  /** Approval bar captured when this gate left `pending`; null on legacy rows. */
+  requiredReleaseApprovals: number | null;
   // Representative (highest-risk) package scan. A monorepo gate fans out into
   // several per-package scans (`scans.gate_id = this.id`); this points at the
   // one surfaced as the gate's headline.
@@ -270,7 +272,10 @@ export async function resetGateReviewForRetry(
       scanId: null,
       reviewStartedAt: null,
       failureReason: null,
-      updatedAt: now,
+      // `updatedAt` is also the review generation observed by decision
+      // requests. Guarantee that a reset advances it even if both operations
+      // happen within the same millisecond.
+      updatedAt: sql`max(${githubWorkflowGates.updatedAt} + 1, ${now.getTime()})`,
     })
     .where(
       and(
@@ -355,6 +360,11 @@ export async function markGateDecided(
       decision: input.decision,
       decisionComment: input.comment,
       reportUrl: input.reportUrl ?? null,
+      requiredReleaseApprovals: sql<number>`(
+        select ${organizations.requiredReleaseApprovals}
+        from ${organizations}
+        where ${organizations.id} = ${githubWorkflowGates.organizationId}
+      )`,
       decidedAt: now,
       updatedAt: now,
     })
@@ -371,6 +381,7 @@ export async function markGateDecided(
 
 interface DecideGateWithPackageAggregateInput extends DecideGateInput {
   organizationId: string;
+  requiredApprovals: number;
 }
 
 /**
@@ -413,6 +424,7 @@ export async function markGateDecidedForPackageAggregate(
       decision: input.decision,
       decisionComment: input.comment,
       reportUrl: input.reportUrl ?? null,
+      requiredReleaseApprovals: input.requiredApprovals,
       decidedAt: now,
       updatedAt: now,
     })
@@ -472,6 +484,7 @@ function readGateRow(row: {
   decision: string | null;
   decisionComment: string | null;
   reportUrl: string | null;
+  requiredReleaseApprovals: number | null;
   scanId: string | null;
   reviewStartedAt: Date | string | number | null;
   failureReason: string | null;
@@ -497,6 +510,7 @@ function readGateRow(row: {
     decision: normalizeGateDecision(row.decision),
     decisionComment: row.decisionComment,
     reportUrl: row.reportUrl,
+    requiredReleaseApprovals: row.requiredReleaseApprovals,
     scanId: row.scanId,
     reviewStartedAt: row.reviewStartedAt ? new Date(row.reviewStartedAt) : null,
     failureReason: row.failureReason,

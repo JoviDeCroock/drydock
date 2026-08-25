@@ -721,13 +721,22 @@ describe("multi-party release approval", () => {
     await waitOnExecutionContext(ctx);
     const body = (await res.json()) as {
       requiredApprovals: number;
-      scans: Array<{ id: string; decision: string | null; approvalCount: number }>;
+      scans: Array<{
+        id: string;
+        decision: string | null;
+        approvalCount: number;
+        viewerDecision: string | null;
+      }>;
     };
 
     expect(body.requiredApprovals).toBe(2);
     const row = body.scans.find((entry) => entry.id === scanId);
     // Still in the undecided queue — which is exactly where the second
     // approver needs to find it.
-    expect(row).toMatchObject({ decision: null, approvalCount: 1 });
+    expect(row).toMatchObject({
+      decision: null,
+      approvalCount: 1,
+      viewerDecision: "publish",
+    });
   });
 });

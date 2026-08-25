@@ -300,20 +300,26 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
     requested,
     policy.required,
   );
+  let policyChangedByThisRequest = reconciliation.applied;
   if (!reconciliation.applied) {
     const currentPolicy = await getOrganizationApprovalPolicy(db, organizationId);
-    // A concurrent identical request already achieved this state and owns its
-    // gate finalization/audit work. A different state must be re-submitted so
-    // its live direction (and therefore TOTP requirement) is evaluated again.
-    if (currentPolicy.required === requested) return c.json({ requiredApprovals: requested });
-    return c.json(
-      {
-        error: "the release approval policy changed while this request was being applied",
-        code: "approval_policy_changed",
-        requiredApprovals: currentPolicy.required,
-      },
-      409,
-    );
+    if (currentPolicy.required !== requested) {
+      // A different state must be re-submitted so its live direction (and
+      // therefore TOTP requirement) is evaluated again.
+      return c.json(
+        {
+          error: "the release approval policy changed while this request was being applied",
+          code: "approval_policy_changed",
+          requiredApprovals: currentPolicy.required,
+        },
+        409,
+      );
+    }
+    // A concurrent identical request committed the policy transaction, but it
+    // may have been interrupted before finalizing a now-ready gate. Continue
+    // through the idempotent CAS work below; only the policy audit belongs to
+    // the request whose conditional write actually succeeded.
+    policyChangedByThisRequest = false;
   }
   purgeReconciledPublicFeedCaches(
     optionalWorkerExecutionContext(c),
@@ -330,6 +336,7 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
       decision: "approved",
       comment: buildHumanDecisionComment("approved", reportUrl),
       reportUrl,
+      requiredApprovals: requested,
     });
     if (!decided) continue;
 
@@ -409,25 +416,27 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
   // bookkeeping must not strand a gate whose packages were reconciled to
   // approved, so contain it after every ready gate has been finalized and
   // scheduled for delivery.
-  try {
-    await recordScanEvent(db, {
-      organizationId,
-      actorUserId: session.userId,
-      type: "organization.release_approvals_changed",
-      metadata: {
+  if (policyChangedByThisRequest) {
+    try {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "organization.release_approvals_changed",
+        metadata: {
+          requiredApprovals: requested,
+          previousRequiredApprovals: policy.required,
+          twoFactor: twoFactorVerified,
+          twoFactorMethod: twoFactorVerified ? "totp" : null,
+        },
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "organization.release_approvals_bookkeeping_failed", {
+        organizationId,
         requiredApprovals: requested,
         previousRequiredApprovals: policy.required,
-        twoFactor: twoFactorVerified,
-        twoFactorMethod: twoFactorVerified ? "totp" : null,
-      },
-    });
-  } catch (err) {
-    emitOperationalEvent("warn", "organization.release_approvals_bookkeeping_failed", {
-      organizationId,
-      requiredApprovals: requested,
-      previousRequiredApprovals: policy.required,
-      error: describeOperationalError(err),
-    });
+        error: describeOperationalError(err),
+      });
+    }
   }
   return c.json({ requiredApprovals: requested });
 });

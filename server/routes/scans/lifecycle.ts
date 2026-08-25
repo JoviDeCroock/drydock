@@ -239,6 +239,7 @@ const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
 
 scanLifecycleRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
+  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
   const rawFilter = c.req.query("filter");
@@ -255,7 +256,12 @@ scanLifecycleRoutes.get("/", async (c) => {
 
   const cursor = parseListScansCursor(c.req.query("cursor"));
 
-  const result = await listScans(db, organizationId, { cursor, limit, decisionFilter });
+  const result = await listScans(db, organizationId, {
+    cursor,
+    limit,
+    decisionFilter,
+    viewerUserId: session.userId,
+  });
   return c.json({
     scans: result.scans,
     nextCursor: encodeListScansCursor(result.nextCursor),

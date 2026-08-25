@@ -8,6 +8,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { upsertScanApproval } from "../../server/db/scan-approvals";
 import {
   createScanJob,
+  loadScanApprovalState,
   markScanFailed,
   setRequiredReleaseApprovals,
 } from "../../server/db/scans";
@@ -23,7 +24,10 @@ import {
   resolveDeploymentProtectionTarget,
   upsertInstallation,
 } from "../../server/lib/github-app/persistence";
-import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
+import {
+  getGateForOrganization,
+  resetGateReviewForRetry,
+} from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -869,6 +873,40 @@ describe("github-app workflow-gate decision route", () => {
     ).toHaveLength(0);
   });
 
+  test("does not persist a vote after a retry advances the gate generation", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await markScanFailed(db, scanId!, organizationId, {
+      code: "review_failed",
+      message: "review failed",
+    });
+    const observed = await getGateForOrganization(db, organizationId, gateId);
+    expect(observed).not.toBeNull();
+
+    expect(await resetGateReviewForRetry(db, { gateId, organizationId })).toBe(true);
+    const retried = await getGateForOrganization(db, organizationId, gateId);
+    expect(retried!.updatedAt.getTime()).toBeGreaterThan(observed!.updatedAt.getTime());
+    const outcome = await upsertScanApproval(db, {
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "publish",
+      reason: null,
+      now: new Date(),
+      hardenOnly: true,
+      pendingGateId: gateId,
+      pendingGateUpdatedAt: observed!.updatedAt,
+    });
+
+    expect(outcome).toBe("not_actionable");
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId!)),
+    ).toHaveLength(0);
+  });
+
   test("rejects a decision that is not approved/rejected", async () => {
     const { userId, organizationId } = await seedUser();
     const { gateId } = await seedGate(organizationId);
@@ -1311,6 +1349,81 @@ describe("github-app workflow-gate decision route", () => {
     expect(release.status).toBe(200);
     expect(await release.json()).toMatchObject({ gate: { status: "approved" } });
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+  });
+
+  test("completed gates keep the approval bar that released them", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in gate policy snapshot test: ${request.url}`);
+    });
+
+    await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    const released = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(released.status).toBe(200);
+    expect(
+      (await getGateForOrganization(db, organizationId, gateId))?.requiredReleaseApprovals,
+    ).toBe(2);
+
+    await setRequiredReleaseApprovals(db, organizationId, 1);
+    const readback = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
+    );
+    expect(await readback.json()).toMatchObject({ gate: { requiredApprovals: 2 } });
+
+    const [scan] = await db
+      .select({
+        decision: schema.scans.decision,
+        decisionReason: schema.scans.decisionReason,
+        decidedByUserId: schema.scans.decidedByUserId,
+        decidedAt: schema.scans.decidedAt,
+        source: schema.scans.source,
+        gateId: schema.scans.gateId,
+      })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    const approvals = await loadScanApprovalState(db, {
+      scanId: scanId!,
+      organizationId,
+      viewerUserId: userId,
+      scan,
+    });
+    expect(approvals.required).toBe(2);
   });
 
   test("removing an approver reopens an approved package while its gate is still pending", async () => {

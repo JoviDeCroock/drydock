@@ -65,7 +65,7 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
     db,
     organizationId,
   );
-  const view = await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor);
+  const view = await gateViewPolicy(db, organizationId, gate, packages, orgRequiresTwoFactor);
   return c.json({ gate: publicWorkflowGate(gate, packages, view) });
 });
 
@@ -160,7 +160,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         gate: publicWorkflowGate(
           existing,
           packages,
-          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+          await gateViewPolicy(db, organizationId, existing, packages, orgRequiresTwoFactor),
         ),
         error: "approval requires a completed workflow-gate review batch",
       },
@@ -231,6 +231,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       scanId: packageScanId,
       organizationId,
       gateId,
+      gateUpdatedAt: existing.updatedAt,
       actorUserId: session.userId,
       decision: decision === "approved" ? "publish" : "no_publish",
       reason: comment || null,
@@ -264,7 +265,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
           ? publicWorkflowGate(
               currentGate,
               packages,
-              await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+              await gateViewPolicy(db, organizationId, currentGate, packages, orgRequiresTwoFactor),
             )
           : null,
         error:
@@ -321,7 +322,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
       gate: publicWorkflowGate(
         currentGate,
         packages,
-        await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+        await gateViewPolicy(db, organizationId, currentGate, packages, orgRequiresTwoFactor),
       ),
       approvals: recorded.outcome === "recorded" ? recorded.approvals : undefined,
     });
@@ -332,7 +333,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         gate: publicWorkflowGate(
           currentGate,
           packages,
-          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+          await gateViewPolicy(db, organizationId, currentGate, packages, orgRequiresTwoFactor),
         ),
         error: "approval requires a completed workflow-gate review batch",
       },
@@ -363,12 +364,17 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const gateDecisionActorUserId = recoveredRejection
     ? recoveredRejection.decidedByUserId
     : session.userId;
+  const requiredApprovals =
+    recorded.outcome === "recorded"
+      ? recorded.approvals.required
+      : (await getOrganizationApprovalPolicy(db, organizationId)).required;
   const decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
     organizationId,
     decision: gateDecision,
     comment: gateDecisionComment,
     reportUrl,
+    requiredApprovals,
   });
   if (!decided) {
     // Lost a race to a concurrent finalize or a fail-closed artifact reject.
@@ -379,7 +385,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
           ? publicWorkflowGate(
               current,
               packages,
-              await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+              await gateViewPolicy(db, organizationId, current, packages, orgRequiresTwoFactor),
             )
           : null,
         error: "gate has already been decided",
@@ -437,7 +443,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     gate: publicWorkflowGate(
       decided,
       packages,
-      await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+      await gateViewPolicy(db, organizationId, decided, packages, orgRequiresTwoFactor),
     ),
     approvals: recorded.outcome === "recorded" ? recorded.approvals : undefined,
   });
@@ -482,7 +488,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
         gate: publicWorkflowGate(
           existing,
           packages,
-          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+          await gateViewPolicy(db, organizationId, existing, packages, orgRequiresTwoFactor),
         ),
         error: "gate review is not retryable",
       },
@@ -507,7 +513,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
       gate: publicWorkflowGate(
         gate ?? existing,
         packages,
-        await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+        await gateViewPolicy(db, organizationId, gate ?? existing, packages, orgRequiresTwoFactor),
       ),
       queued: Boolean(c.env.SCAN_QUEUE),
     },
@@ -550,17 +556,24 @@ async function runWorkflowGateJob(
 /**
  * The policy half of a gate response: the org's two-factor requirement, its
  * approval bar, and how many approvals each package has actually collected.
- * Loaded per response so a reviewer refreshing mid-quorum sees the current
- * count rather than the one their own submit returned.
+ * Approval counts are loaded per response so a reviewer refreshing mid-quorum
+ * sees the current roster. Pending gates use live policy; completed gates keep
+ * the threshold captured by their decision.
  */
 async function gateViewPolicy(
   db: AppDb,
   organizationId: string,
+  gate: WorkflowGateRecord,
   packages: GatePackageScan[],
   organizationRequiresTwoFactor: boolean,
 ): Promise<GateViewPolicy> {
   const [policy, approvalCounts] = await Promise.all([
-    getOrganizationApprovalPolicy(db, organizationId),
+    gate.status === "pending"
+      ? getOrganizationApprovalPolicy(db, organizationId)
+      : Promise.resolve({
+          required: gate.requiredReleaseApprovals ?? 1,
+          memberCount: 0,
+        }),
     countScanApprovals(
       db,
       organizationId,
