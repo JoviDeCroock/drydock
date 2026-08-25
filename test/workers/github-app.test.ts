@@ -1695,6 +1695,89 @@ describe("github-app workflow-gate decision route", () => {
     });
   });
 
+  test("a later package rejection preserves the first durable blocker's attribution", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "first-pkg",
+    });
+    const secondScanId = await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "second-pkg",
+      version: "2.0.0",
+    });
+
+    const firstBlockAt = new Date("2020-02-03T04:05:06.000Z");
+    await db.insert(schema.scanApprovals).values({
+      id: crypto.randomUUID(),
+      scanId: scanId!,
+      organizationId,
+      userId,
+      decision: "no_publish",
+      reason: "first durable blocker",
+      createdAt: firstBlockAt,
+      updatedAt: firstBlockAt,
+    });
+    // Simulate interruption after the first vote but before its package
+    // projection and the aggregate gate CAS. A later rejection is recovery
+    // work, not the cause of the already-durable aggregate block.
+
+    const decisionCalls: Array<{ state: string; comment?: string }> = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string; comment?: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in multi-block recovery test: ${request.url}`);
+    });
+
+    const recovered = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: secondScanId, comment: "second blocker" },
+    );
+
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({
+      gate: { status: "rejected", decisionComment: "first durable blocker" },
+    });
+    expect(decisionCalls).toEqual([
+      expect.objectContaining({ state: "rejected", comment: "first durable blocker" }),
+    ]);
+    const [gateEvent] = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId!),
+          eq(schema.scanEvents.type, "github_workflow_gate.rejected"),
+        ),
+      );
+    expect(gateEvent).toMatchObject({
+      actorUserId: userId,
+      metadata: expect.objectContaining({ recoveredByUserId: second.userId }),
+    });
+  });
+
   test("lowering the approval bar releases a gate whose existing votes now meet it", async () => {
     const { userId, organizationId } = await seedUser();
     const db = createDb(env.DB);
