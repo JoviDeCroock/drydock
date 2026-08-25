@@ -105,23 +105,32 @@ export async function finalizeReconciledWorkflowGateDecision(
   const gate = await getGateForOrganization(db, input.organizationId, input.gateId);
   if (!gate) return null;
   const reportUrl = buildReportUrl(env, gate.scanId);
-  const blockingVote =
-    input.decision === "rejected"
-      ? await getGateFirstBlockingVote(db, input.organizationId, input.gateId)
-      : null;
-  const decisionComment =
-    blockingVote?.decisionReason || buildHumanDecisionComment(input.decision, reportUrl);
-  const decisionActorUserId = blockingVote
-    ? blockingVote.decidedByUserId
-    : input.reconciledByUserId;
-  const decided = await markGateDecidedForPackageAggregate(db, {
-    gateId: input.gateId,
-    organizationId: input.organizationId,
-    decision: input.decision,
-    comment: decisionComment,
-    reportUrl,
-  });
-  if (!decided) return null;
+  const attempt = async (decision: "approved" | "rejected") => {
+    const blockingVote =
+      decision === "rejected"
+        ? await getGateFirstBlockingVote(db, input.organizationId, input.gateId)
+        : null;
+    const comment = blockingVote?.decisionReason || buildHumanDecisionComment(decision, reportUrl);
+    const actorUserId = blockingVote ? blockingVote.decidedByUserId : input.reconciledByUserId;
+    const decided = await markGateDecidedForPackageAggregate(db, {
+      gateId: input.gateId,
+      organizationId: input.organizationId,
+      decision,
+      comment,
+      reportUrl,
+    });
+    return { blockingVote, actorUserId, decided, decision };
+  };
+
+  let result = await attempt(input.decision);
+  if (!result.decided && input.decision === "approved") {
+    // A sibling package may already carry a durable block, or land one between
+    // reconciliation and the aggregate CAS. Prefer that fail-closed verdict
+    // instead of leaving GitHub pending until another request repairs it.
+    result = await attempt("rejected");
+  }
+  if (!result.decided) return null;
+  const { actorUserId: decisionActorUserId, blockingVote, decided, decision } = result;
 
   const message: WorkflowGateQueueMessage = {
     kind: "workflow_gate",
@@ -137,9 +146,7 @@ export async function finalizeReconciledWorkflowGateDecision(
       actorUserId: decisionActorUserId,
       scanId: decided.scanId,
       type:
-        input.decision === "approved"
-          ? "github_workflow_gate.approved"
-          : "github_workflow_gate.rejected",
+        decision === "approved" ? "github_workflow_gate.approved" : "github_workflow_gate.rejected",
       metadata: {
         gateId: input.gateId,
         decidedBy: blockingVote ? "human" : input.trigger,
@@ -153,14 +160,14 @@ export async function finalizeReconciledWorkflowGateDecision(
       name: "workflow_gate.decided",
       organizationId: input.organizationId,
       surface: "human",
-      decision: input.decision,
+      decision,
       packageCount: packages.length,
     });
   } catch (err) {
     emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
       organizationId: input.organizationId,
       gateId: input.gateId,
-      decision: input.decision,
+      decision,
       trigger: input.trigger,
       error: describeOperationalError(err),
     });
