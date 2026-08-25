@@ -1,6 +1,12 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubWorkflowGates, organizations, scanApprovals, scans } from "../../db/schema";
+import {
+  githubWorkflowGates,
+  organizationMembers,
+  organizations,
+  scanApprovals,
+  scans,
+} from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -432,6 +438,34 @@ export async function markGateDecidedForPackageAggregate(
   input: DecideGateWithPackageAggregateInput,
 ): Promise<WorkflowGateRecord | null> {
   const now = new Date();
+  const currentRequiredApprovals = sql`(
+    select ${organizations.requiredReleaseApprovals}
+    from ${organizations}
+    where ${organizations.id} = ${input.organizationId}
+  )`;
+  const packageHasVotes = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+  )`;
+  const packageHasBlock = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'no_publish'
+  )`;
+  const packageEligibleApprovalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    inner join ${organizationMembers}
+      on ${organizationMembers.organizationId} = ${input.organizationId}
+      and ${organizationMembers.userId} = ${scanApprovals.userId}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'publish'
+  )`;
   const packageDecisionCondition =
     input.decision === "approved"
       ? sql`exists (
@@ -445,7 +479,15 @@ export async function markGateDecidedForPackageAggregate(
           from ${scans}
           where ${scans.gateId} = ${input.gateId}
             and ${scans.organizationId} = ${input.organizationId}
-            and (${scans.decision} is null or ${scans.decision} <> 'publish')
+            and (
+              ${scans.decision} is null
+              or ${scans.decision} <> 'publish'
+              or ${packageHasBlock}
+              or (
+                (${currentRequiredApprovals} > 1 or ${packageHasVotes})
+                and ${packageEligibleApprovalCount} < ${currentRequiredApprovals}
+              )
+            )
         )`
       : sql`exists (
           select 1

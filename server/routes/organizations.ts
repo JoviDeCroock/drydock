@@ -395,7 +395,10 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
     try {
       await recordScanEvent(db, {
         organizationId,
-        actorUserId: session.userId,
+        // The vote that became decisive owns the release verdict. The owner
+        // changing policy is the reconciliation trigger, recorded separately
+        // here and by organization.release_approvals_changed.
+        actorUserId: scan.decidedByUserId,
         scanId: scan.id,
         type: "scan.decided",
         metadata: {
@@ -404,6 +407,7 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
           approvedCount: scan.approvalCount,
           requiredApprovals: requested,
           trigger: "approval_policy",
+          reconciledByUserId: session.userId,
           decisionAt: scan.decidedAt?.toISOString() ?? null,
         },
       });
