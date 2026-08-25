@@ -50,16 +50,13 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
   const background = isRecord(raw.background) ? raw.background : {};
   const declaredBackgroundPage =
     typeof background.page === "string"
-      ? (manifestResourcePaths([background.page], { trimLeadingSlash: true })[0] ?? null)
+      ? (manifestResourcePaths([background.page])[0] ?? null)
       : null;
-  const declaredBackgroundEntrypoints = manifestResourcePaths(
-    [
-      ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
-      ...stringList(background.scripts),
-      ...(typeof background.page === "string" ? [background.page] : []),
-    ],
-    { trimLeadingSlash: true },
-  );
+  const declaredBackgroundEntrypoints = manifestResourcePaths([
+    ...(typeof background.service_worker === "string" ? [background.service_worker] : []),
+    ...stringList(background.scripts),
+    ...(typeof background.page === "string" ? [background.page] : []),
+  ]);
   const backgroundEntrypoints = backgroundConsumerEntrypoints(
     files,
     declaredBackgroundEntrypoints,
@@ -93,9 +90,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       hostPermissions: stringList(raw.host_permissions),
       optionalHostPermissions: stringList(raw.optional_host_permissions),
       contentScriptMatches: nestedStringList(raw.content_scripts, "matches"),
-      contentScriptEntrypoints: manifestResourcePaths(nestedStringList(raw.content_scripts, "js"), {
-        trimLeadingSlash: true,
-      }),
+      contentScriptEntrypoints: manifestResourcePaths(nestedStringList(raw.content_scripts, "js")),
       userScriptEntrypoints,
       externallyConnectableMatches: isRecord(raw.externally_connectable)
         ? stringList(raw.externally_connectable.matches)
@@ -284,32 +279,26 @@ function nestedStringList(value: unknown, key: string): string[] {
   return value.flatMap((item) => (isRecord(item) ? stringList(item[key]) : []));
 }
 
-function manifestResourcePaths(
-  paths: Array<string | null>,
-  options: { trimLeadingSlash?: boolean } = {},
-): string[] {
+function manifestResourcePaths(paths: Array<string | null>): string[] {
   return paths.flatMap((path) => {
     if (path === null) return [];
-    const normalized = options.trimLeadingSlash && path.startsWith("/") ? path.slice(1) : path;
-    return isSafeManifestPath(normalized) ? [normalized] : [];
+    const resolved = resolveExtensionRootResourcePath(path);
+    return resolved === null ? [] : [resolved];
   });
 }
 
 function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
-  return manifestResourcePaths(
-    [
-      manifestRecordString(raw.action, "default_popup"),
-      manifestRecordString(raw.browser_action, "default_popup"),
-      manifestRecordString(raw.page_action, "default_popup"),
-      manifestRecordString(raw.options_ui, "page"),
-      manifestRecordString(raw.side_panel, "default_path"),
-      manifestRecordString(raw.sidebar_action, "default_panel"),
-      typeof raw.options_page === "string" ? raw.options_page : null,
-      typeof raw.devtools_page === "string" ? raw.devtools_page : null,
-      ...manifestRecordStrings(raw.chrome_url_overrides),
-    ],
-    { trimLeadingSlash: true },
-  );
+  return manifestResourcePaths([
+    manifestRecordString(raw.action, "default_popup"),
+    manifestRecordString(raw.browser_action, "default_popup"),
+    manifestRecordString(raw.page_action, "default_popup"),
+    manifestRecordString(raw.options_ui, "page"),
+    manifestRecordString(raw.side_panel, "default_path"),
+    manifestRecordString(raw.sidebar_action, "default_panel"),
+    typeof raw.options_page === "string" ? raw.options_page : null,
+    typeof raw.devtools_page === "string" ? raw.devtools_page : null,
+    ...manifestRecordStrings(raw.chrome_url_overrides),
+  ]);
 }
 
 function manifestRecordString(value: unknown, key: string): string | null {
@@ -383,31 +372,40 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   const entrypoints = new Set(pagePaths);
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const inspectedPages = new Set<string>();
-  const pageQueue = [...pagePaths];
+  const pageQueue: Array<{ pagePath: string; inlineHtml?: string }> = pagePaths.map((pagePath) => ({
+    pagePath,
+  }));
   while (pageQueue.length) {
-    const pagePath = pageQueue.pop();
-    if (!pagePath || inspectedPages.has(pagePath)) continue;
-    inspectedPages.add(pagePath);
-    const page = filesByPath.get(pagePath);
-    if (!page?.textSample) continue;
-    for (const { kind, source, baseHref } of htmlConsumerSources(page.textSample)) {
+    const queuedPage = pageQueue.pop();
+    if (!queuedPage) continue;
+    const { pagePath, inlineHtml } = queuedPage;
+    if (inlineHtml === undefined) {
+      if (inspectedPages.has(pagePath)) continue;
+      inspectedPages.add(pagePath);
+    }
+    const html = inlineHtml ?? filesByPath.get(pagePath)?.textSample;
+    if (!html) continue;
+    for (const consumer of htmlConsumerSources(html)) {
+      if (consumer.kind === "inline-page") {
+        pageQueue.push({ pagePath, inlineHtml: consumer.html });
+        continue;
+      }
+      const { kind, source, baseHref } = consumer;
       const path = resolveExtensionResourcePath(pagePath, source, baseHref);
       if (!path) continue;
       entrypoints.add(path);
-      if (kind === "page" && !inspectedPages.has(path)) pageQueue.push(path);
+      if (kind === "page" && !inspectedPages.has(path)) pageQueue.push({ pagePath: path });
     }
   }
   return [...entrypoints];
 }
 
-function htmlConsumerSources(
-  html: string,
-): Array<{ kind: "script" | "page"; source: string; baseHref: string | null }> {
-  const sources: Array<{
-    kind: "script" | "page";
-    source: string;
-    baseHref: string | null;
-  }> = [];
+type HtmlConsumerSource =
+  | { kind: "script" | "page"; source: string; baseHref: string | null }
+  | { kind: "inline-page"; html: string };
+
+function htmlConsumerSources(html: string): HtmlConsumerSource[] {
+  const sources: HtmlConsumerSource[] = [];
   const closingScriptPattern = /<\/script(?=[\s/>])/gi;
   let baseHref: string | null = null;
   let baseSeen = false;
@@ -436,6 +434,8 @@ function htmlConsumerSources(
     const targetAttribute = tagName === "base" ? "href" : "src";
     let targetValue: string | null = null;
     let targetSeen = false;
+    let srcdocValue: string | null = null;
+    let srcdocSeen = false;
     let tagClosed = false;
     while (cursor < html.length) {
       while (/\s/.test(html[cursor] ?? "")) cursor += 1;
@@ -482,10 +482,16 @@ function htmlConsumerSources(
         targetSeen = true;
         targetValue = value;
       }
+      if (tagName === "iframe" && attributeName === "srcdoc" && !srcdocSeen) {
+        srcdocSeen = true;
+        srcdocValue = value;
+      }
     }
     if (tagClosed && tagName === "base" && targetSeen && !baseSeen) {
       baseHref = decodeHTMLAttribute(targetValue ?? "");
       baseSeen = true;
+    } else if (tagClosed && tagName === "iframe" && srcdocSeen) {
+      sources.push({ kind: "inline-page", html: decodeHTMLAttribute(srcdocValue ?? "") });
     } else if (tagClosed && (tagName === "script" || tagName === "iframe") && targetValue) {
       sources.push({
         kind: tagName === "iframe" ? "page" : "script",
@@ -512,6 +518,24 @@ function htmlConsumerSources(
 }
 
 const EXTENSION_RESOURCE_ROOT = new URL("drydock-extension://artifact/");
+
+function resolveExtensionRootResourcePath(rawPath: string): string | null {
+  const source = rawPath.trim();
+  if (!source || source.includes("\\")) return null;
+  try {
+    const resolved = new URL(source, EXTENSION_RESOURCE_ROOT);
+    if (
+      resolved.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
+      resolved.host !== EXTENSION_RESOURCE_ROOT.host
+    ) {
+      return null;
+    }
+    const path = decodeUrlPathForArchiveLookup(resolved.pathname.replace(/^\/+/, ""));
+    return isSafeManifestPath(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
 
 function resolveExtensionResourcePath(
   pagePath: string,

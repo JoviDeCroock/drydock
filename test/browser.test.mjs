@@ -302,6 +302,43 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("normalizes manifest-relative dot segments before reachability analysis", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({
+      background: { service_worker: "./scripts/background.js" },
+      content_scripts: [{ matches: ["https://example.invalid/*"], js: ["./tests/content.js"] }],
+      action: { default_popup: "./tests/popup.html" },
+    });
+    const parsed = parseBrowserExtensionManifest([manifestRecord]).manifest;
+    expect(parsed.backgroundEntrypoints).toContain("scripts/background.js");
+    expect(parsed.contentScriptEntrypoints).toEqual(["tests/content.js"]);
+    expect(parsed.extensionPageEntrypoints).toContain("tests/popup.html");
+
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestRecord,
+          {
+            path: "tests/content.js",
+            size: 14,
+            sha256: "48".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/content.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("follows a root-relative background module and its root-relative import", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -738,6 +775,44 @@ describe("browser extension review adapter", () => {
     const parsed = parseBrowserExtensionManifest(files).manifest;
     expect(parsed.extensionPageEntrypoints).toEqual(
       expect.arrayContaining(["popup.html", "tests/frame.html", "tests/payload.js"]),
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows packaged scripts loaded by an iframe srcdoc", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 88,
+        sha256: "7d".repeat(32),
+        flags: [],
+        textSample:
+          '<iframe srcdoc="&lt;script src=&quot;/tests/payload.js&quot;&gt;&lt;/script&gt;"></iframe>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "7e".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "tests/payload.js"]),
     );
     const review = createBrowserExtensionReview({
       manifest,

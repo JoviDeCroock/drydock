@@ -288,15 +288,18 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   }
   if (rootRelativeModuleImports) {
     specifiers.push(...staticWebExtensionScriptSpecifiers(text));
+    specifiers.push(...staticWorkerScriptSpecifiers(text));
   }
   return specifiers;
 }
 
 type WebExtensionScriptProperty = "file" | "files" | "js";
+type WebExtensionScriptValueShape = "string" | "string-array" | "file-object-array";
 
 interface WebExtensionScriptCall {
   openIndex: number;
   property: WebExtensionScriptProperty;
+  valueShape: WebExtensionScriptValueShape;
 }
 
 // WebExtension APIs can make packaged scripts executable without a manifest or
@@ -315,7 +318,14 @@ function staticWebExtensionScriptSpecifiers(text: string): string[] {
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
     if (closeIndex === null) continue;
     specifiers.push(
-      ...staticPropertyScriptPaths(tokens, text, call.openIndex + 1, closeIndex, call.property),
+      ...staticPropertyScriptPaths(
+        tokens,
+        text,
+        call.openIndex + 1,
+        closeIndex,
+        call.property,
+        call.valueShape,
+      ),
     );
     index = closeIndex;
   }
@@ -338,20 +348,39 @@ function webExtensionScriptCall(
   }
 
   const namespace = tokenText(tokens[index], text);
-  if (namespace !== "tabs" && namespace !== "scripting") return null;
+  if (
+    namespace !== "tabs" &&
+    namespace !== "scripting" &&
+    namespace !== "contentScripts" &&
+    namespace !== "userScripts"
+  ) {
+    return null;
+  }
   if (!isMemberSeparator(tokenText(tokens[index + 1], text))) return null;
 
   const method = tokenText(tokens[index + 2], text);
   const openIndex = index + 3;
   if (tokenText(tokens[openIndex], text) !== "(") return null;
   if (namespace === "tabs" && method === "executeScript") {
-    return { openIndex, property: "file" };
+    return { openIndex, property: "file", valueShape: "string" };
   }
   if (namespace === "scripting" && method === "executeScript") {
-    return { openIndex, property: "files" };
+    return { openIndex, property: "files", valueShape: "string-array" };
   }
-  if (namespace === "scripting" && method === "registerContentScripts") {
-    return { openIndex, property: "js" };
+  if (
+    namespace === "scripting" &&
+    (method === "registerContentScripts" || method === "updateContentScripts")
+  ) {
+    return { openIndex, property: "js", valueShape: "string-array" };
+  }
+  if (namespace === "contentScripts" && method === "register") {
+    return { openIndex, property: "js", valueShape: "file-object-array" };
+  }
+  if (
+    namespace === "userScripts" &&
+    (method === "register" || method === "update" || method === "execute")
+  ) {
+    return { openIndex, property: "js", valueShape: "file-object-array" };
   }
   return null;
 }
@@ -362,6 +391,7 @@ function staticPropertyScriptPaths(
   start: number,
   end: number,
   property: WebExtensionScriptProperty,
+  valueShape: WebExtensionScriptValueShape,
 ): string[] {
   const paths: string[] = [];
   for (let index = start; index < end; index += 1) {
@@ -369,7 +399,7 @@ function staticPropertyScriptPaths(
     if (tokenText(tokens[index + 1], text) !== ":") continue;
 
     const valueIndex = index + 2;
-    if (property === "file") {
+    if (valueShape === "string") {
       const value = staticScriptPath(tokens[valueIndex], text);
       if (value !== null) paths.push(value);
       continue;
@@ -377,6 +407,11 @@ function staticPropertyScriptPaths(
     if (tokenText(tokens[valueIndex], text) !== "[") continue;
     const closeIndex = matchingPunctuation(tokens, text, valueIndex, "[", "]");
     if (closeIndex === null || closeIndex > end) continue;
+    if (valueShape === "file-object-array") {
+      paths.push(...staticNamedPropertyPaths(tokens, text, valueIndex + 1, closeIndex, "file"));
+      index = closeIndex;
+      continue;
+    }
     let nestedDepth = 0;
     for (let itemIndex = valueIndex + 1; itemIndex < closeIndex; itemIndex += 1) {
       const item = tokenText(tokens[itemIndex], text);
@@ -394,6 +429,39 @@ function staticPropertyScriptPaths(
     index = closeIndex;
   }
   return paths;
+}
+
+function staticNamedPropertyPaths(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+  property: string,
+): string[] {
+  const paths: string[] = [];
+  for (let index = start; index < end; index += 1) {
+    if (staticPropertyName(tokens[index], text) !== property) continue;
+    if (tokenText(tokens[index + 1], text) !== ":") continue;
+    const value = staticScriptPath(tokens[index + 2], text);
+    if (value !== null) paths.push(value);
+  }
+  return paths;
+}
+
+function staticWorkerScriptSpecifiers(text: string): string[] {
+  const tokens = tokenizeJs(text).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  const specifiers: string[] = [];
+  for (let index = 0; index < tokens.length - 3; index += 1) {
+    if (tokenText(tokens[index], text) !== "new") continue;
+    const constructor = tokenText(tokens[index + 1], text);
+    if (constructor !== "Worker" && constructor !== "SharedWorker") continue;
+    if (tokenText(tokens[index + 2], text) !== "(") continue;
+    const value = staticScriptPath(tokens[index + 3], text);
+    if (value !== null) specifiers.push(value);
+  }
+  return specifiers;
 }
 
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {

@@ -2524,6 +2524,69 @@ describe("test-scoped capability findings", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test("follows static WebExtension registration script objects", () => {
+    const staged = [
+      pkg(),
+      file(
+        "background.js",
+        [
+          "browser.contentScripts.register({ js: [{ file: '/test/content.js' }] });",
+          "chrome.userScripts.register([{ id: 'register', js: [{ file: '/test/register.js' }] }]);",
+          "browser.userScripts.update([{ id: 'update', js: [{ file: '/test/update.js' }] }]);",
+          "chrome.userScripts.execute({ target: { tabId }, js: [{ file: '/test/execute.js' }] });",
+          "browser.scripting.updateContentScripts([{ id: 'content', js: ['/test/scripting.js'] }]);",
+        ].join("\n"),
+      ),
+      file("test/content.js", "eval(payload);\n"),
+      file("test/register.js", "eval(payload);\n"),
+      file("test/update.js", "eval(payload);\n"),
+      file("test/execute.js", "eval(payload);\n"),
+      file("test/scripting.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings.map((finding) => finding.file)).toEqual(
+      expect.arrayContaining([
+        "test/content.js",
+        "test/register.js",
+        "test/update.js",
+        "test/execute.js",
+        "test/scripting.js",
+      ]),
+    );
+    expect(findings).toHaveLength(5);
+    expect(findings.every((finding) => finding.severity === "medium")).toBe(true);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
+  test("follows static Worker and SharedWorker constructors", () => {
+    const staged = [
+      pkg(),
+      file(
+        "popup.js",
+        "new Worker('/test/worker.js');\nnew SharedWorker(`/test/shared-worker.js`);\n",
+      ),
+      file("test/worker.js", "eval(payload);\n"),
+      file("test/shared-worker.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["popup.js"],
+      consumerRootRelativeModuleImports: true,
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "test/worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/shared-worker.js", severity: "medium" }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
   test("ignores WebExtension injection shapes outside the named APIs", () => {
     const staged = [
       pkg(),
