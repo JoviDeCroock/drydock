@@ -23,7 +23,7 @@ const RELATIVE_SPECIFIER_PATTERNS = [
   /\[\s*["'](?:execFile|execFileSync|fork|spawn|spawnSync)["']\s*\](?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
   /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
   /\[\s*["'](?:exec|execSync)["']\s*\](?:\?\.)?\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
-  /(?:^|[;\n&|]\s*)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
+  /(?:^|[;\n&|]\s*|\b(?:then|do|else|elif)\s+)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
 
 const NODE_INTERPRETER_CALLEES = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
@@ -398,6 +398,10 @@ export function lifecycleScriptSeedPaths(
   const tokens = new Set<string>();
   for (const { command } of installCommands) {
     for (const token of scriptCommandTokens(command)) tokens.add(token);
+    // Preserve shell-quoted paths containing whitespace. The regex token pass
+    // above intentionally handles unquoted command text, while these bounded
+    // shell words let `node "./payload file.js"` seed the exact packaged path.
+    for (const word of shellCommandWords(command)) tokens.add(word.replace(/^\.\//, ""));
   }
 
   // npm's implicit `node-gyp rebuild` does not name binding.gyp in the command,

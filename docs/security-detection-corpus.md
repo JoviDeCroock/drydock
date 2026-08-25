@@ -229,7 +229,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.50.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.51.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -751,6 +751,15 @@ descendants, and persisted dependency-review status/counts are derived or reject
 the retained rows. `added-dependency-shell-target-skipped-content`,
 `added-dependency-bracket-process-skipped-content`, and
 `added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing coverage changes.
+
+`1.51.0` closes dependency completeness gaps across JavaScript, lifecycle shell syntax, and npm range
+resolution. Constant-folded computed loader/process callees, direct Node lifecycle operands, and shell
+targets behind wrappers or control keywords now keep omitted bodies visible; quoted direct Node paths
+remain statically reachable. npm-compatible ranges accept numeric components after a wildcard and
+unbounded wildcard hyphen endpoints while rejecting partial prerelease endpoints. The
+`added-dependency-folded-callee-skipped-content`,
+`added-dependency-direct-node-skipped-content`, and
+`added-dependency-shell-wrapper-skipped-content` fixtures pin the gate-facing completeness changes.
 
 ### Fixture format
 

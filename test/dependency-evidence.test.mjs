@@ -639,6 +639,7 @@ describe("assessDependencyArtifact", () => {
     "module.require(target)",
     "module?.require(target)",
     "module['require'](target)",
+    "module['re' + 'quire'](target)",
     'module?.["require"](target)',
     "module['require']?.(target)",
     "require?.(target)",
@@ -743,6 +744,7 @@ describe("assessDependencyArtifact", () => {
     'require("node:child_process").spawn("node", getArguments())',
     'require("node:child_process").spawn("node", ["./" + name])',
     'const cp = require("node:child_process"); cp["spawn"](process.argv[2])',
+    'const cp = require("node:child_process"); cp["sp" + "awn"](getTarget())',
     'const cp = require("node:child_process"); cp["execFileSync"](getTarget())',
     'source "$PAYLOAD"',
   ])("fails completeness for the dynamic local execution edge in %s", (source) => {
@@ -777,6 +779,10 @@ describe("assessDependencyArtifact", () => {
     `sh -c 'sh "$PAYLOAD"'`,
     'bash --noprofile "$PAYLOAD"',
     'bash --rcfile "$PAYLOAD" -i',
+    'node "$PAYLOAD"',
+    'node --require "$PAYLOAD" install.js',
+    'exec "$PAYLOAD"',
+    'if true; then source "$PAYLOAD"; fi',
   ])("fails completeness for the computed lifecycle executable in %s", (postinstall) => {
     const manifest = {
       name: "n",
@@ -849,6 +855,30 @@ describe("assessDependencyArtifact", () => {
     expect(assessment.installReachableUninspectedFiles).toEqual([]);
   });
 
+  test("retains a shell-quoted direct Node lifecycle path containing whitespace", () => {
+    const manifest = {
+      name: "n",
+      version: "1.0.0",
+      scripts: { postinstall: 'node "./payload file.js"' },
+    };
+    const assessment = assessDependencyArtifact(
+      [
+        file("package.json", JSON.stringify(manifest)),
+        {
+          path: "payload file.js",
+          size: 1024,
+          sha256: "skipped-quoted-node-target",
+          flags: ["text-sample-skipped"],
+        },
+      ],
+      manifest,
+      { codePatternSet: "javascript", entrypointResolution: "npm" },
+    );
+
+    expect(assessment.installReachableUninspectedFiles).toEqual(["payload file.js"]);
+    expect(assessment.observation).not.toHaveProperty("dynamicInstallTarget");
+  });
+
   test.each([
     'require("node:child_process").spawn("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])',
     'require("node:child_process")["spawn"]("node", ["--require", "./retained.js", "./payload.min.js", "--import=../bootstrap.mjs"])',
@@ -903,6 +933,7 @@ describe("assessDependencyArtifact", () => {
     ],
     ["sh install.sh", "install.sh", ". ./payload.min.js"],
     ["sh install.sh", "install.sh", "source './payload.min.js'"],
+    ["sh install.sh", "install.sh", "if true; then source './payload.min.js'; fi"],
   ])("follows the static install execution edge in %s", (postinstall, installPath, command) => {
     const manifest = {
       name: "n",
