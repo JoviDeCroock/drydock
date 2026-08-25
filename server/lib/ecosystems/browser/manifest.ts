@@ -23,6 +23,8 @@ const SHA256_RE = /^[a-f0-9]{64}$/i;
 const GECKO_EMAIL_ID_RE = /^[A-Za-z0-9._-]*@[A-Za-z0-9._-]+$/;
 const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
 const GECKO_EMAIL_ID_MAX_LENGTH = 80;
+const LOCALIZED_MESSAGE_NAME_RE = /^__MSG_([A-Za-z0-9_@]+)__$/i;
+const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
 const HTML_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
@@ -46,7 +48,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
   const raw = parseBrowserManifestJson(file.textSample);
   if (!isRecord(raw)) throw new Error("browser extension manifest.json must be an object");
 
-  const name = safeIdentityText(raw.name, "manifest.json name", 128);
+  const name = browserExtensionDisplayName(raw, files);
   const version = typeof raw.version === "string" ? raw.version : "";
   if (!BROWSER_VERSION_RE.test(version)) throw new Error("manifest.json version is invalid");
   if (raw.manifest_version !== 2 && raw.manifest_version !== 3) {
@@ -260,6 +262,31 @@ function safeIdentityText(value: unknown, field: string, maxLength: number): str
   return text;
 }
 
+function browserExtensionDisplayName(raw: Record<string, unknown>, files: FileRecord[]): string {
+  const name = safeIdentityText(raw.name, "manifest.json name", 128);
+  const localized = LOCALIZED_MESSAGE_NAME_RE.exec(name);
+  if (!localized) return name;
+
+  const defaultLocale = typeof raw.default_locale === "string" ? raw.default_locale.trim() : "";
+  if (!DEFAULT_LOCALE_RE.test(defaultLocale)) {
+    throw new Error("manifest.json localized name requires a valid default_locale");
+  }
+  const messagesPath = `_locales/${defaultLocale}/messages.json`;
+  const messagesFile = files.find((file) => file.path === messagesPath && file.textSample);
+  if (!messagesFile?.textSample) {
+    throw new Error(`browser extension must include ${messagesPath} for its localized name`);
+  }
+  const messages = parseBrowserManifestJson(messagesFile.textSample);
+  if (!isRecord(messages)) throw new Error(`${messagesPath} must be an object`);
+  const messageName = localized[1].toLowerCase();
+  const messageKey = Object.keys(messages).find((key) => key.toLowerCase() === messageName);
+  const message = messageKey ? messages[messageKey] : null;
+  if (!isRecord(message)) {
+    throw new Error(`${messagesPath} does not define localized name ${localized[1]}`);
+  }
+  return safeIdentityText(message.message, `${messagesPath} localized name`, 128);
+}
+
 function geckoExtensionId(raw: Record<string, unknown>, manifestVersion: 2 | 3): string | null {
   const browserSettings = isRecord(raw.browser_specific_settings)
     ? raw.browser_specific_settings
@@ -311,6 +338,7 @@ function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
     typeof raw.options_page === "string" ? raw.options_page : null,
     typeof raw.devtools_page === "string" ? raw.devtools_page : null,
     ...manifestRecordStrings(raw.chrome_url_overrides),
+    ...(isRecord(raw.sandbox) ? stringList(raw.sandbox.pages) : []),
   ]);
 }
 

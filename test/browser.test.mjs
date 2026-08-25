@@ -144,6 +144,43 @@ describe("browser extension review adapter", () => {
     expect(manifest.version).toBe("1.2.0");
   });
 
+  test("resolves a localized manifest name from the declared default locale", () => {
+    const { manifest } = parseBrowserExtensionManifest([
+      manifestFile({ name: "__MSG_extensionName__", default_locale: "en_US" }),
+      {
+        path: "_locales/en_US/messages.json",
+        size: 64,
+        sha256: "13".repeat(32),
+        flags: [],
+        textSample: JSON.stringify({ ExtensionName: { message: "Localized tab helper" } }),
+      },
+    ]);
+    expect(manifest.name).toBe("Localized tab helper");
+    expect(browserExtensionCandidateName(manifest)).toBe("Localized tab helper");
+  });
+
+  test("fails closed when localized manifest-name evidence is missing or malformed", () => {
+    const localizedManifest = manifestFile({
+      name: "__MSG_extensionName__",
+      default_locale: "en",
+    });
+    expect(() => parseBrowserExtensionManifest([localizedManifest])).toThrow(
+      /_locales\/en\/messages\.json/,
+    );
+    expect(() =>
+      parseBrowserExtensionManifest([
+        localizedManifest,
+        {
+          path: "_locales/en/messages.json",
+          size: 2,
+          sha256: "14".repeat(32),
+          flags: [],
+          textSample: JSON.stringify({ otherName: { message: "Other helper" } }),
+        },
+      ]),
+    ).toThrow(/does not define localized name extensionName/);
+  });
+
   test("uses only an embedded stable ID for cross-scan history", async () => {
     const path = "dist/tab-helper.zip";
     const chromeInput = browserAdapter.parseInput({
@@ -872,7 +909,14 @@ describe("browser extension review adapter", () => {
   test("follows extension pages selected by reachable WebExtension APIs", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
-    const pageNames = ["action", "browser-action", "page-action", "side-panel", "devtools-panel"];
+    const pageNames = [
+      "action",
+      "browser-action",
+      "page-action",
+      "side-panel",
+      "devtools-panel",
+      "tab-create",
+    ];
     const files = [
       manifestFile({
         background: { service_worker: "background.js" },
@@ -888,6 +932,7 @@ describe("browser extension review adapter", () => {
           'browser["browserAction"].setPopup({ popup: "tests/browser-action.html" });',
           'globalThis.chrome.pageAction.setPopup({ popup: "tests/page-action.html" });',
           'chrome.sidePanel.setOptions({ path: "/tests/side-panel.html", enabled: true });',
+          'chrome.tabs.create({ url: "/tests/tab-create.html" });',
           'tool.action.setPopup({ popup: "/tests/decoy.html" });',
         ].join("\n"),
       },
@@ -958,7 +1003,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(6);
+    expect(findings).toHaveLength(7);
   });
 
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
@@ -974,6 +1019,7 @@ describe("browser extension review adapter", () => {
       ["tests/side-panel.html", "tests/side-panel.js"],
       ["tests/sidebar.html", "tests/sidebar.js"],
       ["tests/new-tab.html", "tests/new-tab.js"],
+      ["tests/sandbox.html", "tests/sandbox.js"],
     ];
     const files = extensionPages.flatMap(([page, script], index) => [
       {
@@ -1005,6 +1051,7 @@ describe("browser extension review adapter", () => {
       side_panel: { default_path: "tests/side-panel.html" },
       sidebar_action: { default_panel: "tests/sidebar.html" },
       chrome_url_overrides: { newtab: "tests/new-tab.html" },
+      sandbox: { pages: ["tests/sandbox.html"] },
     });
     const parsed = parseBrowserExtensionManifest([manifestRecord, ...files]).manifest;
     expect(parsed.extensionPageEntrypoints).toEqual(expect.arrayContaining(extensionPages.flat()));

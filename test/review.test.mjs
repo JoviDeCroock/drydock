@@ -2518,6 +2518,25 @@ describe("test-scoped capability findings", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows a packaged extension page opened through tabs.create", () => {
+    const staged = [
+      pkg(),
+      file("background.js", 'chrome.tabs.create({ url: "/test/onboarding.html" });\n'),
+      file("test/onboarding.html", '<script src="payload.js"></script>\n'),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerFileDependencyPaths: (path) =>
+        path === "test/onboarding.html" ? ["test/payload.js"] : [],
+    });
+    const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("follows static Manifest V3 scripting injection files", () => {
     const staged = [
       pkg(),

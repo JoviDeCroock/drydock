@@ -482,6 +482,9 @@ function webExtensionScriptCall(
   const method = methodMember.name;
   const openIndex = staticCallOpenIndex(tokens, text, methodMember.nextIndex);
   if (openIndex === null) return null;
+  if (namespace === "tabs" && method === "create") {
+    return { openIndex, source: "property", property: "url", valueShape: "string" };
+  }
   if (namespace === "tabs" && method === "executeScript") {
     return { openIndex, source: "property", property: "file", valueShape: "string" };
   }

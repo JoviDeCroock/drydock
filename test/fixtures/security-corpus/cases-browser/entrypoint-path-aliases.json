@@ -1,8 +1,8 @@
 {
   "id": "browser-entrypoint-path-aliases",
-  "title": "browser-loaded scripts remain reachable through manifest, HTML, and injection path aliases",
+  "title": "browser-loaded scripts remain reachable through manifest, HTML, navigation, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including bracket, nested, positional, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object-document, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
+  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, manifest-declared sandbox pages, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including tabs.create navigation, bracket, nested, positional, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object-document, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -13,7 +13,7 @@
       "size": 420,
       "sha256": "5252525252525252525252525252525252525252525252525252525252525252",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"browser_action\": { \"default_popup\": \"/tests/popup.html\" },\n  \"options_page\": \"pages%23encoded/options.html\",\n  \"devtools_page\": \"pages/srcdoc-host.html\",\n  \"sidebar_action\": { \"default_panel\": \"pages/invalid-base.html\" },\n  \"permissions\": [\"contentScripts\", \"offscreen\", \"https://example.invalid/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\", \"./tests/dot-content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Path alias helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"path-alias-helper@example.invalid\" } },\n  \"background\": { \"page\": \"pages/background.html\" },\n  \"browser_action\": { \"default_popup\": \"/tests/popup.html\" },\n  \"options_page\": \"pages%23encoded/options.html\",\n  \"devtools_page\": \"pages/srcdoc-host.html\",\n  \"sidebar_action\": { \"default_panel\": \"pages/invalid-base.html\" },\n  \"sandbox\": { \"pages\": [\"tests/sandbox.html\"] },\n  \"permissions\": [\"contentScripts\", \"offscreen\", \"https://example.invalid/*\"],\n  \"content_scripts\": [{ \"matches\": [\"https://example.invalid/*\"], \"js\": [\"/tests/content.js\", \"./tests/dot-content.js\"] }],\n  \"user_scripts\": { \"api_script\": \"tests/user-api.js\" }\n}\n"
     },
     {
       "path": "pages/background.html",
@@ -104,7 +104,7 @@
       "size": 72,
       "sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
       "flags": [],
-      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); new Worker(chrome.runtime.getURL('/tests/runtime-worker.js')); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); chrome.action.setPopup({ popup: '/tests/action-api.html' }); browser.sidePanel.setOptions({ path: '/tests/side-panel-api.html' }); tool.action.setPopup({ popup: '/tests/decoy.html' }); const example = \"importScripts('/tests/decoy.js')\";"
+      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); new Worker(chrome.runtime.getURL('/tests/runtime-worker.js')); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); chrome.tabs.create({ url: '/tests/onboarding.html' }); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); chrome.action.setPopup({ popup: '/tests/action-api.html' }); browser.sidePanel.setOptions({ path: '/tests/side-panel-api.html' }); tool.action.setPopup({ popup: '/tests/decoy.html' }); const example = \"importScripts('/tests/decoy.js')\";"
     },
     {
       "path": "tests/injected.js",
@@ -322,6 +322,34 @@
       "sha256": "8383838383838383838383838383838383838383838383838383838383838383",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/sandbox.html",
+      "size": 38,
+      "sha256": "8484848484848484848484848484848484848484848484848484848484848484",
+      "flags": [],
+      "textSample": "<script src=\"sandbox.js\"></script>"
+    },
+    {
+      "path": "tests/sandbox.js",
+      "size": 14,
+      "sha256": "8585858585858585858585858585858585858585858585858585858585858585",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/onboarding.html",
+      "size": 41,
+      "sha256": "8686868686868686868686868686868686868686868686868686868686868686",
+      "flags": [],
+      "textSample": "<script src=\"onboarding.js\"></script>"
+    },
+    {
+      "path": "tests/onboarding.js",
+      "size": 14,
+      "sha256": "8787878787878787878787878787878787878787878787878787878787878787",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -407,6 +435,16 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/devtools-panel.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/sandbox.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/onboarding.js"
     },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" }
   ]

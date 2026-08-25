@@ -1007,6 +1007,8 @@ describe("readTar limits and malformed archives", () => {
   test("isRetainedManifestPath matches ecosystem manifests by basename", () => {
     expect(tarParser.isRetainedManifestPath("manifest.json")).toBe(true);
     expect(tarParser.isRetainedManifestPath("nested/manifest.json")).toBe(false);
+    expect(tarParser.isRetainedManifestPath("_locales/en_US/messages.json")).toBe(true);
+    expect(tarParser.isRetainedManifestPath("nested/_locales/en/messages.json")).toBe(false);
     expect(tarParser.isRetainedManifestPath("package.json")).toBe(true);
     expect(tarParser.isRetainedManifestPath("foo-1.0.0/PKG-INFO")).toBe(true);
     expect(tarParser.isRetainedManifestPath("foo-1.0.0/pyproject.toml")).toBe(true);

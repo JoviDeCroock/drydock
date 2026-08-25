@@ -680,7 +680,8 @@ export function summarizeSkippedFile(path, size, sha256, head) {
 // (name, version, install hooks, dependency and RECORD/METADATA data), so they
 // must always be inspected even when the retention budget has been spent on
 // large prepackaged binaries. Browser extensions require `manifest.json` at the
-// archive root, while matching by basename covers npm's `package.json`, PyPI
+// archive root and may resolve their display identity through one root `_locales`
+// message file, while matching by basename covers npm's `package.json`, PyPI
 // sdists' `PKG-INFO`/`pyproject.toml`, and wheel `METADATA` regardless of the
 // version directory the archive nests them under. A manifest too large to inspect
 // fails the parse (see readTarStream) rather than silently nulling identity.
@@ -689,6 +690,7 @@ export function isRetainedManifestPath(path) {
   const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
   return (
     normalized === "manifest.json" ||
+    /^_locales\/[A-Za-z0-9_@-]{1,64}\/messages\.json$/.test(normalized) ||
     basename === "package.json" ||
     basename === "PKG-INFO" ||
     basename === "pyproject.toml" ||
