@@ -2527,11 +2527,13 @@ describe("test-scoped capability findings", () => {
           'chrome.scripting.executeScript({ target: { tabId }, files: ["test/execute.js"] });',
           "browser.scripting.registerContentScripts([{ id: 'helper', js: [`test/register.js`] }]);",
           'browser?.["scripting"]?.executeScript?.({ files: ["test/bracket.js"] });',
+          'globalThis.chrome["scripting"].executeScript({ files: ["test/global.js"] });',
         ].join("\n"),
       ),
       file("test/execute.js", "eval(payload);\n"),
       file("test/register.js", "eval(payload);\n"),
       file("test/bracket.js", "eval(payload);\n"),
+      file("test/global.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
@@ -2543,9 +2545,10 @@ describe("test-scoped capability findings", () => {
         expect.objectContaining({ file: "test/execute.js", severity: "medium" }),
         expect.objectContaining({ file: "test/register.js", severity: "medium" }),
         expect.objectContaining({ file: "test/bracket.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/global.js", severity: "medium" }),
       ]),
     );
-    expect(findings).toHaveLength(3);
+    expect(findings).toHaveLength(4);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
@@ -2596,11 +2599,15 @@ describe("test-scoped capability findings", () => {
           "new Worker('/test/worker.js');",
           "new SharedWorker(`/test/shared-worker.js`);",
           'new Worker(new URL("/test/url-worker.js", import.meta.url));',
+          "new globalThis.Worker('/test/global-worker.js');",
+          "new window['SharedWorker']('/test/window-shared-worker.js');",
         ].join("\n"),
       ),
       file("test/worker.js", "eval(payload);\n"),
       file("test/shared-worker.js", "eval(payload);\n"),
       file("test/url-worker.js", "eval(payload);\n"),
+      file("test/global-worker.js", "eval(payload);\n"),
+      file("test/window-shared-worker.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
@@ -2612,9 +2619,11 @@ describe("test-scoped capability findings", () => {
         expect.objectContaining({ file: "test/worker.js", severity: "medium" }),
         expect.objectContaining({ file: "test/shared-worker.js", severity: "medium" }),
         expect.objectContaining({ file: "test/url-worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/global-worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/window-shared-worker.js", severity: "medium" }),
       ]),
     );
-    expect(findings).toHaveLength(3);
+    expect(findings).toHaveLength(5);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 

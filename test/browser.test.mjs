@@ -982,6 +982,53 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("inherits the embedding document base when resolving iframe srcdoc scripts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 120,
+        sha256: "8d".repeat(32),
+        flags: [],
+        textSample:
+          '<base href="/assets/"><iframe srcdoc="&lt;script src=&quot;tests/payload.js&quot;&gt;&lt;/script&gt;"></iframe>',
+      },
+      {
+        path: "assets/tests/payload.js",
+        size: 14,
+        sha256: "8e".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "8f".repeat(32),
+        flags: [],
+        textSample: "eval(decoy);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "assets/tests/payload.js"]),
+    );
+    expect(parsed.extensionPageEntrypoints).not.toContain("tests/payload.js");
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "assets/tests/payload.js" }),
+        expect.objectContaining({ severity: "medium", file: "tests/payload.js", testScoped: true }),
+      ]),
+    );
+  });
+
   test("rejects adapter inputs that are not bound to the declared archive", () => {
     const release = buildBrowserReleaseManifest("Tab helper", "1.2.0", [
       { path: "dist/tab-helper.zip", sha256: SHA },

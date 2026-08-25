@@ -393,13 +393,15 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   const documentBaseUrls = new Set<string>();
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const inspectedPages = new Set<string>();
-  const pageQueue: Array<{ pagePath: string; inlineHtml?: string }> = pagePaths.map((pagePath) => ({
-    pagePath,
-  }));
+  const pageQueue: Array<{
+    pagePath: string;
+    inlineHtml?: string;
+    fallbackBaseUrl?: string;
+  }> = pagePaths.map((pagePath) => ({ pagePath }));
   while (pageQueue.length) {
     const queuedPage = pageQueue.pop();
     if (!queuedPage) continue;
-    const { pagePath, inlineHtml } = queuedPage;
+    const { pagePath, inlineHtml, fallbackBaseUrl } = queuedPage;
     if (inlineHtml === undefined) {
       if (inspectedPages.has(pagePath)) continue;
       inspectedPages.add(pagePath);
@@ -408,11 +410,18 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
     if (!html) continue;
     for (const consumer of htmlConsumerSources(html)) {
       if (consumer.kind === "inline-page") {
-        pageQueue.push({ pagePath, inlineHtml: consumer.html });
+        const documentBase = extensionDocumentBaseUrl(pagePath, consumer.baseHref, fallbackBaseUrl);
+        if (documentBase) {
+          pageQueue.push({
+            pagePath,
+            inlineHtml: consumer.html,
+            fallbackBaseUrl: documentBase.href,
+          });
+        }
         continue;
       }
       const { kind, source, baseHref } = consumer;
-      const documentBase = extensionDocumentBaseUrl(pagePath, baseHref);
+      const documentBase = extensionDocumentBaseUrl(pagePath, baseHref, fallbackBaseUrl);
       if (!documentBase) continue;
       const path = resolveExtensionResourcePath(source, documentBase);
       if (!path) continue;
@@ -426,7 +435,7 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
 
 type HtmlConsumerSource =
   | { kind: "script" | "page"; source: string; baseHref: string | null }
-  | { kind: "inline-page"; html: string };
+  | { kind: "inline-page"; html: string; baseHref: string | null };
 
 function htmlConsumerSources(html: string): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
@@ -518,7 +527,11 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       baseHref = decodeHTMLAttribute(targetValue ?? "");
       baseSeen = true;
     } else if (tagClosed && tagName === "iframe" && srcdocSeen) {
-      sources.push({ kind: "inline-page", html: decodeHTMLAttribute(srcdocValue ?? "") });
+      sources.push({
+        kind: "inline-page",
+        html: decodeHTMLAttribute(srcdocValue ?? ""),
+        baseHref,
+      });
     } else if (
       tagClosed &&
       (tagName === "script" || tagName === "iframe" || tagName === "object") &&
@@ -568,7 +581,11 @@ function resolveExtensionRootResourcePath(rawPath: string): string | null {
   }
 }
 
-function extensionDocumentBaseUrl(pagePath: string, rawBaseHref: string | null): URL | null {
+function extensionDocumentBaseUrl(
+  pagePath: string,
+  rawBaseHref: string | null,
+  rawFallbackBaseUrl?: string,
+): URL | null {
   const baseHref = rawBaseHref?.trim() ?? null;
   if (baseHref?.includes("\\")) return null;
   try {
@@ -577,7 +594,14 @@ function extensionDocumentBaseUrl(pagePath: string, rawBaseHref: string | null):
     // not become URL syntax and change the document base.
     const encodedPagePath = encodeArchiveLookupPathForUrl(pagePath);
     const pageUrl = new URL(encodedPagePath, EXTENSION_RESOURCE_ROOT);
-    const documentBase = baseHref === null ? pageUrl : new URL(baseHref, pageUrl);
+    const fallbackBaseUrl = rawFallbackBaseUrl ? new URL(rawFallbackBaseUrl) : pageUrl;
+    if (
+      fallbackBaseUrl.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
+      fallbackBaseUrl.host !== EXTENSION_RESOURCE_ROOT.host
+    ) {
+      return null;
+    }
+    const documentBase = baseHref === null ? fallbackBaseUrl : new URL(baseHref, fallbackBaseUrl);
     return documentBase.protocol === EXTENSION_RESOURCE_ROOT.protocol &&
       documentBase.host === EXTENSION_RESOURCE_ROOT.host
       ? documentBase

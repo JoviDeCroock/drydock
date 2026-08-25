@@ -319,6 +319,8 @@ interface WebExtensionScriptCall {
   valueShape: WebExtensionScriptValueShape;
 }
 
+const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "self", "window"]);
+
 // Classic workers may load more packaged scripts without a module edge. Parse
 // only literal arguments on the worker-global call so API-shaped text in
 // strings, comments, regexes, or unrelated object methods stays inert.
@@ -391,7 +393,15 @@ function webExtensionScriptCall(
   if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
 
   let index = start;
-  const first = tokenText(tokens[index], text);
+  let first = tokenText(tokens[index], text);
+  if (STATIC_BROWSER_GLOBALS.has(first)) {
+    const globalMember = staticMemberAccess(tokens, text, index + 1);
+    if (!globalMember || (globalMember.name !== "chrome" && globalMember.name !== "browser")) {
+      return null;
+    }
+    first = globalMember.name;
+    index = globalMember.nextIndex - 1;
+  }
   let namespace: string;
   if (first === "chrome" || first === "browser") {
     const member = staticMemberAccess(tokens, text, index + 1);
@@ -515,15 +525,22 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
   const specifiers: WorkerScriptSpecifier[] = [];
   for (let index = 0; index < tokens.length - 3; index += 1) {
     if (tokenText(tokens[index], text) !== "new") continue;
-    const constructor = tokenText(tokens[index + 1], text);
+    let constructorIndex = index + 1;
+    let constructor = tokenText(tokens[constructorIndex], text);
+    if (STATIC_BROWSER_GLOBALS.has(constructor)) {
+      const globalMember = staticMemberAccess(tokens, text, constructorIndex + 1);
+      if (!globalMember) continue;
+      constructor = globalMember.name;
+      constructorIndex = globalMember.nextIndex - 1;
+    }
     if (constructor !== "Worker" && constructor !== "SharedWorker") continue;
-    if (tokenText(tokens[index + 2], text) !== "(") continue;
-    const documentPath = staticScriptPath(tokens[index + 3], text);
+    if (tokenText(tokens[constructorIndex + 1], text) !== "(") continue;
+    const documentPath = staticScriptPath(tokens[constructorIndex + 2], text);
     if (documentPath !== null) {
       specifiers.push({ path: documentPath, resolution: "document" });
       continue;
     }
-    const modulePath = staticImportMetaUrlPath(tokens, text, index + 3);
+    const modulePath = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
     if (modulePath !== null) specifiers.push({ path: modulePath, resolution: "module" });
   }
   return specifiers;
