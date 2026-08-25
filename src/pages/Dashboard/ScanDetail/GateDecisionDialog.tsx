@@ -243,6 +243,13 @@ function approveLabel(input: {
   return input.multi ? "Approve package" : "Approve & release";
 }
 
+/** A gate vote is irreversible in the approve direction once either verdict is durable. */
+export function viewerHasRecordedGateVote(
+  approvals: ScanApprovalState | null | undefined,
+): boolean {
+  return approvals?.viewerDecision === "publish" || approvals?.viewerDecision === "no_publish";
+}
+
 export function GateDecisionDialog({
   open,
   onClose,
@@ -293,7 +300,9 @@ export function GateDecisionDialog({
   // approve action is closed off here rather than left to fail — but blocking
   // stays open, because a reviewer who has since seen something bad must be
   // able to stop a release they helped along.
+  const viewerAlreadyVoted = viewerHasRecordedGateVote(approvals) && !packageAlreadyDecided;
   const alreadyApproved = approvals?.viewerDecision === "publish" && !packageAlreadyDecided;
+  const alreadyBlocked = approvals?.viewerDecision === "no_publish" && !packageAlreadyDecided;
   // Whether *this* approval is the one that decides the package.
   const approvalDecidesPackage = Boolean(
     approvals &&
@@ -330,7 +339,7 @@ export function GateDecisionDialog({
     ) {
       return;
     }
-    if (next === "approved" && alreadyApproved) return;
+    if (next === "approved" && viewerAlreadyVoted) return;
     const trimmed = commentDraft.value.trim();
     void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
   };
@@ -456,7 +465,7 @@ export function GateDecisionDialog({
           {canApprove && !packageAlreadyDecided ? (
             <Button
               onClick={() => submit("approved")}
-              disabled={saving || blockedOnCode || mustEnroll || alreadyApproved}
+              disabled={saving || blockedOnCode || mustEnroll || viewerAlreadyVoted}
             >
               {saving
                 ? "Submitting…"
@@ -481,6 +490,11 @@ export function GateDecisionDialog({
         <Muted class="m-0 text-[13px]">
           You have already approved this {multi ? "package" : "release"}. It needs a different
           member's approval to release — you can still reject it.
+        </Muted>
+      ) : alreadyBlocked ? (
+        <Muted class="m-0 text-[13px]">
+          You have already blocked this {multi ? "package" : "release"}. Retry the rejection to
+          finish blocking the held release.
         </Muted>
       ) : null}
       {!gateDecided && !canApprove ? (

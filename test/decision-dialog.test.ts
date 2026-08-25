@@ -3,6 +3,7 @@ import {
   approvalSubmissionCompletesRelease,
   decisionSubmissionReachedVerdict,
 } from "../src/pages/Dashboard/ScanDetail/DecisionDialog";
+import { viewerHasRecordedGateVote } from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
 import type { PersistedScanDetail, ScanDecision } from "../src/models/scan";
 
 function result(verdict: ScanDecision | null, approvedCount: number): PersistedScanDetail {
@@ -60,5 +61,23 @@ describe("staged decision follow-up", () => {
         viewerDecision: null,
       }),
     ).toBe(false);
+  });
+
+  test("does not count a synthesized legacy decision toward the live quorum", () => {
+    const partial = result("publish", 1).approvals!;
+    expect(
+      approvalSubmissionCompletesRelease({
+        ...partial,
+        legacyDecision: true,
+        viewerDecision: null,
+      }),
+    ).toBe(false);
+  });
+
+  test("treats either durable gate verdict as an existing viewer vote", () => {
+    const partial = result(null, 1).approvals!;
+    expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: "publish" })).toBe(true);
+    expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: "no_publish" })).toBe(true);
+    expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: null })).toBe(false);
   });
 });
