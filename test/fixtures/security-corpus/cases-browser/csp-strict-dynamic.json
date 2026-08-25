@@ -1,0 +1,23 @@
+{
+  "id": "browser-csp-strict-dynamic",
+  "title": "WebExtension CSP delegates trust through strict-dynamic",
+  "category": "browser-extension",
+  "intent": "A nonce-bearing packaged script must not be allowed to delegate execution to arbitrary dynamically loaded scripts without an unsafe extension CSP finding.",
+  "slug": "strict-dynamic-helper",
+  "extensionId": "strict-dynamic-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "8989898989898989898989898989898989898989898989898989898989898989",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 320,
+      "sha256": "9090909090909090909090909090909090909090909090909090909090909090",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 2,\n  \"name\": \"Strict dynamic helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"strict-dynamic-helper@example.invalid\" } },\n  \"content_security_policy\": \"script-src 'self' 'nonce-review' 'strict-dynamic'; object-src 'self'\"\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "browser.unsafe-extension-csp", "severity": "high", "file": "manifest.json" }
+  ]
+}

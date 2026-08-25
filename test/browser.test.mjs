@@ -1016,6 +1016,7 @@ describe("browser extension review adapter", () => {
     "script-src 'self'; script-src-elem https://cdn.example.invalid",
     "script-src 'self'; worker-src blob:",
     "script-src 'self'; child-src blob:",
+    "script-src 'self' 'nonce-review' 'strict-dynamic'; object-src 'self'",
   ])("flags effective non-package script sources in CSP: %s", (contentSecurityPolicy) => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

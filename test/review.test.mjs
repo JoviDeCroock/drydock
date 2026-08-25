@@ -2468,7 +2468,7 @@ describe("test-scoped capability findings", () => {
   test("follows static template-literal importScripts calls", () => {
     const staged = [
       pkg(),
-      file("worker.js", "importScripts(`test/payload.js`);\n"),
+      file("worker.js", "self.importScripts(`test/payload.js`);\n"),
       file("test/payload.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
@@ -2478,6 +2478,28 @@ describe("test-scoped capability findings", () => {
     const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("ignores importScripts-shaped text outside executable calls", () => {
+    const staged = [
+      pkg(),
+      file(
+        "worker.js",
+        [
+          `const example = "importScripts('test/payload.js')";`,
+          '// importScripts("test/payload.js");',
+          'const pattern = /importScripts\\("test\\/payload\\.js"\\)/;',
+        ].join("\n"),
+      ),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["worker.js"],
+    });
+    expect(
+      findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation"),
+    ).toMatchObject({ file: "test/payload.js", severity: "low", testScoped: true });
   });
 
   test("follows a static Manifest V2 tabs.executeScript file", () => {
@@ -2504,10 +2526,12 @@ describe("test-scoped capability findings", () => {
         [
           'chrome.scripting.executeScript({ target: { tabId }, files: ["/test/execute.js"] });',
           "browser.scripting.registerContentScripts([{ id: 'helper', js: [`test/register.js`] }]);",
+          'browser?.["scripting"]?.executeScript?.({ files: ["/test/bracket.js"] });',
         ].join("\n"),
       ),
       file("test/execute.js", "eval(payload);\n"),
       file("test/register.js", "eval(payload);\n"),
+      file("test/bracket.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
@@ -2518,9 +2542,10 @@ describe("test-scoped capability findings", () => {
       expect.arrayContaining([
         expect.objectContaining({ file: "test/execute.js", severity: "medium" }),
         expect.objectContaining({ file: "test/register.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/bracket.js", severity: "medium" }),
       ]),
     );
-    expect(findings).toHaveLength(2);
+    expect(findings).toHaveLength(3);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
@@ -2567,10 +2592,15 @@ describe("test-scoped capability findings", () => {
       pkg(),
       file(
         "popup.js",
-        "new Worker('/test/worker.js');\nnew SharedWorker(`/test/shared-worker.js`);\n",
+        [
+          "new Worker('/test/worker.js');",
+          "new SharedWorker(`/test/shared-worker.js`);",
+          'new Worker(new URL("/test/url-worker.js", import.meta.url));',
+        ].join("\n"),
       ),
       file("test/worker.js", "eval(payload);\n"),
       file("test/shared-worker.js", "eval(payload);\n"),
+      file("test/url-worker.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
@@ -2581,9 +2611,10 @@ describe("test-scoped capability findings", () => {
       expect.arrayContaining([
         expect.objectContaining({ file: "test/worker.js", severity: "medium" }),
         expect.objectContaining({ file: "test/shared-worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/url-worker.js", severity: "medium" }),
       ]),
     );
-    expect(findings).toHaveLength(2);
+    expect(findings).toHaveLength(3);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 

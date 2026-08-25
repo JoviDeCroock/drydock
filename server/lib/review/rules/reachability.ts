@@ -20,9 +20,6 @@ const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\/[^"'\n]+)["']/g,
 ];
-const IMPORT_SCRIPTS_CALL_PATTERN = /\bimportScripts\s*\(([^)]*)\)/g;
-const STATIC_STRING_PATTERN = /["']([^"'\n]+)["']|`((?:(?!\$\{)[^`\n])+)`/g;
-
 const RESOLUTION_SUFFIXES = [
   "",
   ".js",
@@ -279,13 +276,7 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
       specifiers.push(match[1]);
     }
   }
-  IMPORT_SCRIPTS_CALL_PATTERN.lastIndex = 0;
-  for (const call of text.matchAll(IMPORT_SCRIPTS_CALL_PATTERN)) {
-    STATIC_STRING_PATTERN.lastIndex = 0;
-    for (const argument of call[1].matchAll(STATIC_STRING_PATTERN)) {
-      specifiers.push(argument[1] ?? argument[2]);
-    }
-  }
+  specifiers.push(...staticImportScriptsSpecifiers(text));
   if (rootRelativeModuleImports) {
     specifiers.push(...staticWebExtensionScriptSpecifiers(text));
     specifiers.push(...staticWorkerScriptSpecifiers(text));
@@ -300,6 +291,39 @@ interface WebExtensionScriptCall {
   openIndex: number;
   property: WebExtensionScriptProperty;
   valueShape: WebExtensionScriptValueShape;
+}
+
+// Classic workers may load more packaged scripts without a module edge. Parse
+// only literal arguments on the worker-global call so API-shaped text in
+// strings, comments, regexes, or unrelated object methods stays inert.
+function staticImportScriptsSpecifiers(text: string): string[] {
+  const tokens = tokenizeJs(text).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  const specifiers: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const current = tokenText(tokens[index], text);
+    let callIndex: number | null = null;
+    if (
+      current === "importScripts" &&
+      !isMemberSeparator(tokenText(tokens[index - 1], text)) &&
+      tokenText(tokens[index - 1], text) !== "]"
+    ) {
+      callIndex = index + 1;
+    } else if (current === "self" || current === "globalThis") {
+      const member = staticMemberAccess(tokens, text, index + 1);
+      if (member?.name === "importScripts") callIndex = member.nextIndex;
+    }
+    if (callIndex === null) continue;
+
+    const openIndex = staticCallOpenIndex(tokens, text, callIndex);
+    if (openIndex === null) continue;
+    const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+    if (closeIndex === null) continue;
+    specifiers.push(...staticLiteralCallArguments(tokens, text, openIndex + 1, closeIndex));
+    index = closeIndex;
+  }
+  return specifiers;
 }
 
 // WebExtension APIs can make packaged scripts executable without a manifest or
@@ -342,12 +366,17 @@ function webExtensionScriptCall(
 
   let index = start;
   const first = tokenText(tokens[index], text);
+  let namespace: string;
   if (first === "chrome" || first === "browser") {
-    if (!isMemberSeparator(tokenText(tokens[index + 1], text))) return null;
-    index += 2;
+    const member = staticMemberAccess(tokens, text, index + 1);
+    if (!member) return null;
+    namespace = member.name;
+    index = member.nextIndex;
+  } else {
+    namespace = first;
+    index += 1;
   }
 
-  const namespace = tokenText(tokens[index], text);
   if (
     namespace !== "tabs" &&
     namespace !== "scripting" &&
@@ -356,11 +385,11 @@ function webExtensionScriptCall(
   ) {
     return null;
   }
-  if (!isMemberSeparator(tokenText(tokens[index + 1], text))) return null;
-
-  const method = tokenText(tokens[index + 2], text);
-  const openIndex = index + 3;
-  if (tokenText(tokens[openIndex], text) !== "(") return null;
+  const methodMember = staticMemberAccess(tokens, text, index);
+  if (!methodMember) return null;
+  const method = methodMember.name;
+  const openIndex = staticCallOpenIndex(tokens, text, methodMember.nextIndex);
+  if (openIndex === null) return null;
   if (namespace === "tabs" && method === "executeScript") {
     return { openIndex, property: "file", valueShape: "string" };
   }
@@ -458,10 +487,87 @@ function staticWorkerScriptSpecifiers(text: string): string[] {
     const constructor = tokenText(tokens[index + 1], text);
     if (constructor !== "Worker" && constructor !== "SharedWorker") continue;
     if (tokenText(tokens[index + 2], text) !== "(") continue;
-    const value = staticScriptPath(tokens[index + 3], text);
+    const value =
+      staticScriptPath(tokens[index + 3], text) ?? staticImportMetaUrlPath(tokens, text, index + 3);
     if (value !== null) specifiers.push(value);
   }
   return specifiers;
+}
+
+function staticImportMetaUrlPath(tokens: JsToken[], text: string, start: number): string | null {
+  if (
+    tokenText(tokens[start], text) !== "new" ||
+    tokenText(tokens[start + 1], text) !== "URL" ||
+    tokenText(tokens[start + 2], text) !== "("
+  ) {
+    return null;
+  }
+  const closeIndex = matchingPunctuation(tokens, text, start + 2, "(", ")");
+  if (closeIndex !== start + 10) return null;
+  const path = staticScriptPath(tokens[start + 3], text);
+  if (
+    path === null ||
+    tokenText(tokens[start + 4], text) !== "," ||
+    tokenText(tokens[start + 5], text) !== "import" ||
+    tokenText(tokens[start + 6], text) !== "." ||
+    tokenText(tokens[start + 7], text) !== "meta" ||
+    tokenText(tokens[start + 8], text) !== "." ||
+    tokenText(tokens[start + 9], text) !== "url"
+  ) {
+    return null;
+  }
+  return path;
+}
+
+function staticMemberAccess(
+  tokens: JsToken[],
+  text: string,
+  separatorIndex: number,
+): { name: string; nextIndex: number } | null {
+  const separator = tokenText(tokens[separatorIndex], text);
+  const bracketIndex =
+    separator === "[" ? separatorIndex : separator === "?." ? separatorIndex + 1 : -1;
+  if (bracketIndex >= 0 && tokenText(tokens[bracketIndex], text) === "[") {
+    const property = tokens[bracketIndex + 1];
+    if (property?.type !== "string" || tokenText(tokens[bracketIndex + 2], text) !== "]") {
+      return null;
+    }
+    return { name: property.value ?? "", nextIndex: bracketIndex + 3 };
+  }
+  if (separator !== "." && separator !== "?.") return null;
+  const property = tokens[separatorIndex + 1];
+  if (property?.type !== "ident") return null;
+  return { name: tokenText(property, text), nextIndex: separatorIndex + 2 };
+}
+
+function staticCallOpenIndex(tokens: JsToken[], text: string, index: number): number | null {
+  if (tokenText(tokens[index], text) === "(") return index;
+  return tokenText(tokens[index], text) === "?." && tokenText(tokens[index + 1], text) === "("
+    ? index + 1
+    : null;
+}
+
+function staticLiteralCallArguments(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+): string[] {
+  const paths: string[] = [];
+  let argumentStart = start;
+  let depth = 0;
+  for (let index = start; index <= end; index += 1) {
+    const value = index === end ? "," : tokenText(tokens[index], text);
+    if (value === "[" || value === "{" || value === "(") depth += 1;
+    else if (value === "]" || value === "}" || value === ")") depth -= 1;
+    if (value !== "," || depth !== 0) continue;
+    if (index === argumentStart + 1) {
+      const path = staticScriptPath(tokens[argumentStart], text);
+      if (path !== null) paths.push(path);
+    }
+    argumentStart = index + 1;
+  }
+  return paths;
 }
 
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {

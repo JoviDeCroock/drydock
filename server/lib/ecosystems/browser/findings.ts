@@ -265,6 +265,9 @@ function unsafeExtensionCspEvidence(value: string | null): string | null {
     if (!directive || inspected.has(directive)) continue;
     inspected.add(directive);
     const sources = directives.get(directive) ?? [];
+    if (sources.some((source) => source.trim().toLowerCase() === "'strict-dynamic'")) {
+      return `extension CSP ${directive} delegates script trust through 'strict-dynamic'`;
+    }
     const nonPackageSource = sources.find(isNonPackageScriptSource);
     if (nonPackageSource) {
       return `extension CSP ${directive} permits non-package script source ${nonPackageSource}`;
