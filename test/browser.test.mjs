@@ -869,6 +869,98 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows extension pages selected by reachable WebExtension APIs", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const pageNames = ["action", "browser-action", "page-action", "side-panel", "devtools-panel"];
+    const files = [
+      manifestFile({
+        background: { service_worker: "background.js" },
+        devtools_page: "devtools.html",
+      }),
+      {
+        path: "background.js",
+        size: 320,
+        sha256: "84".repeat(32),
+        flags: [],
+        textSample: [
+          'chrome.action.setPopup({ popup: "/tests/action.html" });',
+          'browser["browserAction"].setPopup({ popup: "tests/browser-action.html" });',
+          'globalThis.chrome.pageAction.setPopup({ popup: "tests/page-action.html" });',
+          'chrome.sidePanel.setOptions({ path: "/tests/side-panel.html", enabled: true });',
+          'tool.action.setPopup({ popup: "/tests/decoy.html" });',
+        ].join("\n"),
+      },
+      {
+        path: "devtools.html",
+        size: 43,
+        sha256: "85".repeat(32),
+        flags: [],
+        textSample: '<script src="devtools.js"></script>',
+      },
+      {
+        path: "devtools.js",
+        size: 100,
+        sha256: "86".repeat(32),
+        flags: [],
+        textSample:
+          'chrome.devtools.panels.create("Example", "icon.png", "/tests/devtools-panel.html");',
+      },
+      ...pageNames.flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 40,
+          sha256: String(87 + index)
+            .repeat(64)
+            .slice(0, 64),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: String(92 + index)
+            .repeat(64)
+            .slice(0, 64),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+      {
+        path: "tests/decoy.html",
+        size: 38,
+        sha256: "97".repeat(32),
+        flags: [],
+        textSample: '<script src="decoy.js"></script>',
+      },
+      {
+        path: "tests/decoy.js",
+        size: 14,
+        sha256: "98".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        ...pageNames.map((name) =>
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
+        ),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/decoy.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(6);
+  });
+
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -1019,6 +1111,79 @@ describe("browser extension review adapter", () => {
     );
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows packaged frame and meta-refresh pages from extension pages", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        action: { default_popup: "popup.html" },
+        options_page: "refresh.html",
+      }),
+      {
+        path: "popup.html",
+        size: 82,
+        sha256: "99".repeat(32),
+        flags: [],
+        textSample:
+          '<frameset><frame src="tests/frame.html"></frameset><meta name="description" content="0;url=tests/decoy.html">',
+      },
+      {
+        path: "refresh.html",
+        size: 82,
+        sha256: "9a".repeat(32),
+        flags: [],
+        textSample: '<meta content="0; URL=\'tests/refreshed.html\'" HTTP-EQUIV="Refresh">',
+      },
+      ...["frame", "refreshed", "decoy"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 40,
+          sha256: String(101 + index)
+            .repeat(64)
+            .slice(0, 64),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: String(104 + index)
+            .repeat(64)
+            .slice(0, 64),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining([
+        "tests/frame.html",
+        "tests/frame.js",
+        "tests/refreshed.html",
+        "tests/refreshed.js",
+      ]),
+    );
+    expect(parsed.extensionPageEntrypoints).not.toContain("tests/decoy.html");
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/frame.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/refreshed.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/decoy.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(3);
   });
 
   test("follows packaged object documents from manifest-declared extension pages", () => {

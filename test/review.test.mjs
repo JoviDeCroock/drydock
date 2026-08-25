@@ -2601,6 +2601,10 @@ describe("test-scoped capability findings", () => {
           'new Worker(new URL("/test/url-worker.js", import.meta.url));',
           "new globalThis.Worker('/test/global-worker.js');",
           "new window['SharedWorker']('/test/window-shared-worker.js');",
+          "new Worker(chrome.runtime.getURL('/test/runtime-worker.js'));",
+          "new globalThis.SharedWorker(browser['runtime'].getURL('test/browser-runtime-worker.js'));",
+          "new Worker(tool.runtime.getURL('/test/decoy-runtime-worker.js'));",
+          "new Worker(chrome.runtime.getURL('/test/dynamic-runtime-worker.js') + suffix);",
         ].join("\n"),
       ),
       file("test/worker.js", "eval(payload);\n"),
@@ -2608,6 +2612,10 @@ describe("test-scoped capability findings", () => {
       file("test/url-worker.js", "eval(payload);\n"),
       file("test/global-worker.js", "eval(payload);\n"),
       file("test/window-shared-worker.js", "eval(payload);\n"),
+      file("test/runtime-worker.js", "eval(payload);\n"),
+      file("test/browser-runtime-worker.js", "eval(payload);\n"),
+      file("test/decoy-runtime-worker.js", "eval(payload);\n"),
+      file("test/dynamic-runtime-worker.js", "eval(payload);\n"),
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
@@ -2621,10 +2629,30 @@ describe("test-scoped capability findings", () => {
         expect.objectContaining({ file: "test/url-worker.js", severity: "medium" }),
         expect.objectContaining({ file: "test/global-worker.js", severity: "medium" }),
         expect.objectContaining({ file: "test/window-shared-worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/runtime-worker.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/browser-runtime-worker.js", severity: "medium" }),
+        expect.objectContaining({
+          file: "test/decoy-runtime-worker.js",
+          severity: "low",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          file: "test/dynamic-runtime-worker.js",
+          severity: "low",
+          testScoped: true,
+        }),
       ]),
     );
-    expect(findings).toHaveLength(5);
-    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+    expect(findings).toHaveLength(9);
+    expect(
+      findings
+        .filter(
+          (finding) =>
+            finding.file !== "test/decoy-runtime-worker.js" &&
+            finding.file !== "test/dynamic-runtime-worker.js",
+        )
+        .every((finding) => finding.testScoped !== true),
+    ).toBe(true);
   });
 
   test("resolves plain Worker strings against a browser document base", () => {
@@ -2681,6 +2709,12 @@ describe("test-scoped capability findings", () => {
           'const config = { files: ["test/payload.js"] };',
           "const example = 'browser.scripting.executeScript({ files: [\"test/payload.js\"] })';",
           'tool.scripting.executeScript({ files: ["test/payload.js"] });',
+          'tool.action.setPopup({ popup: "test/payload.js" });',
+          'tool.sidePanel.setOptions({ path: "test/payload.js" });',
+          'tool.devtools.panels.create("Example", "icon.png", "test/payload.js");',
+          'action.setPopup({ popup: "test/payload.js" });',
+          'sidePanel.setOptions({ path: "test/payload.js" });',
+          'devtools.panels.create("Example", "icon.png", "test/payload.js");',
         ].join("\n"),
       ),
       file("test/payload.js", "eval(payload);\n"),

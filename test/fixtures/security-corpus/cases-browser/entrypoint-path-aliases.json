@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest, HTML, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, Manifest V2 user scripts, extension-root programmatic injection including bracket and global-object member access, offscreen documents, direct and globally qualified document-relative or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, iframe, object-document, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; importScripts-shaped and raw-text HTML controls remain unreachable.",
+  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including bracket, nested, positional, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object-document, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 70,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
       "flags": [],
-      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><style>.example{content:\"<script src=decoy.js>\"}</style><textarea><script src=\"decoy.js\"></script></textarea><title><script src=\"decoy.js\"></script></title><script data-description=\">\" src=\"page&#46;js\"></script><script src=\"encoded%20page.js\"></script><iframe src=\"frame.html\"></iframe><object type=\"text/html\" data=\"object.html\"></object>"
+      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><style>.example{content:\"<script src=decoy.js>\"}</style><textarea><script src=\"decoy.js\"></script></textarea><title><script src=\"decoy.js\"></script></title><script data-description=\">\" src=\"page&#46;js\"></script><script src=\"encoded%20page.js\"></script><iframe src=\"frame.html\"></iframe><frame src=\"legacy-frame.html\"><object type=\"text/html\" data=\"object.html\"></object><meta content=\"0;url='refresh.html'\" http-equiv=\"refresh\"><meta name=\"description\" content=\"0;url=decoy.html\">"
     },
     {
       "path": "tests/content.js",
@@ -104,7 +104,7 @@
       "size": 72,
       "sha256": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
       "flags": [],
-      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); const example = \"importScripts('/tests/decoy.js')\";"
+      "textSample": "new Worker(new URL('/tests/worker.js', import.meta.url)); new globalThis.Worker('/tests/global-worker.js'); new Worker(chrome.runtime.getURL('/tests/runtime-worker.js')); chrome['scripting'].executeScript({ files: ['tests/bracket-injected.js'] }); globalThis.chrome.scripting.executeScript({ files: ['tests/global-injected.js'] }); browser.tabs.executeScript({ file: \"/tests/injected.js\" }); browser.contentScripts.register({ matches: ['https://example.invalid/*'], js: [{ file: '/tests/dynamic-content.js' }] }); chrome.offscreen.createDocument({ url: '/tests/offscreen.html', reasons: ['DOM_PARSER'], justification: 'parse' }); chrome.action.setPopup({ popup: '/tests/action-api.html' }); browser.sidePanel.setOptions({ path: '/tests/side-panel-api.html' }); tool.action.setPopup({ popup: '/tests/decoy.html' }); const example = \"importScripts('/tests/decoy.js')\";"
     },
     {
       "path": "tests/injected.js",
@@ -124,6 +124,13 @@
       "path": "tests/global-worker.js",
       "size": 14,
       "sha256": "7070707070707070707070707070707070707070707070707070707070707070",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/runtime-worker.js",
+      "size": 14,
+      "sha256": "7878787878787878787878787878787878787878787878787878787878787878",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -202,7 +209,7 @@
       "size": 120,
       "sha256": "7272727272727272727272727272727272727272727272727272727272727272",
       "flags": [],
-      "textSample": "<base href=\"/srcdoc-assets/\"><iframe srcdoc=\"&lt;script src=&quot;tests/inherited.js&quot;&gt;&lt;/script&gt;\"></iframe>"
+      "textSample": "<base href=\"/srcdoc-assets/\"><iframe srcdoc=\"&lt;script src=&quot;tests/inherited.js&quot;&gt;&lt;/script&gt;\"></iframe><script src=\"/scripts/devtools.js\"></script>"
     },
     {
       "path": "srcdoc-assets/tests/inherited.js",
@@ -238,6 +245,83 @@
       "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/legacy-frame.html",
+      "size": 39,
+      "sha256": "7979797979797979797979797979797979797979797979797979797979797979",
+      "flags": [],
+      "textSample": "<script src=\"legacy-frame.js\"></script>"
+    },
+    {
+      "path": "tests/legacy-frame.js",
+      "size": 14,
+      "sha256": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/refresh.html",
+      "size": 36,
+      "sha256": "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b",
+      "flags": [],
+      "textSample": "<script src=\"refresh.js\"></script>"
+    },
+    {
+      "path": "tests/refresh.js",
+      "size": 14,
+      "sha256": "7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/action-api.html",
+      "size": 39,
+      "sha256": "7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
+      "flags": [],
+      "textSample": "<script src=\"action-api.js\"></script>"
+    },
+    {
+      "path": "tests/action-api.js",
+      "size": 14,
+      "sha256": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/side-panel-api.html",
+      "size": 43,
+      "sha256": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+      "flags": [],
+      "textSample": "<script src=\"side-panel-api.js\"></script>"
+    },
+    {
+      "path": "tests/side-panel-api.js",
+      "size": 14,
+      "sha256": "8080808080808080808080808080808080808080808080808080808080808080",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "scripts/devtools.js",
+      "size": 90,
+      "sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+      "flags": [],
+      "textSample": "chrome.devtools.panels.create('Example', 'icon.png', '/tests/devtools-panel.html');"
+    },
+    {
+      "path": "tests/devtools-panel.html",
+      "size": 44,
+      "sha256": "8282828282828282828282828282828282828282828282828282828282828282",
+      "flags": [],
+      "textSample": "<script src=\"devtools-panel.js\"></script>"
+    },
+    {
+      "path": "tests/devtools-panel.js",
+      "size": 14,
+      "sha256": "8383838383838383838383838383838383838383838383838383838383838383",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -256,6 +340,11 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/global-worker.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/runtime-worker.js"
     },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dynamic-content.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/srcdoc.js" },
@@ -293,6 +382,31 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/offscreen.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/legacy-frame.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/refresh.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/action-api.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/side-panel-api.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/devtools-panel.js"
     },
     { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" }
   ]

@@ -463,7 +463,9 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     if (
       (!HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
         tagName !== "base" &&
+        tagName !== "frame" &&
         tagName !== "iframe" &&
+        tagName !== "meta" &&
         tagName !== "object") ||
       !/[\s/>]/.test(html[cursor] ?? "")
     ) {
@@ -471,9 +473,18 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       continue;
     }
 
-    const targetAttribute = tagName === "base" ? "href" : tagName === "object" ? "data" : "src";
+    const targetAttribute =
+      tagName === "base"
+        ? "href"
+        : tagName === "object"
+          ? "data"
+          : tagName === "meta"
+            ? null
+            : "src";
     let targetValue: string | null = null;
     let targetSeen = false;
+    let metaHttpEquiv: string | null = null;
+    let metaContent: string | null = null;
     let srcdocValue: string | null = null;
     let srcdocSeen = false;
     let tagClosed = false;
@@ -518,9 +529,15 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         }
       }
 
-      if (attributeName === targetAttribute && !targetSeen) {
+      if (targetAttribute !== null && attributeName === targetAttribute && !targetSeen) {
         targetSeen = true;
         targetValue = value;
+      }
+      if (tagName === "meta" && attributeName === "http-equiv" && metaHttpEquiv === null) {
+        metaHttpEquiv = decodeHTMLAttribute(value ?? "");
+      }
+      if (tagName === "meta" && attributeName === "content" && metaContent === null) {
+        metaContent = decodeHTMLAttribute(value ?? "");
       }
       if (tagName === "iframe" && attributeName === "srcdoc" && !srcdocSeen) {
         srcdocSeen = true;
@@ -538,7 +555,17 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       });
     } else if (
       tagClosed &&
-      (tagName === "script" || tagName === "iframe" || tagName === "object") &&
+      tagName === "meta" &&
+      metaHttpEquiv?.trim().toLowerCase() === "refresh"
+    ) {
+      const refreshUrl = metaRefreshUrl(metaContent ?? "");
+      if (refreshUrl) sources.push({ kind: "page", source: refreshUrl, baseHref });
+    } else if (
+      tagClosed &&
+      (tagName === "script" ||
+        tagName === "frame" ||
+        tagName === "iframe" ||
+        tagName === "object") &&
       targetValue
     ) {
       sources.push({
@@ -568,6 +595,20 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     index = Math.max(cursor, tagStart + 1);
   }
   return sources;
+}
+
+function metaRefreshUrl(content: string): string | null {
+  const match = /^\s*\d+\s*;\s*url\s*=\s*(.*?)\s*$/i.exec(content);
+  if (!match) return null;
+  const value = match[1];
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1).trim() || null;
+  }
+  return value || null;
 }
 
 const EXTENSION_RESOURCE_ROOT = new URL("drydock-extension://artifact/");

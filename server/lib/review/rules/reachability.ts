@@ -98,8 +98,17 @@ export function consumerReachablePaths(
         if (resolved && !reachable.has(resolved)) queue.push(resolved);
       }
       for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
-        const scriptResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
-        if (scriptResolved && !reachable.has(scriptResolved)) queue.push(scriptResolved);
+        if (worker.resolution === "root") {
+          const resolved = resolveBrowserDocumentModulePath(
+            worker.path,
+            BROWSER_ARCHIVE_ROOT.href,
+            byNormalizedPath,
+          );
+          if (resolved && !reachable.has(resolved)) queue.push(resolved);
+          continue;
+        }
+        const moduleResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
+        if (moduleResolved && !reachable.has(moduleResolved)) queue.push(moduleResolved);
         if (worker.resolution === "document") {
           for (const documentBaseUrl of consumerDocumentBaseUrls) {
             const resolved = resolveBrowserDocumentModulePath(
@@ -316,14 +325,17 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   return specifiers;
 }
 
-type WebExtensionResourceProperty = "file" | "files" | "js" | "url";
+type WebExtensionResourceProperty = "file" | "files" | "js" | "path" | "popup" | "url";
 type WebExtensionScriptValueShape = "string" | "string-array" | "file-object-array";
 
-interface WebExtensionResourceCall {
-  openIndex: number;
-  property: WebExtensionResourceProperty;
-  valueShape: WebExtensionScriptValueShape;
-}
+type WebExtensionResourceCall =
+  | {
+      openIndex: number;
+      source: "property";
+      property: WebExtensionResourceProperty;
+      valueShape: WebExtensionScriptValueShape;
+    }
+  | { openIndex: number; source: "argument"; argumentIndex: number };
 
 const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "self", "window"]);
 
@@ -375,16 +387,27 @@ function staticWebExtensionResourceSpecifiers(text: string): string[] {
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
     if (closeIndex === null) continue;
-    specifiers.push(
-      ...staticPropertyScriptPaths(
+    if (call.source === "property") {
+      specifiers.push(
+        ...staticPropertyScriptPaths(
+          tokens,
+          text,
+          call.openIndex + 1,
+          closeIndex,
+          call.property,
+          call.valueShape,
+        ),
+      );
+    } else {
+      const path = staticLiteralCallArgument(
         tokens,
         text,
         call.openIndex + 1,
         closeIndex,
-        call.property,
-        call.valueShape,
-      ),
-    );
+        call.argumentIndex,
+      );
+      if (path !== null) specifiers.push(path);
+    }
     index = closeIndex;
   }
 
@@ -400,6 +423,7 @@ function webExtensionScriptCall(
 
   let index = start;
   let first = tokenText(tokens[index], text);
+  let browserQualified = false;
   if (STATIC_BROWSER_GLOBALS.has(first)) {
     const globalMember = staticMemberAccess(tokens, text, index + 1);
     if (!globalMember || (globalMember.name !== "chrome" && globalMember.name !== "browser")) {
@@ -410,6 +434,7 @@ function webExtensionScriptCall(
   }
   let namespace: string;
   if (first === "chrome" || first === "browser") {
+    browserQualified = true;
     const member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;
     namespace = member.name;
@@ -419,12 +444,36 @@ function webExtensionScriptCall(
     index += 1;
   }
 
+  let subnamespace: string | null = null;
+  if (namespace === "devtools") {
+    const member = staticMemberAccess(tokens, text, index);
+    if (!member) return null;
+    subnamespace = member.name;
+    index = member.nextIndex;
+  }
+
+  if (
+    !browserQualified &&
+    (namespace === "action" ||
+      namespace === "browserAction" ||
+      namespace === "pageAction" ||
+      namespace === "sidePanel" ||
+      namespace === "devtools")
+  ) {
+    return null;
+  }
+
   if (
     namespace !== "tabs" &&
     namespace !== "scripting" &&
     namespace !== "contentScripts" &&
     namespace !== "userScripts" &&
-    namespace !== "offscreen"
+    namespace !== "offscreen" &&
+    namespace !== "action" &&
+    namespace !== "browserAction" &&
+    namespace !== "pageAction" &&
+    namespace !== "sidePanel" &&
+    namespace !== "devtools"
   ) {
     return null;
   }
@@ -434,28 +483,40 @@ function webExtensionScriptCall(
   const openIndex = staticCallOpenIndex(tokens, text, methodMember.nextIndex);
   if (openIndex === null) return null;
   if (namespace === "tabs" && method === "executeScript") {
-    return { openIndex, property: "file", valueShape: "string" };
+    return { openIndex, source: "property", property: "file", valueShape: "string" };
   }
   if (namespace === "scripting" && method === "executeScript") {
-    return { openIndex, property: "files", valueShape: "string-array" };
+    return { openIndex, source: "property", property: "files", valueShape: "string-array" };
   }
   if (
     namespace === "scripting" &&
     (method === "registerContentScripts" || method === "updateContentScripts")
   ) {
-    return { openIndex, property: "js", valueShape: "string-array" };
+    return { openIndex, source: "property", property: "js", valueShape: "string-array" };
   }
   if (namespace === "contentScripts" && method === "register") {
-    return { openIndex, property: "js", valueShape: "file-object-array" };
+    return { openIndex, source: "property", property: "js", valueShape: "file-object-array" };
   }
   if (
     namespace === "userScripts" &&
     (method === "register" || method === "update" || method === "execute")
   ) {
-    return { openIndex, property: "js", valueShape: "file-object-array" };
+    return { openIndex, source: "property", property: "js", valueShape: "file-object-array" };
   }
   if (namespace === "offscreen" && method === "createDocument") {
-    return { openIndex, property: "url", valueShape: "string" };
+    return { openIndex, source: "property", property: "url", valueShape: "string" };
+  }
+  if (
+    (namespace === "action" || namespace === "browserAction" || namespace === "pageAction") &&
+    method === "setPopup"
+  ) {
+    return { openIndex, source: "property", property: "popup", valueShape: "string" };
+  }
+  if (namespace === "sidePanel" && method === "setOptions") {
+    return { openIndex, source: "property", property: "path", valueShape: "string" };
+  }
+  if (namespace === "devtools" && subnamespace === "panels" && method === "create") {
+    return { openIndex, source: "argument", argumentIndex: 2 };
   }
   return null;
 }
@@ -525,7 +586,7 @@ function staticNamedPropertyPaths(
 
 interface WorkerScriptSpecifier {
   path: string;
-  resolution: "document" | "module";
+  resolution: "document" | "module" | "root";
 }
 
 function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
@@ -551,9 +612,43 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
       continue;
     }
     const modulePath = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
-    if (modulePath !== null) specifiers.push({ path: modulePath, resolution: "module" });
+    if (modulePath !== null) {
+      specifiers.push({ path: modulePath, resolution: "module" });
+      continue;
+    }
+    const rootPath = staticWebExtensionRuntimeUrlPath(tokens, text, constructorIndex + 2);
+    if (rootPath !== null) specifiers.push({ path: rootPath, resolution: "root" });
   }
   return specifiers;
+}
+
+function staticWebExtensionRuntimeUrlPath(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): string | null {
+  let index = start;
+  let global = tokenText(tokens[index], text);
+  if (STATIC_BROWSER_GLOBALS.has(global)) {
+    const globalMember = staticMemberAccess(tokens, text, index + 1);
+    if (!globalMember || (globalMember.name !== "chrome" && globalMember.name !== "browser")) {
+      return null;
+    }
+    global = globalMember.name;
+    index = globalMember.nextIndex - 1;
+  }
+  if (global !== "chrome" && global !== "browser") return null;
+  const runtimeMember = staticMemberAccess(tokens, text, index + 1);
+  if (runtimeMember?.name !== "runtime") return null;
+  const getUrlMember = staticMemberAccess(tokens, text, runtimeMember.nextIndex);
+  if (getUrlMember?.name !== "getURL") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, getUrlMember.nextIndex);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  if (closeIndex === null) return null;
+  const following = tokenText(tokens[closeIndex + 1], text);
+  if (following !== ")" && following !== ",") return null;
+  return staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
 }
 
 function resolveBrowserDocumentModulePath(
@@ -662,6 +757,30 @@ function staticLiteralCallArguments(
     argumentStart = index + 1;
   }
   return paths;
+}
+
+function staticLiteralCallArgument(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+  targetArgument: number,
+): string | null {
+  let argumentStart = start;
+  let argument = 0;
+  let depth = 0;
+  for (let index = start; index <= end; index += 1) {
+    const value = index === end ? "," : tokenText(tokens[index], text);
+    if (value === "[" || value === "{" || value === "(") depth += 1;
+    else if (value === "]" || value === "}" || value === ")") depth -= 1;
+    if (value !== "," || depth !== 0) continue;
+    if (argument === targetArgument) {
+      return index === argumentStart + 1 ? staticScriptPath(tokens[argumentStart], text) : null;
+    }
+    argument += 1;
+    argumentStart = index + 1;
+  }
+  return null;
 }
 
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {
