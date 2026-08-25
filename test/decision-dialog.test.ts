@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { decisionSubmissionReachedVerdict } from "../src/pages/Dashboard/ScanDetail/DecisionDialog";
+import {
+  approvalSubmissionCompletesRelease,
+  decisionSubmissionReachedVerdict,
+} from "../src/pages/Dashboard/ScanDetail/DecisionDialog";
 import type { PersistedScanDetail, ScanDecision } from "../src/models/scan";
 
 function result(verdict: ScanDecision | null, approvedCount: number): PersistedScanDetail {
@@ -39,5 +42,11 @@ describe("staged decision follow-up", () => {
   test("continues only once the submitted verdict is the release decision", () => {
     expect(decisionSubmissionReachedVerdict(result("publish", 2), "publish")).toBe(true);
     expect(decisionSubmissionReachedVerdict(result("no_publish", 1), "no_publish")).toBe(true);
+  });
+
+  test("does not promise quorum when the viewer is replacing their own approval", () => {
+    const partial = result(null, 1).approvals!;
+    expect(approvalSubmissionCompletesRelease(partial)).toBe(false);
+    expect(approvalSubmissionCompletesRelease({ ...partial, viewerDecision: null })).toBe(true);
   });
 });

@@ -115,6 +115,8 @@ export interface ScanListItem {
   decidedAt?: string | number | Date | null;
   approvalCount?: number;
   legacyDecision?: boolean;
+  /** The current viewer's vote, when one exists. */
+  viewerDecision?: ScanDecision | null;
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;

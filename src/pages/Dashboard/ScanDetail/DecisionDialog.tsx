@@ -27,6 +27,16 @@ export function decisionSubmissionReachedVerdict(
   return (updated.approvals?.verdict ?? updated.scan.decision ?? null) === decision;
 }
 
+export function approvalSubmissionCompletesRelease(
+  approvals: ScanApprovalState | null | undefined,
+): boolean {
+  return Boolean(
+    approvals &&
+    approvals.approvedCount + (approvals.viewerDecision === "publish" ? 0 : 1) >=
+      approvals.required,
+  );
+}
+
 export function DecisionDialog({
   open,
   onClose,
@@ -75,11 +85,7 @@ export function DecisionDialog({
   // whether approving records a vote or actually approves the release. A
   // re-approval by someone already in the roster adds nothing to the count, so
   // it must not promise to.
-  const approvalCompletesRelease = Boolean(
-    approvals &&
-    approvals.approvedCount + (approvals.viewerDecision === "publish" ? 0 : 1) >=
-      approvals.required,
-  );
+  const approvalCompletesRelease = approvalSubmissionCompletesRelease(approvals);
 
   useEffect(() => {
     if (open) {

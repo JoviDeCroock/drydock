@@ -22,6 +22,7 @@ export interface ListScansOptions {
   cursor?: { createdAtMs: number; id: string } | null;
   limit?: number;
   decisionFilter?: ScanDecisionFilter;
+  viewerUserId?: string | null;
 }
 
 export interface ListScansResult {
@@ -47,6 +48,8 @@ export interface ListScansResult {
     approvalCount: number;
     /** The verdict exists without a member vote roster and must not be compared to today's bar. */
     legacyDecision: boolean;
+    /** The requesting member's vote, used by the quick-decision dialog. */
+    viewerDecision: "publish" | "no_publish" | null;
     changedFileCount: number;
     findingCount: number;
     riskSummary: ScanRiskSummary | null;
@@ -173,6 +176,7 @@ export async function listScans(
       db,
       organizationId,
       page.map((row) => row.id),
+      options.viewerUserId,
     ),
   ]);
 
@@ -202,6 +206,7 @@ export async function listScans(
           : approvals.get(row.id)?.approved) ?? (row.decision === "publish" ? 1 : 0),
       legacyDecision:
         !approvals.has(row.id) && (row.decision === "publish" || row.decision === "no_publish"),
+      viewerDecision: approvals.get(row.id)?.viewerDecision ?? null,
       changedFileCount: row.changedFileCount ?? 0,
       findingCount: row.findingCount ?? 0,
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,

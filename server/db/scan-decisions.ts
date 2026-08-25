@@ -156,6 +156,8 @@ interface ApplyDecisionVoteInput {
   env?: Cloudflare.Env;
   /** Present only for gate votes, whose row write must prove the gate is still pending. */
   pendingGateId?: string;
+  /** Exact pending-gate generation the route authorized before step-up. */
+  pendingGateUpdatedAt?: Date;
   /**
    * The predicate the verdict write must still satisfy. Re-checked at write
    * time rather than trusted from the read above, so a concurrent finalize
@@ -185,6 +187,7 @@ async function applyDecisionVote(
     artifactBucket,
     env,
     pendingGateId,
+    pendingGateUpdatedAt,
     applyVerdictWhere,
   }: ApplyDecisionVoteInput,
 ): Promise<RecordScanDecisionResult> {
@@ -201,6 +204,7 @@ async function applyDecisionVote(
     now,
     hardenOnly,
     pendingGateId,
+    pendingGateUpdatedAt,
   });
   if (vote === "not_member" || vote === "not_actionable") {
     return { outcome: "not_actionable" };
@@ -605,6 +609,8 @@ function readRiskSummaryValue(value: unknown): unknown {
 
 export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput {
   gateId: string;
+  /** Gate generation authorized by the route before any TOTP step-up. */
+  gateUpdatedAt: Date;
 }
 
 /**
@@ -678,6 +684,7 @@ export async function recordGatePackageDecision(
     artifactBucket,
     env,
     pendingGateId: input.gateId,
+    pendingGateUpdatedAt: input.gateUpdatedAt,
     // The package must still be undecided when the verdict lands — except for a
     // block, which is allowed to override an approval that has not yet released
     // the deployment. Both re-assert that the gate is still pending, so a
