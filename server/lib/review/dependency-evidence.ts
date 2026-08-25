@@ -567,15 +567,42 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
     if (!normalized) return null;
     dependencies.push(normalized);
   }
+  const omittedCount = (optionalCountOf(value.omittedCount) ?? 0) + overflowCount;
+  const selectedCount = optionalCountOf(value.selectedCount) ?? dependencies.length + omittedCount;
+  const retainedInspectedCount = dependencies.filter(
+    (dependency) => dependency.status === "inspected",
+  ).length;
+  const retainedUninspectableCount = dependencies.length - retainedInspectedCount;
+  const rawInspectedCount = optionalCountOf(value.inspectedCount);
+  const rawUninspectableCount = optionalCountOf(value.uninspectableCount);
+  const inspectedCount =
+    rawInspectedCount ??
+    (rawUninspectableCount === null
+      ? retainedInspectedCount
+      : selectedCount - rawUninspectableCount);
+  const uninspectableCount = rawUninspectableCount ?? selectedCount - inspectedCount;
+  if (
+    selectedCount !== dependencies.length + omittedCount ||
+    (selectedCount === 0 && status !== "not-applicable") ||
+    inspectedCount < retainedInspectedCount ||
+    uninspectableCount < retainedUninspectableCount ||
+    inspectedCount + uninspectableCount !== selectedCount ||
+    inspectedCount - retainedInspectedCount + (uninspectableCount - retainedUninspectableCount) !==
+      omittedCount
+  ) {
+    return null;
+  }
   return {
     status:
-      overflowCount || dependencies.some((dependency) => dependency.status === "uninspectable")
-        ? "partial"
-        : status,
-    selectedCount: countOf(value.selectedCount),
-    inspectedCount: countOf(value.inspectedCount),
-    uninspectableCount: countOf(value.uninspectableCount),
-    omittedCount: countOf(value.omittedCount) + overflowCount,
+      selectedCount === 0
+        ? "not-applicable"
+        : omittedCount || uninspectableCount
+          ? "partial"
+          : "complete",
+    selectedCount,
+    inspectedCount,
+    uninspectableCount,
+    omittedCount,
     dependencies,
   };
 }
@@ -714,6 +741,8 @@ function boundedStringOrNull(value: unknown, limit: number): string | null {
   return typeof value === "string" ? boundedText(value, limit) : null;
 }
 
-function countOf(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+function optionalCountOf(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.floor(value))
+    : null;
 }

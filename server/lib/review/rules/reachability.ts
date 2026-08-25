@@ -46,14 +46,32 @@ export function analyzeNodeInterpreterArgs(
 
   for (let index = 0; index < tokens.length; index += 1) {
     const callee = tokens[index];
-    if (callee.type !== "ident" || !NODE_INTERPRETER_CALLEES.has(jsTokenText(text, callee))) {
+    let openIndex: number;
+    if (callee.type === "ident" && NODE_INTERPRETER_CALLEES.has(jsTokenText(text, callee))) {
+      const optionalCall = tokens[index + 1];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 2
+          : index + 1;
+    } else if (callee.type === "string" && NODE_INTERPRETER_CALLEES.has(callee.value ?? "")) {
+      const bracketOpen = tokens[index - 1];
+      const bracketClose = tokens[index + 1];
+      if (
+        bracketOpen?.type !== "punct" ||
+        jsTokenText(text, bracketOpen) !== "[" ||
+        bracketClose?.type !== "punct" ||
+        jsTokenText(text, bracketClose) !== "]"
+      ) {
+        continue;
+      }
+      const optionalCall = tokens[index + 2];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 3
+          : index + 2;
+    } else {
       continue;
     }
-    const optionalCall = tokens[index + 1];
-    const openIndex =
-      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-        ? index + 2
-        : index + 1;
     const open = tokens[openIndex];
     const interpreter = tokens[openIndex + 1];
     const comma = tokens[openIndex + 2];

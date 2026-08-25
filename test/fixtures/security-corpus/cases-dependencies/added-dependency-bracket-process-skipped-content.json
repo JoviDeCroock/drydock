@@ -1,8 +1,8 @@
 {
   "id": "added-dependency-bracket-process-skipped-content",
-  "title": "A bracketed process API cannot hide a computed install target",
+  "title": "A bracketed Node process call retains its static argv targets",
   "category": "dependency-introduction",
-  "intent": "Bracket-property syntax invokes the same child_process API as dot-property syntax. A computed target can select any packaged body, so Drydock must report deliberately omitted content as incomplete evidence.",
+  "intent": "Bracket-property syntax invokes the same child_process API as dot-property syntax. Relative preload and entry scripts passed through a static Node argv must remain install-reachable when their bodies were deliberately omitted.",
   "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
   "stagedPackageJson": {
     "name": "consumer",
@@ -29,7 +29,7 @@
           "path": "install.js",
           "size": 96,
           "sha256": "bracket-runner-install-js",
-          "textSample": "const cp = require(\"node:child_process\"); cp[\"spawn\"](process.argv[2]);",
+          "textSample": "const cp = require(\"node:child_process\"); cp[\"spawn\"](\"node\", [\"./payload.min.js\"]);",
           "flags": []
         },
         {
@@ -53,8 +53,7 @@
       "fileCount": 3,
       "observation": {
         "execution": "observed",
-        "risk": "not-observed",
-        "dynamicInstallTarget": true
+        "risk": "not-observed"
       }
     }
   ],
