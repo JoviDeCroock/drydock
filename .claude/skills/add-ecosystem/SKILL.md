@@ -1,6 +1,6 @@
 ---
 name: add-ecosystem
-description: Add a package ecosystem to Drydock or extend an existing one's release paths. Use when creating a new directory under server/lib/ecosystems/, registering a staged/gate/publicDiff capability, implementing a WorkflowGateAdapter or PublicDiffAdapter, or deciding where ecosystem tests and docs belong.
+description: Add a Drydock package ecosystem or staged, gate, or public-diff capability, including adapters, registry wiring, tests, and docs.
 ---
 
 # Add A Package Ecosystem

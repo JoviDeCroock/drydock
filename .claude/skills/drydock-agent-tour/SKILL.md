@@ -1,6 +1,6 @@
 ---
 name: drydock-agent-tour
-description: Run, inspect, and summarize the portable Drydock local product walkthrough. Use when an agent or developer needs to experience the end-to-end Drydock flow outside Conductor, generate screenshots/traces/report artifacts, validate the fake-registry local review path, or report product feel issues from the staged-publish workbench.
+description: Run or inspect the canonical portable Drydock walkthrough, including fake-registry review, screenshots, traces, reports, and product-feel findings.
 ---
 
 # Drydock Agent Tour

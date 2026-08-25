@@ -1,6 +1,6 @@
 ---
 name: preact-signals-core
-description: Use when implementing or debugging @preact/signals-core, signal, computed, effect, batch, untracked, action, createModel, signal.value tracking, signal unboxing/subscription boundaries, object or array updates, and reactivity that appears stale or over-eager.
+description: Implement or debug @preact/signals-core primitives, tracking, batching, actions, models, updates, or stale and over-eager reactivity.
 ---
 
 # Preact Signals Core

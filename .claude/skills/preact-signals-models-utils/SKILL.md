@@ -1,6 +1,6 @@
 ---
 name: preact-signals-models-utils
-description: Use when designing or debugging Preact Signals models and utilities, including createModel, useModel, action methods, passing signals through models without over-eager unboxing, Show, For, useLiveSignal, useSignalRef, nested model state, and model lifecycle disposal.
+description: Design or debug Preact Signals models and utilities such as createModel, useModel, Show, For, live signals, refs, nested state, and disposal.
 ---
 
 # Preact Signals Models And Utils

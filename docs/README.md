@@ -7,6 +7,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 ## Always-use references
 
 - [`../AGENTS.md`](../AGENTS.md) — repo rules, commands, invariants, and test expectations for agents.
+- [`repository-map.md`](./repository-map.md) — task-oriented ownership map for server, UI, persistence, tests, and commands; load only the relevant layer.
 - [`design.md`](./design.md) — visual/UI source of truth. Read before UI changes.
 - [`release-safety.md`](./release-safety.md) — required verification layer by change type.
 - [`security-model.md`](./security-model.md) — security boundaries and non-negotiables.

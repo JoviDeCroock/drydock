@@ -1,6 +1,6 @@
 ---
 name: preact-signals-eslint-plugin
-description: Use when configuring, extending, or debugging @preact/eslint-plugin-signals rules for Preact Signals misuse, including conditional value reads, signal truthiness, signal writes in computed, values after await, and signal creation in component bodies.
+description: Configure, extend, or debug @preact/eslint-plugin-signals rules for unsafe reads, truthiness, computed writes, async use, or component-local creation.
 ---
 
 # Preact Signals ESLint Plugin

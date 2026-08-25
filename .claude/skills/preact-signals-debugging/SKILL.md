@@ -1,6 +1,6 @@
 ---
 name: preact-signals-debugging
-description: Use when diagnosing Preact Signals bugs, stale renders, missing updates, over-eager rerenders from early unboxing, memory leaks, duplicate Preact copies, React transform misses, devtools/debug output, SSR differences, or issues that need a minimal reproduction.
+description: Diagnose Preact Signals stale or eager renders, missing updates, leaks, duplicate Preact, transform or SSR differences, and minimal reproductions.
 ---
 
 # Preact Signals Debugging

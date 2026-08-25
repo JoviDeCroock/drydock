@@ -1,6 +1,6 @@
 ---
 name: split-large-module
-description: Break an oversized module into logical files without changing behavior — choosing the seam, keeping consumers stable with a barrel, verifying the split mechanically rather than trusting a green suite, and recognizing the files that must stay whole. Use when asked to "clean up the codebase", "split this file", "break up this component", or when a module has outgrown comprehension.
+description: Split an oversized module or component without behavior changes, preserving consumers with a barrel and mechanically verifying the move.
 ---
 
 # Split A Large Module

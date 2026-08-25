@@ -1,6 +1,6 @@
 ---
 name: shared-primitives
-description: Where a small helper belongs and what it must be called. Use before writing any guard, escaper, hash, path check, fan-out helper, tone mapper, or page-level component; when a helper "feels generic"; when a function's safe use depends on the context it lands in; or right after hoisting something into a shared module.
+description: Place or name a reusable guard, escaper, hash, path check, fan-out helper, tone mapper, page component, or other generic helper safely.
 ---
 
 # Shared Primitives: Define It Once, Name It For Its Context

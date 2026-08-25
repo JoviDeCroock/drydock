@@ -1,6 +1,6 @@
 ---
 name: pre-pr
-description: The finishing ritual before opening any PR from this repo. Use when a branch is done and about to be pushed, when asked to "open a PR", "finish this branch", or "get this ready for review" — run it unprompted before every push.
+description: Finish a Drydock branch before any push or PR, including requests to open a PR, finish a branch, or prepare it for review.
 ---
 
 # Pre-PR Finishing Ritual
