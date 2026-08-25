@@ -74,10 +74,16 @@ export function consumerReachablePaths(
   }
 
   const queue: ConsumerReachabilityQueueEntry[] = [];
-  for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
-    // Entrypoints are already decoded, validated archive paths. URL semantics
-    // apply to specifiers discovered inside those files, not to the seeds.
+  for (const candidate of entrypointCandidates(packageJson)) {
     const resolved = resolveModulePath(candidate, byNormalizedPath);
+    if (resolved) queue.push({ path: resolved });
+  }
+  for (const candidate of extraSeedPaths) {
+    // Browser manifest and HTML URLs select exact archive entries. Package
+    // entrypoints retain Node-style extension and index fallback above.
+    const resolved = rootRelativeModuleImports
+      ? resolveExactModulePath(candidate, byNormalizedPath)
+      : resolveModulePath(candidate, byNormalizedPath);
     if (!resolved) continue;
     const documentBases = consumerDocumentBaseUrlsByPath[resolved];
     if (documentBases?.length) {
@@ -100,7 +106,9 @@ export function consumerReachablePaths(
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
     for (const dependency of consumerFileDependencyPaths?.(path, file) ?? []) {
-      const resolved = resolveModulePath(dependency.path, byNormalizedPath);
+      const resolved = rootRelativeModuleImports
+        ? resolveExactModulePath(dependency.path, byNormalizedPath)
+        : resolveModulePath(dependency.path, byNormalizedPath);
       if (resolved) queue.push({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
     }
     for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
@@ -131,9 +139,10 @@ export function consumerReachablePaths(
           if (resolved) queue.push({ path: resolved });
           continue;
         }
-        const moduleResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
-        if (moduleResolved) queue.push({ path: moduleResolved });
-        if (worker.resolution === "document" && documentBaseUrl) {
+        if (worker.resolution === "module") {
+          const resolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
+          if (resolved) queue.push({ path: resolved });
+        } else if (documentBaseUrl) {
           const resolved = resolveBrowserDocumentModulePath(
             worker.path,
             documentBaseUrl,
@@ -803,10 +812,18 @@ function resolveBrowserDocumentModulePath(
     const resolved = new URL(specifier, base);
     if (resolved.protocol !== base.protocol || resolved.host !== base.host) return null;
     const path = decodeUrlPathForArchiveLookup(resolved.pathname.replace(/^\/+/, ""));
-    return resolveModulePath(path, byNormalizedPath);
+    return resolveExactModulePath(path, byNormalizedPath);
   } catch {
     return null;
   }
+}
+
+function resolveExactModulePath(
+  candidate: string,
+  byNormalizedPath: Map<string, FileRecord>,
+): string | null {
+  const normalized = normalizePathSegments(stripPackagePrefix(candidate));
+  return normalized && byNormalizedPath.has(normalized) ? normalized : null;
 }
 
 const BROWSER_ARCHIVE_ROOT = new URL("drydock-extension://artifact/");

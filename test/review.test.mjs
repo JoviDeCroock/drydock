@@ -2658,6 +2658,9 @@ describe("test-scoped capability findings", () => {
       codePatternSet: "javascript",
       consumerEntrypointPaths: ["popup.js"],
       consumerRootRelativeModuleImports: true,
+      consumerDocumentBaseUrlsByPath: {
+        "popup.js": ["drydock-extension://artifact/popup.html"],
+      },
     }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
@@ -2704,6 +2707,7 @@ describe("test-scoped capability findings", () => {
         ].join("\n"),
       ),
       file("test/document-worker.js", "eval(payload);\n"),
+      file("scripts/test/document-worker.js", "eval(decoy);\n"),
       file("scripts/test/module-worker.js", "eval(payload);\n"),
       file("test/module-worker.js", "eval(decoy);\n"),
     ];
@@ -2726,6 +2730,11 @@ describe("test-scoped capability findings", () => {
           severity: "medium",
         }),
         expect.objectContaining({
+          file: "scripts/test/document-worker.js",
+          severity: "low",
+          testScoped: true,
+        }),
+        expect.objectContaining({
           file: "test/module-worker.js",
           severity: "low",
           testScoped: true,
@@ -2734,7 +2743,11 @@ describe("test-scoped capability findings", () => {
     );
     expect(
       findings
-        .filter((finding) => finding.file !== "test/module-worker.js")
+        .filter(
+          (finding) =>
+            finding.file !== "test/module-worker.js" &&
+            finding.file !== "scripts/test/document-worker.js",
+        )
         .every((finding) => finding.testScoped !== true),
     ).toBe(true);
   });

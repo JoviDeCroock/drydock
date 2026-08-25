@@ -19,4 +19,34 @@ describe("AI reviewer eval (historical recorded-output scoring)", () => {
     expect(result.byScenario["missing-baseline"].rate).toBe(1);
     expect(result.byScenario["model-failover"].rate).toBe(1);
   });
+
+  test("reports the recorded reviewer version when it is stale", () => {
+    const stale = runAiReviewEval({
+      suiteVersion: 1,
+      recordedReviewerVersion: "0.0.0",
+      cases: [
+        {
+          id: "stale-reviewer",
+          verdict: "benign",
+          threatClass: "version-provenance",
+          scenario: "recorded-output",
+          review: {
+            status: "complete",
+            risk: "low",
+            releaseAssessment: "nothing_unusual",
+            summary: "Recorded output from an earlier reviewer.",
+            findings: [],
+            requiresManualReview: false,
+            model: "recorded-model",
+            reviewerVersion: "0.0.0",
+          },
+        },
+      ],
+    });
+
+    expect(stale.recordedReviewerVersion).toBe("0.0.0");
+    expect(stale.currentReviewerVersion).toBe(AI_REVIEWER_VERSION);
+    expect(stale.currentContractRecorded).toBe(false);
+    expect(stale.failures).toEqual([]);
+  });
 });

@@ -1070,6 +1070,177 @@ describe("browser extension review adapter", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test.each([
+    [2, ["tests/exposed.html", "tests/direct.js", "assets/*.js"]],
+    [
+      3,
+      [
+        {
+          resources: ["tests/exposed.html", "tests/direct.js", "assets/*.js"],
+          matches: ["https://example.invalid/*"],
+        },
+      ],
+    ],
+  ])(
+    "treats Manifest V%s web-accessible resources as consumer reachable",
+    (manifestVersion, webAccessibleResources) => {
+      const path = "dist/tab-helper.zip";
+      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+      const files = [
+        manifestFile({
+          manifest_version: manifestVersion,
+          background: undefined,
+          web_accessible_resources: webAccessibleResources,
+        }),
+        {
+          path: "tests/exposed.html",
+          size: 40,
+          sha256: "81".repeat(32),
+          flags: [],
+          textSample: '<script src="nested.js"></script>',
+        },
+        {
+          path: "tests/nested.js",
+          size: 14,
+          sha256: "82".repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+        {
+          path: "tests/direct.js",
+          size: 14,
+          sha256: "83".repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+        {
+          path: "assets/exposed.js",
+          size: 14,
+          sha256: "84".repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+        {
+          path: "tests/decoy.js",
+          size: 14,
+          sha256: "85".repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ];
+
+      const parsed = parseBrowserExtensionManifest(files).manifest;
+      expect(parsed.extensionPageEntrypoints).toEqual(
+        expect.arrayContaining([
+          "tests/exposed.html",
+          "tests/nested.js",
+          "tests/direct.js",
+          "assets/exposed.js",
+        ]),
+      );
+      const findings = createBrowserExtensionReview({
+        manifest,
+        artifact: { path, sha256: SHA, files },
+      }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+      expect(findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ file: "tests/nested.js", severity: "high" }),
+          expect.objectContaining({ file: "tests/direct.js", severity: "high" }),
+          expect.objectContaining({ file: "assets/exposed.js", severity: "high" }),
+          expect.objectContaining({
+            file: "tests/decoy.js",
+            severity: "medium",
+            testScoped: true,
+          }),
+        ]),
+      );
+      expect(findings).toHaveLength(4);
+    },
+  );
+
+  test("follows scripts after an abruptly closed HTML comment", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "tests/popup.html" } }),
+      {
+        path: "tests/popup.html",
+        size: 48,
+        sha256: "86".repeat(32),
+        flags: [],
+        textSample: '<!--><script src="payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "87".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "tests/payload.js", severity: "high" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("does not apply Node extension fallback to browser URLs", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        background: { service_worker: "scripts/controller.js" },
+        options_page: "tests/manifest-entry",
+      }),
+      {
+        path: "scripts/controller.js",
+        size: 100,
+        sha256: "88".repeat(32),
+        flags: [],
+        textSample:
+          'import "../tests/imported"; chrome.scripting.executeScript({ files: ["tests/injected"] });',
+      },
+      {
+        path: "tests/imported.js",
+        size: 14,
+        sha256: "89".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "tests/injected.js",
+        size: 14,
+        sha256: "8a".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "tests/manifest-entry.js",
+        size: 14,
+        sha256: "8b".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual([
+      expect.objectContaining({ file: "tests/imported.js", severity: "medium", testScoped: true }),
+      expect.objectContaining({ file: "tests/injected.js", severity: "medium", testScoped: true }),
+      expect.objectContaining({
+        file: "tests/manifest-entry.js",
+        severity: "medium",
+        testScoped: true,
+      }),
+    ]);
+  });
+
   test("resolves plain Worker URLs against the owning extension document", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -1103,6 +1274,13 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: "eval(payload);",
       },
+      {
+        path: "scripts/tests/payload.js",
+        size: 14,
+        sha256: "79".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
@@ -1113,11 +1291,20 @@ describe("browser extension review adapter", () => {
       manifest,
       artifact: { path, sha256: SHA, files },
     });
-    const finding = review.ruleFindings.find(
+    const findings = review.ruleFindings.filter(
       (candidate) => candidate.ruleId === "code.dynamic-evaluation",
     );
-    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
-    expect(finding?.testScoped).not.toBe(true);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/payload.js" }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "scripts/tests/payload.js",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
   });
 
   test("does not resolve Worker URLs against an unrelated extension document", () => {

@@ -1,0 +1,115 @@
+{
+  "id": "browser-reachability-boundaries",
+  "title": "browser URLs preserve exact document and manifest reachability boundaries",
+  "category": "browser-extension",
+  "intent": "Pins web-accessible resource reachability, abrupt HTML comment recovery, exact browser URL lookup without Node extension fallback, and document-only resolution for plain Worker strings.",
+  "slug": "reachability-boundaries",
+  "extensionId": "reachability-boundaries@example.invalid",
+  "version": "1.0.0",
+  "sha256": "9191919191919191919191919191919191919191919191919191919191919191",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 360,
+      "sha256": "9292929292929292929292929292929292929292929292929292929292929292",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Reachability boundaries\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"reachability-boundaries@example.invalid\" } },\n  \"action\": { \"default_popup\": \"tests/popup.html\" },\n  \"options_page\": \"tests/manifest-entry\",\n  \"web_accessible_resources\": [{ \"resources\": [\"tests/web/exposed.html\", \"tests/direct.js\", \"assets/*.js\"], \"matches\": [\"https://example.invalid/*\"] }]\n}\n"
+    },
+    {
+      "path": "tests/popup.html",
+      "size": 70,
+      "sha256": "9393939393939393939393939393939393939393939393939393939393939393",
+      "flags": [],
+      "textSample": "<!--><script type=\"module\" src=\"/scripts/tests/controller.js\"></script>"
+    },
+    {
+      "path": "scripts/tests/controller.js",
+      "size": 180,
+      "sha256": "9494949494949494949494949494949494949494949494949494949494949494",
+      "flags": [],
+      "textSample": "new Worker(\"document-worker.js\"); import \"../../tests/extensionless\"; chrome.scripting.executeScript({ files: [\"tests/injected\"] });"
+    },
+    {
+      "path": "tests/document-worker.js",
+      "size": 14,
+      "sha256": "9595959595959595959595959595959595959595959595959595959595959595",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "scripts/tests/document-worker.js",
+      "size": 14,
+      "sha256": "9696969696969696969696969696969696969696969696969696969696969696",
+      "flags": [],
+      "textSample": "eval(decoy);"
+    },
+    {
+      "path": "tests/extensionless.js",
+      "size": 14,
+      "sha256": "9797979797979797979797979797979797979797979797979797979797979797",
+      "flags": [],
+      "textSample": "eval(decoy);"
+    },
+    {
+      "path": "tests/injected.js",
+      "size": 14,
+      "sha256": "9898989898989898989898989898989898989898989898989898989898989898",
+      "flags": [],
+      "textSample": "eval(decoy);"
+    },
+    {
+      "path": "tests/manifest-entry.js",
+      "size": 14,
+      "sha256": "9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d",
+      "flags": [],
+      "textSample": "eval(decoy);"
+    },
+    {
+      "path": "tests/web/exposed.html",
+      "size": 40,
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "flags": [],
+      "textSample": "<script src=\"child.js\"></script>"
+    },
+    {
+      "path": "tests/web/child.js",
+      "size": 14,
+      "sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/direct.js",
+      "size": 14,
+      "sha256": "9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "assets/public.js",
+      "size": 14,
+      "sha256": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "assets/public.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "scripts/tests/document-worker.js"
+    },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/direct.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/document-worker.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/extensionless.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/injected.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/manifest-entry.js"
+    },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/web/child.js" }
+  ]
+}

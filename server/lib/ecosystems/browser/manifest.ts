@@ -71,10 +71,11 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
     declaredBackgroundEntrypoints,
     declaredBackgroundPage,
   );
-  const extensionPageConsumers = htmlPageConsumerEntrypoints(
-    files,
-    manifestExtensionPagePaths(raw),
-  );
+  const webAccessibleResources = manifestWebAccessibleResourcePaths(raw, files);
+  const extensionPageConsumers = htmlPageConsumerEntrypoints(files, [
+    ...manifestExtensionPagePaths(raw),
+    ...webAccessibleResources.filter((path) => /\.html?$/i.test(path)),
+  ]);
   const userScriptEntrypoints =
     raw.manifest_version === 2 && isRecord(raw.user_scripts)
       ? manifestResourcePaths([manifestRecordString(raw.user_scripts, "api_script")])
@@ -108,7 +109,9 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
         ? stringList(raw.externally_connectable.ids)
         : [],
       backgroundEntrypoints: backgroundConsumers.entrypoints,
-      extensionPageEntrypoints: extensionPageConsumers.entrypoints,
+      extensionPageEntrypoints: [
+        ...new Set([...extensionPageConsumers.entrypoints, ...webAccessibleResources]),
+      ],
       consumerDocumentBaseUrlsByPath: mergeDocumentBaseUrlsByPath(
         backgroundConsumers.documentBaseUrlsByPath,
         extensionPageConsumers.documentBaseUrlsByPath,
@@ -340,6 +343,35 @@ function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
   ]);
 }
 
+function manifestWebAccessibleResourcePaths(
+  raw: Record<string, unknown>,
+  files: FileRecord[],
+): string[] {
+  const declarations = [
+    ...stringList(raw.web_accessible_resources),
+    ...nestedStringList(raw.web_accessible_resources, "resources"),
+  ];
+  const patterns = manifestResourcePaths(declarations);
+  return files
+    .map((file) => file.path)
+    .filter((path) => patterns.some((pattern) => wildcardManifestPathMatches(path, pattern)));
+}
+
+function wildcardManifestPathMatches(path: string, pattern: string): boolean {
+  if (!pattern.includes("*")) return path === pattern;
+  const parts = pattern.split("*");
+  const first = parts[0];
+  if (!path.startsWith(first)) return false;
+  let offset = first.length;
+  for (const part of parts.slice(1, -1)) {
+    const matchAt = path.indexOf(part, offset);
+    if (matchAt === -1) return false;
+    offset = matchAt + part.length;
+  }
+  const last = parts.at(-1) ?? "";
+  return last.length === 0 || (path.length - last.length >= offset && path.endsWith(last));
+}
+
 function manifestRecordString(value: unknown, key: string): string | null {
   if (!isRecord(value)) return null;
   return typeof value[key] === "string" ? value[key] : null;
@@ -507,8 +539,8 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     const tagStart = html.indexOf("<", index);
     if (tagStart === -1) break;
     if (html.startsWith("<!--", tagStart)) {
-      const commentEnd = html.indexOf("-->", tagStart + 4);
-      index = commentEnd === -1 ? html.length : commentEnd + 3;
+      const commentEnd = htmlCommentEnd(html, tagStart);
+      index = commentEnd ?? html.length;
       continue;
     }
 
@@ -653,6 +685,16 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     index = Math.max(cursor, tagStart + 1);
   }
   return sources;
+}
+
+function htmlCommentEnd(html: string, commentStart: number): number | null {
+  if (html.startsWith("<!-->", commentStart)) return commentStart + 5;
+  if (html.startsWith("<!--->", commentStart)) return commentStart + 6;
+  const normalEnd = html.indexOf("-->", commentStart + 4);
+  const bangEnd = html.indexOf("--!>", commentStart + 4);
+  if (normalEnd === -1) return bangEnd === -1 ? null : bangEnd + 4;
+  if (bangEnd === -1) return normalEnd + 3;
+  return normalEnd < bangEnd ? normalEnd + 3 : bangEnd + 4;
 }
 
 function metaRefreshUrl(content: string): string | null {

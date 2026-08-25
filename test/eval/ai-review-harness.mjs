@@ -49,6 +49,7 @@ function evaluateCase(record, recordedReviewerVersion) {
   if (review.reviewerVersion !== recordedReviewerVersion) {
     return {
       ...record,
+      review,
       passed: false,
       reason: `reviewer version ${review.reviewerVersion ?? "legacy"} does not match recorded provenance ${recordedReviewerVersion}`,
     };
@@ -78,8 +79,7 @@ function groupMetrics(results, key) {
   );
 }
 
-export function runAiReviewEval() {
-  const corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"));
+export function runAiReviewEval(corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"))) {
   const results = corpus.cases.map((record) =>
     evaluateCase(record, corpus.recordedReviewerVersion),
   );
