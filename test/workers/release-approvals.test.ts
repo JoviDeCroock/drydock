@@ -9,6 +9,7 @@ import {
   deleteUserAccount,
   ensurePersonalOrganization,
 } from "../../server/db/organizations";
+import { upsertScanApproval } from "../../server/db/scan-approvals";
 import { createScanJob, persistScan, setRequiredReleaseApprovals } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
@@ -325,6 +326,27 @@ describe("multi-party release approval", () => {
     // And the release is genuinely back to needing two people, not one.
     const next = await decide({ ...users[0], organizationId }, scanId, "publish");
     expect(next.body.approvals).toMatchObject({ approvedCount: 1, verdict: null });
+  });
+
+  test("a removed member cannot land a stale approval after cleanup", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    const db = createDb(env.DB);
+
+    await removeOrganizationMember(db, organizationId, users[1].userId);
+    const outcome = await upsertScanApproval(db, {
+      scanId,
+      organizationId,
+      userId: users[1].userId,
+      decision: "publish",
+      reason: null,
+      now: new Date(),
+    });
+
+    expect(outcome).toBe("not_member");
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId)),
+    ).toHaveLength(0);
   });
 
   test("a former member does not count again when a policy increase reopens a release", async () => {

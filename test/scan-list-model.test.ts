@@ -239,6 +239,37 @@ describe("ScanListModel deletion", () => {
   });
 });
 
+describe("ScanListModel pagination", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  test("keeps the approval bar aligned with the policy used by the next page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            scans: [],
+            nextCursor: null,
+            requiredApprovals: 3,
+          }),
+        ),
+      ),
+    );
+
+    model = new ScanListModel();
+    model.requiredApprovals.value = 2;
+    model.nextCursor.value = "next-page";
+
+    await model.loadMore();
+
+    expect(model.requiredApprovals.value).toBe(3);
+  });
+});
+
 describe("scanMatchesDecisionFilter", () => {
   test("matches dashboard decision filter semantics", () => {
     expect(scanMatchesDecisionFilter({ decision: null }, "undecided")).toBe(true);

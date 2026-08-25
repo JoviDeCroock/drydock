@@ -555,7 +555,7 @@ export interface UpsertScanApprovalInput {
   hardenOnly?: boolean;
 }
 
-export type UpsertScanApprovalOutcome = "recorded" | "already_voted";
+export type UpsertScanApprovalOutcome = "recorded" | "already_voted" | "not_member";
 
 /**
  * Record (or replace) this member's vote.
@@ -568,18 +568,35 @@ export async function upsertScanApproval(
   db: AppDb,
   input: UpsertScanApprovalInput,
 ): Promise<UpsertScanApprovalOutcome> {
+  // Select the candidate row from live membership instead of inserting plain
+  // values. The membership proof and the write are now one SQLite statement:
+  // a decision request authorized just before an owner removes the member
+  // cannot race the removal cleanup and leave a vote that becomes eligible if
+  // that account is invited back later.
+  const candidate = db
+    .select({
+      id: sql<string>`${crypto.randomUUID()}`.as("id"),
+      scanId: sql<string>`${input.scanId}`.as("scan_id"),
+      organizationId: organizationMembers.organizationId,
+      userId: organizationMembers.userId,
+      decision: sql<string>`${input.decision}`.as("decision"),
+      reason: sql<string | null>`${input.reason}`.as("reason"),
+      // INSERT ... SELECT expressions bypass the target column's timestamp
+      // mapper, so bind D1's integer representation explicitly.
+      createdAt: sql<Date>`${input.now.getTime()}`.as("created_at"),
+      updatedAt: sql<Date>`${input.now.getTime()}`.as("updated_at"),
+    })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, input.organizationId),
+        eq(organizationMembers.userId, input.userId),
+      ),
+    )
+    .limit(1);
   const recorded = await db
     .insert(scanApprovals)
-    .values({
-      id: crypto.randomUUID(),
-      scanId: input.scanId,
-      organizationId: input.organizationId,
-      userId: input.userId,
-      decision: input.decision,
-      reason: input.reason,
-      createdAt: input.now,
-      updatedAt: input.now,
-    })
+    .select(candidate)
     .onConflictDoUpdate({
       target: [scanApprovals.scanId, scanApprovals.userId],
       set: { decision: input.decision, reason: input.reason, updatedAt: input.now },
@@ -595,7 +612,19 @@ export async function upsertScanApproval(
         : undefined,
     })
     .returning({ id: scanApprovals.id });
-  return recorded.length > 0 ? "recorded" : "already_voted";
+  if (recorded.length > 0) return "recorded";
+
+  const [member] = await db
+    .select({ id: organizationMembers.id })
+    .from(organizationMembers)
+    .where(
+      and(
+        eq(organizationMembers.organizationId, input.organizationId),
+        eq(organizationMembers.userId, input.userId),
+      ),
+    )
+    .limit(1);
+  return member ? "already_voted" : "not_member";
 }
 
 /**
