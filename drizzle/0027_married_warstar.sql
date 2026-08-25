@@ -16,4 +16,5 @@ CREATE UNIQUE INDEX `scan_approvals_scan_user_unique_idx` ON `scan_approvals` (`
 CREATE INDEX `scan_approvals_scan_idx` ON `scan_approvals` (`scan_id`);--> statement-breakpoint
 CREATE INDEX `scan_approvals_org_idx` ON `scan_approvals` (`organization_id`);--> statement-breakpoint
 CREATE INDEX `scan_approvals_user_idx` ON `scan_approvals` (`user_id`);--> statement-breakpoint
+ALTER TABLE `github_workflow_gates` ADD `required_release_approvals` integer;--> statement-breakpoint
 ALTER TABLE `organizations` ADD `required_release_approvals` integer DEFAULT 1 NOT NULL;
