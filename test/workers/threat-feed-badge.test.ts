@@ -8,7 +8,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
-import { publicFeedCacheKey } from "../../server/lib/public-feed";
+import { publicFeedCacheKey, purgeReconciledPublicFeedCaches } from "../../server/lib/public-feed";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -220,6 +220,50 @@ interface FeedBody {
 // off canonicalOrigin so the badge write and the dashboard-side purge land on
 // the same entry even when the two arrive on different hostnames.
 const CANONICAL_TEST_ORIGIN = new URL(env.BETTER_AUTH_URL as string).origin;
+
+test("reconciled decision projections purge listed badge and feed cache entries", async () => {
+  const cache = (caches as unknown as { default: Cache }).default;
+  const listedName = `listed-${crypto.randomUUID().slice(0, 8)}`;
+  const unlistedName = `unlisted-${crypto.randomUUID().slice(0, 8)}`;
+  const listedBadge = publicFeedCacheKey(CANONICAL_TEST_ORIGIN, `/badge/npm/${listedName}`);
+  const unlistedBadge = publicFeedCacheKey(CANONICAL_TEST_ORIGIN, `/badge/npm/${unlistedName}`);
+  const feed = publicFeedCacheKey(CANONICAL_TEST_ORIGIN, "/threat-feed.json");
+  const cachedResponse = () =>
+    Response.json({ cached: true }, { headers: { "cache-control": "public, max-age=300" } });
+  await Promise.all([
+    cache.put(listedBadge, cachedResponse()),
+    cache.put(unlistedBadge, cachedResponse()),
+    cache.put(feed, cachedResponse()),
+  ]);
+  expect(await cache.match(listedBadge)).toBeDefined();
+  expect(await cache.match(unlistedBadge)).toBeDefined();
+
+  const ctx = createExecutionContext();
+  purgeReconciledPublicFeedCaches(ctx, CANONICAL_TEST_ORIGIN, [
+    {
+      source: "manual",
+      packageName: listedName,
+      summaryJson: { stagedPublish: { tag: "latest" } },
+      publicFeedListedAt: new Date(),
+      // Exercise the legacy-row fallback that derives the key when it was not
+      // persisted alongside the original listing.
+      publicPackageKey: null,
+    },
+    {
+      source: "manual",
+      packageName: unlistedName,
+      summaryJson: { stagedPublish: { tag: "latest" } },
+      publicFeedListedAt: null,
+      publicPackageKey: `npm:${unlistedName}`,
+    },
+  ]);
+  await waitOnExecutionContext(ctx);
+
+  expect(await cache.match(listedBadge)).toBeUndefined();
+  expect(await cache.match(feed)).toBeUndefined();
+  expect(await cache.match(unlistedBadge)).toBeDefined();
+  await cache.delete(unlistedBadge);
+});
 
 // The badge key varies by dist-tag, so the query has to be carried through:
 // purging with the bare path would clear the `latest` entry while the test

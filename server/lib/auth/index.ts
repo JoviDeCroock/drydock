@@ -9,6 +9,7 @@ import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
 import { recordProductEvent } from "../platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
+import { purgeReconciledPublicFeedCaches } from "../public-feed";
 import * as schema from "../../db/schema";
 import { sendAccountVerificationEmail } from "../notify/account-email";
 
@@ -326,7 +327,11 @@ export function isGithubSignInEnabled(env: Cloudflare.Env): boolean {
   );
 }
 
-export function createAuth(env: Cloudflare.Env) {
+export function createAuth(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext | null = null,
+  requestOrigin?: string,
+) {
   if (!env.DB) throw new Error("DB binding is required for Better Auth");
   if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is required");
 
@@ -446,7 +451,14 @@ export function createAuth(env: Cloudflare.Env) {
             });
           }
           await sessionCache?.prepareUserDeletion(deletedUser.id);
-          await deleteUserAccount(db, deletedUser.id, env.ARTIFACTS);
+          const changedScans = await deleteUserAccount(db, deletedUser.id, env.ARTIFACTS);
+          let origin = requestOrigin;
+          try {
+            if (env.BETTER_AUTH_URL) origin = new URL(env.BETTER_AUTH_URL).origin;
+          } catch {
+            // Fall back to the current request's origin.
+          }
+          if (origin) purgeReconciledPublicFeedCaches(executionCtx, origin, changedScans);
         },
       },
     },

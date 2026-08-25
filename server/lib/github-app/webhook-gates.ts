@@ -152,6 +152,9 @@ export interface GatePackageScan {
   risk: string;
   status: string;
   decision: string | null;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date | null;
   releaseRisk: string | null;
 }
 
@@ -174,6 +177,9 @@ export async function listGatePackageScans(
       risk: scans.risk,
       status: scans.status,
       decision: scans.decision,
+      decisionReason: scans.decisionReason,
+      decidedByUserId: scans.decidedByUserId,
+      decidedAt: scans.decidedAt,
       riskSummaryJson: scans.riskSummaryJson,
       createdAt: scans.createdAt,
     })
@@ -189,6 +195,9 @@ export async function listGatePackageScans(
       risk: row.risk,
       status: row.status,
       decision: row.decision,
+      decisionReason: row.decisionReason,
+      decidedByUserId: row.decidedByUserId,
+      decidedAt: row.decidedAt,
       releaseRisk: readReleaseRisk(row.riskSummaryJson),
     }));
 }

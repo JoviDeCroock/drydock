@@ -17,6 +17,7 @@ import {
 } from "./lib/auth";
 import { UnauthorizedError } from "./lib/platform/errors";
 import { rateLimitResponse } from "./lib/platform/http";
+import { workerExecutionContext } from "./lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "./lib/public-diff/page";
 import {
@@ -211,7 +212,10 @@ app.route("/public", publicReportsRoutes);
 
 app.use("/api/*", async (c, next) => {
   try {
-    c.set("auth", createAuth(c.env));
+    c.set(
+      "auth",
+      createAuth(c.env, workerExecutionContext(c.executionCtx), new URL(c.req.url).origin),
+    );
   } catch (err) {
     emitOperationalEvent("error", "auth.initialization_failed", {
       error: describeOperationalError(err),

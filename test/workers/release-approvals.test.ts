@@ -295,6 +295,37 @@ describe("multi-party release approval", () => {
     expect(decisionEvents).toHaveLength(1);
   });
 
+  test("a repaired decision event keeps the reviewer who persisted the verdict", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[0], organizationId }, scanId, "publish", "first approval");
+    await decide({ ...users[1], organizationId }, scanId, "publish", "quorum approval");
+
+    const db = createDb(env.DB);
+    await db
+      .delete(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+
+    // A different co-approver retries after the verdict committed but its
+    // bookkeeping did not. The retry repairs the missing event without taking
+    // ownership of the already-persisted transition.
+    await decide({ ...users[0], organizationId }, scanId, "publish", "retrying bookkeeping");
+
+    const decisionEvents = await db
+      .select({
+        actorUserId: schema.scanEvents.actorUserId,
+        metadata: schema.scanEvents.metadataJson,
+      })
+      .from(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+    expect(decisionEvents).toEqual([
+      {
+        actorUserId: users[1].userId,
+        metadata: expect.objectContaining({ decision: "publish", reason: "quorum approval" }),
+      },
+    ]);
+  });
+
   test("the default one-approval policy decides on the first vote, as before", async () => {
     const { organizationId, users } = await seedSharedOrganization(2, 1);
     const scanId = await seedCompletedScan(organizationId, users[0].userId);
@@ -532,6 +563,34 @@ describe("multi-party release approval", () => {
       .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
     expect(decisionEvents).toContainEqual({
       metadata: expect.objectContaining({ approvedCount: 3, requiredApprovals: 3 }),
+    });
+  });
+
+  test("re-inviting a former voter immediately reconciles a newly sufficient tally", async () => {
+    const { organizationId, users } = await seedSharedOrganization(4, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[0], organizationId }, scanId, "publish", "first");
+    await decide({ ...users[1], organizationId }, scanId, "publish", "second");
+
+    const db = createDb(env.DB);
+    await removeOrganizationMember(db, organizationId, users[1].userId);
+    await setRequiredReleaseApprovals(db, organizationId, 3);
+    await decide({ ...users[2], organizationId }, scanId, "publish", "third");
+    expect((await readDecision(scanId))?.decision).toBeNull();
+
+    const reconciled = await addOrganizationMember(db, {
+      organizationId,
+      userId: users[1].userId,
+      role: "member",
+    });
+
+    expect(reconciled).toEqual([
+      expect.objectContaining({ id: scanId, decision: "publish", approvalCount: 3 }),
+    ]);
+    expect(await readDecision(scanId)).toMatchObject({
+      decision: "publish",
+      decidedByUserId: users[1].userId,
+      decisionReason: "second",
     });
   });
 

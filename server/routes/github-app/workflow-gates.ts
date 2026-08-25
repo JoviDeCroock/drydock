@@ -342,11 +342,32 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
 
   const gateDecision: GateDecision = anyRejected ? "rejected" : "approved";
   const reportUrl = buildReportUrl(c.env, currentGate.scanId);
+  // If this request is repairing a rejection that committed before the gate
+  // aggregate CAS, preserve the blocking reviewer's attribution. The recovery
+  // trigger may be another member attempting to approve a different package;
+  // their comment must not become the explanation GitHub receives for a block
+  // they did not cast.
+  const recoveredRejection =
+    gateDecision === "rejected" && (decision !== "rejected" || recorded.outcome !== "recorded")
+      ? packages
+          .filter((pkg) => pkg.decision === "no_publish")
+          .sort(
+            (a, b) =>
+              (a.decidedAt?.getTime() ?? Number.MAX_SAFE_INTEGER) -
+              (b.decidedAt?.getTime() ?? Number.MAX_SAFE_INTEGER),
+          )[0]
+      : null;
+  const gateDecisionComment = recoveredRejection
+    ? recoveredRejection.decisionReason || buildHumanDecisionComment(gateDecision, reportUrl)
+    : comment || buildHumanDecisionComment(gateDecision, reportUrl);
+  const gateDecisionActorUserId = recoveredRejection
+    ? recoveredRejection.decidedByUserId
+    : session.userId;
   const decided = await markGateDecidedForPackageAggregate(db, {
     gateId,
     organizationId,
     decision: gateDecision,
-    comment: comment || buildHumanDecisionComment(gateDecision, reportUrl),
+    comment: gateDecisionComment,
     reportUrl,
   });
   if (!decided) {
@@ -386,7 +407,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   try {
     await recordScanEvent(db, {
       organizationId,
-      actorUserId: session.userId,
+      actorUserId: gateDecisionActorUserId,
       scanId: decided.scanId,
       type:
         gateDecision === "approved"
@@ -400,6 +421,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         twoFactor: twoFactorVerified,
         twoFactorMethod: twoFactorVerified ? "totp" : null,
         twoFactorRequiredByOrg: orgRequiresTwoFactor,
+        ...(recoveredRejection ? { recoveredByUserId: session.userId } : {}),
       },
     });
   } catch (err) {

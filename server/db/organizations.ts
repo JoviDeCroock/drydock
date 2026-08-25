@@ -2,7 +2,7 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
-import { dropPendingApprovalsForUser } from "./scan-approvals";
+import { dropPendingApprovalsForUser, type ReconciledScanProjection } from "./scan-approvals";
 import {
   githubAppInstallations,
   githubReleaseTargets,
@@ -345,7 +345,7 @@ export async function deleteUserAccount(
   db: AppDb,
   userId: string,
   artifactBucket?: R2Bucket,
-): Promise<void> {
+): Promise<ReconciledScanProjection[]> {
   const personalId = personalOrganizationId(userId);
   const owned = await db
     .select({ id: organizations.id })
@@ -369,7 +369,7 @@ export async function deleteUserAccount(
   // before anonymizing the surviving decided-release rows, matching explicit
   // organization-member removal so a deleted account cannot keep helping a
   // future release over the bar.
-  await dropPendingApprovalsForUser(db, userId);
+  const changedScans = await dropPendingApprovalsForUser(db, userId);
 
   await db.batch([
     db.update(scans).set({ ownerUserId: null }).where(eq(scans.ownerUserId, userId)),
@@ -413,6 +413,7 @@ export async function deleteUserAccount(
     db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);
+  return changedScans;
 }
 
 export interface NotificationRecipient {
