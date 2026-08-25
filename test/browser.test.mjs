@@ -37,6 +37,32 @@ describe("browser extension review adapter", () => {
     expect(inferBrowserArtifactKind("dist/addon.crx")).toBeNull();
   });
 
+  test.each(["1", "0.2", "2.10.2", "3.1.2.456789012"])(
+    "accepts the common WebExtension version format: %s",
+    (version) => {
+      expect(parseBrowserExtensionManifest([manifestFile({ version })]).manifest.version).toBe(
+        version,
+      );
+      expect(
+        buildBrowserReleaseManifest("Tab helper", version, [
+          { path: "dist/tab-helper.zip", sha256: SHA },
+        ]).version,
+      ).toBe(version);
+    },
+  );
+
+  test.each(["1.0-beta", "01.2", "1.2.3.4.5", "1.1234567890", " 1.2.0 "])(
+    "rejects a browser-store-incompatible version: %s",
+    (version) => {
+      expect(() => parseBrowserExtensionManifest([manifestFile({ version })])).toThrow(/version/);
+      expect(() =>
+        buildBrowserReleaseManifest("Tab helper", version, [
+          { path: "dist/tab-helper.zip", sha256: SHA },
+        ]),
+      ).toThrow(/version/);
+    },
+  );
+
   test("derives Firefox identity and WebExtension capabilities from manifest.json", () => {
     const { manifest } = parseBrowserExtensionManifest([
       manifestFile({
@@ -854,6 +880,50 @@ describe("browser extension review adapter", () => {
         path: "tests/payload.js",
         size: 14,
         sha256: "7c".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "tests/frame.html", "tests/payload.js"]),
+    );
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows packaged object documents from manifest-declared extension pages", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 64,
+        sha256: "8a".repeat(32),
+        flags: [],
+        textSample: '<object type="text/html" data="tests/frame.html"></object>',
+      },
+      {
+        path: "tests/frame.html",
+        size: 38,
+        sha256: "8b".repeat(32),
+        flags: [],
+        textSample: '<script src="payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "8c".repeat(32),
         flags: [],
         textSample: "eval(payload);",
       },

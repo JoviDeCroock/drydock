@@ -81,6 +81,16 @@ export function consumerReachablePaths(
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
     if (rootRelativeModuleImports) {
+      for (const injected of staticWebExtensionScriptSpecifiers(file.textSample)) {
+        // Chrome resolves packaged injection and registration files from the
+        // extension root, not from the JavaScript module that names them.
+        const resolved = resolveBrowserDocumentModulePath(
+          injected,
+          BROWSER_ARCHIVE_ROOT.href,
+          byNormalizedPath,
+        );
+        if (resolved && !reachable.has(resolved)) queue.push(resolved);
+      }
       for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
         const scriptResolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
         if (scriptResolved && !reachable.has(scriptResolved)) queue.push(scriptResolved);
@@ -297,9 +307,6 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
     }
   }
   specifiers.push(...staticImportScriptsSpecifiers(text));
-  if (rootRelativeModuleImports) {
-    specifiers.push(...staticWebExtensionScriptSpecifiers(text));
-  }
   return specifiers;
 }
 

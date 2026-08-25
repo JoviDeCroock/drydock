@@ -2522,11 +2522,11 @@ describe("test-scoped capability findings", () => {
     const staged = [
       pkg(),
       file(
-        "background.js",
+        "nested/background.js",
         [
-          'chrome.scripting.executeScript({ target: { tabId }, files: ["/test/execute.js"] });',
+          'chrome.scripting.executeScript({ target: { tabId }, files: ["test/execute.js"] });',
           "browser.scripting.registerContentScripts([{ id: 'helper', js: [`test/register.js`] }]);",
-          'browser?.["scripting"]?.executeScript?.({ files: ["/test/bracket.js"] });',
+          'browser?.["scripting"]?.executeScript?.({ files: ["test/bracket.js"] });',
         ].join("\n"),
       ),
       file("test/execute.js", "eval(payload);\n"),
@@ -2535,7 +2535,7 @@ describe("test-scoped capability findings", () => {
     ];
     const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
       codePatternSet: "javascript",
-      consumerEntrypointPaths: ["background.js"],
+      consumerEntrypointPaths: ["nested/background.js"],
       consumerRootRelativeModuleImports: true,
     }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(

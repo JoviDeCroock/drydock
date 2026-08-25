@@ -16,7 +16,9 @@ import {
   type BrowserReleaseManifest,
 } from "./types";
 
-const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+// Common WebExtension/store grammar. Individual stores may impose narrower
+// component bounds, but descriptive prerelease text belongs in version_name.
+const BROWSER_VERSION_RE = /^(?:0|[1-9][0-9]{0,8})(?:\.(?:0|[1-9][0-9]{0,8})){0,3}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/i;
 const GECKO_EMAIL_ID_RE = /^[A-Za-z0-9._-]*@[A-Za-z0-9._-]+$/;
 const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
@@ -44,8 +46,8 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
   if (!isRecord(raw)) throw new Error("browser extension manifest.json must be an object");
 
   const name = safeIdentityText(raw.name, "manifest.json name", 128);
-  const version = typeof raw.version === "string" ? raw.version.trim() : "";
-  if (!SAFE_VERSION_RE.test(version)) throw new Error("manifest.json version is invalid");
+  const version = typeof raw.version === "string" ? raw.version : "";
+  if (!BROWSER_VERSION_RE.test(version)) throw new Error("manifest.json version is invalid");
   if (raw.manifest_version !== 2 && raw.manifest_version !== 3) {
     throw new Error("manifest.json manifest_version must be 2 or 3");
   }
@@ -150,8 +152,8 @@ function parseBrowserReleaseManifest(value: unknown): BrowserReleaseManifest {
   }
   if (value.ecosystem !== "browser") throw new Error("manifest ecosystem must be browser");
   const packageName = safeIdentityText(value.package, "manifest package", 255);
-  const version = typeof value.version === "string" ? value.version.trim() : "";
-  if (!SAFE_VERSION_RE.test(version)) throw new Error("manifest version is not safe");
+  const version = typeof value.version === "string" ? value.version : "";
+  if (!BROWSER_VERSION_RE.test(version)) throw new Error("manifest version is invalid");
   if (!Array.isArray(value.artifacts) || value.artifacts.length !== 1) {
     throw new Error("manifest must include exactly one browser extension artifact");
   }
@@ -446,14 +448,17 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const tagName = html.slice(nameStart, cursor).toLowerCase();
     if (
-      (tagName !== "script" && tagName !== "base" && tagName !== "iframe") ||
+      (tagName !== "script" &&
+        tagName !== "base" &&
+        tagName !== "iframe" &&
+        tagName !== "object") ||
       !/[\s/>]/.test(html[cursor] ?? "")
     ) {
       index = Math.max(cursor, tagStart + 1);
       continue;
     }
 
-    const targetAttribute = tagName === "base" ? "href" : "src";
+    const targetAttribute = tagName === "base" ? "href" : tagName === "object" ? "data" : "src";
     let targetValue: string | null = null;
     let targetSeen = false;
     let srcdocValue: string | null = null;
@@ -514,9 +519,13 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       baseSeen = true;
     } else if (tagClosed && tagName === "iframe" && srcdocSeen) {
       sources.push({ kind: "inline-page", html: decodeHTMLAttribute(srcdocValue ?? "") });
-    } else if (tagClosed && (tagName === "script" || tagName === "iframe") && targetValue) {
+    } else if (
+      tagClosed &&
+      (tagName === "script" || tagName === "iframe" || tagName === "object") &&
+      targetValue
+    ) {
       sources.push({
-        kind: tagName === "iframe" ? "page" : "script",
+        kind: tagName === "script" ? "script" : "page",
         source: decodeHTMLAttribute(targetValue),
         baseHref,
       });
