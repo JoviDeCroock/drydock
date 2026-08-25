@@ -290,6 +290,10 @@ async function applyDecisionVote(
             ? {
                 decisionReason,
                 decidedByUserId: decisionActorUserId,
+                // A same-verdict resubmission is still a new canonical review
+                // revision. Advance its audit identity with the row so the
+                // audit trail records the replacement reason.
+                decidedAt: sql`max(coalesce(${scans.decidedAt}, 0) + 1, ${now.getTime()})`,
                 updatedAt: now,
               }
             : { updatedAt: now },
@@ -302,7 +306,7 @@ async function applyDecisionVote(
             approvalVerdictIsSupported(input, policy, verdict),
           ),
         )
-        .returning({ id: scans.id });
+        .returning({ id: scans.id, decidedAt: scans.decidedAt });
       if (confirmed.length === 0) continue;
       verdictChanged = false;
       resolvedScan = refreshSingleApproverProjection
@@ -310,6 +314,7 @@ async function applyDecisionVote(
             ...approvalScanAfter(live, verdict, false, decisionActorUserId, decisionReason, now),
             decisionReason,
             decidedByUserId: decisionActorUserId,
+            decidedAt: confirmed[0].decidedAt,
           }
         : approvalScanAfter(live, verdict, false, decisionActorUserId, decisionReason, now);
       break;

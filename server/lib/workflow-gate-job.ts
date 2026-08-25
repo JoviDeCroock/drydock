@@ -16,8 +16,11 @@ import {
   type WorkflowGateRecord,
   attachScanToGate,
   claimGateReviewStart,
+  getGateFirstBlockingVote,
   getGateForOrganization,
+  listGatePackageScans,
   markGateDecided,
+  markGateDecidedForPackageAggregate,
   releaseGateReviewClaim,
 } from "./github-app/webhook-gates";
 import { notifyWorkflowGateReview, notifyWorkflowGateTimeout } from "./notify";
@@ -77,6 +80,110 @@ export function classifyGateTimeout(
   if (elapsedMs >= windowMs) return "missed";
   if (elapsedMs >= windowMs * GATE_TIMEOUT_IMMINENT_FRACTION) return "imminent";
   return "ok";
+}
+
+export type WorkflowGateReconciliationTrigger = "approval_policy" | "member_joined";
+
+/**
+ * Finalize and schedule delivery for a gate resolved outside the decision
+ * route, while preserving the durable vote actor and keeping bookkeeping from
+ * stranding the GitHub job.
+ */
+export async function finalizeReconciledWorkflowGateDecision(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  input: {
+    organizationId: string;
+    gateId: string;
+    decision: "approved" | "rejected";
+    requiredApprovals: number;
+    trigger: WorkflowGateReconciliationTrigger;
+    reconciledByUserId: string;
+  },
+): Promise<WorkflowGateRecord | null> {
+  const gate = await getGateForOrganization(db, input.organizationId, input.gateId);
+  if (!gate) return null;
+  const reportUrl = buildReportUrl(env, gate.scanId);
+  const blockingVote =
+    input.decision === "rejected"
+      ? await getGateFirstBlockingVote(db, input.organizationId, input.gateId)
+      : null;
+  const decisionComment =
+    blockingVote?.decisionReason || buildHumanDecisionComment(input.decision, reportUrl);
+  const decisionActorUserId = blockingVote
+    ? blockingVote.decidedByUserId
+    : input.reconciledByUserId;
+  const decided = await markGateDecidedForPackageAggregate(db, {
+    gateId: input.gateId,
+    organizationId: input.organizationId,
+    decision: input.decision,
+    comment: decisionComment,
+    reportUrl,
+  });
+  if (!decided) return null;
+
+  const message: WorkflowGateQueueMessage = {
+    kind: "workflow_gate",
+    organizationId: input.organizationId,
+    gateId: input.gateId,
+  };
+  executionCtx.waitUntil(deliverReconciledWorkflowGate(env, executionCtx, message, db));
+
+  try {
+    const packages = await listGatePackageScans(db, input.organizationId, input.gateId);
+    await recordScanEvent(db, {
+      organizationId: input.organizationId,
+      actorUserId: decisionActorUserId,
+      scanId: decided.scanId,
+      type:
+        input.decision === "approved"
+          ? "github_workflow_gate.approved"
+          : "github_workflow_gate.rejected",
+      metadata: {
+        gateId: input.gateId,
+        decidedBy: blockingVote ? "human" : input.trigger,
+        trigger: input.trigger,
+        packageCount: packages.length,
+        requiredApprovals: input.requiredApprovals,
+        ...(blockingVote ? { recoveredByUserId: input.reconciledByUserId } : {}),
+      },
+    });
+    recordProductEvent(env, {
+      name: "workflow_gate.decided",
+      organizationId: input.organizationId,
+      surface: "human",
+      decision: input.decision,
+      packageCount: packages.length,
+    });
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
+      organizationId: input.organizationId,
+      gateId: input.gateId,
+      decision: input.decision,
+      trigger: input.trigger,
+      error: describeOperationalError(err),
+    });
+  }
+  return decided;
+}
+
+async function deliverReconciledWorkflowGate(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  message: WorkflowGateQueueMessage,
+  db: AppDb,
+): Promise<void> {
+  if (env.SCAN_QUEUE) {
+    try {
+      await env.SCAN_QUEUE.send(message);
+      return;
+    } catch {
+      // The durable decision is already stored. Fall back to an inline
+      // redelivery so a transient queue failure cannot strand GitHub.
+    }
+  }
+  await executeWorkflowGateJob(env, executionCtx, message, db);
 }
 
 /**

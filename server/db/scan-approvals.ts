@@ -71,6 +71,7 @@ export interface OrganizationApprovalPolicy {
 export interface ReconciledScanProjection {
   id: string;
   source: string;
+  gateId: string | null;
   packageName: string | null;
   summaryJson: unknown;
   publicFeedListedAt: Date | null;
@@ -164,6 +165,11 @@ export async function setRequiredReleaseApprovals(
   const normalized = normalizeRequiredApprovals(required);
   const normalizedExpected =
     expectedRequired === undefined ? null : normalizeRequiredApprovals(expectedRequired);
+  // Route callers pass the policy they authorized. When the requested value
+  // already equals that value, this is recovery work rather than a policy
+  // transition: re-check projections and ready gates, but do not rewrite the
+  // policy row or invalidate in-flight gate decisions.
+  const changesPolicy = normalizedExpected === null || normalizedExpected !== normalized;
   const now = new Date();
   const voterIsCurrentMember = approvalVoterIsCurrentMember(organizationId);
   const hasVotes = sql`exists (
@@ -242,6 +248,7 @@ export async function setRequiredReleaseApprovals(
       .where(
         and(
           eq(organizations.id, organizationId),
+          changesPolicy ? undefined : sql`0`,
           normalizedExpected === null
             ? undefined
             : eq(organizations.requiredReleaseApprovals, normalizedExpected),
@@ -261,7 +268,7 @@ export async function setRequiredReleaseApprovals(
         and(
           eq(githubWorkflowGates.organizationId, organizationId),
           eq(githubWorkflowGates.status, "pending"),
-          policyIsCurrent,
+          changesPolicy ? policyIsCurrent : sql`0`,
         ),
       ),
     db
@@ -375,6 +382,7 @@ export async function setRequiredReleaseApprovals(
 const RECONCILED_SCAN_COLUMNS = {
   id: scans.id,
   source: scans.source,
+  gateId: scans.gateId,
   packageName: scans.packageName,
   summaryJson: scans.summaryJson,
   publicFeedListedAt: scans.publicFeedListedAt,

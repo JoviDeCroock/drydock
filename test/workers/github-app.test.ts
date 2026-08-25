@@ -946,6 +946,29 @@ describe("github-app workflow-gate decision route", () => {
     ).toHaveLength(0);
   });
 
+  test("does not advance the gate generation when the approval policy is unchanged", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    const observed = await getGateForOrganization(db, organizationId, gateId);
+    expect(observed).not.toBeNull();
+
+    const recovery = await setRequiredReleaseApprovals(db, organizationId, 2, 2);
+
+    expect(recovery.applied).toBe(false);
+    const current = await getGateForOrganization(db, organizationId, gateId);
+    expect(current!.updatedAt.getTime()).toBe(observed!.updatedAt.getTime());
+  });
+
   test("does not approve a legacy package projection under a multi-approval policy", async () => {
     const { userId, organizationId } = await seedUser();
     const second = await seedUser();

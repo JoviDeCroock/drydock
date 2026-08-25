@@ -30,9 +30,13 @@ import {
 } from "../lib/auth/active-organization";
 import { sanitizeAddress } from "../lib/notify/email";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
-import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
 import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { finalizeReconciledWorkflowGateDecision } from "../lib/workflow-gate-job";
 import { generateInvitationToken, hashInvitationToken } from "../lib/auth/invitation-token";
 import { notifyOrganizationInvite } from "../lib/notify";
 import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/auth/roles";
@@ -223,6 +227,29 @@ organizationMembersRoutes.post("/invitations/accept", async (c) => {
   );
   if (changedScans.length > 0) {
     const policy = await getOrganizationApprovalPolicy(db, invitation.organizationId);
+    const readyGateIds = new Set(
+      changedScans
+        .filter(
+          (scan) =>
+            scan.source === "workflow_gate" && scan.decision === "publish" && scan.gateId !== null,
+        )
+        .map((scan) => scan.gateId!),
+    );
+    for (const gateId of readyGateIds) {
+      await finalizeReconciledWorkflowGateDecision(
+        c.env,
+        workerExecutionContext(c.executionCtx),
+        db,
+        {
+          organizationId: invitation.organizationId,
+          gateId,
+          decision: "approved",
+          requiredApprovals: policy.required,
+          trigger: "member_joined",
+          reconciledByUserId: session.userId,
+        },
+      );
+    }
     for (const scan of changedScans) {
       try {
         await recordScanEvent(db, {
