@@ -2650,14 +2650,24 @@ describe("test-scoped capability findings", () => {
           'location.href = "test/href.html";',
           'window.location = "test/window.html";',
           'window.open("test/opened.html");',
+          'window.open(chrome.runtime.getURL("test/runtime-opened.html"));',
+          'self.location = "test/self.html";',
+          'globalThis.location.assign(chrome.runtime.getURL("test/global.html"));',
+          'location.href = chrome.runtime.getURL("test/runtime-href.html");',
           'tool.location.assign("test/decoy.html");',
           'location.assign("test/dynamic.html" + suffix);',
           'location.href = "test/dynamic-assignment.html" + suffix;',
         ].join("\n"),
       ),
-      ...["assigned", "href", "window", "opened"].flatMap((name) => [
+      ...["assigned", "href", "window", "opened", "self"].flatMap((name) => [
         file(`pages/test/${name}.html`, `<script src="${name}.js"></script>\n`),
         file(`pages/test/${name}.js`, "eval(payload);\n"),
+      ]),
+      file("test/runtime-opened.html", '<script src="runtime-opened.js"></script>\n'),
+      file("test/runtime-opened.js", "eval(payload);\n"),
+      ...["global", "runtime-href"].flatMap((name) => [
+        file(`test/${name}.html`, `<script src="${name}.js"></script>\n`),
+        file(`test/${name}.js`, "eval(payload);\n"),
       ]),
       file("test/replaced.html", '<script src="replaced.js"></script>\n'),
       file("test/replaced.js", "eval(payload);\n"),
@@ -2683,10 +2693,13 @@ describe("test-scoped capability findings", () => {
 
     expect(findings).toEqual(
       expect.arrayContaining([
-        ...["assigned", "href", "window", "opened"].map((name) =>
+        ...["assigned", "href", "window", "opened", "self"].map((name) =>
           expect.objectContaining({ file: `pages/test/${name}.js`, severity: "medium" }),
         ),
         expect.objectContaining({ file: "test/replaced.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/global.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/runtime-href.js", severity: "medium" }),
+        expect.objectContaining({ file: "test/runtime-opened.js", severity: "medium" }),
         expect.objectContaining({
           file: "pages/test/decoy.js",
           severity: "low",
@@ -2704,7 +2717,34 @@ describe("test-scoped capability findings", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(8);
+    expect(findings).toHaveLength(12);
+  });
+
+  test("keeps runtime URL navigation in service workers test-scoped", () => {
+    const staged = [
+      pkg(),
+      file(
+        "background.js",
+        'self.location = chrome.runtime.getURL("test/worker-navigation.html");\n',
+      ),
+      file("test/worker-navigation.html", '<script src="worker-navigation.js"></script>\n'),
+      file("test/worker-navigation.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["background.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerFileDependencyPaths: (path) =>
+        path === "test/worker-navigation.html" ? [{ path: "test/worker-navigation.js" }] : [],
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        file: "test/worker-navigation.js",
+        severity: "low",
+        testScoped: true,
+      }),
+    ]);
   });
 
   test("follows static Manifest V3 scripting injection files", () => {

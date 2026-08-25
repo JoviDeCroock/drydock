@@ -139,13 +139,17 @@ export function consumerReachablePaths(
         const baseUrls =
           resource.resolution === "root"
             ? [BROWSER_ARCHIVE_ROOT.href]
-            : resource.resolution === "document"
+            : resource.resolution === "document-root"
               ? documentBaseUrl
-                ? [documentBaseUrl]
+                ? [BROWSER_ARCHIVE_ROOT.href]
                 : []
-              : documentBaseUrl
-                ? [BROWSER_ARCHIVE_ROOT.href, documentBaseUrl]
-                : [BROWSER_ARCHIVE_ROOT.href];
+              : resource.resolution === "document"
+                ? documentBaseUrl
+                  ? [documentBaseUrl]
+                  : []
+                : documentBaseUrl
+                  ? [BROWSER_ARCHIVE_ROOT.href, documentBaseUrl]
+                  : [BROWSER_ARCHIVE_ROOT.href];
         for (const baseUrl of new Set(baseUrls)) {
           const resolved = resolveBrowserDocumentModulePath(
             resource.path,
@@ -388,7 +392,7 @@ type WebExtensionScriptValueShape =
   | "string-or-string-array"
   | "file-object-array";
 type WebExtensionResourceArgument = "first" | "first-object";
-type WebExtensionResourceResolution = "document" | "document-or-root" | "root";
+type WebExtensionResourceResolution = "document" | "document-or-root" | "document-root" | "root";
 
 interface WebExtensionResourceSpecifier {
   path: string;
@@ -516,7 +520,7 @@ function staticBrowserNavigationResource(
 
   let index = start;
   const first = tokenText(tokens[index], text);
-  if (first === "window") {
+  if (STATIC_BROWSER_GLOBALS.has(first)) {
     const member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;
     if (member.name === "open") {
@@ -524,8 +528,7 @@ function staticBrowserNavigationResource(
       if (openIndex === null) return null;
       const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
       if (closeIndex === null) return null;
-      const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
-      return path === null ? null : { path, resolution: "document" };
+      return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
     }
     if (member.name !== "location") return null;
     index = member.nextIndex;
@@ -540,34 +543,60 @@ function staticBrowserNavigationResource(
   }
 
   if (tokenText(tokens[index], text) === "=") {
-    const path = staticNavigationAssignmentPath(tokens, text, index + 1);
-    return path === null ? null : { path, resolution: "document" };
+    return staticBrowserNavigationAssignmentResource(tokens, text, index + 1);
   }
   const member = staticMemberAccess(tokens, text, index);
   if (!member) return null;
   if (member.name === "href" && tokenText(tokens[member.nextIndex], text) === "=") {
-    const path = staticNavigationAssignmentPath(tokens, text, member.nextIndex + 1);
-    return path === null ? null : { path, resolution: "document" };
+    return staticBrowserNavigationAssignmentResource(tokens, text, member.nextIndex + 1);
   }
   if (member.name !== "assign" && member.name !== "replace") return null;
   const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
   if (openIndex === null) return null;
   const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
   if (closeIndex === null) return null;
-  const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
-  return path === null ? null : { path, resolution: "document" };
+  return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
 }
 
-function staticNavigationAssignmentPath(
+function staticBrowserNavigationCallResource(
+  tokens: JsToken[],
+  text: string,
+  openIndex: number,
+  closeIndex: number,
+): WebExtensionResourceSpecifier | null {
+  const firstArgument = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)[0];
+  if (!firstArgument) return null;
+  return staticBrowserNavigationValue(tokens, text, firstArgument[0], firstArgument[1]);
+}
+
+function staticBrowserNavigationAssignmentResource(
   tokens: JsToken[],
   text: string,
   valueIndex: number,
-): string | null {
-  const path = staticScriptPath(tokens[valueIndex], text);
-  if (path === null) return null;
-  return ["", ",", ";", ")", "]", "}"].includes(tokenText(tokens[valueIndex + 1], text))
-    ? path
-    : null;
+): WebExtensionResourceSpecifier | null {
+  const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
+  const value = staticWebExtensionResourcePath(tokens, text, valueIndex, allowedFollowingTokens);
+  if (!value || !allowedFollowingTokens.includes(tokenText(tokens[value.nextIndex], text))) {
+    return null;
+  }
+  return {
+    path: value.path,
+    resolution: value.runtimeUrl ? "document-root" : "document",
+  };
+}
+
+function staticBrowserNavigationValue(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+): WebExtensionResourceSpecifier | null {
+  const value = staticWebExtensionResourcePath(tokens, text, start, [tokenText(tokens[end], text)]);
+  if (!value || value.nextIndex !== end) return null;
+  return {
+    path: value.path,
+    resolution: value.runtimeUrl ? "document-root" : "document",
+  };
 }
 
 function webExtensionScriptCall(
