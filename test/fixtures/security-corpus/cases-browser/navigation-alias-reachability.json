@@ -1,0 +1,113 @@
+{
+  "id": "browser-navigation-alias-reachability",
+  "title": "browser navigation and extension URL aliases remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins linked and meta-refreshed extension pages, legacy extension.getURL Worker paths, and tag-shaped ordinary attribute text that must remain inert.",
+  "slug": "navigation-alias-reachability",
+  "extensionId": "navigation-alias-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 304,
+      "sha256": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Navigation alias reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"navigation-alias-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"background\": { \"service_worker\": \"background.js\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 202,
+      "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+      "flags": [],
+      "textSample": "<div data-markup=\"<base href=/decoy/>\"></div><script src=\"tests/direct.js\"></script><a href=\"tests/linked.html\">Open helper</a><a download href=\"tests/download.html\">Download source</a><meta http-equiv=\"refresh\" content=\"0.5; tests/refreshed.html\">"
+    },
+    {
+      "path": "background.js",
+      "size": 72,
+      "sha256": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
+      "flags": [],
+      "textSample": "new Worker(browser.extension.getURL(\"tests/legacy-worker.js\"));"
+    },
+    {
+      "path": "tests/direct.js",
+      "size": 14,
+      "sha256": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/linked.html",
+      "size": 40,
+      "sha256": "c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6",
+      "flags": [],
+      "textSample": "<script src=\"linked.js\"></script>"
+    },
+    {
+      "path": "tests/linked.js",
+      "size": 14,
+      "sha256": "c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/refreshed.html",
+      "size": 42,
+      "sha256": "c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8c8",
+      "flags": [],
+      "textSample": "<script src=\"refreshed.js\"></script>"
+    },
+    {
+      "path": "tests/refreshed.js",
+      "size": 14,
+      "sha256": "c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/legacy-worker.js",
+      "size": 14,
+      "sha256": "cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "decoy/tests/direct.js",
+      "size": 14,
+      "sha256": "cbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcb",
+      "flags": [],
+      "textSample": "eval(decoy);"
+    },
+    {
+      "path": "tests/download.html",
+      "size": 41,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "flags": [],
+      "textSample": "<script src=\"download.js\"></script>"
+    },
+    {
+      "path": "tests/download.js",
+      "size": 14,
+      "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "flags": [],
+      "textSample": "eval(download);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/direct.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/legacy-worker.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/linked.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/refreshed.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "decoy/tests/direct.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/download.js"
+    }
+  ]
+}

@@ -119,8 +119,8 @@ export function consumerReachablePaths(
     }
     if (rootRelativeModuleImports) {
       for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
-        // Registration and explicit runtime.getURL() resources are rooted at
-        // the extension origin. Direct relative tab URLs and Manifest V2
+        // Registration and explicit runtime.getURL()/extension.getURL()
+        // resources are rooted at the extension origin. Direct relative tab URLs and Manifest V2
         // injection files differ across browser runtimes, so follow both the
         // extension root and the owning extension document when one is known.
         const baseUrls = [BROWSER_ARCHIVE_ROOT.href];
@@ -815,7 +815,7 @@ function staticWebExtensionResourcePath(
 ): StaticWebExtensionResourcePath | null {
   const literal = staticScriptPath(tokens[start], text);
   if (literal !== null) return { path: literal, nextIndex: start + 1, runtimeUrl: false };
-  const runtimeUrl = staticWebExtensionRuntimeUrlPath(tokens, text, start);
+  const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
   if (
     !runtimeUrl ||
     !allowedFollowingTokens.includes(tokenText(tokens[runtimeUrl.nextIndex], text))
@@ -858,7 +858,7 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
   return specifiers;
 }
 
-function staticWebExtensionRuntimeUrlPath(
+function staticWebExtensionGetUrlPath(
   tokens: JsToken[],
   text: string,
   start: number,
@@ -874,9 +874,9 @@ function staticWebExtensionRuntimeUrlPath(
     index = globalMember.nextIndex - 1;
   }
   if (global !== "chrome" && global !== "browser") return null;
-  const runtimeMember = staticMemberAccess(tokens, text, index + 1);
-  if (runtimeMember?.name !== "runtime") return null;
-  const getUrlMember = staticMemberAccess(tokens, text, runtimeMember.nextIndex);
+  const apiMember = staticMemberAccess(tokens, text, index + 1);
+  if (apiMember?.name !== "runtime" && apiMember?.name !== "extension") return null;
+  const getUrlMember = staticMemberAccess(tokens, text, apiMember.nextIndex);
   if (getUrlMember?.name !== "getURL") return null;
   const openIndex = staticCallOpenIndex(tokens, text, getUrlMember.nextIndex);
   if (openIndex === null) return null;

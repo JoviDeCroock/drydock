@@ -493,13 +493,16 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
       if (!documentBase) continue;
       const path = resolveExtensionResourcePath(source, documentBase);
       if (!path) continue;
+      if (kind === "linked-page" && !/\.html?$/i.test(path)) continue;
       entrypoints.add(path);
       if (kind === "script") {
         const bases = documentBaseUrlsByPath.get(path) ?? new Set<string>();
         bases.add(documentBase.href);
         documentBaseUrlsByPath.set(path, bases);
       }
-      if (kind === "page" && !inspectedPages.has(path)) pageQueue.push({ pagePath: path });
+      if ((kind === "page" || kind === "linked-page") && !inspectedPages.has(path)) {
+        pageQueue.push({ pagePath: path });
+      }
     }
   }
   return {
@@ -536,7 +539,7 @@ function mergeDocumentBaseUrlsByPath(
 }
 
 type HtmlConsumerSource =
-  | { kind: "script" | "page"; source: string; baseHref: string | null }
+  | { kind: "script" | "page" | "linked-page"; source: string; baseHref: string | null }
   | { kind: "inline-page"; html: string; baseHref: string | null };
 
 function htmlConsumerSources(html: string): HtmlConsumerSource[] {
@@ -591,6 +594,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     if (
       !HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
       !HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
+      tagName !== "a" &&
       tagName !== "base" &&
       tagName !== "embed" &&
       tagName !== "frame" &&
@@ -599,12 +603,14 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       tagName !== "object" &&
       namespaceBoundary === null
     ) {
-      index = Math.max(cursor, tagStart + 1);
+      const tagEnd = htmlTagEnd(html, cursor);
+      if (tagEnd === null) break;
+      index = tagEnd;
       continue;
     }
 
     const targetAttributes =
-      tagName === "base"
+      tagName === "base" || tagName === "a"
         ? ["href"]
         : tagName === "object"
           ? ["data"]
@@ -618,6 +624,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     let metaContent: string | null = null;
     let srcdocValue: string | null = null;
     let srcdocSeen = false;
+    let anchorDownload = false;
     let tagClosed = false;
     let selfClosing = false;
     while (cursor < html.length) {
@@ -675,6 +682,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         srcdocSeen = true;
         srcdocValue = value;
       }
+      if (tagName === "a" && attributeName === "download") anchorDownload = true;
     }
     const targetAttribute = targetAttributes.find((attribute) => targetValues.has(attribute));
     const targetValue = targetAttribute ? (targetValues.get(targetAttribute) ?? null) : null;
@@ -700,14 +708,16 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     } else if (
       tagClosed &&
       (tagName === "script" ||
+        tagName === "a" ||
         tagName === "embed" ||
         tagName === "frame" ||
         tagName === "iframe" ||
         tagName === "object") &&
+      (tagName !== "a" || !anchorDownload) &&
       targetValue
     ) {
       sources.push({
-        kind: tagName === "script" ? "script" : "page",
+        kind: tagName === "script" ? "script" : tagName === "a" ? "linked-page" : "page",
         source: decodeHTMLAttribute(targetValue),
         baseHref,
       });
@@ -815,9 +825,9 @@ function htmlCommentEnd(html: string, commentStart: number): number | null {
 }
 
 function metaRefreshUrl(content: string): string | null {
-  const match = /^\s*\d+\s*;\s*url\s*=\s*(.*?)\s*$/i.exec(content);
+  const match = /^\s*(?:\d+(?:\.\d*)?|\.\d+)\s*[;,]\s*(.*?)\s*$/i.exec(content);
   if (!match) return null;
-  const value = match[1];
+  const value = match[1].replace(/^url\s*=\s*/i, "");
   if (
     value.length >= 2 &&
     ((value.startsWith('"') && value.endsWith('"')) ||
