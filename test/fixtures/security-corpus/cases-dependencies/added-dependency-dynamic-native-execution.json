@@ -1,0 +1,70 @@
+{
+  "id": "added-dependency-dynamic-native-execution",
+  "title": "A computed install target can select a bundled native executable",
+  "category": "dependency-introduction",
+  "intent": "A computed process target prevents a static proof of which package file runs, but a bundled native artifact remains a plausible install target. Drydock must retain that uncertainty as high native execution risk instead of treating it as benign install execution.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "dynamic-native": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "dynamic-native": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "dynamic-native",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 112,
+          "sha256": "dynamic-native-package-json",
+          "textSample": "{\"name\":\"dynamic-native\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 96,
+          "sha256": "dynamic-native-install-js",
+          "textSample": "const { spawn } = require(\"node:child_process\"); spawn(process.argv[2]);",
+          "flags": []
+        },
+        {
+          "path": "bin/installer.node",
+          "size": 4096,
+          "sha256": "dynamic-native-binary",
+          "flags": ["binary"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "dynamic-native",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 3,
+      "observation": {
+        "execution": "observed",
+        "risk": "unknown",
+        "dynamicInstallTarget": true
+      },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.install-risk",
+      "severity": "high",
+      "file": "<dependency>dynamic-native@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

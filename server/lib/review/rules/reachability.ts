@@ -20,7 +20,9 @@ const RELATIVE_SPECIFIER_PATTERNS = [
   // module import. Keep statically named child-process and shell-source targets
   // in the same conservative graph so a skipped body cannot look inspected.
   /\b(?:execFile|execFileSync|fork|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\[\s*["'](?:execFile|execFileSync|fork|spawn|spawnSync)["']\s*\](?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
   /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
+  /\[\s*["'](?:exec|execSync)["']\s*\](?:\?\.)?\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
   /(?:^|[;\n&|]\s*)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
 
@@ -460,7 +462,7 @@ function npmRunScriptNames(command: string, scripts: Record<string, string>): st
   // conservative around config options with separate values: an extra
   // statically-reachable script is safer than letting flag placement hide the
   // install chain.
-  const words = shellWords(command);
+  const words = shellCommandWords(command);
   for (let npmIndex = 0; npmIndex < words.length; npmIndex += 1) {
     if (words[npmIndex] !== "npm") continue;
     const invocationEnd = words.findIndex(
@@ -483,7 +485,8 @@ function npmRunScriptNames(command: string, scripts: Record<string, string>): st
 
 const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
 
-function shellWords(value: string): string[] {
+/** Bounded shell words/operators used by install-command reachability checks. */
+export function shellCommandWords(value: string): string[] {
   return [...value.matchAll(/"([^"\n]*)"|'([^'\n]*)'|(&&|\|\||[;&|])|([^\s;&|]+)/g)].map(
     (match) => match[1] ?? match[2] ?? match[3] ?? match[4],
   );

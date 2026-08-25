@@ -102,6 +102,8 @@ export interface DependencyExecutionEntrypoint {
 export interface DependencyInstallObservation {
   execution: "observed" | "not-observed" | "unknown";
   risk: "observed" | "not-observed" | "unknown";
+  /** A computed loader/process/shell edge can select a package path the static graph cannot name. */
+  dynamicInstallTarget?: true;
 }
 
 /**
@@ -647,7 +649,15 @@ function dependencyInstallObservationOf(
   if (isRecord(value.observation)) {
     const execution = observationOf(value.observation.execution);
     const risk = observationOf(value.observation.risk);
-    if (execution && risk) return { execution, risk };
+    if (execution && risk) {
+      return {
+        execution,
+        risk,
+        ...(value.observation.dynamicInstallTarget === true
+          ? { dynamicInstallTarget: true as const }
+          : {}),
+      };
+    }
   }
   if (status === "uninspectable") return { execution: "unknown", risk: "unknown" };
 
