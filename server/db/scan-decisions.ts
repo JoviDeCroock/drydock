@@ -212,6 +212,7 @@ async function applyDecisionVote(
   let verdict: ScanDecision | null = null;
   let verdictChanged = false;
   let resolvedScan: BuildApprovalScan | null = null;
+  let decisionActorUserId: string | null = input.actorUserId;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const [nextPolicy, nextVotes, liveRows] = await Promise.all([
@@ -235,9 +236,24 @@ async function applyDecisionVote(
       ? reason
       : (nextVotes.find((candidate) => candidate.userId === input.actorUserId)?.reason ?? reason);
     verdict = resolveApprovalVerdict(
-      votes.filter((candidate) => candidate.eligible),
+      // Approvals contribute only while their voter is a current member. A
+      // recorded block is durable release state, however, and remains final if
+      // that voter later leaves; the staged path can clear it only by replacing
+      // the same member's vote while they are still eligible to submit.
+      votes.filter((candidate) => candidate.eligible || candidate.decision === "no_publish"),
       policy.required,
     );
+    if (verdict === "no_publish") {
+      const decidingBlock = [...votes]
+        .reverse()
+        .find((candidate) => candidate.decision === "no_publish");
+      if (decidingBlock) {
+        decisionReason = decidingBlock.reason;
+        decisionActorUserId = decidingBlock.userId;
+      }
+    } else {
+      decisionActorUserId = input.actorUserId;
+    }
     const previousVerdict = scanDecision(live.decision);
     const expectedDecision = previousVerdict
       ? eq(scans.decision, previousVerdict)
@@ -265,7 +281,7 @@ async function applyDecisionVote(
         live,
         verdict,
         false,
-        input.actorUserId,
+        decisionActorUserId,
         decisionReason,
         now,
       );
@@ -278,9 +294,9 @@ async function applyDecisionVote(
         .set({
           decision: verdict,
           decisionReason,
-          // The member whose vote completed the bar owns the decision; the full
-          // roster of who else approved lives in `scan_approvals`.
-          decidedByUserId: input.actorUserId,
+          // The member whose vote produced the verdict owns the decision; the
+          // full roster of who else approved or blocked lives in `scan_approvals`.
+          decidedByUserId: decisionActorUserId,
           decidedAt: now,
           updatedAt: now,
         })
@@ -321,7 +337,7 @@ async function applyDecisionVote(
     }
 
     verdictChanged = true;
-    resolvedScan = approvalScanAfter(live, verdict, true, input.actorUserId, decisionReason, now);
+    resolvedScan = approvalScanAfter(live, verdict, true, decisionActorUserId, decisionReason, now);
     break;
   }
 
@@ -330,14 +346,22 @@ async function applyDecisionVote(
   const eligibleApprovedCount = votes.filter(
     (vote) => vote.eligible && vote.decision === "publish",
   ).length;
+  const actorVote = votes.find((vote) => vote.userId === input.actorUserId);
+  if (!actorVote) return { outcome: "not_actionable" };
+  const voteUpdatedAt = actorVote.updatedAt.toISOString();
+  const decisionAt = resolvedScan.decidedAt ? new Date(resolvedScan.decidedAt).toISOString() : null;
   await recordDecisionAuditTrail(db, {
     input,
-    reason: decisionReason,
+    approvalReason: actorVote.reason,
+    decisionReason,
+    decisionActorUserId,
     policy,
     eligibleApprovedCount,
     verdict,
     verdictChanged,
     approvalRecorded,
+    voteUpdatedAt,
+    decisionAt,
   });
 
   // A gate retry may find the durable vote left by an interrupted request. If
@@ -382,15 +406,15 @@ function approvalScanAfter(
   current: DecisionTargetRow,
   verdict: ScanDecision | null,
   changed: boolean,
-  actorUserId: string,
+  actorUserId: string | null,
   reason: string | null,
   now: Date,
 ): BuildApprovalScan {
   return {
     decision: verdict,
-    decisionReason: changed ? reason : current.decisionReason,
-    decidedByUserId: changed ? actorUserId : current.decidedByUserId,
-    decidedAt: changed ? now : current.decidedAt,
+    decisionReason: changed ? (verdict ? reason : null) : current.decisionReason,
+    decidedByUserId: changed ? (verdict ? actorUserId : null) : current.decidedByUserId,
+    decidedAt: changed ? (verdict ? now : null) : current.decidedAt,
   };
 }
 
@@ -410,7 +434,6 @@ function approvalVerdictIsSupported(
     where ${scanApprovals.scanId} = ${input.scanId}
       and ${scanApprovals.organizationId} = ${input.organizationId}
       and ${scanApprovals.decision} = 'no_publish'
-      and ${approvalVoterIsCurrentMember(input.organizationId)}
   )`;
   if (verdict === "no_publish") return blockExists;
 
@@ -455,12 +478,18 @@ async function recordDecisionAuditTrail(
   db: AppDb,
   input: {
     input: RecordScanDecisionInput;
-    reason: string | null;
+    approvalReason: string | null;
+    decisionReason: string | null;
+    decisionActorUserId: string | null;
     policy: OrganizationApprovalPolicy;
     eligibleApprovedCount: number;
     verdict: ScanDecision | null;
     verdictChanged: boolean;
     approvalRecorded: boolean;
+    /** Stable identity of this exact vote revision, preserved across a gate retry. */
+    voteUpdatedAt: string;
+    /** Stable identity of the scan verdict transition being recovered, if any. */
+    decisionAt: string | null;
   },
 ): Promise<void> {
   let approvalEventMissing = input.approvalRecorded;
@@ -474,6 +503,8 @@ async function recordDecisionAuditTrail(
           eq(scanEvents.scanId, input.input.scanId),
           eq(scanEvents.actorUserId, input.input.actorUserId),
           eq(scanEvents.type, "scan.approval_recorded"),
+          sql`json_extract(${scanEvents.metadataJson}, '$.voteUpdatedAt') = ${input.voteUpdatedAt}`,
+          sql`json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.input.decision}`,
         ),
       )
       .limit(1);
@@ -487,9 +518,10 @@ async function recordDecisionAuditTrail(
       type: "scan.approval_recorded",
       metadata: {
         decision: input.input.decision,
-        reason: input.reason,
+        reason: input.approvalReason,
         approvedCount: input.eligibleApprovedCount,
         requiredApprovals: input.policy.required,
+        voteUpdatedAt: input.voteUpdatedAt,
       },
     });
   }
@@ -504,6 +536,12 @@ async function recordDecisionAuditTrail(
           eq(scanEvents.organizationId, input.input.organizationId),
           eq(scanEvents.scanId, input.input.scanId),
           eq(scanEvents.type, "scan.decided"),
+          input.decisionAt
+            ? and(
+                sql`json_extract(${scanEvents.metadataJson}, '$.decisionAt') = ${input.decisionAt}`,
+                sql`json_extract(${scanEvents.metadataJson}, '$.decision') = ${input.verdict}`,
+              )
+            : sql`0`,
         ),
       )
       .limit(1);
@@ -512,14 +550,15 @@ async function recordDecisionAuditTrail(
   if (!decisionEventMissing) return;
   await recordScanEvent(db, {
     organizationId: input.input.organizationId,
-    actorUserId: input.input.actorUserId,
+    actorUserId: input.decisionActorUserId,
     scanId: input.input.scanId,
     type: "scan.decided",
     metadata: {
       decision: input.verdict,
-      reason: input.reason,
+      reason: input.decisionReason,
       approvedCount: input.eligibleApprovedCount,
       requiredApprovals: input.policy.required,
+      decisionAt: input.decisionAt,
     },
   });
 }

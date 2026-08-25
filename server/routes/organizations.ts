@@ -389,6 +389,7 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
           approvedCount: scan.approvalCount,
           requiredApprovals: requested,
           trigger: "approval_policy",
+          decisionAt: scan.decidedAt?.toISOString() ?? null,
         },
       });
     } catch (err) {

@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { addOrganizationMember } from "../../server/db/invitations";
+import { addOrganizationMember, removeOrganizationMember } from "../../server/db/invitations";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createScanJob,
@@ -1282,6 +1282,201 @@ describe("github-app workflow-gate decision route", () => {
     expect(release.status).toBe(200);
     expect(await release.json()).toMatchObject({ gate: { status: "approved" } });
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+  });
+
+  test("removing an approver reopens an approved package while its gate is still pending", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "1.0.0",
+    });
+
+    await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    const [approvedPackage] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(approvedPackage.decision).toBe("publish");
+    expect((await getGateForOrganization(db, organizationId, gateId))?.status).toBe("pending");
+
+    await removeOrganizationMember(db, organizationId, second.userId);
+
+    const [reopenedPackage] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(reopenedPackage.decision).toBeNull();
+    expect(
+      await db
+        .select()
+        .from(schema.scanApprovals)
+        .where(
+          and(
+            eq(schema.scanApprovals.scanId, scanId!),
+            eq(schema.scanApprovals.userId, second.userId),
+          ),
+        ),
+    ).toHaveLength(0);
+  });
+
+  test("a retry audits the exact durable block transition before recovering the gate", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "1.0.0",
+    });
+    await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+
+    // Simulate interruption after the fail-closed vote and package verdict
+    // committed, but before either audit event or aggregate gate CAS ran.
+    const transitionAt = new Date("2030-01-02T03:04:05.000Z");
+    await db
+      .update(schema.scanApprovals)
+      .set({ decision: "no_publish", reason: "late blocker", updatedAt: transitionAt })
+      .where(
+        and(
+          eq(schema.scanApprovals.scanId, scanId!),
+          eq(schema.scanApprovals.userId, second.userId),
+        ),
+      );
+    await db
+      .update(schema.scans)
+      .set({
+        decision: "no_publish",
+        decisionReason: "late blocker",
+        decidedByUserId: second.userId,
+        decidedAt: transitionAt,
+        updatedAt: transitionAt,
+      })
+      .where(eq(schema.scans.id, scanId!));
+    // Timestamp precision is finite, so an older opposite transition may have
+    // the same timestamp. Recovery must include the decision in its identity.
+    await db.insert(schema.scanEvents).values([
+      {
+        id: crypto.randomUUID(),
+        organizationId,
+        actorUserId: second.userId,
+        scanId: scanId!,
+        type: "scan.approval_recorded",
+        metadataJson: {
+          decision: "publish",
+          voteUpdatedAt: transitionAt.toISOString(),
+        },
+        createdAt: transitionAt,
+      },
+      {
+        id: crypto.randomUUID(),
+        organizationId,
+        actorUserId: second.userId,
+        scanId: scanId!,
+        type: "scan.decided",
+        metadataJson: {
+          decision: "publish",
+          decisionAt: transitionAt.toISOString(),
+        },
+        createdAt: transitionAt,
+      },
+    ]);
+
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in block recovery test: ${request.url}`);
+    });
+
+    const recovered = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId! },
+    );
+
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({ gate: { status: "rejected" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
+    const transitionEvents = await db
+      .select({ type: schema.scanEvents.type, metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.scanId, scanId!));
+    expect(transitionEvents).toContainEqual({
+      type: "scan.approval_recorded",
+      metadata: expect.objectContaining({
+        decision: "no_publish",
+        voteUpdatedAt: transitionAt.toISOString(),
+      }),
+    });
+    expect(transitionEvents).toContainEqual({
+      type: "scan.decided",
+      metadata: expect.objectContaining({
+        decision: "no_publish",
+        decisionAt: transitionAt.toISOString(),
+      }),
+    });
   });
 
   test("lowering the approval bar releases a gate whose existing votes now meet it", async () => {

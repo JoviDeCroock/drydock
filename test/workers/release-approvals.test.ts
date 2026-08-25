@@ -126,7 +126,11 @@ async function decide(
       approvedCount: number;
       verdict: string | null;
       legacyDecision?: boolean;
-      approvals: Array<{ userId: string | null; decision: string }>;
+      approvals: Array<{
+        userId: string | null;
+        decision: string;
+        createdAt: string | number | Date;
+      }>;
       eligibleApproverCount: number;
     };
     error?: string;
@@ -195,6 +199,38 @@ describe("multi-party release approval", () => {
       .where(eq(schema.scanApprovals.scanId, scanId));
     expect(votes).toHaveLength(1);
     expect(votes[0].reason).toBe("still fine");
+  });
+
+  test("a revised vote exposes the revision time in the roster", async () => {
+    const { organizationId, users } = await seedSharedOrganization(2, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[0], organizationId }, scanId, "publish", "first look");
+
+    const db = createDb(env.DB);
+    const originalAt = new Date("2000-01-01T00:00:00.000Z");
+    await db
+      .update(schema.scanApprovals)
+      .set({ createdAt: originalAt, updatedAt: originalAt })
+      .where(eq(schema.scanApprovals.scanId, scanId));
+
+    const revised = await decide(
+      { ...users[0], organizationId },
+      scanId,
+      "no_publish",
+      "found a blocker",
+    );
+    const [stored] = await db
+      .select({
+        createdAt: schema.scanApprovals.createdAt,
+        updatedAt: schema.scanApprovals.updatedAt,
+      })
+      .from(schema.scanApprovals)
+      .where(eq(schema.scanApprovals.scanId, scanId));
+
+    expect(stored.updatedAt.getTime()).toBeGreaterThan(stored.createdAt.getTime());
+    expect(new Date(revised.body.approvals!.approvals[0].createdAt).getTime()).toBe(
+      stored.updatedAt.getTime(),
+    );
   });
 
   test("one block decides the release immediately, whatever the bar is", async () => {
@@ -326,6 +362,83 @@ describe("multi-party release approval", () => {
     // And the release is genuinely back to needing two people, not one.
     const next = await decide({ ...users[0], organizationId }, scanId, "publish");
     expect(next.body.approvals).toMatchObject({ approvedCount: 1, verdict: null });
+  });
+
+  test("retrying an interrupted member removal still cleans up the pending vote", async () => {
+    const { organizationId, users } = await seedSharedOrganization(3, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[1], organizationId }, scanId, "publish");
+
+    const db = createDb(env.DB);
+    // Simulate the old two-statement implementation failing after membership
+    // deletion but before approval cleanup.
+    await db
+      .delete(schema.organizationMembers)
+      .where(
+        and(
+          eq(schema.organizationMembers.organizationId, organizationId),
+          eq(schema.organizationMembers.userId, users[1].userId),
+        ),
+      );
+
+    expect(await removeOrganizationMember(db, organizationId, users[1].userId)).toBe(false);
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId)),
+    ).toHaveLength(0);
+  });
+
+  test("member removal preserves a durable block whose scan projection was interrupted", async () => {
+    const { organizationId, users } = await seedSharedOrganization(3, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    const db = createDb(env.DB);
+    expect(
+      await upsertScanApproval(db, {
+        scanId,
+        organizationId,
+        userId: users[1].userId,
+        decision: "no_publish",
+        reason: "durable blocker",
+        now: new Date(),
+      }),
+    ).toBe("recorded");
+    // The scan row is deliberately still null: this is the interruption window
+    // between the durable vote and its derived projection.
+    expect((await readDecision(scanId))?.decision).toBeNull();
+
+    await removeOrganizationMember(db, organizationId, users[1].userId);
+
+    expect(
+      await db
+        .select()
+        .from(schema.scanApprovals)
+        .where(
+          and(
+            eq(schema.scanApprovals.scanId, scanId),
+            eq(schema.scanApprovals.decision, "no_publish"),
+          ),
+        ),
+    ).toHaveLength(1);
+    const recovered = await decide({ ...users[0], organizationId }, scanId, "publish");
+    expect(recovered.body.approvals).toMatchObject({ verdict: "no_publish" });
+    expect(await readDecision(scanId)).toMatchObject({
+      decision: "no_publish",
+      decidedByUserId: users[1].userId,
+    });
+  });
+
+  test("a departed member's final block survives policy reconciliation", async () => {
+    const { organizationId, users } = await seedSharedOrganization(3, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[1], organizationId }, scanId, "no_publish", "found malware");
+
+    const db = createDb(env.DB);
+    await removeOrganizationMember(db, organizationId, users[1].userId);
+    await setRequiredReleaseApprovals(db, organizationId, 3);
+    expect((await readDecision(scanId))?.decision).toBe("no_publish");
+
+    const attemptedOverride = await decide({ ...users[0], organizationId }, scanId, "publish");
+    expect(attemptedOverride.body.approvals).toMatchObject({ verdict: "no_publish" });
+    expect((await readDecision(scanId))?.decision).toBe("no_publish");
   });
 
   test("a removed member cannot land a stale approval after cleanup", async () => {
