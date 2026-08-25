@@ -377,6 +377,40 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("decodes URL escapes in browser module imports", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ background: { service_worker: "scripts/background.js", type: "module" } }),
+          {
+            path: "scripts/background.js",
+            size: 43,
+            sha256: "6e".repeat(32),
+            flags: [],
+            textSample: 'import "../tests/payload%20file.js";',
+          },
+          {
+            path: "tests/payload file.js",
+            size: 14,
+            sha256: "6f".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload file.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("treats Manifest V2 user_scripts api_script as consumer reachable", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -481,6 +515,40 @@ describe("browser extension review adapter", () => {
       (candidate) => candidate.ruleId === "code.dynamic-evaluation",
     );
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("decodes URL escapes before matching packaged script paths", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({ manifest_version: 2, background: { page: "pages/background.html" } }),
+          {
+            path: "pages/background.html",
+            size: 60,
+            sha256: "6c".repeat(32),
+            flags: [],
+            textSample: '<script src="../tests/payload%20file.js"></script>',
+          },
+          {
+            path: "tests/payload file.js",
+            size: 14,
+            sha256: "6d".repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      },
+    });
+    const finding = review.ruleFindings.find(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload file.js" });
     expect(finding?.testScoped).not.toBe(true);
   });
 

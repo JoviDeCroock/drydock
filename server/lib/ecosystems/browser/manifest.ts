@@ -1,6 +1,6 @@
 import { decodeHTMLAttribute } from "entities";
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
-import { isSafeManifestPath } from "../../platform/path-safety";
+import { decodeUrlPathForArchiveLookup, isSafeManifestPath } from "../../platform/path-safety";
 import type { FileRecord, PackageJsonSummary } from "../../review";
 import type { TarSuspiciousEntry } from "../../tar-parser.js";
 import {
@@ -528,7 +528,7 @@ function resolveExtensionResourcePath(
     ) {
       return null;
     }
-    const path = resolved.pathname.replace(/^\/+/, "");
+    const path = decodeUrlPathForArchiveLookup(resolved.pathname.replace(/^\/+/, ""));
     return isSafeManifestPath(path) ? path : null;
   } catch {
     return null;

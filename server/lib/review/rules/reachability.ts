@@ -1,4 +1,5 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
+import { decodeUrlPathForArchiveLookup } from "../../platform/path-safety";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
@@ -19,7 +20,7 @@ const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [
   /\b(?:import|export)\s+["'](\/[^"'\n]+)["']/g,
 ];
 const IMPORT_SCRIPTS_CALL_PATTERN = /\bimportScripts\s*\(([^)]*)\)/g;
-const STATIC_STRING_PATTERN = /["']([^"'\n]+)["']/g;
+const STATIC_STRING_PATTERN = /["']([^"'\n]+)["']|`((?:(?!\$\{)[^`\n])+)`/g;
 
 const RESOLUTION_SUFFIXES = [
   "",
@@ -281,7 +282,7 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   for (const call of text.matchAll(IMPORT_SCRIPTS_CALL_PATTERN)) {
     STATIC_STRING_PATTERN.lastIndex = 0;
     for (const argument of call[1].matchAll(STATIC_STRING_PATTERN)) {
-      specifiers.push(argument[1]);
+      specifiers.push(argument[1] ?? argument[2]);
     }
   }
   return specifiers;
@@ -292,7 +293,9 @@ function resolveModulePath(
   byNormalizedPath: Map<string, FileRecord>,
   browserUrlSemantics = false,
 ): string | null {
-  const pathCandidate = browserUrlSemantics ? stripUrlSearchAndHash(candidate) : candidate;
+  const pathCandidate = browserUrlSemantics
+    ? decodeUrlPathForArchiveLookup(stripUrlSearchAndHash(candidate))
+    : candidate;
   const base = normalizePathSegments(stripPackagePrefix(pathCandidate));
   if (!base) return null;
   for (const suffix of RESOLUTION_SUFFIXES) {

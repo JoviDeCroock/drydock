@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest and HTML path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, classic-worker imports, and HTML script or iframe paths resolved through character references, quoted greater-than characters, and local base URLs.",
+  "intent": "Pins full shared capability severity for root-relative content scripts, Manifest V2 user script APIs, classic-worker imports including static template literals, and HTML script or iframe paths resolved through character references, percent-encoded URLs, quoted greater-than characters, and local base URLs.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 70,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
       "flags": [],
-      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><script data-description=\">\" src=\"page&#46;js\"></script><iframe src=\"frame.html\"></iframe>"
+      "textSample": "<script>const decoy = '<base href=\"https://example.invalid/\">';</script><base href=\"../tests/\"><script data-description=\">\" src=\"page&#46;js\"></script><script src=\"encoded%20page.js\"></script><iframe src=\"frame.html\"></iframe>"
     },
     {
       "path": "tests/content.js",
@@ -41,12 +41,19 @@
       "size": 42,
       "sha256": "5656565656565656565656565656565656565656565656565656565656565656",
       "flags": [],
-      "textSample": "const cp = require('child_process'); cp.exec(command); importScripts('nested.js');"
+      "textSample": "const cp = require('child_process'); cp.exec(command); importScripts(`nested.js`);"
     },
     {
       "path": "tests/nested.js",
       "size": 14,
       "sha256": "5757575757575757575757575757575757575757575757575757575757575757",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/encoded page.js",
+      "size": 14,
+      "sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -71,6 +78,7 @@
     { "ruleId": "code.network-access", "severity": "medium", "file": "tests/user-api.js" },
     { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/nested.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/encoded page.js" },
     { "ruleId": "code.network-access", "severity": "medium", "file": "tests/framed.js" }
   ]
 }

@@ -2465,6 +2465,21 @@ describe("test-scoped capability findings", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
+  test("follows static template-literal importScripts calls", () => {
+    const staged = [
+      pkg(),
+      file("worker.js", "importScripts(`test/payload.js`);\n"),
+      file("test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["worker.js"],
+    });
+    const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("does not reinterpret root-relative ESM imports without ecosystem opt-in", () => {
     const staged = [
       pkg(),

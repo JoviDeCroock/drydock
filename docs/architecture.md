@@ -17,7 +17,7 @@ Hono Worker
   └─ constrained brokers/gateways for registry/artifact downloads
         │
         ▼
-      npm registry, PyPI, VS Code Marketplace, browser stores, GitHub Actions artifacts,
+      npm registry, PyPI, VS Code Marketplace, GitHub Actions artifacts,
       AT Protocol identity + PDS hosts (atpm)
 
 Dynamic Worker sandbox

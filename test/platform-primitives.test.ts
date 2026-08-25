@@ -8,7 +8,10 @@ import {
 } from "../server/lib/platform/crypto-utils";
 import { hasAsciiControlCharacter, isRecord } from "../server/lib/platform/guards";
 import { escapeHtmlAttribute, escapeHtmlText, escapeXml } from "../server/lib/platform/html-escape";
-import { isSafeManifestPath } from "../server/lib/platform/path-safety";
+import {
+  decodeUrlPathForArchiveLookup,
+  isSafeManifestPath,
+} from "../server/lib/platform/path-safety";
 import {
   isSafeHttpUrlForShellArgument,
   quotePosixShellArgument,
@@ -62,6 +65,20 @@ describe("isSafeManifestPath", () => {
   test("caps path length at 512 characters", () => {
     expect(isSafeManifestPath("a".repeat(512))).toBe(true);
     expect(isSafeManifestPath("a".repeat(513))).toBe(false);
+  });
+});
+
+describe("decodeUrlPathForArchiveLookup", () => {
+  test("decodes URL escapes exactly once for archive entry matching", () => {
+    expect(decodeUrlPathForArchiveLookup("tests/payload%20file.js")).toBe("tests/payload file.js");
+    expect(decodeUrlPathForArchiveLookup("tests/literal%2520name.js")).toBe(
+      "tests/literal%20name.js",
+    );
+  });
+
+  test("matches URL percent-decoding for malformed escapes and invalid UTF-8", () => {
+    expect(decodeUrlPathForArchiveLookup("tests/incomplete%2.js")).toBe("tests/incomplete%2.js");
+    expect(decodeUrlPathForArchiveLookup("tests/invalid%C0%AF.js")).toBe("tests/invalid��.js");
   });
 });
 
