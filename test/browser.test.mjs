@@ -748,6 +748,127 @@ describe("browser extension review adapter", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test("uses the document URL when an extension page has an invalid base href", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 68,
+        sha256: "74".repeat(32),
+        flags: [],
+        textSample: '<base href="http://["><script src="/tests/payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "75".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup.html", "tests/payload.js"]),
+    );
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("keeps tag-shaped raw text from creating script reachability", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
+    const files = [
+      manifestRecord,
+      {
+        path: "popup.html",
+        size: 220,
+        sha256: "76".repeat(32),
+        flags: [],
+        textSample:
+          '<style>.example { content: "<script src=tests/style.js>"; }</style>' +
+          '<textarea><script src="tests/textarea.js"></script></textarea>' +
+          '<title><script src="tests/title.js"></script></title>' +
+          '<script src="tests/live.js"></script>',
+      },
+      ...["style", "textarea", "title", "live"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(77 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(["popup.html", "tests/live.js"]);
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "medium", file: "tests/style.js", testScoped: true }),
+        expect.objectContaining({
+          severity: "medium",
+          file: "tests/textarea.js",
+          testScoped: true,
+        }),
+        expect.objectContaining({ severity: "medium", file: "tests/title.js", testScoped: true }),
+        expect.objectContaining({ severity: "high", file: "tests/live.js" }),
+      ]),
+    );
+    expect(findings).toHaveLength(4);
+  });
+
+  test("follows scripts loaded by a reachable offscreen document", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        permissions: ["offscreen"],
+        background: { service_worker: "background.js" },
+      }),
+      {
+        path: "background.js",
+        size: 120,
+        sha256: "81".repeat(32),
+        flags: [],
+        textSample:
+          'chrome.offscreen.createDocument({ url: "/tests/offscreen.html", reasons: ["DOM_PARSER"], justification: "parse" });',
+      },
+      {
+        path: "tests/offscreen.html",
+        size: 39,
+        sha256: "82".repeat(32),
+        flags: [],
+        textSample: '<script src="payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "83".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

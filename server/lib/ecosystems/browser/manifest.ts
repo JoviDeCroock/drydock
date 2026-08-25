@@ -23,6 +23,7 @@ const SHA256_RE = /^[a-f0-9]{64}$/i;
 const GECKO_EMAIL_ID_RE = /^[A-Za-z0-9._-]*@[A-Za-z0-9._-]+$/;
 const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
 const GECKO_EMAIL_ID_MAX_LENGTH = 80;
+const HTML_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -433,13 +434,16 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   return { entrypoints: [...entrypoints], documentBaseUrls: [...documentBaseUrls] };
 }
 
+export function browserHtmlConsumerEntrypoints(files: FileRecord[], pagePath: string): string[] {
+  return htmlPageConsumerEntrypoints(files, [pagePath]).entrypoints;
+}
+
 type HtmlConsumerSource =
   | { kind: "script" | "page"; source: string; baseHref: string | null }
   | { kind: "inline-page"; html: string; baseHref: string | null };
 
 function htmlConsumerSources(html: string): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
-  const closingScriptPattern = /<\/script(?=[\s/>])/gi;
   let baseHref: string | null = null;
   let baseSeen = false;
   let index = 0;
@@ -457,7 +461,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
     const tagName = html.slice(nameStart, cursor).toLowerCase();
     if (
-      (tagName !== "script" &&
+      (!HTML_TEXT_ONLY_ELEMENTS.has(tagName) &&
         tagName !== "base" &&
         tagName !== "iframe" &&
         tagName !== "object") ||
@@ -543,16 +547,21 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
         baseHref,
       });
     }
-    if (tagClosed && tagName === "script") {
-      // Script data is raw text in HTML. A base-looking string inside JavaScript
-      // must not become the document base for a later packaged script.
-      closingScriptPattern.lastIndex = cursor;
-      const closingScript = closingScriptPattern.exec(html);
-      if (!closingScript) {
+    if (tagClosed && HTML_TEXT_ONLY_ELEMENTS.has(tagName)) {
+      // Raw-text and escapable raw-text contents do not create nested elements.
+      // Skip them so tag-shaped CSS, JavaScript, titles, and textarea values
+      // cannot invent consumer edges or document bases.
+      const closingTextElementPattern = new RegExp(`</${tagName}(?=[\\s/>])`, "gi");
+      closingTextElementPattern.lastIndex = cursor;
+      const closingTextElement = closingTextElementPattern.exec(html);
+      if (!closingTextElement) {
         index = html.length;
         continue;
       }
-      const closingTagEnd = html.indexOf(">", closingScript.index + closingScript[0].length);
+      const closingTagEnd = html.indexOf(
+        ">",
+        closingTextElement.index + closingTextElement[0].length,
+      );
       index = closingTagEnd === -1 ? html.length : closingTagEnd + 1;
       continue;
     }
@@ -601,7 +610,15 @@ function extensionDocumentBaseUrl(
     ) {
       return null;
     }
-    const documentBase = baseHref === null ? fallbackBaseUrl : new URL(baseHref, fallbackBaseUrl);
+    let documentBase = fallbackBaseUrl;
+    if (baseHref !== null) {
+      try {
+        documentBase = new URL(baseHref, fallbackBaseUrl);
+      } catch {
+        // The HTML base-element algorithm falls back to the document URL when
+        // its href cannot be parsed; later relative resources still load.
+      }
+    }
     return documentBase.protocol === EXTENSION_RESOURCE_ROOT.protocol &&
       documentBase.host === EXTENSION_RESOURCE_ROOT.host
       ? documentBase

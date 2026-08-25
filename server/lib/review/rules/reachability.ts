@@ -51,6 +51,7 @@ export function consumerReachablePaths(
   codePatternSet: CodePatternSet | undefined = "javascript",
   rootRelativeModuleImports = false,
   consumerDocumentBaseUrls: string[] = [],
+  consumerFileDependencyPaths?: (path: string, file: FileRecord) => string[],
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -74,6 +75,10 @@ export function consumerReachablePaths(
     reachable.add(path);
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
+    for (const dependency of consumerFileDependencyPaths?.(path, file) ?? []) {
+      const resolved = resolveModulePath(dependency, byNormalizedPath);
+      if (resolved && !reachable.has(resolved)) queue.push(resolved);
+    }
     for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
       const resolved = rootRelativeModuleImports
         ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
@@ -81,11 +86,12 @@ export function consumerReachablePaths(
       if (resolved && !reachable.has(resolved)) queue.push(resolved);
     }
     if (rootRelativeModuleImports) {
-      for (const injected of staticWebExtensionScriptSpecifiers(file.textSample)) {
-        // Chrome resolves packaged injection and registration files from the
-        // extension root, not from the JavaScript module that names them.
+      for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
+        // Chrome resolves packaged injection, registration, and offscreen
+        // document files from the extension root, not from the JavaScript
+        // module that names them.
         const resolved = resolveBrowserDocumentModulePath(
-          injected,
+          resource,
           BROWSER_ARCHIVE_ROOT.href,
           byNormalizedPath,
         );
@@ -310,12 +316,12 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   return specifiers;
 }
 
-type WebExtensionScriptProperty = "file" | "files" | "js";
+type WebExtensionResourceProperty = "file" | "files" | "js" | "url";
 type WebExtensionScriptValueShape = "string" | "string-array" | "file-object-array";
 
-interface WebExtensionScriptCall {
+interface WebExtensionResourceCall {
   openIndex: number;
-  property: WebExtensionScriptProperty;
+  property: WebExtensionResourceProperty;
   valueShape: WebExtensionScriptValueShape;
 }
 
@@ -354,11 +360,11 @@ function staticImportScriptsSpecifiers(text: string): string[] {
   return specifiers;
 }
 
-// WebExtension APIs can make packaged scripts executable without a manifest or
-// module edge. Follow only literal `file`, `files`, and `js` properties on the
-// statically named APIs; dynamic expressions remain unproven. The shared lexer
-// keeps API-shaped text in comments, strings, and regular expressions inert.
-function staticWebExtensionScriptSpecifiers(text: string): string[] {
+// WebExtension APIs can make packaged scripts or HTML documents executable
+// without a manifest or module edge. Follow only literal resource properties
+// on the statically named APIs; dynamic expressions remain unproven. The shared
+// lexer keeps API-shaped text in comments, strings, and regular expressions inert.
+function staticWebExtensionResourceSpecifiers(text: string): string[] {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
@@ -389,7 +395,7 @@ function webExtensionScriptCall(
   tokens: JsToken[],
   text: string,
   start: number,
-): WebExtensionScriptCall | null {
+): WebExtensionResourceCall | null {
   if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
 
   let index = start;
@@ -417,7 +423,8 @@ function webExtensionScriptCall(
     namespace !== "tabs" &&
     namespace !== "scripting" &&
     namespace !== "contentScripts" &&
-    namespace !== "userScripts"
+    namespace !== "userScripts" &&
+    namespace !== "offscreen"
   ) {
     return null;
   }
@@ -447,6 +454,9 @@ function webExtensionScriptCall(
   ) {
     return { openIndex, property: "js", valueShape: "file-object-array" };
   }
+  if (namespace === "offscreen" && method === "createDocument") {
+    return { openIndex, property: "url", valueShape: "string" };
+  }
   return null;
 }
 
@@ -455,7 +465,7 @@ function staticPropertyScriptPaths(
   text: string,
   start: number,
   end: number,
-  property: WebExtensionScriptProperty,
+  property: WebExtensionResourceProperty,
   valueShape: WebExtensionScriptValueShape,
 ): string[] {
   const paths: string[] = [];

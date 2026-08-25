@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.44.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.45.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -511,6 +511,12 @@ iframe `srcdoc` HTML and recognizes statically qualified WebExtension injection
 and Worker APIs through `globalThis`, `self`, or `window`. The
 `browser-entrypoint-path-aliases` golden case pins these executable paths so
 test-tree payloads retain full capability severity.
+
+`1.45.0` follows packaged HTML and scripts loaded through
+`chrome.offscreen.createDocument()`, falls back to an extension page's document
+URL when its first `base` URL is invalid, and keeps tag-shaped content inside
+`style`, `textarea`, and `title` inert. The `browser-entrypoint-path-aliases`
+golden case pins the new executable edges and raw-text hard negatives.
 
 ### Fixture format
 

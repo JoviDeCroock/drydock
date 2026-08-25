@@ -32,6 +32,12 @@ export interface DeterministicFindingOptions {
    */
   consumerDocumentBaseUrls?: string[];
   /**
+   * Additional package-relative dependencies discovered from a reachable file.
+   * Browser extensions use this for packaged HTML documents that load scripts;
+   * the resolver must return validated archive paths only.
+   */
+  consumerFileDependencyPaths?: (path: string, file: FileRecord) => string[];
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -94,6 +100,7 @@ export function buildRuleContext(
       options.codePatternSet,
       options.consumerRootRelativeModuleImports,
       options.consumerDocumentBaseUrls,
+      options.consumerFileDependencyPaths,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,

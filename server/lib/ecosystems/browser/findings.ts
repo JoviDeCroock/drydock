@@ -9,6 +9,7 @@ import {
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
+  browserHtmlConsumerEntrypoints,
   browserExtensionCandidateName,
   findBrowserManifestFile,
   parseBrowserExtensionManifest,
@@ -116,6 +117,8 @@ export function buildBrowserFindings(args: {
       ],
       consumerRootRelativeModuleImports: true,
       consumerDocumentBaseUrls: extensionManifest.consumerDocumentBaseUrls,
+      consumerFileDependencyPaths: (path) =>
+        /\.html?$/i.test(path) ? browserHtmlConsumerEntrypoints(args.staged.files, path) : [],
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),
