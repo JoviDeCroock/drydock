@@ -45,8 +45,12 @@ describe("npm range satisfaction", () => {
     expect(matches("1.2.9", "v1.2")).toBe(true);
     expect(matches("1.3.0", "v1.2")).toBe(false);
     expect(matches("9.9.9", "*")).toBe(true);
-    expect(parseRange("1.x.2")).toBeNull();
-    expect(parseRange("<1.x.2")).toBeNull();
+    expect(matches("1.9.9", "1.x.2")).toBe(true);
+    expect(matches("2.0.0", "1.x.2")).toBe(false);
+    expect(matches("0.9.9", "<1.x.2")).toBe(true);
+    expect(matches("1.0.0", "<1.x.2")).toBe(false);
+    expect(matches("2.0.0", ">1.x.2")).toBe(true);
+    expect(matches("1.9.9", ">1.x.2")).toBe(false);
     expect(matches("1.4.0", "^1.x.2")).toBe(true);
     expect(matches("2.0.0", "^1.x.2")).toBe(false);
     expect(matches("1.2.0", "1.2.x-beta")).toBe(true);
@@ -82,6 +86,14 @@ describe("npm range satisfaction", () => {
     expect(matches("2.3.5", "1.2.3 - 2.3.4")).toBe(false);
     expect(matches("2.9.9", "1.2.3 - 2")).toBe(true);
     expect(matches("3.0.0", "1.2.3 - 2")).toBe(false);
+    expect(matches("1.0.0", "1.0.0 - x")).toBe(true);
+    expect(matches("999.0.0", "1.0.0 - x")).toBe(true);
+    expect(matches("0.9.9", "x - 1.2.3")).toBe(true);
+    expect(matches("1.2.4", "x - 1.2.3")).toBe(false);
+    expect(matches("1.9.9", "1.0.0 - 1.x.2")).toBe(true);
+    expect(matches("2.0.0", "1.0.0 - 1.x.2")).toBe(false);
+    expect(parseRange("0 - 1.2-beta")).toBeNull();
+    expect(parseRange("1.2-beta - 2")).toBeNull();
   });
 
   test("a prerelease only satisfies a range that names one on the same tuple", () => {

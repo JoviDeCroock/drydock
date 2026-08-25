@@ -1,0 +1,60 @@
+{
+  "id": "added-dependency-shell-wrapper-skipped-content",
+  "title": "A wrapped shell target behind control flow keeps omitted bodies visible",
+  "category": "dependency-introduction",
+  "intent": "A lifecycle command can hide a shell-expanded executable behind a control keyword and exec wrapper. The bounded shell analysis must still keep deliberately omitted content visible.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "shell-wrapper": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "shell-wrapper": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "shell-wrapper",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "if true; then exec \"$PAYLOAD\"; fi" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 126,
+          "sha256": "shell-wrapper-package-json",
+          "textSample": "{\"name\":\"shell-wrapper\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"if true; then exec \\\"$PAYLOAD\\\"; fi\"}}",
+          "flags": []
+        },
+        {
+          "path": "payload.min.js",
+          "size": 4096,
+          "sha256": "shell-wrapper-payload",
+          "flags": ["text-sample-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "shell-wrapper",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 2,
+      "observation": {
+        "execution": "observed",
+        "risk": "not-observed",
+        "dynamicInstallTarget": true
+      }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency-artifact.uninspectable",
+      "severity": "medium",
+      "file": "<dependency>shell-wrapper@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}
