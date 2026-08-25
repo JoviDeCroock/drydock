@@ -34,6 +34,7 @@ import {
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
 import {
+  getGateFirstBlockingVote,
   getGateForOrganization,
   listGatePackageScans,
   markGateDecidedForPackageAggregate,
@@ -326,15 +327,23 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
     canonicalOrigin(c),
     reconciliation.changedScans,
   );
-  for (const gateId of reconciliation.readyGateIds) {
+  for (const readyGate of reconciliation.readyGates) {
+    const gateId = readyGate.id;
     const gate = await getGateForOrganization(db, organizationId, gateId);
     if (!gate) continue;
     const reportUrl = buildReportUrl(c.env, gate.scanId);
+    const blockingVote =
+      readyGate.decision === "rejected"
+        ? await getGateFirstBlockingVote(db, organizationId, gateId)
+        : null;
+    const gateDecisionComment =
+      blockingVote?.decisionReason || buildHumanDecisionComment(readyGate.decision, reportUrl);
+    const gateDecisionActorUserId = blockingVote ? blockingVote.decidedByUserId : session.userId;
     const decided = await markGateDecidedForPackageAggregate(db, {
       gateId,
       organizationId,
-      decision: "approved",
-      comment: buildHumanDecisionComment("approved", reportUrl),
+      decision: readyGate.decision,
+      comment: gateDecisionComment,
       reportUrl,
     });
     if (!decided) continue;
@@ -349,28 +358,33 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
       const packages = await listGatePackageScans(db, organizationId, gateId);
       await recordScanEvent(db, {
         organizationId,
-        actorUserId: session.userId,
+        actorUserId: gateDecisionActorUserId,
         scanId: decided.scanId,
-        type: "github_workflow_gate.approved",
+        type:
+          readyGate.decision === "approved"
+            ? "github_workflow_gate.approved"
+            : "github_workflow_gate.rejected",
         metadata: {
           gateId,
-          decidedBy: "approval_policy",
+          decidedBy: blockingVote ? "human" : "approval_policy",
+          trigger: "approval_policy",
           packageCount: packages.length,
           requiredApprovals: requested,
+          ...(blockingVote ? { recoveredByUserId: session.userId } : {}),
         },
       });
       recordProductEvent(c.env, {
         name: "workflow_gate.decided",
         organizationId,
         surface: "human",
-        decision: "approved",
+        decision: readyGate.decision,
         packageCount: packages.length,
       });
     } catch (err) {
       emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
         organizationId,
         gateId,
-        decision: "approved",
+        decision: readyGate.decision,
         trigger: "approval_policy",
         error: describeOperationalError(err),
       });
