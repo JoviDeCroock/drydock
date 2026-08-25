@@ -520,6 +520,13 @@ function staticBrowserNavigationResource(
 
   let index = start;
   const first = tokenText(tokens[index], text);
+  if (first === "open") {
+    const openIndex = staticCallOpenIndex(tokens, text, index + 1);
+    if (openIndex === null) return null;
+    const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+    if (closeIndex === null) return null;
+    return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
+  }
   if (STATIC_BROWSER_GLOBALS.has(first)) {
     const member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;

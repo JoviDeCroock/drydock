@@ -2,7 +2,7 @@
   "id": "browser-navigation-runtime-reachability",
   "title": "browser runtime and page navigation edges remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins Manifest V3 generated background pages, runtime.getURL importScripts and DOM navigation, window aliases, and HTML navigation elements while keeping service-worker navigation, relative, dynamic, and download paths test-scoped.",
+  "intent": "Pins Manifest V3 generated background pages, runtime.getURL importScripts and DOM navigation, unqualified open calls, window aliases, XHTML and standalone SVG documents, and HTML navigation elements while keeping service-worker navigation, relative, dynamic, and download paths test-scoped.",
   "slug": "navigation-runtime-reachability",
   "extensionId": "navigation-runtime-reachability@example.invalid",
   "version": "1.0.0",
@@ -24,10 +24,10 @@
     },
     {
       "path": "popup.js",
-      "size": 264,
+      "size": 345,
       "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
       "flags": [],
-      "textSample": "window.location.assign(\"tests/dom.html\");\nwindow.open(chrome.runtime.getURL(\"tests/runtime-page.html\"));\nself.location = \"tests/self.html\";\nglobalThis.location.assign(chrome.runtime.getURL(\"tests/global.html\"));\nlocation.assign(\"tests/dynamic-dom.html\" + suffix);\n"
+      "textSample": "window.location.assign(\"tests/dom.html\");\nwindow.open(chrome.runtime.getURL(\"tests/runtime-page.html\"));\nopen(\"tests/runtime.xhtml\");\nlocation.assign(\"tests/runtime.svg\");\nself.location = \"tests/self.html\";\nglobalThis.location.assign(chrome.runtime.getURL(\"tests/global.html\"));\nlocation.assign(\"tests/dynamic-dom.html\" + suffix);\n"
     },
     {
       "path": "background.js",
@@ -89,6 +89,34 @@
       "path": "tests/runtime-page.js",
       "size": 15,
       "sha256": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/runtime.xhtml",
+      "size": 33,
+      "sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "flags": [],
+      "textSample": "<script src=\"xhtml.js\"></script>\n"
+    },
+    {
+      "path": "tests/xhtml.js",
+      "size": 15,
+      "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/runtime.svg",
+      "size": 76,
+      "sha256": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "flags": [],
+      "textSample": "<svg xmlns=\"http://www.w3.org/2000/svg\"><script href=\"svg.js\"/></svg>\n"
+    },
+    {
+      "path": "tests/svg.js",
+      "size": 15,
+      "sha256": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
       "flags": [],
       "textSample": "eval(payload);\n"
     },
@@ -203,6 +231,8 @@
       "severity": "high",
       "file": "tests/runtime-page.js"
     },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xhtml.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/self.js" },
     {
       "ruleId": "code.dynamic-evaluation",

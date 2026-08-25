@@ -7,6 +7,7 @@ import {
   inferBrowserArtifactKind,
   parseBrowserExtensionManifest,
 } from "../server/lib/ecosystems/browser";
+import { createBrowserHtmlConsumerDependencyResolver } from "../server/lib/ecosystems/browser/manifest";
 import { scanPublicPackageIdentity } from "../server/lib/public-feed";
 import { computeDiff, runDeterministicFindings } from "../server/lib/scan/pipeline-phases";
 
@@ -1538,6 +1539,184 @@ describe("browser extension review adapter", () => {
       expect(findings).toHaveLength(4);
     },
   );
+
+  test("bounds web-accessible resource declarations and wildcard matching work", () => {
+    expect(() =>
+      parseBrowserExtensionManifest([
+        manifestFile({
+          web_accessible_resources: Array.from(
+            { length: 10_001 },
+            (_, index) => `assets/${index}.js`,
+          ),
+        }),
+      ]),
+    ).toThrow(/too many web-accessible resources/);
+
+    const wildcardResources = Array.from({ length: 400 }, (_, index) => `assets/${index}/*.js`);
+    const files = [
+      manifestFile({ web_accessible_resources: wildcardResources }),
+      ...Array.from({ length: 2_500 }, (_, index) => ({
+        path: `assets/${index}/payload.js`,
+        size: 1,
+        sha256: String(index).padStart(64, "0").slice(-64),
+        flags: [],
+        textSample: "x",
+      })),
+    ];
+    expect(() => parseBrowserExtensionManifest(files)).toThrow(/review work budget/);
+  });
+
+  test("returns direct document dependencies for graph traversal", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "root.html",
+        size: 1,
+        sha256: "81".repeat(32),
+        flags: [],
+        textSample: '<iframe src="nested/page.html"></iframe><script src="root.js"></script>',
+      },
+      {
+        path: "nested/page.html",
+        size: 1,
+        sha256: "82".repeat(32),
+        flags: [],
+        textSample: '<script src="payload.js"></script>',
+      },
+    ]);
+
+    expect(dependencies("root.html")).toEqual([
+      { path: "nested/page.html" },
+      { path: "root.js", documentBaseUrl: "drydock-extension://artifact/root.html" },
+    ]);
+    expect(dependencies("nested/page.html")).toEqual([
+      {
+        path: "nested/payload.js",
+        documentBaseUrl: "drydock-extension://artifact/nested/page.html",
+      },
+    ]);
+  });
+
+  test("respects executable script types and HTML, SVG, and MathML namespaces", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 1,
+        sha256: "83".repeat(32),
+        flags: [],
+        textSample:
+          '<script type="application/json" src="tests/data-decoy.js"></script>' +
+          '<math><script src="tests/math-decoy.js"></script>' +
+          '<annotation-xml encoding="text/html"><script src="tests/math-live.js"></script></annotation-xml></math>' +
+          '<svg><iframe src="tests/svg-frame.html"></iframe>' +
+          '<a xlink:href="tests/svg-linked.html">Open</a></svg>',
+      },
+      {
+        path: "tests/svg-linked.html",
+        size: 1,
+        sha256: "84".repeat(32),
+        flags: [],
+        textSample: '<script src="linked.js"></script>',
+      },
+      {
+        path: "tests/svg-frame.html",
+        size: 1,
+        sha256: "85".repeat(32),
+        flags: [],
+        textSample: '<script src="frame-decoy.js"></script>',
+      },
+      ...["data-decoy", "math-decoy", "math-live", "linked", "frame-decoy"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 1,
+        sha256: String(86 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["tests/math-live.js", "tests/svg-linked.html", "tests/linked.js"]),
+    );
+    expect(parsed.extensionPageEntrypoints).not.toEqual(
+      expect.arrayContaining([
+        "tests/data-decoy.js",
+        "tests/math-decoy.js",
+        "tests/svg-frame.html",
+      ]),
+    );
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "tests/math-live.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/linked.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/data-decoy.js", severity: "medium" }),
+        expect.objectContaining({ file: "tests/math-decoy.js", severity: "medium" }),
+        expect.objectContaining({ file: "tests/frame-decoy.js", severity: "medium" }),
+      ]),
+    );
+    expect(findings).toHaveLength(5);
+  });
+
+  test("follows unqualified open calls into XHTML and standalone SVG documents", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 1,
+        sha256: "91".repeat(32),
+        flags: [],
+        textSample: '<script src="popup.js"></script>',
+      },
+      {
+        path: "popup.js",
+        size: 1,
+        sha256: "92".repeat(32),
+        flags: [],
+        textSample: 'open("tests/runtime.xhtml"); location.assign("tests/runtime.svg");',
+      },
+      {
+        path: "tests/runtime.xhtml",
+        size: 1,
+        sha256: "93".repeat(32),
+        flags: [],
+        textSample: '<script src="xhtml.js"></script>',
+      },
+      {
+        path: "tests/runtime.svg",
+        size: 1,
+        sha256: "94".repeat(32),
+        flags: [],
+        textSample: '<svg xmlns="http://www.w3.org/2000/svg"><script href="svg.js"/></svg>',
+      },
+      ...["xhtml", "svg"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 1,
+        sha256: String(95 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "tests/xhtml.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/svg.js", severity: "high" }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
+  });
 
   test("follows scripts after an abruptly closed HTML comment", () => {
     const path = "dist/tab-helper.zip";

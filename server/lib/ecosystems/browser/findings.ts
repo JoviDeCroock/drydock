@@ -9,9 +9,10 @@ import {
 import { firstJsonPropertyLine } from "../../review/rules/helpers";
 import type { AcquiredArtifact } from "../package-adapter";
 import {
-  browserHtmlConsumerDependencies,
   browserExtensionCandidateName,
+  createBrowserHtmlConsumerDependencyResolver,
   findBrowserManifestFile,
+  isBrowserConsumerDocumentPath,
   parseBrowserExtensionManifest,
 } from "./manifest";
 import {
@@ -106,6 +107,9 @@ export function buildBrowserFindings(args: {
   stagedManifestText: string | null;
 }): Finding[] {
   const extensionManifest = parseBrowserExtensionManifest(args.staged.files).manifest;
+  const browserDocumentDependencies = createBrowserHtmlConsumerDependencyResolver(
+    args.staged.files,
+  );
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
@@ -118,7 +122,7 @@ export function buildBrowserFindings(args: {
       consumerRootRelativeModuleImports: true,
       consumerDocumentBaseUrlsByPath: extensionManifest.consumerDocumentBaseUrlsByPath,
       consumerFileDependencyPaths: (path) =>
-        /\.html?$/i.test(path) ? browserHtmlConsumerDependencies(args.staged.files, path) : [],
+        isBrowserConsumerDocumentPath(path) ? browserDocumentDependencies(path) : [],
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),

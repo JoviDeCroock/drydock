@@ -25,6 +25,30 @@ const GECKO_GUID_ID_RE = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const GECKO_EMAIL_ID_MAX_LENGTH = 80;
 const LOCALIZED_MESSAGE_NAME_RE = /^__MSG_([A-Za-z0-9_@]+)__$/i;
 const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
+const MAX_WEB_ACCESSIBLE_RESOURCE_DECLARATIONS = 10_000;
+const MAX_WEB_ACCESSIBLE_RESOURCE_WILDCARD_CHECKS = 1_000_000;
+const BROWSER_DOCUMENT_PATH_RE = /\.(?:html?|xhtml|xht|svg)$/i;
+const JAVASCRIPT_MIME_TYPES = new Set([
+  "application/ecmascript",
+  "application/javascript",
+  "application/x-ecmascript",
+  "application/x-javascript",
+  "text/ecmascript",
+  "text/javascript",
+  "text/javascript1.0",
+  "text/javascript1.1",
+  "text/javascript1.2",
+  "text/javascript1.3",
+  "text/javascript1.4",
+  "text/javascript1.5",
+  "text/javascript1.6",
+  "text/javascript1.7",
+  "text/javascript1.8",
+  "text/jscript",
+  "text/livescript",
+  "text/x-ecmascript",
+  "text/x-javascript",
+]);
 const HTML_TEXT_ONLY_ELEMENTS = new Set([
   "iframe",
   "noembed",
@@ -37,10 +61,11 @@ const HTML_TEXT_ONLY_ELEMENTS = new Set([
 ]);
 const SVG_TEXT_ONLY_ELEMENTS = new Set(["script", "style", "title"]);
 const HTML_INERT_CONTENT_ELEMENTS = new Set(["noscript", "template"]);
+const MATHML_TEXT_INTEGRATION_ELEMENTS = new Set(["mi", "mn", "mo", "ms", "mtext"]);
 
-type HtmlNamespace = "html" | "svg";
+type HtmlNamespace = "html" | "mathml" | "svg";
 type HtmlNamespaceBoundary = {
-  tagName: "foreignobject" | "svg";
+  tagName: string;
   namespace: HtmlNamespace;
 };
 
@@ -366,19 +391,44 @@ function manifestWebAccessibleResourcePaths(
   raw: Record<string, unknown>,
   files: FileRecord[],
 ): string[] {
-  const declarations = [
-    ...stringList(raw.web_accessible_resources),
-    ...nestedStringList(raw.web_accessible_resources, "resources"),
-  ];
-  const patterns = manifestResourcePaths(declarations);
+  const declarations: string[] = [];
+  const append = (value: unknown): void => {
+    if (typeof value !== "string" || !value.trim()) return;
+    if (declarations.length >= MAX_WEB_ACCESSIBLE_RESOURCE_DECLARATIONS) {
+      throw new Error("manifest.json declares too many web-accessible resources");
+    }
+    declarations.push(value);
+  };
+  if (Array.isArray(raw.web_accessible_resources)) {
+    for (const declaration of raw.web_accessible_resources) {
+      if (typeof declaration === "string") {
+        append(declaration);
+        continue;
+      }
+      if (!isRecord(declaration) || !Array.isArray(declaration.resources)) continue;
+      for (const resource of declaration.resources) append(resource);
+    }
+  }
+
+  const patterns = [...new Set(manifestResourcePaths(declarations))];
+  const exactPatterns = new Set(patterns.filter((pattern) => !pattern.includes("*")));
+  const wildcardPatterns = patterns
+    .filter((pattern) => pattern.includes("*"))
+    .map((pattern) => pattern.split("*"));
+  const wildcardWork = wildcardPatterns.reduce((work, parts) => work + parts.length, 0);
+  if (wildcardWork * files.length > MAX_WEB_ACCESSIBLE_RESOURCE_WILDCARD_CHECKS) {
+    throw new Error("manifest.json web-accessible resource patterns exceed the review work budget");
+  }
   return files
     .map((file) => file.path)
-    .filter((path) => patterns.some((pattern) => wildcardManifestPathMatches(path, pattern)));
+    .filter(
+      (path) =>
+        exactPatterns.has(path) ||
+        wildcardPatterns.some((pattern) => wildcardManifestPathMatches(path, pattern)),
+    );
 }
 
-function wildcardManifestPathMatches(path: string, pattern: string): boolean {
-  if (!pattern.includes("*")) return path === pattern;
-  const parts = pattern.split("*");
+function wildcardManifestPathMatches(path: string, parts: string[]): boolean {
   const first = parts[0];
   if (!path.startsWith(first)) return false;
   let offset = first.length;
@@ -492,7 +542,8 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
     }
     const html = inlineHtml ?? filesByPath.get(pagePath)?.textSample;
     if (!html) continue;
-    for (const consumer of htmlConsumerSources(html)) {
+    const namespace = inlineHtml === undefined ? browserDocumentNamespace(pagePath) : "html";
+    for (const consumer of htmlConsumerSources(html, namespace)) {
       if (consumer.kind === "inline-page") {
         const documentBase = extensionDocumentBaseUrl(pagePath, consumer.baseHref, fallbackBaseUrl);
         if (documentBase) {
@@ -509,7 +560,7 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
       if (!documentBase) continue;
       const path = resolveExtensionResourcePath(source, documentBase);
       if (!path) continue;
-      if (kind === "linked-page" && !/\.html?$/i.test(path)) continue;
+      if (kind === "linked-page" && !isBrowserConsumerDocumentPath(path)) continue;
       entrypoints.add(path);
       if (kind === "script") {
         const bases = documentBaseUrlsByPath.get(path) ?? new Set<string>();
@@ -529,15 +580,62 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   };
 }
 
-export function browserHtmlConsumerDependencies(
+export function createBrowserHtmlConsumerDependencyResolver(
   files: FileRecord[],
+): (pagePath: string) => Array<{ path: string; documentBaseUrl?: string }> {
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  return (pagePath) => browserHtmlConsumerDependencies(filesByPath, pagePath);
+}
+
+function browserHtmlConsumerDependencies(
+  filesByPath: Map<string, FileRecord>,
   pagePath: string,
 ): Array<{ path: string; documentBaseUrl?: string }> {
-  const consumers = htmlPageConsumerEntrypoints(files, [pagePath]);
-  return consumers.entrypoints.flatMap((path) => {
-    const bases = consumers.documentBaseUrlsByPath[path];
-    return bases?.length ? bases.map((documentBaseUrl) => ({ path, documentBaseUrl })) : [{ path }];
-  });
+  if (!isBrowserConsumerDocumentPath(pagePath)) return [];
+  const html = filesByPath.get(pagePath)?.textSample;
+  if (!html) return [];
+
+  const dependencies = new Map<string, { path: string; documentBaseUrl?: string }>();
+  const inlineQueue: Array<{
+    html: string;
+    fallbackBaseUrl?: string;
+    namespace: HtmlNamespace;
+  }> = [{ html, namespace: browserDocumentNamespace(pagePath) }];
+  while (inlineQueue.length) {
+    const inline = inlineQueue.pop();
+    if (!inline) continue;
+    for (const consumer of htmlConsumerSources(inline.html, inline.namespace)) {
+      const documentBase = extensionDocumentBaseUrl(
+        pagePath,
+        consumer.baseHref,
+        inline.fallbackBaseUrl,
+      );
+      if (!documentBase) continue;
+      if (consumer.kind === "inline-page") {
+        inlineQueue.push({
+          html: consumer.html,
+          fallbackBaseUrl: documentBase.href,
+          namespace: "html",
+        });
+        continue;
+      }
+      const path = resolveExtensionResourcePath(consumer.source, documentBase);
+      if (!path) continue;
+      if (consumer.kind === "linked-page" && !isBrowserConsumerDocumentPath(path)) continue;
+      const dependency =
+        consumer.kind === "script" ? { path, documentBaseUrl: documentBase.href } : { path };
+      dependencies.set(`${path}\0${dependency.documentBaseUrl ?? ""}`, dependency);
+    }
+  }
+  return [...dependencies.values()];
+}
+
+export function isBrowserConsumerDocumentPath(path: string): boolean {
+  return BROWSER_DOCUMENT_PATH_RE.test(path);
+}
+
+function browserDocumentNamespace(path: string): HtmlNamespace {
+  return /\.svg$/i.test(path) ? "svg" : "html";
 }
 
 function mergeDocumentBaseUrlsByPath(
@@ -558,7 +656,10 @@ type HtmlConsumerSource =
   | { kind: "script" | "page" | "linked-page"; source: string; baseHref: string | null }
   | { kind: "inline-page"; html: string; baseHref: string | null };
 
-function htmlConsumerSources(html: string): HtmlConsumerSource[] {
+function htmlConsumerSources(
+  html: string,
+  initialNamespace: HtmlNamespace = "html",
+): HtmlConsumerSource[] {
   const sources: HtmlConsumerSource[] = [];
   let baseHref: string | null = null;
   let baseSeen = false;
@@ -591,44 +692,15 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       continue;
     }
 
-    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
-    const namespaceBoundary = htmlNamespaceBoundary(namespace, tagName);
-    if (
-      !htmlElementHasTextOnlyContent(namespace, tagName) &&
-      !HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
-      tagName !== "a" &&
-      tagName !== "area" &&
-      tagName !== "base" &&
-      tagName !== "button" &&
-      tagName !== "embed" &&
-      tagName !== "form" &&
-      tagName !== "frame" &&
-      tagName !== "iframe" &&
-      tagName !== "input" &&
-      tagName !== "meta" &&
-      tagName !== "object" &&
-      namespaceBoundary === null
-    ) {
+    const namespace = namespaceBoundaries.at(-1)?.namespace ?? initialNamespace;
+    if (!htmlElementNeedsInspection(namespace, tagName)) {
       const tagEnd = htmlTagEnd(html, cursor);
       if (tagEnd === null) break;
       index = tagEnd;
       continue;
     }
 
-    const targetAttributes =
-      tagName === "base" || tagName === "a" || tagName === "area"
-        ? ["href"]
-        : tagName === "form"
-          ? ["action"]
-          : tagName === "button" || tagName === "input"
-            ? ["formaction"]
-            : tagName === "object"
-              ? ["data"]
-              : tagName === "meta"
-                ? []
-                : tagName === "script" && namespace === "svg"
-                  ? ["href", "xlink:href"]
-                  : ["src"];
+    const targetAttributes = consumerTargetAttributes(namespace, tagName);
     const targetValues = new Map<string, string | null>();
     let metaHttpEquiv: string | null = null;
     let metaContent: string | null = null;
@@ -637,6 +709,8 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
     let downloadNavigation = false;
     let formMethod: string | null = null;
     let controlType: string | null = null;
+    let scriptType: string | null = null;
+    let annotationEncoding: string | null = null;
     let tagClosed = false;
     let selfClosing = false;
     while (cursor < html.length) {
@@ -684,20 +758,44 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       if (targetAttributes.includes(attributeName) && !targetValues.has(attributeName)) {
         targetValues.set(attributeName, value);
       }
-      if (tagName === "meta" && attributeName === "http-equiv" && metaHttpEquiv === null) {
+      if (
+        namespace === "html" &&
+        tagName === "meta" &&
+        attributeName === "http-equiv" &&
+        metaHttpEquiv === null
+      ) {
         metaHttpEquiv = decodeHTMLAttribute(value ?? "");
       }
-      if (tagName === "meta" && attributeName === "content" && metaContent === null) {
+      if (
+        namespace === "html" &&
+        tagName === "meta" &&
+        attributeName === "content" &&
+        metaContent === null
+      ) {
         metaContent = decodeHTMLAttribute(value ?? "");
       }
-      if (tagName === "iframe" && attributeName === "srcdoc" && !srcdocSeen) {
+      if (
+        namespace === "html" &&
+        tagName === "iframe" &&
+        attributeName === "srcdoc" &&
+        !srcdocSeen
+      ) {
         srcdocSeen = true;
         srcdocValue = value;
       }
-      if ((tagName === "a" || tagName === "area") && attributeName === "download") {
+      if (
+        namespace === "html" &&
+        (tagName === "a" || tagName === "area") &&
+        attributeName === "download"
+      ) {
         downloadNavigation = true;
       }
-      if (tagName === "form" && attributeName === "method" && formMethod === null) {
+      if (
+        namespace === "html" &&
+        tagName === "form" &&
+        attributeName === "method" &&
+        formMethod === null
+      ) {
         formMethod = decodeHTMLAttribute(value ?? "");
       }
       if (
@@ -707,16 +805,28 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       ) {
         controlType = decodeHTMLAttribute(value ?? "");
       }
+      if (tagName === "script" && attributeName === "type" && scriptType === null) {
+        scriptType = decodeHTMLAttribute(value ?? "");
+      }
+      if (
+        namespace === "mathml" &&
+        tagName === "annotation-xml" &&
+        attributeName === "encoding" &&
+        annotationEncoding === null
+      ) {
+        annotationEncoding = decodeHTMLAttribute(value ?? "");
+      }
     }
     const targetAttribute = targetAttributes.find((attribute) => targetValues.has(attribute));
     const targetValue = targetAttribute ? (targetValues.get(targetAttribute) ?? null) : null;
+    const namespaceBoundary = htmlNamespaceBoundary(namespace, tagName, annotationEncoding);
     if (tagClosed && namespaceBoundary && !selfClosing) {
       namespaceBoundaries.push(namespaceBoundary);
     }
     if (tagClosed && namespace === "html" && tagName === "base" && targetAttribute && !baseSeen) {
       baseHref = decodeHTMLAttribute(targetValue ?? "");
       baseSeen = true;
-    } else if (tagClosed && tagName === "iframe" && srcdocSeen) {
+    } else if (tagClosed && namespace === "html" && tagName === "iframe" && srcdocSeen) {
       sources.push({
         kind: "inline-page",
         html: decodeHTMLAttribute(srcdocValue ?? ""),
@@ -724,6 +834,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       });
     } else if (
       tagClosed &&
+      namespace === "html" &&
       tagName === "meta" &&
       metaHttpEquiv?.trim().toLowerCase() === "refresh"
     ) {
@@ -731,16 +842,8 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       if (refreshUrl) sources.push({ kind: "page", source: refreshUrl, baseHref });
     } else if (
       tagClosed &&
-      (tagName === "script" ||
-        tagName === "a" ||
-        tagName === "area" ||
-        tagName === "button" ||
-        tagName === "embed" ||
-        tagName === "form" ||
-        tagName === "frame" ||
-        tagName === "iframe" ||
-        tagName === "input" ||
-        tagName === "object") &&
+      consumerKind(namespace, tagName) !== null &&
+      (tagName !== "script" || scriptTypeCanExecute(scriptType)) &&
       !downloadNavigation &&
       (tagName !== "form" || formMethod?.trim().toLowerCase() !== "dialog") &&
       (tagName !== "button" ||
@@ -750,16 +853,7 @@ function htmlConsumerSources(html: string): HtmlConsumerSource[] {
       targetValue
     ) {
       sources.push({
-        kind:
-          tagName === "script"
-            ? "script"
-            : tagName === "a" ||
-                tagName === "area" ||
-                tagName === "button" ||
-                tagName === "form" ||
-                tagName === "input"
-              ? "linked-page"
-              : "page",
+        kind: consumerKind(namespace, tagName) ?? "page",
         source: decodeHTMLAttribute(targetValue),
         baseHref,
       });
@@ -847,7 +941,7 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
       cursor = tagEnd;
       continue;
     }
-    const namespaceBoundary = htmlNamespaceBoundary(namespace, nestedTagName);
+    const namespaceBoundary = htmlNamespaceBoundary(namespace, nestedTagName, null);
     const selfClosing =
       /\/\s*>$/.test(html.slice(tagStart, tagEnd)) &&
       htmlStartTagCanSelfClose(namespace, nestedTagName);
@@ -864,15 +958,83 @@ function htmlInertElementEnd(html: string, cursor: number, tagName: string): num
   return null;
 }
 
+function htmlElementNeedsInspection(namespace: HtmlNamespace, tagName: string): boolean {
+  return (
+    htmlElementHasTextOnlyContent(namespace, tagName) ||
+    (namespace === "html" && HTML_INERT_CONTENT_ELEMENTS.has(tagName)) ||
+    htmlElementCanChangeNamespace(namespace, tagName) ||
+    consumerTargetAttributes(namespace, tagName).length > 0 ||
+    (namespace === "html" && tagName === "meta")
+  );
+}
+
+function htmlElementCanChangeNamespace(namespace: HtmlNamespace, tagName: string): boolean {
+  return (
+    (namespace === "html" && (tagName === "math" || tagName === "svg")) ||
+    (namespace === "mathml" &&
+      (tagName === "annotation-xml" || MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName))) ||
+    (namespace === "svg" && tagName === "foreignobject")
+  );
+}
+
 function htmlNamespaceBoundary(
   namespace: HtmlNamespace,
   tagName: string,
+  annotationEncoding: string | null,
 ): HtmlNamespaceBoundary | null {
-  if (tagName === "svg") return { tagName: "svg", namespace: "svg" };
+  if (namespace === "html" && tagName === "svg") {
+    return { tagName: "svg", namespace: "svg" };
+  }
+  if (namespace === "html" && tagName === "math") {
+    return { tagName: "math", namespace: "mathml" };
+  }
   if (namespace === "svg" && tagName === "foreignobject") {
     return { tagName: "foreignobject", namespace: "html" };
   }
+  if (namespace === "mathml" && MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName)) {
+    return { tagName, namespace: "html" };
+  }
+  if (
+    namespace === "mathml" &&
+    tagName === "annotation-xml" &&
+    ["application/xhtml+xml", "text/html"].includes(annotationEncoding?.trim().toLowerCase() ?? "")
+  ) {
+    return { tagName, namespace: "html" };
+  }
   return null;
+}
+
+function consumerTargetAttributes(namespace: HtmlNamespace, tagName: string): string[] {
+  if (namespace === "svg") {
+    return tagName === "script" || tagName === "a" ? ["href", "xlink:href"] : [];
+  }
+  if (namespace !== "html") return [];
+  if (tagName === "base" || tagName === "a" || tagName === "area") return ["href"];
+  if (tagName === "form") return ["action"];
+  if (tagName === "button" || tagName === "input") return ["formaction"];
+  if (tagName === "object") return ["data"];
+  if (tagName === "meta") return [];
+  return ["embed", "frame", "iframe", "script"].includes(tagName) ? ["src"] : [];
+}
+
+function consumerKind(
+  namespace: HtmlNamespace,
+  tagName: string,
+): "script" | "page" | "linked-page" | null {
+  if (namespace === "svg") {
+    if (tagName === "script") return "script";
+    return tagName === "a" ? "linked-page" : null;
+  }
+  if (namespace !== "html") return null;
+  if (tagName === "script") return "script";
+  if (["a", "area", "button", "form", "input"].includes(tagName)) return "linked-page";
+  return ["embed", "frame", "iframe", "object"].includes(tagName) ? "page" : null;
+}
+
+function scriptTypeCanExecute(rawType: string | null): boolean {
+  const type = rawType?.trim().toLowerCase() ?? "";
+  if (!type || type === "module") return true;
+  return JAVASCRIPT_MIME_TYPES.has(type.split(";", 1)[0].trim());
 }
 
 function closeHtmlNamespaceBoundary(
@@ -887,13 +1049,14 @@ function closeHtmlNamespaceBoundary(
 }
 
 function htmlStartTagCanSelfClose(namespace: HtmlNamespace, tagName: string): boolean {
-  // A trailing slash closes foreign elements, including the <svg> element that
-  // enters the SVG namespace. HTML start tags ignore it.
-  return namespace === "svg" || tagName === "svg";
+  // A trailing slash closes foreign elements, including the <svg>/<math>
+  // elements that enter a foreign namespace. Other HTML start tags ignore it.
+  return namespace !== "html" || tagName === "svg" || tagName === "math";
 }
 
 function htmlElementHasTextOnlyContent(namespace: HtmlNamespace, tagName: string): boolean {
-  return (namespace === "html" ? HTML_TEXT_ONLY_ELEMENTS : SVG_TEXT_ONLY_ELEMENTS).has(tagName);
+  if (namespace === "html") return HTML_TEXT_ONLY_ELEMENTS.has(tagName);
+  return namespace === "svg" && SVG_TEXT_ONLY_ELEMENTS.has(tagName);
 }
 
 function htmlCommentEnd(html: string, commentStart: number): number | null {
