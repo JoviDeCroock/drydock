@@ -93,6 +93,14 @@ and auto-discovered scan and is `npm`/`pypi` for a published-pair review. Rows
 written before that change are indistinguishable from staged npm rows, which is
 correct — they were.
 
+**`scan.decided` fires on the verdict, not on the click.** Under a multi-party
+approval policy a release takes several submissions to decide, and only the one
+that meets the bar emits the event — so decision counts stay comparable across
+organizations with different bars. `double2`/`double3` carry the approvals it
+took and the bar it had to clear; without both, a rising time-to-decision reads
+as reviewer apathy when it is really a second approver being waited on. See
+[`release-approvals.md`](./release-approvals.md).
+
 ## Schema
 
 Analytics Engine columns are **positional** (`blob1`, `double1`, …), not named,
@@ -115,24 +123,24 @@ low-volume one out of the dataset.
 
 ## Events
 
-| event                      | emitted from                  | answers                                              |
-| -------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source   |
-| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts            |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                           |
-| `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran            |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade           |
-| `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
-| `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
-| `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
-| `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
-| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
-| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
-| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                      |
-| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                          |
-| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency                   |
-| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                    |
+| event                      | emitted from                  | answers                                                       |
+| -------------------------- | ----------------------------- | ------------------------------------------------------------- |
+| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source            |
+| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts                     |
+| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                                    |
+| `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran                     |
+| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade; approvals it took |
+| `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate                 |
+| `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback             |
+| `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version                   |
+| `npm_connection.validated` | npm connection validation     | onboarding funnel                                             |
+| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                           |
+| `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`)          |
+| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces                     |
+| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                               |
+| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                                   |
+| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency                            |
+| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                             |
 
 The scan-lifecycle events carry `source` — `manual` (a staged publish someone
 started by hand), `auto_discovery` (the discovery cron), `workflow_gate`, or

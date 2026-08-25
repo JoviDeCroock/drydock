@@ -3,8 +3,13 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, markScanFailed } from "../../server/db/scans";
+import {
+  createScanJob,
+  markScanFailed,
+  setRequiredReleaseApprovals,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { GithubAppValidationError } from "../../server/lib/github-app/config";
 import {
@@ -19,6 +24,7 @@ import {
 } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
+import { organizationsRoutes } from "../../server/routes/organizations";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -79,13 +85,18 @@ async function seedInstallation(
   });
 }
 
-function buildTestApp(userId: string) {
+// `organizationId` pins the active organization the way the browser's org
+// switcher does. Needed only for a caller whose active org is not their
+// personal workspace — a second reviewer in a shared org.
+function buildTestApp(userId: string, organizationId?: string) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
     c.set("authSession", { userId });
+    if (organizationId) c.req.raw.headers.set("x-organization-id", organizationId);
     await next();
   });
   app.route("/api/v1/github-app", githubAppRoutes);
+  app.route("/api/v1/organizations", organizationsRoutes);
   return app;
 }
 
@@ -1073,6 +1084,178 @@ describe("github-app workflow-gate decision route", () => {
     expect(await second.json()).toMatchObject({ error: "gate has already been decided" });
     // The CAS lost the second transition, so no extra callback is posted.
     expect(decisionCalls).toHaveLength(1);
+  });
+
+  test("holds the deployment until the org's approval bar is met on every package", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    // Two reviewers in the org, two approvals required. The personal workspace
+    // seeded above already has one member, so this adds the second.
+    const second = await seedUser();
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    // One approval on a single-package gate is no longer enough to release.
+    const first = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      gate: { status: "pending", requiredApprovals: 2 },
+      approvals: { approvedCount: 1, required: 2, verdict: null },
+    });
+    expect(decisionCalls).toHaveLength(0);
+
+    // The same member cannot supply the second approval.
+    const selfRepeat = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(selfRepeat.status).toBe(409);
+    expect(decisionCalls).toHaveLength(0);
+
+    // A different member's approval meets the bar and releases the job.
+    const release = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(release.status).toBe(200);
+    expect(await release.json()).toMatchObject({ gate: { status: "approved" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+  });
+
+  test("lowering the approval bar releases a gate whose existing votes now meet it", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in policy reconciliation test: ${request.url}`);
+    });
+
+    const first = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(first.status).toBe(200);
+    expect(decisionCalls).toHaveLength(0);
+
+    const lowered = await callGithubAppRoute(
+      buildTestApp(userId),
+      "PUT",
+      `/api/v1/organizations/${organizationId}/release-approvals`,
+      { requiredApprovals: 1 },
+    );
+    expect(lowered.status).toBe(200);
+    expect(await lowered.json()).toEqual({ requiredApprovals: 1 });
+    expect((await getGateForOrganization(db, organizationId, gateId))?.status).toBe("approved");
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+  });
+
+  test("a reviewer who approved can still block before the bar is met", async () => {
+    const { userId, organizationId } = await seedUser();
+    const db = createDb(env.DB);
+    const second = await seedUser();
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    const decisionCalls: { state: string }[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        decisionCalls.push((await request.json()) as { state: string });
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in decision test: ${request.url}`);
+    });
+
+    await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    // Nothing has released yet, so changing your mind in the fail-closed
+    // direction has to still be possible.
+    const blocked = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: scanId!, comment: "spotted a postinstall" },
+    );
+    expect(blocked.status).toBe(200);
+    expect(await blocked.json()).toMatchObject({ gate: { status: "rejected" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
   });
 
   test("holds the deployment until every package is approved, then releases", async () => {

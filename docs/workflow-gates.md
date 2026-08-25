@@ -170,6 +170,8 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 
 The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
 
+An organization can require more than one approval per package before the held job releases, in which case an accept records a vote and the deployment stays held until enough distinct members have approved. The aggregation above is unchanged — a package short of its bar reads as undecided — so a monorepo gate needs `required × packages` approvals in total. A rejection is always unilateral and immediate. See [`release-approvals.md`](./release-approvals.md).
+
 ## Adding a new ecosystem
 
 1. Add or extend a package adapter under `server/lib/ecosystems/<ecosystem>/`.

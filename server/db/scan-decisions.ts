@@ -5,16 +5,30 @@
  * releases it is also what unblocks or blocks the waiting GitHub deployment.
  * Every decision writes an audit event carrying the risk the reviewer actually
  * saw, so an override stays attributable after the fact.
+ *
+ * A decision is no longer written directly. Both paths below record the acting
+ * member's *vote* (see `scan-approvals.ts`) and then write whatever verdict the
+ * org's approval bar says those votes add up to — which for a one-approval org
+ * is the vote itself, and for a two-approval org is nothing at all until a
+ * second distinct member agrees.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
-import { scanEcosystem } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
+import {
+  buildScanApprovalState,
+  getOrganizationApprovalPolicy,
+  listScanApprovalVotes,
+  resolveApprovalVerdict,
+  upsertScanApproval,
+  type OrganizationApprovalPolicy,
+  type ScanApprovalState,
+} from "./scan-approvals";
 import { getScan } from "./scan-detail";
-import { githubWorkflowGates, scans } from "./schema";
+import { githubWorkflowGates, organizations, scanApprovals, scans } from "./schema";
 
 export const SCAN_DECISIONS = ["publish", "no_publish"] as const;
 export type ScanDecision = (typeof SCAN_DECISIONS)[number];
@@ -36,63 +50,357 @@ export interface RecordScanDecisionInput {
   reason?: string | null;
 }
 
+type ScanDecisionDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
+
+/**
+ * What a decision submission did.
+ *
+ * `recorded` covers both "the release swapped" and "your approval is in, the
+ * release still needs another" — the caller tells them apart with `verdict`,
+ * which is the release's decision *after* this vote, not the vote itself.
+ */
+export type RecordScanDecisionResult =
+  | {
+      outcome: "recorded";
+      detail: ScanDecisionDetail;
+      approvals: ScanApprovalState;
+      verdict: ScanDecision | null;
+      /** True when this vote is the one that moved the release's verdict. */
+      verdictChanged: boolean;
+    }
+  /** The scan is gone, not in a decidable state, or its gate is no longer pending. */
+  | { outcome: "not_actionable" }
+  /** This member has already voted and the path does not allow re-voting. */
+  | { outcome: "already_voted" };
+
+interface DecisionTargetRow {
+  createdAt: Date | number | string | null;
+  risk: string;
+  riskSummaryJson: unknown;
+  aiJson: unknown;
+  decision: string | null;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date | number | string | null;
+}
+
 export async function recordScanDecision(
   db: AppDb,
   input: RecordScanDecisionInput,
   artifactBucket?: R2Bucket,
   env?: Cloudflare.Env,
-) {
-  const now = new Date();
-  const reason = input.reason?.trim() ? input.reason.trim() : null;
-  const updated = await db
-    .update(scans)
-    .set({
-      decision: input.decision,
-      decisionReason: reason,
-      decidedByUserId: input.actorUserId,
-      decidedAt: now,
-      updatedAt: now,
-    })
+): Promise<RecordScanDecisionResult> {
+  const [current] = await db
+    .select(DECISION_TARGET_COLUMNS)
+    .from(scans)
     .where(
+        and(
+          eq(scans.id, input.scanId),
+          eq(scans.organizationId, input.organizationId),
+          eq(scans.status, "complete"),
+          isNull(scans.registryStatusSupersededAt),
+          // Workflow-gate votes must go through the gate route: that path performs
+          // the per-vote TOTP step-up and owns the irreversible GitHub callback.
+          // Sharing the vote roster is safe only when the staged route cannot add
+          // an un-stepped-up approval to it.
+          inArray(scans.source, ["manual", "auto_discovery"]),
+        ),
+    )
+    .limit(1);
+  if (!current) return { outcome: "not_actionable" };
+
+  return applyDecisionVote(db, {
+    input,
+    current,
+    // The staged decision is an audit record — it publishes nothing — so a
+    // reviewer may revise their own vote here as freely as they could revise
+    // the whole decision before quorum existed.
+    hardenOnly: false,
+    // Always npm here: this is the staged-publish decision route. Gated
+    // releases decide through `recordGatePackageDecision` below and report
+    // `gate`.
+    ecosystem: "npm",
+    artifactBucket,
+    env,
+    // Only the plain status/ownership predicate; no gate to race with.
+    applyVerdictWhere: () =>
       and(
         eq(scans.id, input.scanId),
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
-      ),
-    )
-    .returning({
-      id: scans.id,
-      createdAt: scans.createdAt,
-      risk: scans.risk,
-      riskSummaryJson: scans.riskSummaryJson,
-      aiJson: scans.aiJson,
-      source: scans.source,
-      summaryJson: scans.summaryJson,
-    });
+        inArray(scans.source, ["manual", "auto_discovery"]),
+      )!,
+  });
+}
 
-  if (updated.length === 0) return null;
+const DECISION_TARGET_COLUMNS = {
+  createdAt: scans.createdAt,
+  risk: scans.risk,
+  riskSummaryJson: scans.riskSummaryJson,
+  aiJson: scans.aiJson,
+  decision: scans.decision,
+  decisionReason: scans.decisionReason,
+  decidedByUserId: scans.decidedByUserId,
+  decidedAt: scans.decidedAt,
+} as const;
 
-  await recordScanEvent(db, {
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
+interface ApplyDecisionVoteInput {
+  input: RecordScanDecisionInput;
+  current: DecisionTargetRow;
+  hardenOnly: boolean;
+  ecosystem: string;
+  artifactBucket?: R2Bucket;
+  env?: Cloudflare.Env;
+  /**
+   * The predicate the verdict write must still satisfy. Re-checked at write
+   * time rather than trusted from the read above, so a concurrent finalize
+   * (or a fail-closed auto-block) wins the race instead of being overwritten.
+   */
+  applyVerdictWhere: (verdict: ScanDecision) => ReturnType<typeof and>;
+}
+
+/**
+ * The shared body of both decision paths: record the vote, re-tally, and write
+ * the verdict only if it moved.
+ *
+ * The tally deliberately re-reads every vote instead of incrementing a counter.
+ * Two members approving at the same instant both land their own row (distinct
+ * keys in the unique index, so neither is lost), and each then reads a tally
+ * that includes the other — so the second one through writes the verdict and
+ * the first sees `verdictChanged: false`. A counter would have to be right
+ * about which write won; a re-tally does not.
+ */
+async function applyDecisionVote(
+  db: AppDb,
+  {
+    input,
+    current,
+    hardenOnly,
+    ecosystem,
+    artifactBucket,
+    env,
+    applyVerdictWhere,
+  }: ApplyDecisionVoteInput,
+): Promise<RecordScanDecisionResult> {
+  const now = new Date();
+  const reason = input.reason?.trim() ? input.reason.trim() : null;
+  const policy = await getOrganizationApprovalPolicy(db, input.organizationId);
+
+  const vote = await upsertScanApproval(db, {
     scanId: input.scanId,
-    type: "scan.decided",
-    metadata: { decision: input.decision, reason },
-  });
-
-  // Staged publishes are npm-only, but a published-pair review reaches this
-  // route for any ecosystem with a public-diff adapter, so the counter reads
-  // the scan rather than assuming. Gated releases decide through
-  // `recordGatePackageDecision` below and report `gate`.
-  recordDecisionEvent(env, updated[0], {
     organizationId: input.organizationId,
+    userId: input.actorUserId,
     decision: input.decision,
-    ecosystem: scanEcosystem(updated[0].source, updated[0].summaryJson) ?? "npm",
+    reason,
     now,
+    hardenOnly,
+  });
+  if (vote === "already_voted") return { outcome: "already_voted" };
+
+  const votes = await listScanApprovalVotes(db, input.scanId, input.organizationId);
+  const verdict = resolveApprovalVerdict(votes, policy.required);
+  const previousVerdict =
+    current.decision === "publish" || current.decision === "no_publish"
+      ? (current.decision as ScanDecision)
+      : null;
+  let verdictChanged = verdict !== previousVerdict;
+
+  if (verdictChanged && verdict) {
+    const applied = await db
+      .update(scans)
+      .set({
+        decision: verdict,
+        decisionReason: reason,
+        // The member whose vote completed the bar owns the decision; the full
+        // roster of who else approved lives in `scan_approvals`.
+        decidedByUserId: input.actorUserId,
+        decidedAt: now,
+        updatedAt: now,
+      })
+      // The in-memory tally can go stale while this request is between its read
+      // and write. Re-prove the verdict from the live roster in the UPDATE so a
+      // concurrent block can never be overwritten by an older approval tally.
+      .where(and(applyVerdictWhere(verdict), approvalVerdictIsSupported(input, policy, verdict)))
+      .returning({ id: scans.id });
+    if (applied.length === 0) {
+      // Lost the write. Two co-approvers submitting at the same instant both
+      // tally the same quorum and both try to finalize; the loser's vote is
+      // still recorded and the release still reached the verdict it computed,
+      // so reporting a conflict would be wrong. Only a *different* state means
+      // this submission genuinely did not apply.
+      const [after] = await db
+        .select({ decision: scans.decision })
+        .from(scans)
+        .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
+        .limit(1);
+      if (after?.decision !== verdict) return { outcome: "not_actionable" };
+      verdictChanged = false;
+    }
+  } else if (verdictChanged && previousVerdict) {
+    // Verdict fell back to undecided — only reachable when the approval bar was
+    // raised above what an already-approved release had cleared. Reverting the
+    // columns keeps "approved" from outliving the policy that granted it. The
+    // predicate is a compare-and-set on the verdict we read, not
+    // `applyVerdictWhere`, whose gate variant asserts the row is *undecided*
+    // and would silently no-op exactly here.
+    await db
+      .update(scans)
+      .set({
+        decision: null,
+        decisionReason: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(scans.id, input.scanId),
+          eq(scans.organizationId, input.organizationId),
+          eq(scans.decision, previousVerdict),
+          approvalVerdictIsSupported(input, policy, null),
+        ),
+      );
+  } else {
+    await db
+      .update(scans)
+      .set({ updatedAt: now })
+      .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)));
+  }
+
+  const approvals = buildScanApprovalState({
+    votes,
+    policy,
+    viewerUserId: input.actorUserId,
+    scan: {
+      decision: verdict,
+      decisionReason: verdictChanged ? reason : current.decisionReason,
+      decidedByUserId: verdictChanged ? input.actorUserId : current.decidedByUserId,
+      decidedAt: verdictChanged ? now : current.decidedAt,
+    },
   });
 
-  return getScan(db, input.scanId, input.organizationId, artifactBucket);
+  await recordDecisionAuditTrail(db, {
+    input,
+    reason,
+    policy,
+    approvals,
+    verdict,
+    verdictChanged,
+  });
+
+  if (verdictChanged && verdict) {
+    recordDecisionEvent(env, current, {
+      organizationId: input.organizationId,
+      decision: verdict,
+      ecosystem,
+      approvalCount: approvals.approvedCount,
+      requiredApprovals: policy.required,
+      now,
+    });
+  }
+
+  const detail = await getScan(db, input.scanId, input.organizationId, artifactBucket);
+  if (!detail) return { outcome: "not_actionable" };
+  // `verdictChanged` is what callers act on (purging caches, finalizing a gate),
+  // so it must describe the row that is actually persisted now.
+  verdictChanged = verdictChanged && (detail.scan.decision ?? null) === verdict;
+  return { outcome: "recorded", detail, approvals, verdict, verdictChanged };
+}
+
+/**
+ * Atomic proof that the current vote rows still produce the verdict a request
+ * computed earlier. D1 serializes each statement, not an entire request, so the
+ * roster may change between `listScanApprovalVotes` and the scan update.
+ */
+function approvalVerdictIsSupported(
+  input: RecordScanDecisionInput,
+  policy: OrganizationApprovalPolicy,
+  verdict: ScanDecision | null,
+) {
+  const blockExists = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${input.scanId}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'no_publish'
+  )`;
+  if (verdict === "no_publish") return blockExists;
+
+  // A policy change reconciles every existing vote in one transaction. Refuse
+  // to apply a tally computed under the previous bar after that transaction has
+  // committed; the recorded vote remains and a retry will use the new policy.
+  const policyIsCurrent = sql`exists (
+    select 1
+    from ${organizations}
+    where ${organizations.id} = ${input.organizationId}
+      and ${organizations.requiredReleaseApprovals} = ${policy.required}
+  )`;
+
+  const approvalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${input.scanId}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'publish'
+  )`;
+  if (verdict === "publish") {
+    return and(
+      policyIsCurrent,
+      sql`not ${blockExists}`,
+      sql`${approvalCount} >= ${policy.required}`,
+    )!;
+  }
+  return and(policyIsCurrent, sql`not ${blockExists}`, sql`${approvalCount} < ${policy.required}`)!;
+}
+
+/**
+ * Audit trail for one submission.
+ *
+ * `scan.decided` stays the record of the release's verdict — it fires when the
+ * verdict moves, not once per click — so the audit log never claims a release
+ * was decided twice, or decided at all while it still waits on a co-approver.
+ * Under a multi-approval policy each individual vote is also recorded, because
+ * "who else signed off on this" is the whole point of the policy.
+ */
+async function recordDecisionAuditTrail(
+  db: AppDb,
+  input: {
+    input: RecordScanDecisionInput;
+    reason: string | null;
+    policy: OrganizationApprovalPolicy;
+    approvals: ScanApprovalState;
+    verdict: ScanDecision | null;
+    verdictChanged: boolean;
+  },
+): Promise<void> {
+  if (input.policy.required > 1) {
+    await recordScanEvent(db, {
+      organizationId: input.input.organizationId,
+      actorUserId: input.input.actorUserId,
+      scanId: input.input.scanId,
+      type: "scan.approval_recorded",
+      metadata: {
+        decision: input.input.decision,
+        reason: input.reason,
+        approvedCount: input.approvals.approvedCount,
+        requiredApprovals: input.policy.required,
+      },
+    });
+  }
+  if (!input.verdictChanged || !input.verdict) return;
+  await recordScanEvent(db, {
+    organizationId: input.input.organizationId,
+    actorUserId: input.input.actorUserId,
+    scanId: input.input.scanId,
+    type: "scan.decided",
+    metadata: {
+      decision: input.verdict,
+      reason: input.reason,
+      approvedCount: input.approvals.approvedCount,
+      requiredApprovals: input.policy.required,
+    },
+  });
 }
 
 function toEpochMs(value: Date | number | string | null): number {
@@ -119,72 +427,62 @@ export interface RecordGatePackageDecisionInput extends RecordScanDecisionInput 
 }
 
 /**
- * Record the one allowed decision for a workflow-gate package while the gate is
- * still pending. This keeps stale concurrent submits from mutating package state
- * after the aggregate gate decision has already released or blocked GitHub.
+ * Record one member's decision on one package of a gate while the gate is still
+ * pending, and flip the package's own verdict once the org's approval bar is
+ * met. This keeps stale concurrent submits from mutating package state after
+ * the aggregate gate decision has already released or blocked GitHub.
+ *
+ * Unlike the staged path, a vote here is not freely revisable: approving helps
+ * release a held deployment, so the only permitted change is approve → block,
+ * the fail-closed direction.
  */
 export async function recordGatePackageDecision(
   db: AppDb,
   input: RecordGatePackageDecisionInput,
   artifactBucket?: R2Bucket,
   env?: Cloudflare.Env,
-) {
-  const now = new Date();
-  const reason = input.reason?.trim() ? input.reason.trim() : null;
-  const updated = await db
-    .update(scans)
-    .set({
-      decision: input.decision,
-      decisionReason: reason,
-      decidedByUserId: input.actorUserId,
-      decidedAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(scans.id, input.scanId),
-        eq(scans.organizationId, input.organizationId),
-        eq(scans.gateId, input.gateId),
-        eq(scans.source, "workflow_gate"),
-        sql`${scans.status} in ('complete', 'failed')`,
-        isNull(scans.decision),
-        sql`exists (
+): Promise<RecordScanDecisionResult> {
+  const gatePending = sql`exists (
           select 1
           from ${githubWorkflowGates}
           where ${githubWorkflowGates.id} = ${input.gateId}
             and ${githubWorkflowGates.status} = 'pending'
-        )`,
-      ),
-    )
-    .returning({
-      id: scans.id,
-      createdAt: scans.createdAt,
-      risk: scans.risk,
-      riskSummaryJson: scans.riskSummaryJson,
-      aiJson: scans.aiJson,
-    });
+        )`;
+  const decidable = and(
+    eq(scans.id, input.scanId),
+    eq(scans.organizationId, input.organizationId),
+    eq(scans.gateId, input.gateId),
+    eq(scans.source, "workflow_gate"),
+    sql`${scans.status} in ('complete', 'failed')`,
+    gatePending,
+  )!;
 
-  if (updated.length === 0) return null;
+  const [current] = await db
+    .select(DECISION_TARGET_COLUMNS)
+    .from(scans)
+    .where(and(decidable, isNull(scans.decision)))
+    .limit(1);
+  if (!current) return { outcome: "not_actionable" };
 
-  await recordScanEvent(db, {
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    scanId: input.scanId,
-    type: "scan.decided",
-    metadata: { decision: input.decision, reason },
-  });
-
-  // Gated releases decide here rather than through `recordScanDecision`, so
-  // without this the decision counter saw only the npm staged path — the
-  // ecosystems that release exclusively through a gate were invisible.
-  recordDecisionEvent(env, updated[0], {
-    organizationId: input.organizationId,
-    decision: input.decision,
+  return applyDecisionVote(db, {
+    input,
+    current,
+    hardenOnly: true,
     ecosystem: "gate",
-    now,
+    artifactBucket,
+    env,
+    // The package must still be undecided when the verdict lands — except for a
+    // block, which is allowed to override an approval that has not yet released
+    // the deployment. Both re-assert that the gate is still pending, so a
+    // concurrent finalize or fail-closed auto-reject wins this race.
+    applyVerdictWhere: (verdict) =>
+      and(
+        decidable,
+        verdict === "no_publish"
+          ? or(isNull(scans.decision), eq(scans.decision, "publish"))
+          : isNull(scans.decision),
+      )!,
   });
-
-  return getScan(db, input.scanId, input.organizationId, artifactBucket);
 }
 
 /**
@@ -201,7 +499,14 @@ function recordDecisionEvent(
     riskSummaryJson: unknown;
     aiJson: unknown;
   },
-  input: { organizationId: string; decision: string; ecosystem: string; now: Date },
+  input: {
+    organizationId: string;
+    decision: string;
+    ecosystem: string;
+    approvalCount: number;
+    requiredApprovals: number;
+    now: Date;
+  },
 ): void {
   const breakdown = normalizeScanRiskBreakdown(readRiskSummaryValue(row.riskSummaryJson));
   recordProductEvent(env, {
@@ -212,6 +517,11 @@ function recordDecisionEvent(
     releaseRisk: breakdown?.releaseRisk ?? row.risk,
     artifactRisk: breakdown?.artifactRisk ?? row.risk,
     timeToDecisionMs: Math.max(0, input.now.getTime() - toEpochMs(row.createdAt)),
+    // How many people it actually took, against the bar the org set. Without
+    // both numbers a rising time-to-decision reads as reviewer apathy when it
+    // is really a second approver being waited on.
+    approvalCount: input.approvalCount,
+    requiredApprovals: input.requiredApprovals,
   });
 
   const aiReview = parsePersistedAiReview(row.aiJson);

@@ -7,11 +7,16 @@
  * group that can require a TOTP step-up before it will act.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
+import { createDb, type AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { organizationRequiresTwoFactorForReleaseDecisions } from "../../db/organizations";
 import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
-import { getScan, recordGatePackageDecision } from "../../db/scans";
+import {
+  countScanApprovals,
+  getOrganizationApprovalPolicy,
+  getScan,
+  recordGatePackageDecision,
+} from "../../db/scans";
 import { badgeLookupKey } from "../../db/scan-share";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../../lib/auth";
@@ -60,7 +65,8 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
     db,
     organizationId,
   );
-  return c.json({ gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor) });
+  const view = await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor);
+  return c.json({ gate: publicWorkflowGate(gate, packages, view) });
 });
 
 // Record a maintainer's decision on one package of a gate and, once the whole
@@ -151,7 +157,11 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const packages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+        gate: publicWorkflowGate(
+          existing,
+          packages,
+          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+        ),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
@@ -209,11 +219,13 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
-  // Persist the per-package decision while the gate is still pending.
-  // `recordGatePackageDecision` also writes the `scan.decided` audit event and
+  // Persist this member's vote on the package while the gate is still pending.
+  // Under a one-approval policy that vote *is* the package decision; under a
+  // higher bar the package stays undecided until enough distinct members have
+  // approved it. `recordGatePackageDecision` also writes the audit events and
   // keeps the workbench decision filters consistent (approved → publish,
   // rejected → no_publish).
-  const decidedPackage = await recordGatePackageDecision(
+  const recorded = await recordGatePackageDecision(
     db,
     {
       scanId: packageScanId,
@@ -226,26 +238,37 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     scanArtifactReadBucket(c.env),
     c.env,
   );
-  if (!decidedPackage) {
+  if (recorded.outcome !== "recorded") {
     const current = await getGateForOrganization(db, organizationId, gateId);
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor) : null,
+        gate: current
+          ? publicWorkflowGate(
+              current,
+              currentPackages,
+              await gateViewPolicy(db, organizationId, currentPackages, orgRequiresTwoFactor),
+            )
+          : null,
         error:
-          current?.status === "pending"
-            ? "package has already been decided"
-            : "gate has already been decided",
+          recorded.outcome === "already_voted"
+            ? "you have already approved this package — it needs a different member's approval"
+            : current?.status === "pending"
+              ? "package has already been decided"
+              : "gate has already been decided",
       },
       409,
     );
   }
+  const decidedPackage = recorded.detail;
 
   // A decision changes what a listed scan's cached badge and feed entry
   // assert ("reviewed · risk" → "approved"/"blocked"); drop both so the
   // change is not delayed by the colo TTL in at least this region. Same
-  // canonical-origin purge as the staged decision route and (un)listing.
-  if (decidedPackage.scan.publicFeedListedAt) {
+  // canonical-origin purge as the staged decision route and (un)listing. An
+  // approval still short of the org's bar changed no verdict, so nothing
+  // cached is stale yet.
+  if (recorded.verdictChanged && decidedPackage.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
@@ -261,18 +284,32 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   }
 
   // Aggregate over every package: release only when all are approved; block the
-  // moment any one is rejected.
+  // moment any one is rejected. `pkg.decision` is the quorum-resolved verdict,
+  // so a package one approval short reads here exactly like an undecided one —
+  // the deployment stays held, which is the behavior we want.
   const packages = await listGatePackageScans(db, organizationId, gateId);
   const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
   const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
-    // Other packages still need a decision; keep the deployment held.
-    return c.json({ gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor) });
+    // Other packages (or other approvers) still owe a decision; keep the
+    // deployment held.
+    return c.json({
+      gate: publicWorkflowGate(
+        existing,
+        packages,
+        await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+      ),
+      approvals: recorded.approvals,
+    });
   }
   if (allApproved && !existing.scanId) {
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+        gate: publicWorkflowGate(
+          existing,
+          packages,
+          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+        ),
         error: "approval requires a completed workflow-gate review batch",
       },
       409,
@@ -293,7 +330,13 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     const current = await getGateForOrganization(db, organizationId, gateId);
     return c.json(
       {
-        gate: current ? publicWorkflowGate(current, packages, orgRequiresTwoFactor) : null,
+        gate: current
+          ? publicWorkflowGate(
+              current,
+              packages,
+              await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+            )
+          : null,
         error: "gate has already been decided",
       },
       409,
@@ -344,7 +387,14 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     });
   }
 
-  return c.json({ gate: publicWorkflowGate(decided, packages, orgRequiresTwoFactor) });
+  return c.json({
+    gate: publicWorkflowGate(
+      decided,
+      packages,
+      await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+    ),
+    approvals: recorded.approvals,
+  });
 });
 
 // Re-run a failed workflow-gate review batch. The retry is intentionally scoped
@@ -383,7 +433,11 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   if (!reset) {
     return c.json(
       {
-        gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+        gate: publicWorkflowGate(
+          existing,
+          packages,
+          await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+        ),
         error: "gate review is not retryable",
       },
       409,
@@ -404,7 +458,11 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   const gate = await getGateForOrganization(db, organizationId, gateId);
   return c.json(
     {
-      gate: publicWorkflowGate(gate ?? existing, packages, orgRequiresTwoFactor),
+      gate: publicWorkflowGate(
+        gate ?? existing,
+        packages,
+        await gateViewPolicy(db, organizationId, packages, orgRequiresTwoFactor),
+      ),
       queued: Boolean(c.env.SCAN_QUEUE),
     },
     202,
@@ -443,11 +501,52 @@ async function runWorkflowGateJob(
 // `organizationRequiresTwoFactor` surfaces the org policy so the decision dialog
 // can prompt for a code (or block an unenrolled member) before submitting,
 // matching what the route enforces server-side.
+/**
+ * The policy half of a gate response: the org's two-factor requirement, its
+ * approval bar, and how many approvals each package has actually collected.
+ * Loaded per response so a reviewer refreshing mid-quorum sees the current
+ * count rather than the one their own submit returned.
+ */
+async function gateViewPolicy(
+  db: AppDb,
+  organizationId: string,
+  packages: GatePackageScan[],
+  organizationRequiresTwoFactor: boolean,
+): Promise<GateViewPolicy> {
+  const [policy, approvalCounts] = await Promise.all([
+    getOrganizationApprovalPolicy(db, organizationId),
+    countScanApprovals(
+      db,
+      organizationId,
+      packages.map((pkg) => pkg.scanId),
+    ),
+  ]);
+  return {
+    organizationRequiresTwoFactor,
+    requiredApprovals: policy.required,
+    approvalCounts,
+  };
+}
+
+interface GateViewPolicy {
+  organizationRequiresTwoFactor: boolean;
+  /** Distinct approvals each package of this gate needs before it counts as approved. */
+  requiredApprovals: number;
+  approvalCounts: Map<string, { approved: number; blocked: number }>;
+}
+
+const SINGLE_APPROVER_VIEW: GateViewPolicy = {
+  organizationRequiresTwoFactor: false,
+  requiredApprovals: 1,
+  approvalCounts: new Map(),
+};
+
 function publicWorkflowGate(
   record: WorkflowGateRecord,
   packages: GatePackageScan[] = [],
-  organizationRequiresTwoFactor = false,
+  policy: GateViewPolicy = SINGLE_APPROVER_VIEW,
 ) {
+  const { organizationRequiresTwoFactor, requiredApprovals, approvalCounts } = policy;
   return {
     id: record.id,
     organizationId: record.organizationId,
@@ -462,6 +561,7 @@ function publicWorkflowGate(
     scanId: record.scanId,
     failureReason: record.failureReason,
     organizationRequiresTwoFactor,
+    requiredApprovals,
     packages: packages.map((pkg) => ({
       scanId: pkg.scanId,
       packageName: pkg.packageName,
@@ -469,6 +569,11 @@ function publicWorkflowGate(
       status: pkg.status,
       releaseRisk: pkg.releaseRisk,
       decision: pkg.decision,
+      // A package under a multi-approval policy sits approved-by-one and still
+      // undecided; the roster is what tells a reviewer whether their own click
+      // will release the deployment or just move it one step closer.
+      approvalCount:
+        approvalCounts.get(pkg.scanId)?.approved ?? (pkg.decision === "publish" ? 1 : 0),
     })),
     requestedAt: record.requestedAt.toISOString(),
     decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,

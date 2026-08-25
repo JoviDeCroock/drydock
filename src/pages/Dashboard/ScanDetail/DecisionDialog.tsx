@@ -1,7 +1,13 @@
 import { useEffect } from "preact/hooks";
 import { useSignal } from "@preact/signals";
 import { formatDateTime } from "../../../lib/format";
-import type { DecisionStatus, ScanDecision, ScanListItem } from "../../../models/scan";
+import type {
+  DecisionStatus,
+  PersistedScanDetail,
+  ScanApprovalState,
+  ScanDecision,
+  ScanListItem,
+} from "../../../models/scan";
 import { openNpmAfterDecision, setOpenNpmAfterDecision } from "../../../models/publish-preferences";
 import { showStageCommandPrompt } from "../../../models/stage-command-prompt";
 import { npmStageCommandFor } from "../../../lib/npm-stage-command";
@@ -11,6 +17,15 @@ import { Button } from "../../../components/Button";
 import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
+import { Muted } from "../../../components/Typography";
+import { ApprovalRoster, QuorumUnreachableNotice, isMultiApproval } from "./ApprovalRoster";
+
+export function decisionSubmissionReachedVerdict(
+  updated: PersistedScanDetail,
+  decision: ScanDecision,
+): boolean {
+  return (updated.approvals?.verdict ?? updated.scan.decision ?? null) === decision;
+}
 
 export function DecisionDialog({
   open,
@@ -21,6 +36,8 @@ export function DecisionDialog({
   status,
   error,
   npmStagedPackagesUrl,
+  approvals,
+  viewerUserId,
   scan,
   onSubmit,
 }: {
@@ -32,6 +49,9 @@ export function DecisionDialog({
   status: DecisionStatus;
   error: string | null;
   npmStagedPackagesUrl?: string | null;
+  /** Absent until the detail loads; `required > 1` is what turns this dialog multi-party. */
+  approvals?: ScanApprovalState | null;
+  viewerUserId?: string | null;
   /** Identifies the stage for the follow-up CLI command. */
   scan: Pick<
     ScanListItem,
@@ -43,10 +63,23 @@ export function DecisionDialog({
     | "registryVersionStatus"
     | "registryStatusSupersededAt"
   >;
-  onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
+  onSubmit: (
+    decision: ScanDecision,
+    reason: string | null,
+  ) => PersistedScanDetail | null | Promise<PersistedScanDetail | null>;
 }) {
   const reasonDraft = useSignal("");
   const saving = status === "saving";
+  const multi = isMultiApproval(approvals);
+  // Under a multi-approval policy the reviewer needs to know, before clicking,
+  // whether approving records a vote or actually approves the release. A
+  // re-approval by someone already in the roster adds nothing to the count, so
+  // it must not promise to.
+  const approvalCompletesRelease = Boolean(
+    approvals &&
+    approvals.approvedCount + (approvals.viewerDecision === "publish" ? 0 : 1) >=
+      approvals.required,
+  );
 
   useEffect(() => {
     if (open) {
@@ -60,8 +93,15 @@ export function DecisionDialog({
     const npmWindow = shouldOpenNpm ? window.open("about:blank", "_blank") : null;
     if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
-    const saved = await onSubmit(next, trimmed.length ? trimmed : null);
-    if (!saved) {
+    const updated = await onSubmit(next, trimmed.length ? trimmed : null);
+    if (!updated) {
+      npmWindow?.close();
+      return;
+    }
+    // A successful request may only have added the first vote toward a larger
+    // quorum. Do not hand that reviewer a publish/cancel command until the
+    // release itself has actually reached the decision they submitted.
+    if (!decisionSubmissionReachedVerdict(updated, next)) {
       npmWindow?.close();
       return;
     }
@@ -93,10 +133,21 @@ export function DecisionDialog({
     <Dialog
       open={open}
       onClose={handleClose}
-      title="Publish decision"
-      description="Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
+      title={multi ? "Your review" : "Publish decision"}
+      description={
+        multi
+          ? `Record your review of this staged publish. It counts as approved once ${approvals?.required} different members approve it; a block takes effect immediately. Either way this adds to the audit trail — it does not publish or cancel anything on npm.`
+          : "Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
+      }
     >
-      {decision ? (
+      {multi && approvals ? (
+        <>
+          <QuorumUnreachableNotice approvals={approvals} />
+          <ApprovalRoster approvals={approvals} viewerUserId={viewerUserId} />
+        </>
+      ) : null}
+
+      {decision && !multi ? (
         <div class="flex flex-col gap-2 border border-border rounded-md p-3">
           <div class="flex flex-wrap items-center gap-2">
             <Badge tone={decision === "publish" ? "ok" : "critical"}>
@@ -146,12 +197,22 @@ export function DecisionDialog({
 
       <div class="flex flex-wrap gap-2">
         <Button onClick={() => submit("publish")} disabled={saving}>
-          {saving ? "Saving…" : "Approve publish"}
+          {saving
+            ? "Saving…"
+            : !multi || approvalCompletesRelease
+              ? "Approve publish"
+              : "Add my approval"}
         </Button>
         <Button variant="danger" onClick={() => submit("no_publish")} disabled={saving}>
           {saving ? "Saving…" : "Block publish"}
         </Button>
       </div>
+      {multi && approvals?.viewerDecision ? (
+        <Muted class="m-0 text-[13px]">
+          You already {approvals.viewerDecision === "publish" ? "approved" : "blocked"} this
+          release. Submitting again replaces your own review — it never counts twice.
+        </Muted>
+      ) : null}
       {error ? <Alert tone="critical">{error}</Alert> : null}
     </Dialog>
   );

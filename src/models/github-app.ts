@@ -48,6 +48,10 @@ export interface GatePackageScan {
   status: string;
   releaseRisk: string | null;
   decision: GatePackageDecision | null;
+  // Distinct members who have approved this package so far. Under the default
+  // one-approval policy this is just 0 or 1 and mirrors `decision`; above it,
+  // a package can be approved-by-one and still undecided.
+  approvalCount: number;
 }
 
 export interface PublicWorkflowGate {
@@ -66,6 +70,9 @@ export interface PublicWorkflowGate {
   // Org policy: every member must step up with a fresh code to decide this gate,
   // and a member who has not enrolled in 2FA cannot decide it at all.
   organizationRequiresTwoFactor: boolean;
+  // Org policy: distinct members who must approve each package before the held
+  // deployment releases. 1 is the default — the first approval decides.
+  requiredApprovals: number;
   packages: GatePackageScan[];
   requestedAt: string;
   decidedAt: string | null;

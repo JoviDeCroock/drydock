@@ -135,6 +135,32 @@ describe("ScanListModel decisions", () => {
 
     expect(model.scans.value).toEqual([]);
   });
+
+  test("updates the approval count when a successful vote is still short of quorum", async () => {
+    const partial = scanDetail(null);
+    partial.approvals = {
+      required: 2,
+      approvedCount: 1,
+      blockedCount: 0,
+      verdict: null,
+      approvals: [],
+      viewerDecision: "publish",
+      eligibleApproverCount: 2,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(partial))),
+    );
+
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, approvalCount: 0 }];
+    model.filter.value = "undecided";
+
+    const updated = await model.setDecision("scan-1", "publish", "reviewed");
+
+    expect(updated?.approvals?.verdict).toBeNull();
+    expect(model.scans.value[0]?.approvalCount).toBe(1);
+  });
 });
 
 describe("ScanListModel deletion", () => {

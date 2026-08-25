@@ -46,7 +46,10 @@ of it cascades on its own (the same reason `deleteOrganization` deletes children
    `scan_events.actor_user_id`, `npm_connections.created_by_user_id`, the GitHub/Slack/notification
    `created_by_user_id` columns, and `organization_invitations.invited_by_user_id` /
    `accepted_by_user_id`). These are all `ON DELETE SET NULL`, so we null them by hand — otherwise a
-   join to the now-deleted user would dangle.
+   join to the now-deleted user would dangle. Pending `scan_approvals` rows are deleted first so a
+   departed member cannot keep helping an undecided release toward quorum; approvals on already
+   decided releases are nulled instead, preserving the historical count while removing identity.
+   See [`release-approvals.md`](./release-approvals.md).
 3. **Remaining memberships + 2FA** — deletes the user's `organization_members` rows in surviving
    orgs and their `two_factor` secret.
 
