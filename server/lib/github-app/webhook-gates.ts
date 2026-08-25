@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubWorkflowGates, scans } from "../../db/schema";
+import { githubWorkflowGates, scanApprovals, scans } from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -281,6 +281,14 @@ export async function resetGateReviewForRetry(
           where ${scans.gateId} = ${input.gateId}
             and ${scans.organizationId} = ${input.organizationId}
             and ${scans.decision} is not null
+        )`,
+        sql`not exists (
+          select 1
+          from ${scanApprovals}
+          inner join ${scans} on ${scans.id} = ${scanApprovals.scanId}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and ${scanApprovals.organizationId} = ${input.organizationId}
         )`,
       ),
     )

@@ -272,6 +272,7 @@ export default function ScanDetailPage() {
 
   const gateReviewComplete = detail?.scan.status === "complete";
   const gateReviewFailed = detail?.scan.status === "failed";
+  const gateHasRecordedApprovals = gate?.packages.some((pkg) => pkg.approvalCount > 0) ?? false;
 
   // npm scans become decidable once complete; gate scans are decidable while
   // pending after the review either completes or fails. Human decisions remain
@@ -325,7 +326,12 @@ export default function ScanDetailPage() {
         <GateContextPanel
           gate={gate}
           packageName={detail.scan.packageName}
-          canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
+          canRetry={
+            gate?.status === "pending" &&
+            gateReviewFailed &&
+            !detail.scan.decision &&
+            !gateHasRecordedApprovals
+          }
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}
           onRetry={handleGateRetry}
