@@ -9,6 +9,7 @@ import {
   consumerInstallScriptCommands,
   lifecycleReachablePaths,
   normalizeReachabilityPath,
+  shellCommandWords,
 } from "./rules/reachability";
 import { normalizeStringRecord } from "../tar-parser.js";
 import { jsTokenText, tokenizeJs, type JsToken } from "../platform/js-lexer";
@@ -100,9 +101,11 @@ export function assessDependencyArtifact(
   const filesByPath = new Map(
     files.map((file) => [normalizeReachabilityPath(file.path), file] as const),
   );
-  const hasDynamicInstallEdge =
+  const needsDynamicInstallAnalysis =
     automaticExecution.length > 0 &&
-    omittedFiles.length > 0 &&
+    (omittedFiles.length > 0 || capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact));
+  const hasDynamicInstallEdge =
+    needsDynamicInstallAnalysis &&
     (installCommands.some(({ command }) => hasDynamicInstallCommand(command)) ||
       [...reachable].some((path) => {
         const file = filesByPath.get(path);
@@ -119,7 +122,9 @@ export function assessDependencyArtifact(
 
   const executionObserved = automaticExecution.length > 0;
   const reachableDanger = hasObservedInstallRisk(installReachableCapabilities);
-  const anyDanger = capabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId));
+  const anyDanger =
+    capabilities.some((ruleId) => INSTALL_TIME_DANGER_RULE_IDS.has(ruleId)) ||
+    (hasDynamicInstallEdge && capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact));
   const risk: DependencyObservation = !executionObserved
     ? "not-observed"
     : reachableDanger
@@ -132,6 +137,7 @@ export function assessDependencyArtifact(
     observation: {
       execution: executionObserved ? "observed" : "not-observed",
       risk,
+      ...(hasDynamicInstallEdge ? { dynamicInstallTarget: true as const } : {}),
     },
     automaticExecution,
     capabilities,
@@ -216,9 +222,7 @@ function hasDynamicModuleLoad(text: string): boolean {
     const afterArgument = tokens[openIndex + 2];
     const argumentEndsSpecifier =
       afterArgument?.type === "punct" && [")", ","].includes(jsTokenText(text, afterArgument));
-    const staticSpecifier =
-      argument.type === "string" ||
-      (argument.type === "template" && !jsTokenText(text, argument).includes("${"));
+    const staticSpecifier = moduleSpecifierIsStaticForReachability(text, argument);
     if (
       !staticSpecifier ||
       !argumentEndsSpecifier ||
@@ -229,6 +233,20 @@ function hasDynamicModuleLoad(text: string): boolean {
     }
   }
   return false;
+}
+
+/** True only when the bounded static graph can represent this literal exactly. */
+function moduleSpecifierIsStaticForReachability(text: string, token: JsToken): boolean {
+  if (token.type === "string") {
+    const value = token.value ?? "";
+    const local = value.startsWith("./") || value.startsWith("../");
+    return !local || !jsTokenText(text, token).includes("\\");
+  }
+  return (
+    token.type === "template" &&
+    !jsTokenText(text, token).includes("${") &&
+    !jsTokenText(text, token).includes("\\")
+  );
 }
 
 /**
@@ -355,19 +373,42 @@ function hasDynamicLocalExecution(text: string): boolean {
   const aliases = localExecutionAliases(text, tokens);
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token.type !== "ident") continue;
-    const callee = jsTokenText(text, token);
-    if (!LOCAL_EXECUTION_CALLEES.has(callee) && !aliases.has(callee)) continue;
-
-    const previous = tokens[index - 1];
-    const memberAccess =
-      previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
+    let callee: string;
+    let memberAccess: boolean;
+    let openIndex: number;
+    if (token.type === "ident") {
+      callee = jsTokenText(text, token);
+      if (!LOCAL_EXECUTION_CALLEES.has(callee) && !aliases.has(callee)) continue;
+      const previous = tokens[index - 1];
+      memberAccess =
+        previous?.type === "punct" && [".", "?."].includes(jsTokenText(text, previous));
+      const optionalCall = tokens[index + 1];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 2
+          : index + 1;
+    } else if (token.type === "string" && LOCAL_EXECUTION_CALLEES.has(token.value ?? "")) {
+      const bracketOpen = tokens[index - 1];
+      const bracketClose = tokens[index + 1];
+      if (
+        bracketOpen?.type !== "punct" ||
+        jsTokenText(text, bracketOpen) !== "[" ||
+        bracketClose?.type !== "punct" ||
+        jsTokenText(text, bracketClose) !== "]"
+      ) {
+        continue;
+      }
+      callee = token.value!;
+      memberAccess = true;
+      const optionalCall = tokens[index + 2];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 3
+          : index + 2;
+    } else {
+      continue;
+    }
     if (memberAccess && aliases.has(callee)) continue;
-    const optionalCall = tokens[index + 1];
-    const openIndex =
-      optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
-        ? index + 2
-        : index + 1;
     const open = tokens[openIndex];
     if (open?.type !== "punct" || jsTokenText(text, open) !== "(") continue;
 
@@ -387,6 +428,13 @@ function hasDynamicLocalExecution(text: string): boolean {
       !argumentEndsTarget ||
       !onlyWhitespaceBetween(text, open, argument) ||
       !onlyWhitespaceBetween(text, argument, afterArgument)
+    ) {
+      return true;
+    }
+    if (
+      argument.type === "string" &&
+      (callee === "exec" || callee === "execSync") &&
+      hasDynamicShellCommand(argument.value ?? "")
     ) {
       return true;
     }
@@ -620,14 +668,24 @@ export function classifyDependencyInstallRisk(
     INSTALL_TIME_DANGER_RULE_IDS.has(ruleId),
   );
   const nativeExecution =
-    !provenDanger && hasReachableNativeExecution(evidence.installReachableCapabilities);
+    !provenDanger &&
+    (hasReachableNativeExecution(evidence.installReachableCapabilities) ||
+      (evidence.observation.dynamicInstallTarget === true &&
+        evidence.capabilities.includes(DETERMINISTIC_RULE_IDS.fileNativeArtifact)));
   const certainty = evidence.observation.risk === "observed" ? "observed" : "unknown";
   const observedCapabilities =
     certainty === "observed" ? evidence.installReachableCapabilities : evidence.capabilities;
   const strong = observedCapabilities.some((ruleId) => STRONG_INSTALL_DANGER_RULE_IDS.has(ruleId));
   return {
-    severity:
-      certainty === "observed" ? (strong ? "critical" : "high") : strong ? "high" : "medium",
+    severity: nativeExecution
+      ? "high"
+      : certainty === "observed"
+        ? strong
+          ? "critical"
+          : "high"
+        : strong
+          ? "high"
+          : "medium",
     certainty,
     strong,
     nativeExecution,
@@ -665,11 +723,50 @@ function installScriptCapabilities(
 }
 
 function hasDynamicInstallCommand(command: string): boolean {
-  if (hasDynamicModuleLoad(command) || hasDynamicLocalExecution(command)) return true;
+  if (
+    hasDynamicModuleLoad(command) ||
+    hasDynamicLocalExecution(command) ||
+    hasDynamicShellCommand(command)
+  ) {
+    return true;
+  }
   for (const program of inlineNodePrograms(command)) {
     if (hasDynamicModuleLoad(program) || hasDynamicLocalExecution(program)) return true;
   }
   return false;
+}
+
+const SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
+const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
+
+/** True when a shell command chooses the executable at runtime. */
+function hasDynamicShellCommand(command: string, inspectInlineShell = true): boolean {
+  const words = shellCommandWords(command);
+  for (let index = 0; index < words.length;) {
+    while (SHELL_COMMAND_OPERATORS.has(words[index] ?? "")) index += 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] ?? "")) index += 1;
+    const program = words[index];
+    if (!program) break;
+    if (hasShellExpansion(program)) return true;
+
+    const end = words.findIndex(
+      (word, wordIndex) => wordIndex > index && SHELL_COMMAND_OPERATORS.has(word),
+    );
+    const commandEnd = end === -1 ? words.length : end;
+    if (inspectInlineShell && SHELL_INTERPRETERS.has(program)) {
+      const commandFlag = words.slice(index + 1, commandEnd).findIndex((word) => word === "-c");
+      if (commandFlag !== -1) {
+        const inline = words[index + 1 + commandFlag + 1];
+        if (inline && hasDynamicShellCommand(inline, false)) return true;
+      }
+    }
+    index = commandEnd + 1;
+  }
+  return false;
+}
+
+function hasShellExpansion(value: string): boolean {
+  return /`|\$\(|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(value);
 }
 
 /** Extract bounded `node -e` / `node --eval` bodies without invoking a shell. */

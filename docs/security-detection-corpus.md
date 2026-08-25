@@ -233,7 +233,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.48.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.49.0`).
 
 `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
@@ -877,6 +877,15 @@ interpreter argv now contributes every relative preload, import, and entry scrip
 first path, and functions bound from `module.require` remain conservative loader aliases.
 `added-dependency-node-argv-skipped-content` and
 `added-dependency-bound-require-skipped-content` pin the fail-visible results.
+
+`1.49.0` keeps computed dependency install targets fail-visible across syntax boundaries. Escaped
+relative loader literals, bracket-property child-process calls, and shell-expanded lifecycle
+executables now make deliberately omitted bodies visible. A computed install edge that can select a
+bundled native artifact remains unknown rather than proven, but projects high native execution risk.
+`added-dependency-escaped-loader-skipped-content`,
+`added-dependency-bracket-process-skipped-content`,
+`added-dependency-shell-target-skipped-content`, and
+`added-dependency-dynamic-native-execution` pin the coverage and gate-facing results.
 
 ### Fixture format
 
