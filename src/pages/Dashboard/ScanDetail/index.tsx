@@ -305,7 +305,9 @@ export default function ScanDetailPage() {
         detail={detail}
         onDecideClick={headerDecideClick}
         onDeleteClick={
-          detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
+          detail?.scan.status === "failed" && !isWorkflowGate
+            ? () => (deleteDialogOpen.value = true)
+            : undefined
         }
         onShareClick={onShareClick}
         shareSignal={model.share}
@@ -518,7 +520,7 @@ export default function ScanDetailPage() {
 
       <StageCommandDialogHost />
 
-      {detail?.scan.status === "failed" ? (
+      {detail?.scan.status === "failed" && !isWorkflowGate ? (
         <DeleteDialogHost
           openSignal={deleteDialogOpen}
           onClose={() => (deleteDialogOpen.value = false)}

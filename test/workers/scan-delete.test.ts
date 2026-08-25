@@ -55,6 +55,35 @@ async function seedScan(owner: SeededUser, status: "pending" | "running" | "comp
   return scanId;
 }
 
+async function seedFailedWorkflowGateScan(owner: SeededUser) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  await createScanJob(db, {
+    id: scanId,
+    stageId: `gate-${scanId.slice(-12)}`,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+    source: "workflow_gate",
+    packageName: "@org/gated-delete-test",
+    stagedVersion: "1.0.0",
+  });
+  await markScanFailed(db, scanId, owner.organizationId, {
+    code: "test_failure",
+    message: "configured gate failure",
+  });
+  await db.insert(schema.scanApprovals).values({
+    id: crypto.randomUUID(),
+    scanId,
+    organizationId: owner.organizationId,
+    userId: owner.userId,
+    decision: "publish",
+    reason: "partial gate approval",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  return scanId;
+}
+
 function buildTestApp(session: { userId: string }) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
@@ -143,6 +172,23 @@ describe("DELETE /scans/:id", () => {
       expect(scan?.status).toBe(status);
     },
   );
+
+  test("rejects deletion of a workflow-gate package and preserves its approval", async () => {
+    const owner = await seedUser();
+    const scanId = await seedFailedWorkflowGateScan(owner);
+
+    const res = await deleteScan(owner, scanId);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "workflow-gate package scans are managed by the gate review and cannot be deleted",
+    });
+
+    const db = createDb(env.DB);
+    expect(await db.select().from(schema.scans).where(eq(schema.scans.id, scanId))).toHaveLength(1);
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId)),
+    ).toHaveLength(1);
+  });
 
   test("returns not found for a failed scan in another organization", async () => {
     const owner = await seedUser();
