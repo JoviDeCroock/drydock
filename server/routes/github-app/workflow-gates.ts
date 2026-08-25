@@ -427,10 +427,23 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         decidedBy: "human",
         reportUrl,
         packageCount: packages.length,
-        twoFactor: twoFactorVerified,
-        twoFactorMethod: twoFactorVerified ? "totp" : null,
-        twoFactorRequiredByOrg: orgRequiresTwoFactor,
-        ...(recoveredRejection ? { recoveredByUserId: session.userId } : {}),
+        ...(recoveredRejection
+          ? {
+              // The event actor is the durable blocker, while this request only
+              // recovered the interrupted aggregate transition. Keep the
+              // recoverer's step-up facts under explicitly recovery-scoped keys
+              // so the audit trail never attributes one member's TOTP proof to
+              // another member.
+              recoveredByUserId: session.userId,
+              recoveryTwoFactor: twoFactorVerified,
+              recoveryTwoFactorMethod: twoFactorVerified ? "totp" : null,
+              recoveryTwoFactorRequiredByOrg: orgRequiresTwoFactor,
+            }
+          : {
+              twoFactor: twoFactorVerified,
+              twoFactorMethod: twoFactorVerified ? "totp" : null,
+              twoFactorRequiredByOrg: orgRequiresTwoFactor,
+            }),
       },
     });
   } catch (err) {
