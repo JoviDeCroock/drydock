@@ -2,7 +2,7 @@
   "id": "browser-entrypoint-path-aliases",
   "title": "browser-loaded scripts remain reachable through manifest, HTML, navigation, and injection path aliases",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, manifest-declared sandbox pages, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including tabs.create and windows.create navigation, bracket, nested, positional, callback-nested, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object, embed, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; lookalike API objects, nested callback metadata, non-refresh metadata, importScripts-shaped controls, and raw-text HTML remain unreachable.",
+  "intent": "Pins full shared capability severity for root-relative and dot-relative manifest resources, manifest-declared sandbox pages, Manifest V2 user scripts, extension-root programmatic injection and extension-page selection including tabs.create and windows.create navigation, bracket, nested, positional, callback-nested, and global-object member access, offscreen documents, direct and globally qualified document-relative, runtime.getURL, or import.meta.url Worker APIs, classic-worker imports including static template literals, and HTML script, frame, iframe, object, embed, meta-refresh, or iframe srcdoc paths resolved through inherited or invalid document bases, character references, percent-encoded URLs and URL delimiters, quoted greater-than characters, and local base URLs; refresh-shaped content attributes and raw-text HTML references are followed by the conservative document scan; lookalike API objects, nested callback metadata, and importScripts-shaped controls remain unreachable.",
   "slug": "path-alias-helper",
   "extensionId": "path-alias-helper@example.invalid",
   "version": "1.0.0",
@@ -403,16 +403,56 @@
   ],
   "expectedRisk": "high",
   "expectedFindings": [
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/content.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dot-content.js" },
-    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/user-api.js" },
-    { "ruleId": "code.process-execution", "severity": "high", "file": "tests/page.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/nested.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/encoded page.js" },
-    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/framed.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/object.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/injected.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/worker.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/content.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dot-content.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "tests/user-api.js"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "tests/page.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/nested.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/encoded page.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "medium",
+      "file": "tests/framed.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/object.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/injected.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/worker.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
@@ -423,8 +463,16 @@
       "severity": "high",
       "file": "tests/runtime-worker.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dynamic-content.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/srcdoc.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dynamic-content.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/srcdoc.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
@@ -495,14 +543,26 @@
       "severity": "high",
       "file": "tests/onboarding.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/embed.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/window.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/embed.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/window.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/nested-api.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/decoy.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/decoy.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "medium",

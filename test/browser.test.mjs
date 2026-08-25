@@ -775,7 +775,7 @@ describe("browser extension review adapter", () => {
     );
   });
 
-  test("follows packaged HTML navigations from a manifest-declared extension page", () => {
+  test("follows packaged HTML navigations, including download and inert-control lookalikes", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const files = [
@@ -870,10 +870,17 @@ describe("browser extension review adapter", () => {
         ]),
       ]),
     );
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/download.html");
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/area-download.html");
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/inert-button.html");
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/inert-input.html");
+    // Conservative over-approximation: download links and inert-looking form
+    // controls still reference packaged documents, so their subtrees keep
+    // full severity.
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining([
+        "tests/download.html",
+        "tests/area-download.html",
+        "tests/inert-button.html",
+        "tests/inert-input.html",
+      ]),
+    );
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
@@ -884,17 +891,9 @@ describe("browser extension review adapter", () => {
         ...["area", "form", "button", "input"].map((name) =>
           expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
         ),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/download.js",
-          testScoped: true,
-        }),
+        expect.objectContaining({ severity: "high", file: "tests/download.js" }),
         ...["area-download", "inert-button", "inert-input"].map((name) =>
-          expect.objectContaining({
-            severity: "medium",
-            file: `tests/${name}.js`,
-            testScoped: true,
-          }),
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
         ),
       ]),
     );
@@ -940,7 +939,7 @@ describe("browser extension review adapter", () => {
     },
   );
 
-  test("ignores inert template and noscript content when resolving page scripts", () => {
+  test("follows template and noscript content as reachable (conservative over-approximation)", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const files = [
@@ -972,23 +971,25 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
-    expect(parsed.extensionPageEntrypoints).toEqual(["popup.html", "tests/live.js"]);
+    // Whether a browser instantiates template/noscript content depends on
+    // exact tree construction and scripting state; the scanner deliberately
+    // does not model that, so these subtrees keep full severity.
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining([
+        "popup.html",
+        "tests/template.js",
+        "tests/noscript.js",
+        "tests/live.js",
+      ]),
+    );
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/template.js",
-          testScoped: true,
-        }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/noscript.js",
-          testScoped: true,
-        }),
+        expect.objectContaining({ severity: "high", file: "tests/template.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/noscript.js" }),
         expect.objectContaining({ severity: "high", file: "tests/live.js" }),
       ]),
     );
@@ -1021,28 +1022,27 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
+    // Namespace context is not modeled: script href/xlink:href count wherever
+    // they appear, so HTML-namespace lookalikes also keep full severity.
     expect(parsed.extensionPageEntrypoints).toEqual(
-      expect.arrayContaining(["popup.html", "tests/href.js", "tests/xlink.js"]),
+      expect.arrayContaining([
+        "popup.html",
+        "tests/href.js",
+        "tests/xlink.js",
+        "tests/html-href.js",
+        "tests/foreign.js",
+      ]),
     );
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ severity: "high", file: "tests/href.js" }),
-        expect.objectContaining({ severity: "high", file: "tests/xlink.js" }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/html-href.js",
-          testScoped: true,
-        }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/foreign.js",
-          testScoped: true,
-        }),
-      ]),
+      expect.arrayContaining(
+        ["href", "xlink", "html-href", "foreign"].map((name) =>
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
+        ),
+      ),
     );
     expect(findings).toHaveLength(4);
   });
@@ -1139,7 +1139,7 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
-  test("keeps tag-shaped raw text from creating script reachability", () => {
+  test("treats tag-shaped raw text as reachable (conservative over-approximation)", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
@@ -1172,27 +1172,31 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
-    expect(parsed.extensionPageEntrypoints).toEqual(["popup.html", "tests/live.js"]);
+    // Raw-text element boundaries are exactly the kind of engine parsing
+    // detail the scanner refuses to model: a tag-shaped reference in raw text
+    // still marks its target reachable, so nothing here is demoted.
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(
+        ["style", "iframe", "noembed", "noframes", "textarea", "title", "xmp", "live"].map(
+          (name) => `tests/${name}.js`,
+        ),
+      ),
+    );
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
-      expect.arrayContaining([
-        ...["style", "iframe", "noembed", "noframes", "textarea", "title", "xmp"].map((name) =>
-          expect.objectContaining({
-            severity: "medium",
-            file: `tests/${name}.js`,
-            testScoped: true,
-          }),
+      expect.arrayContaining(
+        ["style", "iframe", "noembed", "noframes", "textarea", "title", "xmp", "live"].map((name) =>
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
         ),
-        expect.objectContaining({ severity: "high", file: "tests/live.js" }),
-      ]),
+      ),
     );
     expect(findings).toHaveLength(8);
   });
 
-  test("ignores trailing solidus on HTML start tags while preserving SVG self-closing tags", () => {
+  test("follows scripts regardless of trailing-solidus or self-closing syntax", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const files = [
@@ -1218,32 +1222,26 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
-    expect(parsed.extensionPageEntrypoints).toEqual([
-      "popup.html",
-      "tests/live.js",
-      "tests/svg.js",
-      "tests/after.js",
-    ]);
+    // Whether a trailing solidus closes an element differs between HTML and
+    // XML parsing; the scanner ignores the distinction and follows every
+    // referenced script.
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(
+        ["live", "script-decoy", "template-decoy", "svg", "after"].map(
+          (name) => `tests/${name}.js`,
+        ),
+      ),
+    );
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ severity: "high", file: "tests/live.js" }),
-        expect.objectContaining({ severity: "high", file: "tests/svg.js" }),
-        expect.objectContaining({ severity: "high", file: "tests/after.js" }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/script-decoy.js",
-          testScoped: true,
-        }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/template-decoy.js",
-          testScoped: true,
-        }),
-      ]),
+      expect.arrayContaining(
+        ["live", "script-decoy", "template-decoy", "svg", "after"].map((name) =>
+          expect.objectContaining({ severity: "high", file: `tests/${name}.js` }),
+        ),
+      ),
     );
     expect(findings).toHaveLength(5);
   });
@@ -1584,10 +1582,13 @@ describe("browser extension review adapter", () => {
       },
     ]);
 
-    expect(dependencies("root.html")).toEqual([
-      { path: "nested/page.html" },
-      { path: "root.js", documentBaseUrl: "drydock-extension://artifact/root.html" },
-    ]);
+    expect(dependencies("root.html")).toEqual(
+      expect.arrayContaining([
+        { path: "nested/page.html" },
+        { path: "root.js", documentBaseUrl: "drydock-extension://artifact/root.html" },
+      ]),
+    );
+    expect(dependencies("root.html")).toHaveLength(2);
     expect(dependencies("nested/page.html")).toEqual([
       {
         path: "nested/payload.js",
@@ -1596,7 +1597,7 @@ describe("browser extension review adapter", () => {
     ]);
   });
 
-  test("matches XHTML self-closing scripts and foreign-content parsing boundaries", () => {
+  test("follows scripts regardless of XML syntax or foreign-content context", () => {
     const dependencies = createBrowserHtmlConsumerDependencyResolver([
       {
         path: "page.xhtml",
@@ -1618,18 +1619,134 @@ describe("browser extension review adapter", () => {
       },
     ]);
 
-    expect(dependencies("page.xhtml")).toEqual([
-      { path: "first.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
-      { path: "second.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
-    ]);
-    expect(dependencies("page.html")).toEqual([
-      { path: "title.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
-      { path: "desc.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
-      { path: "math-svg.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
-    ]);
+    expect(dependencies("page.xhtml")).toEqual(
+      expect.arrayContaining([
+        { path: "first.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+        { path: "second.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+      ]),
+    );
+    expect(dependencies("page.xhtml")).toHaveLength(2);
+    // CDATA and foreign-content boundaries are not modeled; the CDATA decoy
+    // is followed by design.
+    expect(dependencies("page.html")).toEqual(
+      expect.arrayContaining([
+        { path: "title.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+        { path: "desc.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+        { path: "cdata-decoy.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+        { path: "math-svg.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+      ]),
+    );
+    expect(dependencies("page.html")).toHaveLength(4);
   });
 
-  test("respects executable script types and HTML, SVG, and MathML namespaces", () => {
+  test("follows commented-out and XML-prefixed script references", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.html",
+        size: 1,
+        sha256: "99".repeat(32),
+        flags: [],
+        textSample: '<!-- <script src="commented.js"></script> -->',
+      },
+      {
+        path: "page.xhtml",
+        size: 1,
+        sha256: "9a".repeat(32),
+        flags: [],
+        textSample:
+          '<h:script xmlns:h="http://www.w3.org/1999/xhtml" src="prefixed.js"/>' +
+          '<svg:script xl:href="xlinked.js"/>',
+      },
+    ]);
+
+    // Comment boundaries are engine parsing detail the scanner does not
+    // model; a commented-out reference still counts.
+    expect(dependencies("page.html")).toEqual([
+      { path: "commented.js", documentBaseUrl: "drydock-extension://artifact/page.html" },
+    ]);
+    // Tag and attribute names match on their local name, so namespace
+    // prefixes cannot hide a script.
+    expect(dependencies("page.xhtml")).toEqual(
+      expect.arrayContaining([
+        { path: "prefixed.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+        { path: "xlinked.js", documentBaseUrl: "drydock-extension://artifact/page.xhtml" },
+      ]),
+    );
+    expect(dependencies("page.xhtml")).toHaveLength(2);
+  });
+
+  test("follows scripts from a manifest-declared page without a document extension", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup" } }),
+      {
+        path: "popup",
+        size: 1,
+        sha256: "9c".repeat(32),
+        flags: [],
+        textSample: '<script src="tests/payload.js"></script>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "9d".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.extensionPageEntrypoints).toEqual(
+      expect.arrayContaining(["popup", "tests/payload.js"]),
+    );
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("fails loudly when a document declares too many distinct base candidates", () => {
+    const bases = Array.from({ length: 17 }, (_, index) => `<base href="/base-${index}/">`).join(
+      "",
+    );
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.html",
+        size: 1,
+        sha256: "9b".repeat(32),
+        flags: [],
+        textSample: `${bases}<script src="payload.js"></script>`,
+      },
+    ]);
+
+    expect(() => dependencies("page.html")).toThrow(/too many distinct base URL candidates/);
+  });
+
+  test("fails loudly when a document exceeds the consumer resolution work budget", () => {
+    const bases = Array.from({ length: 15 }, (_, index) => `<base href="/base-${index}/">`).join(
+      "",
+    );
+    const sources = Array.from(
+      { length: 70_000 },
+      (_, index) => `<script src="s${index}.js"></script>`,
+    ).join("");
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.html",
+        size: 1,
+        sha256: "9e".repeat(32),
+        flags: [],
+        textSample: bases + sources,
+      },
+    ]);
+
+    expect(() => dependencies("page.html")).toThrow(/consumer resolution work budget/);
+  });
+
+  test("follows scripts regardless of declared type or markup namespace", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const files = [
@@ -1670,14 +1787,17 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
+    // Script type attributes and HTML/SVG/MathML namespace context are not
+    // modeled — every referenced script and document keeps full severity.
     expect(parsed.extensionPageEntrypoints).toEqual(
-      expect.arrayContaining(["tests/math-live.js", "tests/svg-linked.html", "tests/linked.js"]),
-    );
-    expect(parsed.extensionPageEntrypoints).not.toEqual(
       expect.arrayContaining([
+        "tests/math-live.js",
+        "tests/svg-linked.html",
+        "tests/linked.js",
         "tests/data-decoy.js",
         "tests/math-decoy.js",
         "tests/svg-frame.html",
+        "tests/frame-decoy.js",
       ]),
     );
     const findings = createBrowserExtensionReview({
@@ -1685,13 +1805,11 @@ describe("browser extension review adapter", () => {
       artifact: { path, sha256: SHA, files },
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ file: "tests/math-live.js", severity: "high" }),
-        expect.objectContaining({ file: "tests/linked.js", severity: "high" }),
-        expect.objectContaining({ file: "tests/data-decoy.js", severity: "medium" }),
-        expect.objectContaining({ file: "tests/math-decoy.js", severity: "medium" }),
-        expect.objectContaining({ file: "tests/frame-decoy.js", severity: "medium" }),
-      ]),
+      expect.arrayContaining(
+        ["math-live", "linked", "data-decoy", "math-decoy", "frame-decoy"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+      ),
     );
     expect(findings).toHaveLength(5);
   });
@@ -2185,7 +2303,9 @@ describe("browser extension review adapter", () => {
         "tests/refreshed.js",
       ]),
     );
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/decoy.html");
+    // Refresh-shaped content attributes count on any element, so the
+    // meta-description lookalike is followed by design.
+    expect(parsed.extensionPageEntrypoints).toContain("tests/decoy.html");
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
@@ -2194,11 +2314,7 @@ describe("browser extension review adapter", () => {
       expect.arrayContaining([
         expect.objectContaining({ severity: "high", file: "tests/frame.js" }),
         expect.objectContaining({ severity: "high", file: "tests/refreshed.js" }),
-        expect.objectContaining({
-          severity: "medium",
-          file: "tests/decoy.js",
-          testScoped: true,
-        }),
+        expect.objectContaining({ severity: "high", file: "tests/decoy.js" }),
       ]),
     );
     expect(findings).toHaveLength(3);
@@ -2289,7 +2405,7 @@ describe("browser extension review adapter", () => {
     expect(finding?.testScoped).not.toBe(true);
   });
 
-  test("inherits the embedding document base when resolving iframe srcdoc scripts", () => {
+  test("resolves iframe srcdoc scripts against every candidate document base", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
     const manifestRecord = manifestFile({ action: { default_popup: "popup.html" } });
@@ -2320,10 +2436,11 @@ describe("browser extension review adapter", () => {
     ];
 
     const parsed = parseBrowserExtensionManifest(files).manifest;
+    // Sources resolve against the document URL and every declared base, so
+    // which <base> a browser would actually apply can never hide an edge.
     expect(parsed.extensionPageEntrypoints).toEqual(
-      expect.arrayContaining(["popup.html", "assets/tests/payload.js"]),
+      expect.arrayContaining(["popup.html", "assets/tests/payload.js", "tests/payload.js"]),
     );
-    expect(parsed.extensionPageEntrypoints).not.toContain("tests/payload.js");
     const findings = createBrowserExtensionReview({
       manifest,
       artifact: { path, sha256: SHA, files },
@@ -2331,7 +2448,7 @@ describe("browser extension review adapter", () => {
     expect(findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ severity: "high", file: "assets/tests/payload.js" }),
-        expect.objectContaining({ severity: "medium", file: "tests/payload.js", testScoped: true }),
+        expect.objectContaining({ severity: "high", file: "tests/payload.js" }),
       ]),
     );
   });

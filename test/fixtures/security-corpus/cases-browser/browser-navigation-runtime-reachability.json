@@ -2,7 +2,7 @@
   "id": "browser-navigation-runtime-reachability",
   "title": "browser runtime and page navigation edges remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins Manifest V3 generated background pages, runtime.getURL importScripts and DOM navigation, unqualified open calls, window aliases, XML-self-closing XHTML scripts, standalone SVG documents, and HTML navigation elements while keeping service-worker navigation, relative, dynamic, and download paths test-scoped.",
+  "intent": "Pins Manifest V3 generated background pages, runtime.getURL importScripts and DOM navigation, unqualified open calls, window aliases, XML-self-closing XHTML scripts, standalone SVG documents, and HTML navigation elements — including download links, which the conservative document scan follows — while keeping service-worker navigation, relative, and dynamic paths test-scoped.",
   "slug": "navigation-runtime-reachability",
   "extensionId": "navigation-runtime-reachability@example.invalid",
   "version": "1.0.0",
@@ -228,31 +228,71 @@
   ],
   "expectedRisk": "high",
   "expectedFindings": [
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dom.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/generated.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/html.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/global.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/runtime.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/generated.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/html.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/global.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/runtime.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/runtime-page.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xhtml.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/svg.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/xhtml.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/xhtml-second.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/self.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/self.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "medium",
       "file": "background/tests/generated.js"
     },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/download.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/dynamic-dom.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/download.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "tests/dynamic-dom.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "medium",

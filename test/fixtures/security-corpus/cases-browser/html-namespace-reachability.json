@@ -1,8 +1,8 @@
 {
   "id": "browser-html-namespace-reachability",
-  "title": "WebExtension document reachability respects HTML, SVG, and MathML parsing",
+  "title": "WebExtension document reachability over-approximates HTML, SVG, and MathML parsing",
   "category": "browser-extension",
-  "intent": "Inert templates, non-executable script types, MathML scripts, SVG iframes, CDATA sections, raw-text iframe contents, and trailing solidus on HTML start tags must not invent consumer edges, while MathML-to-SVG content, SVG HTML integration points, executable MathML integration-point scripts, and href or xlink:href SVG scripts and links remain consumer entrypoints.",
+  "intent": "The document scanner deliberately does not model namespaces, raw text, CDATA, templates, script types, or self-closing syntax: every script-shaped reference in a reachable document — MathML scripts, SVG iframes and links, CDATA and raw-text contents, non-executable script types, and template subtrees — keeps full severity. Only a missed edge is a bug; invented edges are by design.",
   "slug": "html-namespace-helper",
   "extensionId": "html-namespace-helper@example.invalid",
   "version": "1.0.0",
@@ -144,27 +144,79 @@
   ],
   "expectedRisk": "high",
   "expectedFindings": [
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/href.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/linked.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/math-live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/math-svg-live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg-desc-live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg-title-live.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/xlink.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/data-decoy.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/frame-decoy.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/math-decoy.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/raw-decoy.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/slash-decoy.js" },
     {
       "ruleId": "code.dynamic-evaluation",
-      "severity": "medium",
+      "severity": "high",
+      "file": "tests/href.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/live.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/linked.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/math-live.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/math-svg-live.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/svg-desc-live.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/svg-title-live.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/xlink.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/data-decoy.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/frame-decoy.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/math-decoy.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/raw-decoy.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/slash-decoy.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
       "file": "tests/svg-cdata-decoy.js"
     },
     {
       "ruleId": "code.dynamic-evaluation",
-      "severity": "medium",
+      "severity": "high",
       "file": "tests/nested-template-decoy.js"
     }
   ]

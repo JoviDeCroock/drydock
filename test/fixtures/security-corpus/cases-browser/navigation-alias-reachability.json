@@ -2,7 +2,7 @@
   "id": "browser-navigation-alias-reachability",
   "title": "browser navigation and extension URL aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins linked and meta-refreshed extension pages, legacy extension.getURL Worker paths, and tag-shaped ordinary attribute text that must remain inert.",
+  "intent": "Pins linked, download-linked, and meta-refreshed extension pages, legacy extension.getURL Worker paths, and tag-shaped ordinary attribute text that must remain inert.",
   "slug": "navigation-alias-reachability",
   "extensionId": "navigation-alias-reachability@example.invalid",
   "version": "1.0.0",
@@ -95,10 +95,26 @@
   ],
   "expectedRisk": "high",
   "expectedFindings": [
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/direct.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/legacy-worker.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/linked.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/refreshed.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/direct.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/legacy-worker.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/linked.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/refreshed.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "medium",
@@ -106,7 +122,7 @@
     },
     {
       "ruleId": "code.dynamic-evaluation",
-      "severity": "medium",
+      "severity": "high",
       "file": "tests/download.js"
     }
   ]

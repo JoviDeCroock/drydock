@@ -28,47 +28,16 @@ const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
 const MAX_WEB_ACCESSIBLE_RESOURCE_DECLARATIONS = 10_000;
 const MAX_WEB_ACCESSIBLE_RESOURCE_WILDCARD_CHECKS = 1_000_000;
 const BROWSER_DOCUMENT_PATH_RE = /\.(?:html?|xhtml|xht|svg)$/i;
-const JAVASCRIPT_MIME_TYPES = new Set([
-  "application/ecmascript",
-  "application/javascript",
-  "application/x-ecmascript",
-  "application/x-javascript",
-  "text/ecmascript",
-  "text/javascript",
-  "text/javascript1.0",
-  "text/javascript1.1",
-  "text/javascript1.2",
-  "text/javascript1.3",
-  "text/javascript1.4",
-  "text/javascript1.5",
-  "text/javascript1.6",
-  "text/javascript1.7",
-  "text/javascript1.8",
-  "text/jscript",
-  "text/livescript",
-  "text/x-ecmascript",
-  "text/x-javascript",
-]);
-const HTML_TEXT_ONLY_ELEMENTS = new Set([
-  "iframe",
-  "noembed",
-  "noframes",
-  "script",
-  "style",
-  "textarea",
-  "title",
-  "xmp",
-]);
-const SVG_TEXT_ONLY_ELEMENTS = new Set(["script", "style"]);
-const HTML_INERT_CONTENT_ELEMENTS = new Set(["noscript", "template"]);
-const MATHML_TEXT_INTEGRATION_ELEMENTS = new Set(["mi", "mn", "mo", "ms", "mtext"]);
-const SVG_HTML_INTEGRATION_ELEMENTS = new Set(["desc", "foreignobject", "title"]);
-
-type HtmlNamespace = "html" | "mathml" | "svg";
-type HtmlNamespaceBoundary = {
-  tagName: string;
-  namespace: HtmlNamespace;
-};
+// URL-valued attribute local names that can make some engine fetch, navigate
+// to, or execute a packaged resource. Collected on every tag-shaped token —
+// consumer-edge extraction is a deliberate over-approximation of browser
+// parsing; see the doc comment on `scanDocumentConsumerTokens`.
+const CONSUMER_URL_ATTRIBUTE_LOCAL_NAMES = new Set(["src", "href", "data", "action", "formaction"]);
+// Benign documents declare at most one <base>. The cap only bounds hostile
+// resolution work; exceeding it fails the review loudly instead of silently
+// dropping a base candidate, which could hide a real consumer edge.
+const MAX_DOCUMENT_BASE_CANDIDATES = 16;
+const MAX_DOCUMENT_CONSUMER_RESOLUTIONS = 1_000_000;
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -528,49 +497,20 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
   const documentBaseUrlsByPath = new Map<string, Set<string>>();
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   const inspectedPages = new Set<string>();
-  const pageQueue: Array<{
-    pagePath: string;
-    inlineHtml?: string;
-    fallbackBaseUrl?: string;
-  }> = pagePaths.map((pagePath) => ({ pagePath }));
+  const pageQueue = [...pagePaths];
   while (pageQueue.length) {
-    const queuedPage = pageQueue.pop();
-    if (!queuedPage) continue;
-    const { pagePath, inlineHtml, fallbackBaseUrl } = queuedPage;
-    if (inlineHtml === undefined) {
-      if (inspectedPages.has(pagePath)) continue;
-      inspectedPages.add(pagePath);
-    }
-    const html = inlineHtml ?? filesByPath.get(pagePath)?.textSample;
-    if (!html) continue;
-    const namespace = inlineHtml === undefined ? browserDocumentNamespace(pagePath) : "html";
-    const xmlSyntax = inlineHtml === undefined && browserDocumentUsesXmlSyntax(pagePath);
-    for (const consumer of htmlConsumerSources(html, namespace, xmlSyntax)) {
-      if (consumer.kind === "inline-page") {
-        const documentBase = extensionDocumentBaseUrl(pagePath, consumer.baseHref, fallbackBaseUrl);
-        if (documentBase) {
-          pageQueue.push({
-            pagePath,
-            inlineHtml: consumer.html,
-            fallbackBaseUrl: documentBase.href,
-          });
-        }
-        continue;
+    const pagePath = pageQueue.pop();
+    if (pagePath === undefined || inspectedPages.has(pagePath)) continue;
+    inspectedPages.add(pagePath);
+    for (const dependency of browserDocumentConsumerEdges(filesByPath, pagePath)) {
+      entrypoints.add(dependency.path);
+      if (dependency.documentBaseUrl !== undefined) {
+        const bases = documentBaseUrlsByPath.get(dependency.path) ?? new Set<string>();
+        bases.add(dependency.documentBaseUrl);
+        documentBaseUrlsByPath.set(dependency.path, bases);
       }
-      const { kind, source, baseHref } = consumer;
-      const documentBase = extensionDocumentBaseUrl(pagePath, baseHref, fallbackBaseUrl);
-      if (!documentBase) continue;
-      const path = resolveExtensionResourcePath(source, documentBase);
-      if (!path) continue;
-      if (kind === "linked-page" && !isBrowserConsumerDocumentPath(path)) continue;
-      entrypoints.add(path);
-      if (kind === "script") {
-        const bases = documentBaseUrlsByPath.get(path) ?? new Set<string>();
-        bases.add(documentBase.href);
-        documentBaseUrlsByPath.set(path, bases);
-      }
-      if ((kind === "page" || kind === "linked-page") && !inspectedPages.has(path)) {
-        pageQueue.push({ pagePath: path });
+      if (isBrowserConsumerDocumentPath(dependency.path) && !inspectedPages.has(dependency.path)) {
+        pageQueue.push(dependency.path);
       }
     }
   }
@@ -586,70 +526,67 @@ export function createBrowserHtmlConsumerDependencyResolver(
   files: FileRecord[],
 ): (pagePath: string) => Array<{ path: string; documentBaseUrl?: string }> {
   const filesByPath = new Map(files.map((file) => [file.path, file]));
-  return (pagePath) => browserHtmlConsumerDependencies(filesByPath, pagePath);
+  return (pagePath) =>
+    isBrowserConsumerDocumentPath(pagePath)
+      ? browserDocumentConsumerEdges(filesByPath, pagePath)
+      : [];
 }
 
-function browserHtmlConsumerDependencies(
+// Direct consumer edges of one packaged document. Callers decide which paths
+// are documents worth traversing — manifest-declared pages are scanned
+// whatever their extension, while discovered edges recurse only into
+// document-suffixed paths. Each source resolves against
+// every base candidate the document could plausibly use (see
+// `documentBaseCandidates`), so mistracking which <base> a browser would pick
+// can only add edges, never hide one.
+function browserDocumentConsumerEdges(
   filesByPath: Map<string, FileRecord>,
   pagePath: string,
 ): Array<{ path: string; documentBaseUrl?: string }> {
-  if (!isBrowserConsumerDocumentPath(pagePath)) return [];
-  const html = filesByPath.get(pagePath)?.textSample;
-  if (!html) return [];
+  const text = filesByPath.get(pagePath)?.textSample;
+  if (!text) return [];
+  const pageUrl = extensionPageUrl(pagePath);
+  if (!pageUrl) return [];
 
-  const dependencies = new Map<string, { path: string; documentBaseUrl?: string }>();
-  const inlineQueue: Array<{
-    html: string;
-    fallbackBaseUrl?: string;
-    namespace: HtmlNamespace;
-    xmlSyntax: boolean;
-  }> = [
-    {
-      html,
-      namespace: browserDocumentNamespace(pagePath),
-      xmlSyntax: browserDocumentUsesXmlSyntax(pagePath),
-    },
+  const edges = new Map<string, { path: string; documentBaseUrl?: string }>();
+  let resolutionBudget = MAX_DOCUMENT_CONSUMER_RESOLUTIONS;
+  const spendResolutionBudget = (work: number): void => {
+    resolutionBudget -= work;
+    if (resolutionBudget < 0) {
+      throw new Error(`document ${pagePath} exceeds the consumer resolution work budget`);
+    }
+  };
+  const inlineQueue: Array<{ html: string; fallbackBases: URL[] }> = [
+    { html: text, fallbackBases: [pageUrl] },
   ];
   while (inlineQueue.length) {
     const inline = inlineQueue.pop();
     if (!inline) continue;
-    for (const consumer of htmlConsumerSources(inline.html, inline.namespace, inline.xmlSyntax)) {
-      const documentBase = extensionDocumentBaseUrl(
-        pagePath,
-        consumer.baseHref,
-        inline.fallbackBaseUrl,
-      );
-      if (!documentBase) continue;
-      if (consumer.kind === "inline-page") {
-        inlineQueue.push({
-          html: consumer.html,
-          fallbackBaseUrl: documentBase.href,
-          namespace: "html",
-          xmlSyntax: false,
-        });
-        continue;
+    const tokens = scanDocumentConsumerTokens(inline.html);
+    spendResolutionBudget(tokens.baseHrefs.length * inline.fallbackBases.length);
+    const bases = documentBaseCandidates(inline.fallbackBases, tokens.baseHrefs);
+    spendResolutionBudget(
+      (tokens.scriptSources.length + tokens.resourceSources.length) * bases.length,
+    );
+    for (const html of tokens.inlineDocuments) inlineQueue.push({ html, fallbackBases: bases });
+    for (const source of tokens.scriptSources) {
+      for (const base of bases) {
+        const path = resolveExtensionResourcePath(source, base);
+        if (path) edges.set(`${path}\0${base.href}`, { path, documentBaseUrl: base.href });
       }
-      const path = resolveExtensionResourcePath(consumer.source, documentBase);
-      if (!path) continue;
-      if (consumer.kind === "linked-page" && !isBrowserConsumerDocumentPath(path)) continue;
-      const dependency =
-        consumer.kind === "script" ? { path, documentBaseUrl: documentBase.href } : { path };
-      dependencies.set(`${path}\0${dependency.documentBaseUrl ?? ""}`, dependency);
+    }
+    for (const source of tokens.resourceSources) {
+      for (const base of bases) {
+        const path = resolveExtensionResourcePath(source, base);
+        if (path) edges.set(`${path}\0`, { path });
+      }
     }
   }
-  return [...dependencies.values()];
+  return [...edges.values()];
 }
 
 export function isBrowserConsumerDocumentPath(path: string): boolean {
   return BROWSER_DOCUMENT_PATH_RE.test(path);
-}
-
-function browserDocumentNamespace(path: string): HtmlNamespace {
-  return /\.svg$/i.test(path) ? "svg" : "html";
-}
-
-function browserDocumentUsesXmlSyntax(path: string): boolean {
-  return /\.(?:xhtml|xht|svg)$/i.test(path);
 }
 
 function mergeDocumentBaseUrlsByPath(
@@ -666,84 +603,60 @@ function mergeDocumentBaseUrlsByPath(
   return Object.fromEntries([...merged].map(([path, bases]) => [path, [...bases]]));
 }
 
-type HtmlConsumerSource =
-  | { kind: "script" | "page" | "linked-page"; source: string; baseHref: string | null }
-  | { kind: "inline-page"; html: string; baseHref: string | null };
+interface DocumentConsumerTokens {
+  scriptSources: string[];
+  resourceSources: string[];
+  inlineDocuments: string[];
+  baseHrefs: string[];
+}
 
-function htmlConsumerSources(
-  html: string,
-  initialNamespace: HtmlNamespace = "html",
-  xmlSyntax = false,
-): HtmlConsumerSource[] {
-  const sources: HtmlConsumerSource[] = [];
-  let baseHref: string | null = null;
-  let baseSeen = false;
-  const namespaceBoundaries: HtmlNamespaceBoundary[] = [];
+// Deliberate over-approximation of browser document parsing.
+//
+// Consumer edges only ever cancel the test-path demotion — findings are
+// demoted, never dropped — so a missed edge lets a hostile package keep
+// reduced severity while an invented edge merely reports an inert reference
+// at full severity. The failure directions are asymmetric, and bit-exact
+// emulation of engine parsing (namespaces, foreign content, raw text, CDATA,
+// integration points, self-closing rules) is an unbounded goal that this
+// scanner deliberately does not attempt. It reads every tag-shaped token in
+// the document — including comment, raw-text, template, and foreign-content
+// context — and collects every URL-valued attribute that could make some
+// engine fetch, navigate to, or execute a packaged resource. Anything a real
+// parser reaches, this scan reaches by construction. An edge no browser
+// would follow is by design, not a bug; only a missed edge is a bug. See the
+// precision-boundary note in docs/security-detection-corpus.md before
+// narrowing this.
+function scanDocumentConsumerTokens(html: string): DocumentConsumerTokens {
+  const tokens: DocumentConsumerTokens = {
+    scriptSources: [],
+    resourceSources: [],
+    inlineDocuments: [],
+    baseHrefs: [],
+  };
   let index = 0;
   while (index < html.length) {
     const tagStart = html.indexOf("<", index);
     if (tagStart === -1) break;
-    const namespace = namespaceBoundaries.at(-1)?.namespace ?? initialNamespace;
-    if (html.startsWith("<!--", tagStart)) {
-      const commentEnd = htmlCommentEnd(html, tagStart);
-      index = commentEnd ?? html.length;
-      continue;
-    }
-    if (html.startsWith("<!", tagStart) || html.startsWith("<?", tagStart)) {
-      const declarationEnd = htmlMarkupDeclarationEnd(html, tagStart, namespace);
-      index = declarationEnd ?? html.length;
-      continue;
-    }
-
     let cursor = tagStart + 1;
-    const closingTag = html[cursor] === "/";
-    if (closingTag) cursor += 1;
+    if (html[cursor] === "/") cursor += 1;
     const nameStart = cursor;
     while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
-    const tagName = html.slice(nameStart, cursor).toLowerCase();
-    if (!tagName || !/[\s/>]/.test(html[cursor] ?? "")) {
+    const rawTagName = html.slice(nameStart, cursor).toLowerCase();
+    if (!rawTagName || !/[\s/>]/.test(html[cursor] ?? "")) {
       index = Math.max(cursor, tagStart + 1);
       continue;
     }
-    if (closingTag) {
-      const tagEnd = htmlTagEnd(html, cursor);
-      if (tagEnd === null) break;
-      closeHtmlNamespaceBoundary(namespaceBoundaries, tagName);
-      index = tagEnd;
-      continue;
-    }
-
-    if (!htmlElementNeedsInspection(namespace, tagName)) {
-      const tagEnd = htmlTagEnd(html, cursor);
-      if (tagEnd === null) break;
-      index = tagEnd;
-      continue;
-    }
-
-    const targetAttributes = consumerTargetAttributes(namespace, tagName);
-    const targetValues = new Map<string, string | null>();
-    let metaHttpEquiv: string | null = null;
-    let metaContent: string | null = null;
-    let srcdocValue: string | null = null;
-    let srcdocSeen = false;
-    let downloadNavigation = false;
-    let formMethod: string | null = null;
-    let controlType: string | null = null;
-    let scriptType: string | null = null;
-    let annotationEncoding: string | null = null;
-    let tagClosed = false;
-    let selfClosing = false;
+    // XML documents can alias any element behind a namespace prefix, so match
+    // on the local name.
+    const tagName = rawTagName.slice(rawTagName.lastIndexOf(":") + 1);
     while (cursor < html.length) {
       while (/\s/.test(html[cursor] ?? "")) cursor += 1;
       if (html[cursor] === ">") {
         cursor += 1;
-        tagClosed = true;
         break;
       }
       if (html[cursor] === "/" && html[cursor + 1] === ">") {
         cursor += 2;
-        tagClosed = true;
-        selfClosing = htmlStartTagCanSelfClose(namespace, tagName, xmlSyntax);
         break;
       }
 
@@ -753,7 +666,8 @@ function htmlConsumerSources(
         cursor += 1;
         continue;
       }
-      const attributeName = html.slice(attributeStart, cursor).toLowerCase();
+      const rawAttributeName = html.slice(attributeStart, cursor).toLowerCase();
+      const attributeName = rawAttributeName.slice(rawAttributeName.lastIndexOf(":") + 1);
       while (/\s/.test(html[cursor] ?? "")) cursor += 1;
 
       let value: string | null = null;
@@ -774,348 +688,33 @@ function htmlConsumerSources(
           value = html.slice(valueStart, cursor);
         }
       }
+      if (value === null) continue;
 
-      if (targetAttributes.includes(attributeName) && !targetValues.has(attributeName)) {
-        targetValues.set(attributeName, value);
+      if (attributeName === "srcdoc") {
+        tokens.inlineDocuments.push(decodeHTMLAttribute(value));
+        continue;
       }
-      if (
-        namespace === "html" &&
-        tagName === "meta" &&
-        attributeName === "http-equiv" &&
-        metaHttpEquiv === null
-      ) {
-        metaHttpEquiv = decodeHTMLAttribute(value ?? "");
+      if (attributeName === "content") {
+        // Meta-refresh URLs live inside the content attribute's own grammar.
+        // Matching the grammar on any element keeps the edge tag-independent.
+        const refreshUrl = metaRefreshUrl(decodeHTMLAttribute(value));
+        if (refreshUrl) tokens.resourceSources.push(refreshUrl);
+        continue;
       }
-      if (
-        namespace === "html" &&
-        tagName === "meta" &&
-        attributeName === "content" &&
-        metaContent === null
-      ) {
-        metaContent = decodeHTMLAttribute(value ?? "");
+      if (!CONSUMER_URL_ATTRIBUTE_LOCAL_NAMES.has(attributeName)) continue;
+      const source = decodeHTMLAttribute(value);
+      if (tagName === "base") {
+        // A base element is never fetched itself; it only changes resolution.
+        if (attributeName === "href") tokens.baseHrefs.push(source);
+      } else if (tagName === "script") {
+        tokens.scriptSources.push(source);
+      } else {
+        tokens.resourceSources.push(source);
       }
-      if (
-        namespace === "html" &&
-        tagName === "iframe" &&
-        attributeName === "srcdoc" &&
-        !srcdocSeen
-      ) {
-        srcdocSeen = true;
-        srcdocValue = value;
-      }
-      if (
-        namespace === "html" &&
-        (tagName === "a" || tagName === "area") &&
-        attributeName === "download"
-      ) {
-        downloadNavigation = true;
-      }
-      if (
-        namespace === "html" &&
-        tagName === "form" &&
-        attributeName === "method" &&
-        formMethod === null
-      ) {
-        formMethod = decodeHTMLAttribute(value ?? "");
-      }
-      if (
-        (tagName === "button" || tagName === "input") &&
-        attributeName === "type" &&
-        controlType === null
-      ) {
-        controlType = decodeHTMLAttribute(value ?? "");
-      }
-      if (tagName === "script" && attributeName === "type" && scriptType === null) {
-        scriptType = decodeHTMLAttribute(value ?? "");
-      }
-      if (
-        namespace === "mathml" &&
-        tagName === "annotation-xml" &&
-        attributeName === "encoding" &&
-        annotationEncoding === null
-      ) {
-        annotationEncoding = decodeHTMLAttribute(value ?? "");
-      }
-    }
-    const targetAttribute = targetAttributes.find((attribute) => targetValues.has(attribute));
-    const targetValue = targetAttribute ? (targetValues.get(targetAttribute) ?? null) : null;
-    const namespaceBoundary = htmlNamespaceBoundary(namespace, tagName, annotationEncoding);
-    if (tagClosed && namespaceBoundary && !selfClosing) {
-      namespaceBoundaries.push(namespaceBoundary);
-    }
-    if (tagClosed && namespace === "html" && tagName === "base" && targetAttribute && !baseSeen) {
-      baseHref = decodeHTMLAttribute(targetValue ?? "");
-      baseSeen = true;
-    } else if (tagClosed && namespace === "html" && tagName === "iframe" && srcdocSeen) {
-      sources.push({
-        kind: "inline-page",
-        html: decodeHTMLAttribute(srcdocValue ?? ""),
-        baseHref,
-      });
-    } else if (
-      tagClosed &&
-      namespace === "html" &&
-      tagName === "meta" &&
-      metaHttpEquiv?.trim().toLowerCase() === "refresh"
-    ) {
-      const refreshUrl = metaRefreshUrl(metaContent ?? "");
-      if (refreshUrl) sources.push({ kind: "page", source: refreshUrl, baseHref });
-    } else if (
-      tagClosed &&
-      consumerKind(namespace, tagName) !== null &&
-      (tagName !== "script" || scriptTypeCanExecute(scriptType)) &&
-      !downloadNavigation &&
-      (tagName !== "form" || formMethod?.trim().toLowerCase() !== "dialog") &&
-      (tagName !== "button" ||
-        !["button", "reset"].includes(controlType?.trim().toLowerCase() ?? "")) &&
-      (tagName !== "input" ||
-        ["image", "submit"].includes(controlType?.trim().toLowerCase() ?? "text")) &&
-      targetValue
-    ) {
-      sources.push({
-        kind: consumerKind(namespace, tagName) ?? "page",
-        source: decodeHTMLAttribute(targetValue),
-        baseHref,
-      });
-    }
-    if (
-      tagClosed &&
-      namespace === "html" &&
-      HTML_INERT_CONTENT_ELEMENTS.has(tagName) &&
-      !selfClosing
-    ) {
-      // Template descendants are inert and noscript descendants are raw text
-      // when extension pages execute with scripting enabled. Neither may
-      // create consumer edges or change the document base.
-      index = htmlInertElementEnd(html, cursor, tagName) ?? html.length;
-      continue;
-    }
-    if (tagClosed && htmlElementHasTextOnlyContent(namespace, tagName) && !selfClosing) {
-      // Raw-text and escapable raw-text contents do not create nested elements.
-      // Skip them so tag-shaped CSS, JavaScript, titles, and textarea values
-      // cannot invent consumer edges or document bases.
-      index = htmlTextElementEnd(html, cursor, tagName) ?? html.length;
-      continue;
     }
     index = Math.max(cursor, tagStart + 1);
   }
-  return sources;
-}
-
-function htmlTagEnd(html: string, cursor: number): number | null {
-  let quote: '"' | "'" | null = null;
-  while (cursor < html.length) {
-    const character = html[cursor];
-    if (quote) {
-      if (character === quote) quote = null;
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === ">") {
-      return cursor + 1;
-    }
-    cursor += 1;
-  }
-  return null;
-}
-
-function htmlTextElementEnd(html: string, cursor: number, tagName: string): number | null {
-  const closingTextElementPattern = new RegExp(`</${tagName}(?=[\\s/>])`, "gi");
-  closingTextElementPattern.lastIndex = cursor;
-  const closingTextElement = closingTextElementPattern.exec(html);
-  if (!closingTextElement) return null;
-  return htmlTagEnd(html, closingTextElement.index + closingTextElement[0].length);
-}
-
-function htmlInertElementEnd(html: string, cursor: number, tagName: string): number | null {
-  if (tagName === "noscript") return htmlTextElementEnd(html, cursor, tagName);
-  const namespaceBoundaries: HtmlNamespaceBoundary[] = [];
-  let depth = 1;
-  while (cursor < html.length) {
-    const tagStart = html.indexOf("<", cursor);
-    if (tagStart === -1) return null;
-    if (html.startsWith("<!--", tagStart)) {
-      const commentEnd = htmlCommentEnd(html, tagStart);
-      if (commentEnd === null) return null;
-      cursor = commentEnd;
-      continue;
-    }
-    const namespace = namespaceBoundaries.at(-1)?.namespace ?? "html";
-    if (html.startsWith("<!", tagStart) || html.startsWith("<?", tagStart)) {
-      const declarationEnd = htmlMarkupDeclarationEnd(html, tagStart, namespace);
-      if (declarationEnd === null) return null;
-      cursor = declarationEnd;
-      continue;
-    }
-    let nameCursor = tagStart + 1;
-    const closingTag = html[nameCursor] === "/";
-    if (closingTag) nameCursor += 1;
-    const nameStart = nameCursor;
-    while (nameCursor < html.length && /[A-Za-z0-9:-]/.test(html[nameCursor])) nameCursor += 1;
-    const nestedTagName = html.slice(nameStart, nameCursor).toLowerCase();
-    if (!nestedTagName || !/[\s/>]/.test(html[nameCursor] ?? "")) {
-      cursor = Math.max(nameCursor, tagStart + 1);
-      continue;
-    }
-    const tagEnd = htmlTagEnd(html, nameCursor);
-    if (tagEnd === null) return null;
-    if (closingTag) {
-      if (namespace === "html" && nestedTagName === tagName) {
-        depth -= 1;
-        if (depth === 0) return tagEnd;
-      }
-      closeHtmlNamespaceBoundary(namespaceBoundaries, nestedTagName);
-      cursor = tagEnd;
-      continue;
-    }
-    const namespaceBoundary = htmlNamespaceBoundary(namespace, nestedTagName, null);
-    const selfClosing =
-      /\/\s*>$/.test(html.slice(tagStart, tagEnd)) &&
-      htmlStartTagCanSelfClose(namespace, nestedTagName, false);
-    if (htmlElementHasTextOnlyContent(namespace, nestedTagName) && !selfClosing) {
-      const textEnd = htmlTextElementEnd(html, tagEnd, nestedTagName);
-      if (textEnd === null) return null;
-      cursor = textEnd;
-      continue;
-    }
-    if (namespace === "html" && nestedTagName === tagName) depth += 1;
-    if (namespaceBoundary && !selfClosing) namespaceBoundaries.push(namespaceBoundary);
-    cursor = tagEnd;
-  }
-  return null;
-}
-
-function htmlElementNeedsInspection(namespace: HtmlNamespace, tagName: string): boolean {
-  return (
-    htmlElementHasTextOnlyContent(namespace, tagName) ||
-    (namespace === "html" && HTML_INERT_CONTENT_ELEMENTS.has(tagName)) ||
-    htmlElementCanChangeNamespace(namespace, tagName) ||
-    consumerTargetAttributes(namespace, tagName).length > 0 ||
-    (namespace === "html" && tagName === "meta")
-  );
-}
-
-function htmlElementCanChangeNamespace(namespace: HtmlNamespace, tagName: string): boolean {
-  return (
-    (namespace === "html" && (tagName === "math" || tagName === "svg")) ||
-    (namespace === "mathml" &&
-      (tagName === "annotation-xml" ||
-        tagName === "svg" ||
-        MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName))) ||
-    (namespace === "svg" && SVG_HTML_INTEGRATION_ELEMENTS.has(tagName))
-  );
-}
-
-function htmlNamespaceBoundary(
-  namespace: HtmlNamespace,
-  tagName: string,
-  annotationEncoding: string | null,
-): HtmlNamespaceBoundary | null {
-  if (namespace === "html" && tagName === "svg") {
-    return { tagName: "svg", namespace: "svg" };
-  }
-  if (namespace === "html" && tagName === "math") {
-    return { tagName: "math", namespace: "mathml" };
-  }
-  if (namespace === "mathml" && tagName === "svg") {
-    return { tagName: "svg", namespace: "svg" };
-  }
-  if (namespace === "svg" && SVG_HTML_INTEGRATION_ELEMENTS.has(tagName)) {
-    return { tagName, namespace: "html" };
-  }
-  if (namespace === "mathml" && MATHML_TEXT_INTEGRATION_ELEMENTS.has(tagName)) {
-    return { tagName, namespace: "html" };
-  }
-  if (
-    namespace === "mathml" &&
-    tagName === "annotation-xml" &&
-    ["application/xhtml+xml", "text/html"].includes(annotationEncoding?.trim().toLowerCase() ?? "")
-  ) {
-    return { tagName, namespace: "html" };
-  }
-  return null;
-}
-
-function consumerTargetAttributes(namespace: HtmlNamespace, tagName: string): string[] {
-  if (namespace === "svg") {
-    return tagName === "script" || tagName === "a" ? ["href", "xlink:href"] : [];
-  }
-  if (namespace !== "html") return [];
-  if (tagName === "base" || tagName === "a" || tagName === "area") return ["href"];
-  if (tagName === "form") return ["action"];
-  if (tagName === "button" || tagName === "input") return ["formaction"];
-  if (tagName === "object") return ["data"];
-  if (tagName === "meta") return [];
-  return ["embed", "frame", "iframe", "script"].includes(tagName) ? ["src"] : [];
-}
-
-function consumerKind(
-  namespace: HtmlNamespace,
-  tagName: string,
-): "script" | "page" | "linked-page" | null {
-  if (namespace === "svg") {
-    if (tagName === "script") return "script";
-    return tagName === "a" ? "linked-page" : null;
-  }
-  if (namespace !== "html") return null;
-  if (tagName === "script") return "script";
-  if (["a", "area", "button", "form", "input"].includes(tagName)) return "linked-page";
-  return ["embed", "frame", "iframe", "object"].includes(tagName) ? "page" : null;
-}
-
-function scriptTypeCanExecute(rawType: string | null): boolean {
-  const type = rawType?.trim().toLowerCase() ?? "";
-  if (!type || type === "module") return true;
-  return JAVASCRIPT_MIME_TYPES.has(type.split(";", 1)[0].trim());
-}
-
-function closeHtmlNamespaceBoundary(
-  namespaceBoundaries: HtmlNamespaceBoundary[],
-  tagName: string,
-): void {
-  for (let index = namespaceBoundaries.length - 1; index >= 0; index -= 1) {
-    if (namespaceBoundaries[index].tagName !== tagName) continue;
-    namespaceBoundaries.length = index;
-    return;
-  }
-}
-
-function htmlStartTagCanSelfClose(
-  namespace: HtmlNamespace,
-  tagName: string,
-  xmlSyntax: boolean,
-): boolean {
-  // A trailing slash closes foreign elements, including the <svg>/<math>
-  // elements that enter a foreign namespace. HTML start tags ignore it unless
-  // the whole document is XML-parsed XHTML.
-  return xmlSyntax || namespace !== "html" || tagName === "svg" || tagName === "math";
-}
-
-function htmlElementHasTextOnlyContent(namespace: HtmlNamespace, tagName: string): boolean {
-  if (namespace === "html") return HTML_TEXT_ONLY_ELEMENTS.has(tagName);
-  return namespace === "svg" && SVG_TEXT_ONLY_ELEMENTS.has(tagName);
-}
-
-function htmlCommentEnd(html: string, commentStart: number): number | null {
-  if (html.startsWith("<!-->", commentStart)) return commentStart + 5;
-  if (html.startsWith("<!--->", commentStart)) return commentStart + 6;
-  const normalEnd = html.indexOf("-->", commentStart + 4);
-  const bangEnd = html.indexOf("--!>", commentStart + 4);
-  if (normalEnd === -1) return bangEnd === -1 ? null : bangEnd + 4;
-  if (bangEnd === -1) return normalEnd + 3;
-  return normalEnd < bangEnd ? normalEnd + 3 : bangEnd + 4;
-}
-
-function htmlMarkupDeclarationEnd(
-  html: string,
-  declarationStart: number,
-  namespace: HtmlNamespace,
-): number | null {
-  if (namespace !== "html" && html.startsWith("<![CDATA[", declarationStart)) {
-    const cdataEnd = html.indexOf("]]>", declarationStart + 9);
-    return cdataEnd === -1 ? null : cdataEnd + 3;
-  }
-  const declarationEnd = html.indexOf(">", declarationStart + 2);
-  return declarationEnd === -1 ? null : declarationEnd + 1;
+  return tokens;
 }
 
 function metaRefreshUrl(content: string): string | null {
@@ -1152,39 +751,44 @@ function resolveExtensionRootResourcePath(rawPath: string): string | null {
   }
 }
 
-function extensionDocumentBaseUrl(
-  pagePath: string,
-  rawBaseHref: string | null,
-  rawFallbackBaseUrl?: string,
-): URL | null {
-  const baseHref = rawBaseHref?.trim() ?? null;
-  if (baseHref?.includes("\\")) return null;
-  try {
-    // pagePath is already decoded for archive lookup. Re-encode each path
-    // segment before URL resolution so a literal archive `#`, `?`, or `%` does
-    // not become URL syntax and change the document base.
-    const encodedPagePath = encodeArchiveLookupPathForUrl(pagePath);
-    const pageUrl = new URL(encodedPagePath, EXTENSION_RESOURCE_ROOT);
-    const fallbackBaseUrl = rawFallbackBaseUrl ? new URL(rawFallbackBaseUrl) : pageUrl;
-    if (
-      fallbackBaseUrl.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
-      fallbackBaseUrl.host !== EXTENSION_RESOURCE_ROOT.host
-    ) {
-      return null;
-    }
-    let documentBase = fallbackBaseUrl;
-    if (baseHref !== null) {
+// Every base URL the document could plausibly resolve sources against: the
+// document URL (or the embedding candidates for an inline srcdoc document)
+// plus every declared base href. Browsers use only the first base element,
+// but which element parses as "first" depends on exact tree construction —
+// resolving against all candidates keeps that ambiguity from hiding an edge.
+function documentBaseCandidates(fallbackBases: URL[], baseHrefs: string[]): URL[] {
+  const candidates = new Map<string, URL>(fallbackBases.map((base) => [base.href, base]));
+  for (const rawHref of baseHrefs) {
+    const href = rawHref.trim();
+    if (!href || href.includes("\\")) continue;
+    for (const fallback of fallbackBases) {
       try {
-        documentBase = new URL(baseHref, fallbackBaseUrl);
+        const resolved = new URL(href, fallback);
+        if (
+          resolved.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
+          resolved.host !== EXTENSION_RESOURCE_ROOT.host
+        ) {
+          continue;
+        }
+        candidates.set(resolved.href, resolved);
       } catch {
         // The HTML base-element algorithm falls back to the document URL when
-        // its href cannot be parsed; later relative resources still load.
+        // its href cannot be parsed; that URL is already a candidate.
       }
     }
-    return documentBase.protocol === EXTENSION_RESOURCE_ROOT.protocol &&
-      documentBase.host === EXTENSION_RESOURCE_ROOT.host
-      ? documentBase
-      : null;
+  }
+  if (candidates.size > MAX_DOCUMENT_BASE_CANDIDATES) {
+    throw new Error("document declares too many distinct base URL candidates");
+  }
+  return [...candidates.values()];
+}
+
+function extensionPageUrl(pagePath: string): URL | null {
+  try {
+    // pagePath is already decoded for archive lookup. Re-encode each path
+    // segment before URL resolution so a literal archive `#`, `?`, or `%`
+    // does not become URL syntax and change the document base.
+    return new URL(encodeArchiveLookupPathForUrl(pagePath), EXTENSION_RESOURCE_ROOT);
   } catch {
     return null;
   }
