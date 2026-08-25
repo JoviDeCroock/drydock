@@ -33,17 +33,7 @@ import {
 } from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
-import {
-  getGateFirstBlockingVote,
-  getGateForOrganization,
-  listGatePackageScans,
-  markGateDecidedForPackageAggregate,
-} from "../lib/github-app/webhook-gates";
-import {
-  buildHumanDecisionComment,
-  buildReportUrl,
-  executeWorkflowGateJob,
-} from "../lib/workflow-gate-job";
+import { finalizeReconciledWorkflowGateDecision } from "../lib/workflow-gate-job";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
@@ -328,67 +318,19 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
     reconciliation.changedScans,
   );
   for (const readyGate of reconciliation.readyGates) {
-    const gateId = readyGate.id;
-    const gate = await getGateForOrganization(db, organizationId, gateId);
-    if (!gate) continue;
-    const reportUrl = buildReportUrl(c.env, gate.scanId);
-    const blockingVote =
-      readyGate.decision === "rejected"
-        ? await getGateFirstBlockingVote(db, organizationId, gateId)
-        : null;
-    const gateDecisionComment =
-      blockingVote?.decisionReason || buildHumanDecisionComment(readyGate.decision, reportUrl);
-    const gateDecisionActorUserId = blockingVote ? blockingVote.decidedByUserId : session.userId;
-    const decided = await markGateDecidedForPackageAggregate(db, {
-      gateId,
-      organizationId,
-      decision: readyGate.decision,
-      comment: gateDecisionComment,
-      reportUrl,
-    });
-    if (!decided) continue;
-
-    // Schedule delivery immediately after the durable CAS. Audit/analytics
-    // bookkeeping below must not be able to strand a decided GitHub job.
-    const message = { kind: "workflow_gate" as const, organizationId, gateId };
-    c.executionCtx.waitUntil(
-      deliverReconciledWorkflowGate(c.env, workerExecutionContext(c.executionCtx), message, db),
-    );
-    try {
-      const packages = await listGatePackageScans(db, organizationId, gateId);
-      await recordScanEvent(db, {
+    await finalizeReconciledWorkflowGateDecision(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      db,
+      {
         organizationId,
-        actorUserId: gateDecisionActorUserId,
-        scanId: decided.scanId,
-        type:
-          readyGate.decision === "approved"
-            ? "github_workflow_gate.approved"
-            : "github_workflow_gate.rejected",
-        metadata: {
-          gateId,
-          decidedBy: blockingVote ? "human" : "approval_policy",
-          trigger: "approval_policy",
-          packageCount: packages.length,
-          requiredApprovals: requested,
-          ...(blockingVote ? { recoveredByUserId: session.userId } : {}),
-        },
-      });
-      recordProductEvent(c.env, {
-        name: "workflow_gate.decided",
-        organizationId,
-        surface: "human",
+        gateId: readyGate.id,
         decision: readyGate.decision,
-        packageCount: packages.length,
-      });
-    } catch (err) {
-      emitOperationalEvent("warn", "github_workflow_gate.decision_bookkeeping_failed", {
-        organizationId,
-        gateId,
-        decision: readyGate.decision,
+        requiredApprovals: requested,
         trigger: "approval_policy",
-        error: describeOperationalError(err),
-      });
-    }
+        reconciledByUserId: session.userId,
+      },
+    );
   }
   for (const scan of reconciliation.changedScans) {
     if (scan.decision !== "publish" && scan.decision !== "no_publish") continue;
@@ -457,24 +399,6 @@ organizationsRoutes.put("/:id/release-approvals", async (c) => {
   }
   return c.json({ requiredApprovals: requested });
 });
-
-async function deliverReconciledWorkflowGate(
-  env: Cloudflare.Env,
-  executionCtx: ExecutionContext,
-  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
-  db: ReturnType<typeof createDb>,
-): Promise<void> {
-  if (env.SCAN_QUEUE) {
-    try {
-      await env.SCAN_QUEUE.send(message);
-      return;
-    } catch {
-      // The durable gate decision is already stored. Fall through to an inline
-      // redelivery attempt so a transient queue failure cannot strand GitHub.
-    }
-  }
-  await executeWorkflowGateJob(env, executionCtx, message, db);
-}
 
 organizationsRoutes.delete("/:id", async (c) => {
   const db = createDb(c.env.DB);

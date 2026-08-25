@@ -716,6 +716,20 @@ describe("required release approvals policy", () => {
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ requiredApprovals: 2 });
 
+    const unchanged = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 2 } },
+    );
+    expect(unchanged.status).toBe(200);
+    expect(
+      await db
+        .select({ id: schema.scanEvents.id })
+        .from(schema.scanEvents)
+        .where(eq(schema.scanEvents.type, "organization.release_approvals_changed")),
+    ).toHaveLength(1);
+
     // Three approvals in a two-person org is not a stricter policy, it is a
     // release process that can never complete.
     const tooMany = await call(

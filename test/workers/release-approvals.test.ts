@@ -347,6 +347,11 @@ describe("multi-party release approval", () => {
     const scanId = await seedCompletedScan(organizationId, users[0].userId);
 
     await decide({ ...users[0], organizationId }, scanId, "publish", "first look");
+    const firstDecision = await createDb(env.DB)
+      .select({ decidedAt: schema.scans.decidedAt })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId))
+      .then((rows) => rows[0]);
     const revised = await decide(
       { ...users[0], organizationId },
       scanId,
@@ -372,6 +377,21 @@ describe("multi-party release approval", () => {
       decisionReason: "reviewed again",
       decidedByUserId: users[0].userId,
     });
+    const db = createDb(env.DB);
+    const [stored] = await db
+      .select({ decidedAt: schema.scans.decidedAt })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    expect(stored.decidedAt!.getTime()).toBeGreaterThan(firstDecision.decidedAt!.getTime());
+    const decisionEvents = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(and(eq(schema.scanEvents.scanId, scanId), eq(schema.scanEvents.type, "scan.decided")));
+    expect(decisionEvents).toHaveLength(2);
+    expect(decisionEvents.map((event) => event.metadata)).toEqual([
+      expect.objectContaining({ decision: "publish", reason: "first look" }),
+      expect.objectContaining({ decision: "publish", reason: "reviewed again" }),
+    ]);
   });
 
   test("a second member's same-verdict vote does not rewrite the canonical decision actor", async () => {

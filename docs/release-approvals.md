@@ -85,7 +85,9 @@ authorized before the policy change therefore cannot land after reconciliation
 has already evaluated the roster. The gate's final approval CAS also proves that
 each package has no blocking vote and enough current-member approvals for the
 live bar; a stale projection or pre-roster package decision cannot release a
-deployment under a stricter policy.
+deployment under a stricter policy. Re-submitting the already-live threshold is
+recovery work rather than a policy change: it may finish a ready gate, but does
+not advance gate generations or emit a policy-change audit event.
 
 When reconciliation itself moves a scan to a verdict, `decided_at` is the
 policy-change time rather than the older vote time. The route emits the same
@@ -112,8 +114,10 @@ decisions, the former member stays in the historical roster but is excluded
 from the new live tally. If that member later accepts a new invitation, the
 membership write re-tallies retained votes in the same D1 batch: a tally that
 becomes sufficient is projected back to `scans.decision` immediately rather
-than waiting for another reviewer to submit. A recorded block remains final
-after its voter leaves; changing the approval threshold cannot erase it.
+than waiting for another reviewer to submit. If that projection completes every
+package behind a pending workflow gate, invitation acceptance also finalizes and
+schedules delivery of the gate decision. A recorded block remains final after
+its voter leaves; changing the approval threshold cannot erase it.
 
 Member removal and account deletion can reopen a package that was already
 projected as approved while its workflow gate remains pending. Both paths
@@ -137,7 +141,10 @@ historical count while dropping the identity. This is the same treatment
   route accepts only manual/auto-discovered staged scans; workflow-gate package
   votes cannot bypass the gate route's per-vote step-up. The UI offers the npm
   publish/cancel follow-up only after the returned verdict has actually met the
-  bar, never after a partial approval.
+  bar, never after a partial approval. Under the default one-approval policy, a
+  same-verdict resubmission advances the canonical decision revision so a
+  replacement reason is recorded in the audit trail rather than silently
+  diverging from it.
 - **Workflow gate** (`POST /api/v1/github-app/workflow-gates/:gateId/decision`)
   — approving helps release a held deployment, so a vote is not freely
   revisable: the only permitted change is approve → block, the fail-closed
