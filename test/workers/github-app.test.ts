@@ -29,6 +29,7 @@ import {
   markGateDecidedForPackageAggregate,
   resetGateReviewForRetry,
 } from "../../server/lib/github-app/webhook-gates";
+import { finalizeReconciledWorkflowGateDecision } from "../../server/lib/workflow-gate-job";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { organizationsRoutes } from "../../server/routes/organizations";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -1024,6 +1025,105 @@ describe("github-app workflow-gate decision route", () => {
       decision: null,
     });
     expect(decisionCalls).toHaveLength(0);
+
+    const [reopened] = await db
+      .select({ decision: schema.scans.decision })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    expect(reopened?.decision).toBeNull();
+
+    const first = await callGithubAppRoute(
+      buildTestApp(userId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ gate: { status: "pending" } });
+
+    const secondApproval = await callGithubAppRoute(
+      buildTestApp(second.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(secondApproval.status).toBe(200);
+    expect(await secondApproval.json()).toMatchObject({ gate: { status: "approved" } });
+    expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
+  });
+
+  test("reconciled gate audit uses the approval bar captured by the final CAS", async () => {
+    const { userId, organizationId } = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, { organizationId, userId: second.userId, role: "member" });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+    });
+    const now = new Date();
+    await db.batch([
+      db.insert(schema.scanApprovals).values({
+        id: crypto.randomUUID(),
+        scanId: scanId!,
+        organizationId,
+        userId,
+        decision: "publish",
+        reason: "owner approval",
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db.insert(schema.scanApprovals).values({
+        id: crypto.randomUUID(),
+        scanId: scanId!,
+        organizationId,
+        userId: second.userId,
+        decision: "publish",
+        reason: "second approval",
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db
+        .update(schema.scans)
+        .set({
+          decision: "publish",
+          decidedByUserId: second.userId,
+          decidedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(schema.scans.id, scanId!)),
+    ]);
+
+    const ctx = createExecutionContext();
+    const decided = await finalizeReconciledWorkflowGateDecision(env, ctx, db, {
+      organizationId,
+      gateId,
+      decision: "approved",
+      // Simulate a caller whose earlier policy read was superseded before the
+      // aggregate CAS. The persisted organization and gate snapshot both say 2.
+      requiredApprovals: 1,
+      trigger: "approval_policy",
+      reconciledByUserId: userId,
+    });
+    await waitOnExecutionContext(ctx);
+
+    expect(decided?.requiredReleaseApprovals).toBe(2);
+    const [event] = await db
+      .select({ metadata: schema.scanEvents.metadataJson })
+      .from(schema.scanEvents)
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, scanId!),
+          eq(schema.scanEvents.type, "github_workflow_gate.approved"),
+        ),
+      );
+    expect(event?.metadata).toMatchObject({ requiredApprovals: 2 });
   });
 
   test("does not approve a published projection with a durable blocking vote", async () => {

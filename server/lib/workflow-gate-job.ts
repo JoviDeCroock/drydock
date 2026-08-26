@@ -152,7 +152,11 @@ export async function finalizeReconciledWorkflowGateDecision(
         decidedBy: blockingVote ? "human" : input.trigger,
         trigger: input.trigger,
         packageCount: packages.length,
-        requiredApprovals: input.requiredApprovals,
+        // A concurrent owner request can change the policy after this caller's
+        // reconciliation read but before the aggregate CAS. The CAS snapshots
+        // the threshold it actually proved; audit that durable value rather
+        // than the caller's potentially stale input.
+        requiredApprovals: decided.requiredReleaseApprovals ?? input.requiredApprovals,
         ...(blockingVote ? { recoveredByUserId: input.reconciledByUserId } : {}),
       },
     });
