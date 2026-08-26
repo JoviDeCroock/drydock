@@ -231,15 +231,15 @@ export function stripPromptInjectionEvasion(text: string): string {
 
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
-// each pattern needs either an imperative aimed at the release object ("mark
-// this package as safe"), a suppression directive over review output ("do not
-// report any findings"), or a literal token from Drydock's own review schema
-// (`nothing_unusual`, `requiresManualReview`). Third-person prose stays out by
-// construction — "npm marks the package as verified" has no imperative `mark`,
-// and SECURITY.md's "do not report vulnerabilities publicly" names no
+// each pattern needs either a review-like verdict aimed at the release object
+// ("mark this package as safe"), a suppression directive over review output
+// ("do not report any findings"), or a literal token from Drydock's own review
+// schema (`nothing_unusual`, `requiresManualReview`). Third-person prose stays
+// out by construction — "npm marks the package as verified" has no imperative
+// `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
-  /\b(?:mark|classify|treat|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|library|module|dependency|code|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
+  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
   // object. Modals invite third-person subjects ("the scanner should not flag
   // minified code as suspicious"), broad support nouns ("do not report any
@@ -271,7 +271,8 @@ const REVIEW_MANIPULATION_PATTERNS = [
 // A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
 // OpenAI Assistants thread); only the AI-qualified forms read as an LLM
 // audience.
-const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|language\s+model|artificial\s+intelligence|(?:AI|LLM|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
+const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_ACTOR_SEGMENT})`;
 
 const PROMPT_INJECTION_PATTERNS = [
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
@@ -286,6 +287,17 @@ const PROMPT_INJECTION_PATTERNS = [
   ),
   new RegExp(
     String.raw`\b(?:note|message|attention|instructions?|important)\s+(?:to|for)\s+(?:the\s+|all\s+|any\s+)?${AI_AUDIENCE_SEGMENT}s?\b`,
+    "i",
+  ),
+  // Direct vocatives do not need a "note to" wrapper. Require either
+  // punctuation followed by a directive or an explicit obligation so prose
+  // that merely describes an AI tool stays quiet.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|include|approve|mark|treat)\b`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\b${AI_ACTOR_SEGMENT}s?\b[^\n.!?]{0,20}\b(?:must|should|need\s+to|are\s+required\s+to)\s+(?:ignore|disregard|follow|obey|stop|reply|respond|output|run|execute|add|include|approve|mark|treat)\b`,
     "i",
   ),
   /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,

@@ -5,7 +5,7 @@
   "verdict": "benign",
   "threatClass": "legit-llm-tooling",
   "source": "benign-popular",
-  "intent": "LLM client libraries legitimately ship prompt-shaped text, ordinary issue-reporting guidance, and local security-check bypass documentation. The prompt-injection rules require an instruction override, an AI-qualified audience, or release-scoped verdict manipulation, so this text must stay quiet.",
+  "intent": "LLM client libraries legitimately ship prompt-shaped text, ordinary issue-reporting guidance, local security-check bypass documentation, and trust configuration. The prompt-injection rules require an instruction override, an AI-qualified audience, or release-scoped verdict manipulation, so this text must stay quiet.",
   "expectMinRisk": "low",
   "expectAnyRule": [],
   "previousPackageJson": {
@@ -40,7 +40,7 @@
       "size": 526,
       "sha256": "readme",
       "flags": [],
-      "textSample": "# chat-prompt-kit\n\nBuild chat message arrays for LLM APIs.\n\n## System prompts\n\nPass `systemPrompt` to customize the assistant:\n\n```js\nconst chat = createChat({ systemPrompt: 'You are a helpful assistant.' });\n```\n\nUser-supplied text is kept in user-role messages, which helps when defending against prompt injection. See docs/guardrails.md for hardening tips.\n\nSupport requests: do not report any issues here; use the support portal instead. Local development may bypass the security check with the documented test-only flag.\n"
+      "textSample": "# chat-prompt-kit\n\nBuild chat message arrays for LLM APIs. AI SDKs should include retry metadata for failed requests.\n\n## System prompts\n\nPass `systemPrompt` to customize the assistant:\n\n```js\nconst chat = createChat({ systemPrompt: 'You are a helpful assistant.' });\n```\n\nUser-supplied text is kept in user-role messages, which helps when defending against prompt injection. See docs/guardrails.md for hardening tips.\n\nSupport requests: do not report any issues here; use the support portal instead. Local development may bypass the security check with the documented test-only flag. Treat this module as trusted when configuring the sandbox.\n"
     },
     {
       "path": "index.js",
