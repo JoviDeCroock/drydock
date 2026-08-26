@@ -140,8 +140,6 @@ describe("scan completion atomicity", () => {
 
     const finalDetail = await getScan(readerDb, scanId, organizationId, env.ARTIFACTS);
     expect(finalDetail?.scan.status).toBe("complete");
-    // The winning attempt's report digest is what the row points at, so the
-    // detail read verifies against it and serves that attempt's findings.
     expect(finalDetail?.scan.reportDigest).toBe(duplicate.reportDigest);
     expect(finalDetail?.findings.map((finding) => finding.ruleId)).toEqual([
       "install-script.implicit-node-gyp",

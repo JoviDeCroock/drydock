@@ -1,12 +1,3 @@
-/**
- * Reading one scan back out.
- *
- * D1 holds the scan's metadata row and its events; the body — file metadata,
- * redacted samples, diff, and findings — is read from the digest-verified R2
- * artifact set. There is no D1 copy to fall back to, so a scan whose artifacts
- * cannot be read degrades to metadata only (empty files/findings) rather than
- * failing: the risk summary and the summary-embedded diff still render.
- */
 import { and, asc, eq } from "drizzle-orm";
 import { annotateFindingsWithDiffStatus } from "../lib/review";
 import {
@@ -19,22 +10,6 @@ import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scans } from "./schema";
 
-/**
- * How much of the scan body a `getScan` caller needs:
- * - `samples` (default) — every artifact; file rows carry their redacted text
- *   samples. The workbench detail view.
- * - `list` — file metadata and findings from report.json alone, samples
- *   stripped. One R2 read; the cheapest mode.
- * - `omit` — full report/diff fidelity (so `findings` and their `diffStatus`
- *   are byte-identical to `samples`) while skipping the file-samples artifact
- *   entirely. For callers that serialize the report and never read `files`.
- *
- * Omitting `artifactBucket` skips the R2 read entirely: `files` and `findings`
- * come back empty and only the scan row, its events, and the summary-derived
- * risk breakdown are populated. That is deliberate for callers that need
- * identity/status alone (existence checks, notifications, gate decisions) — but
- * it means a caller that reads `findings` must pass the bucket.
- */
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
 export async function getScan(
@@ -59,8 +34,6 @@ export async function getScan(
   const scan = scanRows[0];
   if (!scan) return null;
   const fileMode = options.files ?? "samples";
-  // `list` needs only the file metadata the report already carries, so it reads
-  // report.json alone; the other modes read the full artifact set.
   const artifactDetail =
     fileMode === "list"
       ? await loadScanArtifactMetadata(artifactBucket, scan)
@@ -172,9 +145,6 @@ export async function getScanCompareData(
     .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
     .limit(1);
   if (!scan) return null;
-  // Metadata only: the compare view rebuilds both sides' bodies from the
-  // registry archives it fetches, and only needs this scan's file list and
-  // findings to annotate them.
   const artifactDetail = await loadScanArtifactMetadata(artifactBucket, scan);
   return {
     scan,

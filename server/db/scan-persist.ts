@@ -1,15 +1,3 @@
-/**
- * Writing a completed scan back to D1.
- *
- * persistScan is the only writer of scan results. It runs against a claim
- * token so a retried or duplicated queue delivery cannot overwrite a scan that
- * another attempt already completed: the row update is guarded by the claim
- * still being held.
- *
- * D1 stores the scan's metadata row only. The body — file metadata, redacted
- * samples, diff, and findings — lives in the R2 artifact set the caller wrote
- * before calling here, which is why `artifacts` is required.
- */
 import { and, eq, inArray } from "drizzle-orm";
 import {
   annotateFindingsWithDiffStatus,
@@ -55,19 +43,11 @@ export interface PersistedScanInput {
   codePatternSet?: CodePatternSet;
   riskSummary?: ScanRiskBreakdown;
   report?: { version: number; digest: string };
-  /**
-   * The R2 artifact set holding this scan's body. Required: the detail is read
-   * back from R2 and is not duplicated into D1, so a scan cannot be persisted
-   * without it.
-   */
   artifacts: ScanArtifactMetadata;
 }
 
 export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const now = new Date();
-  // Rule rows first, AI rows after them — the same order the report artifact's
-  // findings are written in, so `findingCount` and the risk summary count the
-  // same set the detail read serves back from R2.
   const findingRows = [
     ...input.findings.map((finding) => ({ finding, source: "rule" })),
     ...(input.aiFindingRecords ?? []).map((finding) => ({ finding, source: "ai" })),
@@ -178,10 +158,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
         .onConflictDoNothing({ target: scans.id })
         .returning({ id: scans.id });
 
-  // D1 rejects SQL BEGIN/SAVEPOINT in Workers, so use a batch: D1 applies the
-  // statements atomically. The first statement claims the row by writing a
-  // temporary reportDigest token; the second clears it. A concurrent attempt
-  // that lost the claim matches nothing and writes nothing.
+  // D1 rejects transactions in Workers; the batch atomically claims and finalizes the row.
   const batch = [
     claimScan,
     db

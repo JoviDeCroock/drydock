@@ -421,7 +421,6 @@ describe("scan artifact writes and reads", () => {
     const app = buildTestApp(owner);
     const { db, scanId } = await seedArtifactBackedScan(owner);
 
-    // Without the bucket there is nothing to read: the body lives only in R2.
     const withoutBucket = await getScan(db, scanId, owner.organizationId);
     expect(withoutBucket?.files).toHaveLength(0);
     expect(withoutBucket?.findings).toHaveLength(0);

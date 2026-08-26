@@ -1,10 +1,3 @@
-/**
- * The overview rail beside a scrolling diff.
- *
- * A minimap of where the changes and findings sit in the whole file, plus a
- * thumb tracking the viewport. Driven off the scroll-state signal so dragging
- * through a long diff never rerenders the diff table itself.
- */
 import { useComputed, type Signal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { type DiffOverviewMarker } from "./diff-overview";
@@ -18,9 +11,6 @@ export function DiffOverview({
   markers: DiffOverviewMarker[];
   scrollState: Signal<DiffScrollState | null>;
 }) {
-  // A pane short enough to show everything has nothing to navigate to, and the
-  // rail next to it reads as decoration rather than signal. Gated through Show
-  // so scroll frames flip one boundary instead of rerendering every marker.
   const overflowing = useComputed(() => {
     const state = scrollState.value;
     return state !== null && state.content > state.viewport + 1;
@@ -54,10 +44,6 @@ export function DiffOverview({
   );
 }
 
-// The viewport's position over the strip, in the same neutral ink used for
-// structure (never a severity hue — color = signal). Reads the scroll signal
-// in its own component so scrolling rerenders only this span, never the diff
-// table.
 function DiffOverviewThumb({ scrollState }: { scrollState: Signal<DiffScrollState | null> }) {
   const state = scrollState.value;
   if (!state || state.content <= state.viewport) return null;

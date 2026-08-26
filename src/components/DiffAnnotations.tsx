@@ -1,10 +1,3 @@
-/**
- * Deterministic findings rendered inside the diff.
- *
- * Findings pinned to a staged line render as annotation rows directly under
- * that line; findings whose line is missing from a truncated sample fall back
- * to a banner above the diff, so a clipped sample can never hide a signal.
- */
 import { Badge, severityTone } from "./Badge";
 import {
   annotationLabel,
@@ -15,11 +8,6 @@ import {
 import { Muted } from "./Typography";
 import { cn } from "./cn";
 
-// Severity-tinted fills and left bars for a pinned finding. The fill uses the
-// soft severity token at reduced opacity so it reads as a callout over the
-// green/red row backgrounds; the bar uses the saturated token (shapes, per
-// docs/design.md "color = signal"). Both are static class strings so Tailwind keeps
-// them.
 const ANNOTATION_FILL: Record<SeverityGroup, string> = {
   danger: "bg-danger-soft/60",
   warn: "bg-warn-soft/60",
@@ -34,18 +22,12 @@ const ANNOTATION_BAR: Record<SeverityGroup, string> = {
   ok: "border-ok",
 };
 
-// The body of a pinned finding: severity Badge + mono `ruleId · line N` caption,
-// the reason, and (when present) the triggering evidence in mono. Mirrors the
-// landing page's review-preview annotation so what we advertise matches the app.
 function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
   const group = severityGroup(finding.severity);
   const label = annotationLabel(finding);
   return (
     <div
       class={cn(
-        // font-sans: the callout sits inside the mono diff table, but the reason
-        // is body copy and must not inherit Geist Mono (label/evidence set their
-        // own mono explicitly).
         "border-l-2 px-3 py-2.5 flex flex-col gap-1.5 font-sans",
         ANNOTATION_FILL[group],
         ANNOTATION_BAR[group],
@@ -69,7 +51,6 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
   );
 }
 
-// Findings pinned beneath their diff line, rendered as full-width table rows.
 export function AnnotationRows({
   findings,
   colSpan,
@@ -92,8 +73,6 @@ export function AnnotationRows({
   );
 }
 
-// Findings that can't be pinned (no line, or a line past a truncated sample),
-// shown between the header strip and the scroll region so they're never hidden.
 export function AnnotationBanner({ findings }: { findings: DiffFinding[] }) {
   return (
     <div class="flex flex-col divide-y divide-border border-b border-border">
@@ -104,9 +83,6 @@ export function AnnotationBanner({ findings }: { findings: DiffFinding[] }) {
   );
 }
 
-// A non-table fallback (binary / no-sample) that still surfaces any findings as
-// standalone callouts above the explanatory line, so a missing diff body never
-// drops a deterministic signal.
 export function DiffMessage({ children, findings }: { children: string; findings: DiffFinding[] }) {
   if (!findings.length) return <Muted class="text-[13px]">{children}</Muted>;
   return (

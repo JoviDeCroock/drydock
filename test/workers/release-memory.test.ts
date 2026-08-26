@@ -321,10 +321,6 @@ describe("release memory (prior-release consistency)", () => {
       decision: "publish",
     });
 
-    // Prior is artifact-backed (its findings live only in R2, never in D1). With
-    // no artifact bucket the report can't be read, so the profile is unknown —
-    // the helper must return null (caller degrades to "none") rather than
-    // fabricating an empty prior profile that marks every current finding "new".
     const withoutBucket = await getPriorApprovedScanFindings(db, {
       organizationId: owner.organizationId,
       packageName: "tape",
@@ -332,7 +328,6 @@ describe("release memory (prior-release consistency)", () => {
     });
     expect(withoutBucket).toBeNull();
 
-    // With the bucket, the same prior resolves normally.
     const withBucket = await getPriorApprovedScanFindings(
       db,
       {

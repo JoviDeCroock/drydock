@@ -20,17 +20,7 @@ export interface Finding {
   line?: number;
   ruleId?: string;
   ruleVersion?: string;
-  // True when a code.* capability matched only after constant-folding (the
-  // identifier was assembled, e.g. `['chi','ld_pro','cess'].join('')`) or its
-  // file uses a recognized packed string-table wrapper. Obfuscating a capability
-  // is itself a malice signal, so the risk roll-up does not de-escalate a lone
-  // obfuscated capability the way it does a plain one.
   obfuscated?: boolean;
-  // True when a code.* capability matched inside a test-suite file that no
-  // consumer-facing entrypoint can statically reach. The finding is emitted at
-  // demoted severity and the risk roll-up keeps it out of the capability
-  // co-occurrence escalation: a test runner's own tests legitimately spawn
-  // processes and read the environment.
   testScoped?: boolean;
 }
 
@@ -48,12 +38,6 @@ export interface FindingAnnotationOptions {
   stagedFiles?: Array<Pick<FileRecord, "path" | "textSample" | "flags">>;
   persistedAnnotations?: Map<string, FindingDiffAnnotation>;
   codePatternSet?: CodePatternSet;
-  /**
-   * A published baseline existed but was not downloaded, so the diff reports
-   * every staged file as added. Nothing can honestly be called a release delta
-   * from that, so every finding is annotated `unknown` package context and the
-   * report surfaces why instead of grading a comparison that never happened.
-   */
   baselineComparisonSkipped?: boolean;
 }
 
@@ -73,10 +57,6 @@ export { redactFileRecords, redactFindings, redactJson, redactText } from "./red
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
-// The code.* capability rules (process/network/eval/credential). These are the
-// signals that over- and under-detect under a pure max-severity roll-up: a lone
-// capability is weak evidence, but several together are the collect-and-exfiltrate
-// shape. computeRisk scores them by co-occurrence instead of by max severity.
 const CODE_CAPABILITY_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.codeProcessExecution,
   DETERMINISTIC_RULE_IDS.codeRemoteShell,
@@ -84,16 +64,6 @@ const CODE_CAPABILITY_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
   DETERMINISTIC_RULE_IDS.codeCredentialAccess,
 ]);
-// Process execution is the weak-on-its-own capability: legitimate build and CLI
-// tooling routinely shells out (the `legit-build-childprocess` benign hard
-// negative), so alone it is not evidence of risk. It escalates only when it
-// co-occurs with another capability.
-//
-// `code.remote-shell` is deliberately NOT weak. It used to live inside
-// process-execution, which meant a release adding
-// `execSync('curl … | bash')` scored as one weak capability and rolled up to
-// `low` — the whole shell-mediated dropper class read as benign build tooling.
-// Spawning `cc` and spawning `curl … | bash` are not the same evidence.
 const WEAK_LONE_CAPABILITY: string = DETERMINISTIC_RULE_IDS.codeProcessExecution;
 
 function severityToRisk(severity: string | null | undefined): RiskLevel {
@@ -103,9 +73,6 @@ function severityToRisk(severity: string | null | undefined): RiskLevel {
   return "low";
 }
 
-// `dialect` only changes the human-facing reason text: what counts as a normal
-// archive shape differs per ecosystem (npm pack emits only regular file
-// records; Python build backends also emit directory records).
 export function tarSuspiciousEntryFindings(
   entries: TarSuspiciousEntry[] | undefined | null,
   options: {
@@ -136,11 +103,6 @@ function tarSuspiciousSeverity(
   if (entry.kind === "non-regular") {
     return entry.detail.includes("(directory)") ? "info" : "high";
   }
-  // Coverage disclosure, not suspicion: every large-but-honest archive (numpy
-  // vendors its whole build system) crosses the retention tiers, and a medium
-  // here would brand each of its releases as elevated risk. The per-file
-  // "changed but not inspected" diff status is the control that keeps a
-  // payload buried past the tier visible.
   if (entry.kind === "retention-tier") {
     return hasChangedSkippedContent ? "medium" : "info";
   }
@@ -169,21 +131,6 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi")
   }
 }
 
-// Weighted multi-signal risk roll-up (issue #193). Risk is the max of two
-// independent signals so that finding emission stays authoritative while the
-// roll-up reflects capability co-occurrence rather than a single max severity:
-//
-//   - anchorRisk: the severity of authoritative findings (install hooks, secrets,
-//     native artifacts, files-list escapes, metadata/dependency rules, …). These
-//     are risky on their own, so their severity still sets a floor exactly as the
-//     old max-severity roll-up did.
-//   - codeRisk: a co-occurrence score over the code.* capability rules. A lone
-//     capability is weak evidence — a single `child_process` in a build script is
-//     the benign hard negative that used to land high — but two or more distinct
-//     capabilities in one release escalate to high (collect-and-exfiltrate).
-//
-// This only changes how findings roll up into a level; the findings themselves
-// are unchanged, so the deterministic-findings-are-authoritative boundary holds.
 export function computeRisk(
   findings: Array<{
     severity?: string | null;
@@ -193,14 +140,7 @@ export function computeRisk(
   }>,
 ): RiskLevel {
   let anchorRisk: RiskLevel = "low";
-  // Per-capability roll-up: max severity plus whether any matching finding was
-  // obfuscated. A lone non-process capability keeps its own severity (e.g.
-  // eval/atob on an added file stays high — obfuscation survives base64 wrapping
-  // — while a modified-file network read stays medium).
   const capabilities = new Map<string, { risk: RiskLevel; obfuscated: boolean }>();
-  // Test-scoped capabilities score separately: tests legitimately combine
-  // process/env/eval, so their co-occurrence is not the collect-and-exfiltrate
-  // shape. Each still contributes its (already demoted) lone-capability risk.
   const testCapabilities = new Map<string, RiskLevel>();
   for (const finding of findings) {
     const ruleId = finding.ruleId ?? undefined;
@@ -214,9 +154,6 @@ export function computeRisk(
         obfuscated: Boolean(prior?.obfuscated || finding.obfuscated),
       });
     } else {
-      // Unknown/absent ruleId falls here too: without a capability label we
-      // cannot safely de-escalate, so it anchors at its severity (fail toward
-      // higher risk).
       anchorRisk = combineRisk(anchorRisk, risk);
     }
   }
@@ -239,20 +176,12 @@ function codeCapabilityRisk(
   capabilities: Map<string, { risk: RiskLevel; obfuscated: boolean }>,
 ): RiskLevel {
   if (capabilities.size === 0) return "low";
-  // Two or more distinct capabilities co-occurring in one release is the
-  // collect-and-exfiltrate shape: escalate even if each is individually weak.
-  // Co-occurrence is a floor, not a ceiling — a returned flat "high" would let a
-  // critical capability be *de*-escalated by the presence of a second one, which
-  // is the opposite of what co-occurrence means.
   if (capabilities.size >= 2) {
     let highest: RiskLevel = "high";
     for (const [, { risk }] of capabilities) highest = combineRisk(highest, risk);
     return highest;
   }
   const [[ruleId, { risk, obfuscated }]] = capabilities;
-  // A lone plain process-execution is benign build/CLI tooling — de-escalate. But
-  // an *obfuscated* lone capability is not isolated evidence: hiding the
-  // identifier is a second, co-occurring malice signal, so keep its severity.
   if (obfuscated) return risk;
   return ruleId === WEAK_LONE_CAPABILITY ? "low" : risk;
 }

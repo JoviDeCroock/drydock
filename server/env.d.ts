@@ -6,9 +6,6 @@ declare global {
       AI_CACHE_AFFINITY?: string;
       LOADER: WorkerLoader;
       DB: D1Database;
-      // Required. Completed scan bodies (report/files/diff) live only in R2;
-      // D1 keeps metadata. A deployment without this binding cannot persist a
-      // completed scan — see docs/artifact-storage.md.
       ARTIFACTS: R2Bucket;
       SCAN_ARTIFACT_READS_DISABLED?: string;
       COMPARE_CACHE?: KVNamespace;
