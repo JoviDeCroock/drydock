@@ -4,6 +4,7 @@
 export const DISCOVERY_GUIDE_PATHS = [
   "/npm-staged-publishing",
   "/github-actions-package-gate",
+  "/npm-trusted-publishing",
   "/pypi-release-security",
   "/vscode-extension-security",
   "/package-tarball-diff",

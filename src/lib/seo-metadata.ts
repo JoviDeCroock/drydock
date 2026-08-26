@@ -36,6 +36,12 @@ export const discoveryGuideSeoByPath = {
       "Hold npm, PyPI, or VS Code publication in a GitHub Environment until the exact built artifacts pass human review.",
     path: "/github-actions-package-gate",
   },
+  "/npm-trusted-publishing": {
+    title: "Lock npm publishing to a reviewed workflow | Drydock",
+    description:
+      "Pin npm trusted publishing to a gated GitHub Environment and disallow tokens, so publish credentials only exist after a human review.",
+    path: "/npm-trusted-publishing",
+  },
   "/pypi-release-security": {
     title: "PyPI release security for wheels and sdists | Drydock",
     description:
