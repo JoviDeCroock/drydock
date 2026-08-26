@@ -148,8 +148,6 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
     riskSummary: riskSummary(),
     files: [
       {
-        id: "file-smoke-1",
-        scanId,
         path: "src/gate_demo/__init__.py",
         status: "added",
         size: 102,

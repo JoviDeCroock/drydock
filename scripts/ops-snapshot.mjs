@@ -50,9 +50,18 @@ export const SNAPSHOT_QUERIES = [
     sql: "SELECT status, COUNT(*) AS scans FROM scans GROUP BY status ORDER BY scans DESC",
   },
   {
-    name: "finding_counts_by_rule",
-    columns: ["ruleId", "source", "findings"],
-    sql: "SELECT COALESCE(rule_id, '(none)') AS ruleId, source, COUNT(*) AS findings FROM scan_findings GROUP BY rule_id, source ORDER BY findings DESC",
+    // Per-rule counts are no longer answerable from D1: findings live only in
+    // each scan's R2 report.json. This is the coarsest D1-side stand-in — how
+    // many findings a scan carried, bucketed — and is enough to watch the
+    // finding-volume trend. Per-rule breakdowns need an R2-side aggregation.
+    name: "scans_by_finding_count",
+    columns: ["findingCount", "scans"],
+    sql: "SELECT COALESCE(finding_count, -1) AS findingCount, COUNT(*) AS scans FROM scans WHERE status = 'complete' GROUP BY finding_count ORDER BY findingCount DESC",
+  },
+  {
+    name: "scans_by_release_risk",
+    columns: ["releaseRisk", "scans"],
+    sql: "SELECT COALESCE(json_extract(risk_summary_json, '$.releaseRisk'), '(none)') AS releaseRisk, COUNT(*) AS scans FROM scans WHERE status = 'complete' GROUP BY releaseRisk ORDER BY scans DESC",
   },
   {
     name: "gate_decisions_by_outcome",

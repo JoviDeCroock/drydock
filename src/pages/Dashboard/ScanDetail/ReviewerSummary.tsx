@@ -11,9 +11,9 @@ import { SectionLabel } from "../../../components/Typography";
 // with. Reading order now goes: should I publish (recommendation) → what is
 // this (here) → have I seen these findings before (consistency) → the diff.
 //
-// Findings are deliberately not rendered here. They persist as scan_findings
-// rows and appear once, as assistant-badged cards in Risk signals, so a finding
-// is never shown twice on the page.
+// Findings are deliberately not rendered here. They come from the scan's report
+// artifact and appear once, as assistant-badged cards in Risk signals, so a
+// finding is never shown twice on the page.
 /**
  * A null model means the reviewer is switched off for this organization — there
  * is nothing to report. A non-null model with a non-complete result means it was

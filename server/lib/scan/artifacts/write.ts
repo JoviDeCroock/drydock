@@ -50,21 +50,33 @@ function clipDisplaySample(
   return { textSample: textSample.slice(0, SCAN_FILE_SAMPLE_LIMIT), flags: clippedFlags };
 }
 
-export async function maybeWriteScanArtifacts(
+/**
+ * Write the scan body to R2, retrying transient failures, and fail closed when
+ * it cannot be written.
+ *
+ * There is no D1 fallback: a completed scan's files, diff, and findings live
+ * only in R2, so a scan that cannot write its artifacts must not persist as
+ * complete. A missing `ARTIFACTS` binding is a deployment error, not a degraded
+ * mode — the bucket stays `| undefined` in the signature only because the
+ * pipeline's `env` is optional, and this is where that is turned into a throw.
+ */
+export async function writeScanArtifactsWithRetry(
   bucket: R2Bucket | undefined,
   input: WriteScanArtifactsInput,
-): Promise<ScanArtifactMetadata | null> {
+): Promise<ScanArtifactMetadata> {
   if (!bucket) {
-    emitOperationalEvent("warn", "scan.artifacts.binding_missing", {
+    emitOperationalEvent("error", "scan.artifacts.binding_missing", {
       scanId: input.scanId,
       organizationId: input.organizationId,
     });
-    return null;
+    throw new Error("ARTIFACTS binding is required to persist a completed scan");
   }
+  let lastError: unknown;
   for (let attempt = 1; attempt <= SCAN_ARTIFACT_WRITE_ATTEMPTS; attempt += 1) {
     try {
       return await writeScanArtifacts(bucket, input);
     } catch (err) {
+      lastError = err;
       const finalAttempt = attempt === SCAN_ARTIFACT_WRITE_ATTEMPTS;
       emitOperationalEvent(finalAttempt ? "error" : "warn", "scan.artifacts.write_failed", {
         scanId: input.scanId,
@@ -76,7 +88,7 @@ export async function maybeWriteScanArtifacts(
       if (finalAttempt) throw err;
     }
   }
-  return null;
+  throw lastError instanceof Error ? lastError : new Error("scan artifact write failed");
 }
 
 export async function writeScanArtifacts(

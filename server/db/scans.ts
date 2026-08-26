@@ -29,7 +29,7 @@ export {
   type ScanSource,
 } from "./scan-jobs";
 
-export { persistScan } from "./scan-persist";
+export { persistScan, type PersistedScanInput } from "./scan-persist";
 
 export {
   backfillScanRegistryReleaseIdentity,

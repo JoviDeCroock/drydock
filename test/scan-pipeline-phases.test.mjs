@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { createMemoryArtifactBucket } from "./helpers/artifact-bucket.mjs";
 
 const dbMock = vi.hoisted(() => ({
   persistScan: vi.fn(async () => ({ persisted: true })),
@@ -647,6 +648,7 @@ describe("persistResults", () => {
     const identity = { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" };
 
     const { result, persisted } = await persistResults({
+      env: { ARTIFACTS: createMemoryArtifactBucket() },
       db: {},
       session: { userId: "user-1" },
       adapter,
@@ -706,6 +708,7 @@ describe("persistResults", () => {
     );
 
     await persistResults({
+      env: { ARTIFACTS: createMemoryArtifactBucket() },
       db: {},
       session: { userId: "user-1" },
       adapter,
@@ -734,6 +737,7 @@ describe("persistResults", () => {
     const riskSummary = scoreRisk(findings.annotatedFindings, disabledAi);
 
     const { persisted } = await persistResults({
+      env: { ARTIFACTS: createMemoryArtifactBucket() },
       db: {},
       session: { userId: "user-1" },
       adapter,

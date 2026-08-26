@@ -4,10 +4,11 @@ import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface SeededUser {
   userId: string;
@@ -48,7 +49,7 @@ async function seedCompletedScanWithStage(
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
   });
-  await persistScan(db, {
+  await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
@@ -114,7 +115,7 @@ describe("scans routes enforce organization boundaries", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -170,7 +171,7 @@ describe("scans routes enforce organization boundaries", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -265,7 +266,7 @@ describe("scans routes enforce organization boundaries", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -595,7 +596,7 @@ describe("scans routes enforce organization boundaries", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId: `stage-${scanId.slice(-12)}`,
       organizationId: owner.organizationId,

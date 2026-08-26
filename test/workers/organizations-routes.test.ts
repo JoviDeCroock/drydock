@@ -606,21 +606,6 @@ describe("organization deletion", () => {
       createdAt: now,
       updatedAt: now,
     });
-    await db.insert(schema.scanFiles).values({
-      id: `file_${crypto.randomUUID()}`,
-      scanId,
-      path: "index.js",
-      status: "added",
-      flagsJson: [],
-    });
-    await db.insert(schema.scanFindings).values({
-      id: `finding_${crypto.randomUUID()}`,
-      scanId,
-      severity: "high",
-      file: "index.js",
-      evidence: "evil()",
-      reason: "suspicious",
-    });
     await db.insert(schema.scanEvents).values({
       id: `event_${crypto.randomUUID()}`,
       organizationId: orgId,
@@ -642,12 +627,6 @@ describe("organization deletion", () => {
     expect(await listNotificationRecipients(db, orgId)).toHaveLength(0);
     expect(
       await db.select().from(schema.scans).where(eq(schema.scans.organizationId, orgId)),
-    ).toHaveLength(0);
-    expect(
-      await db.select().from(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId)),
-    ).toHaveLength(0);
-    expect(
-      await db.select().from(schema.scanFindings).where(eq(schema.scanFindings.scanId, scanId)),
     ).toHaveLength(0);
     expect(
       await db.select().from(schema.scanEvents).where(eq(schema.scanEvents.organizationId, orgId)),

@@ -8,11 +8,12 @@ import {
   ensurePersonalOrganization,
   setRequireTwoFactorForReleaseDecisions,
 } from "../../server/db/organizations";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 // 2FA gate-decision step-up is the trust boundary in issue #162: a maintainer
 // who enrolled in two-factor auth must prove a *fresh* second factor before a
@@ -207,7 +208,7 @@ async function seedDecidableGate(
     gateId,
   });
   if (completeScan) {
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId: `workflow-gate:${gateId}`,
       organizationId,

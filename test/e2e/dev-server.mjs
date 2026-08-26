@@ -137,6 +137,14 @@ async function writeWranglerConfig() {
         migrations_dir: configRelativePath("drizzle"),
       },
     ],
+    // Required: a completed scan's body is written to R2 and read back from
+    // there, so the Worker fails the scan closed without this binding.
+    r2_buckets: [
+      {
+        binding: "ARTIFACTS",
+        bucket_name: "staged-publish-review-e2e-artifacts",
+      },
+    ],
     kv_namespaces: [
       {
         binding: "COMPARE_CACHE",

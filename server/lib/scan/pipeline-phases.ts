@@ -45,7 +45,7 @@ import {
 } from "../review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
 import {
-  maybeWriteScanArtifacts,
+  writeScanArtifactsWithRetry,
   projectAiReviewFindings,
   scanArtifactReadBucket,
 } from "./artifacts";
@@ -477,7 +477,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
   const reportJson = stableJson(reportPayload);
   const reportDigest = await sha256Hex(reportJson);
   const generatedAt = new Date().toISOString();
-  const artifacts = await maybeWriteScanArtifacts(args.env?.ARTIFACTS, {
+  const artifacts = await writeScanArtifactsWithRetry(args.env?.ARTIFACTS, {
     organizationId: identity.organizationId,
     scanId: identity.scanId,
     reportJson,

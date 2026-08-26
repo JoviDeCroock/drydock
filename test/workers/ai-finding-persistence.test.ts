@@ -4,13 +4,11 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, getScan, persistScan, recordScanDecision } from "../../server/db/scans";
+import { createScanJob, getScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { buildReportExport } from "../../server/lib/scan/report-export";
-import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
-import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface SeededUser {
   userId: string;
@@ -78,75 +76,7 @@ const diff = [
   { path: "setup.js", status: "added" as const, flags: [] },
 ];
 
-describe("AI finding persistence (D1 degraded path)", () => {
-  test("writes source 'ai' rows after rule rows and counts them", async () => {
-    const owner = await seedUser();
-    const db = createDb(env.DB);
-    const scanId = `scan_${crypto.randomUUID()}`;
-    const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
-      id: scanId,
-      stageId,
-      organizationId: owner.organizationId,
-      ownerUserId: owner.userId,
-    });
-    await persistScan(db, {
-      id: scanId,
-      stageId,
-      organizationId: owner.organizationId,
-      ownerUserId: owner.userId,
-      packageJson: { name: "alleviate", version: "0.2.0" },
-      risk: "critical",
-      status: "complete",
-      summary: { diff },
-      ai: completeAiReview,
-      files,
-      diff,
-      findings: [ruleFinding],
-      aiFindingRecords: [aiFindingRecord],
-      report: { version: 1, digest: `digest-${scanId}` },
-    });
-
-    const rows = await db
-      .select()
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(rows).toHaveLength(2);
-    const aiRow = rows.find((row) => row.source === "ai");
-    expect(aiRow).toMatchObject({
-      severity: "critical",
-      file: "setup.js",
-      evidence: "child_process.exec(atob(payload))",
-      line: null,
-      ruleId: null,
-      ruleVersion: null,
-    });
-
-    const [scanRow] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
-    expect(scanRow.findingCount).toBe(2);
-
-    const detail = await getScan(db, scanId, owner.organizationId);
-    expect(detail).not.toBeNull();
-    const aiDetail = detail!.findings.find((finding) => finding.source === "ai");
-    // The AI finding lands on an added file, so it annotates as release delta
-    // and counts into the release bucket of the recomputed risk summary.
-    expect(aiDetail).toMatchObject({ diffStatus: "added", releaseDelta: true });
-    expect(detail!.riskSummary?.releaseFindingCount).toBe(2);
-
-    // The persisted per-row annotations cover the AI row too.
-    const annotations = (detail!.scan.summaryJson as { findingAnnotations: Array<{ id: string }> })
-      .findingAnnotations;
-    expect(annotations.map((annotation) => annotation.id)).toContain(aiRow!.id);
-
-    // The report export keeps findings[] deterministic-only (AI findings are
-    // carried by aiReview.findings), so they are never double-counted across the
-    // two fields and every findings[] entry keeps a ruleId.
-    const exported = buildReportExport(detail!);
-    expect(exported.findings.every((finding) => finding.source === "rule")).toBe(true);
-    expect(exported.findings).toHaveLength(1);
-    expect(exported.aiReview?.findings.map((finding) => finding.file)).toEqual(["setup.js"]);
-  });
-
+describe("AI finding persistence", () => {
   test("does not record reviewer feedback for a disabled-review placeholder", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
@@ -158,7 +88,7 @@ describe("AI finding persistence (D1 degraded path)", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -181,7 +111,6 @@ describe("AI finding persistence (D1 degraded path)", () => {
       diff,
       findings: [ruleFinding],
       aiFindingRecords: [],
-      report: { version: 1, digest: `digest-${scanId}` },
     });
 
     const productPoints: AnalyticsEngineDataPoint[] = [];
@@ -206,40 +135,18 @@ describe("AI finding persistence (D1 degraded path)", () => {
   });
 });
 
-describe("AI finding persistence (R2 artifact path)", () => {
+describe("AI finding persistence (report artifact)", () => {
   async function seedArtifactBackedScan(owner: SeededUser) {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    const reportPayload = {
-      version: 1,
-      stageId,
-      ruleFindings: [ruleFinding],
-      // Combined index space: rule findings first, AI findings after them.
-      findingAnnotations: [
-        { findingIndex: 0, diffStatus: "modified", releaseDelta: true },
-        { findingIndex: 1, diffStatus: "added", releaseDelta: true },
-      ],
-      aiFindings: completeAiReview,
-    };
-    const reportJson = stableJson(reportPayload);
-    const reportDigest = await sha256Hex(reportJson);
-    const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
-      organizationId: owner.organizationId,
-      scanId,
-      reportJson,
-      reportDigest,
-      files,
-      diff,
-      generatedAt: "2026-07-17T00:00:00.000Z",
-    });
     await createScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -253,8 +160,6 @@ describe("AI finding persistence (R2 artifact path)", () => {
       diff,
       findings: [ruleFinding],
       aiFindingRecords: [aiFindingRecord],
-      report: { version: 1, digest: reportDigest },
-      artifacts,
     });
     return { db, scanId };
   }
@@ -263,12 +168,7 @@ describe("AI finding persistence (R2 artifact path)", () => {
     const owner = await seedUser();
     const { db, scanId } = await seedArtifactBackedScan(owner);
 
-    // Artifact-backed persist writes no D1 finding rows at all.
-    const d1Rows = await db
-      .select()
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(d1Rows).toEqual([]);
+    // The body is not duplicated into D1; only the metadata row counts it.
     const [scanRow] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
     expect(scanRow.findingCount).toBe(2);
 
@@ -284,6 +184,17 @@ describe("AI finding persistence (R2 artifact path)", () => {
       diffStatus: "added",
       releaseDelta: true,
     });
+    // The AI finding lands on an added file, so it counts into the release
+    // bucket of the recomputed risk summary.
+    expect(detail!.riskSummary?.releaseFindingCount).toBe(2);
+
+    // The report export keeps findings[] deterministic-only (AI findings are
+    // carried by aiReview.findings), so they are never double-counted across the
+    // two fields and every findings[] entry keeps a ruleId.
+    const exported = buildReportExport(detail!);
+    expect(exported.findings.every((finding) => finding.source === "rule")).toBe(true);
+    expect(exported.findings).toHaveLength(1);
+    expect(exported.aiReview?.findings.map((finding) => finding.file)).toEqual(["setup.js"]);
   });
 
   test("release memory profiles exclude AI rows from artifact-backed priors", async () => {

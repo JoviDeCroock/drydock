@@ -1,38 +1,39 @@
 /**
  * Reading one scan back out.
  *
- * Scan bodies live in two places: new artifact-backed scans keep files/findings
- * in R2, while legacy or degraded scans can retain them in D1. These readers
- * hide that split — callers ask for a scan detail and get the same shape either
- * way, with artifact rows merged over whatever D1 still holds.
+ * D1 holds the scan's metadata row and its events; the body — file metadata,
+ * redacted samples, diff, and findings — is read from the digest-verified R2
+ * artifact set. There is no D1 copy to fall back to, so a scan whose artifacts
+ * cannot be read degrades to metadata only (empty files/findings) rather than
+ * failing: the risk summary and the summary-embedded diff still render.
  */
 import { and, asc, eq } from "drizzle-orm";
-import {
-  annotateFindingsWithDiffStatus,
-  type FindingDiffAnnotation,
-  normalizeFindingDiffStatus,
-} from "../lib/review";
+import { annotateFindingsWithDiffStatus } from "../lib/review";
 import {
   loadScanArtifactFile,
   loadScanArtifactMetadata,
   loadScanArtifacts,
-  type ScanArtifactFileRow,
 } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
-import { scanEvents, scanFiles, scanFindings, scans } from "./schema";
+import { scanEvents, scans } from "./schema";
 
 /**
- * How much of the file table a `getScan` caller needs:
- * - `samples` (default) — every artifact, file rows carry their redacted text
+ * How much of the scan body a `getScan` caller needs:
+ * - `samples` (default) — every artifact; file rows carry their redacted text
  *   samples. The workbench detail view.
- * - `list` — metadata only, and the artifacts are read only when D1 alone is
- *   short (`needsArtifactMetadataFallback`). The cheapest mode; note it can
- *   leave `findings` sourced from D1 rather than report.json.
+ * - `list` — file metadata and findings from report.json alone, samples
+ *   stripped. One R2 read; the cheapest mode.
  * - `omit` — full report/diff fidelity (so `findings` and their `diffStatus`
  *   are byte-identical to `samples`) while skipping the file-samples artifact
  *   entirely. For callers that serialize the report and never read `files`.
+ *
+ * Omitting `artifactBucket` skips the R2 read entirely: `files` and `findings`
+ * come back empty and only the scan row, its events, and the summary-derived
+ * risk breakdown are populated. That is deliberate for callers that need
+ * identity/status alone (existence checks, notifications, gate decisions) — but
+ * it means a caller that reads `findings` must pass the bucket.
  */
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
@@ -43,14 +44,12 @@ export async function getScan(
   artifactBucket?: R2Bucket,
   options: { files?: ScanDetailFileMode } = {},
 ) {
-  const [scanRows, files, findings, events] = await Promise.all([
+  const [scanRows, events] = await Promise.all([
     db
       .select()
       .from(scans)
       .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
       .limit(1),
-    db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
-    db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
     db
       .select()
       .from(scanEvents)
@@ -60,24 +59,23 @@ export async function getScan(
   const scan = scanRows[0];
   if (!scan) return null;
   const fileMode = options.files ?? "samples";
+  // `list` needs only the file metadata the report already carries, so it reads
+  // report.json alone; the other modes read the full artifact set.
   const artifactDetail =
     fileMode === "list"
-      ? needsArtifactMetadataFallback(scan, files, findings)
-        ? await loadScanArtifactMetadata(artifactBucket, scan)
-        : null
+      ? await loadScanArtifactMetadata(artifactBucket, scan)
       : await loadScanArtifacts(artifactBucket, scan, {
           includeFileSamples: fileMode === "samples",
         });
-  const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
   const responseFiles =
-    fileMode === "samples" ? detailFiles : detailFiles.map(stripFileSampleForList);
-  const diff = artifactDetail?.diff ?? diffForFindingAnnotations(scan.summaryJson, detailFiles);
-  const findingRows = artifactDetail ? artifactDetail.findings : findings;
-  const annotatedFindings = annotateFindingsWithDiffStatus(findingRows, diff, {
-    persistedAnnotations: artifactDetail
-      ? artifactDetail.findingAnnotations
-      : readFindingAnnotations(scan.summaryJson),
-  });
+    fileMode === "samples"
+      ? (artifactDetail?.files ?? [])
+      : (artifactDetail?.files ?? []).map(stripFileSampleForList);
+  const annotatedFindings = artifactDetail
+    ? annotateFindingsWithDiffStatus(artifactDetail.findings, artifactDetail.diff, {
+        persistedAnnotations: artifactDetail.findingAnnotations,
+      })
+    : [];
   return {
     scan,
     files: responseFiles,
@@ -101,26 +99,13 @@ export async function getScanFile(
   path: string,
   artifactBucket?: R2Bucket,
 ) {
-  const [scanRows, fileRows] = await Promise.all([
-    db
-      .select()
-      .from(scans)
-      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
-      .limit(1),
-    db
-      .select()
-      .from(scanFiles)
-      .where(and(eq(scanFiles.scanId, id), eq(scanFiles.path, path)))
-      .limit(1),
-  ]);
-  const scan = scanRows[0];
+  const [scan] = await db
+    .select()
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
   if (!scan) return null;
-
-  const file = fileRows[0] ?? null;
-  const artifactFile = await loadScanArtifactFile(artifactBucket, scan, path);
-  if (!file && !artifactFile) return null;
-  if (!artifactFile) return file;
-  return mergeArtifactFiles(file ? [file] : [], [artifactFile], id)[0] ?? null;
+  return loadScanArtifactFile(artifactBucket, scan, path);
 }
 
 /**
@@ -181,118 +166,23 @@ export async function getScanCompareData(
   organizationId: string,
   artifactBucket?: R2Bucket,
 ) {
-  const [scanRows, files, findings] = await Promise.all([
-    db
-      .select()
-      .from(scans)
-      .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
-      .limit(1),
-    db.select().from(scanFiles).where(eq(scanFiles.scanId, id)),
-    db.select().from(scanFindings).where(eq(scanFindings.scanId, id)),
-  ]);
-  const scan = scanRows[0];
+  const [scan] = await db
+    .select()
+    .from(scans)
+    .where(and(eq(scans.id, id), eq(scans.organizationId, organizationId)))
+    .limit(1);
   if (!scan) return null;
-  const artifactDetail = needsArtifactMetadataFallback(scan, files, findings)
-    ? await loadScanArtifactMetadata(artifactBucket, scan)
-    : null;
-  const detailFiles = artifactDetail ? mergeArtifactFiles(files, artifactDetail.files, id) : files;
-  const findingRows = artifactDetail ? artifactDetail.findings : findings;
-  return { scan, files: detailFiles.map(stripFileSampleForList), findings: findingRows };
-}
-
-function needsArtifactMetadataFallback(
-  scan: typeof scans.$inferSelect,
-  files: Array<typeof scanFiles.$inferSelect>,
-  findings: Array<typeof scanFindings.$inferSelect>,
-): boolean {
-  if (!hasArtifactReferences(scan)) return false;
-  if (files.length === 0) return true;
-  return typeof scan.findingCount === "number" && findings.length < scan.findingCount;
-}
-
-function hasArtifactReferences(scan: typeof scans.$inferSelect): boolean {
-  return (
-    scan.artifactStorageVersion !== null &&
-    scan.artifactManifestKey !== null &&
-    scan.artifactManifestDigest !== null &&
-    scan.artifactManifestSize !== null &&
-    scan.reportArtifactKey !== null &&
-    scan.fileSamplesArtifactKey !== null &&
-    scan.diffArtifactKey !== null
-  );
+  // Metadata only: the compare view rebuilds both sides' bodies from the
+  // registry archives it fetches, and only needs this scan's file list and
+  // findings to annotate them.
+  const artifactDetail = await loadScanArtifactMetadata(artifactBucket, scan);
+  return {
+    scan,
+    files: (artifactDetail?.files ?? []).map(stripFileSampleForList),
+    findings: artifactDetail?.findings ?? [],
+  };
 }
 
 function stripFileSampleForList<T extends { textSample: string | null }>(file: T): T {
   return file.textSample === null ? file : { ...file, textSample: null };
-}
-
-function mergeArtifactFiles(
-  d1Files: (typeof scanFiles.$inferSelect)[],
-  artifactFiles: ScanArtifactFileRow[],
-  scanId: string,
-): (typeof scanFiles.$inferSelect)[] {
-  const d1ByPath = new Map(d1Files.map((file) => [file.path, file]));
-  const seen = new Set<string>();
-  const merged = artifactFiles.map((file) => {
-    seen.add(file.path);
-    const d1 = d1ByPath.get(file.path);
-    return {
-      id: d1?.id ?? `${scanId}:${file.path}`,
-      scanId: d1?.scanId ?? scanId,
-      path: file.path,
-      status: d1?.status ?? file.status,
-      size: d1?.size ?? file.size,
-      sha256: d1?.sha256 ?? file.sha256,
-      flagsJson: d1?.flagsJson ?? file.flagsJson,
-      textSample: file.textSample ?? d1?.textSample ?? null,
-    };
-  });
-  for (const file of d1Files) {
-    if (!seen.has(file.path)) merged.push(file);
-  }
-  return merged;
-}
-
-function readFindingAnnotations(summaryJson: unknown): Map<string, FindingDiffAnnotation> {
-  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
-  const annotations =
-    summary && !Array.isArray(summary)
-      ? (summary as { findingAnnotations?: unknown }).findingAnnotations
-      : null;
-  const out = new Map<string, FindingDiffAnnotation>();
-  if (!Array.isArray(annotations)) return out;
-  for (const annotation of annotations) {
-    if (!annotation || typeof annotation !== "object" || Array.isArray(annotation)) continue;
-    const id = (annotation as { id?: unknown }).id;
-    if (typeof id !== "string") continue;
-    const diffStatus = normalizeFindingDiffStatus(
-      (annotation as { diffStatus?: unknown }).diffStatus,
-    );
-    out.set(id, {
-      diffStatus,
-      releaseDelta: Boolean((annotation as { releaseDelta?: unknown }).releaseDelta),
-    });
-  }
-  return out;
-}
-
-function diffForFindingAnnotations(
-  summaryJson: unknown,
-  files: Array<{ path: string; status: string }>,
-): Array<{ path: string; status: string }> {
-  const summary = summaryJson && typeof summaryJson === "object" ? summaryJson : null;
-  const diff = summary && !Array.isArray(summary) ? (summary as { diff?: unknown }).diff : null;
-  if (Array.isArray(diff)) {
-    const entries = diff.flatMap((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-      const path = (entry as { path?: unknown }).path;
-      if (typeof path !== "string") return [];
-      return [{ path, status: normalizeFindingDiffStatus((entry as { status?: unknown }).status) }];
-    });
-    if (entries.length) return entries;
-  }
-  return files.map((file) => ({
-    path: file.path,
-    status: normalizeFindingDiffStatus(file.status),
-  }));
 }

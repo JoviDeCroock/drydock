@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { createMemoryArtifactBucket } from "./helpers/artifact-bucket.mjs";
 
 vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
@@ -139,7 +140,11 @@ describe("scan pipeline baseline selection", () => {
   });
 
   const baseContext = {
-    env: { NPM_REGISTRY: "https://registry.npmjs.org", DB: {} },
+    env: {
+      NPM_REGISTRY: "https://registry.npmjs.org",
+      DB: {},
+      ARTIFACTS: createMemoryArtifactBucket(),
+    },
     executionCtx: {},
     db: {},
     session: { userId: "user_1" },

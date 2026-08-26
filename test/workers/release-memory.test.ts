@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, persistScan, recordScanDecision } from "../../server/db/scans";
+import { createScanJob, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
   computeReleaseConsistency,
@@ -18,6 +18,7 @@ import { stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface SeededUser {
   userId: string;
@@ -92,7 +93,7 @@ async function seedCompletedScan(owner: SeededUser, options: SeedScanOptions = {
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
   });
-  await persistScan(db, {
+  await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
@@ -229,37 +230,19 @@ describe("release memory (prior-release consistency)", () => {
     expect(out.status).toBe("subset");
   });
 
-  test("reads the prior profile from R2 for artifact-backed scans", async () => {
+  test("reads the prior profile from the report artifact", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
     const ruleFindings = [spawnFinding("test/spawn.js")];
-    const reportPayload = {
-      version: 1,
-      stageId,
-      ruleFindings,
-      findingAnnotations: [{ findingIndex: 0, diffStatus: "modified", releaseDelta: true }],
-    };
-    const reportJson = stableJson(reportPayload);
-    const reportDigest = await sha256Hex(reportJson);
-    const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
-      organizationId: owner.organizationId,
-      scanId,
-      reportJson,
-      reportDigest,
-      files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
-      diff: [{ path: "index.js", status: "modified", flags: [] }],
-      generatedAt: "2026-07-01T00:00:00.000Z",
-    });
     await createScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    // Artifact-backed persist: findings are NOT duplicated into scan_findings.
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -272,14 +255,7 @@ describe("release memory (prior-release consistency)", () => {
       files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
       diff: [{ path: "index.js", status: "modified", flags: [] }],
       findings: ruleFindings,
-      report: { version: 1, digest: reportDigest },
-      artifacts,
     });
-    const d1Findings = await db
-      .select()
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(d1Findings).toEqual([]);
     await recordScanDecision(db, {
       scanId,
       organizationId: owner.organizationId,
@@ -322,7 +298,7 @@ describe("release memory (prior-release consistency)", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -377,22 +353,30 @@ describe("release memory (prior-release consistency)", () => {
     const prior = await seedCompletedScan(owner, { decision: "publish" });
     const db = createDb(env.DB);
 
-    const found = await getPriorApprovedScanFindings(db, {
-      organizationId: owner.organizationId,
-      packageName: "tape",
-      excludeScanId: "scan_current",
-    });
+    const found = await getPriorApprovedScanFindings(
+      db,
+      {
+        organizationId: owner.organizationId,
+        packageName: "tape",
+        excludeScanId: "scan_current",
+      },
+      env.ARTIFACTS,
+    );
     expect(found?.scanId).toBe(prior.scanId);
     expect(found?.findings).toEqual([
       { ruleId: "code.child-process", severity: "high", file: "test/spawn.js" },
     ]);
 
     // Excluding the prior scan's own id (a re-run of the same scan) hides it.
-    const excluded = await getPriorApprovedScanFindings(db, {
-      organizationId: owner.organizationId,
-      packageName: "tape",
-      excludeScanId: prior.scanId,
-    });
+    const excluded = await getPriorApprovedScanFindings(
+      db,
+      {
+        organizationId: owner.organizationId,
+        packageName: "tape",
+        excludeScanId: prior.scanId,
+      },
+      env.ARTIFACTS,
+    );
     expect(excluded).toBeNull();
 
     const out = computeReleaseConsistency([spawnFinding("test/spawn.js")], found);

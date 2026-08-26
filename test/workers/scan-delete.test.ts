@@ -81,27 +81,12 @@ function safeSegment(value: string): string {
 }
 
 describe("DELETE /scans/:id", () => {
-  test("deletes a failed scan, its dependent rows, and its R2 artifacts", async () => {
+  test("deletes a failed scan, its events, and its R2 artifacts", async () => {
     const owner = await seedUser();
     const scanId = await seedScan(owner, "failed");
     const db = createDb(env.DB);
     const eventId = crypto.randomUUID();
 
-    await db.insert(schema.scanFiles).values({
-      id: crypto.randomUUID(),
-      scanId,
-      path: "index.js",
-      status: "added",
-      flagsJson: [],
-    });
-    await db.insert(schema.scanFindings).values({
-      id: crypto.randomUUID(),
-      scanId,
-      severity: "high",
-      file: "index.js",
-      evidence: "test evidence",
-      reason: "test reason",
-    });
     await db.insert(schema.scanEvents).values({
       id: eventId,
       organizationId: owner.organizationId,
@@ -120,12 +105,6 @@ describe("DELETE /scans/:id", () => {
     expect(await res.json()).toEqual({ ok: true, id: scanId });
 
     expect(await db.select().from(schema.scans).where(eq(schema.scans.id, scanId))).toEqual([]);
-    expect(
-      await db.select().from(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId)),
-    ).toEqual([]);
-    expect(
-      await db.select().from(schema.scanFindings).where(eq(schema.scanFindings.scanId, scanId)),
-    ).toEqual([]);
     expect(
       await db.select().from(schema.scanEvents).where(eq(schema.scanEvents.id, eventId)),
     ).toEqual([]);

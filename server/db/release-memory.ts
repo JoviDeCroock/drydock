@@ -2,7 +2,7 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { loadScanArtifacts } from "../lib/scan/artifacts";
 import type { ProfileFindingInput } from "../lib/scan/release-memory";
 import type { AppDb } from "./client";
-import { scanFindings, scans } from "./schema";
+import { scans } from "./schema";
 
 export interface PriorApprovedScanQuery {
   organizationId: string;
@@ -24,9 +24,9 @@ export interface PriorApprovedScanFindings {
  * findings. Organization scoping is mandatory: release memory must never leak
  * another organization's review history.
  *
- * Findings for artifact-backed scans live in the digest-verified R2 report.json
- * (persistScan stopped duplicating them into `scan_findings`), so pass the
- * artifact bucket to read those; legacy/degraded scans fall back to the D1 rows.
+ * Findings live in the digest-verified R2 report.json, so the artifact bucket is
+ * required to build a profile at all; without a readable report this returns
+ * null and the caller degrades to "none".
  */
 export async function getPriorApprovedScanFindings(
   db: AppDb,
@@ -65,27 +65,16 @@ export async function getPriorApprovedScanFindings(
   if (!prior) return null;
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
-  // An artifact-backed prior keeps NO scan_findings rows in D1, so if its report
-  // could not be read (missing binding, digest mismatch, transient R2 error —
-  // loadScanArtifacts returns null rather than throwing) the D1 fallback query
-  // below would return zero rows and we would report a fabricated empty profile,
-  // marking every current finding "new" (a false "diverged"). Return null so the
-  // caller degrades to "none" instead of trusting a corrupt-empty profile.
-  if (prior.artifactStorageVersion !== null && !artifactDetail) return null;
-  // Release memory compares deterministic profiles only: artifact-backed
-  // details also carry the prior review's AI rows (source "ai"), which are
-  // advisory and non-deterministic, so they must not enter the profile —
-  // mirroring the D1 fallback's `source = 'rule'` predicate below.
-  const findingRows = artifactDetail
-    ? artifactDetail.findings.filter((finding) => finding.source === "rule")
-    : await db
-        .select({
-          ruleId: scanFindings.ruleId,
-          severity: scanFindings.severity,
-          file: scanFindings.file,
-        })
-        .from(scanFindings)
-        .where(and(eq(scanFindings.scanId, prior.id), eq(scanFindings.source, "rule")));
+  // The prior's findings live only in its report.json, so a report that could
+  // not be read (missing binding, digest mismatch, transient R2 error —
+  // loadScanArtifacts returns null rather than throwing) must not be reported as
+  // an empty profile: that would mark every current finding "new" (a false
+  // "diverged"). Return null so the caller degrades to "none" instead.
+  if (!artifactDetail) return null;
+  // Release memory compares deterministic profiles only: the report also carries
+  // the prior review's AI rows (source "ai"), which are advisory and
+  // non-deterministic, so they must not enter the profile.
+  const findingRows = artifactDetail.findings.filter((finding) => finding.source === "rule");
 
   return {
     scanId: prior.id,
