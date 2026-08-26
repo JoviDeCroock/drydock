@@ -2605,6 +2605,23 @@ describe("test-scoped capability findings", () => {
     ).toMatchObject({ file: "test/payload.js", severity: "low", testScoped: true });
   });
 
+  test("bounds browser execution-context fan-out", () => {
+    const staged = [pkg(), file("background.js", "export {};\n")];
+    expect(() =>
+      deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+        codePatternSet: "javascript",
+        consumerEntrypointPaths: ["background.js"],
+        consumerRootRelativeModuleImports: true,
+        consumerDocumentBaseUrlsByPath: {
+          "background.js": Array.from(
+            { length: 10_001 },
+            (_, index) => `drydock-extension://artifact/pages/${index}.html`,
+          ),
+        },
+      }),
+    ).toThrow(/execution-context work budget/);
+  });
+
   test("follows a static Manifest V2 tabs.executeScript file", () => {
     const staged = [
       pkg(),

@@ -557,20 +557,54 @@ function browserDocumentConsumerEdges(
   if (!text) return [];
   const pageUrl = extensionPageUrl(pagePath);
   if (!pageUrl) return [];
+  return browserDocumentConsumerEdgesFromText(
+    text,
+    pageUrl,
+    pagePath,
+    BROWSER_XML_DOCUMENT_PATH_RE.test(pagePath),
+  );
+}
 
+export function createBrowserInlineDocumentConsumerDependencyResolver(): (
+  html: string,
+  documentBaseUrl: string,
+) => Array<{ path: string; documentBaseUrl?: string }> {
+  return (html, documentBaseUrl) => {
+    let base: URL;
+    try {
+      base = new URL(documentBaseUrl);
+    } catch {
+      return [];
+    }
+    if (
+      base.protocol !== EXTENSION_RESOURCE_ROOT.protocol ||
+      base.host !== EXTENSION_RESOURCE_ROOT.host
+    ) {
+      return [];
+    }
+    return browserDocumentConsumerEdgesFromText(html, base, "inline srcdoc document", false);
+  };
+}
+
+function browserDocumentConsumerEdgesFromText(
+  text: string,
+  pageUrl: URL,
+  documentLabel: string,
+  xmlSyntax: boolean,
+): Array<{ path: string; documentBaseUrl?: string }> {
   const edges = new Map<string, { path: string; documentBaseUrl?: string }>();
   let resolutionBudget = MAX_DOCUMENT_CONSUMER_RESOLUTIONS;
   const spendResolutionBudget = (work: number): void => {
     resolutionBudget -= work;
     if (resolutionBudget < 0) {
-      throw new Error(`document ${pagePath} exceeds the consumer resolution work budget`);
+      throw new Error(`document ${documentLabel} exceeds the consumer resolution work budget`);
     }
   };
   const inlineQueue: Array<{ html: string; fallbackBases: URL[]; xmlSyntax: boolean }> = [
     {
       html: text,
       fallbackBases: [pageUrl],
-      xmlSyntax: BROWSER_XML_DOCUMENT_PATH_RE.test(pagePath),
+      xmlSyntax,
     },
   ];
   while (inlineQueue.length) {

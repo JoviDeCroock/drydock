@@ -32,6 +32,11 @@ const PYTHON_RESOLUTION_SUFFIXES = [".py", "/__init__.py"];
 const PYTHON_FROM_IMPORT_PATTERN =
   /^\s*from\s+([A-Za-z_][\w.]*|\.+[A-Za-z_][\w.]*|\.+)\s+import\s+([^#;\n]+)/gm;
 const PYTHON_IMPORT_PATTERN = /^\s*import\s+([^#;\n]+)/gm;
+// Archive limits bound files and bytes, but one source can execute under many
+// document bases. Cap the resulting multiplicative work independently.
+const MAX_CONSUMER_REACHABILITY_CONTEXTS = 10_000;
+const MAX_CONSUMER_REACHABILITY_RESOLUTIONS = 1_000_000;
+const MAX_CONSUMER_INLINE_DOCUMENT_CHARACTERS = 25 * 1024 * 1024;
 
 export interface ConsumerReachabilityDependency {
   path: string;
@@ -42,6 +47,14 @@ interface ConsumerReachabilityQueueEntry {
   path: string;
   documentBaseUrl?: string;
   workerEntryBaseUrl?: string;
+}
+
+interface StaticConsumerDependencies {
+  fileDependencies: ConsumerReachabilityDependency[];
+  importScripts: ImportScriptsSpecifier[];
+  relativeSpecifiers: string[];
+  webExtensionResources: WebExtensionResourceSpecifier[];
+  workers: WorkerScriptSpecifier[];
 }
 
 // Files a registry tarball consumer install can execute: declared entrypoints
@@ -60,6 +73,10 @@ export function consumerReachablePaths(
     path: string,
     file: FileRecord,
   ) => ConsumerReachabilityDependency[],
+  consumerInlineDocumentDependencyPaths?: (
+    html: string,
+    documentBaseUrl: string,
+  ) => ConsumerReachabilityDependency[],
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -69,9 +86,34 @@ export function consumerReachablePaths(
   }
 
   const queue: ConsumerReachabilityQueueEntry[] = [];
+  const pendingContexts = new Set<string>();
+  const inspectedContexts = new Set<string>();
+  const contextKey = ({
+    path,
+    documentBaseUrl,
+    workerEntryBaseUrl,
+  }: ConsumerReachabilityQueueEntry): string =>
+    `${path}\0${documentBaseUrl ?? ""}\0${workerEntryBaseUrl ?? ""}`;
+  const enqueue = (entry: ConsumerReachabilityQueueEntry): void => {
+    const key = contextKey(entry);
+    if (pendingContexts.has(key) || inspectedContexts.has(key)) return;
+    if (pendingContexts.size + inspectedContexts.size >= MAX_CONSUMER_REACHABILITY_CONTEXTS) {
+      throw new Error("consumer reachability exceeds the execution-context work budget");
+    }
+    pendingContexts.add(key);
+    queue.push(entry);
+  };
+  let remainingResolutionWork = MAX_CONSUMER_REACHABILITY_RESOLUTIONS;
+  let remainingInlineDocumentCharacters = MAX_CONSUMER_INLINE_DOCUMENT_CHARACTERS;
+  const spendResolutionWork = (work = 1): void => {
+    remainingResolutionWork -= work;
+    if (remainingResolutionWork < 0) {
+      throw new Error("consumer reachability exceeds the dependency-resolution work budget");
+    }
+  };
   for (const candidate of entrypointCandidates(packageJson)) {
     const resolved = resolveModulePath(candidate, byNormalizedPath);
-    if (resolved) queue.push({ path: resolved });
+    if (resolved) enqueue({ path: resolved });
   }
   for (const candidate of extraSeedPaths) {
     // Browser manifest and HTML URLs select exact archive entries. Package
@@ -82,37 +124,54 @@ export function consumerReachablePaths(
     if (!resolved) continue;
     const documentBases = consumerDocumentBaseUrlsByPath[resolved];
     if (documentBases?.length) {
-      for (const documentBaseUrl of documentBases) queue.push({ path: resolved, documentBaseUrl });
+      for (const documentBaseUrl of documentBases) enqueue({ path: resolved, documentBaseUrl });
     } else {
-      queue.push({ path: resolved });
+      enqueue({ path: resolved });
     }
   }
 
   const reachable = new Set<string>();
-  const inspectedContexts = new Set<string>();
+  const staticDependenciesByPath = new Map<string, StaticConsumerDependencies>();
   while (queue.length) {
     const queued = queue.pop();
     if (!queued) continue;
     const { path, documentBaseUrl, workerEntryBaseUrl } = queued;
-    const contextKey = `${path}\0${documentBaseUrl ?? ""}\0${workerEntryBaseUrl ?? ""}`;
-    if (inspectedContexts.has(contextKey)) continue;
-    inspectedContexts.add(contextKey);
+    const queuedContextKey = contextKey(queued);
+    pendingContexts.delete(queuedContextKey);
+    if (inspectedContexts.has(queuedContextKey)) continue;
+    inspectedContexts.add(queuedContextKey);
     reachable.add(path);
     const file = byNormalizedPath.get(path);
     if (!file?.textSample) continue;
-    for (const dependency of consumerFileDependencyPaths?.(path, file) ?? []) {
+    let dependencies = staticDependenciesByPath.get(path);
+    if (!dependencies) {
+      dependencies = {
+        fileDependencies: consumerFileDependencyPaths?.(path, file) ?? [],
+        relativeSpecifiers: relativeSpecifiers(file.textSample, rootRelativeModuleImports),
+        importScripts: staticImportScriptsSpecifiers(file.textSample),
+        webExtensionResources: rootRelativeModuleImports
+          ? staticWebExtensionResourceSpecifiers(file.textSample)
+          : [],
+        workers: rootRelativeModuleImports ? staticWorkerScriptSpecifiers(file.textSample) : [],
+      };
+      staticDependenciesByPath.set(path, dependencies);
+    }
+    for (const dependency of dependencies.fileDependencies) {
+      spendResolutionWork();
       const resolved = rootRelativeModuleImports
         ? resolveExactModulePath(dependency.path, byNormalizedPath)
         : resolveModulePath(dependency.path, byNormalizedPath);
-      if (resolved) queue.push({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+      if (resolved) enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
     }
-    for (const specifier of relativeSpecifiers(file.textSample, rootRelativeModuleImports)) {
+    for (const specifier of dependencies.relativeSpecifiers) {
+      spendResolutionWork();
       const resolved = rootRelativeModuleImports
         ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
         : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
-      if (resolved) queue.push({ path: resolved, documentBaseUrl, workerEntryBaseUrl });
+      if (resolved) enqueue({ path: resolved, documentBaseUrl, workerEntryBaseUrl });
     }
-    for (const imported of staticImportScriptsSpecifiers(file.textSample)) {
+    for (const imported of dependencies.importScripts) {
+      spendResolutionWork();
       if (!rootRelativeModuleImports && imported.resolution === "extension-root") continue;
       const activeWorkerEntryBaseUrl = workerEntryBaseUrl ?? browserArchiveUrl(path);
       const resolved = rootRelativeModuleImports
@@ -131,7 +190,7 @@ export function consumerReachablePaths(
             : null
         : resolveModulePath(joinRelative(path, imported.path), byNormalizedPath);
       if (resolved) {
-        queue.push({
+        enqueue({
           path: resolved,
           documentBaseUrl: rootRelativeModuleImports ? undefined : documentBaseUrl,
           workerEntryBaseUrl: rootRelativeModuleImports
@@ -141,7 +200,26 @@ export function consumerReachablePaths(
       }
     }
     if (rootRelativeModuleImports) {
-      for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
+      for (const resource of dependencies.webExtensionResources) {
+        if ("inlineDocument" in resource) {
+          if (!documentBaseUrl || !consumerInlineDocumentDependencyPaths) continue;
+          remainingInlineDocumentCharacters -= resource.inlineDocument.length;
+          if (remainingInlineDocumentCharacters < 0) {
+            throw new Error("consumer reachability exceeds the inline-document work budget");
+          }
+          const inlineDependencies = consumerInlineDocumentDependencyPaths(
+            resource.inlineDocument,
+            documentBaseUrl,
+          );
+          spendResolutionWork(inlineDependencies.length);
+          for (const dependency of inlineDependencies) {
+            const resolved = resolveExactModulePath(dependency.path, byNormalizedPath);
+            if (resolved) {
+              enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+            }
+          }
+          continue;
+        }
         // Registration and explicit runtime.getURL()/extension.getURL()
         // resources are rooted at the extension origin. Direct relative tab URLs and Manifest V2
         // injection files differ across browser runtimes, so follow both the
@@ -161,13 +239,14 @@ export function consumerReachablePaths(
                   ? [BROWSER_ARCHIVE_ROOT.href, documentBaseUrl]
                   : [BROWSER_ARCHIVE_ROOT.href];
         for (const baseUrl of new Set(baseUrls)) {
+          spendResolutionWork();
           const resolved = resolveBrowserDocumentModulePath(
             resource.path,
             baseUrl,
             byNormalizedPath,
           );
           if (resolved) {
-            queue.push({
+            enqueue({
               path: resolved,
               documentBaseUrl: resource.inheritsExecutionContext ? documentBaseUrl : undefined,
               workerEntryBaseUrl: resource.inheritsExecutionContext
@@ -177,7 +256,8 @@ export function consumerReachablePaths(
           }
         }
       }
-      for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
+      for (const worker of dependencies.workers) {
+        spendResolutionWork();
         if (worker.resolution === "root") {
           const resolved = resolveBrowserDocumentModulePath(
             worker.path,
@@ -185,14 +265,14 @@ export function consumerReachablePaths(
             byNormalizedPath,
           );
           if (resolved) {
-            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+            enqueue({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
           }
           continue;
         }
         if (worker.resolution === "module") {
           const resolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
           if (resolved) {
-            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+            enqueue({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
           }
         } else {
           const executionBaseUrl = workerEntryBaseUrl ?? documentBaseUrl;
@@ -203,7 +283,7 @@ export function consumerReachablePaths(
             byNormalizedPath,
           );
           if (resolved) {
-            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+            enqueue({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
           }
         }
       }
@@ -479,11 +559,13 @@ type WebExtensionScriptValueShape =
 type WebExtensionResourceArgument = "first" | "first-object";
 type WebExtensionResourceResolution = "document" | "document-or-root" | "document-root" | "root";
 
-interface WebExtensionResourceSpecifier {
-  path: string;
-  resolution: WebExtensionResourceResolution;
-  inheritsExecutionContext?: boolean;
-}
+type WebExtensionResourceSpecifier =
+  | {
+      path: string;
+      resolution: WebExtensionResourceResolution;
+      inheritsExecutionContext?: boolean;
+    }
+  | { inlineDocument: string };
 
 interface ImportScriptsSpecifier {
   path: string;
@@ -501,7 +583,9 @@ type WebExtensionResourceCall =
     }
   | { openIndex: number; source: "argument"; argumentIndex: number };
 
-const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "parent", "self", "top", "window"]);
+const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "parent", "self", "this", "top", "window"]);
+const STATIC_WORKER_GLOBALS = new Set(["globalThis", "self", "this"]);
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 const BROWSER_NAVIGATION_EXPRESSION_CONTINUATIONS = new Set([
   "!=",
   "!==",
@@ -574,7 +658,7 @@ function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
       tokenText(tokens[index - 1], text) !== "]"
     ) {
       callIndex = index + 1;
-    } else if (current === "self" || current === "globalThis") {
+    } else if (STATIC_WORKER_GLOBALS.has(current)) {
       const member = staticMemberAccess(tokens, text, index + 1);
       if (member?.name === "importScripts") callIndex = member.nextIndex;
     }
@@ -658,14 +742,16 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
 }
 
 // Packaged scripts and documents can become executable without a WebExtension
-// API when an extension page creates a script, frame, embed, or object element,
-// assigns a literal local URL, and later inserts it into the document. Requiring
-// an observable append would introduce fragile local data-flow assumptions, so
-// assignment is conservative by design.
+// API when an extension page creates a resource-bearing element and assigns a
+// literal local URL or inline document. Requiring an observable append, click,
+// or navigation would introduce fragile local data-flow assumptions, so the
+// assignment itself is conservative evidence of reachability.
 const DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
+  ["a", new Set(["href"])],
+  ["area", new Set(["href"])],
   ["script", new Set(["src"])],
   ["frame", new Set(["src"])],
-  ["iframe", new Set(["src"])],
+  ["iframe", new Set(["src", "srcdoc"])],
   ["embed", new Set(["src"])],
   ["object", new Set(["data"])],
 ]);
@@ -713,13 +799,19 @@ function staticDocumentCreateElementTag(
   }
 
   const createElement = staticMemberAccess(tokens, text, index);
-  if (createElement?.name !== "createElement") return null;
+  if (createElement?.name !== "createElement" && createElement?.name !== "createElementNS") {
+    return null;
+  }
   const openIndex = staticCallOpenIndex(tokens, text, createElement.nextIndex);
   if (openIndex === null) return null;
   const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
-  return closeIndex === null
-    ? null
-    : staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+  if (closeIndex === null) return null;
+  if (createElement.name === "createElement") {
+    return staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+  }
+  const namespace = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+  const tag = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 1);
+  return namespace === HTML_NAMESPACE ? tag : null;
 }
 
 function staticDomConsumerResource(
@@ -748,6 +840,11 @@ function staticDomConsumerResource(
       nameEnd === nameStart + 1 ? staticScriptPath(tokens[nameStart], text)?.toLowerCase() : null;
     if (!property || !resourceProperties.has(property)) return null;
     const [valueStart, valueEnd] = arguments_[1];
+    if (property === "srcdoc") {
+      const inlineDocument =
+        valueEnd === valueStart + 1 ? staticScriptPath(tokens[valueStart], text) : null;
+      return inlineDocument === null ? null : { inlineDocument };
+    }
     const value = staticWebExtensionResourcePath(tokens, text, valueStart, [
       tokenText(tokens[valueEnd], text),
     ]);
@@ -761,6 +858,14 @@ function staticDomConsumerResource(
   }
 
   const valueIndex = member.nextIndex + 1;
+  if (member.name === "srcdoc") {
+    const inlineDocument = staticScriptPath(tokens[valueIndex], text);
+    if (inlineDocument === null) return null;
+    const value = { path: inlineDocument, nextIndex: valueIndex + 1, runtimeUrl: false };
+    return browserNavigationAssignmentEnds(tokens, text, value, ["", ",", ";", ")", "]", "}"])
+      ? { inlineDocument }
+      : null;
+  }
   const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, valueIndex);
   const parsingFollowingTokens = runtimeUrl

@@ -2031,6 +2031,13 @@ describe("browser extension review adapter", () => {
         textSample: '<script src="popup.js"></script>',
       },
       {
+        path: "background.js",
+        size: 1,
+        sha256: "96".repeat(32),
+        flags: [],
+        textSample: 'this.importScripts("tests/worker-global.js");',
+      },
+      {
         path: "popup.js",
         size: 1,
         sha256: "98".repeat(32),
@@ -2051,6 +2058,16 @@ describe("browser extension review adapter", () => {
           'const embed = document.createElement("embed");',
           'embed.setAttribute("src", "tests/embed.html");',
           "document.documentElement.append(embed);",
+          'const inlineFrame = document.createElement("iframe");',
+          "inlineFrame.srcdoc = '<script src=\"tests/srcdoc.js\"></script>';",
+          "document.documentElement.append(inlineFrame);",
+          'const link = document.createElement("a");',
+          'link.href = "tests/linked.html";',
+          "document.documentElement.append(link);",
+          "link.click();",
+          'const namespacedScript = document.createElementNS("http://www.w3.org/1999/xhtml", "script");',
+          'namespacedScript.src = "tests/namespaced.js";',
+          "document.documentElement.append(namespacedScript);",
           'window.document.location = "tests/navigated.html";',
           'const image = document.createElement("img");',
           'image.src = chrome.runtime.getURL("tests/decoy.js");',
@@ -2063,6 +2080,13 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: '<script src="navigated.js"></script>',
       },
+      {
+        path: "tests/linked.html",
+        size: 41,
+        sha256: "9a".repeat(32),
+        flags: [],
+        textSample: '<script src="linked.js"></script>',
+      },
       ...["frame", "object", "embed"].map((name, index) => ({
         path: `tests/${name}.html`,
         size: 41,
@@ -2070,15 +2094,25 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: `<script src="${name}.js"></script>`,
       })),
-      ...["injected", "attribute-injected", "frame", "object", "embed", "navigated", "decoy"].map(
-        (name, index) => ({
-          path: `tests/${name}.js`,
-          size: 14,
-          sha256: (176 + index).toString(16).repeat(32),
-          flags: [],
-          textSample: "eval(payload);",
-        }),
-      ),
+      ...[
+        "injected",
+        "attribute-injected",
+        "frame",
+        "object",
+        "embed",
+        "srcdoc",
+        "linked",
+        "namespaced",
+        "worker-global",
+        "navigated",
+        "decoy",
+      ].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: (176 + index).toString(16).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
     ];
 
     const findings = createBrowserExtensionReview({
@@ -2092,6 +2126,10 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({ file: "tests/frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/object.js", severity: "high" }),
         expect.objectContaining({ file: "tests/embed.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/srcdoc.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/linked.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/namespaced.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/worker-global.js", severity: "high" }),
         expect.objectContaining({ file: "tests/navigated.js", severity: "high" }),
         expect.objectContaining({
           file: "tests/decoy.js",
@@ -2100,7 +2138,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(7);
+    expect(findings).toHaveLength(11);
   });
 
   test("follows scripts after an abruptly closed HTML comment", () => {

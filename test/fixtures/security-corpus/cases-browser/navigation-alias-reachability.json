@@ -2,7 +2,7 @@
   "id": "browser-navigation-alias-reachability",
   "title": "browser navigation and extension URL aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, DOM-injected script and frame resources, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and image element sources remain inert.",
+  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, classic-worker global, DOM-injected script, frame, srcdoc, hyperlink, and namespaced resources, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and image element sources remain inert.",
   "slug": "navigation-alias-reachability",
   "extensionId": "navigation-alias-reachability@example.invalid",
   "version": "1.0.0",
@@ -24,17 +24,17 @@
     },
     {
       "path": "background.js",
-      "size": 204,
+      "size": 265,
       "sha256": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4",
       "flags": [],
-      "textSample": "new Worker(browser.extension.getURL(\"tests/legacy-worker.js\")); chrome.tabs.create({ url: \"tests/runtime-popup\" }); browser.sidebarAction.setPanel({ panel: browser.runtime.getURL(\"tests/sidebar.html\") });"
+      "textSample": "new Worker(browser.extension.getURL(\"tests/legacy-worker.js\")); this.importScripts(\"tests/worker-global.js\"); chrome.tabs.create({ url: \"tests/runtime-popup\" }); browser.sidebarAction.setPanel({ panel: browser.runtime.getURL(\"tests/sidebar.html\") });"
     },
     {
       "path": "tests/direct.js",
-      "size": 681,
+      "size": 1260,
       "sha256": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
       "flags": [],
-      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); const attributeInjected = document.createElement(\"script\"); attributeInjected.setAttribute(\"src\", browser.runtime.getURL(\"tests/dom-attribute-injected.js\")); document.documentElement.append(attributeInjected); const frame = document.createElement(\"iframe\"); frame.src = \"tests/dom-frame.html\"; document.documentElement.append(frame); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
+      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); const attributeInjected = document.createElement(\"script\"); attributeInjected.setAttribute(\"src\", browser.runtime.getURL(\"tests/dom-attribute-injected.js\")); document.documentElement.append(attributeInjected); const frame = document.createElement(\"iframe\"); frame.src = \"tests/dom-frame.html\"; document.documentElement.append(frame); const inlineFrame = document.createElement(\"iframe\"); inlineFrame.srcdoc = '<script src=\"tests/dom-srcdoc.js\"></script>'; document.documentElement.append(inlineFrame); const link = document.createElement(\"a\"); link.href = \"tests/dom-linked.html\"; document.documentElement.append(link); link.click(); const namespaced = document.createElementNS(\"http://www.w3.org/1999/xhtml\", \"script\"); namespaced.src = \"tests/dom-namespaced.js\"; document.documentElement.append(namespaced); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
     },
     {
       "path": "tests/dom-injected.js",
@@ -61,6 +61,41 @@
       "path": "tests/dom-frame.js",
       "size": 14,
       "sha256": "f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom-srcdoc.js",
+      "size": 14,
+      "sha256": "f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom-linked.html",
+      "size": 40,
+      "sha256": "f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5",
+      "flags": [],
+      "textSample": "<script src=\"dom-linked.js\"></script>"
+    },
+    {
+      "path": "tests/dom-linked.js",
+      "size": 14,
+      "sha256": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom-namespaced.js",
+      "size": 14,
+      "sha256": "f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/worker-global.js",
+      "size": 14,
+      "sha256": "f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8f8",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -314,6 +349,26 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/dom-frame.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom-srcdoc.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom-linked.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom-namespaced.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/worker-global.js"
     },
     {
       "ruleId": "code.dynamic-evaluation",

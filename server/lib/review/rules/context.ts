@@ -42,6 +42,15 @@ export interface DeterministicFindingOptions {
     file: FileRecord,
   ) => ConsumerReachabilityDependency[];
   /**
+   * Dependencies loaded by a literal inline document created from reachable
+   * browser code, such as an iframe `srcdoc` assignment. The resolver receives
+   * the owning extension document's base URL and must return validated paths.
+   */
+  consumerInlineDocumentDependencyPaths?: (
+    html: string,
+    documentBaseUrl: string,
+  ) => ConsumerReachabilityDependency[];
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -105,6 +114,7 @@ export function buildRuleContext(
       options.consumerRootRelativeModuleImports,
       options.consumerDocumentBaseUrlsByPath,
       options.consumerFileDependencyPaths,
+      options.consumerInlineDocumentDependencyPaths,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,

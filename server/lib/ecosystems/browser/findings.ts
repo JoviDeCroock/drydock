@@ -11,6 +11,7 @@ import type { AcquiredArtifact } from "../package-adapter";
 import {
   browserExtensionCandidateName,
   createBrowserHtmlConsumerDependencyResolver,
+  createBrowserInlineDocumentConsumerDependencyResolver,
   findBrowserManifestFile,
   isBrowserConsumerDocumentPath,
   parseBrowserExtensionManifest,
@@ -114,6 +115,7 @@ export function buildBrowserFindings(args: {
   const browserDocumentDependencies = createBrowserHtmlConsumerDependencyResolver(
     args.staged.files,
   );
+  const browserInlineDocumentDependencies = createBrowserInlineDocumentConsumerDependencyResolver();
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
@@ -127,6 +129,7 @@ export function buildBrowserFindings(args: {
       consumerDocumentBaseUrlsByPath: extensionManifest.consumerDocumentBaseUrlsByPath,
       consumerFileDependencyPaths: (path) =>
         isBrowserConsumerDocumentPath(path) ? browserDocumentDependencies(path) : [],
+      consumerInlineDocumentDependencyPaths: browserInlineDocumentDependencies,
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),
