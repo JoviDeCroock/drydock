@@ -15,41 +15,57 @@ import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./contex
 // - `file.review-manipulation` (high): verdict coercion aimed at the security
 //   review itself. Standing danger — a prior approval never discounts it.
 // - `file.prompt-injection` (medium): instruction content aimed at any
-//   AI/agent audience. Longstanding matches in unreachable test files demote
-//   one step (LLM-security packages ship jailbreak strings as test fixtures),
-//   mirroring the secret-content policy: demoted, never dropped.
+//   AI/agent audience.
+// Both tiers demote longstanding matches in unreachable test files one step
+// (LLM-guardrail packages ship injection strings as test fixtures), mirroring
+// the secret-content policy: demoted, never dropped.
+
+// Markdown emphasis and zero-width characters are in-band evasions in the
+// rule's primary vector: `ignore all *previous* instructions` renders clean
+// in a README and reads clean to the target LLM. Patterns run against the raw
+// sample and a stripped copy — raw so underscore-bearing schema tokens
+// (`nothing_unusual`) keep matching, stripped so emphasis can't split a
+// phrase. Newlines survive stripping, so line numbers stay valid either way.
+const EVASION_CHARS = /[*_`\u200B-\u200D\uFEFF]/g;
+
 export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
 
   for (const file of ctx.files) {
     const sample = file.textSample;
     if (!sample) continue;
+    const stripped = sample.replace(EVASION_CHARS, "");
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
+    const demote = isUnreachableTestFile(ctx, file.path) && changed === "unchanged";
 
-    if (matchesAny(sample, REVIEW_MANIPULATION_PATTERN_SET)) {
+    if (matchesEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET)) {
       findings.push(
-        tag("fileReviewManipulation", {
-          severity: "high",
-          file: file.path,
-          line: firstMatchingLine(sample, REVIEW_MANIPULATION_PATTERN_SET),
-          evidence: `${prefix}text attempts to steer the security review verdict`,
-          reason:
-            "package text instructs an automated or AI reviewer to report the release as safe or suppress findings; legitimate packages have no reason to address the review process",
-        }),
+        testScope(
+          demote,
+          false,
+          tag("fileReviewManipulation", {
+            severity: "high",
+            file: file.path,
+            line: lineOfEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET),
+            evidence: `${prefix}text attempts to steer the security review verdict`,
+            reason:
+              "package text instructs an automated or AI reviewer to report the release as safe or suppress findings; legitimate packages have no reason to address the review process",
+          }),
+        ),
       );
       continue;
     }
 
-    if (matchesAny(sample, PROMPT_INJECTION_PATTERN_SET)) {
+    if (matchesEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET)) {
       findings.push(
         testScope(
-          isUnreachableTestFile(ctx, file.path) && changed === "unchanged",
+          demote,
           false,
           tag("filePromptInjection", {
             severity: "medium",
             file: file.path,
-            line: firstMatchingLine(sample, PROMPT_INJECTION_PATTERN_SET),
+            line: lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET),
             evidence: `${prefix}prompt-injection text addressed at AI tools`,
             reason:
               "package text embeds instructions aimed at LLMs or AI agents that read package contents; a consumer's coding assistant may follow them",
@@ -62,9 +78,15 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   return findings;
 }
 
-function matchesAny(text: string, patterns: RegExp[]): boolean {
+function matchesEither(sample: string, stripped: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => {
     pattern.lastIndex = 0;
-    return pattern.test(text);
+    if (pattern.test(sample)) return true;
+    pattern.lastIndex = 0;
+    return pattern.test(stripped);
   });
+}
+
+function lineOfEither(sample: string, stripped: string, patterns: RegExp[]): number | undefined {
+  return firstMatchingLine(sample, patterns) ?? firstMatchingLine(stripped, patterns);
 }

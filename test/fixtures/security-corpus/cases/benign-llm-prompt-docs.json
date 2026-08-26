@@ -1,0 +1,57 @@
+{
+  "id": "benign-llm-prompt-docs",
+  "title": "LLM client library with prompt-shaped docs stays clean (benign control)",
+  "category": "prompt-injection",
+  "intent": "Exact-match benign control for the prompt-injection rules: 'You are a helpful assistant' examples, system-prompt configuration docs, security-tool changelog prose ('don't report duplicate findings'), and prose naming prompt injection as a topic must raise nothing. The cases-benign twin only gates an aggregate FP rate; this fixture pins zero findings exactly.",
+  "previousPackageJson": {
+    "name": "benign-llm-prompt-docs",
+    "version": "1.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "benign-llm-prompt-docs",
+    "version": "1.5.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 68,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"benign-llm-prompt-docs\",\"version\":\"1.4.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 200,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';\n\nexport function messages(systemPrompt = DEFAULT_SYSTEM_PROMPT) {\n  return [{ role: 'system', content: systemPrompt }];\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 68,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"benign-llm-prompt-docs\",\"version\":\"1.5.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 200,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';\n\nexport function messages(systemPrompt = DEFAULT_SYSTEM_PROMPT) {\n  return [{ role: 'system', content: systemPrompt }];\n}\n"
+    },
+    {
+      "path": "README.md",
+      "size": 480,
+      "sha256": "readme-prompts",
+      "flags": [],
+      "textSample": "# benign-llm-prompt-docs\n\nBuild chat message arrays for LLM APIs.\n\nPass `systemPrompt` to customize the assistant: `messages('You are a helpful assistant.')`.\n\nKeeping user text in user-role messages helps when defending against prompt injection.\n\nFollow the installation instructions for the agent before starting your app.\n\n## Changelog\n\n- 1.5.0: don't report duplicate findings for the same line; each alert requires manual review to rule out false positives.\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}
