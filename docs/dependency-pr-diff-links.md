@@ -12,6 +12,12 @@ The user-facing setup instructions live on the Docs page
 (`src/pages/Docs/index.tsx`, "Diffs in dependency PRs"). This file documents the
 contracts and the operational posture.
 
+Plain diff links are the zero-request integration: a reviewer chooses when to
+open one. Repositories that want an enforceable dependency-update check can add
+[`drydock verify`](./verify-ci.md). It reads changed npm pairs from the lockfile,
+calls the machine-readable verdict for each pair, and turns the same `/diff`
+links into a failing GitHub check according to `drydock.policy.json`.
+
 ## Renovate preset (`renovate/diff-links.json`)
 
 Third-party repositories reference the preset by path, after their base presets:
@@ -131,3 +137,10 @@ clicks through. There is no new anonymous-traffic amplification to reason about
 their IP rate limits and colo cache (`docs/security-model.md`). Do not "upgrade"
 the column to a per-PR badge image without revisiting that math: registry-scale
 PR volume would fetch on every page view instead of every click.
+
+`drydock verify` intentionally has a different traffic shape: CI calls the
+verdict endpoint for every unambiguous changed pair. Pair results are immutable
+and cacheable, but cold computations still share the anonymous public-diff
+budget. The CLI retries `429` responses with bounded `retry-after` delays, then
+applies the repository's `onUnavailable` policy. See
+[`verify-ci.md`](./verify-ci.md) for the enforcement contract.

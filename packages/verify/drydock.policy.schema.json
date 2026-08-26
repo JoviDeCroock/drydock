@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/drydock-verify/drydock.policy.schema.json",
+  "title": "Drydock dependency verification policy",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "minReleaseAgeHours": { "type": "number", "minimum": 0, "default": 0 },
+    "maxGrade": {
+      "enum": ["clear", "notable", "needs-review"],
+      "default": "needs-review"
+    },
+    "denyCapabilityEscalation": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "network",
+          "process",
+          "credentials",
+          "dynamicEval",
+          "native",
+          "installScripts",
+          "bin"
+        ]
+      },
+      "default": []
+    },
+    "requireListedReview": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "onUnavailable": { "enum": ["warn", "fail"], "default": "fail" }
+  }
+}

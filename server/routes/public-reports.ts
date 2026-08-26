@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import {
   encodeThreatFeedCursor,
+  hasListedMaintainerReview,
   listBadgeCandidateScans,
   listThreatFeedScans,
   parseThreatFeedCursor,
@@ -51,6 +52,8 @@ const PUBLIC_BADGE_READ_RATE = { bucket: "public-badge", limit: 120, windowMs: 6
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
 const SHARE_INCLUDES_FILES_HEADER = "x-drydock-share-includes-files";
+export const REVIEW_LOOKUP_SCHEMA = "drydock.review-lookup.v1";
+const REVIEW_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.!_+~-]{0,127}$/;
 
 publicReportsRoutes.use("*", async (c, next) => {
   await next();
@@ -150,6 +153,50 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
   );
 });
 
+// Version-specific lookup for consumer policy. This is intentionally stricter
+// than the badge and threat feed: only a registry-established package identity
+// can satisfy a maintainer-review requirement. A workflow-gate manifest claim
+// remains visible on the human surfaces but can never become automated proof
+// that the package's maintainer reviewed this version.
+publicReportsRoutes.get("/reviews/:ecosystem/*", async (c) => {
+  const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
+  if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+    return c.json({ error: "unknown ecosystem" }, 404);
+  }
+  const marker = `/reviews/${ecosystem}/`;
+  const markerIndex = c.req.path.indexOf(marker);
+  const rawIdentity = markerIndex >= 0 ? c.req.path.slice(markerIndex + marker.length) : "";
+  const segments = rawIdentity.split("/");
+  if (segments.length < 2) return c.json({ error: "invalid review identity" }, 400);
+
+  let packageName: string;
+  let version: string;
+  try {
+    version = decodeURIComponent(segments.pop() ?? "");
+    packageName = segments.map((segment) => decodeURIComponent(segment)).join("/");
+  } catch {
+    return c.json({ error: "invalid review identity" }, 400);
+  }
+  if (
+    !packageName ||
+    packageName.length > publicPackageNameMax(ecosystem) ||
+    !REVIEW_VERSION_RE.test(version)
+  ) {
+    return c.json({ error: "invalid review identity" }, 400);
+  }
+
+  const listed = await hasListedMaintainerReview(createDb(c.env.DB), {
+    ecosystem,
+    packageName,
+    version,
+  });
+  return c.json({ schema: REVIEW_LOOKUP_SCHEMA, listed }, 200, { "cache-control": "no-store" });
+});
+
+// shields.io endpoint badge for a package's latest publicly shared review.
+// Badge errors are fetched cross-origin by the same proxies as the 200s, so
+// they carry the same CORS header; without it the proxy reports an opaque
+// network failure instead of the actual status.
 const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 
 publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {

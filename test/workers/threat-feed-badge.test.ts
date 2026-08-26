@@ -269,6 +269,62 @@ async function fetchBadge(
   return { status: res.status, body: (await res.json()) as BadgeBody };
 }
 
+async function fetchReviewLookup(
+  app: ReturnType<typeof buildTestApp>,
+  ecosystem: string,
+  packageName: string,
+  version: string,
+): Promise<{ status: number; body: { schema?: string; listed?: boolean } }> {
+  const packagePath = packageName.split("/").map(encodeURIComponent).join("/");
+  const res = await request(
+    app,
+    `/public/reviews/${encodeURIComponent(ecosystem)}/${packagePath}/${encodeURIComponent(version)}`,
+  );
+  return { status: res.status, body: await res.json() };
+}
+
+describe("listed maintainer review lookup", () => {
+  test("requires an exact version whose registry-verified review is feed-listed", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `@scope/pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "2.0.0" });
+
+    expect((await fetchReviewLookup(app, "npm", packageName, "2.0.0")).body).toEqual({
+      schema: "drydock.review-lookup.v1",
+      listed: false,
+    });
+    await share(app, scanId);
+    expect((await fetchReviewLookup(app, "npm", packageName, "2.0.0")).body.listed).toBe(false);
+
+    await share(app, scanId, { threatFeed: true });
+    const listed = await fetchReviewLookup(app, "npm", packageName, "2.0.0");
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual({ schema: "drydock.review-lookup.v1", listed: true });
+    expect((await fetchReviewLookup(app, "npm", packageName, "2.0.1")).body.listed).toBe(false);
+
+    await share(app, scanId, { threatFeed: false });
+    expect((await fetchReviewLookup(app, "npm", packageName, "2.0.0")).body.listed).toBe(false);
+  });
+
+  test("does not let a feed-listed workflow-gate claim satisfy maintainer policy", async () => {
+    const claimant = await seedUser();
+    const app = buildTestApp(claimant);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(claimant, {
+      packageName,
+      version: "9.9.9",
+      source: "workflow_gate",
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchReviewLookup(app, "npm", packageName, "9.9.9")).body).toEqual({
+      schema: "drydock.review-lookup.v1",
+      listed: false,
+    });
+  });
+});
+
 describe("shields badge endpoint", () => {
   test("only feed-listed reviews surface; sharing alone stays not reviewed", async () => {
     const owner = await seedUser();
