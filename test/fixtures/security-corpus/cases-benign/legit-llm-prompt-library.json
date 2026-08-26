@@ -5,7 +5,7 @@
   "verdict": "benign",
   "threatClass": "legit-llm-tooling",
   "source": "benign-popular",
-  "intent": "LLM client libraries legitimately ship prompt-shaped text: 'You are a helpful assistant' examples, system-prompt configuration docs, role constants, and prose that names prompt injection as a topic. The prompt-injection rules require an instruction-override phrase or a direct address to an AI audience, so this text must stay quiet.",
+  "intent": "LLM client libraries legitimately ship prompt-shaped text, ordinary issue-reporting guidance, and local security-check bypass documentation. The prompt-injection rules require an instruction override, an AI-qualified audience, or release-scoped verdict manipulation, so this text must stay quiet.",
   "expectMinRisk": "low",
   "expectAnyRule": [],
   "previousPackageJson": {
@@ -37,10 +37,10 @@
     },
     {
       "path": "README.md",
-      "size": 420,
+      "size": 526,
       "sha256": "readme",
       "flags": [],
-      "textSample": "# chat-prompt-kit\n\nBuild chat message arrays for LLM APIs.\n\n## System prompts\n\nPass `systemPrompt` to customize the assistant:\n\n```js\nconst chat = createChat({ systemPrompt: 'You are a helpful assistant.' });\n```\n\nUser-supplied text is kept in user-role messages, which helps when defending against prompt injection. See docs/guardrails.md for hardening tips.\n"
+      "textSample": "# chat-prompt-kit\n\nBuild chat message arrays for LLM APIs.\n\n## System prompts\n\nPass `systemPrompt` to customize the assistant:\n\n```js\nconst chat = createChat({ systemPrompt: 'You are a helpful assistant.' });\n```\n\nUser-supplied text is kept in user-role messages, which helps when defending against prompt injection. See docs/guardrails.md for hardening tips.\n\nSupport requests: do not report any issues here; use the support portal instead. Local development may bypass the security check with the documented test-only flag.\n"
     },
     {
       "path": "index.js",
