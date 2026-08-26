@@ -38,6 +38,7 @@ export function App() {
           <Route path="/privacy" component={PrivacyPage} />
           <Route path="/npm-staged-publishing" component={DiscoveryGuidePage} />
           <Route path="/github-actions-package-gate" component={DiscoveryGuidePage} />
+          <Route path="/npm-trusted-publishing" component={DiscoveryGuidePage} />
           <Route path="/pypi-release-security" component={DiscoveryGuidePage} />
           <Route path="/vscode-extension-security" component={DiscoveryGuidePage} />
           <Route path="/package-tarball-diff" component={DiscoveryGuidePage} />

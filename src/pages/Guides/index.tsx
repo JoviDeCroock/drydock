@@ -95,6 +95,40 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
     secondary: { href: "/docs#gate-workflow", label: "See workflow examples" },
   },
+  "/npm-trusted-publishing": {
+    eyebrow: "npm trusted publishing",
+    heading: "Make the reviewed workflow the only way to publish.",
+    lead: "A workflow gate is a checkpoint on one path; a stolen token walks around it. Pinning npm trusted publishing to the gated GitHub Environment and disallowing tokens closes that: publish credentials only come into existence after the review passes.",
+    details: ["OIDC, no npm tokens", "environment pinned to the gate", "configuration, not code"],
+    sections: [
+      {
+        label: "Pin the path",
+        heading: "npm issues credentials only inside the gated environment.",
+        body: "A trusted publisher names one repository, one workflow file, and one GitHub Environment. With the environment pinned, the OIDC exchange fails for any other job — including an edited workflow that drops the environment — and the pinned job cannot start until the environment's protection rule, the Drydock review, has passed.",
+      },
+      {
+        label: "Close the side doors",
+        heading: "Every bypass runs into a specific pin.",
+        body: "Package settings disallow tokens, so laptop publishes and CI secrets stop working. Another repository or a fork fails the trusted-publisher claim match. Publishing past a rejection fails closed at the protection rule. Rebuilding after approval fails the digest re-check, and administrator bypass is switched off on the environment itself.",
+      },
+      {
+        label: "The honest residue",
+        heading: "What only the registry can close.",
+        body: "The npm account owner can still publish interactively with 2FA, and whoever controls the account can edit the trusted-publisher configuration. npm has no publisher-only mode today. A release that ships around the pinned path is still visible — it carries no provenance attestation and no review — so bypass becomes detectable even where it is not preventable.",
+      },
+    ],
+    close: {
+      heading: "Pin your publish path.",
+      body: "The whole recipe is configuration: one trusted-publisher entry, one environment setting, one token policy. The step-by-step with the workflow YAML and the full bypass table is in the open repository.",
+      action: {
+        href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md",
+        label: "Read the full recipe",
+      },
+      detail: ["configuration only", "fails closed"],
+    },
+    primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
+    secondary: { href: "/github-actions-package-gate", label: "How the gate works" },
+  },
   "/pypi-release-security": {
     eyebrow: "PyPI release security",
     heading: "Review wheels and source distributions before uploading to PyPI.",
