@@ -3,7 +3,10 @@ import {
   approvalSubmissionCompletesRelease,
   decisionSubmissionReachedVerdict,
 } from "../src/pages/Dashboard/ScanDetail/DecisionDialog";
-import { viewerHasRecordedGateVote } from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
+import {
+  canRetryPendingGatePackageDecision,
+  viewerHasRecordedGateVote,
+} from "../src/pages/Dashboard/ScanDetail/GateDecisionDialog";
 import type { PersistedScanDetail, ScanDecision } from "../src/models/scan";
 
 function result(verdict: ScanDecision | null, approvedCount: number): PersistedScanDetail {
@@ -79,5 +82,39 @@ describe("staged decision follow-up", () => {
     expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: "publish" })).toBe(true);
     expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: "no_publish" })).toBe(true);
     expect(viewerHasRecordedGateVote({ ...partial, viewerDecision: null })).toBe(false);
+  });
+
+  test("allows a matching durable package verdict to finish a resolved pending gate", () => {
+    expect(
+      canRetryPendingGatePackageDecision({
+        gatePending: true,
+        aggregateDecision: "approved",
+        packageDecision: "publish",
+        viewerDecision: "publish",
+        submission: "approved",
+      }),
+    ).toBe(true);
+    expect(
+      canRetryPendingGatePackageDecision({
+        gatePending: true,
+        aggregateDecision: "rejected",
+        packageDecision: "no_publish",
+        viewerDecision: "no_publish",
+        submission: "rejected",
+      }),
+    ).toBe(true);
+  });
+
+  test("does not offer a recovery retry for unresolved, mismatched, or completed gate state", () => {
+    const base = {
+      gatePending: true,
+      aggregateDecision: "approved" as const,
+      packageDecision: "publish" as const,
+      viewerDecision: "publish" as const,
+      submission: "approved" as const,
+    };
+    expect(canRetryPendingGatePackageDecision({ ...base, aggregateDecision: null })).toBe(false);
+    expect(canRetryPendingGatePackageDecision({ ...base, viewerDecision: null })).toBe(false);
+    expect(canRetryPendingGatePackageDecision({ ...base, gatePending: false })).toBe(false);
   });
 });

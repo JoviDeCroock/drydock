@@ -222,6 +222,21 @@ export async function setRequiredReleaseApprovals(
     policyStillApplies,
     policyIsCurrent,
   )!;
+  // A package approved before vote rows existed is still live while its gate
+  // remains pending. Once the bar rises above one, that legacy projection has
+  // no roster that can prove the new quorum, so reopen it in the same policy
+  // batch. Leaving it as `publish` would deadlock the gate: the aggregate CAS
+  // rejects the empty roster, while the vote route treats the package as
+  // already decided and gives no member a first approval to retry.
+  const unsupportedLegacyGateApproval = and(
+    eq(scans.organizationId, organizationId),
+    eq(scans.source, "workflow_gate"),
+    eq(scans.decision, "publish"),
+    sql`not ${hasVotes}`,
+    policyStillApplies,
+    policyIsCurrent,
+    sql`${normalized} > 1`,
+  )!;
   const latestVote = (
     decision: ScanDecision,
     column: "reason" | "user_id" | "updated_at",
@@ -310,11 +325,14 @@ export async function setRequiredReleaseApprovals(
         updatedAt: now,
       })
       .where(
-        and(
-          target,
-          sql`not ${hasBlock}`,
-          sql`${approvalCount} < ${normalized}`,
-          isNotNull(scans.decision),
+        or(
+          and(
+            target,
+            sql`not ${hasBlock}`,
+            sql`${approvalCount} < ${normalized}`,
+            isNotNull(scans.decision),
+          ),
+          unsupportedLegacyGateApproval,
         ),
       )
       .returning(RECONCILED_SCAN_COLUMNS),

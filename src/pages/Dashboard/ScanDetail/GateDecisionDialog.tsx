@@ -250,6 +250,19 @@ export function viewerHasRecordedGateVote(
   return approvals?.viewerDecision === "publish" || approvals?.viewerDecision === "no_publish";
 }
 
+/** Whether the viewer can retry their durable package verdict to finish a pending aggregate CAS. */
+export function canRetryPendingGatePackageDecision(input: {
+  gatePending: boolean;
+  aggregateDecision: WorkflowGateDecision | null;
+  packageDecision: GatePackageDecision | null;
+  viewerDecision: ScanApprovalState["viewerDecision"] | undefined;
+  submission: WorkflowGateDecision;
+}): boolean {
+  if (!input.gatePending || input.aggregateDecision !== input.submission) return false;
+  const recordedDecision = input.submission === "approved" ? "publish" : "no_publish";
+  return input.packageDecision === recordedDecision && input.viewerDecision === recordedDecision;
+}
+
 export function GateDecisionDialog({
   open,
   onClose,
@@ -293,8 +306,31 @@ export function GateDecisionDialog({
   const packages = gate.packages;
   const multi = packages.length > 1;
   const approvedCount = packages.filter((pkg) => pkg.decision === "publish").length;
+  const anyRejected = packages.some((pkg) => pkg.decision === "no_publish");
+  const allApproved = packages.length > 0 && approvedCount === packages.length;
+  const aggregateDecision: WorkflowGateDecision | null = anyRejected
+    ? "rejected"
+    : allApproved
+      ? "approved"
+      : null;
   const multiApproval = isMultiApproval(approvals);
   const canHardenPublishedPackage = multiApproval && packageDecision === "publish" && !gateDecided;
+  const canRetryRecordedApproval =
+    canApprove &&
+    canRetryPendingGatePackageDecision({
+      gatePending: !gateDecided,
+      aggregateDecision,
+      packageDecision,
+      viewerDecision: approvals?.viewerDecision,
+      submission: "approved",
+    });
+  const canRetryRecordedRejection = canRetryPendingGatePackageDecision({
+    gatePending: !gateDecided,
+    aggregateDecision,
+    packageDecision,
+    viewerDecision: approvals?.viewerDecision,
+    submission: "rejected",
+  });
   // This member has already approved this package. The route rejects a second
   // approval from the same person (that is the whole point of the bar), so the
   // approve action is closed off here rather than left to fail — but blocking
@@ -302,7 +338,6 @@ export function GateDecisionDialog({
   // able to stop a release they helped along.
   const viewerAlreadyVoted = viewerHasRecordedGateVote(approvals) && !packageAlreadyDecided;
   const alreadyApproved = approvals?.viewerDecision === "publish" && !packageAlreadyDecided;
-  const alreadyBlocked = approvals?.viewerDecision === "no_publish" && !packageAlreadyDecided;
   // Whether *this* approval is the one that decides the package.
   const approvalDecidesPackage = Boolean(
     approvals &&
@@ -317,7 +352,11 @@ export function GateDecisionDialog({
   // own enrollment, so this is exactly the case the route answers with 403
   // `two_factor_enrollment_required`. Decided gates/packages are read-only, so
   // there's nothing to block there.
-  const hasAvailableAction = !packageAlreadyDecided || canHardenPublishedPackage;
+  const hasAvailableAction =
+    !packageAlreadyDecided ||
+    canHardenPublishedPackage ||
+    canRetryRecordedApproval ||
+    canRetryRecordedRejection;
   const mustEnroll =
     gate.organizationRequiresTwoFactor && !requireTwoFactor && !gateDecided && hasAvailableAction;
 
@@ -330,10 +369,12 @@ export function GateDecisionDialog({
 
   const submit = (next: WorkflowGateDecision) => {
     const hardeningPublishedPackage = next === "rejected" && canHardenPublishedPackage;
+    const retryingRecordedDecision =
+      next === "approved" ? canRetryRecordedApproval : canRetryRecordedRejection;
     if (
       saving ||
       gateDecided ||
-      (packageAlreadyDecided && !hardeningPublishedPackage) ||
+      (packageAlreadyDecided && !hardeningPublishedPackage && !retryingRecordedDecision) ||
       blockedOnCode ||
       mustEnroll
     ) {
@@ -420,10 +461,7 @@ export function GateDecisionDialog({
           placeholder="e.g. reviewed changed files, no risk signals"
           onInput={(e) => (commentDraft.value = (e.target as HTMLInputElement).value)}
           disabled={
-            saving ||
-            gateDecided ||
-            (packageAlreadyDecided && !canHardenPublishedPackage) ||
-            mustEnroll
+            saving || gateDecided || (packageAlreadyDecided && !hasAvailableAction) || mustEnroll
           }
           maxLength={500}
           autoComplete="off"
@@ -455,35 +493,43 @@ export function GateDecisionDialog({
         <Muted class="m-0 text-[13px]">
           This gate has already been decided. The decision is final, and GitHub has been notified.
         </Muted>
-      ) : packageAlreadyDecided && !canHardenPublishedPackage ? (
+      ) : packageAlreadyDecided && !hasAvailableAction ? (
         <Muted class="m-0 text-[13px]">
           This package decision has been recorded. The held deployment stays pending until the
           remaining packages are decided.
         </Muted>
       ) : (
         <div class="flex flex-wrap gap-2">
-          {canApprove && !packageAlreadyDecided ? (
+          {canApprove && (!packageAlreadyDecided || canRetryRecordedApproval) ? (
             <Button
               onClick={() => submit("approved")}
               disabled={saving || blockedOnCode || mustEnroll || viewerAlreadyVoted}
             >
               {saving
                 ? "Submitting…"
-                : approveLabel({
-                    multi,
-                    multiApproval,
-                    approvalDecidesPackage,
-                    reviewFailed: Boolean(reviewFailed),
-                  })}
+                : canRetryRecordedApproval
+                  ? "Finish releasing held job"
+                  : approveLabel({
+                      multi,
+                      multiApproval,
+                      approvalDecidesPackage,
+                      reviewFailed: Boolean(reviewFailed),
+                    })}
             </Button>
           ) : null}
-          <Button
-            variant="danger"
-            onClick={() => submit("rejected")}
-            disabled={saving || blockedOnCode || mustEnroll}
-          >
-            {saving ? "Submitting…" : "Reject & block release"}
-          </Button>
+          {!packageAlreadyDecided || canHardenPublishedPackage || canRetryRecordedRejection ? (
+            <Button
+              variant="danger"
+              onClick={() => submit("rejected")}
+              disabled={saving || blockedOnCode || mustEnroll}
+            >
+              {saving
+                ? "Submitting…"
+                : canRetryRecordedRejection
+                  ? "Finish blocking held job"
+                  : "Reject & block release"}
+            </Button>
+          ) : null}
         </div>
       )}
       {alreadyApproved ? (
@@ -491,10 +537,15 @@ export function GateDecisionDialog({
           You have already approved this {multi ? "package" : "release"}. It needs a different
           member's approval to release — you can still reject it.
         </Muted>
-      ) : alreadyBlocked ? (
+      ) : canRetryRecordedApproval ? (
         <Muted class="m-0 text-[13px]">
-          You have already blocked this {multi ? "package" : "release"}. Retry the rejection to
-          finish blocking the held release.
+          Your approval is recorded, but the held job still needs its final release step. Retry to
+          finish notifying GitHub.
+        </Muted>
+      ) : canRetryRecordedRejection ? (
+        <Muted class="m-0 text-[13px]">
+          Your rejection is recorded, but the held job still needs its final block step. Retry to
+          finish notifying GitHub.
         </Muted>
       ) : null}
       {!gateDecided && !canApprove ? (
