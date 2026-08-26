@@ -9,6 +9,7 @@ import type { ReleaseConsistency } from "./lib/scan/release-memory";
 import type { IntentEnvelope } from "./lib/intent-envelope";
 import type { ScanRiskBreakdown } from "./lib/review/risk";
 import type {
+  CapabilityDelta,
   DiffEntry,
   Finding,
   PackageJsonDiff,
@@ -16,7 +17,12 @@ import type {
   RiskLevel,
 } from "./lib/review";
 
-export type { PackageJsonDiff, PackageJsonDiffEntry } from "./lib/review";
+export type {
+  CapabilityDelta,
+  CapabilitySet,
+  PackageJsonDiff,
+  PackageJsonDiffEntry,
+} from "./lib/review";
 export type { IntentEnvelope, IntentEnvelopeTier } from "./lib/intent-envelope";
 
 export type Bindings = Cloudflare.Env;
@@ -61,6 +67,9 @@ export interface ScanResult {
   releaseConsistency: ReleaseConsistency;
   // Advisory source-binding classification; never feeds risk or findings.
   intentEnvelope: IntentEnvelope;
+  // Advisory per-side capability projection and delta; never feeds risk or
+  // findings.
+  capabilities: CapabilityDelta;
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

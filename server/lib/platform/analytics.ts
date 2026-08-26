@@ -133,6 +133,20 @@ export type AnalyticsEvent =
       cache: string;
       risk: string;
       durationMs: number;
+    }
+  | {
+      /**
+       * A machine-readable verdict served from the anonymous surface. Counted
+       * separately from page views because this is the traffic CI tooling
+       * multiplies — the number that sizes the computation budget before the
+       * consumer-side check is announced.
+       */
+      name: "public_diff.verdict_served";
+      ecosystem: string;
+      /** Public package/project name — already public in the URL and cache key. */
+      packageName: string;
+      grade: string;
+      durationMs: number;
     };
 
 export const ANALYTICS_EVENT_NAMES = [
@@ -146,6 +160,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "ai_review.decided",
   "npm_connection.validated",
   "public_diff.viewed",
+  "public_diff.verdict_served",
   "user.signed_up",
   "organization.created",
   "integration.connected",
@@ -292,5 +307,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [event.packageName, event.cache, event.risk],
         [event.durationMs],
       );
+    case "public_diff.verdict_served":
+      return base("", event.ecosystem, [event.packageName, event.grade], [event.durationMs]);
   }
 }

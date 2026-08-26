@@ -58,6 +58,10 @@ export function buildAiReviewPayload(
     },
     deterministicRisk: computeRisk(options.ruleFindings),
     deterministicFindings: options.ruleFindings,
+    // Advisory capability delta (what the old side could do, what the new side
+    // can, what changed). Context only: the reviewer cannot downgrade the
+    // deterministic findings it summarizes.
+    capabilities: options.capabilities ?? null,
     packageJsonDiff: options.packageJsonDiff,
     packageJson: packageJsonFile
       ? {

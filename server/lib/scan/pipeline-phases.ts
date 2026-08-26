@@ -31,11 +31,14 @@ import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
   projectReleaseRuleFindings,
+  diffCapabilities,
+  projectCapabilities,
   redactFileRecords,
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
+  type CapabilityDelta,
   type CodePatternSet,
   type DiffEntry,
   type FileRecord,
@@ -116,6 +119,11 @@ export interface DeterministicFindings {
   redactedDetails: Record<string, unknown> | null;
   annotatedFindings: Array<Finding & FindingDiffAnnotation>;
   releaseRuleFindings: Finding[];
+  // Advisory per-side capability projection (see lib/review/capabilities.ts).
+  // Computed here because this is the last phase that holds both sides;
+  // persisted with the scan and handed to the AI reviewer as context, and —
+  // like the intent envelope — never allowed to influence risk or findings.
+  capabilities: CapabilityDelta;
 }
 
 // Acquire the staged artifact, then resolve + fetch the baseline it diffs
@@ -187,6 +195,16 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   });
   const releaseRuleFindings = projectReleaseRuleFindings(annotatedFindings);
 
+  // A skipped or absent baseline projects no `from` side: an escalation list
+  // computed against files that were never downloaded would be a fabricated
+  // comparison, so the delta reports "no comparable baseline" instead.
+  const capabilities = diffCapabilities(
+    baseline.artifact
+      ? projectCapabilities(redactedPreviousFiles, redactedPreviousManifest, adapter.codePatternSet)
+      : null,
+    projectCapabilities(redactedStagedFiles, redactedStagedManifest, adapter.codePatternSet),
+  );
+
   return {
     ruleFindings,
     redactedStagedFiles,
@@ -196,6 +214,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     redactedDetails,
     annotatedFindings,
     releaseRuleFindings,
+    capabilities,
   };
 }
 
@@ -444,6 +463,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    capabilities: findings.capabilities,
     safety,
   };
 
@@ -478,6 +498,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    capabilities: findings.capabilities,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -517,6 +538,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      capabilities: findings.capabilities,
       safety: result.safety,
     },
     ai: args.aiFindings,
