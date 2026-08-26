@@ -5,8 +5,8 @@ import {
   normalizeCapabilityDelta,
   projectCapabilities,
   type CapabilitySet,
-} from "../server/lib/review/capabilities";
-import type { FileRecord } from "../server/lib/review";
+  type FileRecord,
+} from "../server/lib/review";
 
 function file(path: string, textSample?: string, flags: string[] = []): FileRecord {
   return { path, size: textSample?.length ?? 0, sha256: "abc", flags, textSample };
@@ -86,6 +86,42 @@ describe("projectCapabilities", () => {
       null,
     );
     expect(projected.inspectedFiles).toBe(1);
+    expect(projected.uninspectedFiles).toBe(1);
+    expect(projected.complete).toBe(false);
+  });
+
+  test("sample-skipped minified scripts are coverage holes; inert skipped files are not", () => {
+    // The parser retains no text for minified bundles — exactly where real
+    // payloads hide — so a confident "no escalation" over one would be a lie.
+    const projected = projectCapabilities(
+      [file("dist/index.min.js", undefined, ["text-sample-skipped"])],
+      null,
+    );
+    expect(projected.uninspectedFiles).toBe(1);
+    expect(projected.complete).toBe(false);
+
+    // Source maps and minified stylesheets cannot execute in the consumer's
+    // runtime, so their skipped samples do not break completeness.
+    const inert = projectCapabilities(
+      [
+        file("dist/index.js.map", undefined, ["text-sample-skipped"]),
+        file("dist/styles.min.css", undefined, ["text-sample-skipped"]),
+      ],
+      null,
+    );
+    expect(inert.uninspectedFiles).toBe(0);
+    expect(inert.complete).toBe(true);
+  });
+
+  test("a baseline-truncated body still projects from its head but breaks completeness", () => {
+    const projected = projectCapabilities(
+      [file("big.js", "const { execSync } = require('child_process');\n", ["baseline-truncated"])],
+      null,
+    );
+    // The clipped head is real evidence — but the tail could hide more, so
+    // the file counts as a coverage hole rather than an inspected body.
+    expect(projected.capabilities).toEqual(["process"]);
+    expect(projected.inspectedFiles).toBe(0);
     expect(projected.uninspectedFiles).toBe(1);
     expect(projected.complete).toBe(false);
   });

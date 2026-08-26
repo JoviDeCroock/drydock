@@ -16,12 +16,7 @@ import type {
   RiskLevel,
 } from "./lib/review";
 
-export type {
-  CapabilityDelta,
-  CapabilitySet,
-  PackageJsonDiff,
-  PackageJsonDiffEntry,
-} from "./lib/review";
+export type { PackageJsonDiff, PackageJsonDiffEntry } from "./lib/review";
 export type { IntentEnvelope, IntentEnvelopeTier } from "./lib/intent-envelope";
 
 export type Bindings = Cloudflare.Env;
