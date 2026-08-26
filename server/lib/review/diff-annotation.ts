@@ -7,9 +7,12 @@ import {
   deterministicFindings,
   FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
+  PROMPT_INJECTION_PATTERN_SET,
   PYTHON_PATTERN_SET,
+  REVIEW_MANIPULATION_PATTERN_SET,
   safeJson,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
+  stripPromptInjectionEvasion,
 } from "./rules";
 import type {
   CodePatternSet,
@@ -235,9 +238,14 @@ function findingPatternMatchesChangedLine(
   for (const lineNumber of changedLines) {
     const line = lines[lineNumber - 1];
     if (line === undefined) continue;
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      if (pattern.test(line)) return true;
+    const candidates = isPromptInjectionFinding(finding)
+      ? [line, stripPromptInjectionEvasion(line)]
+      : [line];
+    for (const candidate of candidates) {
+      for (const pattern of patterns) {
+        pattern.lastIndex = 0;
+        if (pattern.test(candidate)) return true;
+      }
     }
   }
   return false;
@@ -247,6 +255,13 @@ function isPropagationFinding(finding: { ruleId?: string | null }): boolean {
   return (
     finding.ruleId === DETERMINISTIC_RULE_IDS.propagationRegistryPublish ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.propagationPackageMutation
+  );
+}
+
+function isPromptInjectionFinding(finding: { ruleId?: string | null }): boolean {
+  return (
+    finding.ruleId === DETERMINISTIC_RULE_IDS.filePromptInjection ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.fileReviewManipulation
   );
 }
 
@@ -286,6 +301,10 @@ function patternsForFinding(
       // The finding-side set, so line matching agrees with what detection
       // actually flagged (placeholder URL credentials are not secrets).
       return FINDING_SECRET_PATTERNS.map(([pattern]) => pattern);
+    case DETERMINISTIC_RULE_IDS.filePromptInjection:
+      return PROMPT_INJECTION_PATTERN_SET;
+    case DETERMINISTIC_RULE_IDS.fileReviewManipulation:
+      return REVIEW_MANIPULATION_PATTERN_SET;
     default:
       return [];
   }

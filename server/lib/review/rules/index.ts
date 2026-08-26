@@ -19,10 +19,13 @@ export {
   codePatternsFor,
   FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
+  PROMPT_INJECTION_PATTERN_SET,
   PYTHON_PATTERN_SET,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  REVIEW_MANIPULATION_PATTERN_SET,
   SECRET_PATTERNS,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
+  stripPromptInjectionEvasion,
 } from "./patterns";
 export { safeJson } from "./helpers";
 export type { DeterministicFindingOptions } from "./context";

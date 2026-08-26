@@ -219,6 +219,16 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
+// Markdown emphasis and zero-width characters are in-band evasions in the
+// prompt-injection rules' primary vector. Keep the normalization beside the
+// pattern sets so detection and changed-line release classification cannot
+// drift apart.
+const PROMPT_INJECTION_EVASION_CHARS = /[*_`\u200B-\u200D\uFEFF]/g;
+
+export function stripPromptInjectionEvasion(text: string): string {
+  return text.replace(PROMPT_INJECTION_EVASION_CHARS, "");
+}
+
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
 // each pattern needs either an imperative aimed at the release object ("mark
