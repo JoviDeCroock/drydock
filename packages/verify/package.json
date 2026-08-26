@@ -1,0 +1,40 @@
+{
+  "name": "drydock-verify",
+  "version": "0.1.0",
+  "description": "Enforce Drydock dependency-review policy from lockfile changes",
+  "keywords": [
+    "dependencies",
+    "github-actions",
+    "lockfile",
+    "security",
+    "supply-chain"
+  ],
+  "homepage": "https://github.com/JoviDeCroock/drydock/blob/main/docs/verify-ci.md",
+  "bugs": "https://github.com/JoviDeCroock/drydock/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoviDeCroock/drydock.git",
+    "directory": "packages/verify"
+  },
+  "bin": {
+    "drydock": "bin/drydock.mjs",
+    "drydock-verify": "bin/drydock.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "drydock.policy.schema.json"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
