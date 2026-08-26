@@ -2,7 +2,7 @@ import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
 import type { FindingProfileEntry, ReleaseConsistency } from "../scan/release-memory";
 import { combineRisk, computeRisk, normalizeRisk, type Finding, type RiskLevel } from "./";
-import { DETERMINISTIC_RULE_IDS } from "./rules/rule-ids";
+import { deterministicRuleIds } from "./rules/rule-ids";
 
 export interface ScanRiskBreakdown {
   artifactRisk: RiskLevel;
@@ -65,15 +65,7 @@ export function computeScanRiskBreakdown(
 }
 
 // Approval never discounts evidence of active compromise.
-const STANDING_DANGER_RULE_IDS = new Set<string>([
-  DETERMINISTIC_RULE_IDS.installScript,
-  DETERMINISTIC_RULE_IDS.installScriptPreinstall,
-  DETERMINISTIC_RULE_IDS.installScriptImplicitNodeGyp,
-  DETERMINISTIC_RULE_IDS.installScriptGypCommandSubstitution,
-  DETERMINISTIC_RULE_IDS.codeRemoteShell,
-  DETERMINISTIC_RULE_IDS.fileSecretContent,
-  DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
-]);
+const STANDING_DANGER_RULE_IDS = deterministicRuleIds((spec) => spec.standingDanger === true);
 
 function dropPriorApprovedFindings(
   contextFindings: RiskFinding[],

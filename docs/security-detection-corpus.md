@@ -73,6 +73,69 @@ The first corpus slice covers:
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
+## Rule inventory
+
+The complete deterministic ruleset across all ecosystems. Scoring roles are declared per rule in the
+manifest (`DETERMINISTIC_RULES` in `server/lib/review/rules/rule-ids.ts`): `anchor` severities map
+straight to risk and set a floor, `capability` rules score by co-occurrence, and a
+`weak-lone-capability` de-escalates to low when it fires alone. Standing-danger rules are evidence of
+active compromise, so release memory never discounts them as previously-approved context. `pypi.*`
+and `vscode.*` rules live in their ecosystem registries (`PYPI_RULE_IDS`, `VSCODE_RULE_IDS`) and
+always anchor.
+
+`test/detection-rule-coverage.test.mjs` machine-checks this table against the registries: the rule
+IDs must match exactly, every rule needs a corpus fixture asserting it (or an explicit exception in
+that test naming the unit-test layer that covers it), and fixtures may only assert registered IDs.
+
+| Rule                                      | Registry      | Scored as            | Standing danger |
+| ----------------------------------------- | ------------- | -------------------- | --------------- |
+| `atpm.provenance-invalid`                 | deterministic | anchor               | no              |
+| `atpm.provenance-missing`                 | deterministic | anchor               | no              |
+| `atpm.provenance-publisher-mismatch`      | deterministic | anchor               | no              |
+| `atpm.provenance-subject-mismatch`        | deterministic | anchor               | no              |
+| `atpm.trusted-publishing-lost`            | deterministic | anchor               | no              |
+| `code.credential-access`                  | deterministic | capability           | no              |
+| `code.dynamic-evaluation`                 | deterministic | capability           | no              |
+| `code.network-access`                     | deterministic | capability           | no              |
+| `code.process-execution`                  | deterministic | weak-lone-capability | no              |
+| `code.remote-shell`                       | deterministic | capability           | yes             |
+| `dependency.added`                        | deterministic | anchor               | no              |
+| `dependency.major-bump`                   | deterministic | anchor               | no              |
+| `dependency.optional-added`               | deterministic | anchor               | no              |
+| `dependency.unusual-spec`                 | deterministic | anchor               | no              |
+| `diff.bin-added`                          | deterministic | anchor               | no              |
+| `diff.credential-file-added`              | deterministic | anchor               | no              |
+| `diff.large-new-file`                     | deterministic | anchor               | no              |
+| `file.large-binary`                       | deterministic | anchor               | no              |
+| `file.native-artifact`                    | deterministic | anchor               | no              |
+| `file.outside-files-list`                 | deterministic | anchor               | no              |
+| `file.secret-content`                     | deterministic | anchor               | yes             |
+| `install-script.gyp-command-substitution` | deterministic | anchor               | yes             |
+| `install-script.implicit-node-gyp`        | deterministic | anchor               | yes             |
+| `install-script.lifecycle`                | deterministic | anchor               | yes             |
+| `install-script.preinstall`               | deterministic | anchor               | yes             |
+| `package-json.entrypoint-missing`         | deterministic | anchor               | no              |
+| `package-json.parse-failed`               | deterministic | anchor               | no              |
+| `release.source-drift`                    | deterministic | anchor               | no              |
+| `stage.metadata-mismatch`                 | deterministic | anchor               | no              |
+| `stage.tarball-digest-mismatch`           | deterministic | anchor               | no              |
+| `tar.suspicious-entry`                    | deterministic | anchor               | yes             |
+| `pypi.metadata-missing`                   | pypi          | anchor               | no              |
+| `pypi.metadata-mismatch`                  | pypi          | anchor               | no              |
+| `pypi.native-artifact`                    | pypi          | anchor               | no              |
+| `pypi.pth-execution`                      | pypi          | anchor               | no              |
+| `pypi.record-mismatch`                    | pypi          | anchor               | no              |
+| `pypi.setup-install-command`              | pypi          | anchor               | no              |
+| `pypi.startup-hook`                       | pypi          | anchor               | no              |
+| `pypi.unusual-dependency`                 | pypi          | anchor               | no              |
+| `pypi.wheel-record-missing`               | pypi          | anchor               | no              |
+| `vscode.broad-activation`                 | vscode        | anchor               | no              |
+| `vscode.extension-dependency`             | vscode        | anchor               | no              |
+| `vscode.metadata-mismatch`                | vscode        | anchor               | no              |
+| `vscode.startup-remote-command`           | vscode        | anchor               | no              |
+| `vscode.startup-wasm-loader`              | vscode        | anchor               | no              |
+| `vscode.undeclared-configuration-read`    | vscode        | anchor               | no              |
+
 ## Known coverage gaps
 
 The corpus deliberately records some product gaps instead of hiding them:
