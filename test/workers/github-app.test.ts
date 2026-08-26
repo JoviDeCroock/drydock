@@ -1820,6 +1820,116 @@ describe("github-app workflow-gate decision route", () => {
     ).toHaveLength(0);
   });
 
+  test("completed rejected gates retain partial sibling approval history", async () => {
+    const { userId, organizationId } = await seedUser();
+    const approver = await seedUser();
+    const blocker = await seedUser();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: approver.userId,
+      role: "member",
+    });
+    await addOrganizationMember(db, {
+      organizationId,
+      userId: blocker.userId,
+      role: "member",
+    });
+    await setRequiredReleaseApprovals(db, organizationId, 2);
+
+    const { gateId, scanId } = await seedGate(organizationId, {
+      attachScan: { ownerUserId: userId },
+    });
+    await completeWorkflowGateScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      scanId: scanId!,
+      packageName: "alpha-pkg",
+    });
+    const blockedScanId = await seedGatePackageScan({
+      organizationId,
+      ownerUserId: userId,
+      gateId,
+      packageName: "beta-pkg",
+      version: "1.0.0",
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.includes("/access_tokens")) {
+        return Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" });
+      }
+      if (request.url.endsWith("/deployment_protection_rule")) {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected fetch in completed gate history test: ${request.url}`);
+    });
+
+    const partial = await callGithubAppRoute(
+      buildTestApp(approver.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "approved", scanId: scanId! },
+    );
+    expect(partial.status).toBe(200);
+    expect(await partial.json()).toMatchObject({ approvals: { approvedCount: 1, verdict: null } });
+
+    const rejected = await callGithubAppRoute(
+      buildTestApp(blocker.userId, organizationId),
+      "POST",
+      `/api/v1/github-app/workflow-gates/${gateId}/decision`,
+      { decision: "rejected", scanId: blockedScanId },
+    );
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toMatchObject({ gate: { status: "rejected" } });
+
+    await removeOrganizationMember(db, organizationId, approver.userId);
+
+    expect(
+      await db
+        .select({ userId: schema.scanApprovals.userId })
+        .from(schema.scanApprovals)
+        .where(
+          and(
+            eq(schema.scanApprovals.scanId, scanId!),
+            eq(schema.scanApprovals.userId, approver.userId),
+          ),
+        ),
+    ).toEqual([{ userId: approver.userId }]);
+
+    const readback = await callGithubAppRoute(
+      buildTestApp(userId),
+      "GET",
+      `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
+    );
+    const body = (await readback.json()) as {
+      gate: { packages: Array<{ scanId: string; approvalCount: number }> };
+    };
+    expect(body.gate.packages.find((pkg) => pkg.scanId === scanId)?.approvalCount).toBe(1);
+
+    const [scan] = await db
+      .select({
+        decision: schema.scans.decision,
+        decisionReason: schema.scans.decisionReason,
+        decidedByUserId: schema.scans.decidedByUserId,
+        decidedAt: schema.scans.decidedAt,
+        source: schema.scans.source,
+        gateId: schema.scans.gateId,
+      })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId!));
+    const approvals = await loadScanApprovalState(db, {
+      scanId: scanId!,
+      organizationId,
+      viewerUserId: userId,
+      scan,
+    });
+    expect(approvals).toMatchObject({
+      approvedCount: 1,
+      approvals: [expect.objectContaining({ userId: approver.userId, eligible: false })],
+    });
+  });
+
   test("a retry audits the exact durable block transition before recovering the gate", async () => {
     const { userId, organizationId } = await seedUser();
     const db = createDb(env.DB);

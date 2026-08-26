@@ -648,7 +648,7 @@ function publicWorkflowGate(
       // undecided; the roster is what tells a reviewer whether their own click
       // will release the deployment or just move it one step closer.
       approvalCount:
-        (pkg.decision === null
+        (record.status === "pending" && pkg.decision === null
           ? approvalCounts.get(pkg.scanId)?.eligibleApproved
           : approvalCounts.get(pkg.scanId)?.approved) ?? (pkg.decision === "publish" ? 1 : 0),
     })),

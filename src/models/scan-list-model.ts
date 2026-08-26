@@ -317,13 +317,16 @@ export const ScanListModel = createModel(() => {
         ) {
           return;
         }
+        const nextRequiredApprovals = data.requiredApprovals ?? 1;
+        if (nextRequiredApprovals !== this.requiredApprovals.peek()) {
+          // A policy change reconciles decisions across the whole queue. The
+          // rows already loaded were projected under the previous threshold,
+          // so appending this page would combine incompatible snapshots.
+          await refresh();
+          return;
+        }
         this.scans.value = [...this.scans.value, ...data.scans];
         this.nextCursor.value = data.nextCursor;
-        // The owner can change the approval bar in another tab between pages.
-        // Each response carries the policy used to compute its counts, so keep
-        // the denominator aligned with the newest page instead of mixing new
-        // tallies with the first page's stale requirement.
-        this.requiredApprovals.value = data.requiredApprovals ?? 1;
         this.error.value = null;
       } catch (err) {
         if (mutationId === listMutationId && activeOrganizationId.peek() === organizationId) {
