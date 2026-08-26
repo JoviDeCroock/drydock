@@ -1,0 +1,199 @@
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { ScanListModel } from "../src/models/scan-list-model";
+import type { ScanListItem } from "../src/models/scan-api";
+
+/**
+ * The getting-started funnel's last step: has this organization ever recorded a
+ * decision? The dashboard list cannot answer it — it defaults to the
+ * "undecided" filter — so the model resolves it separately, and only when
+ * asked.
+ */
+
+function scan(overrides: Partial<ScanListItem> = {}): ScanListItem {
+  return {
+    id: "scan-1",
+    stageId: "stage-1",
+    packageName: "left-pad",
+    stagedVersion: "1.0.1",
+    previousVersion: "1.0.0",
+    risk: "low",
+    status: "complete",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** Serves `/api/v1/scans` from a per-filter map and records the filters asked for. */
+function stubScanList(pages: Partial<Record<string, ScanListItem[]>>) {
+  const asked: string[] = [];
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), "https://drydock.test");
+    if (init?.method === "POST") {
+      return Promise.resolve(
+        jsonResponse({ scan: scan({ decision: "publish" }), files: [], findings: [], events: [] }),
+      );
+    }
+    const filter = url.searchParams.get("filter") ?? "undecided";
+    asked.push(filter);
+    return Promise.resolve(jsonResponse({ scans: pages[filter] ?? [], nextCursor: null, filter }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return asked;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("ScanListModel onboarding progress", () => {
+  test("an organization with no scans has nothing decided either", async () => {
+    const asked = stubScanList({});
+    const model = new ScanListModel();
+
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(false);
+    expect(model.hasAnyDecision.value).toBe(false);
+    // The empty "undecided" page plus the one-row "all" probe. Nothing more:
+    // an organization with no scans cannot have decided one.
+    expect(asked).toEqual(["undecided", "all"]);
+  });
+
+  test("a decided review in the fetched page settles the step for free", async () => {
+    const asked = stubScanList({ all: [scan({ decision: "no_publish" })] });
+    const model = new ScanListModel();
+    model.filter.value = "all";
+
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(model.hasAnyDecision.value).toBe(true);
+    expect(asked).toEqual(["all"]);
+  });
+
+  test("a page of undecided reviews leaves the step unknown until it is asked about", async () => {
+    const asked = stubScanList({ undecided: [scan()] });
+    const model = new ScanListModel();
+
+    await model.refresh();
+
+    // Unknown, not false: the panel is never shown on a guess.
+    expect(model.hasAnyDecision.value).toBe(null);
+    expect(asked).toEqual(["undecided"]);
+  });
+
+  test("approvals are probed first and short-circuit", async () => {
+    const asked = stubScanList({
+      undecided: [scan()],
+      publish: [scan({ id: "scan-2", decision: "publish" })],
+      no_publish: [scan({ id: "scan-3", decision: "no_publish" })],
+    });
+    const model = new ScanListModel();
+    await model.refresh();
+
+    await model.resolveHasAnyDecision();
+
+    expect(model.hasAnyDecision.value).toBe(true);
+    expect(asked).toEqual(["undecided", "publish"]);
+  });
+
+  test("blocked reviews count too", async () => {
+    const asked = stubScanList({
+      undecided: [scan()],
+      no_publish: [scan({ id: "scan-3", decision: "no_publish" })],
+    });
+    const model = new ScanListModel();
+    await model.refresh();
+
+    await model.resolveHasAnyDecision();
+
+    expect(model.hasAnyDecision.value).toBe(true);
+    expect(asked).toEqual(["undecided", "publish", "no_publish"]);
+  });
+
+  test("answers no when neither decision has ever been recorded", async () => {
+    const asked = stubScanList({ undecided: [scan()] });
+    const model = new ScanListModel();
+    await model.refresh();
+
+    await model.resolveHasAnyDecision();
+
+    expect(model.hasAnyDecision.value).toBe(false);
+    expect(asked).toEqual(["undecided", "publish", "no_publish"]);
+  });
+
+  test("concurrent callers share one probe", async () => {
+    const asked = stubScanList({ undecided: [scan()] });
+    const model = new ScanListModel();
+    await model.refresh();
+
+    await Promise.all([model.resolveHasAnyDecision(), model.resolveHasAnyDecision()]);
+
+    expect(model.hasAnyDecision.value).toBe(false);
+    expect(asked).toEqual(["undecided", "publish", "no_publish"]);
+  });
+
+  test("a settled answer is not re-probed", async () => {
+    const asked = stubScanList({ undecided: [scan()] });
+    const model = new ScanListModel();
+    await model.refresh();
+    await model.resolveHasAnyDecision();
+
+    await model.resolveHasAnyDecision();
+
+    expect(asked).toEqual(["undecided", "publish", "no_publish"]);
+  });
+
+  test("a decided row already loaded answers without any request", async () => {
+    const asked = stubScanList({ all: [scan({ decision: "publish" })] });
+    const model = new ScanListModel();
+    model.filter.value = "all";
+    await model.refresh();
+    model.hasAnyDecision.value = null;
+
+    await model.resolveHasAnyDecision();
+
+    expect(model.hasAnyDecision.value).toBe(true);
+    expect(asked).toEqual(["all"]);
+  });
+
+  test("recording a decision ticks the step without a probe", async () => {
+    const asked = stubScanList({ undecided: [scan()] });
+    const model = new ScanListModel();
+    await model.refresh();
+    expect(model.hasAnyDecision.value).toBe(null);
+
+    await model.setDecision("scan-1", "publish", null);
+
+    expect(model.hasAnyDecision.value).toBe(true);
+    expect(asked).toEqual(["undecided"]);
+  });
+
+  test("an unreachable API leaves the step unknown rather than guessing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), "https://drydock.test");
+        const filter = url.searchParams.get("filter") ?? "undecided";
+        if (filter === "undecided") {
+          return Promise.resolve(jsonResponse({ scans: [scan()], nextCursor: null, filter }));
+        }
+        return Promise.reject(new Error("offline"));
+      }),
+    );
+    const model = new ScanListModel();
+    await model.refresh();
+
+    await model.resolveHasAnyDecision();
+
+    expect(model.hasAnyDecision.value).toBe(null);
+  });
+});

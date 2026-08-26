@@ -19,10 +19,48 @@ atpm has no gate. Its releases are reviewed through an anonymous link from atpm'
 
 The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
+## Guided setup
+
+Step 1 of the contract used to be a manual walk through GitHub settings. **Settings → Integrations → Guided gate setup** (`/dashboard/settings#gate-setup`) now does the GitHub-side work with the installation token:
+
+1. Pick the installation and repository the App can already see.
+2. Pick an existing GitHub Environment, or name a new one and let Drydock create it.
+3. One click registers Drydock as that environment's custom deployment-protection rule.
+4. Pick the ecosystem and package name; Drydock generates the publish workflow for it.
+5. "Open a PR with this workflow" commits the file on a new `drydock/workflow-gate-*` branch and opens a pull request whose body carries the trusted-publishing hardening checklist.
+6. Create the matching release target, which is the same `POST /release-targets` the manual form uses.
+
+Endpoints, all under `/api/v1/github-app/`, all owner/admin-only (`roleCanManageIntegrations`) and scoped through `ensureInstallationOwnedBy`, with the same session and step-up posture as `POST /release-targets`:
+
+| Endpoint                           | Does                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `POST /gate-setup/preview`         | Renders the ecosystem's workflow YAML for a draft. No GitHub calls.                               |
+| `POST /gate-setup/environment`     | `PUT /repos/{o}/{r}/environments/{name}`, after a GET so it never resets an existing environment. |
+| `POST /gate-setup/protection-rule` | Adds the App's `integration_id` as a custom deployment-protection rule.                           |
+| `POST /gate-setup/pull-request`    | Branches from the default branch, writes the workflow, opens the PR.                              |
+
+### Permissions and degradation
+
+Each step needs a different App permission, and an installation commonly has some but not all:
+
+- Creating the environment and adding the protection rule need **repository administration: write**.
+- Writing a file under `.github/workflows/` needs **workflows: write**. GitHub refuses the contents write with a 403 without it, so an installation that lacks it can do every step _except_ open the pull request.
+
+No step throws on a refusal. Each returns HTTP 200 with a `GateSetupStepResult` — `{ step, status: "created" | "already_configured" | "failed", failure? }` — and a failed step carries a `code`, a message naming the missing permission, and a `manualFallback` string. The wizard renders that fallback inline next to the step's own controls, and the pull-request response always includes the generated YAML so the copy-it-yourself path has the exact bytes. Nothing logs a GitHub response body, header, or the installation token.
+
+Steps are idempotent: an existing environment reports `already_configured` without a `PUT` (a `PUT` would clear the maintainer's reviewers and wait timers), and an already-registered protection rule is detected by reading the rules first, with a 422 re-read as the tiebreak.
+
+### Generated workflows
+
+The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
+
+Drydock generates these files but does not review them. Read the pull request before merging it.
+
 ## Shared implementation
 
 - `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
 - `server/routes/github-app/installations.ts` handles App install/callback setup.
+- `server/routes/github-app/gate-setup.ts` and `server/lib/github-app/gate-setup.ts` back the guided setup wizard (environment, protection rule, workflow pull request).
 - `server/routes/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
@@ -176,7 +214,7 @@ The gate review workbench shows the release target, package identity/version, ar
 2. Implement release-set derivation from uploaded artifact bytes.
 3. Define baseline acquisition and artifact namespace matching.
 4. Add deterministic findings for ecosystem-specific risky behavior.
-5. Register the adapter with workflow-gate resolution.
+5. Register the adapter with workflow-gate resolution, and implement `gateSetupTemplate` so the guided setup wizard can generate its publish workflow.
 6. Add Worker-route tests for webhook/gate lifecycle and adapter tests for archive/metadata/baseline behavior.
 7. Add fake-registry or fake-artifact e2e coverage when the publish workflow or browser-visible review flow changes.
 

@@ -45,6 +45,27 @@ what is tied to the persisted scan model (`scanFilesToFileRecords`,
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
 
+## Dashboard onboarding funnel
+
+`src/pages/Dashboard/GettingStarted.tsx` tracks three steps — npm connected, a
+first staged publish reviewed, a first decision recorded — and stays up until
+the last one ticks (or the reader dismisses it). Only the first two are free:
+the list defaults to the `undecided` filter, so `ScanListModel.hasAnyDecision`
+stays `null` until `resolveHasAnyDecision()` runs two one-row probes, and the
+dashboard asks only while the panel could still be shown. A finished or
+dismissed funnel is recorded per organization in `src/models/getting-started.ts`
+(localStorage), which is also what stops the probe from repeating. An
+unresolved (`null`) answer renders nothing — neither onboarding surface appears
+on a guess.
+
+`src/features/onboarding-intent.ts` carries `{ecosystem, packageName}` from the
+anonymous `/diff` page's "Create account" CTA to the dashboard, so a new account
+opens on the package its owner was already reading. It is client-side only and
+untrusted: a stored value that does not parse, names an unknown ecosystem, or
+has aged out is dropped rather than rendered. The dashboard clears it once the
+organization has a scan of its own or the panel is dismissed. It lives in
+`src/features/` because two pages share it and pages may not import each other.
+
 ## Copy and density
 
 - Lead with maintainer action and release risk, not internal pipeline detail.
