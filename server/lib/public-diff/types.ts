@@ -50,6 +50,8 @@ export interface PublicDiffAttestation {
 export interface PublicDiffAcquiredSources {
   from: PublicDiffAcquiredSide;
   to: PublicDiffAcquiredSide;
+  /** False only when `from` is an empty display sentinel, not a real release. */
+  hasComparableBaseline?: boolean;
   buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
   codePatternSet?: CodePatternSet;
   notices?: string[];

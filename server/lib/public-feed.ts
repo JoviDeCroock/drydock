@@ -1,7 +1,15 @@
 import type { SharedScanRow } from "../db/scan-share";
+import { normalizeIntentEnvelope, type IntentEnvelopeTier } from "./intent-envelope";
 import { coloCacheDelete } from "./platform/colo-cache";
 
+// Shaping helpers for the discoverable public surfaces: the shields.io badge,
+// the threat feed, and the exact-version listed-review lookup. All are
+// name-discoverable indexes, so they only ever reflect scans whose org
+// explicitly opted into feed listing on top of sharing — a privately shared
+// link never appears in any of them.
+
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
+export const LISTED_REVIEW_SCHEMA = "drydock.review-lookup.v1";
 
 export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode"] as const;
 export type PublicEcosystem = (typeof PUBLIC_ECOSYSTEMS)[number];
@@ -16,6 +24,36 @@ export function publicPackageNameMax(ecosystem: PublicEcosystem): number {
   return PUBLIC_PACKAGE_NAME_MAX[ecosystem];
 }
 
+export interface ReviewedArtifactDigest {
+  algorithm: "sha1" | "sha256";
+  value: string;
+}
+
+/** Parse the byte identity a consumer resolved for the artifact it will install. */
+export function parseReviewedArtifactDigest(
+  raw: string | undefined,
+): ReviewedArtifactDigest | null {
+  if (!raw) return null;
+  const separator = raw.indexOf(":");
+  if (separator <= 0 || raw.indexOf(":", separator + 1) !== -1) return null;
+  const algorithm = raw.slice(0, separator).toLowerCase();
+  const value = raw.slice(separator + 1).toLowerCase();
+  if (algorithm === "sha1" && /^[0-9a-f]{40}$/.test(value)) return { algorithm, value };
+  if (algorithm === "sha256" && /^[0-9a-f]{64}$/.test(value)) return { algorithm, value };
+  return null;
+}
+
+/**
+ * Canonical lookup key for a package name, per that ecosystem's own identity
+ * rules. The ecosystem prefix makes a cross-ecosystem collision impossible.
+ *
+ * npm is deliberately *not* case-folded, unlike the other two. Its registry
+ * treats names case-sensitively for existing packages — `JSONStream` and
+ * `jsonstream` are different packages — so folding would merge two real
+ * packages onto one badge. PyPI folds per PEP 503 and the VS Code marketplace
+ * treats extension ids case-insensitively, so for those, *not* folding would
+ * fragment one package across several keys.
+ */
 export function publicPackageLookupKey(ecosystem: PublicEcosystem, packageName: string): string {
   const normalized =
     ecosystem === "pypi"
@@ -178,6 +216,63 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
   };
 }
 
+export interface ListedReview {
+  schema: typeof LISTED_REVIEW_SCHEMA;
+  listed: true;
+  ecosystem: PublicEcosystem;
+  package: string;
+  version: string;
+  /** Exact registry or release-artifact digest this review is bound to. */
+  artifactDigest: ReviewedArtifactDigest;
+  packageIdentity: PackageIdentity;
+  /** Null for legacy or malformed persisted envelopes; never infer a tier. */
+  intentEnvelopeTier: IntentEnvelopeTier | null;
+  completedAt: string | null;
+  listedAt: string;
+  /** Capability-bearing URL for the human-readable public report. */
+  reportUrl: string;
+}
+
+/** Machine-readable pointer from an exact public package version to its review. */
+export function buildListedReview(
+  row: SharedScanRow,
+  ecosystem: PublicEcosystem,
+  artifactDigest: ReviewedArtifactDigest,
+  origin: string,
+): ListedReview | null {
+  if (!row.packageName || !row.stagedVersion || !row.publicShareToken || !row.publicFeedListedAt) {
+    return null;
+  }
+  const summary =
+    row.summaryJson && typeof row.summaryJson === "object" && !Array.isArray(row.summaryJson)
+      ? row.summaryJson
+      : {};
+  return {
+    schema: LISTED_REVIEW_SCHEMA,
+    listed: true,
+    ecosystem,
+    package: row.packageName,
+    version: row.stagedVersion,
+    artifactDigest,
+    packageIdentity: scanPackageIdentity(row.source),
+    intentEnvelopeTier:
+      normalizeIntentEnvelope((summary as { intentEnvelope?: unknown }).intentEnvelope)?.tier ??
+      null,
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    listedAt: row.publicFeedListedAt.toISOString(),
+    reportUrl: `${origin}/reports/${row.publicShareToken}`,
+  };
+}
+
+export function buildUnlistedReview(): {
+  schema: typeof LISTED_REVIEW_SCHEMA;
+  listed: false;
+} {
+  return { schema: LISTED_REVIEW_SCHEMA, listed: false };
+}
+
+// shields.io endpoint-badge schema:
+// https://shields.io/badges/endpoint-badge
 export interface BadgePayload {
   schemaVersion: 1;
   label: string;

@@ -1,9 +1,10 @@
-# Public report sharing, attestations, badges, and the threat feed
+# Public report sharing, attestations, listed reviews, badges, and the threat feed
 
 Completed scans can be shared outside the organization as a read-only public
 report, with an optional signed attestation that lets anyone verify the report
-bytes came from Drydock. Shared reports also power two discoverable surfaces:
-a shields.io badge per package and an opt-in public threat feed.
+bytes came from Drydock. Shared reports also power three discoverable surfaces:
+a version-exact listed-review lookup, a shields.io badge per package, and an
+opt-in public threat feed.
 
 ## Share flow
 
@@ -176,6 +177,50 @@ not: npm links the evergreen package-only `/diff/<name>` page (it resolves the
 latest published pair on load), while PyPI and VS Code — which have no
 package-only diff form — link the share URL the maintainer copied, correct at
 copy time but version-pinned.
+
+## Listed-review lookup
+
+`GET /public/reviews/:ecosystem/:package?version=&digest=` (ecosystems: `npm`,
+`pypi`, `vscode`; npm package names may contain `/`) maps one exact package
+artifact to the strongest review its organization explicitly feed-listed.
+`digest` is `sha1:<40 hex>` for a registry-staged npm tarball or
+`sha256:<64 hex>` for one workflow-gate artifact. It serves
+`drydock.review-lookup.v1`: every response carries `listed`, and a positive
+result also carries the persisted package spelling, ecosystem, version, matched
+artifact digest, package-identity strength, normalized intent-envelope tier,
+completion/listing timestamps, and the capability-bearing public report URL. It
+does not duplicate report findings or risk: consumer tooling can follow the
+report URL for the published record and use `/package-diff/verdict` for the
+deterministic comparison grade.
+
+The lookup starts from `scans.public_package_key`. That column is populated only
+while a completed, shared scan is feed-listed, and unlisting or revocation clears
+it in the same update. A never-scanned package, an internal scan, a private share,
+an unlisted share, a revoked share, a wrong version, and a digest that does not
+identify bytes Drydock reviewed therefore all return the
+same `200 { "schema": "drydock.review-lookup.v1", "listed": false }`; the
+application never queries the private population by name and filters it
+afterward. A negative lookup is distinct from endpoint unavailability, so
+`requireListedReview` cannot be weakened by a policy's outage posture. Responses
+are `no-store`, so this machine-policy surface observes withdrawal immediately
+rather than inheriting the badge/feed colo-cache window.
+
+Version equality is deliberately insufficient. npm stages are mutable before
+publication, and a workflow-gate release can contain several artifacts. A
+positive npm staged result requires the requested SHA-1 to match both sides of
+the persisted `verified` stage-integrity verdict; a workflow-gate result
+requires the requested SHA-256 to match one artifact digest Drydock recomputed.
+Publishing or installing different bytes under the same version therefore
+returns `listed: false` instead of inheriting the earlier review.
+
+As with the badge, a registry-verified npm scan ranks ahead of a workflow-gate
+manifest claim for the same name and version. The response still carries
+`packageIdentity`, because PyPI and VS Code reviews—and gate-only npm reviews—are
+necessarily `manifest-claimed`. `intentEnvelopeTier` is independently normalized
+from the persisted envelope and is `null` for legacy or malformed records. In
+particular, `attested` says GitHub bound the reviewed artifact to the reported
+workflow and repository; it does not silently upgrade a manifest-claimed package
+name into registry-proven ownership.
 
 ## Threat feed
 

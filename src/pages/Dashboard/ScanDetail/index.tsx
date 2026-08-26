@@ -141,7 +141,14 @@ export default function ScanDetailPage() {
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
   // Older scans have no capability projection; the normalizer returns null and
   // the section is simply not rendered.
-  const capabilities = useComputed(() => normalizeCapabilityDelta(summary.value.capabilities));
+  const capabilities = useComputed(() => {
+    const persisted = normalizeCapabilityDelta(summary.value.capabilities);
+    const isDefaultComparison = model.isDefaultComparison.value;
+    // The compare endpoint deliberately omits file bodies, so an alternate
+    // baseline cannot produce an honest capability projection in the client.
+    // Never show the persisted default-baseline delta beside another diff.
+    return isDefaultComparison ? persisted : null;
+  });
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;

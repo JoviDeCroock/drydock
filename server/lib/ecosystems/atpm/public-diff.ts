@@ -101,8 +101,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // v9 binds baseline provenance to its tarball and fails closed when a staged
   // candidate's publisher has no currently verified handle. v10 carries the
   // authenticated Rekor instance alongside its log-local index. v11 carries
-  // the capability delta and declared source binding.
-  payloadVersion: "v11",
+  // the capability delta and declared source binding. v12 distinguishes a
+  // first release from a comparable empty baseline in that delta.
+  payloadVersion: "v12",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -189,6 +190,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
         packageJson: fromArchive?.packageJson ?? null,
       },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
+      hasComparableBaseline: from !== null,
       provenance: resolutionTrail(ref, identity, stagedCandidate?.uri),
       attestation: describeAttestation(to, publisher.value, toArchive.archiveSha512 ?? null),
       ...(pageNotices.length ? { notices: pageNotices } : {}),

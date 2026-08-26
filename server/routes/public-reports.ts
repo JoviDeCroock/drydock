@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { createDb } from "../db/client";
 import {
   encodeThreatFeedCursor,
+  findListedReviewScan,
   listBadgeCandidateScans,
   listThreatFeedScans,
   parseThreatFeedCursor,
@@ -12,12 +13,15 @@ import {
 import { getScan } from "../db/scans";
 import {
   buildBadgePayload,
+  buildListedReview,
   buildThreatFeedEntry,
+  buildUnlistedReview,
   badgeTagMatches,
   buildUnavailableBadgePayload,
   isValidBadgeTag,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
+  parseReviewedArtifactDigest,
   publicFeedCacheKey,
   publicPackageNameMax,
   resolveBadgeTag,
@@ -185,6 +189,56 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
     "access-control-allow-origin": "*",
     ...(match ? {} : { [COLO_CACHE_SKIP_HEADER]: "1" }),
   });
+});
+
+// Artifact-exact lookup for consumer tooling. npm names may contain a slash, so
+// the package name is the wildcard suffix and coordinates stay in the query.
+// Misses are intentionally uniform: never scanned, shared-but-private,
+// unlisted, revoked, wrong-version, and wrong-byte packages all return the same
+// successful result. A policy can then distinguish "not listed" from an outage.
+publicReportsRoutes.get("/reviews/:ecosystem/*", async (c) => {
+  const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
+  if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
+    return c.json({ error: "not found" }, 404, { "cache-control": "no-store" });
+  }
+  const marker = `/reviews/${ecosystem}/`;
+  const markerIndex = c.req.path.indexOf(marker);
+  const rawName = markerIndex >= 0 ? c.req.path.slice(markerIndex + marker.length) : "";
+  let packageName: string;
+  try {
+    packageName = decodeURIComponent(rawName);
+  } catch {
+    return c.json({ error: "invalid package name" }, 400, { "cache-control": "no-store" });
+  }
+  if (!packageName || packageName.length > publicPackageNameMax(ecosystem)) {
+    return c.json({ error: "invalid package name" }, 400, { "cache-control": "no-store" });
+  }
+  const version = c.req.query("version");
+  if (!version) {
+    return c.json({ error: "version is required" }, 400, { "cache-control": "no-store" });
+  }
+  // Ecosystem versions are not one grammar (PEP 440 includes an epoch `!`),
+  // so keep this boundary structural: exact, bounded, and free of controls.
+  // eslint-disable-next-line no-control-regex -- controls are the boundary being rejected
+  if (version.length > 128 || /[\u0000-\u001F\u007F-\u009F]/.test(version)) {
+    return c.json({ error: "invalid version" }, 400, { "cache-control": "no-store" });
+  }
+
+  const artifactDigest = parseReviewedArtifactDigest(c.req.query("digest"));
+  if (!artifactDigest) {
+    return c.json({ error: "valid digest is required" }, 400, { "cache-control": "no-store" });
+  }
+
+  const row = await findListedReviewScan(
+    createDb(c.env.DB),
+    packageName,
+    ecosystem,
+    version,
+    artifactDigest,
+  );
+  const review = row ? buildListedReview(row, ecosystem, artifactDigest, canonicalOrigin(c)) : null;
+  if (!review) return c.json(buildUnlistedReview(), 200, { "cache-control": "no-store" });
+  return c.json(review, 200, { "cache-control": "no-store" });
 });
 
 publicReportsRoutes.get("/reports/:token", async (c) => {

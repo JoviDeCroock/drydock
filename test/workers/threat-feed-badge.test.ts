@@ -12,7 +12,11 @@ import { publicFeedCacheKey } from "../../server/lib/public-feed";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
+import type { IntentEnvelope } from "../../server/lib/intent-envelope";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+
+const REVIEWED_NPM_SHA1 = "a".repeat(40);
+const REVIEWED_GATE_SHA256 = "a".repeat(64);
 
 interface SeededUser {
   userId: string;
@@ -81,6 +85,9 @@ async function seedCompletedScan(
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
+    intentEnvelope?: IntentEnvelope | null;
+    artifactSha1?: string;
+    artifactSha256?: string;
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -98,6 +105,7 @@ async function seedCompletedScan(
         ? "npm"
         : null;
   const source = options.source ?? (gateEcosystem ? "workflow_gate" : "manual");
+  const isWorkflowGate = options.source === "workflow_gate" || Boolean(gateEcosystem);
   await createScanJob(db, {
     id: scanId,
     stageId,
@@ -118,7 +126,20 @@ async function seedCompletedScan(
     status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
-      ...(!gateEcosystem && options.tag ? { stagedPublish: { tag: options.tag } } : {}),
+      ...(options.intentEnvelope ? { intentEnvelope: options.intentEnvelope } : {}),
+      ...(!isWorkflowGate
+        ? {
+            stagedPublish: {
+              ...(options.tag ? { tag: options.tag } : {}),
+              artifactIntegrity: {
+                algorithm: "sha1",
+                status: "verified",
+                declared: options.artifactSha1 ?? REVIEWED_NPM_SHA1,
+                computed: options.artifactSha1 ?? REVIEWED_NPM_SHA1,
+              },
+            },
+          }
+        : {}),
       ...(gateEcosystem
         ? {
             stagedPublish: {
@@ -128,8 +149,16 @@ async function seedCompletedScan(
                 mode: "workflow_gate",
                 artifacts: [
                   gateEcosystem === "npm"
-                    ? { path: "pkg.tgz", kind: "tarball", sha256: "a".repeat(64) }
-                    : { path: "dist/a.whl", kind: "wheel", sha256: "a".repeat(64) },
+                    ? {
+                        path: "pkg.tgz",
+                        kind: "tarball",
+                        sha256: options.artifactSha256 ?? REVIEWED_GATE_SHA256,
+                      }
+                    : {
+                        path: "dist/a.whl",
+                        kind: "wheel",
+                        sha256: options.artifactSha256 ?? REVIEWED_GATE_SHA256,
+                      },
                 ],
               },
             },
@@ -226,6 +255,20 @@ interface BadgeBody {
   label: string;
   message: string;
   color: string;
+}
+
+interface ListedReviewBody {
+  schema: string;
+  listed: boolean;
+  ecosystem: string;
+  package: string;
+  version: string;
+  artifactDigest: { algorithm: string; value: string };
+  packageIdentity: string;
+  intentEnvelopeTier: string | null;
+  completedAt: string | null;
+  listedAt: string;
+  reportUrl: string;
 }
 
 async function fetchBadge(
@@ -983,6 +1026,163 @@ describe("shields badge endpoint", () => {
 
     const cache = (caches as unknown as { default: Cache }).default;
     expect(await cache.match(coloCacheKey(`/public/badge/npm/${missName}`))).toBeUndefined();
+  });
+});
+
+describe("listed review lookup", () => {
+  test("only an exact feed-listed version is name-queryable", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `@scope/lookup-${crypto.randomUUID().slice(0, 8)}`;
+    const path = `/public/reviews/npm/${packageName}?version=2.0.0&digest=sha1:${REVIEWED_NPM_SHA1}`;
+    const neverScanned = await request(app, path);
+    expect(neverScanned.status).toBe(200);
+    expect(neverScanned.headers.get("cache-control")).toBe("no-store");
+    const hiddenBody = await neverScanned.text();
+    expect(JSON.parse(hiddenBody)).toEqual({ schema: "drydock.review-lookup.v1", listed: false });
+
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "2.0.0",
+      intentEnvelope: {
+        tier: "declared",
+        repository: "https://github.com/acme/pkg",
+        signals: [{ kind: "manifest-repository", detail: "package declares acme/pkg" }],
+      },
+    });
+    // Neither an internal scan nor its capability share becomes discoverable.
+    expect(await (await request(app, path)).text()).toBe(hiddenBody);
+    await share(app, scanId);
+    expect(await (await request(app, path)).text()).toBe(hiddenBody);
+    expect(
+      await (
+        await request(
+          app,
+          `/public/reviews/npm/${packageName}?version=2.0.1&digest=sha1:${REVIEWED_NPM_SHA1}`,
+        )
+      ).text(),
+    ).toBe(hiddenBody);
+
+    const listed = await share(app, scanId, { threatFeed: true });
+    const response = await request(app, path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect((await response.json()) as ListedReviewBody).toMatchObject({
+      schema: "drydock.review-lookup.v1",
+      listed: true,
+      ecosystem: "npm",
+      package: packageName,
+      version: "2.0.0",
+      artifactDigest: { algorithm: "sha1", value: REVIEWED_NPM_SHA1 },
+      packageIdentity: "registry-verified",
+      intentEnvelopeTier: "declared",
+      reportUrl: `http://example.com/reports/${listed.share.token}`,
+    });
+
+    // A mutable stage can be rewritten under the same version. Version
+    // equality alone must never make the replacement bytes read as reviewed.
+    const rewritten = await request(
+      app,
+      `/public/reviews/npm/${packageName}?version=2.0.0&digest=sha1:${"b".repeat(40)}`,
+    );
+    expect(await rewritten.text()).toBe(hiddenBody);
+
+    // Withdrawal is immediate for the machine lookup; misses remain identical.
+    await share(app, scanId, { threatFeed: false });
+    const unlisted = await request(app, path);
+    expect(unlisted.status).toBe(200);
+    expect(await unlisted.text()).toBe(hiddenBody);
+  });
+
+  test("surfaces attested gate intent without upgrading its package-name claim", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `Gate_Pkg_${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "1!2.0.0",
+      ecosystem: "pypi",
+      source: "workflow_gate",
+      intentEnvelope: {
+        tier: "attested",
+        repository: "https://github.com/acme/gate-pkg",
+        signals: [{ kind: "workflow-gate", detail: "signed gate" }],
+      },
+    });
+    const listed = await share(app, scanId, { threatFeed: true });
+
+    // PEP 503 aliases share the public lookup key; PEP 440's epoch is valid.
+    const response = await request(
+      app,
+      `/public/reviews/pypi/${packageName.toLowerCase().replaceAll("_", "-")}?version=1!2.0.0&digest=sha256:${REVIEWED_GATE_SHA256}`,
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()) as ListedReviewBody).toMatchObject({
+      ecosystem: "pypi",
+      package: packageName,
+      version: "1!2.0.0",
+      artifactDigest: { algorithm: "sha256", value: REVIEWED_GATE_SHA256 },
+      packageIdentity: "manifest-claimed",
+      intentEnvelopeTier: "attested",
+      reportUrl: `http://example.com/reports/${listed.share.token}`,
+    });
+
+    const differentArtifact = await request(
+      app,
+      `/public/reviews/pypi/${packageName}?version=1!2.0.0&digest=sha256:${"b".repeat(64)}`,
+    );
+    expect(await differentArtifact.json()).toEqual({
+      schema: "drydock.review-lookup.v1",
+      listed: false,
+    });
+  });
+
+  test("registry-backed identity outranks a newer gate claim for the same version", async () => {
+    const publisher = await seedUser();
+    const claimant = await seedUser();
+    const app = buildTestApp(publisher);
+    const packageName = `lookup-${crypto.randomUUID().slice(0, 8)}`;
+    const registryScan = await seedCompletedScan(publisher, {
+      packageName,
+      version: "3.0.0",
+      intentEnvelope: { tier: "absent", repository: null, signals: [] },
+    });
+    const registryListing = await share(app, registryScan, { threatFeed: true });
+
+    const gateScan = await seedCompletedScan(claimant, {
+      packageName,
+      version: "3.0.0",
+      source: "workflow_gate",
+      intentEnvelope: {
+        tier: "attested",
+        repository: "https://github.com/claimant/not-the-package",
+        signals: [{ kind: "workflow-gate", detail: "signed gate" }],
+      },
+    });
+    await share(buildTestApp(claimant), gateScan, { threatFeed: true });
+
+    const response = await request(
+      app,
+      `/public/reviews/npm/${packageName}?version=3.0.0&digest=sha1:${REVIEWED_NPM_SHA1}`,
+    );
+    expect((await response.json()) as ListedReviewBody).toMatchObject({
+      packageIdentity: "registry-verified",
+      intentEnvelopeTier: "absent",
+      reportUrl: `http://example.com/reports/${registryListing.share.token}`,
+    });
+  });
+
+  test("rejects malformed lookup coordinates before querying", async () => {
+    const app = buildTestApp(null);
+    expect((await request(app, "/public/reviews/npm/pkg")).status).toBe(400);
+    expect((await request(app, "/public/reviews/unknown/pkg?version=1.0.0")).status).toBe(404);
+    expect((await request(app, `/public/reviews/npm/pkg?version=${"x".repeat(129)}`)).status).toBe(
+      400,
+    );
+    expect((await request(app, "/public/reviews/npm/pkg?version=1.0.0")).status).toBe(400);
+    expect(
+      (await request(app, "/public/reviews/npm/pkg?version=1.0.0&digest=sha256:not-hex")).status,
+    ).toBe(400);
   });
 });
 

@@ -183,7 +183,9 @@ export async function loadPublicPackageDiff(
   // Projected before the cache-size sample reduction below, so a payload whose
   // samples were dropped still carries the capability sets computed over them.
   const capabilities = diffCapabilities(
-    projectCapabilities(redactedFromFiles, fromPackageJson, sources.codePatternSet),
+    sources.hasComparableBaseline !== false
+      ? projectCapabilities(redactedFromFiles, fromPackageJson, sources.codePatternSet)
+      : null,
     projectCapabilities(redactedToFiles, toPackageJson, sources.codePatternSet),
   );
   const fromRepository = declaredSideRepository(sources.from);

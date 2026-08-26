@@ -5,6 +5,7 @@ import {
   publicPackageLookupKey,
   scanDistTag,
   scanEcosystem,
+  type ReviewedArtifactDigest,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -459,6 +460,66 @@ export async function listBadgeCandidateScans(
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
     .limit(limit);
+}
+
+/**
+ * The strongest feed-listed review for one exact package version.
+ *
+ * `publicPackageKey` is the disclosure boundary, not merely an optimization:
+ * it is populated only while an owner/admin has opted the scan into the public
+ * feed, and is cleared by unlisting or revocation. Starting the lookup from
+ * that column means a privately shared scan is not name-queryable even if a
+ * future caller accidentally drops one of the redundant state predicates.
+ *
+ * Registry-backed identity ranks ahead of manifest claims, matching the badge.
+ * A workflow-gate artifact can claim another package's name and version, so a
+ * newer claim must not displace a listed review whose registry access proved
+ * control of that package identity.
+ */
+export async function findListedReviewScan(
+  db: AppDb,
+  packageName: string,
+  ecosystem: "npm" | "pypi" | "vscode",
+  version: string,
+  artifactDigest: ReviewedArtifactDigest,
+): Promise<SharedScanRow | null> {
+  const packageKey = publicPackageLookupKey(ecosystem, packageName);
+  const packageIdentityPriority = sql<number>`CASE WHEN ${scans.source} = 'workflow_gate' THEN 1 ELSE 0 END`;
+  // Version strings are not artifact identities: an npm stage can be rewritten
+  // before publication, and a workflow gate may review several release files.
+  // Match only a registry digest verified against the parsed npm bytes, or one
+  // exact SHA-256 recomputed from a workflow-gate artifact.
+  const digestMatches =
+    artifactDigest.algorithm === "sha1"
+      ? sql`${scans.source} <> 'workflow_gate'
+          AND json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.algorithm') = 'sha1'
+          AND json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.status') = 'verified'
+          AND lower(json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.declared')) = ${artifactDigest.value}
+          AND lower(json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.computed')) = ${artifactDigest.value}`
+      : sql`${scans.source} = 'workflow_gate'
+          AND json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.mode') = 'workflow_gate'
+          AND json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem') = ${ecosystem}
+          AND EXISTS (
+          SELECT 1
+          FROM json_each(${scans.summaryJson}, '$.stagedPublish.provenance.artifacts') AS artifact
+          WHERE lower(json_extract(artifact.value, '$.sha256')) = ${artifactDigest.value}
+        )`;
+  const [row] = await db
+    .select(SHARED_SCAN_COLUMNS)
+    .from(scans)
+    .where(
+      and(
+        eq(scans.publicPackageKey, packageKey),
+        eq(scans.stagedVersion, version),
+        digestMatches,
+        isNotNull(scans.publicShareToken),
+        isNotNull(scans.publicFeedListedAt),
+        eq(scans.status, "complete"),
+      ),
+    )
+    .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
+    .limit(1);
+  return row ?? null;
 }
 
 /**

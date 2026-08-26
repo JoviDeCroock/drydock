@@ -117,6 +117,7 @@ describe("atpm staged public diff", () => {
     });
 
     expect(sources.from.files).toEqual([]);
+    expect(sources.hasComparableBaseline).toBe(false);
     expect(sources.to.packageJson).toMatchObject({ version: "0.0.1" });
     expect(sources.notices).toEqual(
       expect.arrayContaining([expect.stringContaining("first release")]),

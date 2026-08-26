@@ -142,7 +142,7 @@ Organizations store their own encrypted npm connection. The UI validates baselin
 
 ## Report model
 
-Reports remain canonical and signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. The canonical export (`drydock.report.v2`) is the signing boundary — publicly shared reports serve those exact bytes at `/public/reports/:token`, and the attestation endpoint signs their SHA-256 inside a DSSE envelope (see `public-reports.md`). Changing the export shape changes the attested bytes, so bump the schema tag when consumers must branch.
+Reports remain canonical and signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. The canonical export (`drydock.report.v2`) is the signing boundary — publicly shared reports serve those exact bytes at `/public/reports/:token`, and the attestation endpoint signs their SHA-256 inside a DSSE envelope (see `public-reports.md`). `GET /public/reviews/:ecosystem/*?version=&digest=` is the machine bridge from an exact public package artifact to its capability-bearing public report page: it queries only `public_package_key` rows (populated while feed-listed), requires the caller's SHA-1 or SHA-256 to match verified reviewed-byte evidence, reports that digest with package-identity strength plus the normalized intent-envelope tier, and returns one uniform `{ listed: false }` result for every non-public or byte-mismatched state. Changing the export shape changes the attested bytes, so bump the schema tag when consumers must branch.
 
 ## API direction
 
