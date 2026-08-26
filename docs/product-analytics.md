@@ -115,25 +115,25 @@ low-volume one out of the dataset.
 
 ## Events
 
-| event                      | emitted from                  | answers                                              |
-| -------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source   |
-| `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts            |
-| `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                           |
-| `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran            |
-| `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade           |
-| `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
-| `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
-| `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
-| `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
-| `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
-| `public_diff.verdict_served` | `GET /package-diff/verdict` | machine-consumer volume; sizes the computation budget |
-| `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
-| `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
-| `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                      |
-| `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                          |
-| `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency                   |
-| `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                    |
+| event                        | emitted from                  | answers                                               |
+| ---------------------------- | ----------------------------- | ----------------------------------------------------- |
+| `scan.queued`                | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source    |
+| `scan.completed`             | `recordCompletion`            | volume, latency, risk mix, finding counts             |
+| `scan.failed`                | `executeScanJob`, gate runner | failure rate by error code                            |
+| `scan.discarded`             | `executeScanJob`              | queued scans retired before they ever ran             |
+| `scan.decided`               | both decision paths           | time-to-decision; agreement with the grade            |
+| `ai_review.finished`         | `maybeRunAiReview`            | review-level health — the silent-failure rate         |
+| `ai_review.attempted`        | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback     |
+| `ai_review.decided`          | both decision paths           | feedback by assessment and reviewer version           |
+| `npm_connection.validated`   | npm connection validation     | onboarding funnel                                     |
+| `public_diff.viewed`         | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                   |
+| `public_diff.verdict_served` | `GET /package-diff/verdict`   | machine-consumer volume; sizes the computation budget |
+| `user.signed_up`             | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`)  |
+| `organization.created`       | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces             |
+| `integration.connected`      | npm / GitHub / Slack connect  | activation, by integration kind                       |
+| `workflow_gate.opened`       | `deployment_protection_rule`  | gate volume                                           |
+| `workflow_gate.reviewed`     | gate runner                   | recommendation mix; review latency                    |
+| `workflow_gate.decided`      | human route + auto-block path | approval rate, human vs automatic                     |
 
 The scan-lifecycle events carry `source` — `manual` (a staged publish someone
 started by hand), `auto_discovery` (the discovery cron), `workflow_gate`, or
