@@ -10,48 +10,14 @@ import {
 import { compareSemver } from "../npm/registry";
 import { PublicDiffError } from "../../public-diff/error";
 
-/**
- * Turning "this account staged something" into a review anyone can open.
- *
- * The whole point of this module is that the caller needs almost nothing to use
- * it. atpm's staged dashboard knows the publishing account and the record key —
- * it wrote them — so that is the entire input, and everything else is resolved
- * here: which package the candidate is for, which published release it should be
- * read against, and which revision of the record is current.
- *
- * No credential is involved on either side, and none is asked for. A staged
- * candidate is a public record in the publisher's own repository; the review of
- * it is the same deterministic diff the published surface produces. Putting a
- * sign-in in front of that would be asking a maintainer to create an account
- * with a third party in order to read something already public — at exactly the
- * moment they are deciding whether to publish.
- *
- * Nothing here takes part in the decision that follows. Drydock shows what
- * changed; approving or withdrawing the candidate happens in atpm, where it
- * belongs, and this module deliberately has no opinion about — and no ability
- * to affect — which way that goes.
- */
-
 export interface AtpmStagedReview {
-  /** Path on this deployment that renders the review. */
   reviewPath: string;
-  /** Canonical DID-form package name the review is filed under. */
   packageName: string;
-  /** `@handle/name`, when the handle verified in both directions. */
   displayName: string | null;
-  /** Version the candidate would publish as. */
   version: string;
-  /** Published version the candidate is read against, or null for a first release. */
   baselineVersion: string | null;
 }
 
-/**
- * Resolve a staged candidate to the diff URL that reviews it.
- *
- * Every failure here is a 404 or 502 with a short reason rather than a partial
- * answer: a link that resolves to the wrong package's review would be worse than
- * one that does not resolve at all.
- */
 export async function resolveAtpmStagedReview(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
@@ -83,11 +49,6 @@ export async function resolveAtpmStagedReview(
   };
 }
 
-/**
- * `:` and `@` are legal unencoded path characters and appear in every atpm
- * identifier, so escaping them would only make these URLs unreadable. Matches
- * how the client builds the same path.
- */
 function encodePathSegment(segment: string): string {
   return encodeURIComponent(segment).replace(/^%40/, "@").replace(/%3A/g, ":");
 }
@@ -100,7 +61,6 @@ function recordNameOf(packageName: string): string | null {
   return /^[a-z0-9][a-z0-9._~-]*$/.test(name) ? name : null;
 }
 
-/** A package with no published record yet is a first release, not a failure. */
 async function loadPublishedRecord(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
@@ -115,16 +75,6 @@ async function loadPublishedRecord(
   }
 }
 
-/**
- * Which published release this candidate should be read against.
- *
- * The reviewer's question is "what does approving this change for someone who
- * installs it?", so the sharpest answer is the release the candidate would
- * displace: whatever currently sits behind the dist-tag it would move. Failing
- * that, its immediate semver predecessor, then the highest published version.
- * Same order the authenticated staged review uses, because it is the same
- * question.
- */
 export function selectBaselineVersion(
   published: AtpmPackage,
   candidate: Pick<AtpmStagedVersion, "version" | "tag">,

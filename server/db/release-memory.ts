@@ -23,10 +23,6 @@ export interface PriorApprovedScanFindings {
  * package that a maintainer decided "publish", plus its deterministic rule
  * findings. Organization scoping is mandatory: release memory must never leak
  * another organization's review history.
- *
- * Findings live in the digest-verified R2 report.json, so the artifact bucket is
- * required to build a profile at all; without a readable report this returns
- * null and the caller degrades to "none".
  */
 export async function getPriorApprovedScanFindings(
   db: AppDb,
@@ -65,15 +61,9 @@ export async function getPriorApprovedScanFindings(
   if (!prior) return null;
 
   const artifactDetail = await loadScanArtifacts(artifactBucket, prior);
-  // The prior's findings live only in its report.json, so a report that could
-  // not be read (missing binding, digest mismatch, transient R2 error —
-  // loadScanArtifacts returns null rather than throwing) must not be reported as
-  // an empty profile: that would mark every current finding "new" (a false
-  // "diverged"). Return null so the caller degrades to "none" instead.
+  // Missing evidence is not an empty prior profile.
   if (!artifactDetail) return null;
-  // Release memory compares deterministic profiles only: the report also carries
-  // the prior review's AI rows (source "ai"), which are advisory and
-  // non-deterministic, so they must not enter the profile.
+  // Advisory AI findings must not affect the deterministic release profile.
   const findingRows = artifactDetail.findings.filter((finding) => finding.source === "rule");
 
   return {

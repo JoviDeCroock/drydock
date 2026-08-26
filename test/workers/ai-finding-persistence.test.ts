@@ -168,7 +168,6 @@ describe("AI finding persistence (report artifact)", () => {
     const owner = await seedUser();
     const { db, scanId } = await seedArtifactBackedScan(owner);
 
-    // The body is not duplicated into D1; only the metadata row counts it.
     const [scanRow] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
     expect(scanRow.findingCount).toBe(2);
 
@@ -176,7 +175,6 @@ describe("AI finding persistence (report artifact)", () => {
     expect(detail).not.toBeNull();
     expect(detail!.findings).toHaveLength(2);
     expect(detail!.findings.map((finding) => finding.source)).toEqual(["rule", "ai"]);
-    // The combined-index report annotations reach the AI row.
     const aiDetail = detail!.findings.find((finding) => finding.source === "ai");
     expect(aiDetail).toMatchObject({
       severity: "critical",
@@ -184,13 +182,8 @@ describe("AI finding persistence (report artifact)", () => {
       diffStatus: "added",
       releaseDelta: true,
     });
-    // The AI finding lands on an added file, so it counts into the release
-    // bucket of the recomputed risk summary.
     expect(detail!.riskSummary?.releaseFindingCount).toBe(2);
 
-    // The report export keeps findings[] deterministic-only (AI findings are
-    // carried by aiReview.findings), so they are never double-counted across the
-    // two fields and every findings[] entry keeps a ruleId.
     const exported = buildReportExport(detail!);
     expect(exported.findings.every((finding) => finding.source === "rule")).toBe(true);
     expect(exported.findings).toHaveLength(1);

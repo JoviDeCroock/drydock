@@ -5,24 +5,6 @@ import {
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { Alert } from "../../../components/Alert";
 
-// Release-memory notice, rendered directly under the Recommendation.
-// match/subset: a prominent positive banner — the maintainer already reviewed
-// and published a release with this exact finding profile, so the same
-// capability findings are not news. diverged: a quiet one-liner pointing at the
-// count of genuinely new findings. Renders nothing when there is no approved
-// prior scan (or the scan predates the field).
-//
-// Release memory also removes already-approved *package context* from the
-// artifact risk (`priorApprovedContextFindingCount` in the risk breakdown).
-// `approvedContextCount` lets the banner say so, because a headline that
-// silently drops from high to low is worse than one that never moved. It never
-// touches release-delta findings, so the release risk the workflow gate reads
-// is unaffected.
-//
-// An empty profile (zero deterministic findings) gets its own wording instead
-// of "finding profile matches": a vacuous match must not read as reassurance
-// about anything beyond deterministic checks — the diff and AI review still
-// carry release-specific signal.
 export type ReleaseConsistencyVariant = "match" | "subset" | "empty" | "diverged";
 
 export function releaseConsistencyVariant(

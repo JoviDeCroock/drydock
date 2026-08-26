@@ -8,9 +8,6 @@ import {
   type ScanArtifactsManifest,
   type WriteScanArtifactsInput,
 } from "./types";
-/**
- * Writing a completed scan's body out to R2.
- */
 import { type DiffEntry, type FileRecord } from "../../review";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { SCAN_FILE_SAMPLE_LIMIT } from "../../sample-retention";
@@ -50,16 +47,6 @@ function clipDisplaySample(
   return { textSample: textSample.slice(0, SCAN_FILE_SAMPLE_LIMIT), flags: clippedFlags };
 }
 
-/**
- * Write the scan body to R2, retrying transient failures, and fail closed when
- * it cannot be written.
- *
- * There is no D1 fallback: a completed scan's files, diff, and findings live
- * only in R2, so a scan that cannot write its artifacts must not persist as
- * complete. A missing `ARTIFACTS` binding is a deployment error, not a degraded
- * mode — the bucket stays `| undefined` in the signature only because the
- * pipeline's `env` is optional, and this is where that is turned into a throw.
- */
 export async function writeScanArtifactsWithRetry(
   bucket: R2Bucket | undefined,
   input: WriteScanArtifactsInput,

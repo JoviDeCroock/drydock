@@ -7,24 +7,12 @@ import { stableJson } from "../../../server/lib/platform/stable-json";
 import { writeScanArtifactsWithRetry } from "../../../server/lib/scan/artifacts";
 
 type SeedInput = Omit<PersistedScanInput, "artifacts" | "report"> & {
-  /** Extra report.json fields a test asserts on (registryStatus, safety, ...). */
   reportExtras?: Record<string, unknown>;
 };
 
-/**
- * Seed a scan the way the pipeline does: write the R2 artifact set, then persist
- * the D1 metadata row that points at it.
- *
- * A completed scan's body lives only in R2, so `persistScan` alone leaves a row
- * whose files and findings read back empty. Tests that assert on scan detail go
- * through here; the report digest is computed over the same bytes the read path
- * verifies against `scans.report_digest`.
- */
 export async function persistScanWithArtifacts(db: AppDb, input: SeedInput) {
   const findings = input.findings ?? [];
   const aiFindingRecords = input.aiFindingRecords ?? [];
-  // Annotate exactly the way the pipeline does before writing the report, so a
-  // seeded scan's served diff statuses are the real ones and not placeholders.
   const annotated = annotateFindingsWithDiffStatus(
     [...findings, ...aiFindingRecords].map((finding, index) => ({ ...finding, id: String(index) })),
     input.diff ?? [],
@@ -46,8 +34,6 @@ export async function persistScanWithArtifacts(db: AppDb, input: SeedInput) {
     diff: input.diff ?? [],
     ruleFindings: findings,
     aiFindings: input.ai ?? null,
-    // Rule findings first, AI findings after them — the order the read path
-    // re-derives, so `findingIndex` addresses the same combined list.
     findingAnnotations: annotated.map((finding, index) => ({
       findingIndex: index,
       diffStatus: finding.diffStatus,
@@ -70,7 +56,5 @@ export async function persistScanWithArtifacts(db: AppDb, input: SeedInput) {
     report: { version: 1, digest: reportDigest },
     artifacts,
   });
-  // The digest is the scan's claim token once persisted, so tests that assert
-  // which attempt won need it back.
   return { ...result, reportDigest };
 }

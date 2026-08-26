@@ -1,46 +1,14 @@
 import { parseAtpmPackageName, type AtpmPackageRef } from "./identity";
 
-/** atproto record keys for staged entries are TIDs, written by the CLI. */
 const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
 
 export function isValidAtpmStageRkey(rkey: string): boolean {
   return TID_RE.test(rkey);
 }
 
-/**
- * How a staged candidate is named in a *public* URL.
- *
- * The authenticated form above addresses a candidate for a scan: it carries the
- * publisher DID because a scan has nothing else to resolve from. A public review
- * URL already names the publisher in the package portion — `/diff/atpm/<did>/
- * <name>/…` — so the version slot only has to identify which staged record, and
- * which revision of it.
- *
- * That makes a staged candidate just another thing a version pair can point at,
- * which is the whole trick: the anonymous review reuses `/diff` end to end —
- * caching, redaction, risk, per-file fetches, share cards — instead of being a
- * second review surface that would drift from the first.
- *
- * The record CID is in the token because a staged record is mutable. Without it
- * a rewritten candidate would be served from the cache entry of the bytes it
- * replaced, which on a page whose entire claim is "these are the bytes" would be
- * the worst possible kind of stale.
- *
- * The spelling stays inside the shared version grammar (leading alphanumeric,
- * then alphanumerics/`.`/`_`/`+`/`-`) so nothing downstream needs widening.
- */
+// Pin mutable staged records by CID so a rewrite cannot reuse stale cached evidence.
 export const ATPM_STAGED_VERSION_PREFIX = "staged.";
 
-/**
- * Stands in for "there is no published release to compare against" in the
- * `from` slot of a first release.
- *
- * A reserved version string rather than an optional path segment: every public
- * diff URL, cache key, and share card is built from a version *pair*, and making
- * one half optional would ripple through all of them to express something that
- * happens once per package. A published version would have to be named exactly
- * this to collide, and the sentinel is checked before the record is consulted.
- */
 export const ATPM_NO_BASELINE_VERSION = "staged.none";
 
 export interface AtpmStagedVersionRef {
@@ -56,7 +24,6 @@ export function isAtpmStagedVersion(value: string): boolean {
   return parseAtpmStagedVersion(value) !== null;
 }
 
-/** Parse a staged version token, or null when it is not one. */
 export function parseAtpmStagedVersion(value: string): AtpmStagedVersionRef | null {
   if (!value.startsWith(ATPM_STAGED_VERSION_PREFIX) || value === ATPM_NO_BASELINE_VERSION) {
     return null;
@@ -66,21 +33,10 @@ export function parseAtpmStagedVersion(value: string): AtpmStagedVersionRef | nu
   if (separator <= 0) return null;
   const rkey = body.slice(0, separator);
   const recordCid = body.slice(separator + 1);
-  // The CID is compared against the record the PDS returns, so this only has to
-  // reject shapes that could not be one — the authoritative check is the match.
   if (!isValidAtpmStageRkey(rkey) || !/^[a-z0-9]{16,128}$/.test(recordCid)) return null;
   return { rkey, recordCid };
 }
 
-/**
- * Parse a publishing account as a link spells it — `@handle` or a DID — into
- * the reference the identity resolver takes.
- *
- * The resolver is package-shaped because every other caller has a package in
- * hand; a link to a staged candidate does not, so a placeholder record key
- * stands in. Doing it here keeps DID syntax and host policy decided in one
- * place.
- */
 export function parseAtpmPublisherRef(publisherRef: string): AtpmPackageRef | null {
   const trimmed = publisherRef.trim();
   if (!trimmed) return null;

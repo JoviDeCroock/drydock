@@ -130,8 +130,6 @@ describe("denormalized scan list summaries", () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);
 
-    // Wipe the scan body — the dashboard list is served from the denormalized
-    // columns on the scan row and must not read R2 at all.
     const listed = await env.ARTIFACTS.list();
     await env.ARTIFACTS.delete(listed.objects.map((object) => object.key));
 

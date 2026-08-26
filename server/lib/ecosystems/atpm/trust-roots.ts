@@ -1,18 +1,4 @@
-/**
- * The trust anchors for atpm provenance verification.
- *
- * Everything Drydock is willing to believe about who built a release reduces
- * to the constants in this file: Sigstore's Fulcio roots, the Rekor log keys
- * and the window each was valid for, and the Fulcio extension OIDs that name
- * the builder. They are pinned rather than fetched — a publisher-controlled
- * bundle must not be able to nominate its own authority.
- *
- * Kept apart from the verification flow deliberately. Reviewing "what do we
- * trust" should not require reading how the checks are sequenced, and a change
- * here is a change to the trust model even when it looks like a data edit.
- */
-
-/** Fulcio's public-good root (https://fulcio.sigstore.dev/api/v1/rootCert). */
+// Pinned trust roots; package-controlled bundles cannot nominate authorities.
 export const FULCIO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
 MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw
 KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTAeFw0y
@@ -27,11 +13,6 @@ WP/WHPqpaVo0jhsweNFZgSs0eE7wYI4qAjEA2WB9ot98sIkoF3vZYdd3/VtWB5b9
 TNMea7Ix/stJ5TfcLLeABLE4BNJOsQ4vnBHJ
 -----END CERTIFICATE-----`;
 
-/**
- * Fulcio intermediates that may issue a signing certificate. A list rather than
- * a constant so a Sigstore rotation is one appended PEM: certificates issued
- * under a retired intermediate must keep verifying.
- */
 export const FULCIO_INTERMEDIATE_PEMS = [
   `-----BEGIN CERTIFICATE-----
 MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw
@@ -49,11 +30,6 @@ mygUY7Ii2zbdCdliiow=
 -----END CERTIFICATE-----`,
 ];
 
-/**
- * Sigstore's public-good Rekor keys, copied from its signed trusted root.
- * Like the Fulcio anchors above, rotations are explicit code changes so a
- * publisher-controlled bundle cannot nominate its own timestamp authority.
- */
 export const REKOR_LOG_KEYS = [
   {
     keyId: "wNI9atQGlz+VWfO6LRygH4QUfY/8W4RFwiT5i5WRgB0=",

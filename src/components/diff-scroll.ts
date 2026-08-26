@@ -1,12 +1,3 @@
-/**
- * Scroll targeting and geometry for the diff viewport.
- *
- * Opening a file diff should land the reader on the first change rather than
- * at line 1, and the overview thumb needs viewport geometry without
- * rerendering the diff table on every scroll frame. Both are pure enough to
- * test on their own, so they live outside the components.
- */
-
 const INITIAL_SCROLL_TARGET_SELECTOR = "[data-diff-scroll-target='true']";
 const INITIAL_SCROLL_PADDING = 8;
 
@@ -21,10 +12,7 @@ export function isDiffScrollTarget(
   return shouldSeekInitialDiffTarget(status) && tone !== "unchanged";
 }
 
-// Keyed on the file identity and content only — deliberately not on findings.
-// Findings arriving after the diff is on screen must not yank the scroll back
-// to the first change (or reset the single-sided render window) mid-read.
-// Exported for tests.
+// Excluding findings prevents late annotations from resetting scroll position.
 export function initialScrollResetKey(
   path: string,
   status: string,
@@ -41,8 +29,6 @@ export function initialScrollResetKey(
   ].join("\0");
 }
 
-// Scroll geometry mirrored into a signal so the overview thumb can track the
-// viewport without rerendering the diff table on every scroll frame.
 export interface DiffScrollState {
   top: number;
   viewport: number;

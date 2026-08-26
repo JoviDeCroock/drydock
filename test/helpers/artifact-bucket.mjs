@@ -1,11 +1,3 @@
-/**
- * In-memory stand-in for the `ARTIFACTS` R2 bucket.
- *
- * A completed scan's body lives only in R2, so any test that drives the
- * pipeline through `persistResults` has to bind a bucket — the write fails
- * closed without one. Only `put`/`get`/`delete`/`list` are implemented, which is
- * all the artifact reader and writer use.
- */
 export function createMemoryArtifactBucket() {
   const objects = new Map();
   return {

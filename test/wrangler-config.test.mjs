@@ -32,9 +32,6 @@ describe("Wrangler public egress routing", () => {
   );
 });
 
-// A completed scan's body lives only in R2, so a deployment target that does not
-// bind ARTIFACTS cannot persist a scan at all. Bindings are declared by hand per
-// AGENTS.md, so check every declaration site rather than trusting one of them.
 describe("Wrangler artifact bucket binding", () => {
   test.each([
     "../wrangler.jsonc",

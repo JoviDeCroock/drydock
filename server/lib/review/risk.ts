@@ -11,11 +11,6 @@ export interface ScanRiskBreakdown {
   releaseFindingCount: number;
   contextFindingCount: number;
   unknownFindingCount: number;
-  /**
-   * Context findings excluded from `contextRisk`/`artifactRisk` because the same
-   * (ruleId, severity, file) entry was already in a release this organization
-   * reviewed and approved for this package. 0 when release memory did not apply.
-   */
   priorApprovedContextFindingCount: number;
 }
 
@@ -28,9 +23,7 @@ export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): Ri
   const ai = displayedAiResult(aiReview);
   const deterministicRisk = computeRisk(ruleFindings);
   if (ai?.kind !== "complete") {
-    // Fail safe: a review that was attempted but didn't complete (model id
-    // present) escalates to manual review so a release can't read as clean by
-    // crashing the reviewer. A disabled review (model null) stays neutral.
+    // An attempted but unavailable review must not read as clean.
     if (ai?.kind === "unavailable" && ai.model != null) {
       return combineRisk(deterministicRisk, "medium");
     }
@@ -52,19 +45,9 @@ export function computeScanRiskBreakdown(
 ): ScanRiskBreakdown {
   const releaseFindings = ruleFindings.filter((finding) => finding.releaseDelta === true);
   const contextFindings = ruleFindings.filter((finding) => finding.releaseDelta !== true);
-  // Release memory adjusts package context only. A release-delta finding sits on
-  // a file this release changed, so matching a prior profile entry proves
-  // nothing about the new bytes — those keep scoring in full, which is what
-  // keeps `releaseRisk` (and therefore the workflow gate) untouched.
   const { kept: scoredContextFindings, approvedCount } = dropPriorApprovedFindings(
     contextFindings,
-    // Release memory's premise is "this evidence was reviewed before and
-    // nothing changed". With no baseline downloaded, nothing was compared, so
-    // the second half cannot be established: every finding is annotated
-    // `unknown` context, which would otherwise hand the whole scan to the
-    // adjustment and let a matching profile grade an uncompared release as
-    // clean. The profile is (ruleId, severity, file) — identical bytes are not
-    // implied.
+    // Never discount findings when the baseline was not compared.
     options.baselineComparisonSkipped ? null : releaseConsistency,
   );
   const scoredFindings =
@@ -81,43 +64,7 @@ export function computeScanRiskBreakdown(
   };
 }
 
-/**
- * Remove context findings that were already present in the prior release this
- * organization approved for this package.
- *
- * A test runner's `code.process-execution` findings are a property of the
- * package, not of the release: re-anchoring every future release's headline on
- * evidence a maintainer already accepted is how a real signal ends up buried
- * (in production, every scan whose release delta was clean but whose package
- * context read high was published anyway).
- *
- * Fails closed. Any state where the approved set can't be reconstructed exactly
- * — no prior scan, or a `diverged` profile whose new-finding list was truncated
- * by RELEASE_CONSISTENCY_NEW_FINDINGS_CAP — drops no findings at all.
- *
- * Only deterministic findings are eligible. `resolveReleaseConsistency` builds
- * the profile from rule findings alone, so an AI finding was never compared
- * against the approved release and a `match` says nothing about it. AI findings
- * are projected without a `ruleId` (`projectAiReviewFindings`), which is what
- * distinguishes them here.
- */
-/**
- * Rules that never age into background noise, so an approval never discounts
- * them.
- *
- * The discount's premise is that a *capability* — a test runner spawning
- * processes, a prebuilt binary that ships every release — is a property of the
- * package rather than of the release, so re-anchoring the headline on it buries
- * real signal. That premise does not extend to evidence of an active compromise.
- * If a release shipping a dropper is ever approved (a compromised maintainer
- * account, or an approval predating the rule that catches it), the next
- * README-only release must not report the dropper as settled background: the
- * profile would match, the finding would move to context, and the headline
- * would read low forever after.
- *
- * Kept scoring: consumer install hooks, embedded secrets, remote-shell
- * execution, and hostile archive entries.
- */
+// Approval never discounts evidence of active compromise.
 const STANDING_DANGER_RULE_IDS = new Set<string>([
   DETERMINISTIC_RULE_IDS.installScript,
   DETERMINISTIC_RULE_IDS.installScriptPreinstall,
@@ -139,18 +86,12 @@ function dropPriorApprovedFindings(
     Boolean(finding.ruleId) && !STANDING_DANGER_RULE_IDS.has(finding.ruleId as string);
 
   if (releaseConsistency.status === "match" || releaseConsistency.status === "subset") {
-    // Nothing deterministic in this scan is new relative to the approved
-    // profile, so every deterministic context finding is previously-reviewed
-    // evidence.
     const kept = contextFindings.filter((finding) => !eligible(finding));
     return { kept, approvedCount: contextFindings.length - kept.length };
   }
   if (releaseConsistency.status !== "diverged") return none;
   if (releaseConsistency.newFindings.length !== releaseConsistency.newFindingCount) return none;
 
-  // Diverged: only the multiset difference (current − approved) is new. Consume
-  // it per entry so a rule that fired three times before and four times now
-  // keeps exactly one finding scoring.
   const newCounts = new Map<string, number>();
   for (const entry of releaseConsistency.newFindings) {
     const key = profileKey(entry);
