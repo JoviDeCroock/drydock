@@ -27,11 +27,7 @@ import {
   getScanStatus,
   listScans,
 } from "../../db/scans";
-import {
-  requireActiveOrganization,
-  requireActiveOrganizationContext,
-} from "../../lib/auth/active-organization";
-import { backfillScanArtifactsBatch } from "../../lib/scan/artifact-backfill";
+import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, rateLimitResponse } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
@@ -42,7 +38,6 @@ import {
 } from "../../lib/ecosystems/npm/staged-publishes";
 import { parseScanInput } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
-import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { recordProductEvent } from "../../lib/platform/analytics";
 import type { Bindings, ScanInput, Variables } from "../../types";
 
@@ -188,46 +183,6 @@ scanLifecycleRoutes.get("/", async (c) => {
     filter: decisionFilter,
     limit,
   });
-});
-
-const BACKFILL_LIMIT_DEFAULT = 10;
-const BACKFILL_LIMIT_MAX = 50;
-
-scanLifecycleRoutes.post("/artifacts/backfill", async (c) => {
-  if (!c.env.ARTIFACTS) return c.json({ error: "artifact bucket is not configured" }, 503);
-
-  const body = (await c.req.json().catch(() => ({}))) as Partial<{
-    limit: number;
-    cursor: string | null;
-  }>;
-  const rawLimit = Number(body.limit);
-  const limit = Number.isFinite(rawLimit)
-    ? Math.min(BACKFILL_LIMIT_MAX, Math.max(1, Math.floor(rawLimit)))
-    : BACKFILL_LIMIT_DEFAULT;
-  const cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : null;
-
-  const db = createDb(c.env.DB);
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-
-  try {
-    await enforceRateLimit(c.env, {
-      key: `scan-artifact-backfill:${organizationId}`,
-      limit: 60,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "artifact backfill rate limit exceeded", err);
-    }
-    throw err;
-  }
-
-  const result = await backfillScanArtifactsBatch(db, c.env.ARTIFACTS, organizationId, {
-    limit,
-    cursor,
-  });
-  return c.json(result);
 });
 
 scanLifecycleRoutes.delete("/:id", async (c) => {

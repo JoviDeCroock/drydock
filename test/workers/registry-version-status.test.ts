@@ -14,7 +14,6 @@ import {
   listScans,
   markRegistryPublishReminderSent,
   markScanFailed,
-  persistScan,
   recordRegistryVersionStatus,
   recordScanDecision,
   type ScanSource,
@@ -23,6 +22,7 @@ import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { resolveNpmReleaseOutcomes } from "../../server/lib/ecosystems/npm/release-outcome";
 import { refineStagedFailure } from "../../server/lib/scan/job";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 const REGISTRY_URL = "https://registry.npmjs.org";
 const TOKEN = "npm_test_token_0123456789";
@@ -88,7 +88,7 @@ async function seedCompletedScan(
     stagedVersion: overrides.version ?? VERSION,
     registryUrl: overrides.registryUrl === undefined ? REGISTRY_URL : overrides.registryUrl,
   });
-  await persistScan(db, {
+  await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,
     organizationId: org.organizationId,
@@ -428,7 +428,7 @@ describe("registry version status resolution", () => {
       stagedVersion: registryVersion,
       registryUrl: REGISTRY_URL,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: org.organizationId,
@@ -630,7 +630,7 @@ describe("registry version status resolution", () => {
 
     expect((await readScan("scan-z")).registryStatusSupersededAt).toBeTruthy();
     expect((await readScan("scan-a")).registryStatusSupersededAt).toBeNull();
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: "scan-a",
       stageId: "stage-restaged",
       organizationId: org.organizationId,

@@ -15,7 +15,7 @@ import {
 import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
 import {
   SCAN_ARTIFACT_WRITE_ATTEMPTS,
-  maybeWriteScanArtifacts,
+  writeScanArtifactsWithRetry,
   writeScanArtifacts,
 } from "../../server/lib/scan/artifacts";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
@@ -189,14 +189,11 @@ async function buildArtifactWriteInput(owner: SeededUser) {
   };
 }
 
-async function seedDigestMatchedLegacyScan(
-  owner: SeededUser,
-  options: { artifactBacked?: boolean } = {},
-) {
+async function seedArtifactBackedScan(owner: SeededUser) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${crypto.randomUUID().slice(0, 12)}`;
-  const packageName = "@org/artifact-backfill";
+  const packageName = "@org/artifact-backed";
   const packageText = JSON.stringify({
     name: packageName,
     version: "1.0.0",
@@ -280,17 +277,15 @@ async function seedDigestMatchedLegacyScan(
   };
   const reportJson = stableJson(reportPayload);
   const digest = await sha256Hex(reportJson);
-  const artifacts = options.artifactBacked
-    ? await writeScanArtifacts(env.ARTIFACTS, {
-        organizationId: owner.organizationId,
-        scanId,
-        reportJson,
-        reportDigest: digest,
-        files,
-        diff,
-        generatedAt: "2026-06-08T00:00:00.000Z",
-      })
-    : null;
+  const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
+    organizationId: owner.organizationId,
+    scanId,
+    reportJson,
+    reportDigest: digest,
+    files,
+    diff,
+    generatedAt: "2026-06-08T00:00:00.000Z",
+  });
 
   await createScanJob(db, {
     id: scanId,
@@ -336,7 +331,7 @@ describe("scan status poll route", () => {
   test("returns the polling fields without the heavy JSON blobs", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
-    const { db, scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+    const { db, scanId } = await seedArtifactBackedScan(owner);
 
     // The row this poll reads really does carry a large summary blob.
     const [row] = await db
@@ -358,7 +353,7 @@ describe("scan status poll route", () => {
       id: scanId,
       status: "complete",
       risk: "high",
-      packageName: "@org/artifact-backfill",
+      packageName: "@org/artifact-backed",
       stagedVersion: "1.0.0",
     });
     for (const key of [
@@ -387,7 +382,7 @@ describe("scan status poll route", () => {
   test("is organization-scoped", async () => {
     const owner = await seedUser();
     const other = await seedUser();
-    const { scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+    const { scanId } = await seedArtifactBackedScan(owner);
 
     const res = await fetchJsonWithSession(buildTestApp(other), `/api/v1/scans/${scanId}/status`, {
       method: "GET",
@@ -397,16 +392,16 @@ describe("scan status poll route", () => {
   });
 });
 
-describe("scan artifact backfill route", () => {
+describe("scan artifact writes and reads", () => {
   test("retries transient artifact write failures before marking a scan backed", async () => {
     const owner = await seedUser();
     const input = await buildArtifactWriteInput(owner);
     const fake = createFlakyArtifactBucket({ failFirstPuts: 2 });
 
-    const metadata = await maybeWriteScanArtifacts(fake.bucket, input);
+    const metadata = await writeScanArtifactsWithRetry(fake.bucket, input);
 
-    expect(metadata?.artifactStorageVersion).toBe(1);
-    expect(metadata?.artifactManifestKey).toContain(`/scans/${input.scanId}/v1/manifest.json`);
+    expect(metadata.artifactStorageVersion).toBe(1);
+    expect(metadata.artifactManifestKey).toContain(`/scans/${input.scanId}/v1/manifest.json`);
     expect(fake.putCalls()).toBe(6);
   });
 
@@ -415,31 +410,21 @@ describe("scan artifact backfill route", () => {
     const input = await buildArtifactWriteInput(owner);
     const fake = createFlakyArtifactBucket({ failAllPuts: true });
 
-    await expect(maybeWriteScanArtifacts(fake.bucket, input)).rejects.toThrow(
+    await expect(writeScanArtifactsWithRetry(fake.bucket, input)).rejects.toThrow(
       "simulated R2 write failure",
     );
     expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
   });
 
-  test("new artifact-backed scans serve metadata from report artifacts and file bodies from R2", async () => {
+  test("completed scans serve metadata from report artifacts and file bodies from R2", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
-    const { db, scanId } = await seedDigestMatchedLegacyScan(owner, { artifactBacked: true });
+    const { db, scanId } = await seedArtifactBackedScan(owner);
 
-    const fileRows = await db
-      .select({ path: schema.scanFiles.path, textSample: schema.scanFiles.textSample })
-      .from(schema.scanFiles)
-      .where(eq(schema.scanFiles.scanId, scanId));
-    const findingRows = await db
-      .select({ id: schema.scanFindings.id })
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(fileRows).toHaveLength(0);
-    expect(findingRows).toHaveLength(0);
-
-    const d1Only = await getScan(db, scanId, owner.organizationId);
-    expect(d1Only?.files).toHaveLength(0);
-    expect(d1Only?.findings).toHaveLength(0);
+    // Without the bucket there is nothing to read: the body lives only in R2.
+    const withoutBucket = await getScan(db, scanId, owner.organizationId);
+    expect(withoutBucket?.files).toHaveLength(0);
+    expect(withoutBucket?.findings).toHaveLength(0);
 
     const readCounter = createReadCountingBucket(env.ARTIFACTS);
     const metadataOnly = await getScan(db, scanId, owner.organizationId, readCounter.bucket, {
@@ -512,95 +497,5 @@ describe("scan artifact backfill route", () => {
     expect(exported.findings).toEqual([
       expect.objectContaining({ ruleId: "code.credential-access", severity: "high" }),
     ]);
-  });
-
-  test("backfills legacy scan artifacts and detail reads survive D1 sample compaction", async () => {
-    const owner = await seedUser();
-    const app = buildTestApp(owner);
-    const { db, scanId } = await seedDigestMatchedLegacyScan(owner);
-
-    const res = await fetchJsonWithSession(app, "/api/v1/scans/artifacts/backfill", {
-      method: "POST",
-      body: JSON.stringify({ limit: 1 }),
-    });
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      scanned: 1,
-      backfilled: 1,
-      digestMismatch: 0,
-      failed: 0,
-      nextCursor: null,
-    });
-
-    const [scanRow] = await db
-      .select({
-        artifactStorageVersion: schema.scans.artifactStorageVersion,
-        artifactManifestKey: schema.scans.artifactManifestKey,
-      })
-      .from(schema.scans)
-      .where(eq(schema.scans.id, scanId))
-      .limit(1);
-    expect(scanRow?.artifactStorageVersion).toBe(1);
-    expect(scanRow?.artifactManifestKey).toContain(`/scans/${scanId}/v1/manifest.json`);
-
-    await db
-      .update(schema.scanFiles)
-      .set({ textSample: null })
-      .where(eq(schema.scanFiles.scanId, scanId));
-
-    const d1Only = await getScan(db, scanId, owner.organizationId);
-    expect(d1Only?.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
-
-    const detailRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}`, {
-      method: "GET",
-    });
-    expect(detailRes.status).toBe(200);
-    const detail = (await detailRes.json()) as {
-      files: Array<{ path: string; textSample: string | null }>;
-    };
-    expect(detail.files.find((file) => file.path === "index.js")?.textSample).toBeNull();
-
-    const fileRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/file?path=index.js`, {
-      method: "GET",
-    });
-    expect(fileRes.status).toBe(200);
-    const fileDetail = (await fileRes.json()) as { file: { textSample: string | null } };
-    expect(fileDetail.file.textSample).toContain("npm_config_user_agent");
-
-    const second = await fetchJsonWithSession(app, "/api/v1/scans/artifacts/backfill", {
-      method: "POST",
-      body: JSON.stringify({ limit: 1 }),
-    });
-    expect(second.status).toBe(200);
-    await expect(second.json()).resolves.toMatchObject({ scanned: 0, backfilled: 0 });
-  });
-
-  test("skips legacy rows whose reconstructed report digest does not match", async () => {
-    const owner = await seedUser();
-    const app = buildTestApp(owner);
-    const { db, scanId } = await seedDigestMatchedLegacyScan(owner);
-    await db
-      .update(schema.scans)
-      .set({ reportDigest: "0".repeat(64) })
-      .where(eq(schema.scans.id, scanId));
-
-    const res = await fetchJsonWithSession(app, "/api/v1/scans/artifacts/backfill", {
-      method: "POST",
-      body: JSON.stringify({ limit: 1 }),
-    });
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      scanned: 1,
-      backfilled: 0,
-      digestMismatch: 1,
-      failed: 0,
-    });
-
-    const [scanRow] = await db
-      .select({ artifactStorageVersion: schema.scans.artifactStorageVersion })
-      .from(schema.scans)
-      .where(eq(schema.scans.id, scanId))
-      .limit(1);
-    expect(scanRow?.artifactStorageVersion).toBeNull();
   });
 });

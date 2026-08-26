@@ -104,8 +104,6 @@ export interface PersistedScanDetail {
   };
   riskSummary?: ScanRiskSummary | null;
   files: Array<{
-    id: string;
-    scanId: string;
     path: string;
     status: string;
     size: number | null;

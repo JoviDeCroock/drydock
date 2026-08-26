@@ -19,7 +19,6 @@
     "db:migrate:local": "wrangler d1 migrations apply staged-publish-review --local",
     "db:migrate:remote": "wrangler d1 migrations apply staged-publish-review --remote",
     "incident:post": "node scripts/incident-post.mjs",
-    "scan-artifacts:backfill": "node scripts/backfill-scan-artifacts.mjs",
     "db:backfill:scan-list-summaries:local": "wrangler d1 execute staged-publish-review --local --file scripts/backfill-scan-list-summaries.sql",
     "db:backfill:scan-list-summaries:remote": "wrangler d1 execute staged-publish-review --remote --file scripts/backfill-scan-list-summaries.sql",
     "test": "node scripts/test.mjs",

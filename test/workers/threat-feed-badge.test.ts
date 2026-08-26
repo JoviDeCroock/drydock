@@ -5,13 +5,14 @@ import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface SeededUser {
   userId: string;
@@ -107,7 +108,7 @@ async function seedCompletedScan(
     stagedVersion: source !== "workflow_gate" && options.registryUrl ? version : null,
     registryUrl: source !== "workflow_gate" ? (options.registryUrl ?? null) : null,
   });
-  await persistScan(db, {
+  await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,

@@ -10,10 +10,10 @@ import {
   getScan,
   listExistingScanStageIds,
   markScanFailed,
-  persistScan,
 } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 async function seedUserAndOrg() {
   const db = createDb(env.DB);
@@ -68,7 +68,7 @@ describe("scan persistence idempotency", () => {
     expect(await claimScanForRun(db, scanId, organizationId)).toBe(true);
 
     // Complete the scan, then a redelivery must not roll it back to running.
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       ...baseScan,
       id: scanId,
       stageId: "stage-aaaa",
@@ -93,7 +93,7 @@ describe("scan persistence idempotency", () => {
       ownerUserId: userId,
     });
     await claimScanForRun(db, scanId, organizationId);
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       ...baseScan,
       id: scanId,
       stageId: "stage-bbbb",
@@ -122,7 +122,7 @@ describe("scan persistence idempotency", () => {
       ownerUserId: userId,
     });
     await claimScanForRun(db, scanId, organizationId);
-    await persistScan(db, {
+    const first = await persistScanWithArtifacts(db, {
       ...baseScan,
       id: scanId,
       stageId: "stage-cccc",
@@ -130,10 +130,9 @@ describe("scan persistence idempotency", () => {
       ownerUserId: userId,
       risk: "low",
       status: "complete",
-      report: { version: 1, digest: "first" },
     });
 
-    const second = await persistScan(db, {
+    const second = await persistScanWithArtifacts(db, {
       ...baseScan,
       id: scanId,
       stageId: "stage-cccc",
@@ -141,12 +140,19 @@ describe("scan persistence idempotency", () => {
       ownerUserId: userId,
       risk: "high",
       status: "complete",
-      report: { version: 1, digest: "second" },
+      findings: [
+        {
+          severity: "high",
+          file: "index.js",
+          evidence: "second attempt",
+          reason: "second attempt",
+        },
+      ],
     });
 
     expect(second.persisted).toBe(false);
     const final = await readStatus(db, scanId);
-    expect(final?.reportDigest).toBe("first");
+    expect(final?.reportDigest).toBe(first.reportDigest);
   });
 
   test("persistScan preserves Python pattern annotations for extensionless files", async () => {
@@ -182,7 +188,7 @@ describe("scan persistence idempotency", () => {
       ownerUserId: userId,
     });
     await claimScanForRun(db, scanId, organizationId);
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       ...baseScan,
       id: scanId,
       stageId,
@@ -206,7 +212,7 @@ describe("scan persistence idempotency", () => {
       codePatternSet: "python",
     });
 
-    const scan = await getScan(db, scanId, organizationId);
+    const scan = await getScan(db, scanId, organizationId, env.ARTIFACTS);
     expect(scan?.findings[0]).toMatchObject({
       diffStatus: "modified",
       releaseDelta: true,
@@ -229,7 +235,7 @@ describe("scan persistence idempotency", () => {
       ownerUserId: ownerA.userId,
     });
     await claimScanForRun(ownerA.db, completedScanId, ownerA.organizationId);
-    await persistScan(ownerA.db, {
+    await persistScanWithArtifacts(ownerA.db, {
       ...baseScan,
       id: completedScanId,
       stageId: sharedStageId,

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
@@ -13,8 +13,6 @@ import {
   organizationSlackConnections,
   organizations,
   scanEvents,
-  scanFiles,
-  scanFindings,
   scans,
   twoFactor,
   user,
@@ -259,14 +257,7 @@ export async function deleteOrganization(
   organizationId: string,
   artifactBucket?: R2Bucket,
 ): Promise<void> {
-  const orgScans = db
-    .select({ id: scans.id })
-    .from(scans)
-    .where(eq(scans.organizationId, organizationId));
-
   await db.batch([
-    db.delete(scanFindings).where(inArray(scanFindings.scanId, orgScans)),
-    db.delete(scanFiles).where(inArray(scanFiles.scanId, orgScans)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
     db.delete(scans).where(eq(scans.organizationId, organizationId)),
     db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),

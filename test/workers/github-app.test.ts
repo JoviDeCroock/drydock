@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, markScanFailed, persistScan } from "../../server/db/scans";
+import { createScanJob, markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { GithubAppValidationError } from "../../server/lib/github-app/config";
 import {
@@ -21,6 +21,7 @@ import { getGateForOrganization } from "../../server/lib/github-app/webhook-gate
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 import type { Bindings, Variables } from "../../server/types";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 const originalFetch = globalThis.fetch;
 
@@ -771,7 +772,7 @@ async function completeWorkflowGateScan(input: {
   packageName?: string;
   version?: string;
 }) {
-  await persistScan(createDb(env.DB), {
+  await persistScanWithArtifacts(createDb(env.DB), {
     id: input.scanId,
     stageId: `workflow-gate:${input.gateId}`,
     organizationId: input.organizationId,

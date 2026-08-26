@@ -22,7 +22,8 @@ describe("ops snapshot queries", () => {
     const names = SNAPSHOT_QUERIES.map((query) => query.name);
     expect(names).toContain("scan_volume_by_day_14d");
     expect(names).toContain("scans_by_source");
-    expect(names).toContain("finding_counts_by_rule");
+    expect(names).toContain("scans_by_finding_count");
+    expect(names).toContain("scans_by_release_risk");
     expect(names).toContain("gate_decisions_by_outcome");
     expect(names).toContain("scan_events_by_type_14d");
   });

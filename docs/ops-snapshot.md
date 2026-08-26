@@ -8,8 +8,12 @@ timestamped JSON report to `~/.drydock-ops/snapshots/`. It never runs in
 `wrangler d1 --remote` work).
 
 Queries: scan volume by day (last 14 days), scans by source and by status,
-finding counts by rule id, workflow-gate decisions by outcome, scan events by
-type (last 14 days), and failed-scan error codes.
+scans bucketed by finding count and by release risk, workflow-gate decisions by
+outcome, scan events by type (last 14 days), and failed-scan error codes.
+
+Per-rule finding counts are not available here: findings live only in each
+scan's R2 `report.json`, so D1 can answer how many findings a scan carried but
+not which rules fired. A per-rule breakdown needs an R2-side aggregation.
 
 ## Hard rules
 

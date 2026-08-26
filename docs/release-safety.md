@@ -37,7 +37,7 @@ for the lifecycle behavior behind it.
   archives, excessive files, and excessive expanded size.
 - Deterministic findings are authoritative while AI review is unavailable, and AI
   cannot downgrade deterministic findings when it runs. A completed review's
-  findings persist additively as `scan_findings` rows with `source: "ai"` (and
+  findings are carried additively in the report artifact with `source: "ai"` (and
   count into `finding_count` / the risk summary), but they never replace, mutate,
   or re-score a rule finding, and they fold into risk through `combineRisk` — a
   max — so they can only escalate.

@@ -4,10 +4,11 @@ import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob, persistScan } from "../../server/db/scans";
+import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
+import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface SeededUser {
   userId: string;
@@ -61,7 +62,7 @@ async function seedCompletedScan(owner: SeededUser) {
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
   });
-  await persistScan(db, {
+  await persistScanWithArtifacts(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
@@ -125,14 +126,14 @@ describe("denormalized scan list summaries", () => {
     });
   });
 
-  test("listScans renders counts and risk summary even when scan_files and scan_findings are deleted", async () => {
+  test("listScans renders counts and risk summary even when the artifacts are gone", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);
-    const db = createDb(env.DB);
 
-    // Wipe the child evidence — the dashboard list must not depend on it.
-    await db.delete(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId));
-    await db.delete(schema.scanFindings).where(eq(schema.scanFindings.scanId, scanId));
+    // Wipe the scan body — the dashboard list is served from the denormalized
+    // columns on the scan row and must not read R2 at all.
+    const listed = await env.ARTIFACTS.list();
+    await env.ARTIFACTS.delete(listed.objects.map((object) => object.key));
 
     const res = await fetchScans(buildTestApp(owner));
     expect(res.status).toBe(200);

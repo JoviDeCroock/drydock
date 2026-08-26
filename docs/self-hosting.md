@@ -51,7 +51,8 @@ Create the required D1 database:
 pnpm exec wrangler d1 create staged-publish-review
 ```
 
-The template also enables the optional queue, KV cache, and R2 artifact store.
+The template also enables the optional queue and KV cache, and the required R2
+artifact store.
 Create those resources for the full configuration, or remove their binding
 blocks from your self-host config:
 
@@ -235,18 +236,15 @@ https://YOUR_ORIGIN/api/v1/slack/callback
 Then set `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`. See
 [`slack-notifications.md`](slack-notifications.md).
 
-## Artifact storage and backfill
+## Artifact storage
 
 R2 stores canonical report JSON, redacted file samples, generated diffs, and
-manifests for completed scans. New scans write artifacts when the `ARTIFACTS`
-binding is present. Legacy scans can be backfilled:
+manifests for completed scans. **The `ARTIFACTS` binding is required.** A
+completed scan's body lives only in R2 — D1 keeps the metadata row — so a
+deployment without the bucket fails the scan closed at persist time rather than
+storing a reviewable scan with no diff.
 
-```sh
-pnpm run scan-artifacts:backfill -- --all-organizations --limit 50
-```
-
-See [`artifact-storage.md`](artifact-storage.md) for object layout, rollback, and
-compaction behavior.
+See [`artifact-storage.md`](artifact-storage.md) for object layout and rollback.
 
 ## Operational notes
 

@@ -1,10 +1,12 @@
 # Scan Artifact Storage
 
-Drydock keeps D1 as the authoritative metadata/index store and uses R2 for large redacted derived artifacts. Raw tarballs are still not retained by default.
+Drydock keeps D1 as the authoritative metadata/index store and uses R2 for the large redacted derived artifacts. Raw tarballs are still not retained by default.
+
+R2 is the **only** store for a completed scan's body. There is no D1 copy and no D1 fallback: `scan_files` and `scan_findings` were dropped in migration `0028`, and the `ARTIFACTS` binding is required.
 
 ## Provisioning
 
-Wrangler binds the artifact bucket as `ARTIFACTS`:
+Wrangler binds the artifact bucket as `ARTIFACTS`. The binding is required — a Worker without it cannot persist a completed scan:
 
 ```sh
 wrangler r2 bucket create staged-publish-review-artifacts
@@ -14,7 +16,7 @@ Local Worker tests bind `staged-publish-review-test-artifacts` through `test/con
 
 ## D1 Metadata
 
-Completed scans can be artifact-backed when these `scans` columns are set:
+A completed scan points at its artifact set through these `scans` columns:
 
 - `artifact_storage_version`
 - `artifact_manifest_key`
@@ -24,7 +26,7 @@ Completed scans can be artifact-backed when these `scans` columns are set:
 - `file_samples_artifact_key`
 - `diff_artifact_key`
 
-D1 still keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries (including `risk_summary_json` and the summary-embedded diff), and report digest/version. The per-row detail — `scan_files` and `scan_findings` — is **no longer duplicated into D1 for artifact-backed scans**: once the R2 write succeeds, `persistScan` skips those inserts entirely and the detail (file metadata, redacted samples, diff, deterministic findings) is read back from `files.json` / `diff.json` / `report.json`. The detail rows are written only on the degraded path (no `ARTIFACTS` binding, so the R2 write was skipped and the scan falls back to D1). Legacy rows written before this change keep their historical `scan_files` / `scan_findings` content; the read path prefers R2 for any scan that carries artifact metadata.
+D1 keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries (including `risk_summary_json` and the summary-embedded diff), and report digest/version — and nothing else about the scan. The per-row detail (file metadata, redacted samples, diff, deterministic findings) is read back from `files.json` / `diff.json` / `report.json`.
 
 ## Object Layout
 
@@ -45,54 +47,24 @@ User-initiated report downloads serve the same canonical `report.json` bytes wit
 
 ## Write And Read Flow
 
-New completed scans try to write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` marks the D1 row artifact-backed. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry instead of persisting detail into D1. When the R2 write succeeds, D1 stores the scan metadata row only — no `scan_files` or `scan_findings` rows are written, so the redacted samples, file metadata, diff, and findings live exclusively in R2.
+Completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` writes the D1 row. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry. A missing `ARTIFACTS` binding logs `scan.artifacts.binding_missing` and throws for the same reason: there is no second place to put the body.
 
-`GET /api/v1/scans/:id` returns scan metadata, findings, events, and file metadata without staged file bodies. Findings cover both deterministic rules (`source: "rule"`) and a completed AI review's findings (`source: "ai"`): the degraded path persists AI rows into `scan_findings` after the rule rows, and the artifact read path derives them from the verified report's `aiFindings` envelope, appended after `ruleFindings` in the same combined order the report's `findingAnnotations` index over. Both sources count into `finding_count` and the risk summary; AI rows stay advisory and never alter rule rows. For artifact-backed scans the findings, diff, and file metadata come from R2 (`report.json` / `diff.json` / `files.json`); legacy and degraded scans read them from the D1 `scan_findings` / `scan_files` rows. The dashboard fetches a selected staged body on demand through:
+`GET /api/v1/scans/:id` returns scan metadata, findings, events, and file metadata without staged file bodies. Findings cover both deterministic rules (`source: "rule"`) and a completed AI review's findings (`source: "ai"`), the latter derived from the verified report's `aiFindings` envelope and appended after `ruleFindings` in the same combined order the report's `findingAnnotations` index over. Both sources count into `finding_count` and the risk summary; AI findings stay advisory and never alter rule findings. The dashboard fetches a selected staged body on demand through:
 
 ```http
 GET /api/v1/scans/:id/file?path=package.json
 ```
 
-Both the detail read and the file-body read shadow-read R2 when all artifact metadata exists. The artifact read path verifies:
+Both the detail read and the file-body read go to R2. The artifact read path verifies:
 
 - manifest key, size, and digest;
 - manifest scan/org identity and object-key references;
 - on the detail read, the `report.json` digest against `scans.report_digest` (the findings are parsed from that verified report);
 - each object's size + digest against the manifest descriptor, and the file/diff payload shape.
 
-Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and returns the D1-backed detail instead. For scans created before D1 detail compaction (or written on the degraded path), that fallback still returns the D1 `scan_files` / `scan_findings` rows. For compacted artifact-backed scans the detail rows do not exist in D1, so a fallback read returns the scan metadata, risk summary, and the summary-embedded diff but no file samples or findings — the read degrades gracefully rather than failing. This is the single-source-of-truth tradeoff the compaction accepts; `SCAN_ARTIFACT_READS_DISABLED` is not a recovery path for these rows because the data is no longer in D1.
+Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.artifacts.fallback_read` and degrades to the D1 metadata: the scan row, its risk summary, and the summary-embedded diff render, with no file samples and no findings. It never fails the request and never serves unverified bytes. This is the single-source-of-truth tradeoff; there is nothing to fall back to, so `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch, not a recovery path.
 
-## Backfill
-
-The Worker exposes an owner/admin backfill route for app-level maintenance:
-
-```http
-POST /api/v1/scans/artifacts/backfill
-Content-Type: application/json
-
-{ "limit": 10, "cursor": null }
-```
-
-The route processes small idempotent batches and returns counts for `scanned`, `backfilled`, `alreadyBacked`, `digestMismatch`, `failed`, and `nextCursor`. A legacy row is marked artifact-backed only after the reconstructed canonical report digest equals the persisted `report_digest`; rows that cannot be reconstructed exactly stay D1-backed.
-
-Production operators should use the repo-local runner instead of browser cookies. It uses the same Cloudflare credentials as Wrangler, reads from D1 with `wrangler d1 execute --json`, writes verified R2 objects with `wrangler r2 object put/get`, then updates D1 artifact metadata:
-
-```sh
-pnpm exec wrangler login
-pnpm run scan-artifacts:backfill -- \
-  --organization-id org_... \
-  --limit 50
-```
-
-To process every organization in D1:
-
-```sh
-pnpm run scan-artifacts:backfill -- \
-  --all-organizations \
-  --limit 50
-```
-
-The script defaults to the production `staged-publish-review` D1 database and `staged-publish-review-artifacts` R2 bucket through remote Wrangler operations. Use `--database`, `--bucket`, `--config`, `--env`, `--local`, or `--persist-to` when targeting a different Wrangler setup. The script prints one progress line per batch and exits nonzero if any row-level `failed` count remains. Use `--cursor <scan_id>` to resume a single-organization run from the last printed `nextCursor`; `--cursor` is intentionally not accepted with `--all-organizations` because cursors are organization-scoped. `digestMismatch` rows are reported but do not fail the script because they remain safely D1-backed.
+Release memory reads a prior approved scan's rule findings through the same path. An unreadable report there yields **no profile** rather than an empty one, so a transient R2 failure cannot make a routine release read as `diverged`.
 
 ## Deletion Lifecycle
 
@@ -101,7 +73,7 @@ R2 artifacts are torn down whenever the D1 rows that point at them are deleted, 
 - **Organization deletion** (`deleteOrganization`) removes every object under `orgs/{organizationId}/` after the D1 batch completes.
 - **Account deletion** (`deleteUserAccount`, invoked by the Better Auth `beforeDelete` hook) deletes each owned organization through `deleteOrganization`, so the personal-workspace and any sole-owned org artifacts go with it.
 - **Gate re-run discard** (`discardGateScans`) deletes the per-scan prefixes `orgs/{organizationId}/scans/{scanId}/` for the scans it discards, since a prior attempt may have completed some packages and written their artifacts.
-- **Failed-scan deletion** (`DELETE /api/v1/scans/:id`) conditionally deletes only an organization-owned `failed` row, cascades its D1 detail/events, records an organization audit event, and sweeps the per-scan R2 prefix.
+- **Failed-scan deletion** (`DELETE /api/v1/scans/:id`) conditionally deletes only an organization-owned `failed` row, cascades its scan events, records an organization audit event, and sweeps the per-scan R2 prefix.
 
 Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The delete prefixes intentionally stop before the `v{N}` segment so a cleanup removes every storage version. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
 
@@ -109,8 +81,10 @@ Time-based retention (a TTL sweep that deletes old scans on a schedule) is not y
 
 ## Rollback
 
-Set `SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) to force scan-detail reads back to D1 while leaving R2 artifacts untouched. Do not delete R2 objects during rollback. This restores D1-backed detail for legacy/degraded rows that still have `scan_files` / `scan_findings` content. It does **not** recover detail for compacted artifact-backed scans (the rows were never written), so disabling reads for those rows shows metadata only — keep R2 reads enabled for them. The safe operational lever for a suspect R2 read remains the per-object digest/size verification, which already fails closed to the metadata view.
+`SCAN_ARTIFACT_READS_DISABLED=true` (or `1`) stops scan-detail reads from touching R2 while leaving the objects untouched. There is no D1 copy to fall back to, so every completed scan then renders as metadata only — no file samples, no findings. Treat it as a containment switch for a suspect bucket, not a rollback. The routine lever for a suspect object is the per-object digest/size verification, which already fails closed to the same metadata view.
 
-## D1 Detail Compaction
+## D1 Detail Removal
 
-New artifact-backed scans are compacted at write time: `persistScan` no longer duplicates `scan_files` / `scan_findings` into D1 once the R2 write is verified (see `server/db/scan-persist.ts`). R2 is therefore the single source of truth for file samples, file metadata, the diff, and deterministic findings on those scans. The degraded path (no `ARTIFACTS` binding) still writes the detail to D1 so a scan that cannot reach R2 stays fully readable. Legacy rows written before this change are unaffected until an explicit one-time D1 cleanup of their now-redundant detail rows — that cleanup is still a separate, deliberate step and must only target rows that already carry verified artifact metadata.
+`scan_files` and `scan_findings` are gone (migration `0028_deep_vindicator.sql`). They were last written on the degraded path — a Worker with no `ARTIFACTS` binding — which is now a hard error instead. `persistScan` therefore writes exactly one row per scan and takes its `artifacts` metadata as a required input.
+
+Legacy scans written before artifact storage had their bodies in those tables; they were migrated with the (now removed) artifact backfill before the drop. A pre-artifact scan that was never backfilled keeps its metadata row and renders as metadata only.
