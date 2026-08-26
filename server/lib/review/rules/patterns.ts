@@ -242,11 +242,12 @@ const REVIEW_MANIPULATION_PATTERNS = [
   /\b(?:mark|classify|treat|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|library|module|dependency|code|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
   // object. Modals invite third-person subjects ("the scanner should not flag
-  // minified code as suspicious") and a bare object matches changelog and
-  // SECURITY.md prose ("don't report duplicate findings", "do not report
-  // findings without a proof of concept") — all idiomatic in exactly the
-  // linter/scanner packages npm is full of.
-  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?|issues?|warnings?|concerns?)\b/i,
+  // minified code as suspicious"), broad support nouns ("do not report any
+  // issues here") are ordinary project guidance, and a bare object matches
+  // changelog/SECURITY.md prose ("don't report duplicate findings", "do not
+  // report findings without a proof of concept") — all idiomatic in exactly
+  // the linter/scanner packages npm is full of.
+  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b/i,
   /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
   // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
   // with a space; the underscore/hyphen form is schema-targeting.
@@ -255,7 +256,10 @@ const REVIEW_MANIPULATION_PATTERNS = [
   // alert requires manual review to rule out false positives" is ordinary
   // security-tool documentation.
   /\brequires_?manual_?review\b[^\n]{0,20}\bfalse\b(?!\s+positive)/i,
-  /\b(?:skip|bypass|disable)\s+(?:the\s+|this\s+|any\s+|all\s+)?security\s+(?:review|scan|audit|check)/i,
+  // Security tooling legitimately documents switches such as "bypass the
+  // security check during local development". Require the directive to name
+  // this package/release as the object being exempted from review.
+  /\b(?:skip|bypass|disable)\s+(?:(?:(?:the|this)\s+)?security\s+(?:review|scan|audit|check)\s+(?:of|for|on)\s+(?:this|the)\s+(?:package|release|update|version|code)|(?:this|the)\s+(?:package|release|update|version|code)(?:'s)?\s+security\s+(?:review|scan|audit|check))\b/i,
 ];
 
 // Instruction content aimed at any LLM/agent that reads package bytes — an AI
