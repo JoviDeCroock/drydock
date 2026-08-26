@@ -738,10 +738,13 @@ export default function DocsPage() {
 }`}
               </CodeBlock>
               <Prose>
-                List the preset after your base presets so its column layout wins. Updates without
-                two distinct published versions of one package — pins, digests, replacements, and
-                some lockfile-only changes — omit the link, and columns that end up empty are
-                dropped from the table.
+                List the preset after your base presets so its column layout wins. Renovate has no
+                way to append a single column, so the preset restates the whole layout — the
+                standard columns, the merge-confidence badges, and OpenSSF — and your table can come
+                out wider than your base preset alone renders it. Updates without two distinct
+                published versions of one package — pins, digests, replacements, and some
+                lockfile-only changes — omit the link, and columns that end up empty are dropped
+                from the table.
               </Prose>
             </Subsection>
 

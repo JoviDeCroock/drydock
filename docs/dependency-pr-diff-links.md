@@ -27,21 +27,43 @@ A failed preset resolution is not a soft miss: Renovate raises a
 `CONFIG_VALIDATION` error and stops processing the downstream repository
 entirely — adopters lose all updates, not just the column — so treat the path
 like a published API: additive changes only, never rename or move the file.
+`test/renovate-diff-links.test.mjs` pins the path, because this repository uses
+Dependabot and so never renders the preset itself.
 
 Shape notes, so edits keep the links correct:
 
 - The column is added via `packageRules` scoped with `matchDatasources`, the
   same mechanism as Renovate's built-in `security:openssf-scorecard` preset.
   Only `npm` and `pypi` get a column — those are the ecosystems `/diff` serves.
-- `prBodyColumns` is a non-mergeable array where the last matching packageRule
-  wins, so the preset lists a superset: Renovate's defaults plus the
-  `mergeConfidence:*` (`Age`, `Confidence`) and `security:openssf-scorecard`
-  (`OpenSSF`) columns plus `Drydock`. Renovate drops columns that end up empty,
-  so each repo renders only the columns its other presets actually populate.
-  Without the superset, this preset would silently erase the merge-confidence
-  badges for every `config:recommended` adopter. The extends order in the
-  snippet matters for the same reason: listed first, a base preset's own
-  `prBodyColumns` rule would win and drop the `Drydock` column instead.
+- `prBodyColumns` is not a mergeable option. Within one upgrade the last
+  matching packageRule replaces the list outright; across a branch Renovate then
+  unions the lists of every upgrade in it, which is why a mixed-ecosystem group
+  still shows the column. The replacement is the part that bites: listed last,
+  this preset's list becomes the whole list for every npm and PyPI upgrade, so
+  it repeats every column an upstream preset could have asked for — Renovate's
+  defaults (`Package`, `Type`, `Update`, `Change`, `Pending`), all four
+  `mergeConfidence:*` badges (`Age`, `Adoption`, `Passing`, `Confidence`), and
+  `security:openssf-scorecard`'s `OpenSSF` — plus `Drydock`. Without the
+  superset this preset would silently erase badges the adopter opted into. The
+  extends order in the snippet matters for the same reason: listed first, a base
+  preset's own `prBodyColumns` rule would win and drop the `Drydock` column
+  instead. `test/renovate-diff-links.test.mjs` holds copies of the upstream
+  lists, so a column added upstream fails there rather than in an adopter's PR.
+- The superset makes the table wider than one added column, and that is the
+  accepted cost of the point above. `config:recommended` extends
+  `mergeConfidence:age-confidence-badges`, whose list is only `Package`,
+  `Change`, `Age`, `Confidence`, so adopting this preset also brings `Type` and
+  `Update` back — their definitions are Renovate defaults and populated for
+  ordinary dependency updates. For the same reason all four merge-confidence
+  cells render Mend badge images for an adopter whose base config never enabled
+  merge confidence: the `mergeConfidence:*` presets add only the columns, never
+  the definitions. Renovate drops columns that end up empty, so nothing renders
+  a blank column, but nothing renders a narrower table than this list either.
+  That is the deliberate trade: a table wider than an adopter asked for is
+  recoverable — they append their own `packageRules` entry with `prBodyColumns`,
+  and repo-level rules are evaluated after preset ones, so theirs wins — while a
+  badge this preset deleted is a feature they opted into disappearing with no
+  signal.
 - `packageName`, not `depName`: for npm alias specs (`npm:real-pkg@1.2.3`) and
   normalized PyPI names, `packageName` is the package actually being installed;
   `depName` is what the manifest calls it. Linking `depName` could present a
@@ -55,6 +77,13 @@ Shape notes, so edits keep the links correct:
   confidently wrong one, matching `dependencyDiffHref` in the app.
 - Triple-stash (`{{{…}}}`) follows upstream preset convention for URLs; Renovate
   compiles templates with `noEscape`, so it is stylistic, not load-bearing.
+- Nothing scopes the link to the public registry, and nothing can.
+  `matchDatasources: ["npm"]` also matches a package resolved from a private or
+  self-hosted registry, which `/diff` cannot look up, so those rows link a page
+  that will not find the package. Renovate's template field allowlist does not
+  expose `registryUrl`, so the definition cannot see which registry an upgrade
+  came from; a dead link on internal packages is the residual cost of the
+  column.
 
 ## Dependabot
 

@@ -2,7 +2,8 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "Adds a Drydock column to Renovate PR tables: every npm and PyPI update links to a line-level diff of the published packages at drydock.org/diff.",
-    "Usage: \"extends\": [\"config:recommended\", \"github>JoviDeCroock/drydock//renovate/diff-links\"] — list this preset after base presets so its columns win."
+    "Usage: \"extends\": [\"config:recommended\", \"github>JoviDeCroock/drydock//renovate/diff-links\"] — list this preset after base presets so its columns win.",
+    "prBodyColumns replaces rather than merges, so the column list restates Renovate's default, merge-confidence, and OpenSSF columns; columns that end up empty are dropped."
   ],
   "packageRules": [
     {
@@ -14,6 +15,8 @@
         "Change",
         "Pending",
         "Age",
+        "Adoption",
+        "Passing",
         "Confidence",
         "OpenSSF",
         "Drydock"
@@ -31,6 +34,8 @@
         "Change",
         "Pending",
         "Age",
+        "Adoption",
+        "Passing",
         "Confidence",
         "OpenSSF",
         "Drydock"
