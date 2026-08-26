@@ -130,9 +130,11 @@ documented short cache TTL.
 
 Account deletion follows the same unfinished/final split. Approvals on
 undecided releases, including packages behind a still-pending gate, are deleted
-before the membership disappears; durable blocks are retained. Votes on final
-releases are scrubbed by setting `scan_approvals.user_id` to null, keeping the
-historical count while dropping the identity. This is the same treatment
+in the same D1 batch that revokes the account's memberships and repairs package
+projections; durable blocks are retained. An in-flight approval therefore cannot
+land between approval cleanup and membership revocation. Votes on final releases
+are scrubbed by setting `scan_approvals.user_id` to null, keeping the historical
+count while dropping the identity. This is the same treatment
 `scans.decided_by_user_id` gets.
 
 ## Both decision paths

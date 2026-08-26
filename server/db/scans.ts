@@ -62,7 +62,7 @@ export {
 
 export {
   countScanApprovals,
-  dropPendingApprovalsForUser,
+  removeUserMembershipsAndReconcileApprovals,
   getOrganizationApprovalPolicy,
   loadScanApprovalState,
   MAX_REQUIRED_RELEASE_APPROVALS,

@@ -9,7 +9,10 @@ import {
   deleteUserAccount,
   ensurePersonalOrganization,
 } from "../../server/db/organizations";
-import { upsertScanApproval } from "../../server/db/scan-approvals";
+import {
+  removeUserMembershipsAndReconcileApprovals,
+  upsertScanApproval,
+} from "../../server/db/scan-approvals";
 import { createScanJob, persistScan, setRequiredReleaseApprovals } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
@@ -655,6 +658,43 @@ describe("multi-party release approval", () => {
 
     const next = await decide({ ...users[0], organizationId }, scanId, "publish");
     expect(next.body.approvals).toMatchObject({ approvedCount: 1, verdict: null });
+  });
+
+  test("account cleanup revokes membership before another approval can land", async () => {
+    const { organizationId, users } = await seedSharedOrganization(3, 2);
+    const scanId = await seedCompletedScan(organizationId, users[0].userId);
+    await decide({ ...users[1], organizationId }, scanId, "publish");
+
+    const db = createDb(env.DB);
+    await removeUserMembershipsAndReconcileApprovals(db, users[1].userId);
+
+    // This is the interleaving that used to fit between the approval-cleanup
+    // batch and deleteUserAccount's later membership deletion. Once cleanup
+    // returns, the membership proof in the vote insert must already fail.
+    expect(
+      await upsertScanApproval(db, {
+        scanId,
+        organizationId,
+        userId: users[1].userId,
+        decision: "publish",
+        reason: null,
+        now: new Date(),
+      }),
+    ).toBe("not_member");
+    expect(
+      await db
+        .select()
+        .from(schema.organizationMembers)
+        .where(
+          and(
+            eq(schema.organizationMembers.organizationId, organizationId),
+            eq(schema.organizationMembers.userId, users[1].userId),
+          ),
+        ),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(schema.scanApprovals).where(eq(schema.scanApprovals.scanId, scanId)),
+    ).toHaveLength(0);
   });
 
   test("deleting an account anonymizes rather than removes a decided approval", async () => {

@@ -969,8 +969,15 @@ export async function removeMemberAndReconcileApprovals(
   return { removed: removed.length > 0, changedScans: reopened };
 }
 
-/** Remove every still-live approval before an account's surviving rows are anonymized. */
-export async function dropPendingApprovalsForUser(
+/**
+ * Revoke every surviving membership and remove the account's still-live approvals.
+ *
+ * The membership deletion belongs in the same D1 batch as vote cleanup and
+ * projection repair. Otherwise an already-authorized decision request can land
+ * a new approval after cleanup but before account deletion removes membership,
+ * leaving a pending gate package projected as approved by an ineligible voter.
+ */
+export async function removeUserMembershipsAndReconcileApprovals(
   db: AppDb,
   userId: string,
 ): Promise<ReconciledScanProjection[]> {
@@ -1009,7 +1016,8 @@ export async function dropPendingApprovalsForUser(
     from ${organizations}
     where ${organizations.id} = ${scans.organizationId}
   )`;
-  const [, reopened] = await db.batch([
+  const [, , reopened] = await db.batch([
+    db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db
       .delete(scanApprovals)
       .where(
