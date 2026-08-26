@@ -7,9 +7,9 @@
 -- array inside `report.json`, both digest-verified — and the report export now
 -- reads it from there. This rewrites the rows written before that change.
 --
--- Idempotent: the WHERE clause only matches rows that still carry a digest, so
--- a rerun is a no-op. Rows with no `$.diff` (failed scans, hand-seeded rows)
--- are never touched.
+-- Idempotent: the WHERE clause only matches artifact-backed rows that still
+-- carry a digest, so a rerun is a no-op. Rows with no `$.diff` (failed scans,
+-- hand-seeded rows) and legacy rows with no verified R2 copy are never touched.
 --
 -- ORDER MATTERS: deploy the pipeline + export change first. Once a row is
 -- rewritten, its `summary_json.diff` can no longer reproduce the pre-change
@@ -33,7 +33,15 @@ SET summary_json = json_set(
     )
   ))
 )
-WHERE json_type(summary_json, '$.diff') = 'array'
+WHERE artifact_storage_version = 1
+  AND artifact_manifest_key IS NOT NULL
+  AND artifact_manifest_digest IS NOT NULL
+  AND artifact_manifest_size IS NOT NULL
+  AND report_artifact_key IS NOT NULL
+  AND report_digest IS NOT NULL
+  AND file_samples_artifact_key IS NOT NULL
+  AND diff_artifact_key IS NOT NULL
+  AND json_type(summary_json, '$.diff') = 'array'
   AND EXISTS (
     SELECT 1
     FROM json_each(scans.summary_json, '$.diff') j2

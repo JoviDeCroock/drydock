@@ -38,9 +38,46 @@ const DIFF = [
 
 function seedDb(rows) {
   const db = new DatabaseSync(":memory:");
-  db.exec("CREATE TABLE scans (id TEXT PRIMARY KEY, summary_json TEXT)");
-  const insert = db.prepare("INSERT INTO scans (id, summary_json) VALUES (?, ?)");
-  for (const [id, summary] of rows) insert.run(id, summary === null ? null : summary);
+  db.exec(`CREATE TABLE scans (
+    id TEXT PRIMARY KEY,
+    summary_json TEXT,
+    report_digest TEXT,
+    artifact_storage_version INTEGER,
+    artifact_manifest_key TEXT,
+    artifact_manifest_digest TEXT,
+    artifact_manifest_size INTEGER,
+    report_artifact_key TEXT,
+    file_samples_artifact_key TEXT,
+    diff_artifact_key TEXT
+  )`);
+  const insert = db.prepare(`INSERT INTO scans (
+    id,
+    summary_json,
+    report_digest,
+    artifact_storage_version,
+    artifact_manifest_key,
+    artifact_manifest_digest,
+    artifact_manifest_size,
+    report_artifact_key,
+    file_samples_artifact_key,
+    diff_artifact_key
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  for (const [id, summary, artifactState = "backed"] of rows) {
+    const artifactBacked = artifactState === "backed";
+    const partialMetadata = artifactState === "partial";
+    insert.run(
+      id,
+      summary === null ? null : summary,
+      artifactBacked ? "report-digest" : null,
+      artifactBacked || partialMetadata ? 1 : null,
+      artifactBacked || partialMetadata ? "manifest.json" : null,
+      artifactBacked ? "manifest-digest" : null,
+      artifactBacked ? 123 : null,
+      artifactBacked ? "report.json" : null,
+      artifactBacked ? "files.json" : null,
+      artifactBacked ? "diff.json" : null,
+    );
+  }
   return db;
 }
 
@@ -88,6 +125,22 @@ describe("backfill-summary-diff-digests.sql", () => {
     expect(readSummary(db, "scan_no_diff")).toEqual(noDiff);
     expect(readSummary(db, "scan_empty")).toEqual(emptyDiff);
     expect(readSummary(db, "scan_null")).toBeNull();
+    db.close();
+  });
+
+  test("preserves the only full-fidelity diff on rows without complete artifact metadata", () => {
+    const summary = { diff: DIFF };
+    const db = seedDb([
+      ["scan_backed", JSON.stringify(summary)],
+      ["scan_legacy", JSON.stringify(summary), "legacy"],
+      ["scan_partial", JSON.stringify(summary), "partial"],
+    ]);
+
+    db.exec(BACKFILL_SQL);
+
+    expect(readSummary(db, "scan_backed")).toEqual({ diff: summaryDiffEntries(DIFF) });
+    expect(readSummary(db, "scan_legacy")).toEqual(summary);
+    expect(readSummary(db, "scan_partial")).toEqual(summary);
     db.close();
   });
 
