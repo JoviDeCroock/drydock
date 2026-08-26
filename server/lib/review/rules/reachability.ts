@@ -610,12 +610,15 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
     (token) => token.type !== "ws" && token.type !== "comment",
   );
   const specifiers: WebExtensionResourceSpecifier[] = [];
+  const domScriptElementBindings = staticDomScriptElementBindings(tokens, text);
 
   for (let index = 0; index < tokens.length; index += 1) {
     const dynamicImport = staticBrowserDynamicImportResource(tokens, text, index);
     if (dynamicImport) specifiers.push(dynamicImport);
     const navigation = staticBrowserNavigationResource(tokens, text, index);
     if (navigation) specifiers.push(navigation);
+    const domScript = staticDomScriptResource(tokens, text, index, domScriptElementBindings);
+    if (domScript) specifiers.push(domScript);
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
@@ -652,6 +655,88 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   }
 
   return specifiers;
+}
+
+// A packaged script can become executable without a WebExtension API when an
+// extension page creates a script element, assigns a literal local URL, and
+// later inserts it into the document. Track only bindings initialized directly
+// from document.createElement("script"); other element kinds and dynamic tag
+// names remain inert controls. Requiring an observable append would introduce
+// fragile local data-flow assumptions, so assignment is conservative by design.
+function staticDomScriptElementBindings(tokens: JsToken[], text: string): Set<string> {
+  const bindings = new Set<string>();
+  for (let index = 1; index < tokens.length - 3; index += 1) {
+    const declaration = tokenText(tokens[index - 1], text);
+    if (declaration !== "const" && declaration !== "let" && declaration !== "var") continue;
+    const binding = tokens[index];
+    if (binding?.type !== "ident" || tokenText(tokens[index + 1], text) !== "=") continue;
+    if (staticDocumentCreateElementTag(tokens, text, index + 2)?.toLowerCase() !== "script") {
+      continue;
+    }
+    bindings.add(tokenText(binding, text));
+  }
+  return bindings;
+}
+
+function staticDocumentCreateElementTag(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): string | null {
+  let index = start;
+  const first = tokenText(tokens[index], text);
+  if (STATIC_BROWSER_GLOBALS.has(first)) {
+    let member = staticMemberAccess(tokens, text, index + 1);
+    if (!member) return null;
+    while (STATIC_BROWSER_GLOBALS.has(member.name)) {
+      member = staticMemberAccess(tokens, text, member.nextIndex);
+      if (!member) return null;
+    }
+    if (member.name !== "document") return null;
+    index = member.nextIndex;
+  } else if (first === "document") {
+    index += 1;
+  } else {
+    return null;
+  }
+
+  const createElement = staticMemberAccess(tokens, text, index);
+  if (createElement?.name !== "createElement") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, createElement.nextIndex);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  return closeIndex === null
+    ? null
+    : staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+}
+
+function staticDomScriptResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  scriptElementBindings: Set<string>,
+): WebExtensionResourceSpecifier | null {
+  const binding = tokenText(tokens[start], text);
+  if (
+    !scriptElementBindings.has(binding) ||
+    isMemberSeparator(tokenText(tokens[start - 1], text))
+  ) {
+    return null;
+  }
+  const src = staticMemberAccess(tokens, text, start + 1);
+  if (src?.name !== "src" || tokenText(tokens[src.nextIndex], text) !== "=") return null;
+
+  const valueIndex = src.nextIndex + 1;
+  const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
+  const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, valueIndex);
+  const parsingFollowingTokens = runtimeUrl
+    ? [...allowedFollowingTokens, tokenText(tokens[runtimeUrl.nextIndex], text)]
+    : allowedFollowingTokens;
+  const value = staticWebExtensionResourcePath(tokens, text, valueIndex, parsingFollowingTokens);
+  if (!value || !browserNavigationAssignmentEnds(tokens, text, value, allowedFollowingTokens)) {
+    return null;
+  }
+  return { path: value.path, resolution: value.runtimeUrl ? "root" : "document" };
 }
 
 function staticBrowserDynamicImportResource(
@@ -700,15 +785,21 @@ function staticBrowserNavigationResource(
       member = staticMemberAccess(tokens, text, member.nextIndex);
       if (!member) return null;
     }
-    if (member.name === "open") {
-      const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
-      if (openIndex === null) return null;
-      const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
-      if (closeIndex === null) return null;
-      return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
+    if (member.name === "document") {
+      member = staticMemberAccess(tokens, text, member.nextIndex);
+      if (member?.name !== "location") return null;
+      index = member.nextIndex;
+    } else {
+      if (member.name === "open") {
+        const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+        if (openIndex === null) return null;
+        const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+        if (closeIndex === null) return null;
+        return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
+      }
+      if (member.name !== "location") return null;
+      index = member.nextIndex;
     }
-    if (member.name !== "location") return null;
-    index = member.nextIndex;
   } else if (first === "document") {
     const member = staticMemberAccess(tokens, text, index + 1);
     if (member?.name !== "location") return null;

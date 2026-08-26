@@ -2018,6 +2018,66 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(2);
   });
 
+  test("follows script-element sources and window.document navigation from extension pages", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 39,
+        sha256: "97".repeat(32),
+        flags: [],
+        textSample: '<script src="popup.js"></script>',
+      },
+      {
+        path: "popup.js",
+        size: 1,
+        sha256: "98".repeat(32),
+        flags: [],
+        textSample: [
+          'const script = document.createElement("script");',
+          'script.src = chrome.runtime.getURL("tests/injected.js");',
+          "document.documentElement.append(script);",
+          'window.document.location = "tests/navigated.html";',
+          'const image = document.createElement("img");',
+          'image.src = chrome.runtime.getURL("tests/decoy.js");',
+        ].join("\n"),
+      },
+      {
+        path: "tests/navigated.html",
+        size: 41,
+        sha256: "99".repeat(32),
+        flags: [],
+        textSample: '<script src="navigated.js"></script>',
+      },
+      ...["injected", "navigated", "decoy"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: String(100 + index).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "tests/injected.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/navigated.js", severity: "high" }),
+        expect.objectContaining({
+          file: "tests/decoy.js",
+          severity: "medium",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(3);
+  });
+
   test("follows scripts after an abruptly closed HTML comment", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

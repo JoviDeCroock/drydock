@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.62.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.63.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -642,6 +642,12 @@ execution base across classic-worker `importScripts()` chains, nested Worker
 construction, and literal `runtime.getURL()` dynamic imports. The
 browser-worker-execution-base golden case pins all three reachability paths and
 their module-relative decoys.
+
+`1.63.0` follows literal packaged script sources assigned to bindings created by
+`document.createElement("script")` in reachable extension pages and recognizes
+`window.document.location` navigation aliases. Non-script element sources stay
+test-scoped. The browser navigation-alias golden case pins both executable paths
+and the image-element hard negative.
 
 ### Fixture format
 
