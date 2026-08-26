@@ -623,6 +623,14 @@ and as possible replacement markup. Entity count, recursion depth, and expanded
 characters are capped and fail the review loudly when exceeded. The browser
 navigation-alias and HTML-namespace golden cases pin these boundaries.
 
+`1.60.0` follows literal `runtime.getURL()` dynamic imports, `top`/`parent`
+window-location aliases, and semicolonless location assignments whose next
+statement begins after automatic semicolon insertion. The bounded XHTML/SVG
+pass now decodes numeric and predefined references inside internal general
+entities and resolves consumer URLs against inherited `xml:base` chains. The
+browser navigation-alias and HTML-namespace golden cases pin all five bypass
+boundaries.
+
 ### Fixture format
 
 Required fields:

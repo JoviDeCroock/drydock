@@ -415,7 +415,61 @@ type WebExtensionResourceCall =
     }
   | { openIndex: number; source: "argument"; argumentIndex: number };
 
-const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "self", "window"]);
+const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "parent", "self", "top", "window"]);
+const BROWSER_NAVIGATION_EXPRESSION_CONTINUATIONS = new Set([
+  "!=",
+  "!==",
+  "%",
+  "%=",
+  "&",
+  "&&",
+  "&&=",
+  "&=",
+  "(",
+  "*",
+  "**",
+  "**=",
+  "*=",
+  "+",
+  "++",
+  "+=",
+  "-",
+  "--",
+  "-=",
+  ".",
+  "/",
+  "/=",
+  ":",
+  "<",
+  "<<",
+  "<<=",
+  "<=",
+  "=",
+  "==",
+  "===",
+  "=>",
+  ">",
+  ">=",
+  ">>",
+  ">>=",
+  ">>>",
+  ">>>=",
+  "?",
+  "?.",
+  "??",
+  "??=",
+  "[",
+  "^",
+  "^=",
+  "as",
+  "in",
+  "instanceof",
+  "satisfies",
+  "|",
+  "|=",
+  "||",
+  "||=",
+]);
 
 // Classic workers may load more packaged scripts without a module edge. Parse
 // only literal arguments on the worker-global call so API-shaped text in
@@ -460,10 +514,11 @@ function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
   return specifiers;
 }
 
-// WebExtension APIs can make packaged scripts or HTML documents executable
-// without a manifest or module edge. Follow only literal resource properties
-// on the statically named APIs; dynamic expressions remain unproven. The shared
-// lexer keeps API-shaped text in comments, strings, and regular expressions inert.
+// WebExtension APIs and runtime-URL dynamic imports can make packaged scripts
+// or HTML documents executable without a manifest or literal module edge.
+// Follow only literal resource properties on the statically named APIs; dynamic
+// expressions remain unproven. The shared lexer keeps API-shaped text in
+// comments, strings, and regular expressions inert.
 function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourceSpecifier[] {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
@@ -471,6 +526,8 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   const specifiers: WebExtensionResourceSpecifier[] = [];
 
   for (let index = 0; index < tokens.length; index += 1) {
+    const dynamicImport = staticBrowserDynamicImportResource(tokens, text, index);
+    if (dynamicImport) specifiers.push(dynamicImport);
     const navigation = staticBrowserNavigationResource(tokens, text, index);
     if (navigation) specifiers.push(navigation);
     const call = webExtensionScriptCall(tokens, text, index);
@@ -511,6 +568,29 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   return specifiers;
 }
 
+function staticBrowserDynamicImportResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): WebExtensionResourceSpecifier | null {
+  if (
+    tokenText(tokens[start], text) !== "import" ||
+    isMemberSeparator(tokenText(tokens[start - 1], text))
+  ) {
+    return null;
+  }
+  const openIndex = staticCallOpenIndex(tokens, text, start + 1);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  if (closeIndex === null) return null;
+  const firstArgument = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)[0];
+  if (!firstArgument) return null;
+  const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, firstArgument[0]);
+  return runtimeUrl?.nextIndex === firstArgument[1]
+    ? { path: runtimeUrl.path, resolution: "root" }
+    : null;
+}
+
 function staticBrowserNavigationResource(
   tokens: JsToken[],
   text: string,
@@ -528,8 +608,12 @@ function staticBrowserNavigationResource(
     return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
   }
   if (STATIC_BROWSER_GLOBALS.has(first)) {
-    const member = staticMemberAccess(tokens, text, index + 1);
+    let member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;
+    while (STATIC_BROWSER_GLOBALS.has(member.name)) {
+      member = staticMemberAccess(tokens, text, member.nextIndex);
+      if (!member) return null;
+    }
     if (member.name === "open") {
       const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
       if (openIndex === null) return null;
@@ -582,14 +666,34 @@ function staticBrowserNavigationAssignmentResource(
   valueIndex: number,
 ): WebExtensionResourceSpecifier | null {
   const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
-  const value = staticWebExtensionResourcePath(tokens, text, valueIndex, allowedFollowingTokens);
-  if (!value || !allowedFollowingTokens.includes(tokenText(tokens[value.nextIndex], text))) {
+  const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, valueIndex);
+  const parsingFollowingTokens = runtimeUrl
+    ? [...allowedFollowingTokens, tokenText(tokens[runtimeUrl.nextIndex], text)]
+    : allowedFollowingTokens;
+  const value = staticWebExtensionResourcePath(tokens, text, valueIndex, parsingFollowingTokens);
+  if (!value || !browserNavigationAssignmentEnds(tokens, text, value, allowedFollowingTokens)) {
     return null;
   }
   return {
     path: value.path,
     resolution: value.runtimeUrl ? "document-root" : "document",
   };
+}
+
+function browserNavigationAssignmentEnds(
+  tokens: JsToken[],
+  text: string,
+  value: StaticWebExtensionResourcePath,
+  allowedFollowingTokens: string[],
+): boolean {
+  const next = tokens[value.nextIndex];
+  const nextText = tokenText(next, text);
+  if (allowedFollowingTokens.includes(nextText)) return true;
+  const previous = tokens[value.nextIndex - 1];
+  if (!previous || !next || !/[\n\r\u2028\u2029]/.test(text.slice(previous.end, next.start))) {
+    return false;
+  }
+  return next.type !== "template" && !BROWSER_NAVIGATION_EXPRESSION_CONTINUATIONS.has(nextText);
 }
 
 function staticBrowserNavigationValue(

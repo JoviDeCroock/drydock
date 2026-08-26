@@ -1,4 +1,4 @@
-import { decodeHTMLAttribute } from "entities";
+import { decodeHTMLAttribute, decodeXML } from "entities";
 import { SaxesParser } from "saxes";
 import { hasAsciiControlCharacter, isRecord } from "../../platform/guards";
 import {
@@ -774,6 +774,9 @@ function scanXmlDocumentConsumerTokens(xml: string, tokens: DocumentConsumerToke
   });
   parser.on("opentag", (tag) => {
     for (const attribute of Object.values(tag.attributes)) {
+      if (attribute.uri === "http://www.w3.org/XML/1998/namespace" && attribute.local === "base") {
+        supplemental.baseHrefs.push(attribute.value);
+      }
       collectDocumentConsumerAttribute(supplemental, tag.local, attribute.local, attribute.value);
     }
   });
@@ -837,7 +840,7 @@ function xmlGeneralEntityReplacements(doctype: string): Map<string, string> {
       const reference = match[1];
       const replacement = declarations.has(reference)
         ? expand(reference, [...stack, name])
-        : match[0];
+        : decodeXML(match[0]);
       const fragment = raw.slice(cursor, index) + replacement;
       if (output.length + fragment.length > MAX_XML_ENTITY_EXPANDED_CHARACTERS) {
         throw new Error("browser XML entity expansion exceeds the character budget");
@@ -897,15 +900,17 @@ function resolveExtensionRootResourcePath(rawPath: string): string | null {
 
 // Every base URL the document could plausibly resolve sources against: the
 // document URL (or the embedding candidates for an inline srcdoc document)
-// plus every declared base href. Browsers use only the first base element,
-// but which element parses as "first" depends on exact tree construction —
-// resolving against all candidates keeps that ambiguity from hiding an edge.
+// plus every declared HTML <base> or XML xml:base href. Browsers use only the
+// first HTML base element, while XML bases inherit through the element tree.
+// Resolving each candidate against every earlier candidate over-approximates
+// both shapes so parser ambiguity cannot hide an edge.
 function documentBaseCandidates(fallbackBases: URL[], baseHrefs: string[]): URL[] {
   const candidates = new Map<string, URL>(fallbackBases.map((base) => [base.href, base]));
   for (const rawHref of baseHrefs) {
     const href = rawHref.trim();
     if (!href || href.includes("\\")) continue;
-    for (const fallback of fallbackBases) {
+    const currentCandidates = Array.from(candidates.values());
+    for (const fallback of currentCandidates) {
       try {
         const resolved = new URL(href, fallback);
         if (
@@ -919,10 +924,10 @@ function documentBaseCandidates(fallbackBases: URL[], baseHrefs: string[]): URL[
         // The HTML base-element algorithm falls back to the document URL when
         // its href cannot be parsed; that URL is already a candidate.
       }
+      if (candidates.size > MAX_DOCUMENT_BASE_CANDIDATES) {
+        throw new Error("document declares too many distinct base URL candidates");
+      }
     }
-  }
-  if (candidates.size > MAX_DOCUMENT_BASE_CANDIDATES) {
-    throw new Error("document declares too many distinct base URL candidates");
   }
   return [...candidates.values()];
 }

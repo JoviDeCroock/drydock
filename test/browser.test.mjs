@@ -1687,7 +1687,7 @@ describe("browser extension review adapter", () => {
         sha256: "9e".repeat(32),
         flags: [],
         textSample:
-          '<!DOCTYPE svg [<!ENTITY dir "tests"><!ENTITY payload "&dir;/payload.js">]>' +
+          '<!DOCTYPE svg [<!ENTITY dir "tests"><!ENTITY payload "&dir;&#x2F;payload.js">]>' +
           '<svg xmlns="http://www.w3.org/2000/svg"><script href="&payload;"/></svg>',
       },
     ]);
@@ -1697,6 +1697,29 @@ describe("browser extension review adapter", () => {
         {
           path: "tests/payload.js",
           documentBaseUrl: "drydock-extension://artifact/page.svg",
+        },
+      ]),
+    );
+  });
+
+  test("resolves XML scripts against inherited xml:base values", () => {
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.svg",
+        size: 1,
+        sha256: "a3".repeat(32),
+        flags: [],
+        textSample:
+          '<svg xmlns="http://www.w3.org/2000/svg" xml:base="tests/">' +
+          '<g xml:base="nested/"><script href="../payload.js"/></g></svg>',
+      },
+    ]);
+
+    expect(dependencies("page.svg")).toEqual(
+      expect.arrayContaining([
+        {
+          path: "tests/payload.js",
+          documentBaseUrl: "drydock-extension://artifact/tests/nested/",
         },
       ]),
     );

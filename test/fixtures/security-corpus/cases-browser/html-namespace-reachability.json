@@ -2,7 +2,7 @@
   "id": "browser-html-namespace-reachability",
   "title": "WebExtension document reachability over-approximates HTML, SVG, and MathML parsing",
   "category": "browser-extension",
-  "intent": "The document scanner deliberately does not model namespaces, raw text, CDATA, templates, script types, or self-closing syntax: every script-shaped reference in a reachable document — including valid XML qualified names and internal entity replacements — keeps full severity. Only a missed edge is a bug; invented edges are by design.",
+  "intent": "The document scanner deliberately does not model namespaces, raw text, CDATA, templates, script types, or self-closing syntax: every script-shaped reference in a reachable document — including valid XML qualified names, inherited xml:base values, and decoded internal entity replacements — keeps full severity. Only a missed edge is a bug; invented edges are by design.",
   "slug": "html-namespace-helper",
   "extensionId": "html-namespace-helper@example.invalid",
   "version": "1.0.0",
@@ -143,10 +143,10 @@
     },
     {
       "path": "tests/entity.svg",
-      "size": 293,
+      "size": 387,
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "flags": [],
-      "textSample": "<!DOCTYPE svg [<!ENTITY dir \"./\"><!ENTITY payload \"&dir;entity-payload.js\">]><svg xmlns=\"http://www.w3.org/2000/svg\"><_svg:script xmlns:_svg=\"http://www.w3.org/2000/svg\" href=\"underscored.js\"/><π:script xmlns:π=\"http://www.w3.org/2000/svg\" href=\"unicode.js\"/><script href=\"&payload;\"/></svg>"
+      "textSample": "<!DOCTYPE svg [<!ENTITY dir \"./\"><!ENTITY payload \"&dir;entity&#x2D;payload.js\">]><svg xmlns=\"http://www.w3.org/2000/svg\"><_svg:script xmlns:_svg=\"http://www.w3.org/2000/svg\" href=\"underscored.js\"/><π:script xmlns:π=\"http://www.w3.org/2000/svg\" href=\"unicode.js\"/><script href=\"&payload;\"/><g xml:base=\"xml-base/\"><g xml:base=\"nested/\"><script href=\"../base-payload.js\"/></g></g></svg>"
     },
     {
       "path": "tests/underscored.js",
@@ -166,6 +166,13 @@
       "path": "tests/unicode.js",
       "size": 14,
       "sha256": "bebebebebebebebebebebebebebebebebebebebebebebebebebebebebebebebe",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/xml-base/base-payload.js",
+      "size": 14,
+      "sha256": "bfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbf",
       "flags": [],
       "textSample": "eval(payload);"
     }
@@ -261,6 +268,11 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/unicode.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/xml-base/base-payload.js"
     }
   ]
 }
