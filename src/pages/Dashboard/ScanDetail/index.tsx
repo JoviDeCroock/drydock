@@ -23,6 +23,7 @@ import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
 import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed";
+import { normalizeCapabilityDelta } from "../../../../server/lib/review/capabilities";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
@@ -38,6 +39,7 @@ import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
+import { CapabilitiesSection } from "../../../features/review/CapabilitiesSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
 import { hasReleaseConsistencyNote, ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
@@ -136,6 +138,8 @@ export default function ScanDetailPage() {
   // Older scans have no envelope; the normalizer returns null and the section
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
+  // Older scans have no capability projection; omit the section for them.
+  const capabilities = useComputed(() => normalizeCapabilityDelta(summary.value.capabilities));
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -216,6 +220,7 @@ export default function ScanDetailPage() {
   const isWorkflowGate = model.isWorkflowGate.value;
   const gate = model.gate.value;
   const envelope = intentEnvelope.value;
+  const capabilityDelta = capabilities.value;
 
   const verdict =
     detail && detail.scan.status === "complete"
@@ -235,6 +240,7 @@ export default function ScanDetailPage() {
     reviewerSummaryVisible(ai.value) ? "reviewer" : null,
     hasReleaseConsistencyNote(summary.value.releaseConsistency) ? "release memory" : null,
     envelope ? "source binding" : null,
+    capabilityDelta ? "capability changes" : null,
   ].filter((label): label is string => label !== null);
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
@@ -425,6 +431,7 @@ export default function ScanDetailPage() {
                   approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
                 />
                 {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+                {capabilityDelta ? <CapabilitiesSection delta={capabilityDelta} /> : null}
               </div>
             </CollapsibleCard>
 
