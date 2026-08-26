@@ -23,9 +23,8 @@ On npmjs.com, in the package's settings:
    organization/user, the repository, the workflow filename (for example
    `publish.yml`), and — the load-bearing step — the **environment** set to the
    gated environment (`production` below). With the environment pinned, npm
-   only exchanges OIDC credentials for a job running inside that environment,
-   which means the job cannot start until the environment's protection rules
-   have passed.
+   refuses the OIDC exchange for any job outside that environment, and a job
+   inside it cannot start until the environment's protection rules have passed.
 2. **Set publishing access to "Require two-factor authentication and disallow
    tokens"**. This removes every token path: legacy tokens, automation tokens,
    and granular access tokens all stop working for publish.
@@ -87,9 +86,10 @@ are the `id-token: write` permission and the absence of any token secret.
 | A repo admin approving the deployment past the rule in the UI  | Admin bypass unchecked on the environment                                                |
 
 Two properties compound on top of the table. Because the publish is OIDC-based,
-npm attaches provenance attestations binding the published version to the
-repository and workflow run — so a version that _did_ ship around this path is
-publicly distinguishable from one that went through it. And the review boundary
+npm attaches provenance attestations (for public repositories) binding the
+published version to the repository and workflow run — so a version that _did_
+ship around this path is publicly distinguishable from one that went through
+it. And the review boundary
 stays intact under workflow tampering: pinning controls _which_ path can
 publish, while Drydock's review of the uploaded bytes judges _what_ that path
 is about to publish — a malicious workflow edit that produces malicious bytes

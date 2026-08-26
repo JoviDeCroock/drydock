@@ -118,7 +118,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
     ],
     close: {
-      heading: "Pin your publish path this week.",
+      heading: "Pin your publish path.",
       body: "The whole recipe is configuration: one trusted-publisher entry, one environment setting, one token policy. The step-by-step with the workflow YAML and the full bypass table is in the open repository.",
       action: {
         href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md",
@@ -127,10 +127,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       detail: ["configuration only", "fails closed"],
     },
     primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
-    secondary: {
-      href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md",
-      label: "Read the full recipe",
-    },
+    secondary: { href: "/github-actions-package-gate", label: "How the gate works" },
   },
   "/pypi-release-security": {
     eyebrow: "PyPI release security",
