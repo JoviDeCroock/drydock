@@ -6,6 +6,10 @@ import type {
   RepositoryEnvironment,
 } from "./github-app";
 import { ECOSYSTEM_LABELS } from "../../server/lib/ecosystems/labels";
+import {
+  GATE_SETUP_ENVIRONMENT_NAME_RE,
+  GATE_SETUP_PACKAGE_NAME_RE,
+} from "../../server/lib/github-app/validation";
 
 /**
  * State for the guided workflow-gate setup wizard.
@@ -98,12 +102,36 @@ export const GateSetupModel = createModel(() => {
       : environmentChoice.value.trim().toLowerCase(),
   );
 
+  // The server refuses identities it would have to interpolate into generated
+  // YAML, and an environment that already exists on GitHub can be outside that
+  // allowlist. Check the same shapes here so the wizard says so next to the
+  // picker instead of letting the maintainer discover it as a bare error after
+  // two irreversible GitHub mutations.
+  const environmentIssue = computed<string | null>(() => {
+    const value = environment.value;
+    if (!value) return null;
+    if (GATE_SETUP_ENVIRONMENT_NAME_RE.test(value)) return null;
+    return `Drydock can only automate environment names of 1-128 letters, digits, spaces, or . _ - — "${value}" is outside that. Set this environment up by hand and map it as a release target.`;
+  });
+  const packageNameIssue = computed<string | null>(() => {
+    const value = packageName.value.trim();
+    if (!value) return null;
+    if (GATE_SETUP_PACKAGE_NAME_RE.test(value)) return null;
+    return "Use 1-214 characters of letters, digits, or @ . _ / - — this name goes into the generated workflow.";
+  });
+
   const repositoryPicked = computed(
     () => installationRowId.value !== "" && repositoryFullName.value !== "",
   );
-  const environmentPicked = computed(() => repositoryPicked.value && environment.value !== "");
+  const environmentPicked = computed(
+    () => repositoryPicked.value && environment.value !== "" && environmentIssue.value === null,
+  );
   const templateReady = computed(
-    () => environmentPicked.value && ecosystem.value !== "" && packageName.value.trim() !== "",
+    () =>
+      environmentPicked.value &&
+      ecosystem.value !== "" &&
+      packageName.value.trim() !== "" &&
+      packageNameIssue.value === null,
   );
   const busy = computed(() => busyStep.value !== null);
 
@@ -175,6 +203,8 @@ export const GateSetupModel = createModel(() => {
     environment,
     repositoryPicked,
     environmentPicked,
+    environmentIssue,
+    packageNameIssue,
     templateReady,
 
     async selectInstallation(nextId: string): Promise<void> {
@@ -299,15 +329,28 @@ export const GateSetupModel = createModel(() => {
     },
 
     async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
-      const { installationRowId: rowId, repositoryFullName: repo, environment: env } = draft();
+      const {
+        installationRowId: rowId,
+        repositoryFullName: repo,
+        environment: env,
+        ecosystem: pinned,
+      } = draft();
       busyStep.value = "release_target";
       error.value = null;
       try {
-        // Ecosystem stays unpinned: the runner auto-detects each package from
-        // the uploaded artifacts, which is what a monorepo needs.
+        // The wizard knows the ecosystem, so it pins it rather than leaving the
+        // target on auto-detect. Pinning is what enables the ecosystem's own
+        // artifact-name matching — notably PyPI's `pypi-release-candidate-*`
+        // shards, which auto-detect has no name to match. An empty value (the
+        // maintainer skipped the package step) still means auto-detect.
         const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
           "/api/v1/github-app/release-targets",
-          { installationRowId: rowId, repositoryFullName: repo, environment: env },
+          {
+            installationRowId: rowId,
+            repositoryFullName: repo,
+            environment: env,
+            ...(pinned ? { ecosystem: pinned } : {}),
+          },
         );
         releaseTarget.value = data.releaseTarget;
         return data.releaseTarget;

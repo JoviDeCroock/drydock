@@ -23,7 +23,8 @@ import { requireActiveOrganizationContext } from "../../lib/auth/active-organiza
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { getEcosystem, supportedWorkflowGateEcosystems } from "../../lib/ecosystems";
 import {
-  assertGateSetupIdentity,
+  assertGateSetupEnvironment,
+  assertGateSetupPackageName,
   createRepositoryEnvironment,
   enableDrydockProtectionRule,
   openGateSetupPullRequest,
@@ -86,7 +87,16 @@ function readDraft(body: Record<string, unknown>): GateSetupDraft {
   };
 }
 
-function draftError(draft: GateSetupDraft, requireTemplate: boolean): string | null {
+/**
+ * Fail the whole draft before any step touches GitHub.
+ *
+ * The environment and protection-rule steps mutate GitHub irreversibly and do
+ * not need a workflow template, so they used to skip the identity allowlist
+ * entirely — a name only the template step rejects would create an environment
+ * and a protection rule and *then* 400. The identity asserts therefore run here,
+ * for every endpoint, not at template time.
+ */
+function validateDraft(draft: GateSetupDraft, requireTemplate: boolean): string | null {
   if (!draft.installationRowId) return "installationRowId is required";
   if (!draft.repositoryFullName) return "repositoryFullName is required";
   if (!parseRepositoryFullName(draft.repositoryFullName)) {
@@ -97,6 +107,8 @@ function draftError(draft: GateSetupDraft, requireTemplate: boolean): string | n
     if (!draft.ecosystem) return "ecosystem is required";
     if (!draft.packageName) return "packageName is required";
   }
+  assertGateSetupEnvironment(draft.environment);
+  if (draft.packageName) assertGateSetupPackageName(draft.packageName);
   return null;
 }
 
@@ -114,7 +126,8 @@ function resolveTemplate(draft: GateSetupDraft): GateSetupTemplate {
       `no gate setup template for ecosystem ${draft.ecosystem}; supported: ${supportedWorkflowGateEcosystems().join(", ")}`,
     );
   }
-  assertGateSetupIdentity(draft.packageName, draft.environment);
+  // Identity is already allowlisted by `validateDraft`, so adapters may
+  // interpolate both values straight into the emitted YAML.
   return template({ environmentName: draft.environment, packageName: draft.packageName });
 }
 
@@ -140,7 +153,9 @@ async function prepare(
 
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const draft = readDraft(body);
-  const invalid = draftError(draft, options.requireTemplate);
+  // Throws `GithubAppValidationError` for a disallowed identity; the caller's
+  // try/catch maps it to a 400 with an `invalid_input` code.
+  const invalid = validateDraft(draft, options.requireTemplate);
   if (invalid) return { response: c.json({ error: invalid }, 400) } as const;
 
   const db = createDb(c.env.DB);

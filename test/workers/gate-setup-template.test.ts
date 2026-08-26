@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { ECOSYSTEMS, getWorkflowGateAdapter } from "../../server/lib/ecosystems";
-import { assertGateSetupIdentity } from "../../server/lib/github-app/gate-setup";
+import {
+  assertGateSetupEnvironment,
+  assertGateSetupPackageName,
+} from "../../server/lib/github-app/gate-setup";
 import type { GateSetupTemplate } from "../../server/lib/workflow-gates/types";
 
 /**
@@ -91,8 +94,20 @@ describe("gate setup templates", () => {
   test("npm pins the OIDC trusted-publishing shape", () => {
     const generated = template("npm", "@acme/toolkit");
     expect(generated.yaml).toContain("id-token: write");
-    expect(generated.yaml).not.toContain("NODE_AUTH_TOKEN");
     expect(generated.yaml).toContain("--provenance");
+    // A token path must not exist anywhere in the file. `registry-url` writes an
+    // .npmrc that expects NODE_AUTH_TOKEN, so it is as disqualifying as the
+    // secret itself.
+    expect(generated.yaml).not.toContain("NODE_AUTH_TOKEN");
+    const keys = generated.yaml.split("\n").map((line) => line.trim());
+    expect(keys.some((line) => line.startsWith("registry-url:"))).toBe(false);
+    // npm's OIDC exchange needs npm >= 11.5.1; neither Node 22's bundled npm nor
+    // the runner image ships it, so the publish job installs it explicitly.
+    expect(generated.yaml).toContain("npm install -g npm@^11.5.1");
+    const upgradeIndex = generated.yaml.indexOf("npm install -g npm@^11.5.1");
+    const publishIndex = generated.yaml.indexOf("npm publish");
+    expect(upgradeIndex).toBeGreaterThan(generated.yaml.indexOf("  publish:"));
+    expect(upgradeIndex).toBeLessThan(publishIndex);
   });
 
   test("pypi removes the checksum file before handing dist/ to the publisher", () => {
@@ -110,11 +125,14 @@ describe("gate setup templates", () => {
   });
 });
 
-describe("assertGateSetupIdentity", () => {
+describe("gate setup identity allowlist", () => {
   test("accepts the identifiers each ecosystem actually uses", () => {
-    expect(() => assertGateSetupIdentity("@acme/toolkit", "production")).not.toThrow();
-    expect(() => assertGateSetupIdentity("acme-toolkit", "release gate")).not.toThrow();
-    expect(() => assertGateSetupIdentity("acme.toolkit", "prod_1")).not.toThrow();
+    for (const name of ["@acme/toolkit", "acme-toolkit", "acme.toolkit"]) {
+      expect(() => assertGateSetupPackageName(name)).not.toThrow();
+    }
+    for (const environment of ["production", "release gate", "prod_1"]) {
+      expect(() => assertGateSetupEnvironment(environment)).not.toThrow();
+    }
   });
 
   test("rejects anything that could break out of a quoted YAML scalar", () => {
@@ -125,10 +143,17 @@ describe("assertGateSetupIdentity", () => {
       "a`b`",
       "",
     ]) {
-      expect(() => assertGateSetupIdentity(hostile, "production")).toThrow();
+      expect(() => assertGateSetupPackageName(hostile)).toThrow();
     }
-    for (const hostile of ['prod"', "prod\n", "prod${{ github.token }}"]) {
-      expect(() => assertGateSetupIdentity("acme", hostile)).toThrow();
+    for (const hostile of ['prod"', "prod\n", "prod${{ github.token }}", ""]) {
+      expect(() => assertGateSetupEnvironment(hostile)).toThrow();
     }
+  });
+
+  test("caps length so a name the template step would reject never reaches GitHub", () => {
+    expect(() => assertGateSetupEnvironment("e".repeat(128))).not.toThrow();
+    expect(() => assertGateSetupEnvironment("e".repeat(129))).toThrow();
+    expect(() => assertGateSetupPackageName("p".repeat(214))).not.toThrow();
+    expect(() => assertGateSetupPackageName("p".repeat(215))).toThrow();
   });
 });

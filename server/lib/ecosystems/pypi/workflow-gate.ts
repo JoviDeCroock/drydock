@@ -153,7 +153,7 @@ jobs:
     notes: [
       `On PyPI, add a trusted publisher for \`${packageName}\`: this repository, \`drydock-pypi-release.yml\`, and the environment set to \`${environmentName}\`.`,
       "Delete any remaining PyPI API tokens for the project once the trusted publisher works, so the gated workflow is the only credentialed publish path.",
-      `A large wheel matrix can upload one bounded artifact per distribution: name the shards \`${PYPI_GATE_ARTIFACT_NAME}-*\` and pin the release target's ecosystem to PyPI.`,
+      `A large wheel matrix can upload one bounded artifact per distribution: name the shards \`${PYPI_GATE_ARTIFACT_NAME}-*\`. The release target created alongside this workflow is already pinned to PyPI, which is what makes those shard names match.`,
     ],
   };
 }

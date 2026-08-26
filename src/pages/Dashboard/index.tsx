@@ -6,8 +6,9 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { pluralize } from "../../lib/format";
+import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
-import { dismissGettingStarted, gettingStartedDismissed } from "../../models/getting-started";
+import { gettingStartedDone, markGettingStartedDone } from "../../models/getting-started";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import {
@@ -157,9 +158,14 @@ export default function DashboardPage() {
 //
 // The getting-started panel supersedes the bare "npm not connected" callout
 // while the funnel is unfinished: it says the same thing as step 1 and then
-// explains what comes after it. Neither renders on a guess — an unresolved
-// (null) answer shows nothing rather than telling a maintainer with a hundred
-// reviews to get their first one.
+// explains what comes after it. Neither opens on a guess — an unresolved (null)
+// answer shows nothing rather than telling a maintainer with a hundred reviews
+// to get their first one.
+//
+// Opening is latched per organization, which is what lets the last step be seen
+// ticking: recording a first decision finishes the funnel, and a panel that
+// vanished at that moment would take the tick with it. Once open it stays until
+// the reader dismisses it; "finished" only means it will not open again.
 function DashboardOnboarding({
   scans,
   npm,
@@ -167,34 +173,50 @@ function DashboardOnboarding({
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
+  const openForOrganization = useSignal<string | null>(null);
+
   // Step 3 is the only step whose answer costs a request, so it is asked for
-  // only while the panel could still be shown — never for an organization that
-  // has dismissed it or already finished.
+  // only while the panel could still open — never for an organization that has
+  // dismissed it or already finished.
   useSignalEffect(() => {
-    if (gettingStartedDismissed.value) return;
+    if (gettingStartedDone.value) return;
     if (!scans.loaded.value) return;
     if (scans.hasAnyScan.value !== true) return;
     if (scans.hasAnyDecision.value !== null) return;
     void scans.resolveHasAnyDecision();
   });
 
-  // A finished funnel is a dismissed one. Recording it is what keeps the probe
-  // above from running again on every later dashboard load in this browser.
+  // A completed funnel is recorded as finished, which is what keeps the probe
+  // above from running again on every later dashboard load in this browser. It
+  // deliberately does not close a panel that is already open.
   useSignalEffect(() => {
-    if (scans.hasAnyDecision.value === true) dismissGettingStarted();
+    if (scans.hasAnyDecision.value === true) markGettingStartedDone();
   });
 
-  const dismissed = gettingStartedDismissed.value;
-  const hasAnyScan = scans.hasAnyScan.value;
-  const hasAnyDecision = scans.hasAnyDecision.value;
+  useSignalEffect(() => {
+    const organizationId = activeOrganizationId.value;
+    if (gettingStartedDone.value) return;
+    if (scans.hasAnyScan.value === false || scans.hasAnyDecision.value === false) {
+      openForOrganization.value = organizationId;
+    }
+  });
 
-  if (!dismissed && (hasAnyScan === false || hasAnyDecision === false)) {
+  const dismiss = () => {
+    openForOrganization.value = null;
+    markGettingStartedDone();
+  };
+
+  // Latched against the organization it opened for, so switching organizations
+  // closes it rather than carrying one organization's funnel into another's.
+  const open = openForOrganization.value === activeOrganizationId.value;
+
+  if (open) {
     return (
       <GettingStarted
         npmConnected={Boolean(npm.connection.value)}
-        hasAnyScan={hasAnyScan === true}
-        hasAnyDecision={hasAnyDecision === true}
-        onDismiss={dismissGettingStarted}
+        hasAnyScan={scans.hasAnyScan.value === true}
+        hasAnyDecision={scans.hasAnyDecision.value === true}
+        onDismiss={dismiss}
       />
     );
   }

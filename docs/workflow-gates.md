@@ -28,7 +28,9 @@ Step 1 of the contract used to be a manual walk through GitHub settings. **Setti
 3. One click registers Drydock as that environment's custom deployment-protection rule.
 4. Pick the ecosystem and package name; Drydock generates the publish workflow for it.
 5. "Open a PR with this workflow" commits the file on a new `drydock/workflow-gate-*` branch and opens a pull request whose body carries the trusted-publishing hardening checklist.
-6. Create the matching release target, which is the same `POST /release-targets` the manual form uses.
+6. Create the matching release target, which is the same `POST /release-targets` the manual form uses — pinned to the chosen ecosystem rather than left on auto-detect, because pinning is what enables the ecosystem's own artifact-name matching (notably PyPI's `pypi-release-candidate-*` shards).
+
+A maintainer who has not installed the GitHub App yet still lands on this section: it renders an install prompt in place of the wizard rather than nothing, so the `#gate-setup` deep link never dead-ends.
 
 Endpoints, all under `/api/v1/github-app/`, all owner/admin-only (`roleCanManageIntegrations`) and scoped through `ensureInstallationOwnedBy`, with the same session and step-up posture as `POST /release-targets`:
 
@@ -49,6 +51,11 @@ Each step needs a different App permission, and an installation commonly has som
 No step throws on a refusal. Each returns HTTP 200 with a `GateSetupStepResult` — `{ step, status: "created" | "already_configured" | "failed", failure? }` — and a failed step carries a `code`, a message naming the missing permission, and a `manualFallback` string. The wizard renders that fallback inline next to the step's own controls, and the pull-request response always includes the generated YAML so the copy-it-yourself path has the exact bytes. Nothing logs a GitHub response body, header, or the installation token.
 
 Steps are idempotent: an existing environment reports `already_configured` without a `PUT` (a `PUT` would clear the maintainer's reviewers and wait timers), and an already-registered protection rule is detected by reading the rules first, with a 422 re-read as the tiebreak.
+
+Two properties keep a refusal from leaving debris:
+
+- **Identity is allowlisted up front, on every endpoint.** The environment and protection-rule steps do not need a workflow template, but they mutate GitHub irreversibly, so `assertGateSetupEnvironment` / `assertGateSetupPackageName` (`GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) run before any of them — a name only the template step would reject can no longer create an environment and a rule and then 400. The wizard checks the same shapes client-side, because an environment that already exists on GitHub can be outside the allowlist; it says so next to the picker instead of offering a button that cannot work.
+- **Abandoned branches are cleaned up.** The pull-request step creates the branch before it can discover that `workflows: write` is missing, so every failure after the ref exists best-effort `DELETE`s it. Cleanup failures are logged (`github_app.gate_setup_branch_orphaned`) and never change the failure the maintainer sees. The one exception is a pull request GitHub accepted but did not describe: the branch stays, because deleting it would close a PR the maintainer can still find.
 
 ### Generated workflows
 

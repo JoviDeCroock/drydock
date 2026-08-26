@@ -46,11 +46,21 @@ const ENVIRONMENT_DOCS =
 export function GateSetupWizard({
   activeInstallations,
   onReleaseTargetCreated,
-  defaultOpen = false,
+  onInstall,
+  installDisabled = false,
+  deepLinked = false,
 }: {
   activeInstallations: PublicGithubAppInstallation[];
   onReleaseTargetCreated?: () => void;
-  defaultOpen?: boolean;
+  onInstall?: () => void;
+  installDisabled?: boolean;
+  /**
+   * The page arrived on `#gate-setup`. Passed as a captured flag rather than
+   * read from `window.location.hash`: the wizard mounts long after arrival
+   * (installations load first), and the intervening tab-select URL writes make
+   * the live hash an unreliable signal at mount time.
+   */
+  deepLinked?: boolean;
 }) {
   const gateSetup = useModel(GateSetupModel);
   const installationRowId = gateSetup.installationRowId.value;
@@ -67,20 +77,30 @@ export function GateSetupWizard({
     }
   }, [installationIds, installationRowId]);
 
-  // The settings page selects the integrations tab for a #gate-setup deep link,
-  // which means this section only exists after that render — so the scroll has
-  // to happen here, on mount, rather than in the browser's own hash handling.
+  // This section only exists after the settings page has switched to the
+  // integrations tab and the workspace has loaded, which is well after the
+  // browser would have handled the hash itself — so the scroll happens here,
+  // keyed on the captured flag rather than a hash that no longer exists.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (window.location.hash !== "#gate-setup") return;
+    if (typeof window === "undefined" || !deepLinked) return;
     document.getElementById("gate-setup")?.scrollIntoView({ block: "start" });
-  }, []);
+  }, [deepLinked]);
+
+  if (!activeInstallations.length) {
+    return (
+      <GateSetupPlaceholder
+        deepLinked={deepLinked}
+        onInstall={onInstall}
+        installDisabled={installDisabled}
+      />
+    );
+  }
 
   return (
     <div id="gate-setup" class="scroll-mt-6">
       <CollapsibleCard
         title="Guided gate setup"
-        defaultOpen={defaultOpen}
+        defaultOpen={deepLinked}
         aside={releaseTarget ? <Badge tone="ok">gate configured</Badge> : null}
       >
         <SettingsCardBody>
@@ -107,6 +127,55 @@ export function GateSetupWizard({
         <PackageStep gateSetup={gateSetup} />
         <WorkflowStep gateSetup={gateSetup} />
         <ReleaseTargetStep gateSetup={gateSetup} onCreated={onReleaseTargetCreated} />
+      </CollapsibleCard>
+    </div>
+  );
+}
+
+/**
+ * What a maintainer following the `#gate-setup` link sees before the App exists.
+ *
+ * The funnel that links here is aimed at people who have *not* installed the
+ * GitHub App, so this container has to carry the anchor too — rendering nothing
+ * would land them mid-page with no wizard and no explanation.
+ */
+function GateSetupPlaceholder({
+  deepLinked,
+  onInstall,
+  installDisabled,
+}: {
+  deepLinked: boolean;
+  onInstall?: () => void;
+  installDisabled: boolean;
+}) {
+  return (
+    <div id="gate-setup" class="scroll-mt-6">
+      <CollapsibleCard
+        title="Guided gate setup"
+        defaultOpen={deepLinked}
+        aside={<Badge tone="info">needs the GitHub App</Badge>}
+      >
+        <SettingsCardBody>
+          <Muted class="text-[13px] m-0 max-w-[600px]">
+            This wizard creates the GitHub Environment, registers Drydock as its
+            deployment-protection rule, and opens a pull request with your publish workflow. It
+            works through the Drydock GitHub App, so install that first — on the account that hosts
+            the repository you want to gate. The wizard appears here once the installation is
+            linked.
+          </Muted>
+          {onInstall ? (
+            <div class="flex flex-wrap items-center gap-3">
+              <Button onClick={onInstall} disabled={installDisabled}>
+                Install the GitHub App
+              </Button>
+              <Muted class="text-[12px] m-0">
+                {installDisabled
+                  ? "Ask the operator to configure the GitHub App on this Drydock instance."
+                  : "Takes you to GitHub and back."}
+              </Muted>
+            </div>
+          ) : null}
+        </SettingsCardBody>
       </CollapsibleCard>
     </div>
   );
@@ -196,6 +265,7 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
   const loading = gateSetup.environmentsLoading.value;
   const repositoryPicked = gateSetup.repositoryPicked.value;
   const environment = gateSetup.environment.value;
+  const environmentIssue: string | null = gateSetup.environmentIssue.value;
   const step = gateSetup.environmentStep.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
@@ -231,6 +301,9 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
               ))}
               <option value={NEW_ENVIRONMENT_CHOICE}>Create a new environment…</option>
             </Select>
+            {environmentIssue ? (
+              <Muted class="text-[12px] mt-1.5 text-warn-text">{environmentIssue}</Muted>
+            ) : null}
           </Field>
           {creatingNew ? (
             <Field label="New environment name" for="gateSetupNewEnv">
@@ -254,7 +327,7 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
           <div class="flex flex-wrap items-center gap-3">
             <Button
               onClick={() => void gateSetup.createEnvironment()}
-              disabled={busy || !environment}
+              disabled={busy || !environment || environmentIssue !== null}
             >
               {busyStep === "environment" ? "Creating…" : "Create it in GitHub"}
             </Button>
@@ -322,6 +395,7 @@ function ProtectionRuleStep({ gateSetup }: { gateSetup: GateSetup }) {
 function PackageStep({ gateSetup }: { gateSetup: GateSetup }) {
   const ecosystem = gateSetup.ecosystem.value;
   const packageName = gateSetup.packageName.value;
+  const packageNameIssue: string | null = gateSetup.packageNameIssue.value;
   const environmentPicked = gateSetup.environmentPicked.value;
   const busy = gateSetup.busy.value;
 
@@ -355,10 +429,14 @@ function PackageStep({ gateSetup }: { gateSetup: GateSetup }) {
                 gateSetup.setPackageName((event.currentTarget as HTMLInputElement).value)
               }
             />
-            <Muted class="text-[12px] mt-1.5">
-              Used to name the generated workflow and its registry pins. Drydock still derives the
-              reviewed identity from the uploaded artifacts, never from this field.
-            </Muted>
+            {packageNameIssue ? (
+              <Muted class="text-[12px] mt-1.5 text-warn-text">{packageNameIssue}</Muted>
+            ) : (
+              <Muted class="text-[12px] mt-1.5">
+                Used to name the generated workflow and its registry pins. Drydock still derives the
+                reviewed identity from the uploaded artifacts, never from this field.
+              </Muted>
+            )}
           </Field>
         </div>
       </SettingsCardBody>

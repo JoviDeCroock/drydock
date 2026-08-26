@@ -107,6 +107,12 @@ export const ScanListModel = createModel(() => {
       // the funnel's last step for an organization that has decided nothing.
       // A decided row in the page just fetched settles it for free; an
       // organization with no scans at all cannot have decided one.
+      //
+      // Guarded because the `hasAnyScan` probe above is awaited: a refresh
+      // whose organization was switched away from resumes here, and would
+      // otherwise reset the current organization's answer to null and drop its
+      // in-flight probe.
+      if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       decisionProbe = null;
       hasAnyDecision.value = hasDecidedScan(data.scans)
         ? true

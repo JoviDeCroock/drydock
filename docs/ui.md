@@ -47,16 +47,20 @@ move it into `src/features/` instead.
 
 ## Dashboard onboarding funnel
 
-`src/pages/Dashboard/GettingStarted.tsx` tracks three steps — npm connected, a
-first staged publish reviewed, a first decision recorded — and stays up until
-the last one ticks (or the reader dismisses it). Only the first two are free:
-the list defaults to the `undecided` filter, so `ScanListModel.hasAnyDecision`
-stays `null` until `resolveHasAnyDecision()` runs two one-row probes, and the
-dashboard asks only while the panel could still be shown. A finished or
-dismissed funnel is recorded per organization in `src/models/getting-started.ts`
-(localStorage), which is also what stops the probe from repeating. An
-unresolved (`null`) answer renders nothing — neither onboarding surface appears
-on a guess.
+`src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a
+first staged publish reviewed, a first decision recorded. `DashboardOnboarding`
+in `src/pages/Dashboard/index.tsx` decides when it opens and latches that
+against the organization it opened for; nothing but the reader's dismiss control
+(or an organization switch) closes it. That latch is what lets the third step be
+seen ticking — a panel that unmounted the moment the funnel completed would take
+the tick with it. Only the first two steps are free: the list defaults to the
+`undecided` filter, so `ScanListModel.hasAnyDecision` stays `null` until
+`resolveHasAnyDecision()` runs two one-row probes, and the dashboard asks only
+while the panel could still open. Completion and dismissal are both recorded per
+organization in `src/models/getting-started.ts` (localStorage) as "do not open
+again", which is also what stops the probe from repeating on later visits. An
+unresolved (`null`) answer opens nothing — neither onboarding surface appears on
+a guess.
 
 `src/features/onboarding-intent.ts` carries `{ecosystem, packageName}` from the
 anonymous `/diff` page's "Create account" CTA to the dashboard, so a new account

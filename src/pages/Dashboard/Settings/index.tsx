@@ -225,13 +225,18 @@ export default function SettingsPage() {
               <>
                 <NpmConnectionSection npm={npm} defaultOpen />
                 <GithubAppSection githubApp={githubApp} defaultOpen />
-                {activeGithubInstallations.length ? (
-                  <GateSetupWizard
-                    activeInstallations={activeGithubInstallations}
-                    onReleaseTargetCreated={() => void githubApp.loadReleaseTargets()}
-                    defaultOpen={gateSetupDeepLink.value}
-                  />
-                ) : null}
+                {/* Always rendered: the wizard owns the #gate-setup anchor, and
+                    the audience deep-linking to it is precisely the one that has
+                    not installed the App yet. */}
+                <GateSetupWizard
+                  activeInstallations={activeGithubInstallations}
+                  onReleaseTargetCreated={() => void githubApp.loadReleaseTargets()}
+                  onInstall={() => void githubApp.startInstall()}
+                  installDisabled={
+                    githubApp.config.value?.configured !== true || githubApp.busy.value
+                  }
+                  deepLinked={gateSetupDeepLink.value}
+                />
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? <AuditLogSection audit={audit} /> : null}

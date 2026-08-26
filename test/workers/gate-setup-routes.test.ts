@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
@@ -170,6 +170,42 @@ describe("gate-setup validation and ownership", () => {
     );
 
     expect(res.status).toBe(400);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects a disallowed environment name before mutating GitHub", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi.fn();
+
+    // 129 characters: accepted by GitHub, refused by the template step. Without
+    // up-front validation this created an environment and a protection rule and
+    // only failed once the workflow had to be generated.
+    for (const path of ["environment", "protection-rule"]) {
+      const res = await call(
+        buildTestApp(userId),
+        `/api/v1/github-app/gate-setup/${path}`,
+        draft(installation.id, { environment: "e".repeat(129) }),
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: "invalid_input" });
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("rejects a disallowed package name even on the steps that ignore the template", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = vi.fn();
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/environment",
+      draft(installation.id, { packageName: "pkg${{ secrets.NPM_TOKEN }}" }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "invalid_input" });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -435,11 +471,23 @@ describe("gate-setup protection rule step", () => {
 });
 
 describe("gate-setup pull request step", () => {
+  /** Branch refs the double saw created and deleted, in call order. */
+  let refCalls: string[] = [];
+
   const repoResponses = (overrides: Record<string, () => Response> = {}) =>
-    githubDouble((request) => {
+    githubDouble(async (request) => {
       const url = new URL(request.url);
       const key = `${request.method} ${url.pathname}`;
       if (overrides[key]) return overrides[key]();
+      if (request.method === "DELETE" && url.pathname.includes("/git/refs/heads/")) {
+        refCalls.push(`delete ${url.pathname.split("/git/refs/heads/")[1]}`);
+        return new Response(null, { status: 204 });
+      }
+      if (key === "POST /repos/octo/widgets/git/refs") {
+        const payload = (await request.json()) as { ref: string };
+        refCalls.push(`create ${payload.ref.replace("refs/heads/", "")}`);
+        return Response.json({}, { status: 201 });
+      }
       if (key === "GET /repos/octo/widgets") return Response.json({ default_branch: "main" });
       if (key === "GET /repos/octo/widgets/git/ref/heads/main") {
         return Response.json({ object: { sha: "a".repeat(40) } });
@@ -456,6 +504,10 @@ describe("gate-setup pull request step", () => {
       }
       throw new Error(`unexpected GitHub call: ${key}`);
     });
+
+  beforeEach(() => {
+    refCalls = [];
+  });
 
   test("commits the workflow on a new branch and opens the PR", async () => {
     const { userId, organizationId } = await seedUser();
@@ -542,6 +594,11 @@ describe("gate-setup pull request step", () => {
     // The manual fallback is only usable if the exact bytes come back with it.
     expect(body.yaml).toContain('environment: "production"');
     expect(body.step.failure.manualFallback).toContain(".github/workflows/drydock-npm-release.yml");
+    // This refusal is the expected outcome for most installations, so the branch
+    // it created must not survive it.
+    expect(refCalls).toHaveLength(2);
+    expect(refCalls[0]).toMatch(/^create drydock\/workflow-gate-/);
+    expect(refCalls[1]).toBe(refCalls[0].replace("create ", "delete "));
   });
 
   test("reports an existing workflow file as already_exists instead of overwriting it", async () => {
@@ -560,6 +617,68 @@ describe("gate-setup pull request step", () => {
 
     const body = (await res.json()) as { step: { failure: { code: string } } };
     expect(body.step.failure.code).toBe("already_exists");
+    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
+  });
+
+  test("cleans up the branch when the pull request itself is refused", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = repoResponses({
+      "POST /repos/octo/widgets/pulls": () => new Response(null, { status: 403 }),
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/pull-request",
+      draft(installation.id),
+    );
+
+    const body = (await res.json()) as { step: { failure: { code: string } } };
+    expect(body.step.failure.code).toBe("permission_denied");
+    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
+  });
+
+  test("keeps the branch when cleanup itself fails, and still reports the original failure", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble(async (request) => {
+      const url = new URL(request.url);
+      const key = `${request.method} ${url.pathname}`;
+      if (key === "GET /repos/octo/widgets") return Response.json({ default_branch: "main" });
+      if (key === "GET /repos/octo/widgets/git/ref/heads/main") {
+        return Response.json({ object: { sha: "a".repeat(40) } });
+      }
+      if (key === "POST /repos/octo/widgets/git/refs") return Response.json({}, { status: 201 });
+      if (request.method === "DELETE") return new Response(null, { status: 403 });
+      if (url.pathname.startsWith("/repos/octo/widgets/contents/")) {
+        return new Response(null, { status: 403 });
+      }
+      throw new Error(`unexpected GitHub call: ${key}`);
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/pull-request",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { step: { failure: { code: string } } };
+    expect(body.step.failure.code).toBe("workflow_scope_missing");
+  });
+
+  test("does not delete the branch on the happy path", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = repoResponses();
+
+    await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/pull-request",
+      draft(installation.id),
+    );
+
+    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(0);
   });
 
   test("fails cleanly on an empty repository with no default-branch head", async () => {

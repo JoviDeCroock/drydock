@@ -89,7 +89,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+      # No registry pin on setup-node: that writes an .npmrc expecting an auth
+      # token, and a token is exactly what this workflow exists to avoid.
       - run: npm ci
       - run: npm pack --pack-destination dist
       # Record the digests Drydock reviews and the publish job re-checks.
@@ -109,6 +110,13 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # npm's OIDC trusted publishing needs npm >= 11.5.1; the npm bundled with
+      # Node 22 (and with the runner image) is older and would fall back to
+      # looking for a token that does not exist here.
+      - run: npm install -g npm@^11.5.1
       - uses: actions/download-artifact@v4
         with:
           name: ${NPM_GATE_ARTIFACT_NAME}
@@ -123,7 +131,7 @@ jobs:
     notes: [
       `On npmjs.com, configure a trusted publisher for \`${packageName}\`: GitHub Actions, this repository, \`drydock-npm-release.yml\`, and — the load-bearing part — the environment set to \`${environmentName}\`.`,
       'Set the package\'s publishing access to "Require two-factor authentication and disallow tokens" so no token path can publish around the gate.',
-      "Keep `NODE_AUTH_TOKEN` out of the workflow entirely: the publish runs on OIDC.",
+      "Keep `NODE_AUTH_TOKEN` and `registry-url` out of the workflow entirely: the publish runs on OIDC with npm >= 11.5.1, which the publish job installs.",
     ],
   };
 }

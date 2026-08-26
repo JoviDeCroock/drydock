@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { setActiveOrganizationId } from "../src/models/active-organization";
 import { ScanListModel } from "../src/models/scan-list-model";
 import type { ScanListItem } from "../src/models/scan-api";
 
@@ -51,6 +52,7 @@ function stubScanList(pages: Partial<Record<string, ScanListItem[]>>) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setActiveOrganizationId(null);
 });
 
 describe("ScanListModel onboarding progress", () => {
@@ -175,6 +177,67 @@ describe("ScanListModel onboarding progress", () => {
 
     expect(model.hasAnyDecision.value).toBe(true);
     expect(asked).toEqual(["undecided"]);
+  });
+
+  test("a refresh stranded by an organization switch cannot clobber the new answer", async () => {
+    // org-a's "has any scan at all?" probe never resolves until the end, which
+    // is what strands its refresh mid-flight across the switch to org-b.
+    let resolveStrandedProbe!: (response: Response) => void;
+    const strandedProbe = new Promise<Response>((resolve) => {
+      resolveStrandedProbe = resolve;
+    });
+    const asked: Array<string> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "https://drydock.test");
+        const filter = url.searchParams.get("filter") ?? "undecided";
+        const organizationId =
+          (init?.headers as Record<string, string> | undefined)?.["x-organization-id"] ?? "none";
+        asked.push(`${organizationId}:${filter}`);
+        if (organizationId === "org-a") {
+          if (filter === "all") return strandedProbe;
+          return Promise.resolve(jsonResponse({ scans: [], nextCursor: null, filter }));
+        }
+        if (filter === "undecided") {
+          return Promise.resolve(jsonResponse({ scans: [scan()], nextCursor: null, filter }));
+        }
+        if (filter === "publish") {
+          return Promise.resolve(
+            jsonResponse({
+              scans: [scan({ id: "scan-9", decision: "publish" })],
+              nextCursor: null,
+              filter,
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse({ scans: [], nextCursor: null, filter }));
+      }),
+    );
+
+    const model = new ScanListModel();
+    setActiveOrganizationId("org-a");
+    const stranded = model.refresh();
+    await vi.waitFor(() => expect(asked).toContain("org-a:all"));
+
+    setActiveOrganizationId("org-b");
+    await model.refresh();
+    await model.resolveHasAnyDecision();
+    expect(model.hasAnyDecision.value).toBe(true);
+
+    resolveStrandedProbe(jsonResponse({ scans: [], nextCursor: null, filter: "all" }));
+    await stranded;
+
+    // org-a's answers are discarded, not written over org-b's.
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(model.hasAnyDecision.value).toBe(true);
+    // And org-b's settled answer is still settled: no probe was dropped, so
+    // asking again costs nothing.
+    await model.resolveHasAnyDecision();
+    expect(asked.filter((entry) => entry.startsWith("org-b:"))).toEqual([
+      "org-b:undecided",
+      "org-b:publish",
+    ]);
   });
 
   test("an unreachable API leaves the step unknown rather than guessing", async () => {

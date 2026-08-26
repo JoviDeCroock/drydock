@@ -17,7 +17,11 @@
 import { getInstallationAccessToken } from "./api";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubInstallationHeaders } from "./http";
-import { parseRepositoryFullName } from "./validation";
+import {
+  GATE_SETUP_ENVIRONMENT_NAME_RE,
+  GATE_SETUP_PACKAGE_NAME_RE,
+  parseRepositoryFullName,
+} from "./validation";
 import { emitOperationalEvent } from "../platform/observability";
 import { reliableFetch } from "../platform/reliable-fetch";
 
@@ -57,24 +61,28 @@ export interface GateSetupPullRequestResult extends GateSetupStepResult {
   pullRequest?: GateSetupPullRequestRef;
 }
 
-// A conservative allowlist shared by every identity that reaches a generated
-// YAML document. npm (`@scope/name`), PyPI (PEP 503) and VS Code
-// (`publisher.name`) identifiers all fit; anything that could break out of a
-// double-quoted YAML scalar (quotes, backslashes, newlines, `${{ }}`) does not.
-const PACKAGE_NAME_RE = /^[@A-Za-z0-9][A-Za-z0-9@._/-]{0,213}$/;
-const ENVIRONMENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/;
-
-export function assertGateSetupIdentity(packageName: string, environmentName: string): void {
-  if (!PACKAGE_NAME_RE.test(packageName)) {
+/**
+ * Guard the identifiers before anything reaches GitHub.
+ *
+ * Both asserts run on *every* gate-setup endpoint, not just the ones that
+ * generate YAML: the environment and protection-rule steps mutate GitHub
+ * irreversibly, so a name the later template step would reject has to fail
+ * before the first mutation, not after two of them.
+ */
+export function assertGateSetupEnvironment(environmentName: string): void {
+  if (!GATE_SETUP_ENVIRONMENT_NAME_RE.test(environmentName)) {
     throw new GithubAppValidationError(
       "invalid_input",
-      "packageName may only contain letters, digits, and @ . _ / -",
+      "environment must be 1-128 characters of letters, digits, spaces, or . _ -",
     );
   }
-  if (!ENVIRONMENT_NAME_RE.test(environmentName)) {
+}
+
+export function assertGateSetupPackageName(packageName: string): void {
+  if (!GATE_SETUP_PACKAGE_NAME_RE.test(packageName)) {
     throw new GithubAppValidationError(
       "invalid_input",
-      "environment may only contain letters, digits, spaces, and . _ -",
+      "packageName must be 1-214 characters of letters, digits, or @ . _ / -",
     );
   }
 }
@@ -349,6 +357,19 @@ export async function openGateSetupPullRequest(
     );
   }
 
+  /**
+   * Every failure from here on abandons a branch that already exists on the
+   * maintainer's repository. The `workflows: write` refusal below is the
+   * *expected* outcome for most installations, so leaving a `drydock/*` ref
+   * behind on each attempt would litter the repo exactly where the product is
+   * asking for trust. Cleanup is best effort: a failed delete must not change
+   * the failure the caller sees.
+   */
+  const abandon = async (failure: GateSetupFailure): Promise<GateSetupStepResult> => {
+    await deleteBranchQuietly(path, branch, headers);
+    return failed("pull_request", failure);
+  };
+
   const contentsUrl = `https://api.github.com/repos/${path}/contents/${encodePathSegments(input.workflowPath)}`;
   const contentsResponse = await reliableFetch(contentsUrl, {
     method: "PUT",
@@ -363,7 +384,7 @@ export async function openGateSetupPullRequest(
     // The `workflows` permission refusal is the expected failure here, and it is
     // the one worth naming precisely: 403/404 on a `.github/workflows/` write.
     if (contentsResponse.status === 403 || contentsResponse.status === 404) {
-      return failed("pull_request", {
+      return abandon({
         code: "workflow_scope_missing",
         message:
           "The Drydock App installation cannot write files under .github/workflows/, so it cannot open this pull request.",
@@ -371,14 +392,13 @@ export async function openGateSetupPullRequest(
       });
     }
     if (contentsResponse.status === 422) {
-      return failed("pull_request", {
+      return abandon({
         code: "already_exists",
         message: `${input.workflowPath} already exists in this repository, so Drydock did not overwrite it.`,
         manualFallback: `Compare the workflow below against the existing ${input.workflowPath} and merge the gated publish job in by hand.`,
       });
     }
-    return failed(
-      "pull_request",
+    return abandon(
       failureForStatus(contentsResponse.status, "workflow write access", manualFallback),
     );
   }
@@ -394,8 +414,7 @@ export async function openGateSetupPullRequest(
     }),
   });
   if (!prResponse.ok) {
-    return failed(
-      "pull_request",
+    return abandon(
       failureForStatus(prResponse.status, "pull request write access", manualFallback),
     );
   }
@@ -403,11 +422,13 @@ export async function openGateSetupPullRequest(
     number?: number;
     html_url?: string;
   };
+  // The pull request exists but Drydock cannot name it, so the branch is *not*
+  // abandoned here: deleting it would close a PR the maintainer can still find.
   if (typeof prData.number !== "number" || typeof prData.html_url !== "string") {
     return failed("pull_request", {
       code: "invalid_request",
       message: "GitHub accepted the pull request but did not return its number or URL.",
-      manualFallback,
+      manualFallback: `Check the repository's open pull requests for branch ${branch}, or add ${input.workflowPath} by hand from the workflow below.`,
     });
   }
   return {
@@ -444,6 +465,33 @@ function pullRequestBody(input: GateSetupPullRequestInput): string {
     "",
     "🤖 Opened by [Drydock](https://drydock.dev)",
   ].join("\n");
+}
+
+/**
+ * Delete a branch the wizard created and could not use.
+ *
+ * Best effort by construction: a repository where the App can create a ref but
+ * not delete one is possible, and the caller's failure — the one the maintainer
+ * needs to read — must survive regardless.
+ */
+async function deleteBranchQuietly(
+  path: string,
+  branch: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  try {
+    const response = await reliableFetch(
+      `https://api.github.com/repos/${path}/git/refs/heads/${encodePathSegments(branch)}`,
+      { method: "DELETE", headers },
+    );
+    if (!response.ok) {
+      emitOperationalEvent("warn", "github_app.gate_setup_branch_orphaned", {
+        status: response.status,
+      });
+    }
+  } catch {
+    emitOperationalEvent("warn", "github_app.gate_setup_branch_orphaned", { status: 0 });
+  }
 }
 
 /** Encode each path segment but keep `/` separators intact for the contents API. */

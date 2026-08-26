@@ -31,65 +31,65 @@ afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage;
 });
 
-describe("getting-started dismissal", () => {
-  test("dismisses the active organization and remembers it", async () => {
+describe("getting-started done state", () => {
+  test("marks the active organization finished and remembers it", async () => {
     const store = stubLocalStorage();
-    const { gettingStartedDismissed, dismissGettingStarted, setActiveOrganizationId } =
+    const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =
       await loadModule();
     setActiveOrganizationId("org-a");
-    expect(gettingStartedDismissed.value).toBe(false);
+    expect(gettingStartedDone.value).toBe(false);
 
-    dismissGettingStarted();
+    markGettingStartedDone();
 
-    expect(gettingStartedDismissed.value).toBe(true);
+    expect(gettingStartedDone.value).toBe(true);
     expect(JSON.parse(store.get(STORAGE_KEY) ?? "{}")).toEqual({ "org-a": true });
   });
 
   test("is per organization", async () => {
     stubLocalStorage();
-    const { gettingStartedDismissed, dismissGettingStarted, setActiveOrganizationId } =
+    const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =
       await loadModule();
     setActiveOrganizationId("org-a");
-    dismissGettingStarted();
+    markGettingStartedDone();
 
     setActiveOrganizationId("org-b");
 
     // A second organization is a second onboarding.
-    expect(gettingStartedDismissed.value).toBe(false);
+    expect(gettingStartedDone.value).toBe(false);
   });
 
   test("a later session reads what an earlier one stored", async () => {
     stubLocalStorage({ [STORAGE_KEY]: JSON.stringify({ "org-a": true }) });
-    const { gettingStartedDismissed, setActiveOrganizationId } = await loadModule();
+    const { gettingStartedDone, setActiveOrganizationId } = await loadModule();
 
     setActiveOrganizationId("org-a");
 
-    expect(gettingStartedDismissed.value).toBe(true);
+    expect(gettingStartedDone.value).toBe(true);
   });
 
-  test("ignores a stored value that is not a map of dismissals", async () => {
+  test("ignores a stored value that is not a map of finished organizations", async () => {
     const store = stubLocalStorage({ [STORAGE_KEY]: '["org-a"]' });
-    const { gettingStartedDismissed, dismissGettingStarted, setActiveOrganizationId } =
+    const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =
       await loadModule();
     setActiveOrganizationId("org-a");
 
-    expect(gettingStartedDismissed.value).toBe(false);
-    dismissGettingStarted();
-    expect(gettingStartedDismissed.value).toBe(true);
+    expect(gettingStartedDone.value).toBe(false);
+    markGettingStartedDone();
+    expect(gettingStartedDone.value).toBe(true);
     expect(JSON.parse(store.get(STORAGE_KEY) ?? "{}")).toEqual({ "org-a": true });
   });
 
-  test("still hides the panel when the active organization is unknown", async () => {
+  test("still records a dismissal when the active organization is unknown", async () => {
     const store = stubLocalStorage();
-    const { gettingStartedDismissed, dismissGettingStarted, setActiveOrganizationId } =
+    const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =
       await loadModule();
     setActiveOrganizationId(null);
 
-    dismissGettingStarted();
+    markGettingStartedDone();
 
-    expect(gettingStartedDismissed.value).toBe(true);
-    // Nothing worth persisting: the dismissal belongs to an organization that
-    // could not be identified.
+    expect(gettingStartedDone.value).toBe(true);
+    // Nothing worth persisting: it belongs to an organization that could not
+    // be identified.
     expect(store.has(STORAGE_KEY)).toBe(false);
   });
 
@@ -105,11 +105,11 @@ describe("getting-started dismissal", () => {
         throw new Error("blocked");
       },
     };
-    const { gettingStartedDismissed, dismissGettingStarted, setActiveOrganizationId } =
+    const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =
       await loadModule();
     setActiveOrganizationId("org-a");
 
-    expect(() => dismissGettingStarted()).not.toThrow();
-    expect(gettingStartedDismissed.value).toBe(true);
+    expect(() => markGettingStartedDone()).not.toThrow();
+    expect(gettingStartedDone.value).toBe(true);
   });
 });
