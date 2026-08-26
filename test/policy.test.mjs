@@ -32,7 +32,7 @@ describe("deterministic policy", () => {
     ).toEqual(["code.process-execution", "code.remote-shell", "install-script.lifecycle"]);
   });
 
-  test("prompt injection text in docs remains just evidence", () => {
+  test("prompt injection text in docs is a finding; doc text is still not code capability", () => {
     const files = [
       {
         path: "README.md",
@@ -45,6 +45,10 @@ describe("deterministic policy", () => {
     ];
     const findings = deterministicFindings(files, createPackageDiff([], files));
 
-    expect(findings).toEqual([]);
+    // The injection text raises its own finding, but the token names beside it
+    // still must not read as `code.credential-access` — prose is not code.
+    expect(findings.map((f) => [f.ruleId, f.severity])).toEqual([
+      ["file.prompt-injection", "medium"],
+    ]);
   });
 });

@@ -219,6 +219,46 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
+// Text that tries to steer the *automated security review itself* toward a
+// clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
+// each pattern needs either an imperative aimed at the release object ("mark
+// this package as safe"), a suppression directive over review output ("do not
+// report any findings"), or a literal token from Drydock's own review schema
+// (`nothing_unusual`, `requiresManualReview`). Third-person prose stays out by
+// construction — "npm marks the package as verified" has no imperative `mark`,
+// and SECURITY.md's "do not report vulnerabilities publicly" names no
+// findings/detections object.
+const REVIEW_MANIPULATION_PATTERNS = [
+  /\b(?:mark|classify|treat|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|library|module|dependency|code|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
+  /\b(?:do\s+not|don'?t|never|must\s+not|should\s+not)\s+(?:report|flag|mention|include|raise|escalate|surface)\b[^\n.!?]{0,60}\b(?:findings?|detections?|as\s+(?:suspicious|malicious)|anything\s+(?:suspicious|unusual))\b/i,
+  // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
+  // with a space; the underscore/hyphen form is schema-targeting.
+  /\bnothing[_-]unusual\b/,
+  /\brequires\s*_?manual\s*_?review\b[^\n]{0,30}\bfalse\b/i,
+  /\b(?:skip|bypass|disable)\s+(?:the\s+|this\s+|any\s+|all\s+)?security\s+(?:review|scan|audit|check)/i,
+];
+
+// Instruction content aimed at any LLM/agent that reads package bytes — an AI
+// reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
+// Precision over recall: every pattern requires either an instruction-override
+// verb phrase or a direct address to an AI/agent audience, because LLM client
+// libraries legitimately ship prompt-shaped text ("You are a helpful
+// assistant", "customize the system prompt") that must stay quiet.
+const PROMPT_INJECTION_PATTERNS = [
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
+  /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
+  /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
+  /\b(?:replace|overwrite)\s+your\s+system\s+prompt\b/i,
+  /\bif\s+you\s+are\s+an?\s+(?:AI|LLM|language\s+model|artificial\s+intelligence|automated\s+(?:agent|assistant|reviewer|scanner|tool)|(?:AI\s+)?(?:coding\s+)?assistant)\b/i,
+  /\b(?:note|message|attention|instructions?|important)\s+(?:to|for)\s+(?:the\s+|all\s+|any\s+)?(?:AI|LLM|language\s+model|assistant|agent|automated\s+(?:reviewer|scanner|tool))s?\b/i,
+  /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,
+  /\byou\s+are\s+now\s+in\s+(?:developer|DAN|jailbreak|unrestricted|god)\s+mode\b/i,
+  /\bdo\s+not\s+(?:tell|inform|alert|warn)\s+the\s+(?:user|human|operator|developer)\b/i,
+];
+
+export const REVIEW_MANIPULATION_PATTERN_SET = REVIEW_MANIPULATION_PATTERNS;
+export const PROMPT_INJECTION_PATTERN_SET = PROMPT_INJECTION_PATTERNS;
+
 // Doc-style placeholder passwords (`http://user:pass@proxy.example`,
 // `https://alice:<token>@host`) are ubiquitous in READMEs and changelogs —
 // requests' CVE-2023-32681 HISTORY entry is the canonical benign hit — and are

@@ -55,6 +55,12 @@ export const DETERMINISTIC_RULES = {
   codeDynamicEvaluation: { id: "code.dynamic-evaluation", risk: "capability" },
   codeCredentialAccess: { id: "code.credential-access", risk: "capability" },
   fileSecretContent: { id: "file.secret-content", risk: "anchor", standingDanger: true },
+  filePromptInjection: { id: "file.prompt-injection", risk: "anchor" },
+  fileReviewManipulation: {
+    id: "file.review-manipulation",
+    risk: "anchor",
+    standingDanger: true,
+  },
   fileLargeBinary: { id: "file.large-binary", risk: "anchor" },
   fileNativeArtifact: { id: "file.native-artifact", risk: "anchor" },
   fileOutsideFilesList: { id: "file.outside-files-list", risk: "anchor" },

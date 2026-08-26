@@ -1,0 +1,60 @@
+{
+  "id": "legit-llm-prompt-library",
+  "title": "LLM client library ships prompt-shaped docs and examples (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-llm-tooling",
+  "source": "benign-popular",
+  "intent": "LLM client libraries legitimately ship prompt-shaped text: 'You are a helpful assistant' examples, system-prompt configuration docs, role constants, and prose that names prompt injection as a topic. The prompt-injection rules require an instruction-override phrase or a direct address to an AI audience, so this text must stay quiet.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "chat-prompt-kit",
+    "version": "0.8.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "chat-prompt-kit",
+    "version": "0.9.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"chat-prompt-kit\",\"version\":\"0.8.0\",\"main\":\"index.js\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"chat-prompt-kit\",\"version\":\"0.9.0\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "README.md",
+      "size": 420,
+      "sha256": "readme",
+      "flags": [],
+      "textSample": "# chat-prompt-kit\n\nBuild chat message arrays for LLM APIs.\n\n## System prompts\n\nPass `systemPrompt` to customize the assistant:\n\n```js\nconst chat = createChat({ systemPrompt: 'You are a helpful assistant.' });\n```\n\nUser-supplied text is kept in user-role messages, which helps when defending against prompt injection. See docs/guardrails.md for hardening tips.\n"
+    },
+    {
+      "path": "index.js",
+      "size": 300,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant.';\n\nexport function createChat({ systemPrompt = DEFAULT_SYSTEM_PROMPT } = {}) {\n  const messages = [{ role: 'system', content: systemPrompt }];\n  return {\n    user(content) {\n      messages.push({ role: 'user', content });\n      return messages;\n    },\n  };\n}\n"
+    },
+    {
+      "path": "tests/chat.test.js",
+      "size": 220,
+      "sha256": "chat-test",
+      "flags": [],
+      "textSample": "import { createChat } from '../index.js';\n\ntest('keeps user text in the user role', () => {\n  const messages = createChat().user('summarize this document');\n  expect(messages[1].role).toBe('user');\n});\n"
+    }
+  ]
+}

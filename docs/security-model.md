@@ -84,6 +84,8 @@ Workflow gates never publish. GitHub Environment protection holds the publish jo
 
 Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
 
+Injection attempts are also detection targets, not just something to resist: the deterministic rules `file.review-manipulation` (verdict coercion aimed at the automated review — standing danger, never discounted by a prior approval) and `file.prompt-injection` (instruction content aimed at any LLM/agent that reads package bytes, such as a consumer's coding assistant) fire independently of the AI reviewer, so the killswitch and a swayed model cannot suppress them, and the reviewer prompt instructs the model to report injection text as a high/critical finding of its own.
+
 Cloudflare Agent Traces are sampled at 10% for reviewer debugging, with message
 and tool payload persistence explicitly disabled at both the tracing wrapper
 (`storeMessages`/`storeTools`) and the AI SDK call
