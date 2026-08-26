@@ -114,10 +114,12 @@ decisions, the former member stays in the historical roster but is excluded
 from the new live tally. If that member later accepts a new invitation, the
 membership write re-tallies retained votes in the same D1 batch: a tally that
 becomes sufficient is projected back to `scans.decision` immediately rather
-than waiting for another reviewer to submit. If that projection makes a pending
-workflow gate ready, invitation acceptance also finalizes and schedules its
-current aggregate decision: approval when every package is approved, or the
-fail-closed rejection when a sibling already carries a durable block. A recorded
+than waiting for another reviewer to submit. Invitation acceptance then
+finalizes and schedules every organization gate the shared readiness query
+(`listReadyPendingGates`) reports as resolved — approval when every package is
+approved, the fail-closed rejection when a sibling already carries a durable
+block — so joining also acts as a recovery point for a gate an earlier
+interrupted request left ready. A recorded
 block remains final after its voter leaves; changing the approval threshold
 cannot erase it.
 
@@ -222,3 +224,17 @@ Under a one-approval policy none of it renders.
   `requiredApprovals` as `double2`/`double3`. Without both, a rising
   time-to-decision reads as reviewer apathy when it is really a second approver
   being waited on. See [`product-analytics.md`](./product-analytics.md).
+
+## How this stays correct
+
+Every writer that changes an input to the derived decision — a vote, a
+membership row, the policy — builds its predicates from one set of SQL
+fragments in `server/db/scan-approvals.ts` (`approvalProjectionSql`), and every
+non-decision trigger discovers finishable gates through one readiness query
+(`listReadyPendingGates`), so the derivation cannot drift between event
+handlers. On top of the scenario suites, `test/workers/approval-model.test.ts`
+replays seeded-random sequences of votes, membership churn, policy changes,
+account deletions, crash-shaped partial writes, and finalization attempts
+against real D1 and checks every resulting state against an independent oracle
+of the semantics in this document; failures print a deterministic replayable
+event trace.

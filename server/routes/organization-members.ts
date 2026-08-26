@@ -17,7 +17,11 @@ import {
   revokeInvitation,
   upsertInvitation,
 } from "../db/invitations";
-import { getOrganizationApprovalPolicy, recordScanDecisionProductEvents } from "../db/scans";
+import {
+  getOrganizationApprovalPolicy,
+  listReadyPendingGates,
+  recordScanDecisionProductEvents,
+} from "../db/scans";
 import {
   getOrganizationName,
   getOrganizationOwnerUserId,
@@ -225,65 +229,60 @@ organizationMembersRoutes.post("/invitations/accept", async (c) => {
     canonicalOrigin(c),
     changedScans,
   );
-  if (changedScans.length > 0) {
-    const policy = await getOrganizationApprovalPolicy(db, invitation.organizationId);
-    const readyGateIds = new Set(
-      changedScans
-        .filter(
-          (scan) =>
-            scan.source === "workflow_gate" && scan.decision === "publish" && scan.gateId !== null,
-        )
-        .map((scan) => scan.gateId!),
+  const policy = await getOrganizationApprovalPolicy(db, invitation.organizationId);
+  // Ready gates come from the shared readiness query rather than from the
+  // scans this join happened to change: joining is also a recovery point, so a
+  // gate left ready by an earlier interrupted request is finalized here too,
+  // with the fail-closed rejection already selected when a sibling package
+  // carries a durable block.
+  for (const gate of await listReadyPendingGates(db, invitation.organizationId)) {
+    await finalizeReconciledWorkflowGateDecision(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      db,
+      {
+        organizationId: invitation.organizationId,
+        gateId: gate.id,
+        decision: gate.decision,
+        requiredApprovals: policy.required,
+        trigger: "member_joined",
+        reconciledByUserId: session.userId,
+      },
     );
-    for (const gateId of readyGateIds) {
-      await finalizeReconciledWorkflowGateDecision(
-        c.env,
-        workerExecutionContext(c.executionCtx),
-        db,
-        {
-          organizationId: invitation.organizationId,
-          gateId,
-          decision: "approved",
+  }
+  for (const scan of changedScans) {
+    try {
+      await recordScanEvent(db, {
+        organizationId: invitation.organizationId,
+        actorUserId: session.userId,
+        scanId: scan.id,
+        type: "scan.decided",
+        metadata: {
+          decision: "publish",
+          reason: scan.decisionReason,
+          approvedCount: scan.approvalCount,
           requiredApprovals: policy.required,
           trigger: "member_joined",
-          reconciledByUserId: session.userId,
+          decisionAt: scan.decidedAt?.toISOString() ?? null,
         },
-      );
-    }
-    for (const scan of changedScans) {
-      try {
-        await recordScanEvent(db, {
-          organizationId: invitation.organizationId,
-          actorUserId: session.userId,
-          scanId: scan.id,
-          type: "scan.decided",
-          metadata: {
-            decision: "publish",
-            reason: scan.decisionReason,
-            approvedCount: scan.approvalCount,
-            requiredApprovals: policy.required,
-            trigger: "member_joined",
-            decisionAt: scan.decidedAt?.toISOString() ?? null,
-          },
-        });
-      } catch (err) {
-        emitOperationalEvent("warn", "scan.decision_bookkeeping_failed", {
-          organizationId: invitation.organizationId,
-          scanId: scan.id,
-          decision: "publish",
-          trigger: "member_joined",
-          error: describeOperationalError(err),
-        });
-      }
-      recordScanDecisionProductEvents(c.env, scan, {
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "scan.decision_bookkeeping_failed", {
         organizationId: invitation.organizationId,
+        scanId: scan.id,
         decision: "publish",
-        ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
-        approvalCount: scan.approvalCount,
-        requiredApprovals: policy.required,
-        now: scan.decidedAt ?? new Date(),
+        trigger: "member_joined",
+        error: describeOperationalError(err),
       });
     }
+    recordScanDecisionProductEvents(c.env, scan, {
+      organizationId: invitation.organizationId,
+      decision: "publish",
+      ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+      approvalCount: scan.approvalCount,
+      requiredApprovals: policy.required,
+      now: scan.decidedAt ?? new Date(),
+    });
   }
   await recordScanEvent(db, {
     organizationId: invitation.organizationId,

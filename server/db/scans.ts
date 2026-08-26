@@ -61,6 +61,7 @@ export {
   countScanApprovals,
   removeUserMembershipsAndReconcileApprovals,
   getOrganizationApprovalPolicy,
+  listReadyPendingGates,
   loadScanApprovalState,
   MAX_REQUIRED_RELEASE_APPROVALS,
   setRequiredReleaseApprovals,
