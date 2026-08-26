@@ -357,6 +357,7 @@ function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
     manifestRecordString(raw.sidebar_action, "default_panel"),
     typeof raw.options_page === "string" ? raw.options_page : null,
     typeof raw.devtools_page === "string" ? raw.devtools_page : null,
+    manifestRecordString(raw.chrome_settings_overrides, "homepage"),
     ...manifestRecordStrings(raw.chrome_url_overrides),
     ...(isRecord(raw.sandbox) ? stringList(raw.sandbox.pages) : []),
     ...(Array.isArray(raw.protocol_handlers)

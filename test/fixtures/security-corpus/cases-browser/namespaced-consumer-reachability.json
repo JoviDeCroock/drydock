@@ -1,0 +1,59 @@
+{
+  "id": "browser-namespaced-consumer-reachability",
+  "title": "bundled homepages and dynamic SVG scripts remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for a bundled Firefox homepage and for an SVG-namespaced script selected through its href property from a reachable extension page.",
+  "slug": "namespaced-consumer-reachability",
+  "extensionId": "namespaced-consumer-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 300,
+      "sha256": "1212121212121212121212121212121212121212121212121212121212121212",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Namespaced consumer reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"namespaced-consumer-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"chrome_settings_overrides\": { \"homepage\": \"tests/home.html\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 40,
+      "sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+      "flags": [],
+      "textSample": "<script src=\"popup.js\"></script>"
+    },
+    {
+      "path": "popup.js",
+      "size": 260,
+      "sha256": "1414141414141414141414141414141414141414141414141414141414141414",
+      "flags": [],
+      "textSample": "const svg = document.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\"); const script = document.createElementNS(\"http://www.w3.org/2000/svg\", \"script\"); script.href.baseVal = chrome.runtime.getURL(\"tests/svg.js\"); svg.append(script); document.documentElement.append(svg);"
+    },
+    {
+      "path": "tests/svg.js",
+      "size": 14,
+      "sha256": "1515151515151515151515151515151515151515151515151515151515151515",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/home.html",
+      "size": 39,
+      "sha256": "1616161616161616161616161616161616161616161616161616161616161616",
+      "flags": [],
+      "textSample": "<script src=\"payload.js\"></script>"
+    },
+    {
+      "path": "tests/payload.js",
+      "size": 53,
+      "sha256": "1717171717171717171717171717171717171717171717171717171717171717",
+      "flags": [],
+      "textSample": "fetch(\"https://example.invalid/payload\");"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/svg.js" },
+    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/payload.js" }
+  ]
+}

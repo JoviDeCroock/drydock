@@ -1403,6 +1403,7 @@ describe("browser extension review adapter", () => {
       ["tests/side-panel.html", "tests/side-panel.js"],
       ["tests/sidebar.html", "tests/sidebar.js"],
       ["tests/new-tab.html", "tests/new-tab.js"],
+      ["tests/home.html", "tests/home.js"],
       ["tests/sandbox.html", "tests/sandbox.js"],
       ["tests/protocol-handler.xhtml", "tests/protocol-handler.js"],
     ];
@@ -1436,6 +1437,7 @@ describe("browser extension review adapter", () => {
       side_panel: { default_path: "tests/side-panel.html" },
       sidebar_action: { default_panel: "tests/sidebar.html" },
       chrome_url_overrides: { newtab: "tests/new-tab.html" },
+      chrome_settings_overrides: { homepage: "tests/home.html" },
       sandbox: { pages: ["tests/sandbox.html"] },
       protocol_handlers: [
         {
@@ -2072,6 +2074,20 @@ describe("browser extension review adapter", () => {
           'const namespacedScript = document.createElementNS("http://www.w3.org/1999/xhtml", "script");',
           'namespacedScript.src = "tests/namespaced.js";',
           "document.documentElement.append(namespacedScript);",
+          'const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");',
+          'const svgScript = document.createElementNS("http://www.w3.org/2000/svg", "script");',
+          'svgScript.setAttribute("href", chrome.runtime.getURL("tests/svg-namespaced.js"));',
+          "svg.append(svgScript);",
+          'const svgBaseValScript = document.createElementNS("http://www.w3.org/2000/svg", "script");',
+          'svgBaseValScript.href.baseVal = chrome.runtime.getURL("tests/svg-base-val.js");',
+          "svg.append(svgBaseValScript);",
+          'const svgXlinkScript = document.createElementNS("http://www.w3.org/2000/svg", "script");',
+          'svgXlinkScript.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", chrome.runtime.getURL("tests/svg-xlink.js"));',
+          "svg.append(svgXlinkScript);",
+          'const svgPrefixedScript = document.createElementNS("http://www.w3.org/2000/svg", "svg:script");',
+          'svgPrefixedScript.setAttribute("href", chrome.runtime.getURL("tests/svg-prefixed.js"));',
+          "svg.append(svgPrefixedScript);",
+          "document.documentElement.append(svg);",
           'window.document.location = "tests/navigated.html";',
           'location.assign(new URL("./tests/module-navigation.html", import.meta.url));',
           'import(new URL("./tests/module-import.js", import.meta.url));',
@@ -2110,6 +2126,10 @@ describe("browser extension review adapter", () => {
         "srcdoc",
         "linked",
         "namespaced",
+        "svg-namespaced",
+        "svg-base-val",
+        "svg-xlink",
+        "svg-prefixed",
         "worker-global",
         "navigated",
         "module-navigation",
@@ -2139,6 +2159,10 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({ file: "tests/srcdoc.js", severity: "high" }),
         expect.objectContaining({ file: "tests/linked.js", severity: "high" }),
         expect.objectContaining({ file: "tests/namespaced.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/svg-namespaced.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/svg-base-val.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/svg-xlink.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/svg-prefixed.js", severity: "high" }),
         expect.objectContaining({ file: "tests/worker-global.js", severity: "high" }),
         expect.objectContaining({ file: "tests/navigated.js", severity: "high" }),
         expect.objectContaining({ file: "tests/module-navigation.js", severity: "high" }),
@@ -2150,7 +2174,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(14);
+    expect(findings).toHaveLength(18);
   });
 
   test("follows scripts after an abruptly closed HTML comment", () => {

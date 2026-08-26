@@ -608,6 +608,7 @@ type WebExtensionResourceCall =
 const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "parent", "self", "this", "top", "window"]);
 const STATIC_WORKER_GLOBALS = new Set(["globalThis", "self", "this"]);
 const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const BROWSER_NAVIGATION_EXPRESSION_CONTINUATIONS = new Set([
   "!=",
   "!==",
@@ -777,6 +778,15 @@ const DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
   ["embed", new Set(["src"])],
   ["object", new Set(["data"])],
 ]);
+const SVG_DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
+  ["a", new Set(["href"])],
+  ["script", new Set(["href"])],
+]);
+
+interface StaticDomConsumerElement {
+  namespace: "html" | "svg";
+  tag: string;
+}
 
 function staticDomConsumerElementBindings(
   tokens: JsToken[],
@@ -795,8 +805,13 @@ function staticDomConsumerElementBindings(
     ) {
       continue;
     }
-    const tag = staticDocumentCreateElementTag(tokens, text, index + 2)?.toLowerCase();
-    const properties = tag ? DOM_CONSUMER_ELEMENT_PROPERTIES.get(tag) : undefined;
+    const element = staticDocumentCreateElement(tokens, text, index + 2);
+    const properties = element
+      ? (element.namespace === "html"
+          ? DOM_CONSUMER_ELEMENT_PROPERTIES
+          : SVG_DOM_CONSUMER_ELEMENT_PROPERTIES
+        ).get(element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase())
+      : undefined;
     if (!properties) continue;
     const bindingProperties = bindings.get(tokenText(binding, text)) ?? new Set<string>();
     for (const property of properties) bindingProperties.add(property);
@@ -805,11 +820,11 @@ function staticDomConsumerElementBindings(
   return bindings;
 }
 
-function staticDocumentCreateElementTag(
+function staticDocumentCreateElement(
   tokens: JsToken[],
   text: string,
   start: number,
-): string | null {
+): StaticDomConsumerElement | null {
   let index = start;
   const first = tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(first)) {
@@ -836,11 +851,14 @@ function staticDocumentCreateElementTag(
   const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
   if (closeIndex === null) return null;
   if (createElement.name === "createElement") {
-    return staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+    const tag = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+    return tag === null ? null : { namespace: "html", tag };
   }
   const namespace = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
   const tag = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 1);
-  return namespace === HTML_NAMESPACE ? tag : null;
+  if (tag === null) return null;
+  if (namespace === HTML_NAMESPACE) return { namespace: "html", tag };
+  return namespace === SVG_NAMESPACE ? { namespace: "svg", tag } : null;
 }
 
 function staticDomConsumerResource(
@@ -857,18 +875,21 @@ function staticDomConsumerResource(
   const member = staticMemberAccess(tokens, text, start + 1);
   if (!member) return null;
 
-  if (member.name === "setAttribute") {
+  if (member.name === "setAttribute" || member.name === "setAttributeNS") {
     const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
     if (openIndex === null) return null;
     const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
     if (closeIndex === null) return null;
     const arguments_ = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex);
-    if (arguments_.length < 2) return null;
-    const [nameStart, nameEnd] = arguments_[0];
-    const property =
+    const nameArgument = member.name === "setAttributeNS" ? 1 : 0;
+    const valueArgument = nameArgument + 1;
+    if (arguments_.length <= valueArgument) return null;
+    const [nameStart, nameEnd] = arguments_[nameArgument];
+    const rawProperty =
       nameEnd === nameStart + 1 ? staticScriptPath(tokens[nameStart], text)?.toLowerCase() : null;
+    const property = rawProperty?.slice(rawProperty.lastIndexOf(":") + 1) ?? null;
     if (!property || !resourceProperties.has(property)) return null;
-    const [valueStart, valueEnd] = arguments_[1];
+    const [valueStart, valueEnd] = arguments_[valueArgument];
     if (property === "srcdoc") {
       const inlineDocument =
         valueEnd === valueStart + 1 ? staticScriptPath(tokens[valueStart], text) : null;
@@ -885,11 +906,16 @@ function staticDomConsumerResource(
       : null;
   }
 
-  if (!resourceProperties.has(member.name) || tokenText(tokens[member.nextIndex], text) !== "=") {
-    return null;
-  }
+  if (!resourceProperties.has(member.name)) return null;
 
-  const valueIndex = member.nextIndex + 1;
+  let assignmentIndex = member.nextIndex;
+  if (member.name === "href") {
+    const nestedMember = staticMemberAccess(tokens, text, assignmentIndex);
+    if (nestedMember?.name === "baseVal") assignmentIndex = nestedMember.nextIndex;
+  }
+  if (tokenText(tokens[assignmentIndex], text) !== "=") return null;
+
+  const valueIndex = assignmentIndex + 1;
   if (member.name === "srcdoc") {
     const inlineDocument = staticScriptPath(tokens[valueIndex], text);
     if (inlineDocument === null) return null;

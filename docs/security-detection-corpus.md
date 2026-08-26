@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.66.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.67.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -666,6 +666,12 @@ imports and DOM navigation or executable-resource sinks, and recognizes
 `document.createElement()` bindings assigned after their declarations. The
 browser navigation-alias golden case pins the module-relative and split-binding
 execution paths while retaining the image-element hard negative.
+
+`1.67.0` treats a bundled Firefox `chrome_settings_overrides.homepage` as a
+manifest-selected extension page and follows external SVG scripts created with
+`document.createElementNS()` through `href`, `xlink:href`, or `href.baseVal`.
+The `browser-namespaced-consumer-reachability` golden case pins both paths so
+consumer-executable test-tree payloads retain full capability severity.
 
 ### Fixture format
 
