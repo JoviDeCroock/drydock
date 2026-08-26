@@ -227,10 +227,10 @@ export async function enableDrydockProtectionRule(
   const existing = await reliableFetch(rulesUrl, { headers });
   if (existing.ok) {
     const data = (await existing.json().catch(() => ({}))) as {
-      custom_deployment_protection_rules?: { app?: { integration_id?: number } | null }[];
+      custom_deployment_protection_rules?: { app?: { id?: number } | null }[];
     };
     const enabled = (data.custom_deployment_protection_rules ?? []).some(
-      (rule) => rule.app?.integration_id === appId,
+      (rule) => rule.app?.id === appId,
     );
     if (enabled) return { step: "protection_rule", status: "already_configured" };
   } else if (existing.status !== 404) {
@@ -258,10 +258,10 @@ export async function enableDrydockProtectionRule(
     const recheck = await reliableFetch(rulesUrl, { headers });
     if (recheck.ok) {
       const data = (await recheck.json().catch(() => ({}))) as {
-        custom_deployment_protection_rules?: { app?: { integration_id?: number } | null }[];
+        custom_deployment_protection_rules?: { app?: { id?: number } | null }[];
       };
       const enabled = (data.custom_deployment_protection_rules ?? []).some(
-        (rule) => rule.app?.integration_id === appId,
+        (rule) => rule.app?.id === appId,
       );
       if (enabled) return { step: "protection_rule", status: "already_configured" };
     }

@@ -1,14 +1,14 @@
 import type { DiffEcosystem } from "../lib/package-diff-path";
 
 /**
- * The package an anonymous reader was looking at on `/diff` when they clicked
- * through to sign up.
+ * The npm package an anonymous reader was looking at on `/diff` when they
+ * clicked through to sign up.
  *
- * The public diff is the top of the funnel: someone arrives with a package they
- * care about, reads the diff, and then lands on an empty dashboard that knows
- * nothing about them. This carries that one fact across the signup boundary so
- * the dashboard can name the package, prefill it, and skip the "what should I
- * even type here" beat.
+ * The npm public diff is the top of this funnel: someone arrives with a package
+ * they care about, reads the diff, and then lands on an empty dashboard that
+ * knows nothing about them. PyPI and atpm have different private-review paths,
+ * so they must not be carried into instructions built around `npm stage
+ * publish`.
  *
  * Client-side only, and deliberately so: it is a UI breadcrumb, not a claim
  * about the account. It is written before signup — by an anonymous visitor with
@@ -19,10 +19,10 @@ import type { DiffEcosystem } from "../lib/package-diff-path";
  * which is why it lives here rather than with either of them.
  */
 export interface OnboardingIntent {
-  ecosystem: DiffEcosystem;
+  ecosystem: Extract<DiffEcosystem, "npm">;
   /** Canonical name, as it appears in a `/diff` URL. */
   packageName: string;
-  /** Readable spelling when it differs from the canonical one (atpm), else null. */
+  /** Optional readable spelling when a caller has one, else null. */
   displayName: string | null;
   /** When it was recorded, for expiry. */
   at: number;
@@ -36,17 +36,8 @@ const STORAGE_KEY = "drydock:onboarding-intent";
 // does not.
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
-// Bounds a hand-edited storage value. npm caps names at 214 characters; an atpm
-// DID spelling is the longest legitimate form and stays well inside this.
+// Bounds a hand-edited storage value. npm caps names at 214 characters.
 const MAX_NAME_LENGTH = 256;
-
-// An object literal rather than an array so a fourth ecosystem fails typecheck
-// here instead of silently failing validation at runtime.
-const DIFF_ECOSYSTEMS: Record<DiffEcosystem, true> = { npm: true, pypi: true, atpm: true };
-
-function isDiffEcosystem(value: unknown): value is DiffEcosystem {
-  return typeof value === "string" && Object.hasOwn(DIFF_ECOSYSTEMS, value);
-}
 
 function isUsableName(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= MAX_NAME_LENGTH;
@@ -84,7 +75,7 @@ function parseIntent(raw: string): OnboardingIntent | null {
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (!isDiffEcosystem(record.ecosystem)) return null;
+  if (record.ecosystem !== "npm") return null;
   if (!isUsableName(record.packageName)) return null;
   const at = record.at;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
@@ -99,7 +90,7 @@ function parseIntent(raw: string): OnboardingIntent | null {
 
 /** Record the package a reader was on when they left for signup. */
 export function rememberOnboardingIntent(intent: {
-  ecosystem: DiffEcosystem;
+  ecosystem: Extract<DiffEcosystem, "npm">;
   packageName: string;
   displayName?: string | null;
 }): void {

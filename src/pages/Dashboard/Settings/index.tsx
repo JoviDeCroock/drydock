@@ -230,6 +230,8 @@ export default function SettingsPage() {
                     not installed the App yet. */}
                 <GateSetupWizard
                   activeInstallations={activeGithubInstallations}
+                  gateSetupEcosystems={githubApp.config.value?.gateSetupEcosystems ?? []}
+                  canManage={canManageIntegrations(organizations)}
                   onReleaseTargetCreated={() => void githubApp.loadReleaseTargets()}
                   onInstall={() => void githubApp.startInstall()}
                   installDisabled={

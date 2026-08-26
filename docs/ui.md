@@ -62,13 +62,16 @@ again", which is also what stops the probe from repeating on later visits. An
 unresolved (`null`) answer opens nothing — neither onboarding surface appears on
 a guess.
 
-`src/features/onboarding-intent.ts` carries `{ecosystem, packageName}` from the
-anonymous `/diff` page's "Create account" CTA to the dashboard, so a new account
-opens on the package its owner was already reading. It is client-side only and
-untrusted: a stored value that does not parse, names an unknown ecosystem, or
-has aged out is dropped rather than rendered. The dashboard clears it once the
-organization has a scan of its own or the panel is dismissed. It lives in
-`src/features/` because two pages share it and pages may not import each other.
+`src/features/onboarding-intent.ts` carries an npm `{ecosystem, packageName}`
+from the anonymous `/diff` page's "Create account" CTA to the dashboard, so a
+new account opens on the npm package its owner was already reading. PyPI and
+atpm do not enter this npm-specific funnel: their private-review paths differ,
+so presenting `npm stage publish` as their next step would be false. The value
+is client-side only and untrusted; a stored value that does not parse, is not
+npm, or has aged out is dropped rather than rendered. The dashboard clears it
+once the organization has a scan of its own or the panel is dismissed. It lives
+in `src/features/` because two pages share it and pages may not import each
+other.
 
 ## Copy and density
 

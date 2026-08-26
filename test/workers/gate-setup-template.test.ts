@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { ECOSYSTEMS, getWorkflowGateAdapter } from "../../server/lib/ecosystems";
+import {
+  ECOSYSTEMS,
+  gateSetupEcosystemOptions,
+  getWorkflowGateAdapter,
+} from "../../server/lib/ecosystems";
 import {
   assertGateSetupEnvironment,
   assertGateSetupPackageName,
@@ -36,6 +40,12 @@ describe("gate setup templates", () => {
       (eco) => eco.id,
     );
     expect(missing).toEqual([]);
+  });
+
+  test("exposes the wizard options from the ecosystem registry", () => {
+    expect(gateSetupEcosystemOptions().map((option) => option.id)).toEqual(
+      CASES.map((testCase) => testCase.ecosystem),
+    );
   });
 
   for (const testCase of CASES) {

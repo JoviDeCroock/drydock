@@ -5,7 +5,6 @@ import type {
   PublicReleaseTarget,
   RepositoryEnvironment,
 } from "./github-app";
-import { ECOSYSTEM_LABELS } from "../../server/lib/ecosystems/labels";
 import {
   GATE_SETUP_ENVIRONMENT_NAME_RE,
   GATE_SETUP_PACKAGE_NAME_RE,
@@ -23,13 +22,6 @@ import {
  * A step that fails with a permission problem does not block the next one — the
  * wizard renders that step's manual fallback and carries on.
  */
-
-/** Ecosystems with a gate adapter. atpm has no gate; see docs/workflow-gates.md. */
-export const GATE_ECOSYSTEMS = [
-  { id: "npm", label: ECOSYSTEM_LABELS.npm },
-  { id: "pypi", label: ECOSYSTEM_LABELS.pypi },
-  { id: "vscode", label: `${ECOSYSTEM_LABELS.vscode} extension` },
-] as const;
 
 export type GateSetupStep = "environment" | "protection_rule" | "pull_request";
 type GateSetupStatus = "created" | "already_configured" | "failed";
@@ -93,6 +85,8 @@ export const GateSetupModel = createModel(() => {
 
   const busyStep = signal<GateSetupStep | "release_target" | "preview" | null>(null);
   const error = signal<string | null>(null);
+  let repositoriesRequestId = 0;
+  let environmentsRequestId = 0;
 
   // GitHub lowercases environment names, and the server normalizes the same
   // way, so the client shows the maintainer the value that will actually exist.
@@ -179,6 +173,21 @@ export const GateSetupModel = createModel(() => {
     error.value = null;
   }
 
+  function resetAfterEcosystemChange() {
+    pullRequestStep.value = null;
+    pullRequest.value = null;
+    releaseTarget.value = null;
+    preview.value = null;
+    error.value = null;
+  }
+
+  function resetAfterPackageNameChange() {
+    pullRequestStep.value = null;
+    pullRequest.value = null;
+    preview.value = null;
+    error.value = null;
+  }
+
   return {
     installationRowId,
     repositoryFullName,
@@ -208,47 +217,67 @@ export const GateSetupModel = createModel(() => {
     templateReady,
 
     async selectInstallation(nextId: string): Promise<void> {
+      const requestId = ++repositoriesRequestId;
+      ++environmentsRequestId;
       installationRowId.value = nextId;
       repositoryFullName.value = "";
       environmentChoice.value = "";
       repositories.value = [];
       environments.value = [];
       resetDownstream();
+      repositoriesLoading.value = Boolean(nextId);
+      environmentsLoading.value = false;
       if (!nextId) return;
-      repositoriesLoading.value = true;
       try {
         const data = await apiFetch<{ repositories: InstallationRepository[] }>(
           `/api/v1/github-app/installations/${encodeURIComponent(nextId)}/repositories`,
         );
+        if (requestId !== repositoriesRequestId || installationRowId.peek() !== nextId) return;
         repositories.value = data.repositories;
       } catch (err) {
-        error.value = errorMessage(err);
+        if (requestId === repositoriesRequestId && installationRowId.peek() === nextId) {
+          error.value = errorMessage(err);
+        }
       } finally {
-        repositoriesLoading.value = false;
+        if (requestId === repositoriesRequestId) repositoriesLoading.value = false;
       }
     },
 
     async selectRepository(fullName: string): Promise<void> {
+      const requestId = ++environmentsRequestId;
       repositoryFullName.value = fullName;
       environmentChoice.value = "";
       environments.value = [];
       resetDownstream();
       const rowId = installationRowId.peek();
       const [owner, repo] = fullName.split("/", 2);
+      environmentsLoading.value = Boolean(rowId && owner && repo);
       if (!rowId || !owner || !repo) return;
-      environmentsLoading.value = true;
       try {
         const data = await apiFetch<{ environments: RepositoryEnvironment[] }>(
           `/api/v1/github-app/installations/${encodeURIComponent(rowId)}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/environments`,
         );
+        if (
+          requestId !== environmentsRequestId ||
+          installationRowId.peek() !== rowId ||
+          repositoryFullName.peek() !== fullName
+        ) {
+          return;
+        }
         environments.value = data.environments;
         // Nothing to pick from means the wizard's own "create it" path is the
         // only way forward; open it instead of showing an empty select.
         if (!data.environments.length) environmentChoice.value = NEW_ENVIRONMENT_CHOICE;
       } catch (err) {
-        error.value = errorMessage(err);
+        if (
+          requestId === environmentsRequestId &&
+          installationRowId.peek() === rowId &&
+          repositoryFullName.peek() === fullName
+        ) {
+          error.value = errorMessage(err);
+        }
       } finally {
-        environmentsLoading.value = false;
+        if (requestId === environmentsRequestId) environmentsLoading.value = false;
       }
     },
 
@@ -259,17 +288,17 @@ export const GateSetupModel = createModel(() => {
 
     setNewEnvironmentName(name: string) {
       newEnvironmentName.value = name;
-      preview.value = null;
+      resetDownstream();
     },
 
     selectEcosystem(id: string) {
       ecosystem.value = id;
-      preview.value = null;
+      resetAfterEcosystemChange();
     },
 
     setPackageName(name: string) {
       packageName.value = name;
-      preview.value = null;
+      resetAfterPackageNameChange();
     },
 
     async loadPreview(): Promise<void> {
@@ -363,6 +392,8 @@ export const GateSetupModel = createModel(() => {
     },
 
     reset() {
+      ++repositoriesRequestId;
+      ++environmentsRequestId;
       installationRowId.value = "";
       repositoryFullName.value = "";
       environmentChoice.value = "";
@@ -371,6 +402,8 @@ export const GateSetupModel = createModel(() => {
       packageName.value = "";
       repositories.value = [];
       environments.value = [];
+      repositoriesLoading.value = false;
+      environmentsLoading.value = false;
       resetDownstream();
     },
   };

@@ -2,7 +2,6 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
 import {
-  GATE_ECOSYSTEMS,
   GateSetupModel,
   NEW_ENVIRONMENT_CHOICE,
   type GateSetupPreview,
@@ -11,6 +10,7 @@ import {
 } from "../../../models/gate-setup";
 import type {
   InstallationRepository,
+  GateSetupEcosystemOption,
   PublicGithubAppInstallation,
   RepositoryEnvironment,
 } from "../../../models/github-app";
@@ -47,12 +47,16 @@ export function GateSetupWizard({
   activeInstallations,
   onReleaseTargetCreated,
   onInstall,
+  gateSetupEcosystems,
+  canManage,
   installDisabled = false,
   deepLinked = false,
 }: {
   activeInstallations: PublicGithubAppInstallation[];
   onReleaseTargetCreated?: () => void;
   onInstall?: () => void;
+  gateSetupEcosystems: GateSetupEcosystemOption[];
+  canManage: boolean;
   installDisabled?: boolean;
   /**
    * The page arrived on `#gate-setup`. Passed as a captured flag rather than
@@ -71,11 +75,12 @@ export function GateSetupWizard({
   // the release-target form does.
   const installationIds = activeInstallations.map((row) => row.id).join(",");
   useEffect(() => {
+    if (!canManage) return;
     const stillValid = activeInstallations.some((row) => row.id === installationRowId);
     if (!stillValid && activeInstallations.length) {
       void gateSetup.selectInstallation(activeInstallations[0].id);
     }
-  }, [installationIds, installationRowId]);
+  }, [canManage, installationIds, installationRowId]);
 
   // This section only exists after the settings page has switched to the
   // integrations tab and the workspace has loaded, which is well after the
@@ -85,6 +90,10 @@ export function GateSetupWizard({
     if (typeof window === "undefined" || !deepLinked) return;
     document.getElementById("gate-setup")?.scrollIntoView({ block: "start" });
   }, [deepLinked]);
+
+  if (!canManage) {
+    return <GateSetupPermissionPlaceholder deepLinked={deepLinked} />;
+  }
 
   if (!activeInstallations.length) {
     return (
@@ -124,9 +133,29 @@ export function GateSetupWizard({
         <RepositoryStep gateSetup={gateSetup} activeInstallations={activeInstallations} />
         <EnvironmentStep gateSetup={gateSetup} />
         <ProtectionRuleStep gateSetup={gateSetup} />
-        <PackageStep gateSetup={gateSetup} />
+        <PackageStep gateSetup={gateSetup} ecosystems={gateSetupEcosystems} />
         <WorkflowStep gateSetup={gateSetup} />
         <ReleaseTargetStep gateSetup={gateSetup} onCreated={onReleaseTargetCreated} />
+      </CollapsibleCard>
+    </div>
+  );
+}
+
+function GateSetupPermissionPlaceholder({ deepLinked }: { deepLinked: boolean }) {
+  return (
+    <div id="gate-setup" class="scroll-mt-6">
+      <CollapsibleCard
+        title="Guided gate setup"
+        defaultOpen={deepLinked}
+        aside={<Badge tone="info">owner or admin required</Badge>}
+      >
+        <SettingsCardBody>
+          <Muted class="text-[13px] m-0 max-w-[600px]">
+            Organization owners and admins can create GitHub environments, enable Drydock as a
+            deployment-protection rule, open the workflow pull request, and map its release target.
+            Ask one of them to run this setup for the organization.
+          </Muted>
+        </SettingsCardBody>
       </CollapsibleCard>
     </div>
   );
@@ -392,7 +421,13 @@ function ProtectionRuleStep({ gateSetup }: { gateSetup: GateSetup }) {
   );
 }
 
-function PackageStep({ gateSetup }: { gateSetup: GateSetup }) {
+function PackageStep({
+  gateSetup,
+  ecosystems,
+}: {
+  gateSetup: GateSetup;
+  ecosystems: GateSetupEcosystemOption[];
+}) {
   const ecosystem = gateSetup.ecosystem.value;
   const packageName = gateSetup.packageName.value;
   const packageNameIssue: string | null = gateSetup.packageNameIssue.value;
@@ -412,7 +447,7 @@ function PackageStep({ gateSetup }: { gateSetup: GateSetup }) {
               onChange={(value) => gateSetup.selectEcosystem(value)}
             >
               <option value="">Pick an ecosystem…</option>
-              {GATE_ECOSYSTEMS.map((entry) => (
+              {ecosystems.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.label}
                 </option>

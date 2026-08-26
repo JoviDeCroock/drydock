@@ -36,20 +36,13 @@ describe("onboarding intent", () => {
     expect(typeof intent?.at).toBe("number");
   });
 
-  test("keeps a readable spelling alongside the canonical name", () => {
-    stubLocalStorage();
-
-    rememberOnboardingIntent({
-      ecosystem: "atpm",
-      packageName: "@did:plc:abc123/counter",
-      displayName: "@ebey.dev/counter",
+  test.each(["pypi", "atpm"])("drops a %s intent from the npm-specific funnel", (ecosystem) => {
+    const store = stubLocalStorage({
+      [STORAGE_KEY]: JSON.stringify({ ecosystem, packageName: "example", at: Date.now() }),
     });
 
-    expect(readOnboardingIntent()).toMatchObject({
-      ecosystem: "atpm",
-      packageName: "@did:plc:abc123/counter",
-      displayName: "@ebey.dev/counter",
-    });
+    expect(readOnboardingIntent()).toBe(null);
+    expect(store.has(STORAGE_KEY)).toBe(false);
   });
 
   test("reads as no intent when nothing was stored", () => {

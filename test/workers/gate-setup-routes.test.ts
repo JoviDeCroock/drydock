@@ -422,7 +422,7 @@ describe("gate-setup protection rule step", () => {
       if (request.method === "GET") {
         return Response.json({
           custom_deployment_protection_rules: [
-            { id: 3, app: { integration_id: Number(APP_ID), slug: "drydock" } },
+            { id: 3, app: { id: Number(APP_ID), slug: "drydock" } },
           ],
         });
       }
@@ -452,7 +452,7 @@ describe("gate-setup protection rule step", () => {
         // First read shows nothing (a race); the recheck sees the rule.
         return Response.json({
           custom_deployment_protection_rules:
-            gets === 1 ? [] : [{ id: 3, app: { integration_id: Number(APP_ID) } }],
+            gets === 1 ? [] : [{ id: 3, app: { id: Number(APP_ID) } }],
         });
       }
       return new Response(null, { status: 422 });

@@ -30,7 +30,7 @@ Step 1 of the contract used to be a manual walk through GitHub settings. **Setti
 5. "Open a PR with this workflow" commits the file on a new `drydock/workflow-gate-*` branch and opens a pull request whose body carries the trusted-publishing hardening checklist.
 6. Create the matching release target, which is the same `POST /release-targets` the manual form uses — pinned to the chosen ecosystem rather than left on auto-detect, because pinning is what enables the ecosystem's own artifact-name matching (notably PyPI's `pypi-release-candidate-*` shards).
 
-A maintainer who has not installed the GitHub App yet still lands on this section: it renders an install prompt in place of the wizard rather than nothing, so the `#gate-setup` deep link never dead-ends.
+A maintainer who has not installed the GitHub App yet still lands on this section: it renders an install prompt in place of the wizard rather than nothing, so the `#gate-setup` deep link never dead-ends. Organization members see the same anchored section with an owner/admin-required explanation instead of controls that can only return `403`.
 
 Endpoints, all under `/api/v1/github-app/`, all owner/admin-only (`roleCanManageIntegrations`) and scoped through `ensureInstallationOwnedBy`, with the same session and step-up posture as `POST /release-targets`:
 
@@ -59,7 +59,7 @@ Two properties keep a refusal from leaving debris:
 
 ### Generated workflows
 
-The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
+The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). The `/github-app/config` response derives the wizard's ecosystem choices from that same registry, so adding a template also makes the option visible without a second client-side list. Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
 
 Drydock generates these files but does not review them. Read the pull request before merging it.
 

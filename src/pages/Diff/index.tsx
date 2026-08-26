@@ -570,13 +570,10 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                   `src/features/onboarding-intent.ts`. */}
               <LinkButton
                 href="/register"
-                onClick={() =>
-                  rememberOnboardingIntent({
-                    ecosystem,
-                    packageName,
-                    displayName: shownName === packageName ? null : shownName,
-                  })
-                }
+                onClick={() => {
+                  if (ecosystem !== "npm") return;
+                  rememberOnboardingIntent({ ecosystem, packageName });
+                }}
               >
                 Create account
               </LinkButton>

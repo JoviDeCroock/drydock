@@ -76,6 +76,13 @@ export function supportedWorkflowGateEcosystems(): string[] {
   return ECOSYSTEMS.filter((eco) => eco.gate).map((eco) => eco.id);
 }
 
+export function gateSetupEcosystemOptions(): Array<{ id: string; label: string }> {
+  return ECOSYSTEMS.filter((eco) => eco.gate?.gateSetupTemplate).map((eco) => ({
+    id: eco.id,
+    label: eco.label,
+  }));
+}
+
 export function supportedPublicDiffEcosystems(): string[] {
   return ECOSYSTEMS.filter((eco) => eco.publicDiff).map((eco) => eco.id);
 }
