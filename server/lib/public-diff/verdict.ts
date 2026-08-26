@@ -29,7 +29,7 @@ export interface PublicDiffVerdict {
   displayName: string | null;
   from: { version: string; publishedAt: string | null };
   to: { version: string; publishedAt: string | null };
-  /** Analysis identity: deterministic-rules segment + risk-aggregation version. */
+  /** Analysis identity: payload projection + deterministic rules + risk aggregation. */
   rulesVersion: string;
   grade: VerdictGrade;
   risk: { artifactRisk: RiskLevel; releaseRisk: RiskLevel };

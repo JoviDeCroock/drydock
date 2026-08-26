@@ -69,7 +69,7 @@ function payload(overrides: Partial<PublicPackageDiff> = {}): PublicPackageDiff 
 }
 
 const OPTIONS = {
-  rulesVersion: "1.28.0+risk-1",
+  rulesVersion: "1.28.0+risk-1+payload-v7",
   diffUrl: "https://drydock.org/diff/example/1.2.3/1.2.4",
 };
 
@@ -94,7 +94,7 @@ describe("buildPublicDiffVerdict", () => {
     expect(verdict.package).toBe("example");
     expect(verdict.from).toEqual({ version: "1.2.3", publishedAt: "2026-01-01T00:00:00.000Z" });
     expect(verdict.to).toEqual({ version: "1.2.4", publishedAt: "2026-08-01T00:00:00.000Z" });
-    expect(verdict.rulesVersion).toBe("1.28.0+risk-1");
+    expect(verdict.rulesVersion).toBe("1.28.0+risk-1+payload-v7");
     expect(verdict.diffUrl).toBe(OPTIONS.diffUrl);
     expect(verdict.computedAt).toBe("2026-08-26T00:00:00.000Z");
   });
