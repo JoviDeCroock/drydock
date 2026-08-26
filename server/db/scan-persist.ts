@@ -8,7 +8,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
-import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
+import { PERSIST_CLAIM_DIGEST_PREFIX, type ScanArtifactMetadata } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { NON_TERMINAL_STATUSES } from "./scan-jobs";
 import {
@@ -107,16 +107,21 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     updatedAt: now,
   };
 
-  const claimToken = `persist:${crypto.randomUUID()}`;
+  const claimToken = `${PERSIST_CLAIM_DIGEST_PREFIX}${crypto.randomUUID()}`;
   const existing = await db
     .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
     .from(scans)
     .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
     .limit(1);
   if (existing[0] && !NON_TERMINAL_STATUSES.some((status) => status === existing[0]?.status)) {
-    return { persisted: false, reason: "already_terminal" as const };
+    return { persisted: false as const, reason: "already_terminal" as const };
   }
 
+  // The UPDATE branch assumes the existing row is non-terminal and therefore
+  // carries NULL artifact key columns: the pre-read above and `claimScanForRun`
+  // both refuse terminal rows, and the sole production caller always persists
+  // `status: "complete"`. A caller that persists a non-terminal status would
+  // break that, and would have to sweep the artifact run this overwrites.
   const claimScan = existing[0]
     ? db
         .update(scans)
@@ -175,7 +180,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 
   const [claimed] = await db.batch(batch);
   if (Array.isArray(claimed) && claimed.length === 0) {
-    return { persisted: false, reason: "already_terminal" as const };
+    return { persisted: false as const, reason: "already_terminal" as const };
   }
   return { persisted: true as const };
 }

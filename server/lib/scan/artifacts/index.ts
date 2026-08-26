@@ -1,4 +1,5 @@
 export {
+  PERSIST_CLAIM_DIGEST_PREFIX,
   SCAN_ARTIFACT_WRITE_ATTEMPTS,
   SCAN_FILE_SAMPLE_LIMIT,
   type ScanArtifactMetadata,
@@ -13,6 +14,6 @@ export {
   scanArtifactReadBucket,
 } from "./read";
 
-export { deleteOrganizationArtifacts, deleteScanArtifacts } from "./delete";
+export { deleteOrganizationArtifacts, deleteScanArtifacts, discardScanArtifactRun } from "./delete";
 
 export { projectAiReviewFindings } from "./parse";

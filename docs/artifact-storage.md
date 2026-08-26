@@ -33,21 +33,35 @@ D1 keeps scan status/lifecycle fields, ownership, package/version metadata, deci
 Version 1 artifact keys are:
 
 ```text
-orgs/{organizationId}/scans/{scanId}/v1/manifest.json
-orgs/{organizationId}/scans/{scanId}/v1/report.json
-orgs/{organizationId}/scans/{scanId}/v1/files.json
-orgs/{organizationId}/scans/{scanId}/v1/diff.json
+orgs/{organizationId}/scans/{scanId}/v1/{runId}/manifest.json
+orgs/{organizationId}/scans/{scanId}/v1/{runId}/report.json
+orgs/{organizationId}/scans/{scanId}/v1/{runId}/files.json
+orgs/{organizationId}/scans/{scanId}/v1/{runId}/diff.json
 ```
 
-Path segments are URL-encoded with `%` replaced by `~` so object keys stay path-safe.
+`{runId}` is a UUID minted once per write attempt (reused across that attempt's retries). Path segments are URL-encoded with `%` replaced by `~` so object keys stay path-safe.
+
+Objects written before run ids existed have no `{runId}` segment and stay readable: the read path resolves keys from the `scans` columns above rather than recomputing them, so the key shape is not part of any read-time contract and adding the segment needed no storage-version bump.
 
 The manifest records each object key, SHA-256 digest, byte size, content type, and count where applicable. `report.json` is the canonical report JSON whose digest must equal `scans.report_digest`. `files.json` stores redacted staged file samples plus file metadata. `diff.json` stores the generated file diff.
 
 User-initiated report downloads serve the same canonical `report.json` bytes with a package-scoped filename: `drydock-{package-name}-{version}.json`. The export's `findings[]` stays deterministic-only (every entry keeps its `ruleId`/`ruleVersion`); the advisory AI review, when one exists, is carried separately in the export's `aiReview` block, so AI findings are never double-listed. Package names are normalized to a path-safe filename segment for the `Content-Disposition` header. Dashboard download links include the active organization as a validated query parameter because native browser downloads cannot attach the dashboard's `x-organization-id` fetch header.
 
+## Concurrent Completion Attempts
+
+A duplicate queue delivery can run a second completion attempt for the same scan. Each attempt writes its artifact set _before_ `persistScan` decides which one owns the D1 row, so the invariant that keeps this safe is structural: **an attempt's object set is unaddressable by any other attempt.** The `{runId}` segment is what provides it.
+
+Without it, both attempts wrote the same four keys. A loser whose R2 write landed after the winner's D1 batch committed left the row pointing at digests that no longer matched the stored bytes, and the detail read then failed closed to metadata-only — permanently, since nothing rewrites the objects. For a scan shared through a public report token that is worse than an empty page: `loadSharedScanDetail` attests over exactly those serialized bytes, so the same token would start serving different bytes under a different attested subject digest.
+
+An attempt that loses the claim (`persisted: false`) sweeps its own prefix and logs `scan.artifacts.run_discarded`. The sweep runs only on an explicit `persisted === false`, never from a `catch`: if `persistScan` throws, the D1 batch may or may not have committed, and deleting the run could destroy the winner's objects.
+
+One orphan class is accepted: an attempt that writes R2 and then crashes (isolate eviction, queue timeout) before `persistScan` returns leaks up to four objects. It is bounded by the queue retry budget and reclaimed by the scan/org prefix sweeps on deletion. To find one, correlate the logs — an orphan is a `scan.artifacts.written` `runId` for a scan with neither a completion nor a matching `scan.artifacts.run_discarded`.
+
+`persistScan` parks a `persist:<uuid>` claim token in `scans.report_digest` for the length of its atomic D1 batch. D1 applies a batch as one implicit transaction, so a reader should never observe it; the read path recognizes the token anyway and degrades with reason `persist_in_flight` at `info` rather than `report_digest_mismatch`. That keeps `report_digest_mismatch` an unambiguous corruption signal worth alerting on.
+
 ## Write And Read Flow
 
-Completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` writes the D1 row. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried; exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry. A missing `ARTIFACTS` binding logs `scan.artifacts.binding_missing` and throws for the same reason: there is no second place to put the body.
+Completed scans write `report.json`, `files.json`, `diff.json`, and `manifest.json` to R2 before `persistScan` writes the D1 row. Each object is read back and verified against its expected size and SHA-256 digest before D1 metadata is saved. Transient write or verification failures are retried under the same run id — a retry replaces its own partial objects instead of orphaning them — and exhausted failures log `scan.artifacts.write_failed` and fail closed so the scan can retry. A missing `ARTIFACTS` binding logs `scan.artifacts.binding_missing` and throws for the same reason: there is no second place to put the body.
 
 `GET /api/v1/scans/:id` returns scan metadata, findings, events, and file metadata without staged file bodies. Findings cover both deterministic rules (`source: "rule"`) and a completed AI review's findings (`source: "ai"`), the latter derived from the verified report's `aiFindings` envelope and appended after `ruleFindings` in the same combined order the report's `findingAnnotations` index over. Both sources count into `finding_count` and the risk summary; AI findings stay advisory and never alter rule findings. The dashboard fetches a selected staged body on demand through:
 
@@ -74,8 +88,9 @@ R2 artifacts are torn down whenever the D1 rows that point at them are deleted, 
 - **Account deletion** (`deleteUserAccount`, invoked by the Better Auth `beforeDelete` hook) deletes each owned organization through `deleteOrganization`, so the personal-workspace and any sole-owned org artifacts go with it.
 - **Gate re-run discard** (`discardGateScans`) deletes the per-scan prefixes `orgs/{organizationId}/scans/{scanId}/` for the scans it discards, since a prior attempt may have completed some packages and written their artifacts.
 - **Failed-scan deletion** (`DELETE /api/v1/scans/:id`) conditionally deletes only an organization-owned `failed` row, cascades its scan events, records an organization audit event, and sweeps the per-scan R2 prefix.
+- **Lost completion claim** (`discardScanArtifactRun`) — the one trigger with no D1 deletion behind it — deletes the single run prefix `orgs/{organizationId}/scans/{scanId}/v{N}/{runId}/` an attempt wrote before it discovered another attempt owned the row. It logs `scan.artifacts.run_discarded` at `warn` _before_ deleting, so the discard is on record even if the sweep fails, and the sweep itself emits `scan.artifacts.deleted` with `scope: "run"`. The prefix must come from the writer's in-memory result: reconstructing one by stripping a filename off a persisted key would, for a pre-run-id key, strip to the scan's whole `v{N}/` directory and delete a live artifact set. A prefix that does not sit under the scan's own prefix is rejected with `scan.artifacts.run_discard_rejected` and nothing is deleted.
 
-Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The delete prefixes intentionally stop before the `v{N}` segment so a cleanup removes every storage version. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
+Deletion uses the raw `ARTIFACTS` binding, not the read-gated bucket: `SCAN_ARTIFACT_READS_DISABLED` is a read kill-switch and must not strand objects. The org and scan delete prefixes intentionally stop before the `v{N}` segment, so a cleanup removes every storage version — and, for the same reason, every run prefix under it. Cleanup is fail-soft — a delete error is logged (`scan.artifacts.delete_failed`) but never thrown, so it cannot abort the surrounding D1 teardown; a leaked object is recoverable by re-running the prefix sweep. A successful sweep logs `scan.artifacts.deleted` with the object count. Pending/running scans that are discarded before completion (`discardScanAttempt`, `deletePendingScanJob`) carry no artifacts, so they skip R2 cleanup.
 
 Time-based retention (a TTL sweep that deletes old scans on a schedule) is not yet implemented and is tracked separately.
 

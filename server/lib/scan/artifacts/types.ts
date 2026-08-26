@@ -31,6 +31,24 @@ export interface ScanArtifactMetadata {
   diffArtifactKey: string;
 }
 
+/**
+ * What a write attempt produced. Extends the persisted column set with the R2
+ * prefix holding only this attempt's objects, so a caller that loses the D1
+ * claim can sweep exactly its own bytes. The prefix is not a D1 column: a
+ * committed row addresses its objects through the key columns above, and
+ * deriving a prefix from one of those keys would be unsafe (a pre-run-id key
+ * strips to the scan's whole `v{N}/` directory).
+ */
+export interface WrittenScanArtifacts extends ScanArtifactMetadata {
+  artifactRunPrefix: string;
+}
+
+// `persistScan` claims a scan row by parking this prefix in `scans.report_digest`
+// for the length of its D1 batch. D1 applies a batch atomically, so the token
+// should never be externally visible; the read path recognizes it anyway so a
+// `report_digest_mismatch` stays an unambiguous corruption signal.
+export const PERSIST_CLAIM_DIGEST_PREFIX = "persist:";
+
 export interface ScanArtifactFileRow {
   path: string;
   status: string;

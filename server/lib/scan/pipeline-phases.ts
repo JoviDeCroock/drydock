@@ -45,6 +45,7 @@ import {
 } from "../review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
 import {
+  discardScanArtifactRun,
   writeScanArtifactsWithRetry,
   projectAiReviewFindings,
   scanArtifactReadBucket,
@@ -524,6 +525,27 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     report: { version: reportPayload.version, digest: reportDigest },
     artifacts,
   });
+
+  // This attempt wrote its artifact set before it could know whether it owned
+  // the row, so a loser has to take its own objects back out. Three constraints:
+  //
+  // - Only on an explicit `persisted === false`, never from a `catch`. If
+  //   `persistScan` throws, the D1 batch may or may not have committed, and
+  //   deleting this run could destroy the winner's objects — the very bug the
+  //   per-run prefixes exist to prevent.
+  // - The raw `ARTIFACTS` binding, not `scanArtifactReadBucket`:
+  //   SCAN_ARTIFACT_READS_DISABLED is a read kill-switch and must not strand
+  //   objects (same reasoning as the comment above the read-path sweeps).
+  // - Only this run's prefix is touched, so the winner's set is unaddressable
+  //   from here. `reason` is a log field; both loss modes mean the same thing.
+  if (!persisted.persisted) {
+    await discardScanArtifactRun(args.env?.ARTIFACTS, {
+      organizationId: identity.organizationId,
+      scanId: identity.scanId,
+      artifactRunPrefix: artifacts.artifactRunPrefix,
+      reason: persisted.reason,
+    });
+  }
 
   return { result, persisted: persisted.persisted };
 }

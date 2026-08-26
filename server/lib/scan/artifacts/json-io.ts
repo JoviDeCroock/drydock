@@ -12,7 +12,11 @@ import {
  * swapped object therefore fails closed rather than being handed to a reviewer
  * as if it were the reviewed release.
  */
-import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
+import {
+  describeOperationalError,
+  emitOperationalEvent,
+  type OperationalEventLevel,
+} from "../../platform/observability";
 import { sha256Hex } from "../../platform/crypto-utils";
 import { utf8Size } from "../../platform/stable-json";
 
@@ -131,8 +135,12 @@ export function emitArtifactFallback(
   reason: string,
   scan: Pick<ScanArtifactScanRow, "id" | "organizationId">,
   extra: Record<string, unknown> = {},
+  // A fallback is a `warn` by default because it means a reviewer is being shown
+  // less than the scan recorded. An expected, self-healing fallback passes
+  // "info" so it does not dilute the alertable signal.
+  level: OperationalEventLevel = "warn",
 ) {
-  emitOperationalEvent("warn", "scan.artifacts.fallback_read", {
+  emitOperationalEvent(level, "scan.artifacts.fallback_read", {
     scanId: scan.id,
     organizationId: scan.organizationId,
     reason,

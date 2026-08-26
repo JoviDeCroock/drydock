@@ -115,7 +115,7 @@ function createFlakyArtifactBucket(options: { failFirstPuts?: number; failAllPut
       };
     },
   } as unknown as R2Bucket;
-  return { bucket, putCalls: () => putCalls };
+  return { bucket, putCalls: () => putCalls, storedKeys: () => [...objects.keys()] };
 }
 
 function createReadCountingBucket(delegate: R2Bucket) {
@@ -401,8 +401,17 @@ describe("scan artifact writes and reads", () => {
     const metadata = await writeScanArtifactsWithRetry(fake.bucket, input);
 
     expect(metadata.artifactStorageVersion).toBe(1);
-    expect(metadata.artifactManifestKey).toContain(`/scans/${input.scanId}/v1/manifest.json`);
+    expect(metadata.artifactManifestKey).toBe(`${metadata.artifactRunPrefix}manifest.json`);
+    expect(metadata.artifactRunPrefix).toMatch(
+      new RegExp(`/scans/${input.scanId}/v1/[0-9a-f-]{36}/$`),
+    );
     expect(fake.putCalls()).toBe(6);
+
+    // A retry is the same completion attempt, so it reuses one run prefix and
+    // replaces its own partial objects instead of orphaning them under a second.
+    const stored = fake.storedKeys();
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.every((key) => key.startsWith(metadata.artifactRunPrefix))).toBe(true);
   });
 
   test("exhausted artifact write failures fail closed", async () => {
