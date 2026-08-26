@@ -41,8 +41,8 @@ export interface FindingAnnotationOptions {
   baselineComparisonSkipped?: boolean;
 }
 
-export { createPackageDiff } from "./diff";
-export type { DiffEntry } from "./diff";
+export { createPackageDiff, summaryDiffEntries } from "./diff";
+export type { DiffEntry, SummaryDiffEntry } from "./diff";
 export { summarizePackageJsonDiff } from "./serialize";
 export type { PackageJsonDiff, PackageJsonDiffEntry, PackageJsonSummary } from "./serialize";
 export {

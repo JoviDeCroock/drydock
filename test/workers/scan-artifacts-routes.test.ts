@@ -444,6 +444,30 @@ describe("scan artifact writes and reads", () => {
     expect(compareData?.findings).toHaveLength(1);
     expect(compareCounter.getCalls()).toBe(1);
 
+    // `omit` is the report-export mode: it returns the full-fidelity diff —
+    // digests included, which `summary_json.diff` no longer stores — off the
+    // artifacts the export already reads. manifest + report + diff, and no
+    // fourth GET for the file samples the export never touches.
+    const exportCounter = createReadCountingBucket(env.ARTIFACTS);
+    const exportDetail = await getScan(db, scanId, owner.organizationId, exportCounter.bucket, {
+      files: "omit",
+    });
+    expect(exportCounter.getCalls()).toBe(3);
+    expect(exportDetail?.diff).toEqual([
+      { path: "index.js", status: "added", stagedSize: 39, stagedSha256: "index-sha", flags: [] },
+      {
+        path: "package.json",
+        status: "added",
+        stagedSize: expect.any(Number),
+        stagedSha256: "pkg-sha",
+        flags: [],
+      },
+    ]);
+    // The client-facing modes get `null` instead: every path's `sha256` already
+    // rides on `files[]` there, so populating it would be a third copy of the
+    // same array in one response body.
+    expect(metadataOnly?.diff).toBeNull();
+
     const detailRes = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}`, {
       method: "GET",
     });

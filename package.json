@@ -21,6 +21,8 @@
     "incident:post": "node scripts/incident-post.mjs",
     "db:backfill:scan-list-summaries:local": "wrangler d1 execute staged-publish-review --local --file scripts/backfill-scan-list-summaries.sql",
     "db:backfill:scan-list-summaries:remote": "wrangler d1 execute staged-publish-review --remote --file scripts/backfill-scan-list-summaries.sql",
+    "db:backfill:summary-diff-digests:local": "wrangler d1 execute staged-publish-review --local --file scripts/backfill-summary-diff-digests.sql",
+    "db:backfill:summary-diff-digests:remote": "wrangler d1 execute staged-publish-review --remote --file scripts/backfill-summary-diff-digests.sql",
     "test": "node scripts/test.mjs",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",

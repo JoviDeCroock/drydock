@@ -1,4 +1,4 @@
-import type { DiffEntry } from "../../../../server/lib/review";
+import type { SummaryDiffEntry } from "../../../../server/lib/review";
 import type { PackageJsonDiff, ReleaseProvenance } from "../../../../server/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 
@@ -11,7 +11,10 @@ export interface PersistedSummary {
     rulesVersion?: string;
   };
   packageJsonDiff?: PackageJsonDiff;
-  diff?: DiffEntry[];
+  // Digest-free by construction: `summaryDiffEntries` projects the digests out
+  // before D1 persistence (they stay in the R2 artifacts). A file's own hash
+  // comes off its `files[]` record, never off this array.
+  diff?: SummaryDiffEntry[];
   // Baseline selection recorded by the pipeline. The UI only reads
   // `comparisonSkipped`, which says a published predecessor existed but was
   // never downloaded, so the diff is not a release delta.

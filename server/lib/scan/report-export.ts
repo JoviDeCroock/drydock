@@ -1,5 +1,5 @@
 import { isRecord } from "../platform/guards";
-import type { getScan } from "../../db/scans";
+import type { ScanExportDetail } from "../../db/scans";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
@@ -8,8 +8,10 @@ import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
 
-// A persisted scan detail, as returned by getScan (never null at the call site).
-type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
+// A persisted scan detail as returned by `getScan(..., { files: "omit" })`
+// (never null at the call site). The export mode specifically: only it carries
+// the artifact `diff`, and only that copy still has the content digests.
+type ScanDetail = ScanExportDetail;
 
 interface ReportExportFilenameInput {
   id: string;
@@ -79,7 +81,11 @@ export function buildReportExport(detail: ScanDetail) {
     // the field (or persisted a malformed blob) export null.
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     packageJsonDiff: summary.packageJsonDiff ?? null,
-    diff: summary.diff ?? null,
+    // R2 first: `summary_json.diff` is a digest-free projection, so only the
+    // artifact copy carries `previousSha256`/`stagedSha256`. The D1 fallback
+    // covers the degraded path (artifacts unreadable) and rows persisted before
+    // the projection landed, whose summary copy is still full fidelity.
+    diff: detail.diff ?? summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
     // by `aiReview.findings` above; including the persisted `source: "ai"` rows
     // here too would double-count them in this array and break the invariant

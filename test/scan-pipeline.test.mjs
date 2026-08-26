@@ -333,6 +333,31 @@ describe("scan pipeline baseline selection", () => {
     });
   });
 
+  test("persists a digest-free diff in the summary and the full diff for R2", async () => {
+    await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_summary_diff",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    // The artifact input keeps full fidelity: R2 is where the report export
+    // reads the digests from, and the exported bytes are an attestation subject.
+    expect(persistedInput.diff.some((entry) => entry.stagedSha256)).toBe(true);
+    // The D1 column stores identity + status + sizes only. Across production
+    // that pair of 64-char hex strings was the single largest thing in the
+    // database, and nothing read it there.
+    expect(persistedInput.summary.diff).toEqual(
+      persistedInput.diff.map(
+        ({ previousSha256: _previous, stagedSha256: _staged, ...entry }) => entry,
+      ),
+    );
+    for (const entry of persistedInput.summary.diff) {
+      expect(entry).not.toHaveProperty("previousSha256");
+      expect(entry).not.toHaveProperty("stagedSha256");
+    }
+  });
+
   test("computes a declared intent envelope from the staged manifest repository", async () => {
     sandboxMock.downloadInSandbox.mockResolvedValue({
       files: [

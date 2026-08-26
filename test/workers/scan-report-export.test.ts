@@ -1,10 +1,13 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
+import { eq } from "drizzle-orm";
 import { createDb } from "../../server/db/client";
 import { createOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
+import { createScanJob, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { summaryDiffEntries, type DiffEntry } from "../../server/lib/review";
+import { buildReportExport } from "../../server/lib/scan/report-export";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -537,4 +540,130 @@ describe("scan report JSON export", () => {
     const res = await getReport(buildTestApp(owner), "scan_does_not_exist");
     expect(res.status).toBe(404);
   });
+
+  // The load-bearing property behind dropping the digests from
+  // `summary_json.diff`: the export document is an attestation subject, so its
+  // bytes must be a function of the R2 artifacts alone. A scan persisted the
+  // old way (full diff in D1) and the same scan after the backfill has stripped
+  // the digests must serialize to the same bytes, or every attestation issued
+  // before the backfill stops verifying against the report served after it.
+  test("export bytes do not depend on the digests in summary_json.diff", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const app = buildTestApp(owner);
+    const { scanId, summary } = await seedScanWithFullSummaryDiff(owner);
+
+    const before = await getReport(app, scanId);
+    expect(before.status).toBe(200);
+    const beforeText = await before.text();
+    // Precondition: the digests really are in the exported diff, so the
+    // comparison below is not two empty arrays agreeing.
+    expect(beforeText).toContain(STAGED_SHA256);
+
+    // Exactly what scripts/backfill-summary-diff-digests.sql does to the row.
+    await db
+      .update(schema.scans)
+      .set({ summaryJson: { ...summary, diff: summaryDiffEntries(SEEDED_DIFF) } })
+      .where(eq(schema.scans.id, scanId));
+    const [row] = await db
+      .select({ summaryJson: schema.scans.summaryJson })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId))
+      .limit(1);
+    expect(JSON.stringify(row?.summaryJson)).not.toContain(STAGED_SHA256);
+
+    const after = await getReport(app, scanId);
+    expect(after.status).toBe(200);
+    expect(await after.text()).toBe(beforeText);
+  });
+
+  // The other half of the same contract: with no artifacts to read, the export
+  // falls back to the D1 copy. A backfilled row therefore exports a digest-free
+  // diff on that path — degraded, not wrong, and the reason the backfill only
+  // runs after the artifact-sourced export is deployed.
+  test("falls back to the summary diff when the artifacts cannot be read", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const { scanId, summary } = await seedScanWithFullSummaryDiff(owner);
+    await db
+      .update(schema.scans)
+      .set({
+        summaryJson: { ...summary, diff: summaryDiffEntries(SEEDED_DIFF) },
+        artifactManifestKey: "scans/missing/manifest.json",
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS, {
+      files: "omit",
+    });
+    expect(detail?.diff).toBeNull();
+    expect(buildReportExport(detail!).diff).toEqual(summaryDiffEntries(SEEDED_DIFF));
+  });
 });
+
+const STAGED_SHA256 = "b".repeat(64);
+
+// Production shape: `summary.diff` is the same array the artifact writer
+// receives, digests included. The seeds above deliberately diverge from it to
+// keep their assertions short; this one must not.
+const SEEDED_DIFF: DiffEntry[] = [
+  {
+    path: "index.js",
+    status: "modified",
+    previousSize: 10,
+    stagedSize: 12,
+    previousSha256: "a".repeat(64),
+    stagedSha256: STAGED_SHA256,
+    flags: [],
+  },
+  {
+    path: "package.json",
+    status: "unchanged",
+    previousSize: 20,
+    stagedSize: 20,
+    previousSha256: "c".repeat(64),
+    stagedSha256: "c".repeat(64),
+    flags: [],
+  },
+];
+
+async function seedScanWithFullSummaryDiff(owner: SeededUser) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  const stageId = `stage-${scanId.slice(-12)}`;
+  const summary = {
+    report: {
+      version: 1,
+      digest: "abc123",
+      digestAlgorithm: "sha256",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      rulesVersion: "1.8.0",
+    },
+    baseline: { kind: "registry", version: "1.0.0" },
+    diff: SEEDED_DIFF,
+  };
+  await createScanJob(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+  });
+  await persistScanWithArtifacts(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+    packageJson: { name: "@org/pkg", version: "1.1.0" },
+    risk: "medium",
+    status: "complete",
+    summary,
+    ai: null,
+    files: [
+      { path: "index.js", size: 12, sha256: STAGED_SHA256, flags: [], textSample: "console.log()" },
+      { path: "package.json", size: 20, sha256: "c".repeat(64), flags: [], textSample: "{}" },
+    ],
+    diff: SEEDED_DIFF,
+    findings: [],
+  });
+  return { scanId, summary };
+}

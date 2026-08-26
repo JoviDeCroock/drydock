@@ -35,14 +35,26 @@ export function isValidBadgeTag(tag: string): boolean {
 }
 
 export function scanDistTag(summaryJson: unknown): string | null {
-  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
-    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
-    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
-      const tag = (stagedPublish as { tag?: unknown }).tag;
-      if (typeof tag === "string" && isValidBadgeTag(tag)) return tag;
-    }
+  return normalizeDistTag(readStagedPublish(summaryJson)?.tag);
+}
+
+/**
+ * The same rule applied to an already-extracted value, for readers that pull
+ * `$.stagedPublish.tag` in SQL instead of loading the whole `summary_json`
+ * blob — the bounded feed and badge pages, where the blob is orders of
+ * magnitude larger than the two scalars they read off it.
+ */
+export function normalizeDistTag(tag: unknown): string | null {
+  return typeof tag === "string" && isValidBadgeTag(tag) ? tag : null;
+}
+
+function readStagedPublish(summaryJson: unknown): Record<string, unknown> | null {
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return null;
+  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
+    return null;
   }
-  return null;
+  return stagedPublish as Record<string, unknown>;
 }
 
 export function badgeTagMatches(scanTag: string | null, requestedTag: string): boolean {
@@ -101,25 +113,25 @@ export function purgePublicFeedCache(
   }
 }
 
-function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
-  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
-    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
-    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
-      const provenance = (stagedPublish as { provenance?: unknown }).provenance;
-      if (provenance && typeof provenance === "object" && !Array.isArray(provenance)) {
-        const ecosystem = (provenance as { ecosystem?: unknown }).ecosystem;
-        if (ecosystem === "pypi" || ecosystem === "vscode" || ecosystem === "npm") {
-          return ecosystem;
-        }
-      }
-    }
-  }
-  return null;
+function provenanceEcosystem(summaryJson: unknown): unknown {
+  const provenance = readStagedPublish(summaryJson)?.provenance;
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return undefined;
+  return (provenance as { ecosystem?: unknown }).ecosystem;
 }
 
 // Never guess an ecosystem for a gate scan with missing provenance.
 export function scanEcosystem(source: string, summaryJson: unknown): PublicEcosystem | null {
-  return provenanceEcosystem(summaryJson) ?? (source === "workflow_gate" ? null : "npm");
+  return normalizeScanEcosystem(source, provenanceEcosystem(summaryJson));
+}
+
+/**
+ * The same rule applied to an already-extracted
+ * `$.stagedPublish.provenance.ecosystem` value — see `normalizeDistTag` for
+ * why the paged readers extract in SQL rather than loading `summary_json`.
+ */
+export function normalizeScanEcosystem(source: string, ecosystem: unknown): PublicEcosystem | null {
+  if (ecosystem === "pypi" || ecosystem === "vscode" || ecosystem === "npm") return ecosystem;
+  return source === "workflow_gate" ? null : "npm";
 }
 
 type PackageIdentity = "registry-verified" | "manifest-claimed";
@@ -165,8 +177,8 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     package: row.packageName,
     version: row.stagedVersion,
     previousVersion: row.previousVersion,
-    ecosystem: scanEcosystem(row.source, row.summaryJson),
-    tag: scanDistTag(row.summaryJson),
+    ecosystem: normalizeScanEcosystem(row.source, row.provenanceEcosystem),
+    tag: normalizeDistTag(row.distTag),
     packageIdentity: scanPackageIdentity(row.source),
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,

@@ -34,6 +34,7 @@ import {
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
+  summaryDiffEntries,
   DETERMINISTIC_RULES_VERSION,
   type CodePatternSet,
   type DiffEntry,
@@ -505,7 +506,9 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
         rulesVersion: reportPayload.rulesVersion,
       },
       packageJsonDiff: diff.manifestDiff,
-      diff: diff.fileDiff,
+      // Digest-free projection: the full-fidelity diff lives in R2 (`diff.json`
+      // and inside `report.json`), which is what the report export reads.
+      diff: summaryDiffEntries(diff.fileDiff),
       risk: args.riskSummary,
       stagedPublish: findings.redactedDetails,
       baseline: facts.baseline,

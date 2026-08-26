@@ -8,7 +8,8 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
-import { publicFeedCacheKey } from "../../server/lib/public-feed";
+import { listThreatFeedScans } from "../../server/db/scan-share";
+import { buildThreatFeedEntry, publicFeedCacheKey } from "../../server/lib/public-feed";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
@@ -987,6 +988,31 @@ describe("shields badge endpoint", () => {
 });
 
 describe("public threat feed", () => {
+  // The feed and badge pages are bounded at 100 rows, and a completed scan's
+  // `summary_json` carries the whole file diff. Selecting the column to read
+  // two scalars off it cost megabytes of D1 reads per page; the projection is
+  // easy to undo by reflex, so the row shape is asserted rather than implied.
+  test("the paged read projects two scalars instead of the whole summary blob", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const db = createDb(env.DB);
+    const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "2.0.0", tag: "beta" });
+    await share(app, scanId, { threatFeed: true });
+
+    const rows = await listThreatFeedScans(db);
+    const row = rows.find((candidate) => candidate.packageName === packageName);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty("summaryJson");
+    expect(row?.distTag).toBe("beta");
+    // Staged-publish scans persist no provenance snapshot; npm by construction.
+    expect(row?.provenanceEcosystem).toBeNull();
+    expect(buildThreatFeedEntry(row!, "http://example.com")).toMatchObject({
+      ecosystem: "npm",
+      tag: "beta",
+    });
+  });
+
   test("sharing alone does not list; the feed opt-in does", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);

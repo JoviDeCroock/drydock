@@ -16,13 +16,13 @@ import {
   badgeTagMatches,
   buildUnavailableBadgePayload,
   isValidBadgeTag,
+  normalizeDistTag,
+  normalizeScanEcosystem,
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
   publicFeedCacheKey,
   publicPackageNameMax,
   resolveBadgeTag,
-  scanDistTag,
-  scanEcosystem,
   THREAT_FEED_SCHEMA,
   type PublicEcosystem,
 } from "../lib/public-feed";
@@ -176,8 +176,8 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const match = pickBadgeScan(
     rows.filter(
       (row) =>
-        scanEcosystem(row.source, row.summaryJson) === ecosystem &&
-        badgeTagMatches(scanDistTag(row.summaryJson), tag),
+        normalizeScanEcosystem(row.source, row.provenanceEcosystem) === ecosystem &&
+        badgeTagMatches(normalizeDistTag(row.distTag), tag),
     ),
   );
   return c.json(buildBadgePayload(match, tag), 200, {

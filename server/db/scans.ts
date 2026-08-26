@@ -26,7 +26,13 @@ export {
 
 export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT, listScans } from "./scan-list";
 
-export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
+export {
+  getScan,
+  getScanCompareData,
+  getScanFile,
+  getScanStatus,
+  type ScanExportDetail,
+} from "./scan-detail";
 
 export {
   recordGatePackageDecision,

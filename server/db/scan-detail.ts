@@ -12,7 +12,48 @@ import { scanEvents, scans } from "./schema";
 
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
-export async function getScan(
+/**
+ * What `omit` (the report-export mode) returns: the client-facing detail plus
+ * the artifact's full-fidelity `diff`.
+ *
+ * The split is a type-level contract, not a convenience. The export document's
+ * bytes are an attestation subject and `summary_json.diff` no longer carries
+ * the content digests, so an export built from a `samples`/`list` detail would
+ * silently fall back to the digest-free D1 copy and serialize to *different*
+ * bytes than the ones already attested. `buildReportExport` takes a
+ * `ScanExportDetail`, so that mistake is a compile error rather than an
+ * attestation that stops verifying.
+ */
+export type ScanExportDetail = NonNullable<Awaited<ReturnType<typeof readScanDetail>>>;
+
+/** What every other mode returns: the same detail without the export diff. */
+export type ScanDetailView = Omit<ScanExportDetail, "diff">;
+
+export function getScan(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket: R2Bucket | undefined,
+  options: { files: "omit" },
+): Promise<ScanExportDetail | null>;
+export function getScan(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+  options?: { files?: "samples" | "list" },
+): Promise<ScanDetailView | null>;
+export function getScan(
+  db: AppDb,
+  id: string,
+  organizationId: string,
+  artifactBucket?: R2Bucket,
+  options: { files?: ScanDetailFileMode } = {},
+): Promise<ScanExportDetail | null> {
+  return readScanDetail(db, id, organizationId, artifactBucket, options);
+}
+
+async function readScanDetail(
   db: AppDb,
   id: string,
   organizationId: string,
@@ -53,6 +94,11 @@ export async function getScan(
     scan,
     files: responseFiles,
     findings: annotatedFindings,
+    // Surfaced to `omit` callers only (see `ScanExportDetail`): the
+    // client-facing modes already carry every path's `sha256` on `files[]`, so
+    // shipping it there would be a third copy of the same array in one response
+    // body. Null on the degraded path — the export falls back to D1.
+    diff: fileMode === "omit" ? (artifactDetail?.diff ?? null) : null,
     riskSummary:
       scan.status === "complete"
         ? computeRiskSummary(

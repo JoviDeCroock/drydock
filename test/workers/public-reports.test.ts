@@ -9,6 +9,7 @@ import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
+import { summaryDiffEntries } from "../../server/lib/review";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -164,6 +165,63 @@ async function seedCompletedScan(
     report: { version: 1, digest: "abc123" },
   });
   return scanId;
+}
+
+const ATTESTED_SHA256 = "d".repeat(64);
+
+// Production shape: the same diff array reaches `summary_json` and the artifact
+// writer, digests included. `seedCompletedScan` deliberately diverges from that
+// to keep its assertions short, so the backfill test seeds its own.
+const ATTESTED_DIFF = [
+  {
+    path: "index.js",
+    status: "modified" as const,
+    previousSize: 10,
+    stagedSize: 12,
+    previousSha256: "e".repeat(64),
+    stagedSha256: ATTESTED_SHA256,
+    flags: [],
+  },
+];
+
+async function seedScanWithFullSummaryDiff(owner: SeededUser) {
+  const db = createDb(env.DB);
+  const scanId = `scan_${crypto.randomUUID()}`;
+  const stageId = `stage-${scanId.slice(-12)}`;
+  const summary = {
+    report: {
+      version: 1,
+      digest: "abc123",
+      digestAlgorithm: "sha256",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      rulesVersion: "1.8.0",
+    },
+    baseline: { kind: "registry", version: "1.0.0" },
+    diff: ATTESTED_DIFF,
+  };
+  await createScanJob(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+  });
+  await persistScanWithArtifacts(db, {
+    id: scanId,
+    stageId,
+    organizationId: owner.organizationId,
+    ownerUserId: owner.userId,
+    packageJson: { name: "@org/pkg", version: "1.1.0" },
+    risk: "medium",
+    status: "complete",
+    summary,
+    ai: null,
+    files: [
+      { path: "index.js", size: 12, sha256: ATTESTED_SHA256, flags: [], textSample: "log()" },
+    ],
+    diff: ATTESTED_DIFF,
+    findings: [],
+  });
+  return { db, scanId, summary };
 }
 
 const AI_REVIEW = {
@@ -529,6 +587,45 @@ describe("public report sharing", () => {
 });
 
 describe("public report attestations", () => {
+  // Two of the scans in production are shared and attested. Stripping the diff
+  // digests out of `summary_json` must not move the subject digest under them,
+  // or every envelope issued before the backfill stops verifying against the
+  // report the route serves after it.
+  test("the subject digest survives the summary-diff digest backfill", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const { db, scanId, summary } = await seedScanWithFullSummaryDiff(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    const signer = await signingEnv();
+
+    const subjectDigest = async () => {
+      const attRes = await request(app, `/public/reports/${share.token}/attestation`, {}, signer);
+      expect(attRes.status).toBe(200);
+      const envelope = (await attRes.json()) as { payload: string };
+      const statement = JSON.parse(
+        new TextDecoder().decode(strictBase64Decode(envelope.payload)),
+      ) as { subject: Array<{ digest: { sha256: string } }> };
+      return statement.subject[0].digest.sha256;
+    };
+
+    const beforeBytes = await (await request(app, `/public/reports/${share.token}`)).text();
+    const beforeDigest = await subjectDigest();
+    // Precondition: the digests really are in the served report, so the
+    // comparison below is not two empty diffs agreeing.
+    expect(beforeBytes).toContain(ATTESTED_SHA256);
+
+    // Exactly what scripts/backfill-summary-diff-digests.sql does to the row.
+    await db
+      .update(schema.scans)
+      .set({ summaryJson: { ...summary, diff: summaryDiffEntries(ATTESTED_DIFF) } })
+      .where(eq(schema.scans.id, scanId));
+
+    expect(await (await request(app, `/public/reports/${share.token}`)).text()).toBe(beforeBytes);
+    expect(await subjectDigest()).toBe(beforeDigest);
+  });
+
   test("attestation verifies against the served report bytes and published key", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);

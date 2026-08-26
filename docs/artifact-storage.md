@@ -28,6 +28,10 @@ A completed scan points at its artifact set through these `scans` columns:
 
 D1 keeps scan status/lifecycle fields, ownership, package/version metadata, decisions, compact list summaries (including `risk_summary_json` and the summary-embedded diff), and report digest/version — and nothing else about the scan. The per-row detail (file metadata, redacted samples, diff, deterministic findings) is read back from `files.json` / `diff.json` / `report.json`.
 
+The summary-embedded diff (`summary_json.diff`) is a **projection**, not a copy: `summaryDiffEntries` (`server/lib/review/diff.ts`) drops `previousSha256`/`stagedSha256` before persistence. The full-fidelity array is already in R2 twice — `diff.json` and the `diff` inside `report.json`, both digest-verified — and the two digests were the largest single thing in the database. Readers of `summary_json.diff` get `path`/`status`/sizes/`flags`; a file's own hash comes from its `files[]` record. Rows written before the projection landed were rewritten by `pnpm run db:backfill:summary-diff-digests:remote`.
+
+Because the export document's bytes are an attestation subject, `buildReportExport` sources the diff from the artifact (`getScan(..., { files: "omit" }).diff`) and falls back to `summary_json.diff` only when the artifacts cannot be read. That fallback is why the backfill must run _after_ the artifact-sourced export is deployed. Only the `omit` mode returns `diff`, and `buildReportExport` takes that mode's `ScanExportDetail`, so exporting from a `samples`/`list` detail — which would silently serialize the digest-free copy and break every attestation already issued — is a compile error.
+
 ## Object Layout
 
 Version 1 artifact keys are:

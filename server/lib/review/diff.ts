@@ -88,3 +88,21 @@ export function createPackageDiff(
 function bothHashesKnown(before: FileRecord, after: FileRecord): boolean {
   return before.sha256 !== "" && after.sha256 !== "";
 }
+
+/**
+ * A diff entry as `scans.summary_json` stores it: identity, status and sizes,
+ * without the two 64-char content digests.
+ *
+ * The digests are not dropped, they are de-duplicated. Every completed scan
+ * writes the full `DiffEntry[]` to R2 twice — `diff.json` and the `diff` array
+ * inside `report.json` — and both are digest-verified, so the D1 copy was a
+ * third one that nothing read: the report export sources the diff from the
+ * artifact, and the client only ever reads `path`/`status` off this array
+ * (a file's own hash comes from its file record, not from here).
+ */
+export type SummaryDiffEntry = Omit<DiffEntry, "previousSha256" | "stagedSha256">;
+
+/** Project a diff for D1 persistence. R2 keeps the full-fidelity copy. */
+export function summaryDiffEntries(diff: DiffEntry[]): SummaryDiffEntry[] {
+  return diff.map(({ previousSha256: _previous, stagedSha256: _staged, ...entry }) => entry);
+}

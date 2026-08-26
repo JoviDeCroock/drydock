@@ -311,7 +311,16 @@ export interface SharedScanRow {
   decision: string | null;
   findingCount: number | null;
   riskSummaryJson: unknown;
-  summaryJson: unknown;
+  /**
+   * `$.stagedPublish.tag` and `$.stagedPublish.provenance.ecosystem`, extracted
+   * in SQL rather than by shipping `summary_json`. These pages are bounded at
+   * 100 rows and a completed scan's summary blob carries the whole file diff,
+   * so selecting the column to read two scalars off it cost megabytes of D1
+   * reads per page. Raw here, not validated: read them through
+   * `normalizeDistTag` / `normalizeScanEcosystem`.
+   */
+  distTag: unknown;
+  provenanceEcosystem: unknown;
   publicShareToken: string | null;
   publicFeedListedAt: Date | null;
   completedAt: Date | null;
@@ -327,7 +336,8 @@ const SHARED_SCAN_COLUMNS = {
   decision: scans.decision,
   findingCount: scans.findingCount,
   riskSummaryJson: scans.riskSummaryJson,
-  summaryJson: scans.summaryJson,
+  distTag: sql`json_extract(${scans.summaryJson}, '$.stagedPublish.tag')`,
+  provenanceEcosystem: sql`json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem')`,
   publicShareToken: scans.publicShareToken,
   publicFeedListedAt: scans.publicFeedListedAt,
   completedAt: scans.completedAt,
