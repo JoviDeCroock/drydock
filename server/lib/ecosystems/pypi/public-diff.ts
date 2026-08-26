@@ -72,7 +72,9 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // every sample, and mark the records that lost one. Entries written by v5
   // carry no sample at all for a pair this large, so they must not be served
   // once the prioritized retention ships.
-  payloadVersion: "v6",
+  // v7: payloads carry the capability delta, per-side publication timestamps,
+  // and declared source binding; v6 entries would serve none of them.
+  payloadVersion: "v7",
 
   isValidPackageName: isValidPyPiProjectName,
   // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
@@ -522,20 +524,35 @@ async function acquirePublicPyPiDiff(
   const omittedKinds = new Set([...selection.omittedKinds, ...resolved.omittedKinds]);
   const notices = [...selection.notices, ...resolved.notices];
 
+  const sources = buildPublicPyPiDiffSources({
+    packageName: metadata.info?.name ?? input.packageName,
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+    from: resolved.from,
+    to: resolved.to,
+    // The synthetic release manifest must describe only the artifacts the
+    // diff actually contains, or the metadata-mismatch rules would flag the
+    // omitted artifact as missing evidence.
+    toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
+  });
+  const fromPublishedAt = releasePublishedAt(metadata, input.fromVersion);
+  const toPublishedAt = releasePublishedAt(metadata, input.toVersion);
   return {
-    ...buildPublicPyPiDiffSources({
-      packageName: metadata.info?.name ?? input.packageName,
-      fromVersion: input.fromVersion,
-      toVersion: input.toVersion,
-      from: resolved.from,
-      to: resolved.to,
-      // The synthetic release manifest must describe only the artifacts the
-      // diff actually contains, or the metadata-mismatch rules would flag the
-      // omitted artifact as missing evidence.
-      toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
-    }),
+    ...sources,
+    from: { ...sources.from, ...(fromPublishedAt ? { publishedAt: fromPublishedAt } : {}) },
+    to: { ...sources.to, ...(toPublishedAt ? { publishedAt: toPublishedAt } : {}) },
     ...(notices.length ? { notices } : {}),
   };
+}
+
+// A PyPI release has per-file upload times rather than one publication time;
+// the newest upload is the moment the release reached its current artifact
+// set, matching the /versions listing's ordering timestamp.
+function releasePublishedAt(metadata: PyPiProjectMetadata, version: string): string | undefined {
+  const files = metadata.releases?.[version];
+  if (!Array.isArray(files)) return undefined;
+  const uploadedAt = newestUploadTimestamp(files);
+  return uploadedAt > 0 ? new Date(uploadedAt).toISOString() : undefined;
 }
 
 // Pure resolution of per-artifact download outcomes into a servable pair,

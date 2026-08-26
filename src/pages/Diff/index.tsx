@@ -46,6 +46,7 @@ import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
+import { CapabilitiesSection } from "../../features/review/CapabilitiesSection";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import type { FindingWithDiffStatus } from "../../features/review/types";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -466,6 +467,8 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           {diff.provenance?.length || diff.attestation ? (
             <TrustEvidence provenance={diff.provenance ?? []} attestation={diff.attestation} />
           ) : null}
+
+          {diff.capabilities ? <CapabilitiesSection delta={diff.capabilities} /> : null}
           <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
             <Card as="aside" class="p-5 flex flex-col gap-3 lg:max-h-[720px] overflow-hidden">
               <SectionLabel as="h2">Release tree</SectionLabel>
