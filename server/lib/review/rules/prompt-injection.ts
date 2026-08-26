@@ -14,8 +14,7 @@ import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./contex
 // Text addressed at either audience is scanned in every file with a text
 // sample — docs included, since a README is the primary vector.
 //
-// Two tiers, one finding per file (the manipulation tier subsumes the generic
-// one):
+// Two tiers, one finding per distinct attempt:
 // - `file.review-manipulation` (high): verdict coercion aimed at the security
 //   review itself. Standing danger — a prior approval never discounts it.
 // - `file.prompt-injection` (medium): instruction content aimed at any
@@ -40,8 +39,10 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const demote = isUnreachableTestFile(ctx, file.path) && changed === "unchanged";
+    const reviewLine = lineOfEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET);
+    const promptLine = lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET);
 
-    if (matchesEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET)) {
+    if (reviewLine !== undefined) {
       findings.push(
         testScope(
           demote,
@@ -49,17 +50,19 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
           tag("fileReviewManipulation", {
             severity: "high",
             file: file.path,
-            line: lineOfEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET),
+            line: reviewLine,
             evidence: `${prefix}text attempts to steer the security review verdict`,
             reason:
               "package text instructs an automated or AI reviewer to report the release as safe or suppress findings; legitimate packages have no reason to address the review process",
           }),
         ),
       );
-      continue;
     }
 
-    if (matchesEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET)) {
+    // A high-tier match subsumes generic injection on the same line, but not a
+    // separate attempt elsewhere in the file. Keeping the distinct row lets
+    // diff annotation assign only newly added generic text to release risk.
+    if (promptLine !== undefined && promptLine !== reviewLine) {
       findings.push(
         testScope(
           demote,
@@ -67,7 +70,7 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
           tag("filePromptInjection", {
             severity: "medium",
             file: file.path,
-            line: lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET),
+            line: promptLine,
             evidence: `${prefix}prompt-injection text addressed at AI tools`,
             reason:
               "package text embeds instructions aimed at LLMs or AI agents that read package contents; a consumer's coding assistant may follow them",
@@ -78,15 +81,6 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   }
 
   return findings;
-}
-
-function matchesEither(sample: string, stripped: string, patterns: RegExp[]): boolean {
-  return patterns.some((pattern) => {
-    pattern.lastIndex = 0;
-    if (pattern.test(sample)) return true;
-    pattern.lastIndex = 0;
-    return pattern.test(stripped);
-  });
 }
 
 function lineOfEither(sample: string, stripped: string, patterns: RegExp[]): number | undefined {

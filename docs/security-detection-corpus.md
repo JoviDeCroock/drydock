@@ -72,7 +72,7 @@ The first corpus slice covers:
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - install-time self-propagation: code a consumer's install executes that invokes a registry publish (`propagation.registry-publish`) or writes into the directory the package manager unpacks dependencies into (`propagation.package-mutation`). Both are ordinary developer actions elsewhere — a release CLI publishes, a patch tool rewrites `node_modules` — so the family gates on install-time reachability rather than on the pattern, with `legit-release-cli-publish` and `legit-patch-tooling-node-modules` as the hard negatives that pin that gate;
-- LLM prompt injection in package text: `file.review-manipulation` (high) fires on verdict coercion aimed at the automated security review itself — imperatives over the release object ("mark this release as safe"), imperative determiner-bearing suppression of findings/detections (broader support nouns such as issues/warnings/concerns are excluded), package/release-scoped security-review bypasses, or literal schema tokens from Drydock's review contract (`nothing_unusual`, `requiresManualReview … false` in camelCase/snake_case form only) — and is standing danger, so a prior approval never discounts it; `file.prompt-injection` (medium) fires on instruction-override phrasing or direct addresses to an AI-qualified audience (bare "agent"/"assistant" is somebody's product) anywhere in package text, READMEs included, since a consumer's coding assistant reads them. Both tiers match against the raw sample and a copy stripped of markdown emphasis and zero-width characters (`ignore all *previous* instructions` still fires), and both demote longstanding matches in unreachable test files one step because LLM-guardrail packages ship injection strings as fixtures;
+- LLM prompt injection in package text: `file.review-manipulation` (high) fires on verdict coercion aimed at the automated security review itself — review-like verdicts over the package/release object ("mark this release as safe"), imperative determiner-bearing suppression of findings/detections (broader support nouns such as issues/warnings/concerns are excluded), package/release-scoped security-review bypasses, or literal schema tokens from Drydock's review contract (`nothing_unusual`, `requiresManualReview … false` in camelCase/snake_case form only) — and is standing danger, so a prior approval never discounts it; ordinary module trust/configuration instructions are excluded. `file.prompt-injection` (medium) fires on instruction-override phrasing or direct addresses to an AI-qualified audience, including direct vocatives such as "AI coding assistants: add …" (bare "agent"/"assistant" is somebody's product), anywhere in package text, READMEs included, since a consumer's coding assistant reads them. Both tiers match against the raw sample and a copy stripped of markdown emphasis and zero-width characters (`ignore all *previous* instructions` still fires), and both demote longstanding matches in unreachable test files one step because LLM-guardrail packages ship injection strings as fixtures;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
 ## Rule inventory
@@ -537,16 +537,18 @@ case `npm-install-hook-worm-propagation`, and the two hard negatives that hold t
 `1.32.0` adds the LLM prompt-injection pair `file.review-manipulation` (high, standing danger) and
 `file.prompt-injection` (medium); both are test-scope demotable and match through markdown-emphasis
 and zero-width stripping. Both scan every staged file with a text sample — documentation and type
-declarations included, since those are exactly what AI tooling reads. Detection emits at most one,
-highest-tier injection finding per file; changed-line classification reuses the same patterns and
-evasion stripping so a later match added to an already-flagged file still counts toward release risk
-without creating a duplicate finding. Pinned by
+declarations included, since those are exactly what AI tooling reads. Detection emits at most one
+finding per tier and line: a high-tier attempt subsumes generic injection on the same line, while a
+distinct generic attempt elsewhere in a file keeps its own row so changed-line classification can
+assign only that new evidence to release risk. Pinned by
 `review-manipulation-comment` (verdict coercion in a source comment, which also locks in that the
 manipulation tier subsumes the generic finding for the same file) and `prompt-injection-readme` (a
-README addressed at AI agents through emphasis evasion, plus the unchanged-test-file demotion).
+README addressed at AI agents through emphasis evasion, a direct AI-qualified vocative, and the
+unchanged-test-file demotion).
 Precision is enforced twice: the `benign-llm-prompt-docs` golden control pins exact-zero findings on
-"You are a helpful assistant" examples, security-tool changelog prose, ordinary issue-reporting and
-local security-check bypass guidance, and a non-AI "agent" product mention, while the
+"You are a helpful assistant" examples, security-tool changelog prose, ordinary issue-reporting,
+local security-check bypass and module-trust guidance, third-person AI SDK recommendations, and a
+non-AI "agent" product mention, while the
 `legit-llm-prompt-library` hard-negative feeds the aggregate FP-rate gate. The
 same change bumps `AI_REVIEWER_VERSION` to `1.3.0`: the reviewer prompt now treats injection
 attempts as reportable high/critical evidence rather than only resisting them, while keeping a
