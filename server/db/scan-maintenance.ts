@@ -5,7 +5,6 @@ import { githubWorkflowGates, scans } from "./schema";
 export const SCAN_MAINTENANCE_LEASE_MS = 60 * 60 * 1000;
 
 export const SCAN_MAINTENANCE_KINDS = {
-  artifactBackfill: "artifact-backfill",
   retention: "retention",
   retentionArtifactsRemoved: "retention-artifacts-removed",
 } as const;
@@ -24,50 +23,6 @@ interface ScanMaintenanceClaimInput {
   token: string;
   claimedAt: Date;
   staleBefore: Date;
-}
-
-/**
- * Claim an unbackfilled scan before writing its deterministic R2 prefix.
- *
- * Backfill can recover only its own stale work. A stale retention state still
- * belongs to destructive teardown, especially when its kind says evidence has
- * already been removed, so backfill must never overwrite it.
- */
-export async function claimScanForArtifactBackfill(
-  db: AppDb,
-  input: ScanMaintenanceClaimInput,
-): Promise<ClaimedScanMaintenance | null> {
-  const claimed = await db
-    .update(scans)
-    .set({
-      maintenanceKind: SCAN_MAINTENANCE_KINDS.artifactBackfill,
-      maintenanceToken: input.token,
-      maintenanceClaimedAt: input.claimedAt,
-    })
-    .where(
-      and(
-        eq(scans.id, input.scanId),
-        eq(scans.organizationId, input.organizationId),
-        eq(scans.status, "complete"),
-        isNull(scans.artifactStorageVersion),
-        or(
-          and(isNull(scans.maintenanceKind), isNull(scans.maintenanceToken)),
-          and(
-            eq(scans.maintenanceKind, SCAN_MAINTENANCE_KINDS.artifactBackfill),
-            or(
-              isNull(scans.maintenanceClaimedAt),
-              lt(scans.maintenanceClaimedAt, input.staleBefore),
-            ),
-          ),
-        ),
-      ),
-    )
-    .returning({
-      artifactStorageVersion: scans.artifactStorageVersion,
-      kind: scans.maintenanceKind,
-      token: scans.maintenanceToken,
-    });
-  return normalizeScanMaintenanceClaim(claimed[0]);
 }
 
 /**
@@ -166,73 +121,6 @@ export async function markScanRetentionArtifactsRemoved(
     .where(ownedScanMaintenance(input))
     .returning({ id: scans.id });
   return updated.length > 0;
-}
-
-export interface BackfilledArtifactMetadata {
-  artifactStorageVersion: number;
-  artifactManifestKey: string;
-  artifactManifestDigest: string;
-  artifactManifestSize: number;
-  reportArtifactKey: string;
-  fileSamplesArtifactKey: string;
-  diffArtifactKey: string;
-}
-
-/** Install verified artifact pointers and release the backfill lease atomically. */
-export async function completeScanArtifactBackfill(
-  db: AppDb,
-  input: {
-    scanId: string;
-    organizationId: string;
-    token: string;
-    metadata: BackfilledArtifactMetadata;
-  },
-): Promise<boolean> {
-  const updated = await db
-    .update(scans)
-    .set({
-      ...input.metadata,
-      maintenanceKind: null,
-      maintenanceToken: null,
-      maintenanceClaimedAt: null,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        ownedScanMaintenance(input),
-        eq(scans.status, "complete"),
-        isNull(scans.artifactStorageVersion),
-        eq(scans.maintenanceKind, SCAN_MAINTENANCE_KINDS.artifactBackfill),
-      ),
-    )
-    .returning({ id: scans.id });
-  return updated.length > 0;
-}
-
-/**
- * Whether this backfill still owns the uninstalled deterministic R2 prefix.
- * A deleted row has no successor owner, so its now-unreachable prefix is safe to
- * sweep; an installed row or changed token must be left to the winner.
- */
-export async function ownsUninstalledBackfillPrefix(
-  db: AppDb,
-  input: { scanId: string; organizationId: string; token: string },
-): Promise<boolean> {
-  const [current] = await db
-    .select({
-      artifactStorageVersion: scans.artifactStorageVersion,
-      kind: scans.maintenanceKind,
-      token: scans.maintenanceToken,
-    })
-    .from(scans)
-    .where(and(eq(scans.id, input.scanId), eq(scans.organizationId, input.organizationId)))
-    .limit(1);
-  if (!current) return true;
-  return (
-    current.artifactStorageVersion === null &&
-    current.kind === SCAN_MAINTENANCE_KINDS.artifactBackfill &&
-    current.token === input.token
-  );
 }
 
 function ownedScanMaintenance(input: { scanId: string; organizationId: string; token: string }) {

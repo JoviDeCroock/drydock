@@ -204,6 +204,13 @@
       "when": 1787725506345,
       "tag": "0028_deep_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1787728543851,
+      "tag": "0029_deep_shiver_man",
+      "breakpoints": true
     }
   ]
 }

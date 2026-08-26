@@ -51,7 +51,7 @@ import {
 } from "./artifacts";
 import { sha256Hex } from "../platform/crypto-utils";
 import { stableJson } from "../platform/stable-json";
-import { compactSummaryDiff, fullSummaryDiff } from "./summary-diff";
+import { compactSummaryDiff } from "./summary-diff";
 import type { ScanResult } from "../../types";
 
 export interface PipelineIdentity {
@@ -314,8 +314,8 @@ export interface MergedAiFindings {
 }
 
 // Pure: project a completed AI review's findings into the same Finding shape
-// deterministic rules emit, so they persist as `scan_findings` rows (source
-// "ai"), count into `finding_count` / the risk breakdown, and carry diff
+// deterministic rules emit, so they persist in the canonical R2 report with
+// source "ai", count into `finding_count` / the risk breakdown, and carry diff
 // annotations. Additive only — deterministic findings are never replaced or
 // re-scored by this phase, and a review that did not complete contributes
 // nothing (its fail-safe risk handling lives in computeScanRisk).
@@ -490,12 +490,9 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
 
   // R2 holds the authoritative diff (`diff.json`, plus the copy inside the
   // digested `report.json`), so the D1 row keeps a compact release-delta view
-  // sized for list pages and the documented R2-fallback read. The degraded path
-  // keeps the full embed: D1 is then the only copy, and the artifact backfill
-  // rebuilds a digest-identical report from it. See lib/scan/summary-diff.ts.
-  const summaryDiff = artifacts
-    ? compactSummaryDiff(diff.fileDiff)
-    : fullSummaryDiff(diff.fileDiff);
+  // sized for list pages and the documented R2-fallback read. Completed scans
+  // require R2, so there is no D1-only body path to preserve here.
+  const summaryDiff = compactSummaryDiff(diff.fileDiff);
 
   const persisted = await persistScan(db, {
     id: identity.scanId,

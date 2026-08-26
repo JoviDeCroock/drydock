@@ -67,7 +67,7 @@ const AI_FINDING: Finding = {
 
 async function seedApprovedScan(
   owner: SeededUser,
-  options: { findings: Finding[]; aiFindingRecords?: Finding[]; artifactBacked?: boolean },
+  options: { findings: Finding[]; aiFindingRecords?: Finding[] },
 ) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
@@ -84,18 +84,15 @@ async function seedApprovedScan(
     })),
   });
   const reportDigest = await sha256Hex(reportJson);
-  const artifacts =
-    options.artifactBacked === false
-      ? null
-      : await writeScanArtifacts(env.ARTIFACTS, {
-          organizationId: owner.organizationId,
-          scanId,
-          reportJson,
-          reportDigest,
-          files,
-          diff,
-          generatedAt: "2026-07-20T00:00:00.000Z",
-        });
+  const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
+    organizationId: owner.organizationId,
+    scanId,
+    reportJson,
+    reportDigest,
+    files,
+    diff,
+    generatedAt: "2026-07-20T00:00:00.000Z",
+  });
   await createScanJob(db, {
     id: scanId,
     stageId,
@@ -117,7 +114,7 @@ async function seedApprovedScan(
     findings: options.findings,
     ...(options.aiFindingRecords ? { aiFindingRecords: options.aiFindingRecords } : {}),
     report: { version: 1, digest: reportDigest },
-    ...(artifacts ? { artifacts } : {}),
+    artifacts,
   });
   await recordScanDecision(db, {
     scanId,
@@ -237,23 +234,6 @@ describe("release-memory finding profile column", () => {
     // artifact-backed prior with no readable report reports nothing rather than a
     // fabricated empty profile.
     expect(await lookup(db, owner)).toBeNull();
-  });
-
-  test("legacy degraded rows still fall back to the D1 finding rows", async () => {
-    const owner = await seedUser();
-    const { db, scanId } = await seedApprovedScan(owner, {
-      findings: [finding("code.network-access", "index.js", "medium")],
-      artifactBacked: false,
-    });
-    await db
-      .update(schema.scans)
-      .set({ findingProfileJson: null })
-      .where(eq(schema.scans.id, scanId));
-
-    const prior = await lookup(db, owner);
-    expect(prior?.findings).toEqual([
-      { ruleId: "code.network-access", severity: "medium", file: "index.js" },
-    ]);
   });
 
   test("an oversized profile is not stored, and the artifact path serves it", async () => {

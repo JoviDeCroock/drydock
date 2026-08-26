@@ -750,33 +750,6 @@ describe("persistResults", () => {
     expect(persistArg.riskSummary.artifactRisk).toBe("critical");
   });
 
-  test("embeds the FULL diff in summary_json on the degraded (no-R2) path", async () => {
-    const adapter = makeAdapter();
-    const diff = computeDiff(resolved);
-    const findings = runDeterministicFindings(adapter, resolved, diff);
-
-    await persistResults({
-      db: {},
-      session: { userId: "user-1" },
-      adapter,
-      identity: { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" },
-      facts: summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, resolved),
-      diff,
-      findings,
-      aiFindings: disabledAi,
-      riskSummary: scoreRisk(findings.annotatedFindings, disabledAi),
-      releaseConsistency: noneConsistency,
-      intentEnvelope: absentIntentEnvelope,
-    });
-
-    const persistArg = dbMock.persistScan.mock.calls[0][1];
-    // D1 is the only copy here, and the artifact backfill reconstructs a
-    // digest-identical report.json from this embed, so it must stay complete.
-    expect(persistArg.summary.diff).toEqual(diff.fileDiff);
-    expect(persistArg.summary.diffStats).toMatchObject({ compacted: false, totalCount: 3 });
-    expect(persistArg.artifacts).toBeNull();
-  });
-
   test("compacts the summary diff once R2 holds the authoritative copy", async () => {
     const adapter = makeAdapter();
     const diff = computeDiff(resolved);

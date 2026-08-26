@@ -4,11 +4,8 @@ import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
-  claimScanForArtifactBackfill,
   claimScanForRetention,
-  completeScanArtifactBackfill,
   markScanRetentionArtifactsRemoved,
-  releaseScanMaintenanceClaim,
   SCAN_MAINTENANCE_KINDS,
   SCAN_MAINTENANCE_LEASE_MS,
 } from "../../server/db/scan-maintenance";
@@ -48,28 +45,7 @@ function claimInput(scan: { organizationId: string; scanId: string }, token: str
   };
 }
 
-describe("scan maintenance claims", () => {
-  test("serializes backfills and releases only the current owner", async () => {
-    const scan = await seedCompleteScan();
-    const now = new Date();
-
-    await expect(
-      claimScanForArtifactBackfill(scan.db, claimInput(scan, "backfill-one", now)),
-    ).resolves.toMatchObject({
-      kind: SCAN_MAINTENANCE_KINDS.artifactBackfill,
-      token: "backfill-one",
-    });
-    await expect(
-      claimScanForArtifactBackfill(scan.db, claimInput(scan, "backfill-two", now)),
-    ).resolves.toBeNull();
-    await expect(
-      releaseScanMaintenanceClaim(scan.db, { ...scan, token: "backfill-two" }),
-    ).resolves.toBe(false);
-    await expect(
-      releaseScanMaintenanceClaim(scan.db, { ...scan, token: "backfill-one" }),
-    ).resolves.toBe(true);
-  });
-
+describe("scan retention maintenance claims", () => {
   test("keeps the artifacts-removed state across retention ownership rotation", async () => {
     const scan = await seedCompleteScan();
     const firstNow = new Date();
@@ -85,47 +61,6 @@ describe("scan maintenance claims", () => {
     ).resolves.toMatchObject({
       kind: SCAN_MAINTENANCE_KINDS.retentionArtifactsRemoved,
       token: "retention-two",
-    });
-    await expect(
-      claimScanForArtifactBackfill(scan.db, claimInput(scan, "backfill", retryNow)),
-    ).resolves.toBeNull();
-  });
-
-  test("installs backfill metadata and clears maintenance state atomically", async () => {
-    const scan = await seedCompleteScan();
-    const now = new Date();
-    await claimScanForArtifactBackfill(scan.db, claimInput(scan, "backfill", now));
-
-    await expect(
-      completeScanArtifactBackfill(scan.db, {
-        ...scan,
-        token: "backfill",
-        metadata: {
-          artifactStorageVersion: 1,
-          artifactManifestKey: "manifest",
-          artifactManifestDigest: "a".repeat(64),
-          artifactManifestSize: 100,
-          reportArtifactKey: "report",
-          fileSamplesArtifactKey: "files",
-          diffArtifactKey: "diff",
-        },
-      }),
-    ).resolves.toBe(true);
-
-    const [row] = await scan.db
-      .select({
-        artifactStorageVersion: scans.artifactStorageVersion,
-        maintenanceKind: scans.maintenanceKind,
-        maintenanceToken: scans.maintenanceToken,
-        maintenanceClaimedAt: scans.maintenanceClaimedAt,
-      })
-      .from(scans)
-      .where(eq(scans.id, scan.scanId));
-    expect(row).toEqual({
-      artifactStorageVersion: 1,
-      maintenanceKind: null,
-      maintenanceToken: null,
-      maintenanceClaimedAt: null,
     });
   });
 });

@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 
 const {
   compactSummaryDiff,
-  fullSummaryDiff,
   normalizeSummaryDiffStats,
   summaryDiffStatusCounts,
   SUMMARY_DIFF_MAX_ENTRIES,
@@ -96,7 +95,7 @@ describe("compactSummaryDiff", () => {
   });
 
   test("is materially smaller than the full embed", () => {
-    const full = JSON.stringify(fullSummaryDiff(diff).diff);
+    const full = JSON.stringify(diff);
     const compact = JSON.stringify(compactSummaryDiff(diff).diff);
     expect(compact.length).toBeLessThan(full.length / 2);
   });
@@ -106,24 +105,6 @@ describe("compactSummaryDiff", () => {
     expect(compacted.diff).toEqual([]);
     expect(compacted.diffStats.counts.unchanged).toBe(2);
     expect(compacted.diffStats.changedCount).toBe(0);
-  });
-});
-
-describe("fullSummaryDiff", () => {
-  test("keeps every entry verbatim for the degraded (no-R2) path", () => {
-    const full = fullSummaryDiff(diff);
-    expect(full.diff).toEqual(diff);
-    expect(full.diffStats.compacted).toBe(false);
-    expect(full.diffStats.totalCount).toBe(5);
-    expect(full.diffStats.changedCount).toBe(3);
-    expect(full.diffStats.omittedChangedCount).toBe(0);
-  });
-
-  test("does not alias the caller's array", () => {
-    const source = [entry("a", "added")];
-    const full = fullSummaryDiff(source);
-    source.push(entry("b", "added"));
-    expect(full.diff).toHaveLength(1);
   });
 });
 

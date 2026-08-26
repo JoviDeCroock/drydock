@@ -66,7 +66,7 @@ Any mismatch, missing object, invalid payload, or R2 read failure logs `scan.art
 
 Release memory normally reads the cached deterministic finding profile from the scan row. Legacy rows fall back to the same verified R2 report path; an unreadable report yields **no profile** rather than an empty one, so a transient R2 failure cannot make a routine release read as `diverged`.
 
-When the artifact read succeeds, the scan-detail response also carries the R2-sourced diff as its own `diff` field. That is the complete file diff (from `report.json` / `diff.json`); readers prefer it and fall back to the summary embed, which is the whole diff on legacy/degraded rows and the compacted release delta on artifact-backed ones.
+When the artifact read succeeds, the scan-detail response also carries the R2-sourced diff as its own `diff` field. That is the complete file diff (from `report.json` / `diff.json`); readers prefer it and fall back to the summary embed, which is the whole diff on pre-compaction rows and the compacted release delta on current rows.
 
 The [report export](./public-reports.md) follows the same preference and discloses which copy it got: its additive `diffStats` object carries `complete` (false only when an artifact-backed scan fell back to the compacted embed) alongside `entryCount` and the `totalCount` / `changedCount` / per-status `counts` of the **complete** diff. The export is the attested subject, so a truncated diff has to say so inside the signed bytes rather than read as the release's whole file list.
 

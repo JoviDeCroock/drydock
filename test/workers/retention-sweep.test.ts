@@ -23,7 +23,7 @@ import {
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
 import { stableJson } from "../../server/lib/platform/stable-json";
-import type { DiffEntry, FileRecord, Finding } from "../../server/lib/review";
+import type { DiffEntry, FileRecord } from "../../server/lib/review";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRACE_MS = AUTH_ROW_RETENTION_GRACE_MS;
@@ -59,12 +59,11 @@ async function seedUser() {
 async function seedAgedScan(
   owner: { db: ReturnType<typeof createDb>; userId: string; organizationId: string },
   ageDays: number,
-  options: { artifactBacked?: boolean; findings?: Finding[] } = {},
 ) {
   const { db } = owner;
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${scanId.slice(-12)}`;
-  const findings = options.findings ?? [];
+  const findings = [];
   const reportJson = stableJson({
     version: 1,
     diff,
@@ -72,18 +71,15 @@ async function seedAgedScan(
     findingAnnotations: [],
   });
   const reportDigest = await sha256Hex(reportJson);
-  const artifacts =
-    options.artifactBacked === false
-      ? null
-      : await writeScanArtifacts(env.ARTIFACTS, {
-          organizationId: owner.organizationId,
-          scanId,
-          reportJson,
-          reportDigest,
-          files,
-          diff,
-          generatedAt: "2026-01-01T00:00:00.000Z",
-        });
+  const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
+    organizationId: owner.organizationId,
+    scanId,
+    reportJson,
+    reportDigest,
+    files,
+    diff,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
   await createScanJob(db, {
     id: scanId,
     stageId,
@@ -104,7 +100,7 @@ async function seedAgedScan(
     diff,
     findings,
     report: { version: 1, digest: reportDigest },
-    ...(artifacts ? { artifacts } : {}),
+    artifacts,
   });
   await db.insert(schema.scanEvents).values({
     id: `evt_${crypto.randomUUID()}`,
@@ -367,7 +363,7 @@ describe("scan retention", () => {
     expect(await scanKeys(owner.organizationId, scanId)).toHaveLength(4);
   });
 
-  test("deletes aged scans, their D1 children, and their R2 prefix when enabled", async () => {
+  test("deletes aged scans and their R2 prefix when enabled", async () => {
     const owner = await seedUser();
     const doomed = await seedAgedScan(owner, 400);
     const kept = await seedAgedScan(owner, 10);
@@ -382,10 +378,7 @@ describe("scan retention", () => {
 
     const remaining = await owner.db.select({ id: schema.scans.id }).from(schema.scans);
     expect(remaining.map((row) => row.id)).toEqual([kept]);
-    // Children go with the parent, evidence first.
-    expect(await countRows("scan_files")).toBe(0);
-    expect(await countRows("scan_findings")).toBe(0);
-    // And no redacted evidence outlives the metadata that pointed at it.
+    // No redacted evidence outlives the metadata that pointed at it.
     expect(await scanKeys(owner.organizationId, doomed)).toEqual([]);
     expect(await scanKeys(owner.organizationId, kept)).toHaveLength(4);
   });
@@ -509,21 +502,9 @@ describe("scan retention", () => {
     ).resolves.toMatchObject({ scans: { deleted: 1 } });
   });
 
-  test("rolls back D1 detail and audit mutations when the parent delete fails", async () => {
+  test("rolls back audit mutations when the parent delete fails", async () => {
     const owner = await seedUser();
-    const retainedFinding: Finding = {
-      severity: "medium",
-      file: "index.js",
-      evidence: "fetch('https://example.com')",
-      reason: "network access",
-      line: 1,
-      ruleId: "code.network-access",
-      ruleVersion: "1.8.0",
-    };
-    const scanId = await seedAgedScan(owner, 400, {
-      artifactBacked: false,
-      findings: [retainedFinding],
-    });
+    const scanId = await seedAgedScan(owner, 400);
     // Fail the final statement from inside a real D1 batch. The trigger makes the
     // parent DELETE abort after the preceding child/event statements have run, so
     // this only preserves them when D1 rolls the whole batch back atomically.
@@ -549,15 +530,6 @@ describe("scan retention", () => {
     expect(result.scans).toMatchObject({ deleted: 0, deferred: 1 });
     expect(
       await owner.db.select().from(schema.scans).where(eq(schema.scans.id, scanId)),
-    ).toHaveLength(1);
-    expect(
-      await owner.db.select().from(schema.scanFiles).where(eq(schema.scanFiles.scanId, scanId)),
-    ).toHaveLength(1);
-    expect(
-      await owner.db
-        .select()
-        .from(schema.scanFindings)
-        .where(eq(schema.scanFindings.scanId, scanId)),
     ).toHaveLength(1);
     const events = await owner.db
       .select()

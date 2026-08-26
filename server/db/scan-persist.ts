@@ -48,9 +48,9 @@ export interface PersistedScanInput {
   findings: Finding[];
   /**
    * Findings a completed AI review contributed, already projected into the
-   * deterministic Finding shape (see mergeAiFindings). Persisted as
-   * `scan_findings` rows with source "ai" so they count into `finding_count`
-   * and the risk summary; the full review stays in `ai_json`.
+   * deterministic Finding shape (see mergeAiFindings). Persisted in the
+   * canonical R2 report with source "ai" so they count into `finding_count` and
+   * the risk summary; the full review stays in `ai_json`.
    */
   aiFindingRecords?: Finding[];
   codePatternSet?: CodePatternSet;

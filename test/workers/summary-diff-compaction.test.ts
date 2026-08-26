@@ -7,7 +7,7 @@ import { createScanJob, getScan, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { buildReportExport } from "../../server/lib/scan/report-export";
-import { compactSummaryDiff, fullSummaryDiff } from "../../server/lib/scan/summary-diff";
+import { compactSummaryDiff } from "../../server/lib/scan/summary-diff";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
 import { stableJson } from "../../server/lib/platform/stable-json";
 import type { DiffEntry, FileRecord, Finding } from "../../server/lib/review";
@@ -143,7 +143,7 @@ async function seedCompactedScan(owner: SeededUser) {
   return { db, scanId };
 }
 
-/** Seed a pre-compaction row: the whole diff embedded, no diffStats, D1 detail. */
+/** Seed a pre-compaction metadata row: the whole diff embedded, no diffStats. */
 async function seedLegacyShapeScan(owner: SeededUser) {
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
@@ -154,27 +154,26 @@ async function seedLegacyShapeScan(owner: SeededUser) {
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
   });
-  await persistScan(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    packageJson: { name: "pkg", version: "1.1.0" },
-    risk: "medium",
-    status: "complete",
-    // The historical shape: `diff` is the complete array and there is no
-    // `diffStats` sibling at all.
-    summary: {
-      ...reportSummary,
-      report: { ...reportSummary.report, digest: "old" },
-      diff: fileDiff,
-    },
-    ai: null,
-    files,
-    diff: fileDiff,
-    findings: [ruleFinding],
-    report: { version: 1, digest: `digest-${scanId}` },
-  });
+  await db
+    .update(schema.scans)
+    .set({
+      packageName: "pkg",
+      stagedVersion: "1.1.0",
+      risk: "medium",
+      status: "complete",
+      // The historical shape: `diff` is the complete array and there is no
+      // `diffStats` sibling at all.
+      summaryJson: {
+        ...reportSummary,
+        report: { ...reportSummary.report, digest: "old" },
+        diff: fileDiff,
+      },
+      reportVersion: 1,
+      reportDigest: `digest-${scanId}`,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.scans.id, scanId));
   return { db, scanId };
 }
 
@@ -213,26 +212,10 @@ describe("summary_json diff compaction", () => {
     const { db, scanId } = await seedCompactedScan(owner);
 
     const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
-    // The annotations are keyed by scan_findings.id, and those rows are never
-    // written for an artifact-backed scan — they would match nothing. The read
-    // path re-derives them from report.json by index instead.
+    // The R2 report is the canonical annotation source; D1 stores only metadata.
     expect(row.summaryJson).not.toHaveProperty("findingAnnotations");
     const detail = await getScan(db, scanId, owner.organizationId, env.ARTIFACTS);
     expect(detail!.findings[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
-  });
-
-  test("the degraded path still embeds annotations, because its reader joins on them", async () => {
-    const owner = await seedUser();
-    const { db, scanId } = await seedLegacyShapeScan(owner);
-
-    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
-    const annotations = (row.summaryJson as { findingAnnotations: Array<{ id: string }> })
-      .findingAnnotations;
-    const findingRows = await db
-      .select()
-      .from(schema.scanFindings)
-      .where(eq(schema.scanFindings.scanId, scanId));
-    expect(annotations.map((annotation) => annotation.id)).toEqual([findingRows[0].id]);
   });
 
   test("the R2-fallback read still renders a diff from the compacted embed", async () => {
@@ -278,7 +261,7 @@ describe("summary_json diff compaction", () => {
     });
   });
 
-  test("old-shape rows keep parsing: the full embed is read, annotated, and exported", async () => {
+  test("old-shape metadata rows keep exporting their full embedded diff", async () => {
     const owner = await seedUser();
     const { db, scanId } = await seedLegacyShapeScan(owner);
 
@@ -297,19 +280,7 @@ describe("summary_json diff compaction", () => {
       changedCount: 1,
       counts: { added: 0, removed: 0, modified: 1, unchanged: 2 },
     });
-    expect(detail!.findings[0]).toMatchObject({ diffStatus: "modified", releaseDelta: true });
-    expect(detail!.files.map((file) => file.path).sort()).toEqual([
-      "LICENSE",
-      "README.md",
-      "index.js",
-    ]);
-  });
-
-  test("fullSummaryDiff is what a degraded row embeds, byte-for-byte", async () => {
-    const owner = await seedUser();
-    const { db, scanId } = await seedLegacyShapeScan(owner);
-    const [row] = await db.select().from(schema.scans).where(eq(schema.scans.id, scanId));
-    const summary = row.summaryJson as { diff: DiffEntry[] };
-    expect(summary.diff).toEqual(fullSummaryDiff(fileDiff).diff);
+    expect(detail!.findings).toEqual([]);
+    expect(detail!.files).toEqual([]);
   });
 });

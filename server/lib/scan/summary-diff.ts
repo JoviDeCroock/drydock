@@ -12,13 +12,7 @@
 // last-resort copy when an R2 read fails closed. So it is compacted rather than
 // dropped: keep the release delta (added/removed/modified) plus aggregate
 // per-status counts, drop the unchanged entries and the two redundant sha256
-// digests (which no reader consumes and which files.json / scan_files already
-// hold).
-//
-// The degraded path (no ARTIFACTS binding) keeps the FULL embed: D1 is then the
-// only copy, and the artifact backfill reconstructs a digest-identical
-// `report.json` from it — a compacted embed would make those rows permanently
-// un-backfillable. See docs/artifact-storage.md.
+// digests (which no reader consumes and which files.json already holds).
 
 import type { DiffEntry } from "../review";
 
@@ -96,25 +90,6 @@ export function compactSummaryDiff(
 }
 
 /**
- * The full embed, for the degraded (no-R2) path where D1 is the only copy.
- * Carries stats too so every completed scan describes its own diff the same way.
- */
-export function fullSummaryDiff(diff: readonly DiffEntry[]): SummaryDiff {
-  const counts = summaryDiffStatusCounts(diff);
-  return {
-    diff: [...diff],
-    diffStats: {
-      version: SUMMARY_DIFF_STATS_VERSION,
-      compacted: false,
-      counts,
-      totalCount: diff.length,
-      changedCount: counts.added + counts.removed + counts.modified,
-      omittedChangedCount: 0,
-    },
-  };
-}
-
-/**
  * Tolerant reader for the persisted `summary.diffStats` blob. Rows written
  * before compaction have no such field and every reader must treat that as "the
  * embed is whatever it is" rather than break, so anything unusable reads null.
@@ -144,7 +119,7 @@ export function normalizeSummaryDiffStats(value: unknown): SummaryDiffStats | nu
 // Only the fields a reader of the compact embed actually consumes: `path` and
 // `status` (finding annotation, changed-file counts, the fallback file tree) and
 // `flags` (rendering hints). The two sha256 digests are ~128 bytes per entry and
-// nothing reads them off a diff entry — files.json/scan_files carry per-file
+// nothing reads them off a diff entry — files.json carries per-file
 // hashes — so they are the first thing to go. Sizes are kept: they are a few
 // bytes each and are what makes a fallback file list readable.
 function compactSummaryDiffEntry(entry: DiffEntry): DiffEntry {

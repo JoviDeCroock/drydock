@@ -187,9 +187,9 @@ export const scans = sqliteTable(
     // explicit state: `retention-artifacts-removed` is the durable tombstone that
     // prevents sharing after R2 evidence is gone but before D1 teardown finishes.
     // Token makes transitions compare-and-swap safe; claimed_at makes interrupted
-    // backfill/retention leases recoverable.
+    // retention leases recoverable.
     maintenanceKind: text("maintenance_kind", {
-      enum: ["artifact-backfill", "retention", "retention-artifacts-removed"],
+      enum: ["retention", "retention-artifacts-removed"],
     }),
     maintenanceToken: text("maintenance_token"),
     maintenanceClaimedAt: integer("maintenance_claimed_at", { mode: "timestamp_ms" }),

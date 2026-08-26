@@ -153,10 +153,9 @@ export function expiredScanCursor(row: ExpiredScanRow): ExpiredScanCursor {
  *
  * The failure to design around is a live row that still claims to be
  * artifact-backed after its evidence is gone. Every detail read then fetches
- * nothing, logs `scan.artifacts.fallback_read`, and — because an artifact-backed
- * row has no `scan_files` / `scan_findings` either, and
- * `SCAN_ARTIFACT_READS_DISABLED` is explicitly not a recovery path for those rows
- * — renders a completed scan with zero files and zero findings while `risk` and
+ * nothing, logs `scan.artifacts.fallback_read`, and — because
+ * `SCAN_ARTIFACT_READS_DISABLED` is explicitly not a recovery path — renders a
+ * completed scan with zero files and zero findings while `risk` and
  * `finding_count` still advertise the findings it no longer shows. That is what
  * running this *after* the sweep prevents.
  *
