@@ -196,9 +196,13 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
   // comparison, so the delta reports "no comparable baseline" instead.
   const capabilities = diffCapabilities(
     baseline.artifact
-      ? projectCapabilities(redactedPreviousFiles, redactedPreviousManifest, adapter.codePatternSet)
+      ? projectCapabilities(
+          baseline.artifact.files,
+          baseline.artifact.manifest,
+          adapter.codePatternSet,
+        )
       : null,
-    projectCapabilities(redactedStagedFiles, redactedStagedManifest, adapter.codePatternSet),
+    projectCapabilities(staged.artifact.files, staged.artifact.manifest, adapter.codePatternSet),
   );
 
   return {

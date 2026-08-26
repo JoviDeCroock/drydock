@@ -185,8 +185,8 @@ export async function loadPublicPackageDiff(
   const capabilities = diffCapabilities(
     sources.from.comparable === false
       ? null
-      : projectCapabilities(redactedFromFiles, fromPackageJson, sources.codePatternSet),
-    projectCapabilities(redactedToFiles, toPackageJson, sources.codePatternSet),
+      : projectCapabilities(sources.from.files, sources.from.packageJson, sources.codePatternSet),
+    projectCapabilities(sources.to.files, sources.to.packageJson, sources.codePatternSet),
   );
   const fromRepository = declaredSideRepository(sources.from);
   const toRepository = declaredSideRepository(sources.to);
@@ -249,15 +249,15 @@ function declaredSideRepository(side: {
 }
 
 /**
- * Full analysis identity of a payload this module computes: the ecosystem's
- * deterministic-rules segment plus the risk-aggregation version. The verdict
- * projection cites this so a consumer can tell two verdicts of the same pair
- * apart after a rules bump.
+ * Full analysis identity of a payload this module computes: its payload
+ * projection, ecosystem deterministic-rules segment, and risk-aggregation
+ * version. The verdict cites this so consumers can distinguish any analysis
+ * change for the same package/version pair.
  */
 export function publicDiffAnalysisVersion(
-  adapter: Pick<PublicDiffAdapter, "rulesVersionSegment">,
+  adapter: Pick<PublicDiffAdapter, "rulesVersionSegment" | "payloadVersion">,
 ): string {
-  return `${adapter.rulesVersionSegment}+risk-${PUBLIC_DIFF_RISK_VERSION}`;
+  return `${adapter.rulesVersionSegment}+risk-${PUBLIC_DIFF_RISK_VERSION}+payload-${adapter.payloadVersion}`;
 }
 
 export async function computePublicDiffCacheKey(input: {

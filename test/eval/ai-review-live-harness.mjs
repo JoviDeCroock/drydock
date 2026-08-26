@@ -32,7 +32,9 @@ import {
   computeRisk,
   createPackageDiff,
   deterministicFindings,
+  diffCapabilities,
   packageJsonDiffFindings,
+  projectCapabilities,
   projectReleaseRuleFindings,
   redactFileRecords,
   redactFindings,
@@ -132,6 +134,22 @@ function releaseRuleFindings(ruleFindings, diff, files, previousFiles, codePatte
   );
 }
 
+function capabilityDelta(
+  files,
+  previousFiles,
+  manifest,
+  previousManifest,
+  codePatternSet,
+  previousVersionAvailable,
+) {
+  return diffCapabilities(
+    previousVersionAvailable
+      ? projectCapabilities(previousFiles, previousManifest, codePatternSet)
+      : null,
+    projectCapabilities(files, manifest, codePatternSet),
+  );
+}
+
 function buildNpmLiveCase(record) {
   const previousFiles = record.fx.previousFiles ?? [];
   const stagedFiles = record.fx.stagedFiles;
@@ -149,6 +167,7 @@ function buildNpmLiveCase(record) {
   const files = redactFileRecords(stagedFiles);
   const previous = redactFileRecords(previousFiles);
   const ruleFindings = releaseRuleFindings(allRuleFindings, diff, files, previous, "javascript");
+  const previousVersionAvailable = previousFiles.length > 0;
   return liveCase(record, computeRisk(allRuleFindings), {
     ecosystem: "npm",
     files,
@@ -156,7 +175,15 @@ function buildNpmLiveCase(record) {
     diff,
     packageJsonDiff,
     ruleFindings,
-    previousVersionAvailable: previousFiles.length > 0,
+    previousVersionAvailable,
+    capabilities: capabilityDelta(
+      stagedFiles,
+      previousFiles,
+      record.fx.stagedPackageJson,
+      record.fx.previousPackageJson,
+      "javascript",
+      previousVersionAvailable,
+    ),
   });
 }
 
@@ -171,6 +198,7 @@ function buildPyPiLiveCase(record) {
   const review = createPyPiReleaseCandidateReview(input);
   const files = redactFileRecords(staged.artifact.files);
   const previousFiles = redactFileRecords(baseline.artifact?.files ?? []);
+  const previousVersionAvailable = baseline.artifact !== null;
   return liveCase(record, review.risk, {
     ecosystem: "pypi",
     files,
@@ -187,7 +215,15 @@ function buildPyPiLiveCase(record) {
       previousFiles,
       "python",
     ),
-    previousVersionAvailable: baseline.artifact !== null,
+    previousVersionAvailable,
+    capabilities: capabilityDelta(
+      staged.artifact.files,
+      baseline.artifact?.files ?? [],
+      staged.artifact.manifest,
+      baseline.artifact?.manifest,
+      "python",
+      previousVersionAvailable,
+    ),
   });
 }
 
@@ -214,6 +250,7 @@ function buildVscodeLiveCase(record) {
   const previousManifest = previousFiles.length
     ? packageJsonSummaryForVscode(parseVscodeExtensionManifest(previousFiles).manifest)
     : null;
+  const previousVersionAvailable = previousFiles.length > 0;
   return liveCase(record, review.risk, {
     ecosystem: "vscode",
     files: redactedFiles,
@@ -227,7 +264,15 @@ function buildVscodeLiveCase(record) {
       redactedPreviousFiles,
       "javascript",
     ),
-    previousVersionAvailable: previousFiles.length > 0,
+    previousVersionAvailable,
+    capabilities: capabilityDelta(
+      files,
+      previousFiles,
+      stagedManifest,
+      previousManifest,
+      "javascript",
+      previousVersionAvailable,
+    ),
   });
 }
 
