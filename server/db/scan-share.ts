@@ -6,6 +6,7 @@ import {
   badgeEcosystem,
   publicPackageLookupKey,
   scanDistTag,
+  type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -508,6 +509,34 @@ export async function listBadgeCandidateScans(
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
     .limit(limit);
+}
+
+/**
+ * Whether a package version has a feed-listed review whose package identity
+ * the registry established. Sources without registry-backed package identity
+ * are deliberately excluded: accepting a manifest claim here would let an
+ * unrelated organization satisfy a consumer's maintainer-review policy.
+ */
+export async function hasListedMaintainerReview(
+  db: AppDb,
+  input: { ecosystem: PublicEcosystem; packageName: string; version: string },
+): Promise<boolean> {
+  const packageKey = publicPackageLookupKey(input.ecosystem, input.packageName);
+  const [row] = await db
+    .select({ scanId: scans.id })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.publicPackageKey, packageKey),
+        eq(scans.stagedVersion, input.version),
+        isNotNull(scans.publicShareToken),
+        isNotNull(scans.publicFeedListedAt),
+        eq(scans.status, "complete"),
+        notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 /**

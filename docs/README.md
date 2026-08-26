@@ -49,6 +49,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset and Dependabot workflow that link dependency-update PRs to public `/diff` pages; the preset path is a public contract.
+- [`verify-ci.md`](./verify-ci.md) — enforce dependency-update policy in CI with `drydock verify`, including lockfile support, policy semantics, and the GitHub Action.
 - [`two-factor-auth.md`](./two-factor-auth.md) — step-up auth and sensitive actions.
 - [`slack-notifications.md`](./slack-notifications.md) — Slack install and notification flow.
 - [`account-deletion.md`](./account-deletion.md) — account deletion lifecycle.
