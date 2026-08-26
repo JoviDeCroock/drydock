@@ -610,15 +610,15 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
     (token) => token.type !== "ws" && token.type !== "comment",
   );
   const specifiers: WebExtensionResourceSpecifier[] = [];
-  const domScriptElementBindings = staticDomScriptElementBindings(tokens, text);
+  const domConsumerElementBindings = staticDomConsumerElementBindings(tokens, text);
 
   for (let index = 0; index < tokens.length; index += 1) {
     const dynamicImport = staticBrowserDynamicImportResource(tokens, text, index);
     if (dynamicImport) specifiers.push(dynamicImport);
     const navigation = staticBrowserNavigationResource(tokens, text, index);
     if (navigation) specifiers.push(navigation);
-    const domScript = staticDomScriptResource(tokens, text, index, domScriptElementBindings);
-    if (domScript) specifiers.push(domScript);
+    const domResource = staticDomConsumerResource(tokens, text, index, domConsumerElementBindings);
+    if (domResource) specifiers.push(domResource);
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
@@ -657,23 +657,35 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
   return specifiers;
 }
 
-// A packaged script can become executable without a WebExtension API when an
-// extension page creates a script element, assigns a literal local URL, and
-// later inserts it into the document. Track only bindings initialized directly
-// from document.createElement("script"); other element kinds and dynamic tag
-// names remain inert controls. Requiring an observable append would introduce
-// fragile local data-flow assumptions, so assignment is conservative by design.
-function staticDomScriptElementBindings(tokens: JsToken[], text: string): Set<string> {
-  const bindings = new Set<string>();
+// Packaged scripts and documents can become executable without a WebExtension
+// API when an extension page creates a script, frame, embed, or object element,
+// assigns a literal local URL, and later inserts it into the document. Requiring
+// an observable append would introduce fragile local data-flow assumptions, so
+// assignment is conservative by design.
+const DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
+  ["script", new Set(["src"])],
+  ["frame", new Set(["src"])],
+  ["iframe", new Set(["src"])],
+  ["embed", new Set(["src"])],
+  ["object", new Set(["data"])],
+]);
+
+function staticDomConsumerElementBindings(
+  tokens: JsToken[],
+  text: string,
+): Map<string, Set<string>> {
+  const bindings = new Map<string, Set<string>>();
   for (let index = 1; index < tokens.length - 3; index += 1) {
     const declaration = tokenText(tokens[index - 1], text);
     if (declaration !== "const" && declaration !== "let" && declaration !== "var") continue;
     const binding = tokens[index];
     if (binding?.type !== "ident" || tokenText(tokens[index + 1], text) !== "=") continue;
-    if (staticDocumentCreateElementTag(tokens, text, index + 2)?.toLowerCase() !== "script") {
-      continue;
-    }
-    bindings.add(tokenText(binding, text));
+    const tag = staticDocumentCreateElementTag(tokens, text, index + 2)?.toLowerCase();
+    const properties = tag ? DOM_CONSUMER_ELEMENT_PROPERTIES.get(tag) : undefined;
+    if (!properties) continue;
+    const bindingProperties = bindings.get(tokenText(binding, text)) ?? new Set<string>();
+    for (const property of properties) bindingProperties.add(property);
+    bindings.set(tokenText(binding, text), bindingProperties);
   }
   return bindings;
 }
@@ -710,23 +722,45 @@ function staticDocumentCreateElementTag(
     : staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
 }
 
-function staticDomScriptResource(
+function staticDomConsumerResource(
   tokens: JsToken[],
   text: string,
   start: number,
-  scriptElementBindings: Set<string>,
+  consumerElementBindings: Map<string, Set<string>>,
 ): WebExtensionResourceSpecifier | null {
   const binding = tokenText(tokens[start], text);
-  if (
-    !scriptElementBindings.has(binding) ||
-    isMemberSeparator(tokenText(tokens[start - 1], text))
-  ) {
+  const resourceProperties = consumerElementBindings.get(binding);
+  if (!resourceProperties || isMemberSeparator(tokenText(tokens[start - 1], text))) {
     return null;
   }
-  const src = staticMemberAccess(tokens, text, start + 1);
-  if (src?.name !== "src" || tokenText(tokens[src.nextIndex], text) !== "=") return null;
+  const member = staticMemberAccess(tokens, text, start + 1);
+  if (!member) return null;
 
-  const valueIndex = src.nextIndex + 1;
+  if (member.name === "setAttribute") {
+    const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+    if (openIndex === null) return null;
+    const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+    if (closeIndex === null) return null;
+    const arguments_ = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex);
+    if (arguments_.length < 2) return null;
+    const [nameStart, nameEnd] = arguments_[0];
+    const property =
+      nameEnd === nameStart + 1 ? staticScriptPath(tokens[nameStart], text)?.toLowerCase() : null;
+    if (!property || !resourceProperties.has(property)) return null;
+    const [valueStart, valueEnd] = arguments_[1];
+    const value = staticWebExtensionResourcePath(tokens, text, valueStart, [
+      tokenText(tokens[valueEnd], text),
+    ]);
+    return value?.nextIndex === valueEnd
+      ? { path: value.path, resolution: value.runtimeUrl ? "root" : "document" }
+      : null;
+  }
+
+  if (!resourceProperties.has(member.name) || tokenText(tokens[member.nextIndex], text) !== "=") {
+    return null;
+  }
+
+  const valueIndex = member.nextIndex + 1;
   const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, valueIndex);
   const parsingFollowingTokens = runtimeUrl

@@ -2,7 +2,7 @@
   "id": "browser-navigation-alias-reachability",
   "title": "browser navigation and extension URL aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, DOM-script-injected, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and non-script element sources remain inert.",
+  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, DOM-injected script and frame resources, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and image element sources remain inert.",
   "slug": "navigation-alias-reachability",
   "extensionId": "navigation-alias-reachability@example.invalid",
   "version": "1.0.0",
@@ -34,12 +34,33 @@
       "size": 681,
       "sha256": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
       "flags": [],
-      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
+      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); const attributeInjected = document.createElement(\"script\"); attributeInjected.setAttribute(\"src\", browser.runtime.getURL(\"tests/dom-attribute-injected.js\")); document.documentElement.append(attributeInjected); const frame = document.createElement(\"iframe\"); frame.src = \"tests/dom-frame.html\"; document.documentElement.append(frame); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
     },
     {
       "path": "tests/dom-injected.js",
       "size": 14,
       "sha256": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom-attribute-injected.js",
+      "size": 14,
+      "sha256": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom-frame.html",
+      "size": 39,
+      "sha256": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2",
+      "flags": [],
+      "textSample": "<script src=\"dom-frame.js\"></script>"
+    },
+    {
+      "path": "tests/dom-frame.js",
+      "size": 14,
+      "sha256": "f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -283,6 +304,16 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/dom-injected.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom-attribute-injected.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/dom-frame.js"
     },
     {
       "ruleId": "code.dynamic-evaluation",
