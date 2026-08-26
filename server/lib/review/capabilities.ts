@@ -2,7 +2,8 @@ import type { CodePatternSet, FileRecord } from ".";
 import type { PackageJsonSummary } from "./serialize";
 import { isRecord } from "../platform/guards";
 import { isNativeArtifactFile } from "./rules/binaries";
-import { codePatternsFor, CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./rules/patterns";
+import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./rules/patterns";
+import { isConsumerInstallScriptFile, matchDeterministicCodeCapabilities } from "./rules/scripts";
 
 /**
  * Normalized per-side capability projection and cross-version delta.
@@ -96,7 +97,6 @@ export function projectCapabilities(
   packageJson: PackageJsonSummary | null | undefined,
   codePatternSet?: CodePatternSet,
 ): CapabilitySet {
-  const patterns = codePatternsFor(codePatternSet);
   const present = new Set<Capability>();
   let inspectedFiles = 0;
   let uninspectedFiles = 0;
@@ -106,12 +106,24 @@ export function projectCapabilities(
     const gap = hasInspectionGap(file);
     if (gap) uninspectedFiles++;
     if (typeof file.textSample !== "string" || !file.textSample) continue;
+    const codeCapabilities = matchDeterministicCodeCapabilities(
+      file.path,
+      file.textSample,
+      codePatternSet,
+      {
+        lifecycleScriptFile: isConsumerInstallScriptFile(
+          file.path,
+          packageJson?.scripts ?? {},
+          packageJson?.implicitScripts ?? {},
+        ),
+      },
+    );
+    if (!codeCapabilities) continue;
     if (!gap) inspectedFiles++;
-    const sample = file.textSample;
-    if (!present.has("process") && matchesAny(sample, patterns.processExecution)) {
+    if (!present.has("process") && codeCapabilities.processExecution.matched) {
       present.add("process");
     }
-    if (!present.has("network") && matchesAny(sample, patterns.networkAccess)) {
+    if (!present.has("network") && codeCapabilities.networkAccess.matched) {
       present.add("network");
     }
     // A shell command that reaches the network is both things at once: it
@@ -120,15 +132,15 @@ export function projectCapabilities(
     // the two primitives it is made of.
     if (
       (!present.has("network") || !present.has("process")) &&
-      matchesAny(sample, patterns.remoteShell)
+      codeCapabilities.remoteShellCapability
     ) {
       present.add("network");
       present.add("process");
     }
-    if (!present.has("dynamicEval") && matchesAny(sample, patterns.dynamicEvaluation)) {
+    if (!present.has("dynamicEval") && codeCapabilities.dynamicEvaluation.matched) {
       present.add("dynamicEval");
     }
-    if (!present.has("credentials") && matchesAny(sample, patterns.credentialAccess)) {
+    if (!present.has("credentials") && codeCapabilities.credentialAccess.matched) {
       present.add("credentials");
     }
   }
@@ -207,10 +219,6 @@ function normalizeCapabilityList(value: unknown): Capability[] | null {
 
 function sortCapabilities(present: ReadonlySet<Capability>): Capability[] {
   return CAPABILITY_ORDER.filter((capability) => present.has(capability));
-}
-
-function matchesAny(sample: string, patterns: readonly RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(sample));
 }
 
 function hasConsumerInstallScript(packageJson: PackageJsonSummary | null | undefined): boolean {

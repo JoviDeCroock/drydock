@@ -43,8 +43,9 @@ export const npmPublicDiff: PublicDiffAdapter = {
   // carry no sample at all for a pair this large, so they must not be served
   // once the prioritized retention ships.
   // v6: payloads carry the capability delta, per-side publication timestamps,
-  // and declared source binding; v5 entries would serve none of them.
-  payloadVersion: "v6",
+  // and declared source binding; v5 entries would serve none of them. v7
+  // aligns capability projection with deterministic code-matching semantics.
+  payloadVersion: "v7",
 
   isValidPackageName: isValidNpmPackageName,
   normalizePackageName: (name) => name,

@@ -4,11 +4,13 @@ import {
   firstMatchingLine,
   firstMatchingSourceLine,
 } from "../../platform/text-utils";
-import type { Finding } from "..";
+import type { CodePatternSet, Finding } from "..";
 import {
   CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
   SHELL_NETWORK_TOOL_PATTERN_SET,
+  codePatternsFor,
+  type JS_PATTERN_SET,
 } from "./patterns";
 import { firstJsonPropertyLine, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
@@ -88,6 +90,118 @@ const ROTATING_STRING_TABLE_SIGNALS = [
 ];
 const ROTATING_STRING_TABLE_SIGNAL_THRESHOLD = 5;
 
+interface CodeCapabilityMatch {
+  matched: boolean;
+  line: number | undefined;
+  obfuscated: boolean;
+}
+
+export interface DeterministicCodeCapabilityMatches {
+  processExecution: CodeCapabilityMatch;
+  remoteShell: CodeCapabilityMatch;
+  downloadExecute: CodeCapabilityMatch;
+  shellNetworkTool: CodeCapabilityMatch;
+  networkAccess: CodeCapabilityMatch;
+  dynamicEvaluation: CodeCapabilityMatch;
+  credentialAccess: CodeCapabilityMatch;
+  downloadExecuteCapability: boolean;
+  remoteShellCapability: boolean;
+}
+
+/**
+ * Match one retained file with the exact preprocessing and exclusions used by
+ * deterministic code findings. Capability projection calls this too, so its
+ * machine-readable delta cannot drift from the evidence a reviewer sees.
+ */
+export function matchDeterministicCodeCapabilities(
+  path: string,
+  sample: string,
+  codePatternSet: CodePatternSet | undefined,
+  options: {
+    patterns?: typeof JS_PATTERN_SET;
+    lifecycleScriptFile?: boolean;
+  } = {},
+): DeterministicCodeCapabilityMatches | null {
+  if (isDocumentationPath(path) || isTypeDeclarationPath(path)) return null;
+  if (codePatternSet === "python" && isPythonMetadataPath(path)) return null;
+
+  const patterns = options.patterns ?? codePatternsFor(codePatternSet);
+  // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
+  // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
+  // both raw and normalized text means folding can only add detections, never
+  // drop one a literal scan already finds. JavaScript only for now; the
+  // normalizer is JS-flavored and Python evasion is out of scope.
+  const normalized = codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
+  const packedObfuscation =
+    codePatternSet !== "python" && hasRotatingStringTableObfuscation(sample);
+  const processExecution = matchCategory(
+    patterns.processExecution,
+    sample,
+    normalized,
+    packedObfuscation,
+  );
+  // Comment-blind: a shell command quoted in prose is documentation.
+  const remoteShell = matchCategory(
+    patterns.remoteShell,
+    sample,
+    normalized,
+    packedObfuscation,
+    false,
+    true,
+  );
+  const downloadExecute = matchCategory(
+    SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
+    sample,
+    normalized,
+    packedObfuscation,
+  );
+  const shellNetworkTool = matchCategory(
+    SHELL_NETWORK_TOOL_PATTERN_SET,
+    sample,
+    normalized,
+    packedObfuscation,
+  );
+  const networkAccess = matchCategory(
+    patterns.networkAccess,
+    sample,
+    normalized,
+    packedObfuscation,
+  );
+  const dynamicEvaluation = matchCategory(
+    patterns.dynamicEvaluation,
+    sample,
+    normalized,
+    packedObfuscation,
+    true,
+  );
+  const credentialSample =
+    codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
+  const credentialNormalized =
+    codePatternSet === "python" ? normalized : omitCommonEnvironmentAccesses(normalized);
+  const credentialAccess = matchCategory(
+    patterns.credentialAccess,
+    credentialSample,
+    credentialNormalized,
+    packedObfuscation,
+  );
+  const downloadExecuteCapability = downloadExecute.matched && !isBuildInfrastructurePath(path);
+  const remoteShellCapability =
+    remoteShell.matched &&
+    (processExecution.matched || options.lifecycleScriptFile || downloadExecuteCapability);
+
+  return {
+    processExecution,
+    remoteShell,
+    downloadExecute,
+    shellNetworkTool,
+    networkAccess,
+    dynamicEvaluation,
+    credentialAccess,
+    downloadExecuteCapability,
+    remoteShellCapability,
+  };
+}
+
 // Install lifecycle hooks and in-file code-execution capability: the scripts and
 // code paths that run on, or are pulled in by, a registry tarball install.
 export function scriptFindings(ctx: RuleContext): Finding[] {
@@ -142,81 +256,30 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   for (const file of ctx.files) {
-    if (isDocumentationPath(file.path) || isTypeDeclarationPath(file.path)) continue;
-    if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
-
-    const sample = file.textSample || "";
-    // Constant-fold runtime-assembled identifiers (`'chi'+'ld_process'`,
-    // `globalThis['re'+'quire']`) so the literal regex set sees them. Matching
-    // both raw and normalized text means folding can only add detections, never
-    // drop one a literal scan already finds. JavaScript only for now; the
-    // normalizer is JS-flavored and Python evasion is out of scope.
-    const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
-    const packedObfuscation =
-      ctx.codePatternSet !== "python" && hasRotatingStringTableObfuscation(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const lifecycleScriptFile = isLifecycleScriptFile(ctx, file.path);
+    const codeCapabilities = matchDeterministicCodeCapabilities(
+      file.path,
+      file.textSample || "",
+      ctx.codePatternSet,
+      { patterns: ctx.patterns, lifecycleScriptFile },
+    );
+    if (!codeCapabilities) continue;
+    const {
+      processExecution,
+      remoteShell,
+      downloadExecute,
+      shellNetworkTool,
+      networkAccess,
+      dynamicEvaluation,
+      credentialAccess,
+      downloadExecuteCapability,
+      remoteShellCapability,
+    } = codeCapabilities;
     // Consumer install lifecycle script files keep full severity even under
     // test/ — an install hook pointing into the test tree is itself suspicious.
     const testScoped = !lifecycleScriptFile && isUnreachableTestFile(ctx, file.path);
-
-    const processExecution = matchCategory(
-      ctx.patterns.processExecution,
-      sample,
-      normalized,
-      packedObfuscation,
-    );
-    // Comment-blind: a shell command quoted in prose is documentation. See
-    // `firstMatchingCodeLine`. Download-and-execute below keeps the ordinary
-    // matcher, because `curl … | bash` shipped as an instruction still tells
-    // someone to run it — but only outside build infrastructure (below).
-    const remoteShell = matchCategory(
-      ctx.patterns.remoteShell,
-      sample,
-      normalized,
-      packedObfuscation,
-      false,
-      true,
-    );
-    const downloadExecute = matchCategory(
-      SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
-      sample,
-      normalized,
-      packedObfuscation,
-    );
-    // A shell network tool is a real egress sink, so it counts as network access
-    // for the credential collect-and-exfiltrate chain below even though the
-    // in-language network patterns cannot see it.
-    const shellNetworkTool = matchCategory(
-      SHELL_NETWORK_TOOL_PATTERN_SET,
-      sample,
-      normalized,
-      packedObfuscation,
-    );
-    const networkAccess = matchCategory(
-      ctx.patterns.networkAccess,
-      sample,
-      normalized,
-      packedObfuscation,
-    );
-    const dynamicEvaluation = matchCategory(
-      ctx.patterns.dynamicEvaluation,
-      sample,
-      normalized,
-      packedObfuscation,
-      true,
-    );
-    const credentialSample =
-      ctx.codePatternSet === "python" ? sample : omitCommonEnvironmentAccesses(sample);
-    const credentialNormalized =
-      ctx.codePatternSet === "python" ? normalized : omitCommonEnvironmentAccesses(normalized);
-    const credentialAccess = matchCategory(
-      ctx.patterns.credentialAccess,
-      credentialSample,
-      credentialNormalized,
-      packedObfuscation,
-    );
     const adjacentExecutionRisk =
       processExecution.matched ||
       shellNetworkTool.matched ||
@@ -237,14 +300,7 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     // every mainstream toolchain documents exactly that idiom. Withholding the
     // exemption there leaves the ordinary executor requirement, which those
     // files do not satisfy.
-    const buildInfrastructure = isBuildInfrastructurePath(file.path);
-    // Build infrastructure keeps neither the exemption nor the critical tier:
-    // the same `curl … | bash` that is a dropper in a lifecycle script is a
-    // documented bootstrap step in a Dockerfile.
-    const downloadExecuteCapability = downloadExecute.matched && !buildInfrastructure;
-    const shellExecutable =
-      processExecution.matched || lifecycleScriptFile || downloadExecuteCapability;
-    if (remoteShell.matched && shellExecutable) {
+    if (remoteShellCapability) {
       findings.push(
         testScope(
           testScoped,
@@ -419,10 +475,18 @@ function networkAccessSeverity(
 }
 
 function isLifecycleScriptFile(ctx: RuleContext, path: string): boolean {
+  return isConsumerInstallScriptFile(path, ctx.scripts, ctx.implicitScripts);
+}
+
+export function isConsumerInstallScriptFile(
+  path: string,
+  scripts: Readonly<Record<string, string>>,
+  implicitScripts: Readonly<Record<string, string>>,
+): boolean {
   const candidates = scriptPathCandidates(path);
   return CONSUMER_INSTALL_LIFECYCLE_SCRIPTS.some((script) => {
-    const command = ctx.scripts[script];
-    if (!command || ctx.implicitScripts[script] === command) return false;
+    const command = scripts[script];
+    if (!command || implicitScripts[script] === command) return false;
     return scriptCommandTokens(command).some((token) => candidates.has(token));
   });
 }
