@@ -265,4 +265,8 @@ describe("normalizeCapabilityDelta", () => {
     expect(normalized?.confident).toBe(false);
     expect(normalized?.to.complete).toBe(false);
   });
+
+  test("rejects persisted deltas that disagree with their normalized sides", () => {
+    expect(normalizeCapabilityDelta({ ...valid, escalations: [], reductions: [] })).toBeNull();
+  });
 });

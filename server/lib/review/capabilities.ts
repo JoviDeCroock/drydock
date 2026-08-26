@@ -192,10 +192,14 @@ export function normalizeCapabilityDelta(value: unknown): CapabilityDelta | null
   const escalations = normalizeCapabilityList(value.escalations);
   const reductions = normalizeCapabilityList(value.reductions);
   if (!escalations || !reductions) return null;
-  // Confidence is recomputed from its evidence rather than trusted: a
-  // persisted `confident: true` over an incomplete side must not survive.
-  const confident = value.confident === true && from !== null && from.complete && to.complete;
-  return { from, to, escalations, reductions, confident };
+  const normalized = diffCapabilities(from, to);
+  if (
+    !sameCapabilityList(escalations, normalized.escalations) ||
+    !sameCapabilityList(reductions, normalized.reductions)
+  ) {
+    return null;
+  }
+  return normalized;
 }
 
 function normalizeCapabilitySet(value: unknown): CapabilitySet | null {
@@ -225,6 +229,12 @@ function normalizeCapabilityList(value: unknown): Capability[] | null {
 
 function sortCapabilities(present: ReadonlySet<Capability>): Capability[] {
   return CAPABILITY_ORDER.filter((capability) => present.has(capability));
+}
+
+function sameCapabilityList(left: readonly Capability[], right: readonly Capability[]): boolean {
+  return (
+    left.length === right.length && left.every((capability, index) => capability === right[index])
+  );
 }
 
 function hasConsumerInstallScript(packageJson: PackageJsonSummary | null | undefined): boolean {

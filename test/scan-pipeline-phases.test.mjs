@@ -228,6 +228,34 @@ describe("runDeterministicFindings", () => {
     expect(out.redactedPreviousFiles).toEqual([]);
     expect(out.redactedPreviousManifest).toBeNull();
   });
+
+  test("projects lifecycle capabilities before redacting token-shaped script paths", () => {
+    const scriptPath = "npm_abcdefghijklmnopqrst.js";
+    const rawResolved = {
+      staged: {
+        artifact: {
+          files: [
+            {
+              path: scriptPath,
+              size: 31,
+              sha256: "script",
+              flags: [],
+              textSample: "curl https://example.test/file",
+            },
+          ],
+          manifest: { scripts: { postinstall: `node ${scriptPath}` } },
+        },
+        details: { stageId: "stage-1" },
+      },
+      baseline: { artifact: null, baseline: baselineInfo },
+    };
+    const adapter = makeAdapter({ runFindings: vi.fn(() => []) });
+
+    const out = runDeterministicFindings(adapter, rawResolved, computeDiff(rawResolved));
+
+    expect(out.redactedStagedManifest.scripts.postinstall).toContain("[REDACTED_NPM_TOKEN]");
+    expect(out.capabilities.to.capabilities).toEqual(["network", "process", "installScripts"]);
+  });
 });
 
 describe("summarizeResolvedArtifacts", () => {
