@@ -20,7 +20,7 @@ import type { PublicPackageDiff } from ".";
  */
 export const PUBLIC_VERDICT_SCHEMA = "drydock.verdict.v1";
 
-export type VerdictGrade = "clear" | "notable" | "needs-review";
+type VerdictGrade = "clear" | "notable" | "needs-review";
 
 export interface PublicDiffVerdict {
   schema: typeof PUBLIC_VERDICT_SCHEMA;

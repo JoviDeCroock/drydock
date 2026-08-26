@@ -23,10 +23,13 @@ import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { Show } from "@preact/signals/utils";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
-import { normalizeCapabilityDelta } from "../../../../server/lib/review/capabilities";
 import { CapabilitiesSection } from "../../../features/review/CapabilitiesSection";
 import { scanDistTag, scanEcosystem } from "../../../../server/lib/public-feed";
-import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
+import {
+  createPackageDiff,
+  normalizeCapabilityDelta,
+  type DiffEntry,
+} from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { Card } from "../../../components/Card";
