@@ -44,12 +44,14 @@ export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
         ))}
         {!delta.to.capabilities.length ? <Badge tone="ok">none detected</Badge> : null}
       </div>
-      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">{deltaDescription(delta)}</Muted>
+      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
+        {capabilityDeltaDescription(delta)}
+      </Muted>
     </section>
   );
 }
 
-function deltaDescription(delta: CapabilityDelta): string {
+export function capabilityDeltaDescription(delta: CapabilityDelta): string {
   const parts: string[] = [];
   if (delta.escalations.length) {
     parts.push(
@@ -61,7 +63,7 @@ function deltaDescription(delta: CapabilityDelta): string {
   }
   if (!delta.from) {
     parts.push("No comparable baseline, so nothing can honestly be called an escalation.");
-  } else if (!delta.escalations.length && !delta.reductions.length) {
+  } else if (delta.confident && !delta.escalations.length && !delta.reductions.length) {
     parts.push("No capability changes against the previous version.");
   }
   // The honesty constraint from the projection: an empty escalation list over
