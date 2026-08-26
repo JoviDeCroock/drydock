@@ -174,12 +174,12 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.59.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.61.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
 fixtures in the same PR whenever a rule family's coverage changes (`PYPI_RULES_VERSION` in the adapter,
-`DETERMINISTIC_RULES_VERSION` in `review.ts`). The PyPI adapter opts the shared `code.*` rules into
+`DETERMINISTIC_RULES_VERSION` in `server/lib/review/rules/index.ts`). The PyPI adapter opts the shared `code.*` rules into
 Python-aware matching in `1.6.0` (subprocess/os.system, urllib.request/requests/socket,
 exec/`__import__`/base64-decode, os.environ/getpass/keyring) while npm keeps the JavaScript matcher;
 the same Python matcher must be used when annotating modified-file findings so release-risk
@@ -630,6 +630,12 @@ pass now decodes numeric and predefined references inside internal general
 entities and resolves consumer URLs against inherited `xml:base` chains. The
 browser navigation-alias and HTML-namespace golden cases pin all five bypass
 boundaries.
+
+`1.61.0` treats Firefox protocol-handler pages and dynamically selected
+`sidebarAction.setPanel()` documents as browser consumer entrypoints, and
+recurses into linked packaged `.xml` documents using the bounded XML parser.
+The browser navigation-alias and HTML-namespace golden cases pin all three
+reachability paths.
 
 ### Fixture format
 

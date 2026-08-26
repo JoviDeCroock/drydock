@@ -1293,6 +1293,7 @@ describe("browser extension review adapter", () => {
       "action",
       "browser-action",
       "page-action",
+      "sidebar-action",
       "side-panel",
       "devtools-panel",
       "tab-create",
@@ -1312,6 +1313,7 @@ describe("browser extension review adapter", () => {
           'chrome.action.setPopup({ popup: "/tests/action.html" });',
           'browser["browserAction"].setPopup({ popup: "tests/browser-action.html" });',
           'globalThis.chrome.pageAction.setPopup({ popup: "tests/page-action.html" });',
+          'browser.sidebarAction.setPanel({ panel: browser.runtime.getURL("tests/sidebar-action.html") });',
           'chrome.sidePanel.setOptions({ path: "/tests/side-panel.html", enabled: true });',
           'chrome.tabs.create({ url: "/tests/tab-create.html" });',
           'chrome.windows.create({ url: ["/tests/window-create.html"] });',
@@ -1385,7 +1387,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(8);
+    expect(findings).toHaveLength(pageNames.length + 1);
   });
 
   test("treats scripts loaded by manifest-declared extension pages as consumer reachable", () => {
@@ -1402,6 +1404,7 @@ describe("browser extension review adapter", () => {
       ["tests/sidebar.html", "tests/sidebar.js"],
       ["tests/new-tab.html", "tests/new-tab.js"],
       ["tests/sandbox.html", "tests/sandbox.js"],
+      ["tests/protocol-handler.xhtml", "tests/protocol-handler.js"],
     ];
     const files = extensionPages.flatMap(([page, script], index) => [
       {
@@ -1434,6 +1437,13 @@ describe("browser extension review adapter", () => {
       sidebar_action: { default_panel: "tests/sidebar.html" },
       chrome_url_overrides: { newtab: "tests/new-tab.html" },
       sandbox: { pages: ["tests/sandbox.html"] },
+      protocol_handlers: [
+        {
+          protocol: "ext+drydock",
+          name: "Drydock handler",
+          uriTemplate: "/tests/protocol-handler.xhtml?url=%s",
+        },
+      ],
     });
     const parsed = parseBrowserExtensionManifest([manifestRecord, ...files]).manifest;
     expect(parsed.extensionPageEntrypoints).toEqual(expect.arrayContaining(extensionPages.flat()));
@@ -1723,6 +1733,43 @@ describe("browser extension review adapter", () => {
         },
       ]),
     );
+  });
+
+  test("follows scripts from linked packaged XML documents", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      {
+        path: "popup.html",
+        size: 1,
+        sha256: "a4".repeat(32),
+        flags: [],
+        textSample: '<a href="tests/payload.xml">Open XML helper</a>',
+      },
+      {
+        path: "tests/payload.xml",
+        size: 1,
+        sha256: "a5".repeat(32),
+        flags: [],
+        textSample:
+          '<root xmlns:h="http://www.w3.org/1999/xhtml"><h:script src="payload.js"/></root>',
+      },
+      {
+        path: "tests/payload.js",
+        size: 14,
+        sha256: "a6".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
   });
 
   test("follows scripts from a manifest-declared page without a document extension", () => {

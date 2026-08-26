@@ -385,7 +385,7 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
   return specifiers;
 }
 
-type WebExtensionResourceProperty = "file" | "files" | "js" | "path" | "popup" | "url";
+type WebExtensionResourceProperty = "file" | "files" | "js" | "panel" | "path" | "popup" | "url";
 type WebExtensionScriptValueShape =
   | "string"
   | "string-array"
@@ -753,6 +753,7 @@ function webExtensionScriptCall(
     (namespace === "action" ||
       namespace === "browserAction" ||
       namespace === "pageAction" ||
+      namespace === "sidebarAction" ||
       namespace === "sidePanel" ||
       namespace === "devtools")
   ) {
@@ -769,6 +770,7 @@ function webExtensionScriptCall(
     namespace !== "action" &&
     namespace !== "browserAction" &&
     namespace !== "pageAction" &&
+    namespace !== "sidebarAction" &&
     namespace !== "sidePanel" &&
     namespace !== "devtools"
   ) {
@@ -893,6 +895,16 @@ function webExtensionScriptCall(
       openIndex,
       source: "property",
       property: "path",
+      valueShape: "string",
+      argument: "first",
+      resolution: "root",
+    };
+  }
+  if (namespace === "sidebarAction" && method === "setPanel") {
+    return {
+      openIndex,
+      source: "property",
+      property: "panel",
       valueShape: "string",
       argument: "first",
       resolution: "root",

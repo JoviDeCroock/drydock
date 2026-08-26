@@ -10,7 +10,7 @@ import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoint
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.60.0";
+export const DETERMINISTIC_RULES_VERSION = "1.61.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export {

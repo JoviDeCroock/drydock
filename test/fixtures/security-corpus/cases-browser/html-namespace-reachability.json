@@ -2,7 +2,7 @@
   "id": "browser-html-namespace-reachability",
   "title": "WebExtension document reachability over-approximates HTML, SVG, and MathML parsing",
   "category": "browser-extension",
-  "intent": "The document scanner deliberately does not model namespaces, raw text, CDATA, templates, script types, or self-closing syntax: every script-shaped reference in a reachable document — including valid XML qualified names, inherited xml:base values, and decoded internal entity replacements — keeps full severity. Only a missed edge is a bug; invented edges are by design.",
+  "intent": "The document scanner deliberately does not model namespaces, raw text, CDATA, templates, script types, or self-closing syntax: every script-shaped reference in a reachable document — including linked XML documents, valid XML qualified names, inherited xml:base values, and decoded internal entity replacements — keeps full severity. Only a missed edge is a bug; invented edges are by design.",
   "slug": "html-namespace-helper",
   "extensionId": "html-namespace-helper@example.invalid",
   "version": "1.0.0",
@@ -17,10 +17,10 @@
     },
     {
       "path": "tests/popup.html",
-      "size": 920,
+      "size": 956,
       "sha256": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
       "flags": [],
-      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><iframe><script src=\"raw-decoy.js\"></script></iframe><script src=\"live.js\" /><script src=\"slash-decoy.js\"></script></script><template><template/></template><script src=\"nested-template-decoy.js\"></script></template><script type=\"application/json\" src=\"data-decoy.js\"></script><math><script src=\"math-decoy.js\"></script><annotation-xml encoding=\"text/html\"><script src=\"math-live.js\"></script></annotation-xml><annotation-xml><svg><script href=\"math-svg-live.js\"/></svg></annotation-xml></math><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script><iframe src=\"svg-frame.html\"></iframe><a xlink:href=\"svg-linked.html\">Open</a><title><script src=\"svg-title-live.js\"></script></title><desc><script src=\"svg-desc-live.js\"></script></desc><![CDATA[<script href=\"svg-cdata-decoy.js\"/>]]></svg><a href=\"entity.svg\">XML helper</a>"
+      "textSample": "<template><base href=\"/decoy/\"><script src=\"template.js\"></script></template><iframe><script src=\"raw-decoy.js\"></script></iframe><script src=\"live.js\" /><script src=\"slash-decoy.js\"></script></script><template><template/></template><script src=\"nested-template-decoy.js\"></script></template><script type=\"application/json\" src=\"data-decoy.js\"></script><math><script src=\"math-decoy.js\"></script><annotation-xml encoding=\"text/html\"><script src=\"math-live.js\"></script></annotation-xml><annotation-xml><svg><script href=\"math-svg-live.js\"/></svg></annotation-xml></math><svg><script href=\"href.js\"></script><script xlink:href=\"xlink.js\"></script><iframe src=\"svg-frame.html\"></iframe><a xlink:href=\"svg-linked.html\">Open</a><title><script src=\"svg-title-live.js\"></script></title><desc><script src=\"svg-desc-live.js\"></script></desc><![CDATA[<script href=\"svg-cdata-decoy.js\"/>]]></svg><a href=\"entity.svg\">XML helper</a><a href=\"linked.xml\">Linked XML</a>"
     },
     {
       "path": "tests/live.js",
@@ -175,6 +175,20 @@
       "sha256": "bfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbf",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/linked.xml",
+      "size": 83,
+      "sha256": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+      "flags": [],
+      "textSample": "<root xmlns:h=\"http://www.w3.org/1999/xhtml\"><h:script src=\"xml-linked.js\"/></root>"
+    },
+    {
+      "path": "tests/xml-linked.js",
+      "size": 14,
+      "sha256": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
@@ -273,6 +287,11 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/xml-base/base-payload.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/xml-linked.js"
     }
   ]
 }

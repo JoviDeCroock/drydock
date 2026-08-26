@@ -28,8 +28,8 @@ const LOCALIZED_MESSAGE_NAME_RE = /^__MSG_([A-Za-z0-9_@]+)__$/i;
 const DEFAULT_LOCALE_RE = /^[A-Za-z0-9_@-]{1,64}$/;
 const MAX_WEB_ACCESSIBLE_RESOURCE_DECLARATIONS = 10_000;
 const MAX_WEB_ACCESSIBLE_RESOURCE_WILDCARD_CHECKS = 1_000_000;
-const BROWSER_DOCUMENT_PATH_RE = /\.(?:html?|xhtml|xht|svg)$/i;
-const BROWSER_XML_DOCUMENT_PATH_RE = /\.(?:xhtml|xht|svg)$/i;
+const BROWSER_DOCUMENT_PATH_RE = /\.(?:html?|xml|xhtml|xht|svg)$/i;
+const BROWSER_XML_DOCUMENT_PATH_RE = /\.(?:xml|xhtml|xht|svg)$/i;
 // URL-valued attribute local names that can make some engine fetch, navigate
 // to, or execute a packaged resource. Collected on every tag-shaped token —
 // consumer-edge extraction is a deliberate over-approximation of browser
@@ -359,6 +359,11 @@ function manifestExtensionPagePaths(raw: Record<string, unknown>): string[] {
     typeof raw.devtools_page === "string" ? raw.devtools_page : null,
     ...manifestRecordStrings(raw.chrome_url_overrides),
     ...(isRecord(raw.sandbox) ? stringList(raw.sandbox.pages) : []),
+    ...(Array.isArray(raw.protocol_handlers)
+      ? raw.protocol_handlers.flatMap((handler) =>
+          isRecord(handler) && typeof handler.uriTemplate === "string" ? [handler.uriTemplate] : [],
+        )
+      : []),
   ]);
 }
 
