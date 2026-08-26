@@ -91,7 +91,11 @@ const PRIVILEGED_PERMISSIONS = new Set([
   "webRequestFilterResponse.serviceWorkerScript",
 ]);
 const BROAD_HOST_MATCH_PATTERN_RE = /^(?:\*|[a-z][a-z0-9+.-]*):\/\/\*(?::(?:\*|\d+))?\//i;
-const BROAD_FILE_MATCH_PATTERN_RE = /^file:\/\/\/\*$/i;
+// Chrome accepts the pathless `file://*` form by normalizing it to
+// `file:///*`, while WebExtension match-pattern paths may repeat adjacent
+// wildcards. Both grant the same scheme-wide file access as the canonical
+// spelling; keep narrower file paths out of this rule.
+const BROAD_FILE_MATCH_PATTERN_RE = /^file:\/\/(?:\*|\/\*+)$/i;
 
 const EXECUTABLE_CSP_DIRECTIVE_CHAINS = [
   ["script-src", "default-src"],

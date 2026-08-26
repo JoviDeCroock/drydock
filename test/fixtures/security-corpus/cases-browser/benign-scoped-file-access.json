@@ -1,0 +1,28 @@
+{
+  "id": "browser-benign-scoped-file-access",
+  "title": "WebExtension scoped to one local file directory",
+  "category": "browser-extension",
+  "intent": "A directory-scoped file match pattern must not be treated as scheme-wide file access.",
+  "slug": "scoped-file-helper",
+  "extensionId": "scoped-file-helper@example.invalid",
+  "version": "1.0.0",
+  "sha256": "7474747474747474747474747474747474747474747474747474747474747474",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 312,
+      "sha256": "7575757575757575757575757575757575757575757575757575757575757575",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Scoped file helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"scoped-file-helper@example.invalid\" } },\n  \"host_permissions\": [\"file:///home/example/*\"],\n  \"content_scripts\": [{ \"matches\": [\"file:///home/example/*\"], \"js\": [\"content.js\"] }]\n}\n"
+    },
+    {
+      "path": "content.js",
+      "size": 35,
+      "sha256": "7676767676767676767676767676767676767676767676767676767676767676",
+      "flags": [],
+      "textSample": "document.body.dataset.ready = '1';\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

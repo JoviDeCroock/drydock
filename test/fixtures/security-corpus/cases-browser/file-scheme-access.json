@@ -2,7 +2,7 @@
   "id": "browser-file-scheme-access",
   "title": "WebExtension with all-file host and content-script access",
   "category": "browser-extension",
-  "intent": "The canonical file scheme match pattern must retain broad host and content-script findings.",
+  "intent": "Equivalent all-file match-pattern spellings must retain broad host and content-script findings.",
   "slug": "file-helper",
   "extensionId": "file-helper@example.invalid",
   "version": "1.0.0",
@@ -10,14 +10,14 @@
   "stagedFiles": [
     {
       "path": "manifest.json",
-      "size": 338,
+      "size": 272,
       "sha256": "7272727272727272727272727272727272727272727272727272727272727272",
       "flags": [],
-      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"File helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"file-helper@example.invalid\" } },\n  \"host_permissions\": [\"file:///*\"],\n  \"content_scripts\": [{ \"matches\": [\"file:///*\"], \"js\": [\"content.js\"] }]\n}\n"
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"File helper\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"file-helper@example.invalid\" } },\n  \"host_permissions\": [\"file://*\"],\n  \"content_scripts\": [{ \"matches\": [\"file:///**\"], \"js\": [\"content.js\"] }]\n}\n"
     },
     {
       "path": "content.js",
-      "size": 34,
+      "size": 35,
       "sha256": "7373737373737373737373737373737373737373737373737373737373737373",
       "flags": [],
       "textSample": "document.body.dataset.ready = '1';\n"

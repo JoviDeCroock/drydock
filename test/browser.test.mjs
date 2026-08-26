@@ -2675,29 +2675,50 @@ describe("browser extension review adapter", () => {
     );
   });
 
-  test.each(["*://*/", "https://*/", "http://*/", "https://*/sensitive/*", "file:///*"])(
-    "flags scheme-wide match pattern %s",
-    (matchPattern) => {
-      const path = "dist/tab-helper.zip";
-      const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
-      const review = createBrowserExtensionReview({
-        manifest,
-        artifact: {
-          path,
-          sha256: SHA,
-          files: [
-            manifestFile({
-              host_permissions: [matchPattern],
-              content_scripts: [{ matches: [matchPattern], js: ["content.js"] }],
-            }),
-          ],
-        },
-      });
-      expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
-        expect.arrayContaining(["browser.broad-host-access", "browser.broad-content-script"]),
-      );
-    },
-  );
+  test.each([
+    "*://*/",
+    "https://*/",
+    "http://*/",
+    "https://*/sensitive/*",
+    "file:///*",
+    "file://*",
+    "file:///**",
+  ])("flags scheme-wide match pattern %s", (matchPattern) => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [
+          manifestFile({
+            host_permissions: [matchPattern],
+            content_scripts: [{ matches: [matchPattern], js: ["content.js"] }],
+          }),
+        ],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining(["browser.broad-host-access", "browser.broad-content-script"]),
+    );
+  });
+
+  test("keeps a file permission scoped to one directory out of the broad-access rule", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const review = createBrowserExtensionReview({
+      manifest,
+      artifact: {
+        path,
+        sha256: SHA,
+        files: [manifestFile({ host_permissions: ["file:///home/example/*"] })],
+      },
+    });
+    expect(review.ruleFindings.map((finding) => finding.ruleId)).not.toContain(
+      "browser.broad-host-access",
+    );
+  });
 
   test.each([
     "accessibilityFeatures.modify",
