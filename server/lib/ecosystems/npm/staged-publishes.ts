@@ -188,6 +188,10 @@ export function parseStagedPublishDetails(
   fallbackId?: string,
 ): StagedPublishDetails | null {
   const root = isRecord(data) ? data : {};
+  const explicitIds = [readString(root.id), readString(root.stageId)].filter(
+    (id): id is string => id !== null,
+  );
+  if (fallbackId && explicitIds.some((id) => id !== fallbackId)) return null;
   const item = parseStagedPublishItem(root, fallbackId);
   if (!item) return null;
   return {

@@ -54,6 +54,52 @@ async function seedUserAndOrg() {
 }
 
 describe("scan completion atomicity", () => {
+  test("D1 fallback persists more files and findings than Workerd's compound-select limit", async () => {
+    const { userId, organizationId } = await seedUserAndOrg();
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = "stage-compound-select-000001";
+    const db = createDb(env.DB);
+    await createScanJob(db, { id: scanId, stageId, organizationId, ownerUserId: userId });
+    await claimScanForRun(db, scanId, organizationId);
+
+    const files = Array.from({ length: 7 }, (_, index) => ({
+      path: `file-${index}.js`,
+      size: 16,
+      sha256: `sha-${index}`,
+      flags: [],
+      textSample: `export const value${index} = ${index};\n`,
+    }));
+    const findings = files.map((file, index) => ({
+      severity: "medium" as const,
+      file: file.path,
+      evidence: `value${index}`,
+      reason: "regression fixture",
+      ruleId: `fixture.rule-${index}`,
+    }));
+
+    const persisted = await persistScan(db, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+      packageJson: { name: "demo", version: "1.0.0" },
+      previousPackageJson: null,
+      risk: "medium",
+      status: "complete",
+      summary: { ok: true },
+      ai: null,
+      files,
+      diff: createPackageDiff([], files),
+      findings,
+      report: { version: 1, digest: "digest-compound-select" },
+    });
+
+    expect(persisted.persisted).toBe(true);
+    const detail = await getScan(db, scanId, organizationId);
+    expect(detail?.files).toHaveLength(7);
+    expect(detail?.findings).toHaveLength(7);
+  });
+
   // A duplicate Queue delivery may finish while an earlier completion attempt
   // is still parked before its D1 batch. The stale batch must not clear or
   // replace the detail rows written by the successful completion.

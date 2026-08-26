@@ -15,9 +15,58 @@ describe("npm stage commands", () => {
     );
   });
 
+  test("pins commands to the registry captured for the scan", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "https://registry.example.test/team's",
+      }),
+    ).toBe(`npm stage approve ${stageId} --registry 'https://registry.example.test/team'\\''s'`);
+  });
+
+  test("refuses an unsafe captured registry instead of falling back to the default", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "file:///tmp/registry",
+      }),
+    ).toBeNull();
+  });
+
+  test("refuses credential-bearing registry urls from legacy scans", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryUrl: "https://user:password@registry.example.test",
+      }),
+    ).toBeNull();
+  });
+
   test("has no command for workflow-gate scans", () => {
     expect(npmStageCommandFor("publish", { source: "workflow_gate", stageId })).toBeNull();
   });
+
+  test("has no command for a superseded stage", () => {
+    expect(
+      npmStageCommandFor("publish", {
+        stageId,
+        registryStatusSupersededAt: "2026-08-20T10:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
+
+  test.each(["published", "blocked", "deleted"])(
+    "has no command after npm reports the stage as %s",
+    (registryVersionStatus) => {
+      expect(
+        npmStageCommandFor("publish", {
+          stageId,
+          registryUrl: "https://registry.npmjs.org",
+          registryVersionStatus,
+        }),
+      ).toBeNull();
+    },
+  );
 
   test("has no command without a stage id", () => {
     expect(npmStageCommandFor("publish", {})).toBeNull();

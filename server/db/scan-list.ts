@@ -26,6 +26,7 @@ export interface ListScansResult {
     ownerUserId: string | null;
     packageName: string | null;
     stagedVersion: string | null;
+    registryUrl: string | null;
     previousVersion: string | null;
     risk: string;
     status: string;
@@ -38,6 +39,9 @@ export interface ListScansResult {
     riskSummary: ScanRiskSummary | null;
     reportVersion: number | null;
     reportDigest: string | null;
+    registryVersionStatus: string | null;
+    registryVersionStatusAt: Date | null;
+    registryStatusSupersededAt: Date | null;
     startedAt: Date | null;
     completedAt: Date | null;
     createdAt: Date;
@@ -61,8 +65,12 @@ export async function listScans(
   const decisionFilter = options.decisionFilter ?? "undecided";
 
   const conditions = [eq(scans.organizationId, organizationId)];
-  if (decisionFilter === "undecided") conditions.push(isNull(scans.decision));
-  else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
+  if (decisionFilter === "undecided") {
+    // Superseded reviews are immutable history, not pending work: the decision
+    // route refuses them, so leaving them in the default queue creates rows the
+    // reviewer can never resolve. They remain visible under the `all` filter.
+    conditions.push(isNull(scans.decision), isNull(scans.registryStatusSupersededAt));
+  } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
   if (options.cursor) {
@@ -84,6 +92,7 @@ export async function listScans(
       ownerUserId: scans.ownerUserId,
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
+      registryUrl: scans.registryUrl,
       previousVersion: scans.previousVersion,
       risk: scans.risk,
       status: scans.status,
@@ -96,6 +105,9 @@ export async function listScans(
       riskSummaryJson: scans.riskSummaryJson,
       reportVersion: scans.reportVersion,
       reportDigest: scans.reportDigest,
+      registryVersionStatus: scans.registryVersionStatus,
+      registryVersionStatusAt: scans.registryVersionStatusAt,
+      registryStatusSupersededAt: scans.registryStatusSupersededAt,
       startedAt: scans.startedAt,
       completedAt: scans.completedAt,
       createdAt: scans.createdAt,
@@ -123,6 +135,7 @@ export async function listScans(
       ownerUserId: row.ownerUserId,
       packageName: row.packageName,
       stagedVersion: row.stagedVersion,
+      registryUrl: row.registryUrl,
       previousVersion: row.previousVersion,
       risk: row.risk,
       status: row.status,
@@ -135,6 +148,9 @@ export async function listScans(
       riskSummary: row.status === "complete" ? readScanRiskBreakdown(row.riskSummaryJson) : null,
       reportVersion: row.reportVersion,
       reportDigest: row.reportDigest,
+      registryVersionStatus: row.registryVersionStatus,
+      registryVersionStatusAt: row.registryVersionStatusAt,
+      registryStatusSupersededAt: row.registryStatusSupersededAt,
       startedAt: row.startedAt,
       completedAt: row.completedAt,
       createdAt: row.createdAt,

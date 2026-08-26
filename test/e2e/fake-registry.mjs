@@ -71,6 +71,30 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    // npm's package-version lifecycle status. Scoped names arrive fully escaped
+    // (`%40scope%2Fname`), which is what the real endpoint requires and what the
+    // adapter must send — the packument routes below take the un-escaped form,
+    // so getting these two confused is a real bug this fixture can catch.
+    const versionStatusMatch = /^\/-\/package\/([^/]+)\/version\/([^/]+)\/status$/.exec(
+      url.pathname,
+    );
+    if (versionStatusMatch) {
+      const packageName = decodeURIComponent(versionStatusMatch[1]);
+      const version = decodeURIComponent(versionStatusMatch[2]);
+      const scenario = registry.scenarios.find(
+        (entry) => entry.stagePackageName === packageName && entry.stageVersion === version,
+      );
+      const status = scenario?.versionStatus ?? null;
+      if (!status) {
+        // Matches npm: an unknown version and an unauthorized one are the same
+        // 404, which is exactly why the client must never treat it as a verdict.
+        await sendJson(request, response, startedAt, 404, { error: "version not found" });
+        return;
+      }
+      await sendJson(request, response, startedAt, 200, { packageName, version, status });
+      return;
+    }
+
     const stagedViewMatch = /^\/-\/stage\/([^/]+)$/.exec(url.pathname);
     if (stagedViewMatch) {
       const scenario = stageById.get(decodeURIComponent(stagedViewMatch[1]));

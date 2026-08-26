@@ -61,7 +61,7 @@ scanSharingRoutes.post("/:id/share", async (c) => {
     // tell them apart with. Say the part that is true either way; the UI drops
     // its stale share state on 409 regardless.
     if (unlisting) return c.json({ error: "this report is not shared publicly" }, 409);
-    return c.json({ error: "only completed scans can be shared publicly" }, 409);
+    return c.json({ error: "only active completed scans can be shared publicly" }, 409);
   }
   // Threat-feed listing is a second opt-in layered on the link: only flip it
   // when the caller states an intent, so a plain re-share never (un)lists.

@@ -37,6 +37,15 @@ describe("npm connection validation", () => {
     ).toThrow("registry URL must use https");
   });
 
+  test("rejects registry urls with embedded credentials", () => {
+    expect(() => normalizeRegistryUrl("https://user:password@registry.example.test")).toThrow(
+      "registry URL must not include credentials",
+    );
+    expect(() => normalizeRegistryUrl("https://user@registry.example.test")).toThrow(
+      "registry URL must not include credentials",
+    );
+  });
+
   test("checks registry auth and staged list capability without a stage id", async () => {
     const fetchMock = vi.fn(async (url, init) => {
       expect(init.headers.authorization).toBe("Bearer npm_secret_token");

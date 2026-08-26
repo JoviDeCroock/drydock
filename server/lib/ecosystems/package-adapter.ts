@@ -22,6 +22,12 @@ export interface AdapterContext {
 // the orchestrator scope.
 export interface AdapterConnectionRef {
   organizationId: string;
+  /**
+   * Registry captured when a staged scan was created. Credential brokers must
+   * fail closed if the organization's live connection no longer matches it,
+   * rather than retargeting an already-queued release to another registry.
+   */
+  registryUrl?: string | null;
 }
 
 // Files plus an ecosystem-normalized "manifest summary" pulled from a fetched
@@ -159,4 +165,7 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
 
   /** Opaque snapshot of staged details that's safe to persist in the report. */
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
+
+  /** Registry-control-plane identity recovered while acquiring the release. */
+  registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
 }

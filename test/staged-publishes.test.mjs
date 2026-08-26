@@ -86,6 +86,30 @@ describe("staged publish metadata", () => {
     });
   });
 
+  test("rejects detail responses for a different explicit stage id", () => {
+    expect(
+      parseStagedPublishDetails(
+        {
+          id: "stage-other-123",
+          packageName: "wrong-package",
+          version: "9.9.9",
+        },
+        "stage-requested-123",
+      ),
+    ).toBeNull();
+    expect(
+      parseStagedPublishDetails(
+        {
+          id: "stage-requested-123",
+          stageId: "stage-other-123",
+          packageName: "wrong-package",
+          version: "9.9.9",
+        },
+        "stage-requested-123",
+      ),
+    ).toBeNull();
+  });
+
   test("does not treat metadata-only staged view responses as prepared manifests", () => {
     const detail = parseStagedPublishDetails({
       id: "stage-good-123",

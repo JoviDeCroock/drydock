@@ -40,6 +40,7 @@ import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
+import { RegistryStatusNotice } from "./RegistryStatusNotice";
 import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import { ReleaseRecommendation } from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
@@ -262,12 +263,12 @@ export default function ScanDetailPage() {
     ? gate?.status === "pending" && (gateReviewComplete || gateReviewFailed)
       ? () => (gateDialogOpen.value = true)
       : undefined
-    : detail?.scan.status === "complete"
+    : detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
       ? () => (decisionDialogOpen.value = true)
       : undefined;
 
   const onShareClick =
-    detail?.scan.status === "complete"
+    detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
       ? () => {
           shareDialogOpen.value = true;
           void model.loadAttestationAvailability();
@@ -313,6 +314,13 @@ export default function ScanDetailPage() {
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
+
+      {/* Above the recommendation on purpose: npm blocking a version, or still
+          holding one this organization already approved, outranks anything the
+          report has to say about it. Rendered for failed scans too — a review
+          that could not read the tarball because the release was published or
+          removed is exactly when this is the only useful thing on the page. */}
+      {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
 
       {!detail && !error ? (
         <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
@@ -437,7 +445,10 @@ export default function ScanDetailPage() {
         ) : null
       ) : null}
 
-      {detail && detail.scan.status === "complete" && !isWorkflowGate ? (
+      {detail &&
+      detail.scan.status === "complete" &&
+      !isWorkflowGate &&
+      detail.scan.registryStatusSupersededAt == null ? (
         <DecisionDialogHost
           openSignal={decisionDialogOpen}
           onClose={() => (decisionDialogOpen.value = false)}
@@ -452,7 +463,9 @@ export default function ScanDetailPage() {
         />
       ) : null}
 
-      {detail && detail.scan.status === "complete" ? (
+      {detail &&
+      detail.scan.status === "complete" &&
+      detail.scan.registryStatusSupersededAt == null ? (
         <ShareDialogHost
           openSignal={shareDialogOpen}
           onClose={() => (shareDialogOpen.value = false)}

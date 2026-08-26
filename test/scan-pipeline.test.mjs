@@ -5,6 +5,7 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 const dbMock = vi.hoisted(() => ({
+  backfillScanRegistryReleaseIdentity: vi.fn(async () => undefined),
   persistScan: vi.fn(async () => ({ persisted: true })),
   recordScanEvent: vi.fn(async () => undefined),
   getNpmConnection: vi.fn(),
@@ -125,6 +126,7 @@ describe("scan pipeline baseline selection", () => {
   });
 
   afterEach(() => {
+    dbMock.backfillScanRegistryReleaseIdentity.mockClear();
     dbMock.persistScan.mockClear();
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
@@ -162,6 +164,56 @@ describe("scan pipeline baseline selection", () => {
     expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
     expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
     expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
+  });
+
+  test("refuses to retarget a captured staged scan to another registry", async () => {
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_registry_changed",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+        registryUrl: "https://registry.example.test",
+      }),
+    ).rejects.toThrow("npm registry changed after this scan was queued");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
+    expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
+  });
+
+  test("recovers missing registry coordinates from the staged control plane", async () => {
+    await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_registry_identity",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+      registryUrl: "https://registry.npmjs.org",
+    });
+
+    expect(dbMock.backfillScanRegistryReleaseIdentity).toHaveBeenCalledWith(
+      {},
+      {
+        scanId: "scan_registry_identity",
+        organizationId: "org_1",
+        registryUrl: "https://registry.npmjs.org",
+        packageName: "@scope/pkg",
+        version: "2.0.0-beta.3",
+      },
+    );
+  });
+
+  test("fails when staged details disagree with the queued registry identity", async () => {
+    dbMock.backfillScanRegistryReleaseIdentity.mockResolvedValueOnce("mismatch");
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_registry_identity_mismatch",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+        registryUrl: "https://registry.npmjs.org",
+      }),
+    ).rejects.toThrow("staged release identity changed after this scan was queued");
+
+    expect(dbMock.persistScan).not.toHaveBeenCalled();
   });
 
   test("propagates credential failures during baseline metadata lookup", async () => {

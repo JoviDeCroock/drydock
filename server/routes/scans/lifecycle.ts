@@ -108,6 +108,7 @@ scanLifecycleRoutes.post("/", async (c) => {
       ownerUserId: session.userId,
       packageName: staged?.packageName ?? null,
       stagedVersion: staged?.version ?? null,
+      registryUrl: npmConnection.registryUrl,
     });
     if (!detail) return c.json({ error: "failed to create scan" }, 500);
     const message: ScanQueueMessage = {

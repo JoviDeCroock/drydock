@@ -50,8 +50,12 @@ function slackEvents() {
     .filter((event) => event.metadata.channel === "slack");
 }
 
-const { notifyNpmConnectionExpired, notifyScanCompletion, notifyWorkflowGateReview } =
-  await import("../server/lib/notify");
+const {
+  notifyNpmConnectionExpired,
+  notifyScanCompletion,
+  notifyStagedReleaseAwaitingApproval,
+  notifyWorkflowGateReview,
+} = await import("../server/lib/notify");
 
 function gateInput(overrides = {}) {
   return {
@@ -89,6 +93,22 @@ function npmConnectionExpiredInput(overrides = {}) {
     organizationId: "org_1",
     ownerUserId: "user_1",
     registryUrl: "https://registry.npmjs.org",
+    ...overrides,
+  };
+}
+
+function awaitingApprovalInput(overrides = {}) {
+  return {
+    env: { BETTER_AUTH_URL: "https://drydock.test" },
+    db: {},
+    organizationId: "org_1",
+    ownerUserId: "user_1",
+    scanId: "scan_1",
+    stageId: "stage-safe_123",
+    packageName: "demo-package",
+    version: "1.2.0",
+    decidedAt: "2026-08-19T12:00:00.000Z",
+    registryUrl: "https://registry.example.test/npm",
     ...overrides,
   };
 }
@@ -264,6 +284,36 @@ describe("notifyNpmConnectionExpired", () => {
     expect(message.text).toContain(
       "https://drydock.test/dashboard/settings?tab=integrations&org=org_1",
     );
+  });
+});
+
+describe("notifyStagedReleaseAwaitingApproval", () => {
+  test("pins the approval command to the captured registry", async () => {
+    await notifyStagedReleaseAwaitingApproval(awaitingApprovalInput());
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain(
+      "npm stage approve stage-safe_123 --registry 'https://registry.example.test/npm'",
+    );
+  });
+
+  test("shell-quotes registry punctuation in the copy-paste command", async () => {
+    await notifyStagedReleaseAwaitingApproval(
+      awaitingApprovalInput({ registryUrl: "https://registry.example.test/team's" }),
+    );
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain("--registry 'https://registry.example.test/team'\\''s'");
+  });
+
+  test("does not put legacy registry credentials into reminder email", async () => {
+    await notifyStagedReleaseAwaitingApproval(
+      awaitingApprovalInput({ registryUrl: "https://user:password@registry.example.test" }),
+    );
+
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).not.toContain("user:password");
+    expect(message.text).not.toContain("npm stage approve");
   });
 });
 

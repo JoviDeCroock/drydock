@@ -2,10 +2,17 @@ import { type AppDb, type WorkspaceSession, createDb } from "../../db/client";
 import { getNpmConnection, markNpmConnectionUsed } from "../../db/npm-connections";
 import {
   type ScanSource,
+  getScanReleaseIdentity,
   claimScanForRun,
   discardScanAttempt,
   markScanFailed,
+  recordRegistryVersionStatus,
 } from "../../db/scans";
+import { lookupStagedReleaseFate } from "../ecosystems/npm/release-outcome";
+import {
+  isTerminalNpmVersionStatus,
+  type NpmVersionStatus,
+} from "../ecosystems/npm/version-status";
 import { getStagedAdapter } from "../ecosystems";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
@@ -89,6 +96,17 @@ export async function executeScanJob(
     if (npmConnection.validationStatus !== "valid") {
       throw new Error("Validate the organization npm token before scanning staged publishes.");
     }
+    const releaseIdentity = await getScanReleaseIdentity(
+      db,
+      message.scanId,
+      message.organizationId,
+    );
+    if (!releaseIdentity?.registryUrl) {
+      throw new Error("The queued scan is missing its captured npm registry.");
+    }
+    if (npmConnection.registryUrl !== releaseIdentity.registryUrl) {
+      throw new Error("The organization npm registry changed after this scan was queued.");
+    }
 
     await markNpmConnectionUsed(db, message.organizationId);
 
@@ -103,6 +121,7 @@ export async function executeScanJob(
         maxFiles: message.maxFiles,
         organizationId: message.organizationId,
         source: message.source ?? "manual",
+        registryUrl: releaseIdentity.registryUrl,
       },
     );
     emitOperationalEvent("info", "scan.job.completed", {
@@ -130,10 +149,14 @@ export async function executeScanJob(
     }
     return result;
   } catch (err) {
-    const safe = classifyScanError(err);
+    const classified = classifyScanError(err);
+    // A staged tarball we cannot read is the one failure whose cause we can
+    // actually go and ask about, and the default reading of it ("your token is
+    // wrong") is the least likely one. Refine before deciding anything.
+    const { error: safe, registryStatus } = await refineStagedFailure(env, db, message, classified);
     if (!safe.retryable || options.finalAttempt) {
       const skip =
-        message.source === "auto_discovery" && safe.code === "staged_tarball_unavailable";
+        message.source === "auto_discovery" && AUTO_DISCOVERY_DISCARD_CODES.has(safe.code);
       if (skip) {
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
@@ -142,23 +165,35 @@ export async function executeScanJob(
           stageId: message.stageId,
           source: message.source,
           attempt,
-          reason: "staged_tarball_unavailable",
+          reason: safe.code,
+          registryStatus,
           durationMs: durationMsSince(startedAtMs),
           error: safe,
         });
         // Terminal counterpart to this scan's `scan.queued`, so a discovered
-        // candidate withdrawn before review does not read as a scan that queued
-        // and vanished.
+        // candidate that npm removed before we could review it does not read
+        // as a scan that queued and vanished.
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
           ecosystem: "npm",
           source: message.source ?? "auto_discovery",
-          reason: "staged_tarball_unavailable",
+          reason: safe.code,
           durationMs: durationMsSince(startedAtMs),
         });
       } else {
         await markScanFailed(db, message.scanId, message.organizationId, safe);
+        // Failed scans are not part of the background outcome sweep, so persist
+        // only statuses that cannot subsequently change. The refined error
+        // already explains a published release; storing that nonterminal
+        // snapshot here would leave a green "published" badge after deletion.
+        if (isTerminalNpmVersionStatus(registryStatus)) {
+          await recordRegistryVersionStatus(db, {
+            scanId: message.scanId,
+            organizationId: message.organizationId,
+            status: registryStatus,
+          }).catch(() => undefined);
+        }
         // Counted only on a terminal failure, so a scan that succeeds on retry
         // is not filed as a failure in the aggregate.
         recordProductEvent(env, {
@@ -177,6 +212,7 @@ export async function executeScanJob(
           attempt,
           finalAttempt: Boolean(options.finalAttempt),
           durationMs: durationMsSince(startedAtMs),
+          registryStatus,
           error: safe,
         });
         if (message.source !== "workflow_gate") {
@@ -206,6 +242,52 @@ export async function executeScanJob(
     }
     throw err;
   }
+}
+
+/**
+ * Terminal classifications that mean the staged release itself went away, as
+ * opposed to the review failing. Auto-discovered candidates in this family are
+ * discarded rather than shown as failures: nobody asked for the scan, and the
+ * thing it was going to review no longer exists.
+ */
+const AUTO_DISCOVERY_DISCARD_CODES = new Set([
+  "staged_tarball_unavailable",
+  "staged_release_published",
+  "staged_release_deleted",
+  "staged_release_blocked",
+]);
+
+export interface RefinedScanFailure {
+  error: SafeScanError;
+  registryStatus: NpmVersionStatus | null;
+}
+
+/**
+ * Narrow a staged-tarball failure using what npm says became of the release.
+ *
+ * The mapping from lifecycle status to failure lives in the npm adapter; this
+ * only decides when it is safe to ask. Workflow-gate reviews are excluded
+ * because they are not staged publishes and span three ecosystems — npm's stage
+ * lifecycle has nothing to say about a PyPI or VS Code release. Strictly
+ * advisory: an unanswerable lookup leaves the classification untouched.
+ */
+export async function refineStagedFailure(
+  env: Cloudflare.Env,
+  db: AppDb,
+  message: ScanQueueMessage,
+  error: SafeScanError,
+): Promise<RefinedScanFailure> {
+  if (error.code !== "staged_tarball_unavailable" || message.source === "workflow_gate") {
+    return { error, registryStatus: null };
+  }
+  const fate = await lookupStagedReleaseFate(env, db, message.scanId, message.organizationId);
+  if (!fate) return { error, registryStatus: null };
+  return {
+    // Every refined code is as terminal as the one it replaces: the staged
+    // bytes are gone, and no retry brings them back.
+    error: fate.failure ? { ...fate.failure, retryable: false } : error,
+    registryStatus: fate.status,
+  };
 }
 
 export function classifyScanError(err: unknown): SafeScanError {
@@ -244,6 +326,30 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "staged_tarball_unavailable",
       message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    };
+  }
+  if (message.includes("queued scan is missing its captured npm registry")) {
+    return {
+      code: "npm_registry_identity_missing",
+      message:
+        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
+      retryable: false,
+    };
+  }
+  if (message.includes("npm registry changed after this scan was queued")) {
+    return {
+      code: "npm_connection_changed",
+      message:
+        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
+      retryable: false,
+    };
+  }
+  if (message.includes("staged release identity changed after this scan was queued")) {
+    return {
+      code: "staged_release_identity_changed",
+      message:
+        "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
       retryable: false,
     };
   }

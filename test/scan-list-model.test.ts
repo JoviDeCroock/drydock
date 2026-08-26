@@ -4,6 +4,7 @@ import {
   scanMatchesDecisionFilter,
   type PersistedScanDetail,
 } from "../src/models/scan";
+import { ACTIVE_ORG_HEADER, setActiveOrganizationId } from "../src/models/active-organization";
 
 type ScanListModelInstance = InstanceType<typeof ScanListModel>;
 
@@ -14,6 +15,14 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "content-type": "application/json" },
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function scanDetail(decision: "publish" | "no_publish" | null): PersistedScanDetail {
@@ -89,6 +98,27 @@ describe("ScanListModel decisions", () => {
     expect(model.scans.value[0]?.decision).toBe("no_publish");
     expect(model.scans.value[0]?.riskSummary?.releaseRisk).toBe("none");
   });
+
+  test("does not let an older refresh restore a decided scan", async () => {
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshResponse.promise)
+      .mockResolvedValueOnce(jsonResponse(scanDetail("publish")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+
+    const refreshing = model.refresh();
+    await model.setDecision("scan-1", "publish", "reviewed");
+    expect(model.scans.value).toEqual([]);
+
+    refreshResponse.resolve(jsonResponse({ scans: [scanDetail(null).scan], nextCursor: null }));
+    await refreshing;
+
+    expect(model.scans.value).toEqual([]);
+  });
 });
 
 describe("ScanListModel deletion", () => {
@@ -136,6 +166,32 @@ describe("ScanListModel deletion", () => {
     expect(model.deleteStatus.value).toBe("error");
     expect(model.deleteError.value).toBe("only failed scans can be deleted");
     expect(model.scans.value).toHaveLength(1);
+  });
+
+  test("does not let an older refresh restore a deleted scan", async () => {
+    const refreshResponse = deferred<Response>();
+    const remainingScan = { ...scanDetail(null).scan, id: "scan-2" };
+    const deletedScan = { ...scanDetail(null).scan, status: "failed" as const };
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(refreshResponse.promise)
+      .mockResolvedValueOnce(jsonResponse({ ok: true, id: "scan-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = [deletedScan, remainingScan];
+
+    const refreshing = model.refresh();
+    await expect(model.deleteFailed("scan-1")).resolves.toBe(true);
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
+
+    refreshResponse.resolve(
+      jsonResponse({ scans: [deletedScan, remainingScan], nextCursor: null }),
+    );
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
   });
 });
 
@@ -277,5 +333,211 @@ describe("ScanListModel hasAnyScan after deletion", () => {
     expect(model.hasAnyScan.value).toBe(true);
     // No probe: the list is still non-empty, so only the DELETE was sent.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ScanListModel registry status refreshes", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    setActiveOrganizationId(null);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("ignores a refresh response from the previously active organization", async () => {
+    const organizationA = deferred<Response>();
+    const organizationB = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(organizationA.promise)
+      .mockReturnValueOnce(organizationB.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    setActiveOrganizationId("org-a");
+    const refreshA = model.refresh();
+    setActiveOrganizationId("org-b");
+    const refreshB = model.refresh();
+
+    organizationB.resolve(
+      jsonResponse({ scans: [{ ...scanDetail(null).scan, id: "scan-b" }], nextCursor: null }),
+    );
+    await refreshB;
+    organizationA.resolve(
+      jsonResponse({ scans: [{ ...scanDetail(null).scan, id: "scan-a" }], nextCursor: null }),
+    );
+    await refreshA;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-b"]);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-a" }),
+      }),
+    );
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-b" }),
+      }),
+    );
+  });
+
+  test("cancels pending registry refreshes after the active organization changes", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    setActiveOrganizationId("org-a");
+    model.scheduleRegistryStatusRefreshes();
+    setActiveOrganizationId("org-b");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("refreshes while the Check npm background work can still be completing", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    model.scheduleRegistryStatusRefreshes();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(39_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  test("keeps already-loaded pages during registry status refreshes", async () => {
+    vi.useFakeTimers();
+    const loadedScans = Array.from({ length: 40 }, (_, index) => ({
+      ...scanDetail(null).scan,
+      id: `scan-${index}`,
+    }));
+    const refreshedScans = loadedScans.map((scan) => ({
+      ...scan,
+      registryVersionStatus: "published",
+    }));
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ scans: refreshedScans, nextCursor: "cursor-after-refresh" })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = loadedScans;
+    model.nextCursor.value = "cursor-before-refresh";
+
+    model.scheduleRegistryStatusRefreshes();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/scans?filter=all&limit=40", expect.any(Object));
+    expect(model.scans.value).toHaveLength(40);
+    expect(model.scans.value.every((scan) => scan.registryVersionStatus === "published")).toBe(
+      true,
+    );
+    expect(model.nextCursor.value).toBe("cursor-after-refresh");
+  });
+
+  test("ignores pagination that an overlapping refresh superseded", async () => {
+    const loadMoreResponse = deferred<Response>();
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(loadMoreResponse.promise)
+      .mockReturnValueOnce(refreshResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    model.scans.value = [
+      { ...scanDetail(null).scan, id: "scan-a" },
+      { ...scanDetail(null).scan, id: "scan-b" },
+      { ...scanDetail(null).scan, id: "scan-c" },
+    ];
+    model.nextCursor.value = "cursor-c";
+
+    const loadingMore = model.loadMore();
+    const refreshing = model.refresh({ preserveLoaded: true });
+    refreshResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-new" },
+          { ...scanDetail(null).scan, id: "scan-a" },
+          { ...scanDetail(null).scan, id: "scan-b" },
+        ],
+        nextCursor: "cursor-b",
+      }),
+    );
+    await refreshing;
+    loadMoreResponse.resolve(
+      jsonResponse({
+        scans: [
+          { ...scanDetail(null).scan, id: "scan-d" },
+          { ...scanDetail(null).scan, id: "scan-e" },
+        ],
+        nextCursor: null,
+      }),
+    );
+    await loadingMore;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-new", "scan-a", "scan-b"]);
+    expect(model.nextCursor.value).toBe("cursor-b");
+  });
+
+  test("does not paginate with a stale cursor while an organization refresh is in flight", async () => {
+    const refreshResponse = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValueOnce(refreshResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+    setActiveOrganizationId("org-a");
+    model.scans.value = [
+      { ...scanDetail(null).scan, id: "scan-a" },
+      { ...scanDetail(null).scan, id: "scan-b" },
+      { ...scanDetail(null).scan, id: "scan-c" },
+    ];
+    model.nextCursor.value = "cursor-c";
+
+    setActiveOrganizationId("org-b");
+    const refreshing = model.refresh();
+    await model.loadMore();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/scans?filter=all",
+      expect.objectContaining({
+        headers: expect.objectContaining({ [ACTIVE_ORG_HEADER]: "org-b" }),
+      }),
+    );
+    refreshResponse.resolve(
+      jsonResponse({
+        scans: [{ ...scanDetail(null).scan, id: "scan-new" }],
+        nextCursor: null,
+      }),
+    );
+    await refreshing;
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-new"]);
+    expect(model.nextCursor.value).toBeNull();
+  });
+
+  test("cancels pending refreshes when the model is disposed", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ scans: [], nextCursor: null })));
+    vi.stubGlobal("fetch", fetchMock);
+    model = new ScanListModel();
+    model.filter.value = "all";
+
+    model.scheduleRegistryStatusRefreshes();
+    model[Symbol.dispose]();
+    model = null;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

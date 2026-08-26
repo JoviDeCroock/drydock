@@ -14,7 +14,15 @@ import {
  * per-row decide/delete actions.
  */
 import { createModel, effect, signal } from "@preact/signals";
+import { activeOrganizationId } from "./active-organization";
 import { errorMessage } from "./api";
+
+interface ScanListRefreshOptions {
+  /** Keep every page the user has already loaded instead of returning to page one. */
+  preserveLoaded?: boolean;
+}
+
+const LIST_SCANS_REFRESH_LIMIT = 100;
 
 export const ScanListModel = createModel(() => {
   const scans = signal<ScanListItem[]>([]);
@@ -34,12 +42,42 @@ export const ScanListModel = createModel(() => {
   // review looks identical to one who has never run a scan — and only the
   // second should be shown the getting-started panel.
   const hasAnyScan = signal<boolean | null>(null);
+  // `Check npm` resolves registry outcomes under Worker `waitUntil`, after the
+  // discovery response returns. Incrementing this signal starts a bounded
+  // refresh sequence; a later request or model disposal cancels the old one.
+  const registryStatusRefreshRequest = signal(0);
+  let refreshRequestId = 0;
+  // Refresh and pagination replace or extend the same cursor snapshot. The
+  // operation that starts later owns the next list mutation.
+  let listMutationId = 0;
 
-  async function refresh(): Promise<void> {
+  async function refresh(options: ScanListRefreshOptions = {}): Promise<void> {
+    const requestId = ++refreshRequestId;
+    const mutationId = ++listMutationId;
+    const organizationId = activeOrganizationId.peek();
     const currentFilter = filter.peek();
+    const loadedCount = options.preserveLoaded ? scans.peek().length : 0;
     refreshing.value = true;
     try {
-      const data = await listScans({ filter: currentFilter });
+      const firstLimit =
+        loadedCount > 0 ? Math.min(LIST_SCANS_REFRESH_LIMIT, loadedCount) : undefined;
+      const firstPage = await listScans({ filter: currentFilter, limit: firstLimit });
+      if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
+      const refreshed = [...firstPage.scans];
+      let cursor = firstPage.nextCursor;
+      while (options.preserveLoaded && refreshed.length < loadedCount && cursor) {
+        const page = await listScans({
+          cursor,
+          filter: currentFilter,
+          limit: Math.min(LIST_SCANS_REFRESH_LIMIT, loadedCount - refreshed.length),
+        });
+        if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
+        refreshed.push(...page.scans);
+        cursor = page.nextCursor;
+      }
+      // A concurrent Load more completed while these pages were in flight.
+      if (options.preserveLoaded && scans.peek().length > loadedCount) return;
+      const data = { ...firstPage, scans: refreshed, nextCursor: cursor };
       scans.value = data.scans;
       nextCursor.value = data.nextCursor;
       error.value = null;
@@ -55,24 +93,53 @@ export const ScanListModel = createModel(() => {
         hasAnyScan.value = false;
       } else {
         hasAnyScan.value = null;
-        await resolveHasAnyScan();
+        await resolveHasAnyScan({ requestId, mutationId, organizationId });
       }
     } catch (err) {
+      if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       error.value = errorMessage(err);
     } finally {
-      loaded.value = true;
-      refreshing.value = false;
+      if (requestId === refreshRequestId) {
+        if (activeOrganizationId.peek() === organizationId) loaded.value = true;
+        refreshing.value = false;
+      }
     }
+  }
+
+  function isCurrentRefresh(
+    requestId: number,
+    mutationId: number,
+    organizationId: string | null,
+  ): boolean {
+    return (
+      requestId === refreshRequestId &&
+      mutationId === listMutationId &&
+      activeOrganizationId.peek() === organizationId
+    );
   }
 
   // One-row probe for the case the filtered list cannot answer: this filter is
   // empty, but the organization may still have decided reviews. Failure leaves
   // `hasAnyScan` null, which renders nothing — an onboarding panel is never
   // worth showing on a guess.
-  async function resolveHasAnyScan(): Promise<void> {
+  async function resolveHasAnyScan(refreshContext?: {
+    requestId: number;
+    mutationId: number;
+    organizationId: string | null;
+  }): Promise<void> {
     if (hasAnyScan.peek() !== null) return;
     try {
       const data = await listScans({ filter: "all", limit: 1 });
+      if (
+        refreshContext &&
+        !isCurrentRefresh(
+          refreshContext.requestId,
+          refreshContext.mutationId,
+          refreshContext.organizationId,
+        )
+      ) {
+        return;
+      }
       hasAnyScan.value = data.scans.length > 0;
     } catch {
       // Leave unknown.
@@ -86,6 +153,32 @@ export const ScanListModel = createModel(() => {
     void filter.value;
     if (!loaded.peek()) return;
     void refresh();
+  });
+
+  effect(() => {
+    const request = registryStatusRefreshRequest.value;
+    if (request === 0) return;
+
+    const organizationId = activeOrganizationId.peek();
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const delays = [1_000, 4_000, 10_000, 25_000];
+    const refreshNext = async (index: number) => {
+      if (disposed || index >= delays.length) return;
+      timer = setTimeout(async () => {
+        if (disposed || activeOrganizationId.peek() !== organizationId) return;
+        await refresh({ preserveLoaded: true });
+        if (!disposed && activeOrganizationId.peek() === organizationId) {
+          void refreshNext(index + 1);
+        }
+      }, delays[index]);
+    };
+    void refreshNext(0);
+
+    return () => {
+      disposed = true;
+      if (timer !== null) clearTimeout(timer);
+    };
   });
 
   return {
@@ -103,17 +196,34 @@ export const ScanListModel = createModel(() => {
     hasAnyScan,
     refresh,
 
+    scheduleRegistryStatusRefreshes(): void {
+      registryStatusRefreshRequest.value += 1;
+    },
+
     async loadMore(): Promise<void> {
       const cursor = this.nextCursor.value;
-      if (!cursor || this.loadingMore.value) return;
+      if (!cursor || this.loadingMore.value || this.refreshing.value) return;
+      const mutationId = ++listMutationId;
+      const organizationId = activeOrganizationId.peek();
+      const currentFilter = this.filter.peek();
       this.loadingMore.value = true;
       try {
-        const data = await listScans({ cursor, filter: this.filter.value });
+        const data = await listScans({ cursor, filter: currentFilter });
+        if (
+          mutationId !== listMutationId ||
+          activeOrganizationId.peek() !== organizationId ||
+          this.filter.peek() !== currentFilter ||
+          this.nextCursor.peek() !== cursor
+        ) {
+          return;
+        }
         this.scans.value = [...this.scans.value, ...data.scans];
         this.nextCursor.value = data.nextCursor;
         this.error.value = null;
       } catch (err) {
-        this.error.value = errorMessage(err);
+        if (mutationId === listMutationId && activeOrganizationId.peek() === organizationId) {
+          this.error.value = errorMessage(err);
+        }
       } finally {
         this.loadingMore.value = false;
       }
@@ -124,6 +234,8 @@ export const ScanListModel = createModel(() => {
       this.decisionError.value = null;
       try {
         const updated = await setScanDecision(id, decision, reason);
+        // Fence out a refresh that started before this authoritative write.
+        ++listMutationId;
         const activeFilter = this.filter.peek();
         this.scans.value = this.scans.value
           .map((scan) =>
@@ -148,6 +260,8 @@ export const ScanListModel = createModel(() => {
       this.deleteError.value = null;
       try {
         await deleteScan(id);
+        // Do not let an older list response resurrect the deleted row.
+        ++listMutationId;
         this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
         // Deleting the organization's only scan puts it back in the
         // never-scanned state, so the getting-started panel has to come back.

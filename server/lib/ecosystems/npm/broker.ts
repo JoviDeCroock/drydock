@@ -28,6 +28,7 @@ export interface NpmBrokerDownloadOptions {
 
 interface NpmBrokerProps {
   organizationId: string;
+  registryUrl?: string | null;
 }
 
 interface ResolvedCredentials {
@@ -91,7 +92,12 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
   }
 
   private async resolveCredentials(): Promise<ResolvedCredentials> {
-    return resolveNpmCredentials(this.env, createDb(this.env.DB), this.ctx.props.organizationId);
+    return resolveNpmCredentials(
+      this.env,
+      createDb(this.env.DB),
+      this.ctx.props.organizationId,
+      this.ctx.props.registryUrl,
+    );
   }
 }
 
@@ -99,6 +105,7 @@ async function resolveNpmCredentials(
   env: Cloudflare.Env,
   db: AppDb,
   organizationId: string,
+  expectedRegistryUrl?: string | null,
 ): Promise<ResolvedCredentials> {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
@@ -106,6 +113,9 @@ async function resolveNpmCredentials(
   }
   if (connection.validationStatus !== "valid") {
     throw new Error("Validate the organization npm token before scanning staged publishes.");
+  }
+  if (expectedRegistryUrl && connection.registryUrl !== expectedRegistryUrl) {
+    throw new Error("The organization npm registry changed after this scan was queued.");
   }
   const token = await decryptNpmToken(env, connection);
   return { token, registry: connection.registryUrl };
@@ -181,7 +191,12 @@ class LocalNpmBroker implements NpmBroker {
   }
 
   private async resolve(): Promise<ResolvedCredentials> {
-    return resolveNpmCredentials(this.ctx.env, this.ctx.db, this.props.organizationId);
+    return resolveNpmCredentials(
+      this.ctx.env,
+      this.ctx.db,
+      this.props.organizationId,
+      this.props.registryUrl,
+    );
   }
 }
 
@@ -195,7 +210,12 @@ export function createNpmBroker(ctx: AdapterContext, ref: AdapterConnectionRef):
   const ctxExports = (ctx.executionCtx as unknown as CtxWithExports).exports;
   const factory = ctxExports?.NpmAdapterBroker;
   if (factory) {
-    return factory({ props: { organizationId: ref.organizationId } });
+    return factory({
+      props: { organizationId: ref.organizationId, registryUrl: ref.registryUrl },
+    });
   }
-  return new LocalNpmBroker(ctx, { organizationId: ref.organizationId });
+  return new LocalNpmBroker(ctx, {
+    organizationId: ref.organizationId,
+    registryUrl: ref.registryUrl,
+  });
 }

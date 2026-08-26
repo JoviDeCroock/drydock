@@ -139,6 +139,17 @@ export const scans = sqliteTable(
     }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
+    // Registry base URL captured when this staged release was discovered. npm
+    // package coordinates are registry-local, so later connection edits must
+    // never make an old scan query a different registry for the same name and
+    // version.
+    registryUrl: text("registry_url"),
+    // Immutable registry-control-plane coordinates captured alongside
+    // `registryUrl`. `packageName` / `stagedVersion` are intentionally replaced
+    // with the inspected tarball manifest after a successful scan, and hostile
+    // bytes must never be allowed to retarget a credentialed registry lookup.
+    registryPackageName: text("registry_package_name"),
+    registryVersion: text("registry_version"),
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
     status: text("status").notNull().default("pending"),
@@ -166,8 +177,9 @@ export const scans = sqliteTable(
     diffArtifactKey: text("diff_artifact_key"),
     // Public share link. A non-null token makes the completed scan's canonical
     // report export readable (unauthenticated) at /public/reports/:token.
-    // Revoking sets the token back to null; the token itself is the only
-    // capability — there is no separate "enabled" flag to drift out of sync.
+    // Revoking or superseding the registry stage sets the token back to null;
+    // the token itself is the only capability — there is no separate "enabled"
+    // flag to drift out of sync.
     publicShareToken: text("public_share_token"),
     publicSharedAt: integer("public_shared_at", { mode: "timestamp_ms" }),
     publicSharedByUserId: text("public_shared_by_user_id").references(() => user.id, {
@@ -176,12 +188,41 @@ export const scans = sqliteTable(
     // Public threat-feed listing is a second, separate opt-in on top of the
     // share link: a shared report is reachable by anyone holding the link,
     // but only feed-listed scans appear in the discoverable
-    // /public/threat-feed.json index. Cleared whenever the share is revoked.
+    // /public/threat-feed.json index. Cleared whenever the share is revoked or
+    // the registry stage is superseded.
     publicFeedListedAt: integer("public_feed_listed_at", { mode: "timestamp_ms" }),
     // Ecosystem-prefixed canonical package identity used by the public badge.
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
     publicPackageKey: text("public_package_key"),
+    // npm's own lifecycle status for this exact package version, as reported by
+    // `GET /-/package/{name}/version/{version}/status`. This is the registry's
+    // view of the release, never Drydock's: `decision` records what the
+    // organization decided, this records what npm did with it afterwards.
+    // Null means "not known" — the lookup is best-effort and npm answers 404
+    // for both an unknown version and an unauthorized one, so absence can never
+    // be read as a negative signal.
+    registryVersionStatus: text("registry_version_status"),
+    // When npm last returned the status above. Kept separate from the attempt
+    // clock so a transient failure never makes a known status look freshly
+    // observed or erases it from the workbench/report export.
+    registryVersionStatusAt: integer("registry_version_status_at", { mode: "timestamp_ms" }),
+    // When the lookup last ran, whether or not it produced a status. This is
+    // the throttle and overlap fence: an unresolvable scan costs one call per
+    // interval, and an older in-flight sweep cannot overwrite a newer result.
+    registryVersionStatusAttemptedAt: integer("registry_version_status_attempted_at", {
+      mode: "timestamp_ms",
+    }),
+    // Durable release-target tombstone. Creating a newer review for the same
+    // registry/package/version stamps every older scan, so deleting a failed
+    // newer scan can never make historical stage ids eligible again.
+    registryStatusSupersededAt: integer("registry_status_superseded_at", {
+      mode: "timestamp_ms",
+    }),
+    // Send-once stamp for the "you approved this, npm is still waiting" nudge.
+    // A separate column rather than an event lookup because the sweep decides
+    // whether to send while holding only this row.
+    registryPublishReminderAt: integer("registry_publish_reminder_at", { mode: "timestamp_ms" }),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -213,6 +254,28 @@ export const scans = sqliteTable(
     ),
     orgCreatedIdx: index("scans_org_created_idx").on(
       table.organizationId,
+      table.createdAt,
+      table.id,
+    ),
+    // Serves the discovery sweep's "which reviewed releases still need a
+    // registry status?" scan, which filters by organization and orders by the
+    // last attempt. Without it that query walks every scan the org has ever
+    // run, every 15 minutes.
+    orgRegistryStatusIdx: index("scans_org_registry_status_idx").on(
+      table.organizationId,
+      table.registryUrl,
+      table.registryStatusSupersededAt,
+      table.registryVersionStatus,
+      table.registryVersionStatusAttemptedAt,
+    ),
+    // Supports the correlated newest-incarnation guard in the registry-status
+    // sweep. A package version can be rejected and staged again under a new
+    // stage id, and duplicate manual reviews can also exist for one stage.
+    orgRegistryReleaseIdx: index("scans_org_registry_release_idx").on(
+      table.organizationId,
+      table.registryUrl,
+      table.registryPackageName,
+      table.registryVersion,
       table.createdAt,
       table.id,
     ),
