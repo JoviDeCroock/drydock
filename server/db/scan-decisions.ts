@@ -96,17 +96,17 @@ export async function recordScanDecision(
     .select(DECISION_TARGET_COLUMNS)
     .from(scans)
     .where(
-        and(
-          eq(scans.id, input.scanId),
-          eq(scans.organizationId, input.organizationId),
-          eq(scans.status, "complete"),
-          isNull(scans.registryStatusSupersededAt),
-          // Workflow-gate votes must go through the gate route: that path performs
-          // the per-vote TOTP step-up and owns the irreversible GitHub callback.
-          // Sharing the vote roster is safe only when the staged route cannot add
-          // an un-stepped-up approval to it.
-          inArray(scans.source, ["manual", "auto_discovery"]),
-        ),
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.status, "complete"),
+        isNull(scans.registryStatusSupersededAt),
+        // Workflow-gate votes must go through the gate route: that path performs
+        // the per-vote TOTP step-up and owns the irreversible GitHub callback.
+        // Sharing the vote roster is safe only when the staged route cannot add
+        // an un-stepped-up approval to it.
+        inArray(scans.source, ["manual", "auto_discovery"]),
+      ),
     )
     .limit(1);
   if (!current) return { outcome: "not_actionable" };
@@ -124,7 +124,8 @@ export async function recordScanDecision(
     ecosystem: "npm",
     artifactBucket,
     env,
-    // Only the plain status/ownership predicate; no gate to race with.
+    // Re-prove staged eligibility at write time so a concurrent restage cannot
+    // let this older scan overwrite its superseded state.
     applyVerdictWhere: () =>
       and(
         eq(scans.id, input.scanId),
