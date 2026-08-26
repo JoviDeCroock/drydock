@@ -4,6 +4,7 @@ import {
   parsePyPiReleaseManifest,
   preparePyPiArtifact,
   pypiAdapter,
+  selectPyPiReleaseArtifacts,
   PYPI_RELEASE_MANIFEST_SCHEMA,
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
@@ -19,6 +20,7 @@ import type {
   WorkflowArtifactKind,
   WorkflowGateAdapter,
 } from "../../workflow-gates/types";
+import { createPyPiBroker } from "./broker";
 
 /**
  * PyPI workflow-gate adapter.
@@ -78,6 +80,31 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
       return { artifact, input, prepared: preparePyPiArtifact(input) };
     });
     return deriveReleaseCandidates(entries);
+  },
+
+  async verifyPublishedRelease(ctx, input) {
+    const broker = createPyPiBroker(
+      { ...ctx, session: { userId: "registry-verification" } },
+      { organizationId: ctx.organizationId },
+    );
+    try {
+      const metadata = await broker.fetchProjectMetadata(input.packageName);
+      if (!metadata) return { status: "not_published" };
+      const publishedArtifacts = selectPyPiReleaseArtifacts(metadata, input.version, {
+        includeYanked: true,
+      });
+      if (!publishedArtifacts.length) return { status: "not_published" };
+      const reviewedDigests = input.artifacts.map((artifact) => artifact.sha256).sort();
+      const publishedDigests = publishedArtifacts
+        .map((artifact) => artifact.sha256?.toLowerCase() ?? "")
+        .sort();
+      return reviewedDigests.length === publishedDigests.length &&
+        reviewedDigests.every((digest, index) => digest === publishedDigests[index])
+        ? { status: "verified" }
+        : { status: "mismatch", reviewedDigests, publishedDigests };
+    } finally {
+      await broker.dispose();
+    }
   },
 };
 

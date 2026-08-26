@@ -33,12 +33,17 @@ import {
 import {
   classifyScanError,
   executeScanJob,
+  isRegistryVerificationMessage,
   isWorkflowGateMessage,
   MAX_SCAN_JOB_ATTEMPTS,
   retryDelaySeconds,
   type QueueMessage,
 } from "./lib/scan/job";
 import { executeWorkflowGateJob } from "./lib/workflow-gate-job";
+import {
+  executeRegistryVerificationJob,
+  runRegistryVerificationCron,
+} from "./lib/workflow-gates/registry-verification";
 import {
   createStageStartCoordinator,
   discoverAndQueueStagedPublishes,
@@ -589,6 +594,14 @@ export default {
         error: describeOperationalError(err),
       });
     }
+    try {
+      const result = await runRegistryVerificationCron(env, ctx);
+      emitOperationalEvent("info", "workflow_gate.registry_verification.cron_swept", result);
+    } catch (err) {
+      emitOperationalEvent("error", "workflow_gate.registry_verification.cron_failed", {
+        error: describeOperationalError(err),
+      });
+    }
     await pruneStaleAuditEvents(env);
     await pruneStaleAuthRows(env);
     await pruneStaleRateLimitBuckets(env);
@@ -596,6 +609,45 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Cloudflare.Env, ctx: ExecutionContext) {
     for (const message of batch.messages) {
       const messageStartedAtMs = Date.now();
+      if (isRegistryVerificationMessage(message.body)) {
+        const verificationMessage = message.body;
+        try {
+          const result = await executeRegistryVerificationJob(env, ctx, verificationMessage);
+          emitOperationalEvent("info", "workflow_gate.registry_verification.queue_completed", {
+            organizationId: verificationMessage.organizationId,
+            gateId: verificationMessage.gateId,
+            attempt: message.attempts,
+            durationMs: durationMsSince(messageStartedAtMs),
+            ...result,
+          });
+        } catch (err) {
+          if (message.attempts < MAX_SCAN_JOB_ATTEMPTS) {
+            message.retry({ delaySeconds: retryDelaySeconds(message.attempts) });
+            emitOperationalEvent(
+              "warn",
+              "workflow_gate.registry_verification.queue_retry_scheduled",
+              {
+                organizationId: verificationMessage.organizationId,
+                gateId: verificationMessage.gateId,
+                attempt: message.attempts,
+                nextDelaySeconds: retryDelaySeconds(message.attempts),
+                durationMs: durationMsSince(messageStartedAtMs),
+                error: describeOperationalError(err),
+              },
+            );
+          } else {
+            emitOperationalEvent("error", "workflow_gate.registry_verification.queue_failed", {
+              organizationId: verificationMessage.organizationId,
+              gateId: verificationMessage.gateId,
+              attempt: message.attempts,
+              durationMs: durationMsSince(messageStartedAtMs),
+              error: describeOperationalError(err),
+            });
+            throw err;
+          }
+        }
+        continue;
+      }
       if (isWorkflowGateMessage(message.body)) {
         const gateMessage = message.body;
         try {

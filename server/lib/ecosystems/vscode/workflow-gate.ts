@@ -15,6 +15,7 @@ import type {
   WorkflowArtifactKind,
   WorkflowGateAdapter,
 } from "../../workflow-gates/types";
+import { createVscodeBroker, vscodeVsixAssetUrl } from "./broker";
 
 export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "vscode",
@@ -35,6 +36,43 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     return deriveVscodeReleaseCandidates(artifacts);
+  },
+
+  async verifyPublishedRelease(ctx, input) {
+    const broker = createVscodeBroker(
+      { ...ctx, session: { userId: "registry-verification" } },
+      { organizationId: ctx.organizationId },
+    );
+    try {
+      const versions = await broker.fetchExtensionVersions(input.packageName);
+      const reviewedDigests = input.artifacts.map((artifact) => artifact.sha256).sort();
+      const urls = [
+        ...new Set(
+          (versions ?? [])
+            .filter((entry) => entry.version === input.version)
+            .map(vscodeVsixAssetUrl)
+            .filter((url): url is string => Boolean(url)),
+        ),
+      ];
+      if (!urls.length) return { status: "not_published" };
+      if (urls.length > 16) throw new Error("too many Marketplace VSIX variants to verify");
+      const publishedDigests: string[] = [];
+      for (const url of urls) {
+        const published = await broker.downloadPublicArtifact({ url }, { maxFiles: 1 });
+        if (!published.archiveSha256) throw new Error("published VSIX digest unavailable");
+        const digest = published.archiveSha256.toLowerCase();
+        publishedDigests.push(digest);
+        // Marketplace can expose target-platform variants as duplicate version
+        // rows. This gate reviews one VSIX, so any exact digest match proves the
+        // claimed extension/version reached the registry.
+        if (reviewedDigests.length === 1 && reviewedDigests[0] === digest) {
+          return { status: "verified" };
+        }
+      }
+      return { status: "mismatch", reviewedDigests, publishedDigests: publishedDigests.sort() };
+    } finally {
+      await broker.dispose();
+    }
   },
 };
 

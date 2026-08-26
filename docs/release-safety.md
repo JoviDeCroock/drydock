@@ -75,6 +75,15 @@ Current structured events cover:
 - `scan.queue.message.completed`, `scan.queue.retry_scheduled`, and
   `scan.queue.message_failed` with attempt, delay/exhaustion, duration, and safe
   error code.
+- `workflow_gate.registry_digest_verified` when every published registry digest
+  matches the gate provenance, and `workflow_gate.registry_digest_mismatch` when
+  a disagreement survives the publication grace period. The mismatch event may
+  include package/version and both digest sets; it must never include registry
+  credentials, headers, archive contents, or unredacted errors.
+- `workflow_gate.registry_verification.queue_completed` and the
+  `workflow_gate.registry_verification.cron_*` events keep the delayed job and
+  scheduled backstop observable without treating a not-yet-published version as
+  a failure.
 
 Do not log raw package text, headers, tokens, token fingerprints, ciphertext,
 nonces, cookies, or raw unexpected error messages. If an operator needs detail,

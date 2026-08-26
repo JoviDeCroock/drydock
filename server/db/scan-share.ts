@@ -347,6 +347,7 @@ export const THREAT_FEED_MAX_ENTRIES = 100;
 export interface SharedScanRow {
   scanId: string;
   source: string;
+  registryVerifiedAt: Date | null;
   packageName: string | null;
   stagedVersion: string | null;
   previousVersion: string | null;
@@ -363,6 +364,7 @@ export interface SharedScanRow {
 const SHARED_SCAN_COLUMNS = {
   scanId: scans.id,
   source: scans.source,
+  registryVerifiedAt: scans.registryVerifiedAt,
   packageName: scans.packageName,
   stagedVersion: scans.stagedVersion,
   previousVersion: scans.previousVersion,
@@ -482,10 +484,13 @@ export async function listBadgeCandidateScans(
     tag === DEFAULT_BADGE_TAG
       ? or(sql`${distTag} = ${tag}`, sql`${distTag} IS NULL`)
       : sql`${distTag} = ${tag}`;
-  // Rank registry-backed scans before applying the bounded page. Otherwise a
-  // burst of newer manifest-claimed gate scans could crowd the verified review
-  // out of the result set before pickBadgeScan gets a chance to prefer it.
-  const packageIdentityPriority = sql<number>`CASE WHEN ${scans.source} = 'workflow_gate' THEN 1 ELSE 0 END`;
+  // Mirror `scanPackageIdentity` in SQL before applying the bounded page.
+  // Otherwise newer, still-unverified gate scans could crowd a verified gate
+  // or staged review out before `pickBadgeScan` sees it.
+  const packageIdentityPriority = sql<number>`CASE
+    WHEN ${scans.source} = 'workflow_gate' AND ${scans.registryVerifiedAt} IS NULL THEN 1
+    ELSE 0
+  END`;
   // Badge-ineligible sources never get a publicPackageKey, so this excludes
   // nothing the key filter admits today. It stays as the second lock: a row
   // that acquired a key before its source was reclassified, or through a future

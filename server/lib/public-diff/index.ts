@@ -28,8 +28,10 @@ import {
   type PackageJsonSummary,
 } from "../review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
+import { PUBLIC_DIFF_RISK_VERSION } from "./version";
 
 export { PublicDiffError } from "./error";
+export { publicDiffAnalysisVersion } from "./version";
 export type { PublicDiffInput } from "./types";
 
 /**
@@ -105,8 +107,6 @@ export interface PublicPackageDiff {
   cacheExpiresAt?: string;
 }
 
-// Bump this when risk aggregation changes without a deterministic-rules bump.
-const PUBLIC_DIFF_RISK_VERSION = "1";
 // The payload and rules segments are per-ecosystem (`PublicDiffAdapter`) so one
 // ecosystem's rules or payload bump cannot invalidate another's cached pairs.
 function publicDiffCachePrefix(adapter: PublicDiffAdapter): string {
@@ -234,7 +234,6 @@ export function publicDiffAnalysisVersion(
 ): string {
   return `${adapter.rulesVersionSegment}+risk-${PUBLIC_DIFF_RISK_VERSION}+payload-${adapter.payloadVersion}`;
 }
-
 export async function computePublicDiffCacheKey(input: {
   ecosystem: string;
   packageName: string;

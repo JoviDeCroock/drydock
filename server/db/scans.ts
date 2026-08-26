@@ -37,3 +37,12 @@ export {
   type ScanDecision,
   type ScanDecisionFilter,
 } from "./scan-decisions";
+
+export {
+  getOrRecordRegistryMismatchObservedAt,
+  listGateScansPendingRegistryVerification,
+  listGatesPendingRegistryVerification,
+  markScanRegistryVerified,
+  recordRegistryDigestMismatch,
+  type RegistryVerificationScan,
+} from "./scan-registry-verification";
