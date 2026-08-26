@@ -129,6 +129,13 @@ describe("recordProductEvent", () => {
         risk: "low",
         durationMs: 3,
       },
+      {
+        name: "public_diff.verdict_served",
+        ecosystem: "npm",
+        packageName: "left-pad",
+        grade: "clear",
+        durationMs: 3,
+      },
       { name: "scan.queued", organizationId: "org_1", ecosystem: "npm", source: "manual" },
       {
         name: "scan.failed",

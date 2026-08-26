@@ -1,5 +1,6 @@
 import { batch, createModel, signal } from "@preact/signals";
 import type {
+  CapabilityDelta,
   DiffEntry,
   FileRecord,
   Finding,
@@ -55,6 +56,15 @@ export interface PublicDiffResponse {
   packageJsonDiff: PackageJsonDiff;
   findings: Array<Finding & FindingDiffAnnotation>;
   risk: ScanRiskBreakdown;
+  // Advisory per-side capability sets and their delta; see
+  // server/lib/review/capabilities.ts.
+  capabilities: CapabilityDelta;
+  // Registry publication timestamps per side; null for previews and
+  // ecosystems without one.
+  fromPublishedAt: string | null;
+  toPublishedAt: string | null;
+  // Declared-tier source binding per side (unverified manifest claim).
+  sourceBinding: { from: string | null; to: string | null; changed: boolean };
   textSamplesOmitted: boolean;
   // Coverage caveats (e.g. an artifact kind omitted because it exceeded a
   // sandbox cap); rendered as a banner above the diff.

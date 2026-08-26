@@ -23,6 +23,13 @@ export function nativeFormatLabel(flags: readonly string[]): string | null {
   return null;
 }
 
+// One definition of "native artifact" for the rule below and the capability
+// projection, so a file cannot be a native finding without carrying the native
+// capability (or the reverse).
+export function isNativeArtifactFile(path: string, flags: readonly string[]): boolean {
+  return nativeFormatLabel(flags) !== null || NATIVE_ARTIFACT_EXTENSION.test(path);
+}
+
 // The hash is the only identity a reviewer can take to the registry artifact
 // when the body is binary or was never retained, so it rides on every
 // binary-shaped finding. Legacy artifacts persisted before skip-hashing have
@@ -50,7 +57,7 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
       );
     }
     const formatLabel = nativeFormatLabel(file.flags);
-    if (formatLabel || NATIVE_ARTIFACT_EXTENSION.test(file.path)) {
+    if (isNativeArtifactFile(file.path, file.flags)) {
       findings.push(
         tag("fileNativeArtifact", {
           severity: "high",

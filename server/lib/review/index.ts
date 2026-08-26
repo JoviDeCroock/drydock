@@ -58,6 +58,13 @@ export {
   projectReleaseRuleFindings,
 } from "./diff-annotation";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
+export {
+  CAPABILITY_ORDER,
+  diffCapabilities,
+  normalizeCapabilityDelta,
+  projectCapabilities,
+} from "./capabilities";
+export type { Capability, CapabilityDelta, CapabilitySet } from "./capabilities";
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 

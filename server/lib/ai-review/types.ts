@@ -1,4 +1,11 @@
-import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, RiskLevel } from "../review";
+import type {
+  CapabilityDelta,
+  DiffEntry,
+  FileRecord,
+  Finding,
+  PackageJsonDiff,
+  RiskLevel,
+} from "../review";
 import type { AiReviewEcosystem } from "./contract";
 
 interface AiFinding {
@@ -52,6 +59,9 @@ export interface SelectiveAiReviewOptions {
   packageJsonDiff: PackageJsonDiff;
   ruleFindings: Finding[];
   previousVersionAvailable: boolean;
+  // Advisory capability delta computed by the deterministic phase; context
+  // for the reviewer's judgment, never something it can downgrade.
+  capabilities?: CapabilityDelta;
 }
 
 export type DisplayedAiResult =

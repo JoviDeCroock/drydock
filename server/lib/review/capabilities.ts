@@ -1,0 +1,222 @@
+import type { CodePatternSet, FileRecord } from ".";
+import type { PackageJsonSummary } from "./serialize";
+import { isRecord } from "../platform/guards";
+import { isNativeArtifactFile } from "./rules/binaries";
+import { codePatternsFor, CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./rules/patterns";
+
+/**
+ * Normalized per-side capability projection and cross-version delta.
+ *
+ * Capabilities are derived from the same pattern sets the deterministic rules
+ * match, plus the manifest and the parser's file flags — but deliberately not
+ * from the findings themselves. Rules run over the staged side only and
+ * modulate severity by diff status, so a findings projection could never
+ * answer the question this module exists for: what could the OLD version do,
+ * what can the NEW one do, and what changed.
+ *
+ * Advisory, like the intent envelope: a capability set never feeds risk or
+ * findings. It feeds the verdict payload, the review surfaces, AI-review
+ * context, and (later) consumer-side policy.
+ */
+export type Capability =
+  | "network"
+  | "process"
+  | "credentials"
+  | "dynamicEval"
+  | "native"
+  | "installScripts"
+  | "bin";
+
+// Stable output order, so two projections of the same evidence are comparable
+// byte-for-byte wherever they are serialized.
+export const CAPABILITY_ORDER: readonly Capability[] = [
+  "network",
+  "process",
+  "credentials",
+  "dynamicEval",
+  "native",
+  "installScripts",
+  "bin",
+];
+
+export interface CapabilitySet {
+  capabilities: Capability[];
+  /** Files whose text was pattern-scanned (a bounded sample was retained). */
+  inspectedFiles: number;
+  /**
+   * Files whose body was never content-inspected (the parser's
+   * `content-skipped` retention flag). Text samples are bounded, so every set
+   * is a lower bound; this counts the files where even that lower bound has a
+   * hole a capability could hide in.
+   */
+  uninspectedFiles: number;
+  /** True when no file body escaped inspection entirely. */
+  complete: boolean;
+}
+
+export interface CapabilityDelta {
+  /** Null when there is no comparable baseline (first release, or skipped). */
+  from: CapabilitySet | null;
+  to: CapabilitySet;
+  /** Capabilities the target side has and the baseline did not. */
+  escalations: Capability[];
+  /** Capabilities the baseline had and the target side no longer shows. */
+  reductions: Capability[];
+  /**
+   * True only when both sides exist and both are complete. An empty
+   * `escalations` with `confident: false` must never be rendered or evaluated
+   * as "no escalation" — it means the comparison has uninspected bytes an
+   * escalation could hide in.
+   */
+  confident: boolean;
+}
+
+const CONTENT_SKIPPED_FLAG = "content-skipped";
+
+export function projectCapabilities(
+  files: ReadonlyArray<Pick<FileRecord, "path" | "textSample" | "flags">>,
+  packageJson: PackageJsonSummary | null | undefined,
+  codePatternSet?: CodePatternSet,
+): CapabilitySet {
+  const patterns = codePatternsFor(codePatternSet);
+  const present = new Set<Capability>();
+  let inspectedFiles = 0;
+  let uninspectedFiles = 0;
+
+  for (const file of files) {
+    if (isNativeArtifactFile(file.path, file.flags)) present.add("native");
+    if (file.flags.includes(CONTENT_SKIPPED_FLAG)) {
+      uninspectedFiles++;
+      continue;
+    }
+    if (typeof file.textSample !== "string" || !file.textSample) continue;
+    inspectedFiles++;
+    const sample = file.textSample;
+    if (!present.has("process") && matchesAny(sample, patterns.processExecution)) {
+      present.add("process");
+    }
+    if (!present.has("network") && matchesAny(sample, patterns.networkAccess)) {
+      present.add("network");
+    }
+    // A shell command that reaches the network is both things at once: it
+    // spawns a process and it egresses. The rules split remote-shell out of
+    // process-execution for scoring; the capability view folds it back into
+    // the two primitives it is made of.
+    if (
+      (!present.has("network") || !present.has("process")) &&
+      matchesAny(sample, patterns.remoteShell)
+    ) {
+      present.add("network");
+      present.add("process");
+    }
+    if (!present.has("dynamicEval") && matchesAny(sample, patterns.dynamicEvaluation)) {
+      present.add("dynamicEval");
+    }
+    if (!present.has("credentials") && matchesAny(sample, patterns.credentialAccess)) {
+      present.add("credentials");
+    }
+  }
+
+  if (hasConsumerInstallScript(packageJson)) present.add("installScripts");
+  if (hasBinEntry(packageJson?.bin)) present.add("bin");
+
+  return {
+    capabilities: sortCapabilities(present),
+    inspectedFiles,
+    uninspectedFiles,
+    complete: uninspectedFiles === 0,
+  };
+}
+
+export function diffCapabilities(from: CapabilitySet | null, to: CapabilitySet): CapabilityDelta {
+  if (!from) {
+    return { from: null, to, escalations: [], reductions: [], confident: false };
+  }
+  const fromSet = new Set(from.capabilities);
+  const toSet = new Set(to.capabilities);
+  return {
+    from,
+    to,
+    escalations: to.capabilities.filter((capability) => !fromSet.has(capability)),
+    reductions: from.capabilities.filter((capability) => !toSet.has(capability)),
+    confident: from.complete && to.complete,
+  };
+}
+
+/**
+ * Re-validate a persisted delta (summaryJson blob, report export, cached diff
+ * payload). Returns null for anything that predates the projection or was
+ * stored malformed, like `normalizeIntentEnvelope`.
+ */
+export function normalizeCapabilityDelta(value: unknown): CapabilityDelta | null {
+  if (!isRecord(value)) return null;
+  const to = normalizeCapabilitySet(value.to);
+  if (!to) return null;
+  const from =
+    value.from === null || value.from === undefined ? null : normalizeCapabilitySet(value.from);
+  if (value.from !== null && value.from !== undefined && !from) return null;
+  const escalations = normalizeCapabilityList(value.escalations);
+  const reductions = normalizeCapabilityList(value.reductions);
+  if (!escalations || !reductions) return null;
+  // Confidence is recomputed from its evidence rather than trusted: a
+  // persisted `confident: true` over an incomplete side must not survive.
+  const confident = value.confident === true && from !== null && from.complete && to.complete;
+  return { from, to, escalations, reductions, confident };
+}
+
+function normalizeCapabilitySet(value: unknown): CapabilitySet | null {
+  if (!isRecord(value)) return null;
+  const capabilities = normalizeCapabilityList(value.capabilities);
+  if (!capabilities) return null;
+  const inspectedFiles = nonNegativeInteger(value.inspectedFiles);
+  const uninspectedFiles = nonNegativeInteger(value.uninspectedFiles);
+  if (inspectedFiles === null || uninspectedFiles === null) return null;
+  return {
+    capabilities,
+    inspectedFiles,
+    uninspectedFiles,
+    complete: uninspectedFiles === 0,
+  };
+}
+
+function normalizeCapabilityList(value: unknown): Capability[] | null {
+  if (!Array.isArray(value)) return null;
+  const present = new Set<Capability>();
+  for (const entry of value) {
+    if (!CAPABILITY_ORDER.includes(entry as Capability)) return null;
+    present.add(entry as Capability);
+  }
+  return sortCapabilities(present);
+}
+
+function sortCapabilities(present: ReadonlySet<Capability>): Capability[] {
+  return CAPABILITY_ORDER.filter((capability) => present.has(capability));
+}
+
+function matchesAny(sample: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(sample));
+}
+
+function hasConsumerInstallScript(packageJson: PackageJsonSummary | null | undefined): boolean {
+  if (!packageJson) return false;
+  // `gypfile` is npm's implicit `node-gyp rebuild` install hook — an install
+  // script the manifest never spells out (install-script.implicit-node-gyp).
+  if (packageJson.gypfile === true) return true;
+  for (const scripts of [packageJson.scripts, packageJson.implicitScripts]) {
+    if (!scripts) continue;
+    for (const name of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
+      if (typeof scripts[name] === "string" && scripts[name].trim()) return true;
+    }
+  }
+  return false;
+}
+
+function hasBinEntry(bin: PackageJsonSummary["bin"]): boolean {
+  if (typeof bin === "string") return bin.trim().length > 0;
+  if (isRecord(bin)) return Object.keys(bin).length > 0;
+  return false;
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
