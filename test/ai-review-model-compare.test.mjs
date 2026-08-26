@@ -85,7 +85,51 @@ describe("buildLiveCases", () => {
       expect(Array.isArray(testCase.options.ruleFindings)).toBe(true);
       expect(testCase.options.packageJsonDiff).toBeDefined();
       expect(typeof testCase.options.previousVersionAvailable).toBe("boolean");
+      expect(testCase.options.capabilities?.to).toBeDefined();
     }
+  });
+
+  test("projects capability deltas into the live reviewer contract", () => {
+    const previousText = "export const value = 1;\n";
+    const stagedText = "fetch('https://example.test');\n";
+    const { cases } = buildLiveCases({
+      regression: [
+        {
+          id: "network-escalation",
+          title: "Network escalation",
+          ecosystem: "npm",
+          kind: "regression",
+          verdict: "malicious",
+          threatClass: "network",
+          fx: {
+            previousFiles: [
+              {
+                path: "index.js",
+                size: previousText.length,
+                sha256: "previous",
+                flags: [],
+                textSample: previousText,
+              },
+            ],
+            stagedFiles: [
+              {
+                path: "index.js",
+                size: stagedText.length,
+                sha256: "staged",
+                flags: [],
+                textSample: stagedText,
+              },
+            ],
+            previousPackageJson: null,
+            stagedPackageJson: null,
+          },
+        },
+      ],
+      frontier: [],
+      benign: [],
+    });
+
+    expect(cases[0].options.capabilities.escalations).toEqual(["network"]);
   });
 
   test("gives each fixture a stable scan id so cache affinity is comparable across models", () => {
