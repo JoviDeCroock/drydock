@@ -7,6 +7,7 @@ import {
   type CapabilitySet,
   type FileRecord,
 } from "../server/lib/review";
+import { matchDeterministicCodeCapabilities } from "../server/lib/review/rules/scripts";
 
 function file(path: string, textSample?: string, flags: string[] = []): FileRecord {
   return { path, size: textSample?.length ?? 0, sha256: "abc", flags, textSample };
@@ -35,6 +36,34 @@ describe("projectCapabilities", () => {
   test("a benign file projects nothing", () => {
     const projected = projectCapabilities([file("index.js", "export const value = 1;\n")], null);
     expect(projected.capabilities).toEqual([]);
+  });
+
+  test("uses deterministic path filters and common-environment exclusions", () => {
+    const projected = projectCapabilities(
+      [
+        file("README.md", "Use require('child_process') when extending this package."),
+        file("index.d.ts", "export type Child = typeof import('child_process');"),
+        file("index.js", "export const production = process.env.NODE_ENV === 'production';"),
+      ],
+      null,
+    );
+    expect(projected.capabilities).toEqual([]);
+    expect(projected.inspectedFiles).toBe(1);
+  });
+
+  test("projects capabilities found only after deterministic constant folding", () => {
+    const projected = projectCapabilities(
+      [
+        file(
+          "index.js",
+          "const cp = require(['chi', 'ld_pro', 'cess'].join(''));\n" +
+            "const secret = globalThis['proc' + 'ess']['e' + 'nv'];\n" +
+            "cp['exec' + 'Sync']('echo ' + secret);\n",
+        ),
+      ],
+      null,
+    );
+    expect(projected.capabilities).toEqual(["process", "credentials"]);
   });
 
   test("a remote-shell command implies both network and process", () => {
@@ -133,6 +162,28 @@ describe("projectCapabilities", () => {
     expect(projected.capabilities).toEqual(
       CAPABILITY_ORDER.filter((capability) => projected.capabilities.includes(capability)),
     );
+  });
+});
+
+describe("matchDeterministicCodeCapabilities", () => {
+  test("shares exclusions and normalization with deterministic findings", () => {
+    expect(
+      matchDeterministicCodeCapabilities("README.md", "require('child_process')", "javascript"),
+    ).toBeNull();
+
+    const commonEnvironment = matchDeterministicCodeCapabilities(
+      "index.js",
+      "process.env.NODE_ENV",
+      "javascript",
+    );
+    expect(commonEnvironment?.credentialAccess.matched).toBe(false);
+
+    const assembled = matchDeterministicCodeCapabilities(
+      "index.js",
+      "require(['chi', 'ld_pro', 'cess'].join(''))",
+      "javascript",
+    );
+    expect(assembled?.processExecution).toMatchObject({ matched: true, obfuscated: true });
   });
 });
 

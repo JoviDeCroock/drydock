@@ -74,7 +74,8 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // once the prioritized retention ships.
   // v7: payloads carry the capability delta, per-side publication timestamps,
   // and declared source binding; v6 entries would serve none of them.
-  payloadVersion: "v7",
+  // v8 aligns capability projection with deterministic code-matching semantics.
+  payloadVersion: "v8",
 
   isValidPackageName: isValidPyPiProjectName,
   // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
