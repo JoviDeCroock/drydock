@@ -72,7 +72,7 @@ The first corpus slice covers:
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - install-time self-propagation: code a consumer's install executes that invokes a registry publish (`propagation.registry-publish`) or writes into the directory the package manager unpacks dependencies into (`propagation.package-mutation`). Both are ordinary developer actions elsewhere — a release CLI publishes, a patch tool rewrites `node_modules` — so the family gates on install-time reachability rather than on the pattern, with `legit-release-cli-publish` and `legit-patch-tooling-node-modules` as the hard negatives that pin that gate;
-- LLM prompt injection in package text: `file.review-manipulation` (high) fires on verdict coercion aimed at the automated security review itself — imperatives over the release object ("mark this release as safe"), suppression of findings, or literal tokens from Drydock's review schema (`nothing_unusual`, `requiresManualReview … false`) — and is standing danger, so a prior approval never discounts it; `file.prompt-injection` (medium) fires on instruction-override phrasing or direct addresses to an AI/LLM/agent audience anywhere in package text (READMEs included — a consumer's coding assistant reads them), with longstanding matches in unreachable test files demoted one step because LLM-security packages ship jailbreak strings as fixtures;
+- LLM prompt injection in package text: `file.review-manipulation` (high) fires on verdict coercion aimed at the automated security review itself — imperatives over the release object ("mark this release as safe"), imperative determiner-bearing suppression ("do not report any findings"; modals and bare objects are excluded because "the scanner should not flag …" and "don't report duplicate findings" are idiomatic security-tool prose), or literal schema tokens from Drydock's review contract (`nothing_unusual`, `requiresManualReview … false` in camelCase/snake_case form only) — and is standing danger, so a prior approval never discounts it; `file.prompt-injection` (medium) fires on instruction-override phrasing or direct addresses to an AI-qualified audience (bare "agent"/"assistant" is somebody's product) anywhere in package text, READMEs included, since a consumer's coding assistant reads them. Both tiers match against the raw sample and a copy stripped of markdown emphasis and zero-width characters (`ignore all *previous* instructions` still fires), and both demote longstanding matches in unreachable test files one step because LLM-guardrail packages ship injection strings as fixtures;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
 ## Rule inventory
@@ -154,7 +154,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
 - Anti-analysis and environment-detection patterns are not deeply modeled because Drydock intentionally avoids package execution.
-- Prompt-injection detection is phrase-based: paraphrased, encoded, split-across-lines, or non-English injection text raises nothing deterministically and falls to the AI reviewer, whose prompt treats injection attempts as reportable high/critical findings.
+- Prompt-injection detection is phrase-based: paraphrased, encoded, split-across-lines, or non-English injection text raises nothing deterministically and falls to the AI reviewer, whose prompt treats injection attempts as reportable high/critical findings. A guardrail library that _quotes_ injection strings in its README flags at medium with no demotion path (only test-tree matches demote), and a package embedding Drydock's own review schema — a future API client SDK shipping `nothing_unusual` in an enum — flags high; both are accepted costs, with release memory and human review as the valves.
 
 ## Adding fixtures
 
@@ -535,15 +535,19 @@ line cannot hide a newly added propagation action from release risk. Pinned by
 case `npm-install-hook-worm-propagation`, and the two hard negatives that hold the gate honest.
 
 `1.32.0` adds the LLM prompt-injection pair `file.review-manipulation` (high, standing danger) and
-`file.prompt-injection` (medium, test-scope demotable). Both scan every staged file with a text
-sample — documentation and type declarations included, since those are exactly what AI tooling
-reads. Pinned by `review-manipulation-comment` (verdict coercion in a source comment, which also
-locks in that the manipulation tier subsumes the generic finding for the same file) and
-`prompt-injection-readme` (a README addressed at AI agents plus the unchanged-test-file demotion);
-the `legit-llm-prompt-library` benign hard-negative holds "You are a helpful assistant" examples,
-system-prompt configuration docs, and prose naming prompt injection as a topic below the FP
-threshold. The same change bumps `AI_REVIEWER_VERSION` to `1.3.0`: the reviewer prompt now treats
-injection attempts as reportable high/critical findings rather than only resisting them.
+`file.prompt-injection` (medium); both are test-scope demotable and match through markdown-emphasis
+and zero-width stripping. Both scan every staged file with a text sample — documentation and type
+declarations included, since those are exactly what AI tooling reads. Pinned by
+`review-manipulation-comment` (verdict coercion in a source comment, which also locks in that the
+manipulation tier subsumes the generic finding for the same file) and `prompt-injection-readme` (a
+README addressed at AI agents through emphasis evasion, plus the unchanged-test-file demotion).
+Precision is enforced twice: the `benign-llm-prompt-docs` golden control pins exact-zero findings on
+"You are a helpful assistant" examples, security-tool changelog prose, and a non-AI "agent" product
+mention, while the `legit-llm-prompt-library` hard-negative feeds the aggregate FP-rate gate. The
+same change bumps `AI_REVIEWER_VERSION` to `1.3.0`: the reviewer prompt now treats injection
+attempts as reportable high/critical findings rather than only resisting them, and the recorded eval
+gains `npm-readme-injection-only`, where injection text beside inert code must alone produce a
+high/suspicious review.
 
 ### Fixture format
 

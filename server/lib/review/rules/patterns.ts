@@ -230,11 +230,21 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
   /\b(?:mark|classify|treat|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|library|module|dependency|code|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
-  /\b(?:do\s+not|don'?t|never|must\s+not|should\s+not)\s+(?:report|flag|mention|include|raise|escalate|surface)\b[^\n.!?]{0,60}\b(?:findings?|detections?|as\s+(?:suspicious|malicious)|anything\s+(?:suspicious|unusual))\b/i,
+  // Suppression is imperative-only ("do not"/"don't") with a determiner on the
+  // object. Modals invite third-person subjects ("the scanner should not flag
+  // minified code as suspicious") and a bare object matches changelog and
+  // SECURITY.md prose ("don't report duplicate findings", "do not report
+  // findings without a proof of concept") — all idiomatic in exactly the
+  // linter/scanner packages npm is full of.
+  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?|issues?|warnings?|concerns?)\b/i,
+  /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
   // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
   // with a space; the underscore/hyphen form is schema-targeting.
-  /\bnothing[_-]unusual\b/,
-  /\brequires\s*_?manual\s*_?review\b[^\n]{0,30}\bfalse\b/i,
+  /\bnothing[_-]unusual\b/i,
+  // Schema form only (camelCase or snake_case, no spaces): prose like "each
+  // alert requires manual review to rule out false positives" is ordinary
+  // security-tool documentation.
+  /\brequires_?manual_?review\b[^\n]{0,20}\bfalse\b(?!\s+positive)/i,
   /\b(?:skip|bypass|disable)\s+(?:the\s+|this\s+|any\s+|all\s+)?security\s+(?:review|scan|audit|check)/i,
 ];
 
@@ -244,13 +254,26 @@ const REVIEW_MANIPULATION_PATTERNS = [
 // verb phrase or a direct address to an AI/agent audience, because LLM client
 // libraries legitimately ship prompt-shaped text ("You are a helpful
 // assistant", "customize the system prompt") that must stay quiet.
+// A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
+// OpenAI Assistants thread); only the AI-qualified forms read as an LLM
+// audience.
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|language\s+model|artificial\s+intelligence|(?:AI|LLM|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
+
 const PROMPT_INJECTION_PATTERNS = [
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
   /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
   /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
   /\b(?:replace|overwrite)\s+your\s+system\s+prompt\b/i,
-  /\bif\s+you\s+are\s+an?\s+(?:AI|LLM|language\s+model|artificial\s+intelligence|automated\s+(?:agent|assistant|reviewer|scanner|tool)|(?:AI\s+)?(?:coding\s+)?assistant)\b/i,
-  /\b(?:note|message|attention|instructions?|important)\s+(?:to|for)\s+(?:the\s+|all\s+|any\s+)?(?:AI|LLM|language\s+model|assistant|agent|automated\s+(?:reviewer|scanner|tool))s?\b/i,
+  // The conditional address alone also greets humans ("if you are an AI
+  // researcher, see the docs"), so it must be followed by a directive clause.
+  new RegExp(
+    String.raw`\bif\s+you\s+are\s+an?\s+${AI_AUDIENCE_SEGMENT}\b[^\n.!?]{0,60}\b(?:ignore|disregard|follow|obey|must|should|do\s+not|don'?t|stop|instead|reply|respond|output|run|execute|add|include)\b`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\b(?:note|message|attention|instructions?|important)\s+(?:to|for)\s+(?:the\s+|all\s+|any\s+)?${AI_AUDIENCE_SEGMENT}s?\b`,
+    "i",
+  ),
   /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,
   /\byou\s+are\s+now\s+in\s+(?:developer|DAN|jailbreak|unrestricted|god)\s+mode\b/i,
   /\bdo\s+not\s+(?:tell|inform|alert|warn)\s+the\s+(?:user|human|operator|developer)\b/i,
