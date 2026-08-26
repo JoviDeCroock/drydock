@@ -23,7 +23,10 @@ import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { Show } from "@preact/signals/utils";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
-import { CapabilitiesSection } from "../../../features/review/CapabilitiesSection";
+import {
+  CapabilitiesSection,
+  capabilityDeltaForComparison,
+} from "../../../features/review/CapabilitiesSection";
 import { scanDistTag, scanEcosystem } from "../../../../server/lib/public-feed";
 import {
   createPackageDiff,
@@ -141,7 +144,12 @@ export default function ScanDetailPage() {
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
   // Older scans have no capability projection; the normalizer returns null and
   // the section is simply not rendered.
-  const capabilities = useComputed(() => normalizeCapabilityDelta(summary.value.capabilities));
+  const capabilities = useComputed(() =>
+    capabilityDeltaForComparison(
+      normalizeCapabilityDelta(summary.value.capabilities),
+      model.isDefaultComparison.value,
+    ),
+  );
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
