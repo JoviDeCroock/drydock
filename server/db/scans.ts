@@ -59,7 +59,6 @@ export {
 
 export {
   countScanApprovals,
-  removeUserMembershipsAndReconcileApprovals,
   getOrganizationApprovalPolicy,
   listReadyPendingGates,
   loadScanApprovalState,
