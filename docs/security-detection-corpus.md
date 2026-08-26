@@ -537,7 +537,10 @@ case `npm-install-hook-worm-propagation`, and the two hard negatives that hold t
 `1.32.0` adds the LLM prompt-injection pair `file.review-manipulation` (high, standing danger) and
 `file.prompt-injection` (medium); both are test-scope demotable and match through markdown-emphasis
 and zero-width stripping. Both scan every staged file with a text sample — documentation and type
-declarations included, since those are exactly what AI tooling reads. Pinned by
+declarations included, since those are exactly what AI tooling reads. Detection emits at most one,
+highest-tier injection finding per file; changed-line classification reuses the same patterns and
+evasion stripping so a later match added to an already-flagged file still counts toward release risk
+without creating a duplicate finding. Pinned by
 `review-manipulation-comment` (verdict coercion in a source comment, which also locks in that the
 manipulation tier subsumes the generic finding for the same file) and `prompt-injection-readme` (a
 README addressed at AI agents through emphasis evasion, plus the unchanged-test-file demotion).
@@ -545,9 +548,11 @@ Precision is enforced twice: the `benign-llm-prompt-docs` golden control pins ex
 "You are a helpful assistant" examples, security-tool changelog prose, and a non-AI "agent" product
 mention, while the `legit-llm-prompt-library` hard-negative feeds the aggregate FP-rate gate. The
 same change bumps `AI_REVIEWER_VERSION` to `1.3.0`: the reviewer prompt now treats injection
-attempts as reportable high/critical findings rather than only resisting them, and the recorded eval
-gains `npm-readme-injection-only`, where injection text beside inert code must alone produce a
-high/suspicious review.
+attempts as reportable high/critical evidence rather than only resisting them, while keeping a
+deterministic injection row single-sourced and reserving AI finding rows for materially distinct
+evidence the phrase-based rules missed. The recorded eval gains `npm-readme-injection-only`, where
+injection text beside inert code must alone produce a high/suspicious review without a duplicate AI
+finding row.
 
 ### Fixture format
 

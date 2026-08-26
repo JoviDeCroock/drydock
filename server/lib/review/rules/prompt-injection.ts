@@ -1,6 +1,10 @@
 import type { Finding } from "..";
 import { firstMatchingLine } from "../../platform/text-utils";
-import { PROMPT_INJECTION_PATTERN_SET, REVIEW_MANIPULATION_PATTERN_SET } from "./patterns";
+import {
+  PROMPT_INJECTION_PATTERN_SET,
+  REVIEW_MANIPULATION_PATTERN_SET,
+  stripPromptInjectionEvasion,
+} from "./patterns";
 import { tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 
@@ -26,15 +30,13 @@ import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./contex
 // sample and a stripped copy — raw so underscore-bearing schema tokens
 // (`nothing_unusual`) keep matching, stripped so emphasis can't split a
 // phrase. Newlines survive stripping, so line numbers stay valid either way.
-const EVASION_CHARS = /[*_`\u200B-\u200D\uFEFF]/g;
-
 export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
 
   for (const file of ctx.files) {
     const sample = file.textSample;
     if (!sample) continue;
-    const stripped = sample.replace(EVASION_CHARS, "");
+    const stripped = stripPromptInjectionEvasion(sample);
     const prefix = changedPrefix(ctx, file.path);
     const changed = ctx.diffByPath.get(file.path)?.status;
     const demote = isUnreachableTestFile(ctx, file.path) && changed === "unchanged";
