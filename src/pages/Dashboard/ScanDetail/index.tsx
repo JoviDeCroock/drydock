@@ -42,7 +42,10 @@ import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
-import { CapabilitiesSection } from "../../../features/review/CapabilitiesSection";
+import {
+  CapabilitiesSection,
+  capabilityDeltaForComparison,
+} from "../../../features/review/CapabilitiesSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
 import { hasReleaseConsistencyNote, ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
@@ -141,8 +144,14 @@ export default function ScanDetailPage() {
   // Older scans have no envelope; the normalizer returns null and the section
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
-  // Older scans have no capability projection; omit the section for them.
-  const capabilities = useComputed(() => normalizeCapabilityDelta(summary.value.capabilities));
+  // Older scans have no capability projection; the normalizer returns null and
+  // the section is simply not rendered.
+  const capabilities = useComputed(() =>
+    capabilityDeltaForComparison(
+      normalizeCapabilityDelta(summary.value.capabilities),
+      model.isDefaultComparison.value,
+    ),
+  );
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
