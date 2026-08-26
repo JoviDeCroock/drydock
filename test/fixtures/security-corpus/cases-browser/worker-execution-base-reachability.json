@@ -1,0 +1,141 @@
+{
+  "id": "browser-worker-execution-base-reachability",
+  "title": "browser worker and module execution bases remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins multiline static imports, the worker entry base across transitive importScripts and nested Worker calls, and the extension-page document base through runtime.getURL dynamic imports.",
+  "slug": "worker-execution-base-reachability",
+  "extensionId": "worker-base-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 209,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "flags": [],
+      "textSample": "{\"manifest_version\":3,\"name\":\"Worker base reachability\",\"version\":\"1.0.0\",\"browser_specific_settings\":{\"gecko\":{\"id\":\"worker-base-reachability@example.invalid\"}},\"action\":{\"default_popup\":\"pages/popup.html\"}}\n"
+    },
+    {
+      "path": "pages/popup.html",
+      "size": 47,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>\n"
+    },
+    {
+      "path": "pages/popup.js",
+      "size": 163,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "flags": [],
+      "textSample": "import {\n  payload\n} from \"../modules/test/multiline.js\";\nimport(chrome.runtime.getURL(\"modules/runtime.js\"));\nnew Worker(\"../workers/root.js\");\nconsume(payload);\n"
+    },
+    {
+      "path": "modules/runtime.js",
+      "size": 38,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "flags": [],
+      "textSample": "new Worker(\"test/runtime-worker.js\");\n"
+    },
+    {
+      "path": "workers/root.js",
+      "size": 32,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "flags": [],
+      "textSample": "importScripts(\"lib/middle.js\");\n"
+    },
+    {
+      "path": "workers/lib/middle.js",
+      "size": 65,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "flags": [],
+      "textSample": "importScripts(\"test/imported.js\");\nnew Worker(\"test/nested.js\");\n"
+    },
+    {
+      "path": "modules/test/multiline.js",
+      "size": 15,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "pages/test/runtime-worker.js",
+      "size": 15,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "workers/test/imported.js",
+      "size": 15,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "workers/test/nested.js",
+      "size": 15,
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "modules/test/runtime-worker.js",
+      "size": 13,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "flags": [],
+      "textSample": "eval(decoy);\n"
+    },
+    {
+      "path": "workers/lib/test/imported.js",
+      "size": 13,
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "flags": [],
+      "textSample": "eval(decoy);\n"
+    },
+    {
+      "path": "workers/lib/test/nested.js",
+      "size": 13,
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "flags": [],
+      "textSample": "eval(decoy);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "modules/test/multiline.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "pages/test/runtime-worker.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "workers/test/imported.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "workers/test/nested.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "modules/test/runtime-worker.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "workers/lib/test/imported.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "medium",
+      "file": "workers/lib/test/nested.js"
+    }
+  ]
+}

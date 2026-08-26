@@ -15,14 +15,8 @@ import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 const RELATIVE_SPECIFIER_PATTERNS = [
   /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
   /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
-  /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
-  /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
 ];
-const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [
-  /\bimport\s*\(\s*["'](\/[^"'\n]+)["']\s*\)/g,
-  /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\/[^"'\n]+)["']/g,
-  /\b(?:import|export)\s+["'](\/[^"'\n]+)["']/g,
-];
+const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [/\bimport\s*\(\s*["'](\/[^"'\n]+)["']\s*\)/g];
 const RESOLUTION_SUFFIXES = [
   "",
   ".js",
@@ -47,6 +41,7 @@ export interface ConsumerReachabilityDependency {
 interface ConsumerReachabilityQueueEntry {
   path: string;
   documentBaseUrl?: string;
+  workerEntryBaseUrl?: string;
 }
 
 // Files a registry tarball consumer install can execute: declared entrypoints
@@ -98,8 +93,8 @@ export function consumerReachablePaths(
   while (queue.length) {
     const queued = queue.pop();
     if (!queued) continue;
-    const { path, documentBaseUrl } = queued;
-    const contextKey = `${path}\0${documentBaseUrl ?? ""}`;
+    const { path, documentBaseUrl, workerEntryBaseUrl } = queued;
+    const contextKey = `${path}\0${documentBaseUrl ?? ""}\0${workerEntryBaseUrl ?? ""}`;
     if (inspectedContexts.has(contextKey)) continue;
     inspectedContexts.add(contextKey);
     reachable.add(path);
@@ -115,10 +110,11 @@ export function consumerReachablePaths(
       const resolved = rootRelativeModuleImports
         ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
         : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
-      if (resolved) queue.push({ path: resolved, documentBaseUrl });
+      if (resolved) queue.push({ path: resolved, documentBaseUrl, workerEntryBaseUrl });
     }
     for (const imported of staticImportScriptsSpecifiers(file.textSample)) {
       if (!rootRelativeModuleImports && imported.resolution === "extension-root") continue;
+      const activeWorkerEntryBaseUrl = workerEntryBaseUrl ?? browserArchiveUrl(path);
       const resolved = rootRelativeModuleImports
         ? imported.resolution === "extension-root"
           ? resolveBrowserDocumentModulePath(
@@ -126,9 +122,23 @@ export function consumerReachablePaths(
               BROWSER_ARCHIVE_ROOT.href,
               byNormalizedPath,
             )
-          : resolveBrowserScriptModulePath(path, imported.path, byNormalizedPath)
+          : activeWorkerEntryBaseUrl
+            ? resolveBrowserDocumentModulePath(
+                imported.path,
+                activeWorkerEntryBaseUrl,
+                byNormalizedPath,
+              )
+            : null
         : resolveModulePath(joinRelative(path, imported.path), byNormalizedPath);
-      if (resolved) queue.push({ path: resolved, documentBaseUrl });
+      if (resolved) {
+        queue.push({
+          path: resolved,
+          documentBaseUrl: rootRelativeModuleImports ? undefined : documentBaseUrl,
+          workerEntryBaseUrl: rootRelativeModuleImports
+            ? (activeWorkerEntryBaseUrl ?? undefined)
+            : undefined,
+        });
+      }
     }
     if (rootRelativeModuleImports) {
       for (const resource of staticWebExtensionResourceSpecifiers(file.textSample)) {
@@ -156,7 +166,15 @@ export function consumerReachablePaths(
             baseUrl,
             byNormalizedPath,
           );
-          if (resolved) queue.push({ path: resolved });
+          if (resolved) {
+            queue.push({
+              path: resolved,
+              documentBaseUrl: resource.inheritsExecutionContext ? documentBaseUrl : undefined,
+              workerEntryBaseUrl: resource.inheritsExecutionContext
+                ? workerEntryBaseUrl
+                : undefined,
+            });
+          }
         }
       }
       for (const worker of staticWorkerScriptSpecifiers(file.textSample)) {
@@ -166,19 +184,27 @@ export function consumerReachablePaths(
             BROWSER_ARCHIVE_ROOT.href,
             byNormalizedPath,
           );
-          if (resolved) queue.push({ path: resolved });
+          if (resolved) {
+            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+          }
           continue;
         }
         if (worker.resolution === "module") {
           const resolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
-          if (resolved) queue.push({ path: resolved });
-        } else if (documentBaseUrl) {
+          if (resolved) {
+            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+          }
+        } else {
+          const executionBaseUrl = workerEntryBaseUrl ?? documentBaseUrl;
+          if (!executionBaseUrl) continue;
           const resolved = resolveBrowserDocumentModulePath(
             worker.path,
-            documentBaseUrl,
+            executionBaseUrl,
             byNormalizedPath,
           );
-          if (resolved) queue.push({ path: resolved });
+          if (resolved) {
+            queue.push({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
+          }
         }
       }
     }
@@ -382,6 +408,65 @@ function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): s
       specifiers.push(match[1]);
     }
   }
+  specifiers.push(...staticModuleDeclarationSpecifiers(text, rootRelativeModuleImports));
+  return specifiers;
+}
+
+function staticModuleDeclarationSpecifiers(
+  text: string,
+  rootRelativeModuleImports: boolean,
+): string[] {
+  const tokens = tokenizeJs(text, { sourceGoal: "module" }).filter(
+    (token) => token.type !== "ws" && token.type !== "comment",
+  );
+  const specifiers: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const declaration = tokenText(tokens[index], text);
+    if (declaration !== "import" && declaration !== "export") continue;
+    if (isMemberSeparator(tokenText(tokens[index - 1], text))) continue;
+    if (
+      declaration === "import" &&
+      (tokenText(tokens[index + 1], text) === "(" || tokenText(tokens[index + 1], text) === ".")
+    ) {
+      continue;
+    }
+    if (
+      declaration === "export" &&
+      [
+        "async",
+        "class",
+        "const",
+        "default",
+        "enum",
+        "function",
+        "interface",
+        "let",
+        "var",
+      ].includes(tokenText(tokens[index + 1], text))
+    ) {
+      continue;
+    }
+
+    for (let sourceIndex = index + 1; sourceIndex < tokens.length; sourceIndex += 1) {
+      const sourceToken = tokens[sourceIndex];
+      const sourceText = tokenText(sourceToken, text);
+      if (sourceText === ";") break;
+      const isSideEffectImport =
+        declaration === "import" && sourceIndex === index + 1 && sourceToken?.type === "string";
+      const isFromSource = sourceText === "from" && tokens[sourceIndex + 1]?.type === "string";
+      if (!isSideEffectImport && !isFromSource) continue;
+      const pathToken = isSideEffectImport ? sourceToken : tokens[sourceIndex + 1];
+      const path = pathToken?.value;
+      if (
+        path?.startsWith("./") ||
+        path?.startsWith("../") ||
+        (rootRelativeModuleImports && path?.startsWith("/"))
+      ) {
+        specifiers.push(path);
+      }
+      break;
+    }
+  }
   return specifiers;
 }
 
@@ -397,6 +482,7 @@ type WebExtensionResourceResolution = "document" | "document-or-root" | "documen
 interface WebExtensionResourceSpecifier {
   path: string;
   resolution: WebExtensionResourceResolution;
+  inheritsExecutionContext?: boolean;
 }
 
 interface ImportScriptsSpecifier {
@@ -587,7 +673,7 @@ function staticBrowserDynamicImportResource(
   if (!firstArgument) return null;
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, firstArgument[0]);
   return runtimeUrl?.nextIndex === firstArgument[1]
-    ? { path: runtimeUrl.path, resolution: "root" }
+    ? { path: runtimeUrl.path, resolution: "root", inheritsExecutionContext: true }
     : null;
 }
 
@@ -1162,18 +1248,21 @@ function resolveExactModulePath(
 
 const BROWSER_ARCHIVE_ROOT = new URL("drydock-extension://artifact/");
 
+function browserArchiveUrl(path: string): string | undefined {
+  try {
+    return new URL(encodeArchiveLookupPathForUrl(path), BROWSER_ARCHIVE_ROOT).href;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveBrowserScriptModulePath(
   fromPath: string,
   specifier: string,
   byNormalizedPath: Map<string, FileRecord>,
 ): string | null {
-  try {
-    const encodedPath = encodeArchiveLookupPathForUrl(fromPath);
-    const base = new URL(encodedPath, BROWSER_ARCHIVE_ROOT);
-    return resolveBrowserDocumentModulePath(specifier, base.href, byNormalizedPath);
-  } catch {
-    return null;
-  }
+  const baseUrl = browserArchiveUrl(fromPath);
+  return baseUrl ? resolveBrowserDocumentModulePath(specifier, baseUrl, byNormalizedPath) : null;
 }
 
 function staticImportMetaUrlPath(tokens: JsToken[], text: string, start: number): string | null {

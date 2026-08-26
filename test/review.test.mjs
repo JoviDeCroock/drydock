@@ -2431,6 +2431,21 @@ describe("test-scoped capability findings", () => {
     });
   });
 
+  test("follows multiline static module declarations", () => {
+    const staged = [
+      pkg("scripts/entry.js"),
+      file(
+        "scripts/entry.js",
+        ["import {", "  payload,", '} from "./test/payload.js";', "consume(payload);"].join("\n"),
+      ),
+      file("scripts/test/payload.js", "eval(payload);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged));
+    const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(finding).toMatchObject({ file: "scripts/test/payload.js", severity: "medium" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("keeps full severity for an ecosystem-provided consumer entrypoint", () => {
     const staged = [
       pkg(),
@@ -2463,6 +2478,44 @@ describe("test-scoped capability findings", () => {
     const finding = findings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(finding).toMatchObject({ file: "test/payload.js", severity: "medium" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("keeps the worker entry base across transitive importScripts and nested workers", () => {
+    const staged = [
+      pkg(),
+      file("workers/root.js", 'importScripts("lib/middle.js");\n'),
+      file(
+        "workers/lib/middle.js",
+        ['importScripts("test/imported.js");', 'new Worker("test/nested.js");'].join("\n"),
+      ),
+      file("workers/test/imported.js", "eval(importedPayload);\n"),
+      file("workers/test/nested.js", "eval(nestedPayload);\n"),
+      file("workers/lib/test/imported.js", "eval(importedDecoy);\n"),
+      file("workers/lib/test/nested.js", "eval(nestedDecoy);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["workers/root.js"],
+      consumerRootRelativeModuleImports: true,
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "workers/test/imported.js", severity: "medium" }),
+        expect.objectContaining({ file: "workers/test/nested.js", severity: "medium" }),
+        expect.objectContaining({
+          file: "workers/lib/test/imported.js",
+          severity: "low",
+          testScoped: true,
+        }),
+        expect.objectContaining({
+          file: "workers/lib/test/nested.js",
+          severity: "low",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(4);
   });
 
   test("follows static template-literal importScripts calls", () => {
@@ -2977,6 +3030,36 @@ describe("test-scoped capability findings", () => {
         )
         .every((finding) => finding.testScoped !== true),
     ).toBe(true);
+  });
+
+  test("preserves the browser document base through runtime URL dynamic imports", () => {
+    const staged = [
+      pkg(),
+      file("pages/popup.js", 'import(chrome.runtime.getURL("modules/outer.js"));\n'),
+      file("modules/outer.js", 'new Worker("test/inner.js");\n'),
+      file("pages/test/inner.js", "eval(payload);\n"),
+      file("modules/test/inner.js", "eval(decoy);\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff(staged, staged), undefined, {
+      codePatternSet: "javascript",
+      consumerEntrypointPaths: ["pages/popup.js"],
+      consumerRootRelativeModuleImports: true,
+      consumerDocumentBaseUrlsByPath: {
+        "pages/popup.js": ["drydock-extension://artifact/pages/popup.html"],
+      },
+    }).filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "pages/test/inner.js", severity: "medium" }),
+        expect.objectContaining({
+          file: "modules/test/inner.js",
+          severity: "low",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
   });
 
   test("ignores WebExtension injection shapes outside the named APIs", () => {
