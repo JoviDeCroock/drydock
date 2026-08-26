@@ -203,11 +203,10 @@ class Oracle {
   applyMembershipLoss(userId: string): void {
     this.members.delete(userId);
     for (const scanId of this.allScanIds()) {
+      const gatePackage = this.isGatePackage(scanId);
       const scanIsMutable =
-        this.projection.get(scanId) === null ||
-        (this.isGatePackage(scanId) &&
-          this.projection.get(scanId) === "publish" &&
-          this.gateStatus === "pending");
+        (this.projection.get(scanId) === null && (!gatePackage || this.gateStatus === "pending")) ||
+        (gatePackage && this.projection.get(scanId) === "publish" && this.gateStatus === "pending");
       if (!scanIsMutable) continue;
       const vote = this.votes.get(scanId)!.get(userId);
       if (vote?.decision === "publish") this.votes.get(scanId)!.delete(userId);

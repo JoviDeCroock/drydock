@@ -678,6 +678,8 @@ export interface BuildScanApprovalStateInput {
   votes: ScanApprovalVote[];
   policy: OrganizationApprovalPolicy;
   viewerUserId: string | null;
+  /** Completed workflow gates retain their roster as historical release state. */
+  historical?: boolean;
   /** Falls back to the scan's own columns when no votes were ever recorded. */
   scan: {
     decision: string | null;
@@ -699,7 +701,7 @@ export interface BuildScanApprovalStateInput {
  * verdict it sits next to.
  */
 export function buildScanApprovalState(input: BuildScanApprovalStateInput): ScanApprovalState {
-  const { votes, policy, viewerUserId, scan } = input;
+  const { votes, policy, viewerUserId, scan, historical = false } = input;
   const decision =
     scan.decision === "publish" || scan.decision === "no_publish"
       ? (scan.decision as ScanDecision)
@@ -735,7 +737,7 @@ export function buildScanApprovalState(input: BuildScanApprovalStateInput): Scan
   // revised vote reopens it, former members remain visible in the roster but
   // stop contributing to the live quorum.
   const countedApprovals =
-    votes.length && decision === null
+    votes.length && decision === null && !historical
       ? approvals.filter((_, index) => votes[index]?.eligible)
       : approvals;
   return {
@@ -795,6 +797,7 @@ export async function loadScanApprovalState(
     policy,
     viewerUserId: input.viewerUserId,
     scan: input.scan,
+    historical: Boolean(completedGate && completedGate.status !== "pending"),
   });
 }
 
@@ -981,7 +984,14 @@ async function removeMembershipsAndReconcileApprovalsCore(
       and(
         organizationId === null ? undefined : eq(scans.organizationId, organizationId),
         or(
-          isNull(scans.decision),
+          and(
+            isNull(scans.decision),
+            // A rejected multi-package gate can leave sibling packages with a
+            // partial approval roster and no package verdict. Once the gate is
+            // complete that roster is historical, just like a decided package,
+            // and must survive later membership cleanup.
+            or(ne(scans.source, "workflow_gate"), projection.scanGateIsPending),
+          ),
           and(
             eq(scans.source, "workflow_gate"),
             eq(scans.decision, "publish"),

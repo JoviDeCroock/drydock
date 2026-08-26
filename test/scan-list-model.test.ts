@@ -247,27 +247,47 @@ describe("ScanListModel pagination", () => {
     vi.unstubAllGlobals();
   });
 
-  test("keeps the approval bar aligned with the policy used by the next page", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse({
-            scans: [],
-            nextCursor: null,
-            requiredApprovals: 3,
-          }),
-        ),
-      ),
+  test("appends the next page when the approval bar is unchanged", async () => {
+    const next = { ...scanDetail(null).scan, id: "scan-2" };
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ scans: [next], nextCursor: null, requiredApprovals: 2 })),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+    model.requiredApprovals.value = 2;
+    model.nextCursor.value = "next-page";
+
+    await model.loadMore();
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-1", "scan-2"]);
+    expect(model.nextCursor.value).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("refreshes the whole list when the approval bar changes between pages", async () => {
+    const refreshed = { ...scanDetail("publish").scan, id: "scan-refreshed" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ scans: [], nextCursor: null, requiredApprovals: 3 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ scans: [refreshed], nextCursor: null, requiredApprovals: 3 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
     model.requiredApprovals.value = 2;
     model.nextCursor.value = "next-page";
 
     await model.loadMore();
 
     expect(model.requiredApprovals.value).toBe(3);
+    expect(model.scans.value).toEqual([refreshed]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("cursor=next-page");
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("cursor=");
   });
 });
 
