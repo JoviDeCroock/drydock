@@ -2,7 +2,7 @@
   "id": "browser-navigation-alias-reachability",
   "title": "browser navigation and extension URL aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, classic-worker global, DOM-injected script, frame, srcdoc, hyperlink, and namespaced resources, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and image element sources remain inert.",
+  "intent": "Pins linked, download-linked, meta-refreshed, runtime-imported, runtime-opened, module-relative, classic-worker global, DOM-injected script, split-assignment frame, srcdoc, hyperlink, and namespaced resources, protocol-handler, and Firefox sidebar-panel extension resources, including semicolonless, parent/top, and window.document navigation aliases, while tag-shaped ordinary attribute text and image element sources remain inert.",
   "slug": "navigation-alias-reachability",
   "extensionId": "navigation-alias-reachability@example.invalid",
   "version": "1.0.0",
@@ -20,7 +20,7 @@
       "size": 202,
       "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
       "flags": [],
-      "textSample": "<div data-markup=\"<base href=/decoy/>\"></div><script src=\"tests/direct.js\"></script><a href=\"tests/linked.html\">Open helper</a><a download href=\"tests/download.html\">Download source</a><meta http-equiv=\"refresh\" content=\"0.5; tests/refreshed.html\">"
+      "textSample": "<div data-markup=\"<base href=/decoy/>\"></div><script type=\"module\" src=\"tests/direct.js\"></script><a href=\"tests/linked.html\">Open helper</a><a download href=\"tests/download.html\">Download source</a><meta http-equiv=\"refresh\" content=\"0.5; tests/refreshed.html\">"
     },
     {
       "path": "background.js",
@@ -34,7 +34,42 @@
       "size": 1260,
       "sha256": "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5",
       "flags": [],
-      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); const attributeInjected = document.createElement(\"script\"); attributeInjected.setAttribute(\"src\", browser.runtime.getURL(\"tests/dom-attribute-injected.js\")); document.documentElement.append(attributeInjected); const frame = document.createElement(\"iframe\"); frame.src = \"tests/dom-frame.html\"; document.documentElement.append(frame); const inlineFrame = document.createElement(\"iframe\"); inlineFrame.srcdoc = '<script src=\"tests/dom-srcdoc.js\"></script>'; document.documentElement.append(inlineFrame); const link = document.createElement(\"a\"); link.href = \"tests/dom-linked.html\"; document.documentElement.append(link); link.click(); const namespaced = document.createElementNS(\"http://www.w3.org/1999/xhtml\", \"script\"); namespaced.src = \"tests/dom-namespaced.js\"; document.documentElement.append(namespaced); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
+      "textSample": "eval(payload); import(chrome.runtime.getURL(\"tests/runtime-import.js\")); import(new URL(\"module-import.js\", import.meta.url)); window.top.location = \"tests/top.html\"; parent.location.replace(\"tests/parent.html\"); location.href = \"tests/asi.html\"\nconsole.log(\"navigation continues\"); location.assign(new URL(\"module-navigation.html\", import.meta.url)); const injected = document.createElement(\"script\"); injected.src = browser.runtime.getURL(\"tests/dom-injected.js\"); document.documentElement.append(injected); const attributeInjected = document.createElement(\"script\"); attributeInjected.setAttribute(\"src\", browser.runtime.getURL(\"tests/dom-attribute-injected.js\")); document.documentElement.append(attributeInjected); const frame = document.createElement(\"iframe\"); frame.src = \"tests/dom-frame.html\"; document.documentElement.append(frame); let splitFrame; splitFrame = document.createElement(\"iframe\"); splitFrame.src = \"tests/split-frame.html\"; document.documentElement.append(splitFrame); const inlineFrame = document.createElement(\"iframe\"); inlineFrame.srcdoc = '<script src=\"tests/dom-srcdoc.js\"></script>'; document.documentElement.append(inlineFrame); const link = document.createElement(\"a\"); link.href = \"tests/dom-linked.html\"; document.documentElement.append(link); link.click(); const namespaced = document.createElementNS(\"http://www.w3.org/1999/xhtml\", \"script\"); namespaced.src = \"tests/dom-namespaced.js\"; document.documentElement.append(namespaced); window.document.location.assign(\"tests/window-document.html\"); const image = document.createElement(\"img\"); image.src = browser.runtime.getURL(\"decoy/tests/dom-image.js\");"
+    },
+    {
+      "path": "tests/module-import.js",
+      "size": 14,
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/module-navigation.html",
+      "size": 47,
+      "sha256": "acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+      "flags": [],
+      "textSample": "<script src=\"module-navigation.js\"></script>"
+    },
+    {
+      "path": "tests/module-navigation.js",
+      "size": 14,
+      "sha256": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/split-frame.html",
+      "size": 41,
+      "sha256": "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+      "flags": [],
+      "textSample": "<script src=\"split-frame.js\"></script>"
+    },
+    {
+      "path": "tests/split-frame.js",
+      "size": 14,
+      "sha256": "afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+      "flags": [],
+      "textSample": "eval(payload);"
     },
     {
       "path": "tests/dom-injected.js",
@@ -309,6 +344,21 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/runtime-import.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/module-import.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/module-navigation.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/split-frame.js"
     },
     {
       "ruleId": "code.dynamic-evaluation",

@@ -174,7 +174,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.65.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.66.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -660,6 +660,12 @@ recognizes classic-worker `this` globals,
 and follows literal iframe `srcdoc`, dynamically created hyperlink, and
 HTML-namespaced script resources. The browser navigation-alias golden case pins
 all four execution paths, and the review suite pins hostile context fan-out.
+
+`1.66.0` follows static `new URL(..., import.meta.url)` values used by dynamic
+imports and DOM navigation or executable-resource sinks, and recognizes
+`document.createElement()` bindings assigned after their declarations. The
+browser navigation-alias golden case pins the module-relative and split-binding
+execution paths while retaining the image-element hard negative.
 
 ### Fixture format
 

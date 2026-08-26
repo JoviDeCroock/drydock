@@ -221,9 +221,25 @@ export function consumerReachablePaths(
           continue;
         }
         // Registration and explicit runtime.getURL()/extension.getURL()
-        // resources are rooted at the extension origin. Direct relative tab URLs and Manifest V2
-        // injection files differ across browser runtimes, so follow both the
-        // extension root and the owning extension document when one is known.
+        // resources are rooted at the extension origin. Static URL values constructed from
+        // import.meta.url instead resolve against the owning script. Direct relative tab URLs and
+        // Manifest V2 injection files differ across browser runtimes, so follow both the extension
+        // root and the owning extension document when one is known.
+        if (resource.resolution === "module" || resource.resolution === "document-module") {
+          if (resource.resolution === "document-module" && !documentBaseUrl) continue;
+          spendResolutionWork();
+          const resolved = resolveBrowserScriptModulePath(path, resource.path, byNormalizedPath);
+          if (resolved) {
+            enqueue({
+              path: resolved,
+              documentBaseUrl: resource.inheritsExecutionContext ? documentBaseUrl : undefined,
+              workerEntryBaseUrl: resource.inheritsExecutionContext
+                ? workerEntryBaseUrl
+                : undefined,
+            });
+          }
+          continue;
+        }
         const baseUrls =
           resource.resolution === "root"
             ? [BROWSER_ARCHIVE_ROOT.href]
@@ -557,7 +573,13 @@ type WebExtensionScriptValueShape =
   | "string-or-string-array"
   | "file-object-array";
 type WebExtensionResourceArgument = "first" | "first-object";
-type WebExtensionResourceResolution = "document" | "document-or-root" | "document-root" | "root";
+type WebExtensionResourceResolution =
+  | "document"
+  | "document-module"
+  | "document-or-root"
+  | "document-root"
+  | "module"
+  | "root";
 
 type WebExtensionResourceSpecifier =
   | {
@@ -684,8 +706,8 @@ function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
   return specifiers;
 }
 
-// WebExtension APIs and runtime-URL dynamic imports can make packaged scripts
-// or HTML documents executable without a manifest or literal module edge.
+// WebExtension APIs and runtime- or module-URL dynamic imports can make packaged
+// scripts or HTML documents executable without a manifest or literal module edge.
 // Follow only literal resource properties on the statically named APIs; dynamic
 // expressions remain unproven. The shared lexer keeps API-shaped text in
 // comments, strings, and regular expressions inert.
@@ -761,11 +783,18 @@ function staticDomConsumerElementBindings(
   text: string,
 ): Map<string, Set<string>> {
   const bindings = new Map<string, Set<string>>();
-  for (let index = 1; index < tokens.length - 3; index += 1) {
+  for (let index = 0; index < tokens.length - 2; index += 1) {
     const declaration = tokenText(tokens[index - 1], text);
-    if (declaration !== "const" && declaration !== "let" && declaration !== "var") continue;
     const binding = tokens[index];
     if (binding?.type !== "ident" || tokenText(tokens[index + 1], text) !== "=") continue;
+    if (
+      declaration !== "const" &&
+      declaration !== "let" &&
+      declaration !== "var" &&
+      isMemberSeparator(declaration)
+    ) {
+      continue;
+    }
     const tag = staticDocumentCreateElementTag(tokens, text, index + 2)?.toLowerCase();
     const properties = tag ? DOM_CONSUMER_ELEMENT_PROPERTIES.get(tag) : undefined;
     if (!properties) continue;
@@ -849,7 +878,10 @@ function staticDomConsumerResource(
       tokenText(tokens[valueEnd], text),
     ]);
     return value?.nextIndex === valueEnd
-      ? { path: value.path, resolution: value.runtimeUrl ? "root" : "document" }
+      ? {
+          path: value.path,
+          resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+        }
       : null;
   }
 
@@ -861,7 +893,12 @@ function staticDomConsumerResource(
   if (member.name === "srcdoc") {
     const inlineDocument = staticScriptPath(tokens[valueIndex], text);
     if (inlineDocument === null) return null;
-    const value = { path: inlineDocument, nextIndex: valueIndex + 1, runtimeUrl: false };
+    const value = {
+      path: inlineDocument,
+      nextIndex: valueIndex + 1,
+      runtimeUrl: false,
+      moduleUrl: false,
+    };
     return browserNavigationAssignmentEnds(tokens, text, value, ["", ",", ";", ")", "]", "}"])
       ? { inlineDocument }
       : null;
@@ -875,7 +912,10 @@ function staticDomConsumerResource(
   if (!value || !browserNavigationAssignmentEnds(tokens, text, value, allowedFollowingTokens)) {
     return null;
   }
-  return { path: value.path, resolution: value.runtimeUrl ? "root" : "document" };
+  return {
+    path: value.path,
+    resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+  };
 }
 
 function staticBrowserDynamicImportResource(
@@ -895,10 +935,21 @@ function staticBrowserDynamicImportResource(
   if (closeIndex === null) return null;
   const firstArgument = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)[0];
   if (!firstArgument) return null;
-  const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, firstArgument[0]);
-  return runtimeUrl?.nextIndex === firstArgument[1]
-    ? { path: runtimeUrl.path, resolution: "root", inheritsExecutionContext: true }
-    : null;
+  const resource = staticWebExtensionResourcePath(tokens, text, firstArgument[0], [
+    tokenText(tokens[firstArgument[1]], text),
+  ]);
+  if (
+    !resource ||
+    resource.nextIndex !== firstArgument[1] ||
+    (!resource.runtimeUrl && !resource.moduleUrl)
+  ) {
+    return null;
+  }
+  return {
+    path: resource.path,
+    resolution: resource.moduleUrl ? "module" : "root",
+    inheritsExecutionContext: true,
+  };
 }
 
 function staticBrowserNavigationResource(
@@ -992,7 +1043,11 @@ function staticBrowserNavigationAssignmentResource(
   }
   return {
     path: value.path,
-    resolution: value.runtimeUrl ? "document-root" : "document",
+    resolution: value.moduleUrl
+      ? "document-module"
+      : value.runtimeUrl
+        ? "document-root"
+        : "document",
   };
 }
 
@@ -1022,7 +1077,11 @@ function staticBrowserNavigationValue(
   if (!value || value.nextIndex !== end) return null;
   return {
     path: value.path,
-    resolution: value.runtimeUrl ? "document-root" : "document",
+    resolution: value.moduleUrl
+      ? "document-module"
+      : value.runtimeUrl
+        ? "document-root"
+        : "document",
   };
 }
 
@@ -1263,7 +1322,7 @@ function staticPropertyScriptPaths(
     const valueIndex = index + 2;
     if (valueShape === "string" || valueShape === "string-or-string-array") {
       const value = staticWebExtensionResourcePath(tokens, text, valueIndex, [",", "}"]);
-      if (value !== null) {
+      if (value !== null && !value.moduleUrl) {
         paths.push({
           path: value.path,
           resolution: value.runtimeUrl ? "root" : resolution,
@@ -1289,7 +1348,7 @@ function staticPropertyScriptPaths(
         nestedDepth === 0
           ? staticWebExtensionResourcePath(tokens, text, itemIndex, [",", "]"])
           : null;
-      if (value !== null) {
+      if (value !== null && !value.moduleUrl) {
         paths.push({
           path: value.path,
           resolution: value.runtimeUrl ? "root" : resolution,
@@ -1335,8 +1394,11 @@ function staticNamedPropertyPaths(
     if (staticPropertyName(tokens[index], text) !== property) continue;
     if (tokenText(tokens[index + 1], text) !== ":") continue;
     const value = staticWebExtensionResourcePath(tokens, text, index + 2, [",", "}"]);
-    if (value !== null) {
-      paths.push({ path: value.path, resolution: value.runtimeUrl ? "root" : resolution });
+    if (value !== null && !value.moduleUrl) {
+      paths.push({
+        path: value.path,
+        resolution: value.runtimeUrl ? "root" : resolution,
+      });
     }
   }
   return paths;
@@ -1371,6 +1433,7 @@ interface StaticWebExtensionResourcePath {
   path: string;
   nextIndex: number;
   runtimeUrl: boolean;
+  moduleUrl: boolean;
 }
 
 function staticWebExtensionResourcePath(
@@ -1380,7 +1443,25 @@ function staticWebExtensionResourcePath(
   allowedFollowingTokens: string[],
 ): StaticWebExtensionResourcePath | null {
   const literal = staticScriptPath(tokens[start], text);
-  if (literal !== null) return { path: literal, nextIndex: start + 1, runtimeUrl: false };
+  if (literal !== null) {
+    return { path: literal, nextIndex: start + 1, runtimeUrl: false, moduleUrl: false };
+  }
+  const modulePath = staticImportMetaUrlPath(tokens, text, start);
+  if (modulePath !== null) {
+    const closeIndex = matchingPunctuation(tokens, text, start + 2, "(", ")");
+    if (
+      closeIndex === null ||
+      !allowedFollowingTokens.includes(tokenText(tokens[closeIndex + 1], text))
+    ) {
+      return null;
+    }
+    return {
+      path: modulePath,
+      nextIndex: closeIndex + 1,
+      runtimeUrl: false,
+      moduleUrl: true,
+    };
+  }
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
   if (
     !runtimeUrl ||
@@ -1388,7 +1469,7 @@ function staticWebExtensionResourcePath(
   ) {
     return null;
   }
-  return { ...runtimeUrl, runtimeUrl: true };
+  return { ...runtimeUrl, runtimeUrl: true, moduleUrl: false };
 }
 
 function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
@@ -1428,7 +1509,7 @@ function staticWebExtensionGetUrlPath(
   tokens: JsToken[],
   text: string,
   start: number,
-): Omit<StaticWebExtensionResourcePath, "runtimeUrl"> | null {
+): Omit<StaticWebExtensionResourcePath, "runtimeUrl" | "moduleUrl"> | null {
   let index = start;
   let global = tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(global)) {

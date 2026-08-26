@@ -2028,7 +2028,7 @@ describe("browser extension review adapter", () => {
         size: 39,
         sha256: "97".repeat(32),
         flags: [],
-        textSample: '<script src="popup.js"></script>',
+        textSample: '<script type="module" src="popup.js"></script>',
       },
       {
         path: "background.js",
@@ -2052,6 +2052,10 @@ describe("browser extension review adapter", () => {
           'const frame = document.createElement("iframe");',
           'frame.src = "tests/frame.html";',
           "document.documentElement.append(frame);",
+          "let splitFrame;",
+          'splitFrame = document.createElement("iframe");',
+          'splitFrame.src = "tests/split-frame.html";',
+          "document.documentElement.append(splitFrame);",
           'const object = document.createElement("object");',
           'object.data = "tests/object.html";',
           "document.documentElement.append(object);",
@@ -2069,6 +2073,8 @@ describe("browser extension review adapter", () => {
           'namespacedScript.src = "tests/namespaced.js";',
           "document.documentElement.append(namespacedScript);",
           'window.document.location = "tests/navigated.html";',
+          'location.assign(new URL("./tests/module-navigation.html", import.meta.url));',
+          'import(new URL("./tests/module-import.js", import.meta.url));',
           'const image = document.createElement("img");',
           'image.src = chrome.runtime.getURL("tests/decoy.js");',
         ].join("\n"),
@@ -2087,7 +2093,7 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: '<script src="linked.js"></script>',
       },
-      ...["frame", "object", "embed"].map((name, index) => ({
+      ...["frame", "split-frame", "object", "embed", "module-navigation"].map((name, index) => ({
         path: `tests/${name}.html`,
         size: 41,
         sha256: (160 + index).toString(16).repeat(32),
@@ -2098,6 +2104,7 @@ describe("browser extension review adapter", () => {
         "injected",
         "attribute-injected",
         "frame",
+        "split-frame",
         "object",
         "embed",
         "srcdoc",
@@ -2105,6 +2112,8 @@ describe("browser extension review adapter", () => {
         "namespaced",
         "worker-global",
         "navigated",
+        "module-navigation",
+        "module-import",
         "decoy",
       ].map((name, index) => ({
         path: `tests/${name}.js`,
@@ -2124,6 +2133,7 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({ file: "tests/injected.js", severity: "high" }),
         expect.objectContaining({ file: "tests/attribute-injected.js", severity: "high" }),
         expect.objectContaining({ file: "tests/frame.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/split-frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/object.js", severity: "high" }),
         expect.objectContaining({ file: "tests/embed.js", severity: "high" }),
         expect.objectContaining({ file: "tests/srcdoc.js", severity: "high" }),
@@ -2131,6 +2141,8 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({ file: "tests/namespaced.js", severity: "high" }),
         expect.objectContaining({ file: "tests/worker-global.js", severity: "high" }),
         expect.objectContaining({ file: "tests/navigated.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/module-navigation.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/module-import.js", severity: "high" }),
         expect.objectContaining({
           file: "tests/decoy.js",
           severity: "medium",
@@ -2138,7 +2150,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(11);
+    expect(findings).toHaveLength(14);
   });
 
   test("follows scripts after an abruptly closed HTML comment", () => {
