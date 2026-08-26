@@ -115,6 +115,7 @@ low-volume one out of the dataset.
 | `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
+| `public_diff.verdict_served` | `GET /package-diff/verdict` | machine-consumer volume; sizes the computation budget |
 | `user.signed_up`           | Better Auth user-create hook  | acquisition, by method (`email_password` / `github`) |
 | `organization.created`     | `POST /api/v1/organizations`  | teams, excluding lazy personal workspaces            |
 | `integration.connected`    | npm / GitHub / Slack connect  | activation, by integration kind                      |
@@ -132,6 +133,12 @@ release solely through a gate.
 through the same loader and is called once per file the visitor opens, so
 counting it would report one page view as thirty and skew the cache column
 toward `hit` (only the first request of a session can miss).
+
+`public_diff.verdict_served` counts machine reads (`drydock.verdict.v1`)
+separately from human page views, carrying only the public package identity,
+the grade, and duration. This is the number to watch before announcing any CI
+integration that multiplies verdict reads: it sizes the shared cold-computation
+budget.
 
 `ai_review.finished` is the highest-value counter here. A review that returns
 `invalid`/`unavailable` is handled safely — `computeScanRisk` floors the scan at

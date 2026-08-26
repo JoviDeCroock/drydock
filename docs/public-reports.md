@@ -45,7 +45,10 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
-  or organization/user identifiers.
+  or organization/user identifiers. The export carries an additive nullable
+  `capabilities` field (advisory per-side capability sets and their delta, see
+  `server/lib/review/capabilities.ts`); scans persisted before the projection
+  existed export `null`, so the schema tag is unchanged.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1
   Statement about the report (see below).
 - `GET /public/attestation-key` — the Ed25519 public key (JWK) and its RFC 7638

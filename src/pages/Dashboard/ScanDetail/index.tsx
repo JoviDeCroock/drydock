@@ -21,7 +21,10 @@ import {
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
+import { Show } from "@preact/signals/utils";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
+import { normalizeCapabilityDelta } from "../../../../server/lib/review/capabilities";
+import { CapabilitiesSection } from "../../../features/review/CapabilitiesSection";
 import { scanDistTag, scanEcosystem } from "../../../../server/lib/public-feed";
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
@@ -133,6 +136,9 @@ export default function ScanDetailPage() {
   // Older scans have no envelope; the normalizer returns null and the section
   // is simply not rendered.
   const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
+  // Older scans have no capability projection; the normalizer returns null and
+  // the section is simply not rendered.
+  const capabilities = useComputed(() => normalizeCapabilityDelta(summary.value.capabilities));
 
   const diffEntries = useComputed<DiffEntry[]>(() => {
     const detail = model.detail.value;
@@ -347,6 +353,8 @@ export default function ScanDetailPage() {
             />
 
             {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+
+            <Show when={capabilities}>{(delta) => <CapabilitiesSection delta={delta} />}</Show>
 
             {detail.scan.packageName ? (
               <div class="flex flex-col gap-2 border-t border-border pt-3">
