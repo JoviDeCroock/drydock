@@ -1,4 +1,4 @@
-import { putVerifiedJson } from "./json-io";
+import { deleteArtifactsByPrefix, putVerifiedJson } from "./json-io";
 import { artifactKeys, scanArtifactRunPrefix } from "./keys";
 import {
   SCAN_ARTIFACT_STORAGE_VERSION,
@@ -78,7 +78,23 @@ export async function writeScanArtifactsWithRetry(
         finalAttempt,
         error: describeOperationalError(err),
       });
-      if (finalAttempt) throw err;
+      if (finalAttempt) {
+        // D1 persistence has not started, so nothing can reference this run.
+        // Sweep any objects a later put/readback failure left behind before the
+        // queue retries with a new run id. The helper is fail-soft: cleanup
+        // failure is logged without replacing the original write error.
+        await deleteArtifactsByPrefix(
+          bucket,
+          scanArtifactRunPrefix(input.organizationId, input.scanId, runId),
+          {
+            organizationId: input.organizationId,
+            scanId: input.scanId,
+            scope: "run",
+            reason: "write_failed",
+          },
+        );
+        throw err;
+      }
     }
   }
   throw lastError instanceof Error ? lastError : new Error("scan artifact write failed");

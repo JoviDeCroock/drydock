@@ -93,13 +93,21 @@ const safety = {
   fileExplorerPolicy: "test file policy",
 };
 
-function createFlakyArtifactBucket(options: { failFirstPuts?: number; failAllPuts?: boolean }) {
+function createFlakyArtifactBucket(options: {
+  failFirstPuts?: number;
+  failAllPuts?: boolean;
+  failKeySuffix?: string;
+}) {
   const objects = new Map<string, string>();
   let putCalls = 0;
   const bucket = {
     async put(key: string, body: string) {
       putCalls += 1;
-      if (options.failAllPuts || putCalls <= (options.failFirstPuts ?? 0)) {
+      if (
+        options.failAllPuts ||
+        putCalls <= (options.failFirstPuts ?? 0) ||
+        (options.failKeySuffix && key.endsWith(options.failKeySuffix))
+      ) {
         throw new Error("simulated R2 write failure");
       }
       objects.set(key, body);
@@ -113,6 +121,17 @@ function createFlakyArtifactBucket(options: { failFirstPuts?: number; failAllPut
           return new TextEncoder().encode(body).buffer;
         },
       };
+    },
+    async list({ prefix }: { prefix?: string }) {
+      return {
+        objects: [...objects.keys()]
+          .filter((key) => !prefix || key.startsWith(prefix))
+          .map((key) => ({ key })),
+        truncated: false,
+      };
+    },
+    async delete(keys: string | string[]) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
     },
   } as unknown as R2Bucket;
   return { bucket, putCalls: () => putCalls, storedKeys: () => [...objects.keys()] };
@@ -423,6 +442,20 @@ describe("scan artifact writes and reads", () => {
       "simulated R2 write failure",
     );
     expect(fake.putCalls()).toBe(SCAN_ARTIFACT_WRITE_ATTEMPTS);
+  });
+
+  test("exhausted artifact writes discard objects left by a partial run", async () => {
+    const owner = await seedUser();
+    const input = await buildArtifactWriteInput(owner);
+    const fake = createFlakyArtifactBucket({ failKeySuffix: "/files.json" });
+
+    await expect(writeScanArtifactsWithRetry(fake.bucket, input)).rejects.toThrow(
+      "simulated R2 write failure",
+    );
+
+    // report.json succeeds before files.json fails on every retry. A later queue
+    // delivery gets a new run id, so the exhausted writer must remove this one.
+    expect(fake.storedKeys()).toEqual([]);
   });
 
   test("completed scans serve metadata from report artifacts and file bodies from R2", async () => {
