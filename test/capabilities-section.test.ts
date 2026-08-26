@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { capabilityDeltaDescription } from "../src/features/review/CapabilitiesSection";
+import {
+  capabilityDeltaDescription,
+  capabilityDeltaForComparison,
+} from "../src/features/review/CapabilitiesSection";
 import type { CapabilityDelta, CapabilitySet } from "../server/lib/review";
 
 function side(overrides: Partial<CapabilitySet> = {}): CapabilitySet {
@@ -31,5 +34,32 @@ describe("capabilityDeltaDescription", () => {
     };
 
     expect(capabilityDeltaDescription(delta)).toContain("No capability changes");
+  });
+
+  test("reports target coverage gaps when there is no baseline", () => {
+    const delta: CapabilityDelta = {
+      from: null,
+      to: side({ uninspectedFiles: 2, complete: false }),
+      escalations: [],
+      reductions: [],
+      confident: false,
+    };
+
+    const description = capabilityDeltaDescription(delta);
+    expect(description).toContain("No comparable baseline");
+    expect(description).toContain("Lower bound: 2 file bodies");
+  });
+
+  test("hides the persisted delta for a non-default comparison", () => {
+    const delta: CapabilityDelta = {
+      from: side(),
+      to: side({ capabilities: ["network"] }),
+      escalations: ["network"],
+      reductions: [],
+      confident: true,
+    };
+
+    expect(capabilityDeltaForComparison(delta, true)).toBe(delta);
+    expect(capabilityDeltaForComparison(delta, false)).toBeNull();
   });
 });
