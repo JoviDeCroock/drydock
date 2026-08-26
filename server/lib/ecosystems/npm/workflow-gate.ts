@@ -1,4 +1,8 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
+import { createNpmBroker } from "./broker";
+import { allowInsecureLocalRegistry } from "./connection";
+import { downloadPublishedTarball } from "./published-tarball";
+import { fetchPackageMetadataCached } from "./registry-cache";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
@@ -44,6 +48,48 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     return deriveNpmReleaseCandidates(artifacts);
+  },
+
+  async verifyPublishedRelease(ctx, input) {
+    const broker = createNpmBroker(
+      { ...ctx, session: { userId: "registry-verification" } },
+      { organizationId: ctx.organizationId },
+    );
+    try {
+      let published: Awaited<ReturnType<typeof downloadPublishedTarball>> | undefined;
+      try {
+        const metadata = await broker.fetchPackageMetadata(input.packageName);
+        const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
+        if (tarballUrl) published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
+      } catch {
+        // A public gate does not require an organization npm connection. Fall
+        // through to the credential-free registry path; private registries can
+        // still verify through the broker above when a connection exists.
+      }
+      if (!published) {
+        const metadata = await fetchPackageMetadataCached(ctx.env, ctx.executionCtx, {
+          packageName: input.packageName,
+          registryUrl: ctx.env.NPM_REGISTRY,
+          cacheScope: "registry-verification:public",
+          abbreviated: true,
+        });
+        const tarballUrl = metadata.versions?.[input.version]?.dist?.tarball;
+        if (!tarballUrl) return { status: "not_published" };
+        published = await downloadPublishedTarball(ctx.env, ctx.executionCtx, tarballUrl, {
+          registryUrl: ctx.env.NPM_REGISTRY,
+          allowInsecureLocalhost: allowInsecureLocalRegistry(ctx.env),
+          maxFiles: 1,
+        });
+      }
+      if (!published.archiveSha256) throw new Error("published npm tarball digest unavailable");
+      const reviewedDigests = input.artifacts.map((artifact) => artifact.sha256).sort();
+      const publishedDigests = [published.archiveSha256.toLowerCase()];
+      return reviewedDigests.length === 1 && reviewedDigests[0] === publishedDigests[0]
+        ? { status: "verified" }
+        : { status: "mismatch", reviewedDigests, publishedDigests };
+    } finally {
+      await broker.dispose();
+    }
   },
 };
 

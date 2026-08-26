@@ -35,6 +35,7 @@ import {
 import { combineRisk, type RiskLevel } from "./review";
 import { runScanPipeline } from "./scan/pipeline";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan/job";
+import { enqueueRegistryVerification } from "./workflow-gates/registry-verification";
 
 // A release whose changed (release-delta) findings reach these levels is
 // recommended for rejection in the workbench; everything below is recommended
@@ -149,6 +150,18 @@ export async function executeWorkflowGateJob(
   // ack — we never re-run the review for a decided gate.
   if (gate.status === "approved" || gate.status === "rejected") {
     await redeliverGateDecision(config, db, gate);
+    if (gate.status === "approved") {
+      await enqueueRegistryVerification(
+        env,
+        executionCtx,
+        {
+          kind: "registry_verification",
+          organizationId: gate.organizationId,
+          gateId: gate.id,
+        },
+        db,
+      );
+    }
     return;
   }
   if (gate.status !== "pending") {

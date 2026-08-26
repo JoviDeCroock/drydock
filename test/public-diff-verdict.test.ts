@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
+import { publicDiffAnalysisVersion } from "../server/lib/public-diff/version";
 import { buildPublicDiffVerdict, PUBLIC_VERDICT_SCHEMA } from "../server/lib/public-diff/verdict";
 import {
   diffCapabilities,
@@ -88,6 +89,12 @@ function withRisk(artifactRisk: RiskLevel, releaseRisk: RiskLevel): PublicPackag
 }
 
 describe("buildPublicDiffVerdict", () => {
+  test("analysis identity includes payload and capability-projection semantics", () => {
+    expect(publicDiffAnalysisVersion({ rulesVersionSegment: "1.28.0", payloadVersion: "v7" })).toBe(
+      "1.28.0+risk-1+payload-v7",
+    );
+  });
+
   test("projects identity, versions, timestamps, and analysis version", () => {
     const verdict = buildPublicDiffVerdict(payload(), OPTIONS);
     expect(verdict.schema).toBe(PUBLIC_VERDICT_SCHEMA);
