@@ -52,8 +52,8 @@ function StageCommandDialog({ prompt }: { prompt: StageCommandPrompt }) {
       open={true}
       onClose={dismissStageCommandPrompt}
       // Wider than the default: the body is a copyable one-line shell command
-      // whose stage id runs long, so the default width scrolls it almost
-      // immediately.
+      // whose stage id runs long, so the default width would wrap it into a
+      // paragraph of fragments.
       size="md"
       title={approving ? "Finish the publish on npm" : "Remove the staged publish on npm"}
       description={
@@ -69,7 +69,12 @@ function StageCommandDialog({ prompt }: { prompt: StageCommandPrompt }) {
       ) : null}
 
       <div class="flex flex-col gap-2">
-        <code class="font-mono text-[12px] text-ink bg-surface-2 border border-border rounded px-2.5 py-2 overflow-x-auto whitespace-pre">
+        {/* Wraps rather than scrolls: a stage id plus a `--registry` URL runs
+            past the dialog width, and a horizontal scroller reads as a
+            truncated command (macOS hides the scrollbar until it is used).
+            whitespace-pre-wrap keeps the argument spacing, break-words is the
+            fallback for a stage id or URL with no break opportunity. */}
+        <code class="font-mono text-[12px] leading-[1.6] text-ink bg-surface-2 border border-border rounded px-2.5 py-2 whitespace-pre-wrap break-words">
           {prompt.command}
         </code>
         <div class="flex flex-wrap items-center gap-2">
