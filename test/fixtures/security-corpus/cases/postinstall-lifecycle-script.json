@@ -1,0 +1,50 @@
+{
+  "id": "postinstall-lifecycle-script",
+  "title": "Postinstall lifecycle script added to a release",
+  "category": "install-surface",
+  "intent": "Pin the non-preinstall consumer install hook rule (install-script.lifecycle): a postinstall script executes on consumer machines at install time and must anchor the release at high even when the script it runs is inert, so the whole install-hook surface — not just preinstall — is covered by the corpus.",
+  "previousPackageJson": {
+    "name": "postinstall-lifecycle-script",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "postinstall-lifecycle-script",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "node scripts/postinstall.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 58,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"postinstall-lifecycle-script\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 124,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"postinstall-lifecycle-script\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"node scripts/postinstall.js\"}}"
+    },
+    {
+      "path": "scripts/postinstall.js",
+      "size": 41,
+      "sha256": "postinstall-script",
+      "flags": [],
+      "textSample": "console.log(\"postinstall placeholder\");"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    }
+  ]
+}

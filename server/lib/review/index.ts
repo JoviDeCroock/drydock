@@ -1,5 +1,5 @@
 import type { TarSuspiciousEntry } from "../tar-parser.js";
-import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./rules";
+import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION, deterministicRuleIds } from "./rules";
 import type { DiffEntry } from "./diff";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
@@ -57,14 +57,15 @@ export { redactFileRecords, redactFindings, redactJson, redactText } from "./red
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
-const CODE_CAPABILITY_RULE_IDS = new Set<string>([
-  DETERMINISTIC_RULE_IDS.codeProcessExecution,
-  DETERMINISTIC_RULE_IDS.codeRemoteShell,
-  DETERMINISTIC_RULE_IDS.codeNetworkAccess,
-  DETERMINISTIC_RULE_IDS.codeDynamicEvaluation,
-  DETERMINISTIC_RULE_IDS.codeCredentialAccess,
-]);
-const WEAK_LONE_CAPABILITY: string = DETERMINISTIC_RULE_IDS.codeProcessExecution;
+// Which rules score by capability co-occurrence versus anchoring at their
+// severity is declared per rule in the manifest (`rules/rule-ids.ts`), with
+// the rationale for each classification next to its entry.
+const CODE_CAPABILITY_RULE_IDS = deterministicRuleIds(
+  (spec) => spec.risk === "capability" || spec.risk === "weak-lone-capability",
+);
+const WEAK_LONE_CAPABILITY_RULE_IDS = deterministicRuleIds(
+  (spec) => spec.risk === "weak-lone-capability",
+);
 
 function severityToRisk(severity: string | null | undefined): RiskLevel {
   if (severity === "critical") return "critical";
@@ -167,7 +168,7 @@ export function computeRisk(
 function testCapabilityRisk(capabilities: Map<string, RiskLevel>): RiskLevel {
   let highest: RiskLevel = "low";
   for (const [ruleId, risk] of capabilities) {
-    highest = combineRisk(highest, ruleId === WEAK_LONE_CAPABILITY ? "low" : risk);
+    highest = combineRisk(highest, WEAK_LONE_CAPABILITY_RULE_IDS.has(ruleId) ? "low" : risk);
   }
   return highest;
 }
@@ -183,7 +184,7 @@ function codeCapabilityRisk(
   }
   const [[ruleId, { risk, obfuscated }]] = capabilities;
   if (obfuscated) return risk;
-  return ruleId === WEAK_LONE_CAPABILITY ? "low" : risk;
+  return WEAK_LONE_CAPABILITY_RULE_IDS.has(ruleId) ? "low" : risk;
 }
 
 export function combineRisk(...risks: Array<RiskLevel | null | undefined>): RiskLevel {

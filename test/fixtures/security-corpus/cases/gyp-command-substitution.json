@@ -1,0 +1,59 @@
+{
+  "id": "gyp-command-substitution",
+  "title": "Root binding.gyp runs package JavaScript through GYP command substitution",
+  "category": "native-install-surface",
+  "intent": "GYP command substitutions execute shell commands during node-gyp configure, so a root gyp file invoking node on a package script is an install-time execution path that bypasses package.json lifecycle scripts entirely. The substituted script is inert here; the execution channel itself is the critical finding, alongside the implicit node-gyp install hook the root gyp file creates.",
+  "previousPackageJson": {
+    "name": "gyp-command-substitution",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "gyp-command-substitution",
+    "version": "1.0.1"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 52,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"gyp-command-substitution\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 52,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"gyp-command-substitution\",\"version\":\"1.0.1\"}"
+    },
+    {
+      "path": "binding.gyp",
+      "size": 128,
+      "sha256": "binding-gyp",
+      "flags": [],
+      "textSample": "{\"targets\":[{\"target_name\":\"addon\",\"sources\":[\"addon.cc\"],\"defines\":[\"BUILD_CONFIG=<!@(node genconfig.js)\"]}]}"
+    },
+    {
+      "path": "genconfig.js",
+      "size": 34,
+      "sha256": "genconfig-script",
+      "flags": [],
+      "textSample": "console.log(\"-DNDEBUG\");"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.gyp-command-substitution",
+      "severity": "critical",
+      "file": "binding.gyp"
+    },
+    {
+      "ruleId": "install-script.implicit-node-gyp",
+      "severity": "high",
+      "file": "binding.gyp"
+    }
+  ]
+}

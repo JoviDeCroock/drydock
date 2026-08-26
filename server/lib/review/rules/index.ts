@@ -12,7 +12,7 @@ import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoint
 // Lives here (not in a family module) because versioning spans every family.
 export const DETERMINISTIC_RULES_VERSION = "1.28.0";
 
-export { DETERMINISTIC_RULE_IDS } from "./rule-ids";
+export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export {
   codePatternsFor,
   FINDING_SECRET_PATTERNS,
