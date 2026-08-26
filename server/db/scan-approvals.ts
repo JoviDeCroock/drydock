@@ -114,12 +114,79 @@ export function resolveApprovalVerdict(
 
 /** SQL proof that the current `scan_approvals` row still belongs to an org member. */
 export function approvalVoterIsCurrentMember(organizationId: string) {
-  return sql`exists (
-    select 1
-    from ${organizationMembers}
-    where ${organizationMembers.organizationId} = ${organizationId}
-      and ${organizationMembers.userId} = ${scanApprovals.userId}
-  )`;
+  return approvalProjectionSql(organizationId).voterIsCurrentMember;
+}
+
+/**
+ * The SQL fragments every approval reconciliation derives `scans.decision`
+ * from. There is exactly one definition of "a vote", "a block", "an eligible
+ * approval", "the live bar", and "a still-pending gate package"; every writer
+ * that changes an input to the projection — a vote, a membership row, the
+ * policy — must build its predicates from these rather than restating them,
+ * so the derivation cannot drift between event handlers.
+ *
+ * Pass `null` to correlate on `scans.organizationId` instead of one bound
+ * organization, for statements that span every organization a user belongs to
+ * (account deletion).
+ */
+function approvalProjectionSql(organizationId: string | null) {
+  const org = organizationId === null ? sql`${scans.organizationId}` : sql`${organizationId}`;
+  return {
+    /** The current `scan_approvals` row's voter is still an org member. */
+    voterIsCurrentMember: sql`exists (
+      select 1
+      from ${organizationMembers}
+      where ${organizationMembers.organizationId} = ${org}
+        and ${organizationMembers.userId} = ${scanApprovals.userId}
+    )`,
+    /** The outer `scans` row has at least one recorded vote. */
+    scanHasVotes: sql`exists (
+      select 1
+      from ${scanApprovals}
+      where ${scanApprovals.scanId} = ${scans.id}
+        and ${scanApprovals.organizationId} = ${org}
+    )`,
+    /**
+     * The outer `scans` row carries a durable block. A block is a fail-closed
+     * release verdict, so unlike approvals it does not require current
+     * membership.
+     */
+    scanHasBlock: sql`exists (
+      select 1
+      from ${scanApprovals}
+      where ${scanApprovals.scanId} = ${scans.id}
+        and ${scanApprovals.organizationId} = ${org}
+        and ${scanApprovals.decision} = 'no_publish'
+    )`,
+    /** Approvals on the outer `scans` row that still count toward a live quorum. */
+    eligibleApprovalCount: sql`(
+      select count(*)
+      from ${scanApprovals}
+      where ${scanApprovals.scanId} = ${scans.id}
+        and ${scanApprovals.organizationId} = ${org}
+        and ${scanApprovals.decision} = 'publish'
+        and exists (
+          select 1
+          from ${organizationMembers}
+          where ${organizationMembers.organizationId} = ${org}
+            and ${organizationMembers.userId} = ${scanApprovals.userId}
+        )
+    )`,
+    /** The organization's live approval bar. */
+    requiredApprovals: sql`(
+      select ${organizations.requiredReleaseApprovals}
+      from ${organizations}
+      where ${organizations.id} = ${org}
+    )`,
+    /** The outer `scans` row belongs to a workflow gate that is still pending. */
+    scanGateIsPending: sql`exists (
+      select 1
+      from ${githubWorkflowGates}
+      where ${githubWorkflowGates.id} = ${scans.gateId}
+        and ${githubWorkflowGates.organizationId} = ${org}
+        and ${githubWorkflowGates.status} = 'pending'
+    )`,
+  };
 }
 
 /** The org's approval bar, plus the member pool it has to be met from. */
@@ -171,45 +238,13 @@ export async function setRequiredReleaseApprovals(
   // policy row or invalidate in-flight gate decisions.
   const changesPolicy = normalizedExpected === null || normalizedExpected !== normalized;
   const now = new Date();
-  const voterIsCurrentMember = approvalVoterIsCurrentMember(organizationId);
-  const hasVotes = sql`exists (
-    select 1
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${organizationId}
-  )`;
-  // A recorded block is final even if its voter later leaves. Approvals are
-  // live quorum contributions and therefore require current membership; a
-  // block is a durable release verdict that only its voter can clear by
-  // revising the staged-review vote while they are still a member.
-  const hasBlock = sql`exists (
-    select 1
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${organizationId}
-      and ${scanApprovals.decision} = 'no_publish'
-  )`;
-  const approvalCount = sql`(
-    select count(*)
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${organizationId}
-      and ${scanApprovals.decision} = 'publish'
-      and ${voterIsCurrentMember}
-  )`;
+  const projection = approvalProjectionSql(organizationId);
+  const { voterIsCurrentMember, scanHasVotes: hasVotes, scanHasBlock: hasBlock } = projection;
+  const approvalCount = projection.eligibleApprovalCount;
   // A completed workflow gate is irreversible. Reconcile ordinary staged
   // decisions and packages whose held gate is still pending, but never rewrite
   // the historical package decisions behind a GitHub job that already shipped.
-  const policyStillApplies = or(
-    ne(scans.source, "workflow_gate"),
-    sql`exists (
-      select 1
-      from ${githubWorkflowGates}
-      where ${githubWorkflowGates.id} = ${scans.gateId}
-        and ${githubWorkflowGates.organizationId} = ${organizationId}
-        and ${githubWorkflowGates.status} = 'pending'
-    )`,
-  )!;
+  const policyStillApplies = or(ne(scans.source, "workflow_gate"), projection.scanGateIsPending)!;
   const policyIsCurrent = sql`exists (
     select 1
     from ${organizations}
@@ -338,6 +373,43 @@ export async function setRequiredReleaseApprovals(
       .returning(RECONCILED_SCAN_COLUMNS),
   ]);
 
+  const readyGates = await listReadyPendingGates(db, organizationId);
+  const changedScans = [...blocked, ...approved, ...undecided];
+  const changedCounts = await countScanApprovals(
+    db,
+    organizationId,
+    changedScans.map((scan) => scan.id),
+  );
+  return {
+    applied: updatedPolicy.length > 0,
+    readyGates,
+    changedScans: changedScans.map((scan) => ({
+      ...scan,
+      approvalCount: changedCounts.get(scan.id)?.eligibleApproved ?? 0,
+    })),
+  };
+}
+
+export interface ReadyPendingGate {
+  id: string;
+  decision: "approved" | "rejected";
+}
+
+/**
+ * Pending gates whose current package projections already resolve the
+ * aggregate: fail-closed rejection when any package carries a durable voted
+ * block, approval when every package has met the live bar.
+ *
+ * This is the one definition of "a gate someone should finalize". Every event
+ * that can move a projection without a decision request attached — a policy
+ * change, a member rejoining, recovery after an interrupted request — asks
+ * this and then drives `finalizeReconciledWorkflowGateDecision`, whose CAS
+ * re-proves the roster before anything reaches GitHub.
+ */
+export async function listReadyPendingGates(
+  db: AppDb,
+  organizationId: string,
+): Promise<ReadyPendingGate[]> {
   const gateHasDurableBlock = sql`exists (
     select 1
     from ${scans}
@@ -361,7 +433,7 @@ export async function setRequiredReleaseApprovals(
       and ${scans.organizationId} = ${organizationId}
       and (${scans.decision} is null or ${scans.decision} <> 'publish')
   )`;
-  const readyGates = await db
+  return db
     .select({
       id: githubWorkflowGates.id,
       decision: sql<"approved" | "rejected">`case
@@ -381,20 +453,6 @@ export async function setRequiredReleaseApprovals(
         ),
       ),
     );
-  const changedScans = [...blocked, ...approved, ...undecided];
-  const changedCounts = await countScanApprovals(
-    db,
-    organizationId,
-    changedScans.map((scan) => scan.id),
-  );
-  return {
-    applied: updatedPolicy.length > 0,
-    readyGates,
-    changedScans: changedScans.map((scan) => ({
-      ...scan,
-      approvalCount: changedCounts.get(scan.id)?.eligibleApproved ?? 0,
-    })),
-  };
 }
 
 const RECONCILED_SCAN_COLUMNS = {
@@ -431,27 +489,7 @@ export async function addMemberAndReconcileApprovals(
   input: { organizationId: string; userId: string; role: OrganizationRole },
 ): Promise<ReconciledScanDecision[]> {
   const now = new Date();
-  const voterIsCurrentMember = approvalVoterIsCurrentMember(input.organizationId);
-  const hasBlock = sql`exists (
-    select 1
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${input.organizationId}
-      and ${scanApprovals.decision} = 'no_publish'
-  )`;
-  const approvalCount = sql`(
-    select count(*)
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${input.organizationId}
-      and ${scanApprovals.decision} = 'publish'
-      and ${voterIsCurrentMember}
-  )`;
-  const requiredApprovals = sql`(
-    select ${organizations.requiredReleaseApprovals}
-    from ${organizations}
-    where ${organizations.id} = ${input.organizationId}
-  )`;
+  const projection = approvalProjectionSql(input.organizationId);
   const addedMemberHasVote = sql`exists (
     select 1
     from ${scanApprovals}
@@ -459,13 +497,6 @@ export async function addMemberAndReconcileApprovals(
       and ${scanApprovals.organizationId} = ${input.organizationId}
       and ${scanApprovals.userId} = ${input.userId}
       and ${scanApprovals.decision} = 'publish'
-  )`;
-  const pendingGate = sql`exists (
-    select 1
-    from ${githubWorkflowGates}
-    where ${githubWorkflowGates.id} = ${scans.gateId}
-      and ${githubWorkflowGates.organizationId} = ${input.organizationId}
-      and ${githubWorkflowGates.status} = 'pending'
   )`;
   const addedMemberApprovalReason = sql`(
     select ${scanApprovals.reason}
@@ -509,9 +540,9 @@ export async function addMemberAndReconcileApprovals(
           eq(scans.organizationId, input.organizationId),
           isNull(scans.decision),
           addedMemberHasVote,
-          sql`not ${hasBlock}`,
-          sql`${approvalCount} >= ${requiredApprovals}`,
-          or(ne(scans.source, "workflow_gate"), pendingGate),
+          sql`not ${projection.scanHasBlock}`,
+          sql`${projection.eligibleApprovalCount} >= ${projection.requiredApprovals}`,
+          or(ne(scans.source, "workflow_gate"), projection.scanGateIsPending),
         ),
       )
       .returning(RECONCILED_SCAN_COLUMNS),
@@ -907,46 +938,67 @@ export async function removeMemberAndReconcileApprovals(
   organizationId: string,
   userId: string,
 ): Promise<{ removed: boolean; changedScans: ReconciledScanProjection[] }> {
+  return removeMembershipsAndReconcileApprovalsCore(db, userId, organizationId);
+}
+
+/**
+ * Revoke every surviving membership and remove the account's still-live approvals.
+ *
+ * The membership deletion belongs in the same D1 batch as vote cleanup and
+ * projection repair. Otherwise an already-authorized decision request can land
+ * a new approval after cleanup but before account deletion removes membership,
+ * leaving a pending gate package projected as approved by an ineligible voter.
+ */
+export async function removeUserMembershipsAndReconcileApprovals(
+  db: AppDb,
+  userId: string,
+): Promise<ReconciledScanProjection[]> {
+  const { changedScans } = await removeMembershipsAndReconcileApprovalsCore(db, userId, null);
+  return changedScans;
+}
+
+/**
+ * The one implementation behind both departure shapes: an owner removing a
+ * member from one organization, and account deletion revoking every
+ * membership at once (`organizationId: null`). Both must delete the departing
+ * member's approvals on live release state, keep fail-closed blocks and final
+ * rosters, and reopen a pending-gate package whose remaining quorum no longer
+ * meets the bar — in one D1 batch with the membership deletion, so an
+ * interrupted request cannot leave a stale vote that becomes eligible again
+ * after a later re-invite.
+ */
+async function removeMembershipsAndReconcileApprovalsCore(
+  db: AppDb,
+  userId: string,
+  organizationId: string | null,
+): Promise<{ removed: boolean; changedScans: ReconciledScanProjection[] }> {
   const now = new Date();
-  const pendingGate = sql`exists (
-    select 1
-    from ${githubWorkflowGates}
-    where ${githubWorkflowGates.id} = ${scans.gateId}
-      and ${githubWorkflowGates.organizationId} = ${organizationId}
-      and ${githubWorkflowGates.status} = 'pending'
-  )`;
+  const projection = approvalProjectionSql(organizationId);
   const mutableScans = db
     .select({ id: scans.id })
     .from(scans)
     .where(
       and(
-        eq(scans.organizationId, organizationId),
+        organizationId === null ? undefined : eq(scans.organizationId, organizationId),
         or(
           isNull(scans.decision),
-          and(eq(scans.source, "workflow_gate"), eq(scans.decision, "publish"), pendingGate),
+          and(
+            eq(scans.source, "workflow_gate"),
+            eq(scans.decision, "publish"),
+            projection.scanGateIsPending,
+          ),
         ),
       ),
     );
-  const remainingApprovalCount = sql`(
-    select count(*)
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${organizationId}
-      and ${scanApprovals.decision} = 'publish'
-      and ${approvalVoterIsCurrentMember(organizationId)}
-  )`;
-  const requiredApprovals = sql`(
-    select ${organizations.requiredReleaseApprovals}
-    from ${organizations}
-    where ${organizations.id} = ${organizationId}
-  )`;
 
   const [removed, , reopened] = await db.batch([
     db
       .delete(organizationMembers)
       .where(
         and(
-          eq(organizationMembers.organizationId, organizationId),
+          organizationId === null
+            ? undefined
+            : eq(organizationMembers.organizationId, organizationId),
           eq(organizationMembers.userId, userId),
         ),
       )
@@ -955,7 +1007,7 @@ export async function removeMemberAndReconcileApprovals(
     // request. That makes retrying the operation repair stale approval state.
     db.delete(scanApprovals).where(
       and(
-        eq(scanApprovals.organizationId, organizationId),
+        organizationId === null ? undefined : eq(scanApprovals.organizationId, organizationId),
         eq(scanApprovals.userId, userId),
         // A block is durable even when its scan projection has not caught up
         // yet (for example, interruption immediately after the vote insert).
@@ -975,94 +1027,14 @@ export async function removeMemberAndReconcileApprovals(
       })
       .where(
         and(
-          eq(scans.organizationId, organizationId),
+          organizationId === null ? undefined : eq(scans.organizationId, organizationId),
           eq(scans.source, "workflow_gate"),
           eq(scans.decision, "publish"),
-          pendingGate,
-          sql`${remainingApprovalCount} < ${requiredApprovals}`,
+          projection.scanGateIsPending,
+          sql`${projection.eligibleApprovalCount} < ${projection.requiredApprovals}`,
         ),
       )
       .returning(RECONCILED_SCAN_COLUMNS),
   ]);
   return { removed: removed.length > 0, changedScans: reopened };
-}
-
-/**
- * Revoke every surviving membership and remove the account's still-live approvals.
- *
- * The membership deletion belongs in the same D1 batch as vote cleanup and
- * projection repair. Otherwise an already-authorized decision request can land
- * a new approval after cleanup but before account deletion removes membership,
- * leaving a pending gate package projected as approved by an ineligible voter.
- */
-export async function removeUserMembershipsAndReconcileApprovals(
-  db: AppDb,
-  userId: string,
-): Promise<ReconciledScanProjection[]> {
-  const now = new Date();
-  const pendingGate = sql`exists (
-    select 1
-    from ${githubWorkflowGates}
-    where ${githubWorkflowGates.id} = ${scans.gateId}
-      and ${githubWorkflowGates.organizationId} = ${scans.organizationId}
-      and ${githubWorkflowGates.status} = 'pending'
-  )`;
-  const mutableScans = db
-    .select({ id: scans.id })
-    .from(scans)
-    .where(
-      or(
-        isNull(scans.decision),
-        and(eq(scans.source, "workflow_gate"), eq(scans.decision, "publish"), pendingGate),
-      ),
-    );
-  const remainingApprovalCount = sql`(
-    select count(*)
-    from ${scanApprovals}
-    where ${scanApprovals.scanId} = ${scans.id}
-      and ${scanApprovals.organizationId} = ${scans.organizationId}
-      and ${scanApprovals.decision} = 'publish'
-      and exists (
-        select 1
-        from ${organizationMembers}
-        where ${organizationMembers.organizationId} = ${scans.organizationId}
-          and ${organizationMembers.userId} = ${scanApprovals.userId}
-      )
-  )`;
-  const requiredApprovals = sql`(
-    select ${organizations.requiredReleaseApprovals}
-    from ${organizations}
-    where ${organizations.id} = ${scans.organizationId}
-  )`;
-  const [, , reopened] = await db.batch([
-    db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
-    db
-      .delete(scanApprovals)
-      .where(
-        and(
-          eq(scanApprovals.userId, userId),
-          eq(scanApprovals.decision, "publish"),
-          inArray(scanApprovals.scanId, mutableScans),
-        ),
-      ),
-    db
-      .update(scans)
-      .set({
-        decision: null,
-        decisionReason: null,
-        decidedByUserId: null,
-        decidedAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(scans.source, "workflow_gate"),
-          eq(scans.decision, "publish"),
-          pendingGate,
-          sql`${remainingApprovalCount} < ${requiredApprovals}`,
-        ),
-      )
-      .returning(RECONCILED_SCAN_COLUMNS),
-  ]);
-  return reopened;
 }
