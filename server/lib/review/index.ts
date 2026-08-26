@@ -60,7 +60,9 @@ const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, criti
 // Which rules score by capability co-occurrence versus anchoring at their
 // severity is declared per rule in the manifest (`rules/rule-ids.ts`), with
 // the rationale for each classification next to its entry.
-const CODE_CAPABILITY_RULE_IDS = deterministicRuleIds((spec) => spec.risk !== "anchor");
+const CODE_CAPABILITY_RULE_IDS = deterministicRuleIds(
+  (spec) => spec.risk === "capability" || spec.risk === "weak-lone-capability",
+);
 const WEAK_LONE_CAPABILITY_RULE_IDS = deterministicRuleIds(
   (spec) => spec.risk === "weak-lone-capability",
 );
