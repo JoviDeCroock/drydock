@@ -2,7 +2,10 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
-import { dropPendingApprovalsForUser, type ReconciledScanProjection } from "./scan-approvals";
+import {
+  removeUserMembershipsAndReconcileApprovals,
+  type ReconciledScanProjection,
+} from "./scan-approvals";
 import {
   githubAppInstallations,
   githubReleaseTargets,
@@ -365,11 +368,11 @@ export async function deleteUserAccount(
     await deleteOrganization(db, org.id, artifactBucket);
   }
 
-  // A vote on an undecided release is not historical quorum yet. Remove those
-  // before anonymizing the surviving decided-release rows, matching explicit
-  // organization-member removal so a deleted account cannot keep helping a
-  // future release over the bar.
-  const changedScans = await dropPendingApprovalsForUser(db, userId);
+  // A vote on an undecided release is not historical quorum yet. Revoke the
+  // remaining memberships, remove those live approvals, and repair pending
+  // gate projections in one transaction so an in-flight vote cannot land in a
+  // gap before membership cleanup. Historical rows are anonymized below.
+  const changedScans = await removeUserMembershipsAndReconcileApprovals(db, userId);
 
   await db.batch([
     db.update(scans).set({ ownerUserId: null }).where(eq(scans.ownerUserId, userId)),
@@ -410,7 +413,6 @@ export async function deleteUserAccount(
       .update(organizationInvitations)
       .set({ acceptedByUserId: null })
       .where(eq(organizationInvitations.acceptedByUserId, userId)),
-    db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);
   return changedScans;
