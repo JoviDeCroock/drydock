@@ -9,8 +9,13 @@ import {
 } from "../server/lib/review";
 import { matchDeterministicCodeCapabilities } from "../server/lib/review/rules/scripts";
 
-function file(path: string, textSample?: string, flags: string[] = []): FileRecord {
-  return { path, size: textSample?.length ?? 0, sha256: "abc", flags, textSample };
+function file(
+  path: string,
+  textSample?: string,
+  flags: string[] = [],
+  size = textSample?.length ?? 0,
+): FileRecord {
+  return { path, size, sha256: "abc", flags, textSample };
 }
 
 function set(overrides: Partial<CapabilitySet> = {}): CapabilitySet {
@@ -117,6 +122,18 @@ describe("projectCapabilities", () => {
     expect(projected.inspectedFiles).toBe(1);
     expect(projected.uninspectedFiles).toBe(1);
     expect(projected.complete).toBe(false);
+  });
+
+  test("nonempty binary bodies are coverage holes while empty files are not", () => {
+    const opaque = projectCapabilities([file("payload.dat", undefined, ["binary"], 64)], null);
+    expect(opaque.capabilities).toEqual([]);
+    expect(opaque.inspectedFiles).toBe(0);
+    expect(opaque.uninspectedFiles).toBe(1);
+    expect(opaque.complete).toBe(false);
+
+    const empty = projectCapabilities([file("empty.dat", undefined, ["binary"], 0)], null);
+    expect(empty.uninspectedFiles).toBe(0);
+    expect(empty.complete).toBe(true);
   });
 
   test("sample-skipped minified scripts are coverage holes; inert skipped files are not", () => {

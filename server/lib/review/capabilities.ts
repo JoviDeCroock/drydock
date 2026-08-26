@@ -46,13 +46,13 @@ export interface CapabilitySet {
   inspectedFiles: number;
   /**
    * Files with an inspection gap a capability could hide in: bodies the
-   * parser never retained (`content-skipped`), minified scripts whose text
-   * sample is deliberately skipped (`text-sample-skipped`, code-capable
-   * extensions only — a source map or minified stylesheet cannot execute in
-   * the consumer's runtime), and baseline bodies clipped at the baseline
-   * retention cap (`baseline-truncated`, whose visible head is still
-   * scanned). Every set is a lower bound; this counts the files where the
-   * bound has a hole.
+   * parser never retained (`content-skipped`), nonempty binary bodies that
+   * have no text sample, minified scripts whose text sample is deliberately
+   * skipped (`text-sample-skipped`, code-capable extensions only — a source
+   * map or minified stylesheet cannot execute in the consumer's runtime), and
+   * baseline bodies clipped at the baseline retention cap
+   * (`baseline-truncated`, whose visible head is still scanned). Every set is
+   * a lower bound; this counts the files where the bound has a hole.
    */
   uninspectedFiles: number;
   /** True when no file body escaped inspection. */
@@ -84,16 +84,22 @@ const CODE_CAPABLE_SKIPPED_SAMPLE_RE = /\.min\.(?:js|mjs|cjs)$/i;
 
 // A file whose inspection has a hole a capability could hide in. The
 // baseline-truncated head is still scanned below — the gap is its tail.
-function hasInspectionGap(file: Pick<FileRecord, "path" | "flags">): boolean {
+function hasInspectionGap(file: Pick<FileRecord, "path" | "size" | "flags">): boolean {
   if (file.flags.includes("content-skipped")) return true;
   if (file.flags.includes("baseline-truncated")) return true;
+  // Binary bodies have no textSample, so the pattern matcher cannot say which
+  // capabilities they contain. Native-format detection still contributes the
+  // coarse `native` capability above, but it cannot prove the absence of
+  // network, process, or credential behavior inside those bytes. Empty files
+  // are also flagged `binary` by the parser and contain nothing to inspect.
+  if (file.size > 0 && file.flags.includes("binary")) return true;
   return (
     file.flags.includes("text-sample-skipped") && CODE_CAPABLE_SKIPPED_SAMPLE_RE.test(file.path)
   );
 }
 
 export function projectCapabilities(
-  files: ReadonlyArray<Pick<FileRecord, "path" | "textSample" | "flags">>,
+  files: ReadonlyArray<Pick<FileRecord, "path" | "size" | "textSample" | "flags">>,
   packageJson: PackageJsonSummary | null | undefined,
   codePatternSet?: CodePatternSet,
 ): CapabilitySet {
