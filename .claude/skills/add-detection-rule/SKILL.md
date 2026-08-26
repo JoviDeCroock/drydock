@@ -1,6 +1,6 @@
 ---
 name: add-detection-rule
-description: Add or change a deterministic detection rule in Drydock. Use when adding a new rule ID, changing a rule's severity or coverage, wiring a rule into the deterministic findings pipeline, authoring the required security-corpus fixture, or confirming eval coverage before a detection PR.
+description: Add or change a Drydock deterministic rule, including its ID, severity, pipeline wiring, security-corpus fixture, and eval coverage.
 ---
 
 # Add A Deterministic Detection Rule

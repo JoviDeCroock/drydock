@@ -1,6 +1,6 @@
 ---
 name: verify-live
-description: Verify this branch's changes in a running local Drydock instance with a real browser. Use when asked to "verify this change in the app", "check it works live", "see it in the browser", or when a UI/behavior change needs evidence beyond passing tests. Diff-driven and exploratory; for the fixed canonical product walkthrough use drydock-agent-tour instead.
+description: Verify branch-specific Drydock UI or behavior in a real local browser. For the fixed canonical walkthrough, use drydock-agent-tour instead.
 ---
 
 # Verify Live

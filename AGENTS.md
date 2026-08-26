@@ -1,68 +1,37 @@
-# Repository guidelines
+# Agent rules
 
-## Layout
+## Load context progressively
 
-- `server/` — Hono Worker. `index.ts` mounts routes under `/api/*`. The Worker is the deploy target (`main` in `wrangler.jsonc`).
-  - `routes/scans/` — `POST /api/v1/scans { stageId }`, `GET /api/v1/scans`, `GET /api/v1/scans/:id`. Split by what the caller is doing with a scan: `lifecycle` / `decisions` / `sharing` / `compare`, mounted by `index.ts`.
-  - `routes/github-webhooks.ts` — public signed GitHub App webhook endpoint. Persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `docs/workflow-gates.md`, `docs/npm-workflow-gate.md`, `docs/pypi-workflow-gate.md`, and `docs/vscode-workflow-gate.md`.
-  - `lib/sandbox.ts` — Dynamic Worker that downloads/parses package artifacts. `NpmStageGateway` is the only npm-token egress.
-  - `lib/review/` — deterministic findings (`rules/`), package/package.json diffing, redaction, serialization, risk computation, and shared UI types. `lib/review/index.ts` is the public entry.
-  - `lib/ai-review/` — Workers AI reviewer, wired via `lib/scan/pipeline.ts` and on by default behind the `ai-review` Flagship killswitch.
-  - `lib/scan/` — scan lifecycle: pipeline and phases, queue job, input parsing, artifact persistence, report export, release memory.
-  - `lib/public-diff/` — anonymous `/diff` orchestration and the `PublicDiffAdapter` contract. The atpm ecosystem resolves releases over AT Protocol rather than through a registry; see `docs/atpm-public-diff.md`.
-  - `lib/ecosystems/` — one directory per ecosystem (npm, PyPI, VS Code, atpm) plus `index.ts`, the single registry declaring which release paths each supports (`staged` / `gate` / `publicDiff`). Add an ecosystem by adding a directory and a registry entry — never by branching on the ecosystem name in a route or orchestrator (machine-checked by `test/ecosystem-branching-invariants.test.mjs`).
-  - `lib/workflow-gates/` — shared GitHub Environment gate plumbing only; ecosystem gate adapters live in `lib/ecosystems/<id>/workflow-gate.ts`. When one ecosystem needs extra behavior here, add an optional method to `WorkflowGateAdapter` instead of branching on the ecosystem name.
-  - `lib/auth/` — Better Auth wiring, ownership, roles, active organization, invitation tokens, audit-event allowlist.
-  - `lib/notify/` — outbound messaging: notification fan-out, Slack, email.
-  - `lib/platform/` — domain-free infrastructure: HTTP helpers, errors, fetch retry, rate limiting, JSON canonicalization, text utils, the non-executing JS lexer, crypto, secret box, security headers, observability, plus the shared primitives every layer narrows or fans out with (`guards.ts`, `path-safety.ts`, `concurrency.ts`). Reach for one of those before writing a local copy — each previously existed as three to seven divergent duplicates. See `.claude/skills/shared-primitives` for where a helper belongs and how to name it, and `.claude/skills/split-large-module` before breaking up an oversized file. `rate-limit.ts` is the only rate limiter: native Cloudflare Rate Limiting bindings first, D1 buckets only for windows the binding cannot express.
-  - `db/` — Drizzle schema and persistence helpers for scans, findings, artifacts, workflow gates, and Better Auth. `scans.ts` is a barrel: the implementations live in `scan-jobs` / `scan-persist` / `scan-list` / `scan-detail` / `scan-decisions` / `scan-risk`, split by what they do to a scan. `lib/scan/artifacts/` and `src/models/scan.ts` follow the same barrel pattern.
-- `src/` — Preact UI. `index.tsx` mounts `preact-iso`; `models/` re-use `server/` types; `features/` holds code shared by more than one page (a page must never import from another page's directory — machine-checked by the `boundaries-local/no-cross-page-import` lint rule).
-- `drizzle/` — D1 migrations generated from `server/db/schema.ts`.
-- `docs/` — reference docs. Start with `docs/README.md` and read only the relevant layer.
-- `test/` — Vitest logic/Worker suites plus Playwright fake-registry e2e fixtures.
+- Start with `docs/README.md`. Use `docs/repository-map.md` for ownership, `docs/tooling.md` for commands, `docs/release-safety.md` for test scope, and `docs/design.md` before UI decisions. Do not read all docs.
+- Discover with `rg`, `rg --files`, `git diff --stat`, or `git diff --name-only`; then read only relevant ranges or hunks.
+- Do not batch full-file dumps or large diffs. Default shell/search output to at most 3,000 tokens and avoid results above roughly 12,000 characters. Exceed this only for a required instruction file or an unsplittable targeted result.
+- Run the narrowest test first and inspect only failing cases. Start a fresh session for unrelated work or after context-heavy exploration.
 
-## Non-negotiable boundaries
+## Hard boundaries
 
-- Package bytes are hostile evidence. Never execute package code, install dependencies, run lifecycle scripts, import modules, run builds, invoke shells, or render package-provided active content.
-- npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, only for allowed staged/metadata/tarball registry endpoints.
-- The AI reviewer is advisory and on by default; the per-organization `ai-review` flag is a killswitch that disables it. It cannot downgrade deterministic findings.
-- D1/Better Auth are required for every non-auth `/api/*` endpoint; resource ownership must be organization-scoped. Two anonymous exceptions, both credential-free and IP rate-limited (see `docs/security-model.md`): the `/api/public/v1/package-diff` endpoints, which serve only public-registry and pkg.pr.new preview data; and `/public/reports/*`, where an unguessable share token minted by an owner/admin is the capability and the response is the scan's canonical report export and nothing else.
-- New Cloudflare bindings are hand-declared in `server/env.d.ts` (`cf-typegen` output is not used by typecheck) and must be added to `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and — when tests need them — `test/config/wrangler.jsonc`.
+- Treat package bytes as hostile evidence. Never execute package code, install its dependencies, run lifecycle scripts/builds/shells, import its modules, or render package-provided active content.
+- npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, and only to allowed staged, metadata, or tarball registry endpoints.
+- AI review is advisory and on by default. The organization `ai-review` flag is a killswitch; AI review cannot downgrade deterministic findings.
+- D1 and Better Auth protect every non-auth `/api/*` endpoint with organization-scoped ownership. Anonymous access is limited to IP-rate-limited, credential-free `/api/public/v1/package-diff` for public registries/pkg.pr.new and `/public/reports/*`, where an owner/admin-minted unguessable token exposes only the canonical report export. See `docs/security-model.md`.
 - Operational logs/events must be structured and secret-redacted. Never log raw tokens, headers, package contents, or unredacted errors.
+- Declare Cloudflare bindings by hand in `server/env.d.ts` (`cf-typegen` is not used by typecheck), `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and, when tests need them, `test/config/wrangler.jsonc`.
 
-## UI and frontend conventions
+## Architecture invariants
 
-- Read `docs/design.md` before visual or UI decisions. It is the source of truth for fonts, colors, spacing, iconography, data viz, state patterns, and marketing-surface rules.
-- Tailwind CSS v4 tokens live in `src/style.css`; prefer primitives in `src/components/` before one-off classes. No CSS-in-JS and no SVG icons.
-- Code used by two or more pages belongs in `src/features/`, not in one page's folder. The scan workbench and the anonymous `/diff` page share `src/features/review/`; see `docs/ui.md`.
-- Use `preact`, `preact-iso`, and `@preact/signals`; never `preact/compat`.
-- `useState`/`useReducer` are banned. Use `useSignal`, `useComputed`, `createModel`, and `useModel`. See `docs/tooling.md` and `.claude/skills/preact-signals-*`.
+- `server/lib/ecosystems/index.ts` is the sole `staged`/`gate`/`publicDiff` registry. Add ecosystem directories and registry entries; never branch on ecosystem names in routes/orchestrators. Put gate behavior in `<id>/workflow-gate.ts` and extend `WorkflowGateAdapter` for optional shared hooks.
+- Reuse `server/lib/platform/{guards,path-safety,concurrency}.ts`; read `.claude/skills/shared-primitives` before adding generic helpers and `.claude/skills/split-large-module` before splitting large modules. `rate-limit.ts` is the only rate limiter: native Cloudflare bindings first, D1 only for unsupported windows.
+- Preserve responsibility-focused barrels in `server/db/scans.ts`, `server/lib/scan/artifacts/index.ts`, and `src/models/scan.ts`.
+- Shared UI belongs in `src/features/`; pages never import other page directories. Machine checks enforce ecosystem branching, sandbox credential boundaries, and cross-page imports.
 
-## Testing
+## Frontend
 
-New functionality needs tests at the narrowest useful layer; add broader coverage when behavior crosses a trust boundary:
+- Use `preact`, `preact-iso`, and `@preact/signals`, never `preact/compat`.
+- `useState` and `useReducer` are banned; use signals/models. Read `docs/tooling.md` and the applicable `.claude/skills/preact-signals-*` skill.
+- Use Tailwind v4 tokens from `src/style.css` and `src/components/` primitives. No CSS-in-JS or SVG icons.
 
-- Routes, auth, org scoping, rate limits, D1 persistence, queues, scan lifecycle → `test/workers/`.
-- Sandbox/archive parsing/npm credential forwarding/redaction/deterministic rules → invariant or regression tests; the sandbox must never receive token material (statically pinned by `test/sandbox-boundary-invariants.test.mjs`).
-- Registry behavior, staged-publish discovery, workflow gates, browser-visible scan flows → fake-registry e2e in `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
-- Detection changes → security corpus fixtures with explicit rule IDs/severity/risk, plus eval coverage when relevant. See `docs/security-detection-corpus.md` and `docs/detection-eval.md`.
+## Finish changes
 
-## Commands
-
-- `pnpm run verify` — lint + format check + typecheck + tests; run before every commit when practical.
-- `pnpm run verify:quick` — the iteration loop: lint/format on changed files only, full typecheck, changed-only Vitest. Not the commit gate — finish with `pnpm run verify`.
-- `pnpm run dev` — Vite dev server with the Cloudflare plugin (`http://localhost:5173`).
-- `pnpm run lint` / `pnpm run lint:fix` — oxlint.
-- `pnpm run format` / `pnpm run format:check` — oxfmt.
-- `pnpm run typecheck` — TypeScript typecheck.
-- `pnpm run test` — Vitest logic + Worker-runtime suites. Forwards args to Vitest: `pnpm test -- <file>` runs one file, add `--project node` or `--project workers` to pin a suite.
-- `pnpm run test:node` / `pnpm run test:workers` — one project only: node for pure logic tests (`test/**`), workers for the slower Miniflare/D1 suite (`test/workers/**`).
-- `pnpm run test:e2e` — Playwright fake-registry e2e.
-- `pnpm run e2e:dev:seed` — creds-free local app with one scanned fixture release seeded (fake registry + throwaway login, printed on start); `pnpm run e2e:seed` seeds an already-running `pnpm run e2e:dev`. See `docs/e2e-test-environment.md`.
-- `pnpm run eval` — detection eval harness.
-- `pnpm run eval:ai:live` — paid live AI-reviewer model comparison; needs Cloudflare credentials and never runs in `verify`. See `docs/ai-review-eval.md`.
-- `pnpm db:generate` — generate Drizzle migrations; never hand-write SQL migrations.
-
-## Documentation expectations
-
-Use `docs/README.md` to select relevant docs instead of reading all of `docs/`. Before finishing behavior, API, UI, security, workflow, deployment, or operator changes, update the relevant docs or note `docs checked, no update needed` in the PR summary/testing notes.
+- Add tests at the narrowest layer in `docs/repository-map.md`; follow `docs/release-safety.md` when behavior crosses a trust boundary.
+- Detection changes require security-corpus fixtures with explicit rule ID/severity/risk and relevant eval coverage.
+- Use `pnpm run verify:quick` while iterating and `pnpm run verify` before commits when practical. Generate migrations with `pnpm db:generate`; never hand-write migration SQL.
+- Update the relevant docs for behavior, API, UI, security, workflow, deployment, or operator changes, or record `docs checked, no update needed` in the PR/testing summary.

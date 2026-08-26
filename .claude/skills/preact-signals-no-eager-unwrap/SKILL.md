@@ -1,6 +1,6 @@
 ---
 name: preact-signals-no-eager-unwrap
-description: Use when writing or reviewing Preact components that render signals — to avoid eagerly unwrapping `signal.value` in the component body for conditional rendering, text nodes, or attributes. Covers Show/Show-fallback, direct signal rendering, useComputed for derivations, the DOM-attribute vs plain-prop distinction, and the local `signals-local/no-signal-conditional-jsx` lint rule.
+description: Write or review Preact signal rendering without eager signal.value reads, covering conditionals, text, attributes, props, Show, and computed values.
 ---
 
 # Preact Signals: don't eagerly unwrap

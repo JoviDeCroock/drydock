@@ -1,6 +1,6 @@
 ---
 name: preact-signals-preact-integration
-description: Use when working with @preact/signals in Preact components, including useSignal, useComputed, useSignalEffect, signal unboxing/subscription boundaries, direct JSX signal rendering, DOM attribute optimization, passing signals through props or context, Show, For, useLiveSignal, and rerender behavior.
+description: Integrate @preact/signals with Preact components, JSX, effects, props, context, Show, For, live signals, subscriptions, and rerender behavior.
 ---
 
 # Preact Signals Preact Integration
