@@ -50,6 +50,8 @@ export const TOC: Array<{
     children: [
       { id: "renovate-diff-links", label: "Renovate" },
       { id: "dependabot-diff-links", label: "Dependabot" },
+      { id: "diff-capabilities", label: "Capabilities" },
+      { id: "diff-verdict-api", label: "Verdict API" },
     ],
   },
 ];
