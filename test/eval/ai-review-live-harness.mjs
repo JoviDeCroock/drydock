@@ -252,6 +252,7 @@ export function buildLiveCases(corpus = loadCorpus()) {
 // uses so the two reports mean the same thing.
 export function scoreRun(testCase, result) {
   const review = result.review;
+  const usage = result.usage ?? null;
   const completed = review.status === "complete";
   const passed =
     testCase.verdict === "malicious"
@@ -274,10 +275,11 @@ export function scoreRun(testCase, result) {
     findingCount: review.findings.length,
     requiresManualReview: review.requiresManualReview,
     summary: review.summary,
-    steps: result.usage?.steps ?? 0,
-    inputTokens: result.usage?.inputTokens ?? 0,
-    cachedInputTokens: result.usage?.cachedInputTokens ?? 0,
-    outputTokens: result.usage?.outputTokens ?? 0,
+    usageAvailable: usage !== null,
+    steps: usage?.steps ?? 0,
+    inputTokens: usage?.inputTokens ?? 0,
+    cachedInputTokens: usage?.cachedInputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? 0,
     durationMs: result.durationMs ?? 0,
   };
 }
@@ -297,6 +299,7 @@ function scoreHarnessError(testCase, error, durationMs) {
     findingCount: 0,
     requiresManualReview: true,
     summary: "The live eval run failed before producing a review.",
+    usageAvailable: false,
     steps: 0,
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -318,10 +321,10 @@ export function summarizeModel(model, runs) {
   const malicious = runs.filter((run) => run.verdict === "malicious");
   const benign = runs.filter((run) => run.verdict === "benign");
   const completed = runs.filter((run) => run.completed);
-  const measuredRuns = runs.filter((run) => run.status !== "harness_error");
-  const costs = measuredRuns.map((run) => estimateCost(model, run)).filter((cost) => cost !== null);
-  const totalInput = measuredRuns.reduce((total, run) => total + run.inputTokens, 0);
-  const totalCached = measuredRuns.reduce((total, run) => total + run.cachedInputTokens, 0);
+  const usageRuns = runs.filter((run) => run.usageAvailable);
+  const costs = usageRuns.map((run) => estimateCost(model, run)).filter((cost) => cost !== null);
+  const totalInput = usageRuns.reduce((total, run) => total + run.inputTokens, 0);
+  const totalCached = usageRuns.reduce((total, run) => total + run.cachedInputTokens, 0);
 
   return {
     model,
@@ -340,10 +343,10 @@ export function summarizeModel(model, runs) {
     catchRate: rate(malicious.filter((run) => run.passed).length, malicious.length),
     falsePositiveRate: rate(benign.filter((run) => !run.passed).length, benign.length),
     manualReviewRate: rate(runs.filter((run) => run.requiresManualReview).length, runs.length),
-    avgSteps: mean(measuredRuns.map((run) => run.steps)),
+    avgSteps: mean(usageRuns.map((run) => run.steps)),
     avgDurationMs: mean(runs.map((run) => run.durationMs)),
-    avgInputTokens: mean(measuredRuns.map((run) => run.inputTokens)),
-    avgOutputTokens: mean(measuredRuns.map((run) => run.outputTokens)),
+    avgInputTokens: mean(usageRuns.map((run) => run.inputTokens)),
+    avgOutputTokens: mean(usageRuns.map((run) => run.outputTokens)),
     cachedInputShare: totalInput ? totalCached / totalInput : 0,
     avgCostUsd: costs.length ? mean(costs) : null,
     totalCostUsd: costs.length ? costs.reduce((total, cost) => total + cost, 0) : null,

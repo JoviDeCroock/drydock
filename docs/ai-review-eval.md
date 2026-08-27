@@ -182,7 +182,9 @@ It reports three things, in priority order:
    cost more than one with double its list price. `MODEL_PRICING` in
    `test/eval/ai-review-live-harness.mjs` carries the list prices and the date
    they were checked — refresh it with any routing change, because a stale table
-   silently reorders the comparison.
+   silently reorders the comparison. Runs without provider usage are excluded
+   from token and cost averages and reduce the reported cost coverage instead of
+   being priced as zero-cost calls.
 
 The harness deliberately asserts no winner: picking a model is a judgement call
 across all three axes. Unsupported ecosystems and fixtures omitted by `--limit`

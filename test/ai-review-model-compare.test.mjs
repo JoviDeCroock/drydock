@@ -200,6 +200,7 @@ describe("scoreRun", () => {
     const run = scoreRun(maliciousCase, { review: review({ status: "invalid" }), usage: null });
     expect(run.completed).toBe(false);
     expect(run.status).toBe("invalid");
+    expect(run.usageAvailable).toBe(false);
     expect(run.inputTokens).toBe(0);
     expect(run.steps).toBe(0);
   });
@@ -233,6 +234,14 @@ describe("summarizeModel", () => {
 
   test("reports cached input share over the whole run, not per case", () => {
     expect(summarizeModel(KIMI, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
+  });
+
+  test("excludes runs without usage from cost coverage and token averages", () => {
+    const summary = summarizeModel(KIMI, runs);
+    expect(summary.costCoverage).toBeCloseTo(2 / 3, 6);
+    expect(summary.avgInputTokens).toBe(100_000);
+    expect(summary.avgOutputTokens).toBe(3_000);
+    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(KIMI, usage()), 6);
   });
 
   test("leaves rates null rather than inventing a denominator", () => {
