@@ -48,7 +48,11 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
     if (!sample) continue;
     const prefix = changedPrefix(ctx, file.path);
     const reviewLine = firstPromptInjectionLine(sample, REVIEW_MANIPULATION_PATTERN_SET);
-    const promptLine = firstPromptInjectionLine(sample, PROMPT_INJECTION_PATTERN_SET, reviewLine);
+    const promptLine = firstPromptInjectionLine(
+      sample,
+      PROMPT_INJECTION_PATTERN_SET,
+      REVIEW_MANIPULATION_PATTERN_SET,
+    );
 
     if (reviewLine !== undefined) {
       findings.push(
@@ -94,13 +98,12 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
 function firstPromptInjectionLine(
   sample: string,
   patterns: RegExp[],
-  excludedLine?: number,
+  excludedPatterns: RegExp[] = [],
 ): number | undefined {
   let firstLine: number | undefined;
+  const excludedRanges = promptInjectionMatchRanges(sample, excludedPatterns);
   visitPromptInjectionMatches(sample, patterns, (startLine, endLine) => {
-    if (excludedLine !== undefined && startLine <= excludedLine && excludedLine <= endLine) {
-      return true;
-    }
+    if (overlapsPromptInjectionRange(startLine, endLine, excludedRanges)) return true;
     if (firstLine === undefined || startLine < firstLine) firstLine = startLine;
     return firstLine !== 1;
   });
@@ -120,6 +123,7 @@ function shouldDemoteTestMatch(ctx: RuleContext, path: string, patterns: RegExp[
     staged.textSample,
     changedStagedLines(previous.textSample, staged.textSample),
     patterns,
+    patterns === PROMPT_INJECTION_PATTERN_SET ? REVIEW_MANIPULATION_PATTERN_SET : [],
   );
 }
 
@@ -127,10 +131,13 @@ export function promptInjectionPatternsMatchChangedLines(
   sample: string,
   changedLines: Set<number>,
   patterns: RegExp[],
+  excludedPatterns: RegExp[] = [],
 ): boolean {
   if (changedLines.size === 0) return false;
   let matched = false;
+  const excludedRanges = promptInjectionMatchRanges(sample, excludedPatterns);
   visitPromptInjectionMatches(sample, patterns, (startLine, endLine) => {
+    if (overlapsPromptInjectionRange(startLine, endLine, excludedRanges)) return true;
     for (let line = startLine; line <= endLine; line += 1) {
       if (changedLines.has(line)) {
         matched = true;
@@ -140,6 +147,49 @@ export function promptInjectionPatternsMatchChangedLines(
     return true;
   });
   return matched;
+}
+
+interface PromptInjectionMatchRange {
+  startLine: number;
+  endLine: number;
+}
+
+function promptInjectionMatchRanges(
+  sample: string,
+  patterns: RegExp[],
+): PromptInjectionMatchRange[] {
+  if (patterns.length === 0) return [];
+  const ranges: PromptInjectionMatchRange[] = [];
+  visitPromptInjectionMatches(sample, patterns, (startLine, endLine) => {
+    ranges.push({ startLine, endLine });
+    return true;
+  });
+  ranges.sort((left, right) => left.startLine - right.startLine || left.endLine - right.endLine);
+  const merged: PromptInjectionMatchRange[] = [];
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.startLine <= previous.endLine) {
+      previous.endLine = Math.max(previous.endLine, range.endLine);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function overlapsPromptInjectionRange(
+  startLine: number,
+  endLine: number,
+  ranges: PromptInjectionMatchRange[],
+): boolean {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (ranges[middle].startLine <= endLine) low = middle + 1;
+    else high = middle;
+  }
+  return low > 0 && ranges[low - 1].endLine >= startLine;
 }
 
 function visitPromptInjectionMatches(
@@ -162,8 +212,16 @@ function visitPromptInjectionMatches(
         for (const match of variant.searchText.matchAll(matcher)) {
           const start = match.index ?? 0;
           const end = start + Math.max(0, match[0].length - 1);
-          const startLine = windowFirstLine + countLineBreaks(variant.lineSource, 0, start);
-          const endLine = startLine + countLineBreaks(variant.lineSource, start, end);
+          const originalStart = originalPromptInjectionOffset(variant, start);
+          const originalEnd = originalPromptInjectionOffset(variant, end);
+          if (
+            isPromptInjectionPatternSet(patterns) &&
+            isBenignPromptInjectionDocumentation(window, originalStart, originalEnd)
+          ) {
+            continue;
+          }
+          const startLine = windowFirstLine + countLineBreaks(window, 0, originalStart);
+          const endLine = startLine + countLineBreaks(window, originalStart, originalEnd);
           if (!visit(startLine, endLine)) return;
         }
       }
@@ -176,31 +234,101 @@ function visitPromptInjectionMatches(
   }
 }
 
-function promptInjectionScanVariants(window: string): Array<{
+const PROMPT_EXAMPLE_LEAD =
+  /\b(?:prompt[\s-]+injection|review[\s-]+manipulation|jailbreak|attacks?|attackers?|filters?|detectors?|guardrails?|tests?|fixtures?|samples?|examples?)\b[^\n.!?]{0,120}\b(?:say|says|include|includes|contain|contains|reject|detect|block|match|phrase|text|message|input|such\s+as|like)\b[^\n.!?]{0,40}$/i;
+const LABELED_PROMPT_EXAMPLE =
+  /\b(?:examples?|samples?|fixtures?|test\s+cases?)\s*[:-]\s*[["'`(<]*$/i;
+const DEFENSIVE_PROMPT_DIRECTIVE =
+  /\b(?:ignore|disregard|do\s+not\s+follow|don'?t\s+follow)\s+(?:any\s+|the\s+)?(?:instructions?|prompts?|commands?|directives?)\b[^\n.!?]{0,40}\b(?:(?:embedded|contained|found)\s+in|(?:coming|received)\s+from|from)\s+(?:untrusted|retrieved|external|package|user[\s-]+supplied|tool[\s-]+output)(?:\s+(?:documents?|content|inputs?|outputs?))?\b(?=\s*(?:[.!?]|$))/i;
+
+// Security and LLM libraries legitimately quote canonical attack strings in
+// threat guides and tell assistants to ignore instructions from untrusted
+// content. Those are descriptions of the trust boundary, not attempts to cross
+// it. Require an explicit example/defense cue; a bare quoted directive remains
+// hostile evidence because package-delivered injection is commonly wrapped in
+// a string, comment, or Markdown code span.
+function isBenignPromptInjectionDocumentation(text: string, start: number, end: number): boolean {
+  const sentenceStart = Math.max(
+    text.lastIndexOf("\n", start - 1),
+    text.lastIndexOf(".", start - 1),
+    text.lastIndexOf("!", start - 1),
+    text.lastIndexOf("?", start - 1),
+  );
+  const boundaryCandidates = [
+    text.indexOf("\n", end),
+    text.indexOf(".", end),
+    text.indexOf("!", end),
+    text.indexOf("?", end),
+  ].filter((index) => index >= 0);
+  const sentenceEnd = boundaryCandidates.length ? Math.min(...boundaryCandidates) : text.length;
+  const sentence = text.slice(sentenceStart + 1, sentenceEnd);
+  if (DEFENSIVE_PROMPT_DIRECTIVE.test(sentence)) return true;
+
+  const lead = text.slice(Math.max(sentenceStart + 1, start - 180), start);
+  const isThreatExample = PROMPT_EXAMPLE_LEAD.test(lead) || LABELED_PROMPT_EXAMPLE.test(lead);
+  return isThreatExample && hasMatchingExampleQuotes(text, start, end, sentenceStart, sentenceEnd);
+}
+
+function isPromptInjectionPatternSet(patterns: RegExp[]): boolean {
+  return patterns === PROMPT_INJECTION_PATTERN_SET || patterns === REVIEW_MANIPULATION_PATTERN_SET;
+}
+
+function hasMatchingExampleQuotes(
+  text: string,
+  start: number,
+  end: number,
+  sentenceStart: number,
+  sentenceEnd: number,
+): boolean {
+  const before = text.slice(Math.max(sentenceStart + 1, start - 8), start);
+  const after = text.slice(end + 1, Math.min(text.length, sentenceEnd + 4, end + 12));
+  const opening = /^["'`]/.test(text.slice(start)) ? text[start] : before.match(/(["'`])\s*$/)?.[1];
+  const closing = after.match(/^\s*[.,;:]?\s*(["'`])/)?.[1];
+  return opening !== undefined && opening === closing;
+}
+
+interface PromptInjectionScanVariant {
   searchText: string;
-  lineSource: string;
-}> {
-  const variants = [{ searchText: window, lineSource: window }];
+  originalOffsets?: number[];
+}
+
+function promptInjectionScanVariants(window: string): PromptInjectionScanVariant[] {
+  const variants: PromptInjectionScanVariant[] = [{ searchText: window }];
   const stripped = stripPromptInjectionEvasion(window);
-  addPromptInjectionVariant(variants, stripped, stripped);
-  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(window), window);
-  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(stripped), stripped);
+  const strippedOffsets =
+    stripped === window ? undefined : originalOffsetsForSubsequence(window, stripped);
+  addPromptInjectionVariant(variants, stripped, strippedOffsets);
+  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(window));
+  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(stripped), strippedOffsets);
   return variants;
 }
 
 function addPromptInjectionVariant(
-  variants: Array<{ searchText: string; lineSource: string }>,
+  variants: PromptInjectionScanVariant[],
   searchText: string,
-  lineSource: string,
+  originalOffsets?: number[],
 ): void {
-  if (
-    variants.some(
-      (variant) => variant.searchText === searchText && variant.lineSource === lineSource,
-    )
-  ) {
-    return;
+  if (variants.some((variant) => variant.searchText === searchText)) return;
+  variants.push({ searchText, ...(originalOffsets ? { originalOffsets } : {}) });
+}
+
+function originalOffsetsForSubsequence(source: string, subsequence: string): number[] {
+  const offsets: number[] = [];
+  let sourceIndex = 0;
+  for (let index = 0; index < subsequence.length; index += 1) {
+    const character = subsequence[index];
+    while (source[sourceIndex] !== character) sourceIndex += 1;
+    offsets.push(sourceIndex);
+    sourceIndex += 1;
   }
-  variants.push({ searchText, lineSource });
+  return offsets;
+}
+
+function originalPromptInjectionOffset(
+  variant: PromptInjectionScanVariant,
+  offset: number,
+): number {
+  return variant.originalOffsets?.[offset] ?? offset;
 }
 
 function countLineBreaks(text: string, start: number, end: number): number {
