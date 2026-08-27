@@ -121,9 +121,11 @@ version-agnostic persisted-shape compatibility set. Corpus metadata, non-empty
 required fields, and unique case ids across both sets are validated before
 metrics are computed. The report keeps the two totals separate so historical
 output cannot be mistaken for current reviewer coverage. The corpus includes
-prompt-injection-shaped hostile evidence, unavailable evidence, and a fallback
-model result. Reports are written to `.context/eval/ai-review-eval.json` and
-`.context/eval/ai-review-eval.md`; a write failure fails the command.
+prompt-injection-shaped hostile evidence, unavailable evidence, a benign
+documentation release, install-time and credential compromise, and a
+fallback-model result. Reports are written to
+`.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`; a
+write failure fails the command.
 
 These are recorded outputs, so a green run proves the scoring contract and
 guards known current-version outputs; it does not prove the hosted model will

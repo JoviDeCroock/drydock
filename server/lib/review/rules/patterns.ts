@@ -254,7 +254,7 @@ const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_
 // `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
-  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted(?!\s+(?:in|for|when)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
+  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted(?!\s+(?:in|for|when)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
   // An explicit approval command aimed at an AI-qualified audience is already
   // a clean verdict; requiring a redundant "as safe" suffix would leave the
   // deterministic gate at medium when the advisory reviewer cannot run.
@@ -290,6 +290,7 @@ const REVIEW_MANIPULATION_PATTERNS = [
 // assistant", "customize the system prompt") that must stay quiet.
 const PROMPT_INJECTION_PATTERNS = [
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|every\s+)?(?:instructions?|prompts?|rules?|directives?|commands?|context)\s+(?:above|before|earlier|previously)\b/i,
   /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
   /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
   /\b(?:replace|overwrite)\s+your\s+system\s+prompt\b/i,
