@@ -104,9 +104,7 @@
         "model": "@cf/deepseek-ai/deepseek-v4-flash-0731",
         "reviewerVersion": "1.2.0"
       }
-    }
-  ],
-  "cases": [
+    },
     {
       "id": "preinstall-env-exfil-v1-4",
       "verdict": "malicious",
@@ -249,5 +247,6 @@
         "reviewerVersion": "1.4.0"
       }
     }
-  ]
+  ],
+  "cases": []
 }

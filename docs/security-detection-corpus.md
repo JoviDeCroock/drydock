@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.42.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.43.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -600,7 +600,7 @@ actual AI-directed or instruction-override directive before escalating documenta
 Quoted prompt examples, qualified scanner policy, reproducibility and responsible-disclosure
 requirements, local-development bypass flags, and trust/sandbox configuration remain ordinary
 documentation unless they tell this reviewer or a consumer AI tool to ignore governing instructions
-or conceal release risk. The controlled current-version records include both
+or conceal release risk. Controlled `1.4.0` records include both
 `prompt-injection-readme` and the clean `benign-llm-prompt-docs` counterpart.
 
 `1.38.0` recognizes Drydock itself as an explicit automated-review audience and keeps AI/Drydock-
@@ -635,6 +635,18 @@ danger tier by dropping one word. It also recognizes direct AI instructions to i
 a package alongside the existing add/include verbs. `review-manipulation-comment` and
 `prompt-injection-readme` pin the malicious forms; the focused policy matrix and both benign LLM
 controls keep third-person Drydock integration and recommendation prose quiet.
+
+`1.43.0` keeps prompt scanning bounded when a package repeats review-manipulation text densely by
+building exclusion ranges within each 64 KiB window and bounding documentation context lookups. It
+also promotes direct AI/Drydock clean-verdict commands without a determiner, including "approve
+package" and "say this package is safe", and recognizes paired typographic quotes around explicitly
+labeled threat examples. The focused policy and large-sample tests plus both benign LLM controls pin
+the malicious, performance, and precision regressions.
+
+Rebasing onto the GLM/Kimi routing contract advances `AI_REVIEWER_VERSION` to `1.5.0`: the combined
+prompt and routing policy was never exercised by the `1.4.0` controlled outputs, and one of those
+records came from the retired DeepSeek fallback. Those outputs remain historical compatibility
+evidence until controlled `1.5.0` runs can be recorded; they are not relabeled as current coverage.
 
 ### Fixture format
 
