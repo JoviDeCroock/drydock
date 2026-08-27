@@ -10,9 +10,10 @@ behaviors before the reviewer contract changes.
 `AI_REVIEWER_VERSION` in `server/lib/ai-review/contract.ts` identifies the
 prompt, evidence tools, model routing, and response contract as one unit. Every
 new review persists that version and includes it in traces and analytics. Bump
-it whenever a change can alter reviewer behavior; copy or regenerate the eval
-records for the new version in the same change. Historical rows parse with a
-`null` version and analytics labels them `legacy`.
+it whenever a change can alter reviewer behavior. Historical recorded outputs
+keep the version and model that actually produced them; regenerate and
+adjudicate the corpus before marking a new contract as recorded. Historical
+rows without a version parse as `null` and analytics labels them `legacy`.
 
 ## Submission bounds
 
@@ -188,8 +189,8 @@ the reviewer refuses to use; treat it as a floor to clear, not a feature to buy.
 
 1. Bump `AI_REVIEWER_VERSION` for behavioral changes. Model routing is part of
    that contract: changing `AI_MODEL` or `AI_FALLBACK_MODEL` is a version bump,
-   and the recorded eval records must be reissued at the new version in the
-   same change.
+   but historical outputs must keep their original version and model until they
+   are regenerated under the new contract.
 2. Run the normal reviewer tests and `pnpm run eval:ai`.
 3. For a routing change, run `pnpm run eval:ai:live` over the candidate set and
    read completion rate before detection quality before cost. Refresh

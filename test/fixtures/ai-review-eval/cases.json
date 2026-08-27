@@ -1,6 +1,6 @@
 {
-  "suiteVersion": 3,
-  "recordedReviewerVersion": "1.4.0",
+  "suiteVersion": 2,
+  "recordedReviewerVersion": "1.2.0",
   "cases": [
     {
       "id": "npm-install-exfiltration",
@@ -23,7 +23,7 @@
         ],
         "requiresManualReview": true,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.4.0"
+        "reviewerVersion": "1.2.0"
       }
     },
     {
@@ -38,8 +38,8 @@
         "summary": "This release changes documentation and tests without adding install-time, network, process, credential, dependency, or entrypoint behavior.",
         "findings": [],
         "requiresManualReview": false,
-        "model": "@cf/zai-org/glm-5.3-flash",
-        "reviewerVersion": "1.4.0"
+        "model": "@cf/moonshotai/kimi-k2.7-code",
+        "reviewerVersion": "1.2.0"
       }
     },
     {
@@ -63,7 +63,7 @@
         ],
         "requiresManualReview": true,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.4.0"
+        "reviewerVersion": "1.2.0"
       }
     },
     {
@@ -79,7 +79,7 @@
         "findings": [],
         "requiresManualReview": false,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.4.0"
+        "reviewerVersion": "1.2.0"
       }
     },
     {
@@ -102,8 +102,8 @@
           }
         ],
         "requiresManualReview": true,
-        "model": "@cf/zai-org/glm-5.3-flash",
-        "reviewerVersion": "1.4.0"
+        "model": "@cf/deepseek-ai/deepseek-v4-flash-0731",
+        "reviewerVersion": "1.2.0"
       }
     }
   ]
