@@ -56,8 +56,9 @@ export function App() {
             cannot match the prerender URL `/reports` — without the bare route
             the shell falls through to `default` and every share link serves a
             200 whose body says "Page not found" until the bundle hydrates.
-            PublicReportPage renders its loading skeleton for an empty token,
-            which is the correct shell.
+            PublicReportPage server-renders its loading skeleton for an empty
+            token — the correct shell for a real share link — and swaps in the
+            "no public index" explainer once mounted on the client.
           */}
           <Route path="/reports" component={PublicReportPage} />
           <Route path="/reports/:token" component={PublicReportPage} />
