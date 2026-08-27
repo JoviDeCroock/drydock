@@ -236,6 +236,56 @@ describe("scan report JSON export", () => {
     expect(body.provenance).toEqual(provenance);
   });
 
+  test.each([
+    { kind: "zip", path: "dist/tab-helper.zip" },
+    { kind: "xpi", path: "dist/tab-helper.xpi" },
+  ])("surfaces reviewed browser $kind provenance digests", async ({ kind, path }) => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = `stage-${scanId.slice(-12)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    const provenance = {
+      ecosystem: "browser",
+      mode: "workflow_gate",
+      artifacts: [{ path, kind, sha256: "d".repeat(64) }],
+    };
+    await persistScanWithArtifacts(db, {
+      id: scanId,
+      stageId,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageJson: { name: "tab-helper@example.invalid", version: "1.2.0" },
+      risk: "low",
+      status: "complete",
+      summary: {
+        report: {
+          version: 1,
+          digest: "abc123",
+          digestAlgorithm: "sha256",
+          generatedAt: "2026-01-01T00:00:00.000Z",
+          rulesVersion: "1.8.0",
+        },
+        stagedPublish: { provenance, manifest: { package: "tab-helper@example.invalid" } },
+      },
+      ai: null,
+      files: [],
+      diff: [],
+      findings: [],
+      report: { version: 1, digest: "abc123" },
+    });
+
+    const res = await getReport(buildTestApp(owner), scanId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provenance: typeof provenance | null };
+    expect(body.provenance).toEqual(provenance);
+  });
+
   test("exports a complete AI review with evidence and recommendations", async () => {
     const owner = await seedUser();
     const aiReview = {

@@ -1859,6 +1859,27 @@ describe("browser extension review adapter", () => {
     expect(() => dependencies("page.svg")).toThrow(/entity .* recursive/);
   });
 
+  test("fails loudly when repeated XML entities exceed the expanded attribute budget", () => {
+    const entity = "a".repeat(1_000_000);
+    const references = Array.from(
+      { length: 27 },
+      (_, index) => `<a href="&payload;/${index}"/>`,
+    ).join("");
+    const dependencies = createBrowserHtmlConsumerDependencyResolver([
+      {
+        path: "page.svg",
+        size: 1,
+        sha256: "a7".repeat(32),
+        flags: [],
+        textSample:
+          `<!DOCTYPE svg [<!ENTITY payload "${entity}">]>` +
+          `<svg xmlns="http://www.w3.org/2000/svg">${references}</svg>`,
+      },
+    ]);
+
+    expect(() => dependencies("page.svg")).toThrow(/expanded attributes.*character budget/);
+  });
+
   test("fails loudly when a document declares too many distinct base candidates", () => {
     const bases = Array.from({ length: 17 }, (_, index) => `<base href="/base-${index}/">`).join(
       "",
@@ -2051,6 +2072,9 @@ describe("browser extension review adapter", () => {
           'const attributeScript = document.createElement("script");',
           'attributeScript.setAttribute("src", chrome.runtime.getURL("tests/attribute-injected.js"));',
           "document.documentElement.append(attributeScript);",
+          'document.body.appendChild(document.createElement("script")).src = chrome.runtime.getURL("tests/appended-return.js");',
+          'const computedTemplateScript = document.createElement("script");',
+          "computedTemplateScript.src = chrome[`runtime`][`getURL`](`tests/computed-template-member.js`);",
           'const frame = document.createElement("iframe");',
           'frame.src = "tests/frame.html";',
           "document.documentElement.append(frame);",
@@ -2119,6 +2143,8 @@ describe("browser extension review adapter", () => {
       ...[
         "injected",
         "attribute-injected",
+        "appended-return",
+        "computed-template-member",
         "frame",
         "split-frame",
         "object",
@@ -2152,6 +2178,8 @@ describe("browser extension review adapter", () => {
       expect.arrayContaining([
         expect.objectContaining({ file: "tests/injected.js", severity: "high" }),
         expect.objectContaining({ file: "tests/attribute-injected.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/appended-return.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/computed-template-member.js", severity: "high" }),
         expect.objectContaining({ file: "tests/frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/split-frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/object.js", severity: "high" }),
@@ -2174,7 +2202,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(18);
+    expect(findings).toHaveLength(20);
   });
 
   test("follows literal HTML written by reachable extension scripts", () => {

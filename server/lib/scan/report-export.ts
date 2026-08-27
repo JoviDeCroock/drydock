@@ -197,7 +197,14 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
     if (!isRecord(artifact)) return null;
     const { path, kind, sha256 } = artifact;
     if (typeof path !== "string" || typeof sha256 !== "string") return null;
-    if (kind === "tarball" || kind === "wheel" || kind === "sdist" || kind === "vsix") {
+    if (
+      kind === "tarball" ||
+      kind === "wheel" ||
+      kind === "sdist" ||
+      kind === "vsix" ||
+      kind === "zip" ||
+      kind === "xpi"
+    ) {
       mapped.push({ path, kind, sha256 });
       continue;
     }

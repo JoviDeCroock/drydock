@@ -43,6 +43,7 @@ const MAX_DOCUMENT_CONSUMER_RESOLUTIONS = 1_000_000;
 const MAX_XML_GENERAL_ENTITIES = 1_024;
 const MAX_XML_ENTITY_EXPANSION_DEPTH = 32;
 const MAX_XML_ENTITY_EXPANDED_CHARACTERS = 1_000_000;
+const MAX_XML_EXPANDED_ATTRIBUTE_CHARACTERS = 25 * 1024 * 1024;
 
 export function inferBrowserArtifactKind(path: string): BrowserArtifactKind | null {
   const lower = path.toLowerCase();
@@ -791,6 +792,14 @@ function scanXmlDocumentConsumerTokens(xml: string, tokens: DocumentConsumerToke
   };
   const parser = new SaxesParser({ xmlns: true });
   let fatalError: Error | null = null;
+  let expandedAttributeCharacters = 0;
+  const spendExpandedAttributeCharacters = (value: string): void => {
+    expandedAttributeCharacters += value.length;
+    if (expandedAttributeCharacters > MAX_XML_EXPANDED_ATTRIBUTE_CHARACTERS) {
+      fatalError = new Error("browser XML expanded attributes exceed the character budget");
+      throw fatalError;
+    }
+  };
   parser.on("doctype", (doctype) => {
     try {
       for (const [name, replacement] of xmlGeneralEntityReplacements(doctype)) {
@@ -814,6 +823,7 @@ function scanXmlDocumentConsumerTokens(xml: string, tokens: DocumentConsumerToke
   });
   parser.on("opentag", (tag) => {
     for (const attribute of Object.values(tag.attributes)) {
+      spendExpandedAttributeCharacters(attribute.value);
       if (attribute.uri === "http://www.w3.org/XML/1998/namespace" && attribute.local === "base") {
         supplemental.baseHrefs.push(attribute.value);
       }

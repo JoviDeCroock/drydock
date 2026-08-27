@@ -731,6 +731,8 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
     if (navigation) specifiers.push(navigation);
     const domResource = staticDomConsumerResource(tokens, text, index, domConsumerElementBindings);
     if (domResource) specifiers.push(domResource);
+    const appendedDomResource = staticAppendedDomConsumerResource(tokens, text, index);
+    if (appendedDomResource) specifiers.push(appendedDomResource);
     specifiers.push(...staticDomInlineDocuments(tokens, text, index));
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
@@ -792,6 +794,17 @@ const SVG_DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>
 interface StaticDomConsumerElement {
   namespace: "html" | "svg";
   tag: string;
+  nextIndex: number;
+}
+
+function staticDomConsumerElementProperties(
+  element: StaticDomConsumerElement,
+): ReadonlySet<string> | undefined {
+  const properties =
+    element.namespace === "html"
+      ? DOM_CONSUMER_ELEMENT_PROPERTIES
+      : SVG_DOM_CONSUMER_ELEMENT_PROPERTIES;
+  return properties.get(element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase());
 }
 
 function staticDomConsumerElementBindings(
@@ -812,12 +825,7 @@ function staticDomConsumerElementBindings(
       continue;
     }
     const element = staticDocumentCreateElement(tokens, text, index + 2);
-    const properties = element
-      ? (element.namespace === "html"
-          ? DOM_CONSUMER_ELEMENT_PROPERTIES
-          : SVG_DOM_CONSUMER_ELEMENT_PROPERTIES
-        ).get(element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase())
-      : undefined;
+    const properties = element ? staticDomConsumerElementProperties(element) : undefined;
     if (!properties) continue;
     const bindingName = staticIdentifierName(binding, text);
     if (bindingName === null) continue;
@@ -860,13 +868,15 @@ function staticDocumentCreateElement(
   if (closeIndex === null) return null;
   if (createElement.name === "createElement") {
     const tag = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
-    return tag === null ? null : { namespace: "html", tag };
+    return tag === null ? null : { namespace: "html", tag, nextIndex: closeIndex + 1 };
   }
   const namespace = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
   const tag = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 1);
   if (tag === null) return null;
-  if (namespace === HTML_NAMESPACE) return { namespace: "html", tag };
-  return namespace === SVG_NAMESPACE ? { namespace: "svg", tag } : null;
+  if (namespace === HTML_NAMESPACE) {
+    return { namespace: "html", tag, nextIndex: closeIndex + 1 };
+  }
+  return namespace === SVG_NAMESPACE ? { namespace: "svg", tag, nextIndex: closeIndex + 1 } : null;
 }
 
 function staticDomConsumerResource(
@@ -883,6 +893,39 @@ function staticDomConsumerResource(
   const member = staticMemberAccess(tokens, text, start + 1);
   if (!member) return null;
 
+  return staticDomConsumerMemberResource(tokens, text, member, resourceProperties);
+}
+
+function staticAppendedDomConsumerResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): WebExtensionResourceSpecifier | null {
+  const appendChild = staticMemberAccess(tokens, text, start);
+  if (appendChild?.name !== "appendChild") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, appendChild.nextIndex);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  if (closeIndex === null) return null;
+  const arguments_ = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex);
+  if (arguments_.length !== 1) return null;
+  const [elementStart, elementEnd] = arguments_[0];
+  const element = staticDocumentCreateElement(tokens, text, elementStart);
+  if (!element || element.nextIndex !== elementEnd) return null;
+  const resourceProperties = staticDomConsumerElementProperties(element);
+  if (!resourceProperties) return null;
+  const member = staticMemberAccess(tokens, text, closeIndex + 1);
+  if (!member) return null;
+
+  return staticDomConsumerMemberResource(tokens, text, member, resourceProperties);
+}
+
+function staticDomConsumerMemberResource(
+  tokens: JsToken[],
+  text: string,
+  member: { name: string; nextIndex: number },
+  resourceProperties: ReadonlySet<string>,
+): WebExtensionResourceSpecifier | null {
   if (member.name === "setAttribute" || member.name === "setAttributeNS") {
     const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
     if (openIndex === null) return null;
@@ -1751,10 +1794,11 @@ function staticMemberAccess(
     separator === "[" ? separatorIndex : separator === "?." ? separatorIndex + 1 : -1;
   if (bracketIndex >= 0 && tokenText(tokens[bracketIndex], text) === "[") {
     const property = tokens[bracketIndex + 1];
-    if (property?.type !== "string" || tokenText(tokens[bracketIndex + 2], text) !== "]") {
+    const name = staticScriptPath(property, text);
+    if (name === null || tokenText(tokens[bracketIndex + 2], text) !== "]") {
       return null;
     }
-    return { name: property.value ?? "", nextIndex: bracketIndex + 3 };
+    return { name, nextIndex: bracketIndex + 3 };
   }
   if (separator !== "." && separator !== "?.") return null;
   const property = tokens[separatorIndex + 1];
