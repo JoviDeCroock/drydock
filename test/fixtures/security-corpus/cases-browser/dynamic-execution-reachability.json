@@ -2,7 +2,7 @@
   "id": "browser-dynamic-execution-reachability",
   "title": "dynamic browser execution sinks remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for paint and audio worklet modules, dynamically assigned form targets, and relative script sources resolved after a reachable extension page assigns a dynamic base URL.",
+  "intent": "Pins full shared capability severity for paint and audio worklet modules, dynamically assigned form targets, and nested relative script sources resolved after a reachable extension page assigns a dynamic base URL.",
   "slug": "dynamic-execution-reachability",
   "extensionId": "dynamic-execution-reachability@example.invalid",
   "version": "1.0.0",
@@ -59,8 +59,15 @@
     },
     {
       "path": "tests/base-payload.js",
-      "size": 14,
+      "size": 94,
       "sha256": "6363636363636363636363636363636363636363636363636363636363636363",
+      "flags": [],
+      "textSample": "eval(payload); const nested = document.createElement(\"script\"); nested.src = \"nested-base.js\";"
+    },
+    {
+      "path": "tests/nested-base.js",
+      "size": 14,
+      "sha256": "6464646464646464646464646464646464646464646464646464646464646464",
       "flags": [],
       "textSample": "eval(payload);"
     }
@@ -78,6 +85,11 @@
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",
       "file": "tests/base-payload.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/nested-base.js"
     }
   ]
 }

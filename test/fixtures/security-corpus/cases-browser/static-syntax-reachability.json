@@ -2,7 +2,7 @@
   "id": "browser-static-syntax-reachability",
   "title": "static browser syntax aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for literal HTML appended with +=, location pathname assignment, new URL import-meta values converted through href including WebExtension navigation options and computed url access, quoted or template-literal computed WebExtension option keys and member access, Unicode-escaped WebExtension identifiers, escape-decoded static template resource paths, resource assignment through an appended element's returned node, and document-relative workers loaded by that injected script.",
+  "intent": "Pins full shared capability severity for literal HTML appended with +=, location pathname assignment, new URL import-meta values projected through href or pathname including WebExtension navigation options and computed url access, quoted or template-literal computed WebExtension option keys and member access, Unicode-escaped WebExtension identifiers, escape-decoded static template resource paths, resource assignment through an appended element's returned node, and document-relative workers loaded by that injected script.",
   "slug": "static-syntax-reachability",
   "extensionId": "static-syntax-reachability@example.invalid",
   "version": "1.0.0",
@@ -24,10 +24,10 @@
     },
     {
       "path": "popup.js",
-      "size": 416,
+      "size": 585,
       "sha256": "3434343434343434343434343434343434343434343434343434343434343434",
       "flags": [],
-      "textSample": "document.body.innerHTML += \"<iframe src='tests/appended.html'></iframe>\"; location.href = new URL(\"./tests/module-url.html\", import.meta.url).href; location.assign(new URL(\"./tests/computed-module-url.html\", import.meta[\"url\"]).href); location.pathname = \"/tests/pathname.html\"; chrome.tabs.create({ url: new URL(\"./tests/module-api.html\", import.meta.url).href }); document.body.appendChild(document.createElement(\"script\")).src = chrome.runtime.getURL(\"tests/appended-node.js\");"
+      "textSample": "document.body.innerHTML += \"<iframe src='tests/appended.html'></iframe>\"; location.href = new URL(\"./tests/module-url.html\", import.meta.url).href; location.assign(new URL(\"./tests/computed-module-url.html\", import.meta[\"url\"]).href); location.pathname = \"/tests/pathname.html\"; location.href = new URL(\"https://example.invalid/tests/module-pathname.html\", import.meta.url).pathname; chrome.tabs.create({ url: new URL(\"./tests/module-api.html\", import.meta.url).href }); document.body.appendChild(document.createElement(\"script\")).src = chrome.runtime.getURL(\"tests/appended-node.js\");"
     },
     {
       "path": "background.js",
@@ -156,6 +156,20 @@
       "textSample": "eval(payload);"
     },
     {
+      "path": "tests/module-pathname.html",
+      "size": 42,
+      "sha256": "6565656565656565656565656565656565656565656565656565656565656565",
+      "flags": [],
+      "textSample": "<script src=\"module-pathname.js\"></script>"
+    },
+    {
+      "path": "tests/module-pathname.js",
+      "size": 14,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
       "path": "tests/module-api.html",
       "size": 45,
       "sha256": "5353535353535353535353535353535353535353535353535353535353535353",
@@ -194,6 +208,11 @@
       "file": "tests/template-member.js"
     },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/pathname.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/module-pathname.js"
+    },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/module-api.js" }
   ]
 }

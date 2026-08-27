@@ -2335,8 +2335,18 @@ describe("browser extension review adapter", () => {
         size: 14,
         sha256: (227 + index).toString(16).repeat(32),
         flags: [],
-        textSample: "eval(payload);",
+        textSample:
+          name === "base-payload"
+            ? 'eval(payload); const nested = document.createElement("script"); nested.src = "nested-base.js";'
+            : "eval(payload);",
       })),
+      {
+        path: "tests/nested-base.js",
+        size: 14,
+        sha256: "ec".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
     ];
 
     const findings = createBrowserExtensionReview({
@@ -2345,7 +2355,7 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
-        ...["paint", "audio", "form-payload", "base-payload"].map((name) =>
+        ...["paint", "audio", "form-payload", "base-payload", "nested-base"].map((name) =>
           expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
         ),
         expect.objectContaining({
@@ -2355,7 +2365,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(5);
+    expect(findings).toHaveLength(6);
   });
 
   test("follows equivalent static browser resource syntax", () => {
@@ -2465,11 +2475,12 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: [
           'location.pathname = "/tests/pathname.html";',
+          'location.href = new URL("https://example.invalid/tests/module-pathname.html", import.meta.url).pathname;',
           'chrome.tabs.create({ url: new URL("../tests/module-api.html", import.meta.url).href });',
           'chrome.windows.create({ url: [new URL("../tests/module-array.html", import.meta.url).href] });',
         ].join("\n"),
       },
-      ...["pathname", "module-api", "module-array"].flatMap((name, index) => [
+      ...["pathname", "module-pathname", "module-api", "module-array"].flatMap((name, index) => [
         {
           path: `tests/${name}.html`,
           size: 41,
@@ -2493,12 +2504,12 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining(
-        ["pathname", "module-api", "module-array"].map((name) =>
+        ["pathname", "module-pathname", "module-api", "module-array"].map((name) =>
           expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
         ),
       ),
     );
-    expect(findings).toHaveLength(3);
+    expect(findings).toHaveLength(4);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 

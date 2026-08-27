@@ -224,6 +224,22 @@ export function consumerReachablePaths(
           if (resolvedBaseUrl) activeDocumentBaseUrls.add(resolvedBaseUrl);
         }
       }
+      const enqueueResource = (
+        resolved: string,
+        inheritsExecutionContext: boolean | undefined,
+      ): void => {
+        if (!inheritsExecutionContext) {
+          enqueue({ path: resolved });
+          return;
+        }
+        if (activeDocumentBaseUrls.size) {
+          for (const activeDocumentBaseUrl of activeDocumentBaseUrls) {
+            enqueue({ path: resolved, documentBaseUrl: activeDocumentBaseUrl });
+          }
+          return;
+        }
+        enqueue({ path: resolved, workerEntryBaseUrl });
+      };
       for (const resource of dependencies.webExtensionResources) {
         if ("inlineDocument" in resource) {
           if (!consumerInlineDocumentDependencyPaths) continue;
@@ -251,18 +267,22 @@ export function consumerReachablePaths(
         // import.meta.url instead resolve against the owning script. Direct relative tab URLs and
         // Manifest V2 injection files differ across browser runtimes, so follow both the extension
         // root and the owning extension document when one is known.
-        if (resource.resolution === "module" || resource.resolution === "document-module") {
-          if (resource.resolution === "document-module" && !documentBaseUrl) continue;
+        if (
+          resource.resolution === "module" ||
+          resource.resolution === "module-pathname" ||
+          resource.resolution === "document-module" ||
+          resource.resolution === "document-module-pathname"
+        ) {
+          if (resource.resolution.startsWith("document-") && !documentBaseUrl) continue;
           spendResolutionWork();
-          const resolved = resolveBrowserScriptModulePath(path, resource.path, byNormalizedPath);
+          const resolved = resolveBrowserScriptModulePath(
+            path,
+            resource.path,
+            byNormalizedPath,
+            resource.resolution.endsWith("-pathname"),
+          );
           if (resolved) {
-            enqueue({
-              path: resolved,
-              documentBaseUrl: resource.inheritsExecutionContext ? documentBaseUrl : undefined,
-              workerEntryBaseUrl: resource.inheritsExecutionContext
-                ? workerEntryBaseUrl
-                : undefined,
-            });
+            enqueueResource(resolved, resource.inheritsExecutionContext);
           }
           continue;
         }
@@ -286,13 +306,7 @@ export function consumerReachablePaths(
             byNormalizedPath,
           );
           if (resolved) {
-            enqueue({
-              path: resolved,
-              documentBaseUrl: resource.inheritsExecutionContext ? documentBaseUrl : undefined,
-              workerEntryBaseUrl: resource.inheritsExecutionContext
-                ? workerEntryBaseUrl
-                : undefined,
-            });
+            enqueueResource(resolved, resource.inheritsExecutionContext);
           }
         }
       }
@@ -309,8 +323,13 @@ export function consumerReachablePaths(
           }
           continue;
         }
-        if (worker.resolution === "module") {
-          const resolved = resolveBrowserScriptModulePath(path, worker.path, byNormalizedPath);
+        if (worker.resolution === "module" || worker.resolution === "module-pathname") {
+          const resolved = resolveBrowserScriptModulePath(
+            path,
+            worker.path,
+            byNormalizedPath,
+            worker.resolution === "module-pathname",
+          );
           if (resolved) {
             enqueue({ path: resolved, workerEntryBaseUrl: browserArchiveUrl(resolved) });
           }
@@ -600,9 +619,11 @@ type WebExtensionResourceArgument = "first" | "first-object";
 type WebExtensionResourceResolution =
   | "document"
   | "document-module"
+  | "document-module-pathname"
   | "document-or-root"
   | "document-root"
   | "module"
+  | "module-pathname"
   | "root";
 
 type WebExtensionResourceSpecifier =
@@ -1062,7 +1083,13 @@ function staticDomConsumerMemberResource(
     if (value?.nextIndex !== valueEnd) return null;
     return {
       path: value.path,
-      resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+      resolution: value.moduleUrl
+        ? value.modulePathname
+          ? "document-module-pathname"
+          : "document-module"
+        : value.runtimeUrl
+          ? "root"
+          : "document",
       ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
     };
   }
@@ -1085,6 +1112,7 @@ function staticDomConsumerMemberResource(
       nextIndex: valueIndex + 1,
       runtimeUrl: false,
       moduleUrl: false,
+      modulePathname: false,
     };
     return browserNavigationAssignmentEnds(tokens, text, value, ["", ",", ";", ")", "]", "}"])
       ? { inlineDocument }
@@ -1101,7 +1129,13 @@ function staticDomConsumerMemberResource(
   }
   return {
     path: value.path,
-    resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+    resolution: value.moduleUrl
+      ? value.modulePathname
+        ? "document-module-pathname"
+        : "document-module"
+      : value.runtimeUrl
+        ? "root"
+        : "document",
     ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
   };
 }
@@ -1129,6 +1163,7 @@ function staticDomInlineDocuments(
           nextIndex: valueIndex + 1,
           runtimeUrl: false,
           moduleUrl: false,
+          modulePathname: false,
         },
         ["", ",", ";", ")", "]", "}"],
       )
@@ -1232,7 +1267,11 @@ function staticBrowserDynamicImportResource(
   }
   return {
     path: resource.path,
-    resolution: resource.moduleUrl ? "module" : "root",
+    resolution: resource.moduleUrl
+      ? resource.modulePathname
+        ? "module-pathname"
+        : "module"
+      : "root",
     inheritsExecutionContext: true,
   };
 }
@@ -1272,7 +1311,13 @@ function staticWorkletModuleResource(
   if (!resource || resource.nextIndex !== firstArgument[1]) return null;
   return {
     path: resource.path,
-    resolution: resource.moduleUrl ? "document-module" : resource.runtimeUrl ? "root" : "document",
+    resolution: resource.moduleUrl
+      ? resource.modulePathname
+        ? "document-module-pathname"
+        : "document-module"
+      : resource.runtimeUrl
+        ? "root"
+        : "document",
   };
 }
 
@@ -1356,6 +1401,7 @@ function staticBrowserPathnameAssignmentResource(
     nextIndex: valueIndex + 1,
     runtimeUrl: false,
     moduleUrl: false,
+    modulePathname: false,
   };
   if (!browserNavigationAssignmentEnds(tokens, text, value, allowedFollowingTokens)) return null;
   return { path, resolution: "document-root" };
@@ -1389,7 +1435,9 @@ function staticBrowserNavigationAssignmentResource(
   return {
     path: value.path,
     resolution: value.moduleUrl
-      ? "document-module"
+      ? value.modulePathname
+        ? "document-module-pathname"
+        : "document-module"
       : value.runtimeUrl
         ? "document-root"
         : "document",
@@ -1423,7 +1471,9 @@ function staticBrowserNavigationValue(
   return {
     path: value.path,
     resolution: value.moduleUrl
-      ? "document-module"
+      ? value.modulePathname
+        ? "document-module-pathname"
+        : "document-module"
       : value.runtimeUrl
         ? "document-root"
         : "document",
@@ -1662,7 +1712,13 @@ function staticPropertyScriptPaths(
         if (value !== null && (!value.moduleUrl || property === "url")) {
           paths.push({
             path: value.path,
-            resolution: value.moduleUrl ? "module" : value.runtimeUrl ? "root" : resolution,
+            resolution: value.moduleUrl
+              ? value.modulePathname
+                ? "module-pathname"
+                : "module"
+              : value.runtimeUrl
+                ? "root"
+                : resolution,
           });
           continue;
         }
@@ -1688,7 +1744,13 @@ function staticPropertyScriptPaths(
         if (value !== null && (!value.moduleUrl || property === "url")) {
           paths.push({
             path: value.path,
-            resolution: value.moduleUrl ? "module" : value.runtimeUrl ? "root" : resolution,
+            resolution: value.moduleUrl
+              ? value.modulePathname
+                ? "module-pathname"
+                : "module"
+              : value.runtimeUrl
+                ? "root"
+                : resolution,
           });
           itemIndex = value.nextIndex - 1;
           continue;
@@ -1775,7 +1837,7 @@ function staticCallArgumentRanges(
 
 interface WorkerScriptSpecifier {
   path: string;
-  resolution: "document" | "module" | "root";
+  resolution: "document" | "module" | "module-pathname" | "root";
 }
 
 interface StaticWebExtensionResourcePath {
@@ -1783,6 +1845,7 @@ interface StaticWebExtensionResourcePath {
   nextIndex: number;
   runtimeUrl: boolean;
   moduleUrl: boolean;
+  modulePathname: boolean;
 }
 
 function staticWebExtensionResourcePath(
@@ -1793,7 +1856,13 @@ function staticWebExtensionResourcePath(
 ): StaticWebExtensionResourcePath | null {
   const literal = staticScriptPath(tokens[start], text);
   if (literal !== null) {
-    return { path: literal, nextIndex: start + 1, runtimeUrl: false, moduleUrl: false };
+    return {
+      path: literal,
+      nextIndex: start + 1,
+      runtimeUrl: false,
+      moduleUrl: false,
+      modulePathname: false,
+    };
   }
   const moduleUrl = staticImportMetaUrlPath(tokens, text, start);
   if (moduleUrl !== null) {
@@ -1805,6 +1874,7 @@ function staticWebExtensionResourcePath(
       nextIndex: moduleUrl.nextIndex,
       runtimeUrl: false,
       moduleUrl: true,
+      modulePathname: moduleUrl.projection === "pathname",
     };
   }
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
@@ -1814,7 +1884,7 @@ function staticWebExtensionResourcePath(
   ) {
     return null;
   }
-  return { ...runtimeUrl, runtimeUrl: true, moduleUrl: false };
+  return { ...runtimeUrl, runtimeUrl: true, moduleUrl: false, modulePathname: false };
 }
 
 function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
@@ -1843,7 +1913,10 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
     }
     const moduleUrl = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
     if (moduleUrl !== null) {
-      specifiers.push({ path: moduleUrl.path, resolution: "module" });
+      specifiers.push({
+        path: moduleUrl.path,
+        resolution: moduleUrl.projection === "pathname" ? "module-pathname" : "module",
+      });
       continue;
     }
     const rootPath = staticWebExtensionResourcePath(tokens, text, constructorIndex + 2, [")", ","]);
@@ -1856,7 +1929,7 @@ function staticWebExtensionGetUrlPath(
   tokens: JsToken[],
   text: string,
   start: number,
-): Omit<StaticWebExtensionResourcePath, "runtimeUrl" | "moduleUrl"> | null {
+): Omit<StaticWebExtensionResourcePath, "runtimeUrl" | "moduleUrl" | "modulePathname"> | null {
   let index = start;
   let global = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(global)) {
@@ -1930,16 +2003,26 @@ function resolveBrowserScriptModulePath(
   fromPath: string,
   specifier: string,
   byNormalizedPath: Map<string, FileRecord>,
+  pathnameOnly = false,
 ): string | null {
   const baseUrl = browserArchiveUrl(fromPath);
-  return baseUrl ? resolveBrowserDocumentModulePath(specifier, baseUrl, byNormalizedPath) : null;
+  if (!baseUrl) return null;
+  if (!pathnameOnly) {
+    return resolveBrowserDocumentModulePath(specifier, baseUrl, byNormalizedPath);
+  }
+  try {
+    const pathname = new URL(specifier, baseUrl).pathname;
+    return resolveBrowserDocumentModulePath(pathname, BROWSER_ARCHIVE_ROOT.href, byNormalizedPath);
+  } catch {
+    return null;
+  }
 }
 
 function staticImportMetaUrlPath(
   tokens: JsToken[],
   text: string,
   start: number,
-): { path: string; nextIndex: number } | null {
+): { path: string; nextIndex: number; projection: "url" | "pathname" } | null {
   if (
     tokenText(tokens[start], text) !== "new" ||
     tokenText(tokens[start + 1], text) !== "URL" ||
@@ -1962,9 +2045,14 @@ function staticImportMetaUrlPath(
   const url = staticMemberAccess(tokens, text, start + 8);
   if (url?.name !== "url" || url.nextIndex !== closeIndex) return null;
   let nextIndex = closeIndex + 1;
-  const href = staticMemberAccess(tokens, text, nextIndex);
-  if (href?.name === "href") nextIndex = href.nextIndex;
-  return { path, nextIndex };
+  const projection = staticMemberAccess(tokens, text, nextIndex);
+  if (projection?.name === "href") {
+    return { path, nextIndex: projection.nextIndex, projection: "url" };
+  }
+  if (projection?.name === "pathname") {
+    return { path, nextIndex: projection.nextIndex, projection: "pathname" };
+  }
+  return { path, nextIndex, projection: "url" };
 }
 
 function staticMemberAccess(
