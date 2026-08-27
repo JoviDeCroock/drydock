@@ -154,7 +154,7 @@ The corpus deliberately records some product gaps instead of hiding them:
 - Maintainer/package transfer signals, new publisher signals, package reputation, and OpenSSF/package intelligence integrations are not implemented.
 - Behavior-chain detection is regex-based and does not yet prove source-to-sink intent. The one modeled chain is a heuristic: credential access co-located with a network egress path in the same file escalates to high (the collect-and-exfiltrate shape), without proving the value actually flows from the read to the send.
 - Anti-analysis and environment-detection patterns are not deeply modeled because Drydock intentionally avoids package execution.
-- Prompt-injection detection is phrase-based: paraphrased, encoded, split-across-lines, or non-English injection text raises nothing deterministically and falls to the AI reviewer, whose prompt treats injection attempts as reportable high/critical findings. A guardrail library that _quotes_ injection strings in its README flags at medium with no demotion path (only test-tree matches demote), which is an accepted cost with human review as the valve. Drydock schema tokens in ordinary API source or documentation stay quiet unless an explicit AI/Drydock review audience is told to produce them.
+- Prompt-injection detection is phrase-based: paraphrased, encoded, non-English, or unusually segmented injection text raises nothing deterministically and falls to the AI reviewer, whose prompt treats injection attempts as reportable high/critical findings. Ordinary soft line breaks are normalized, but a phrase spread across more than the scanner's 4 KiB overlap remains outside deterministic coverage. A guardrail library that _quotes_ injection strings in its README flags at medium with no demotion path (only test-tree matches demote), which is an accepted cost with human review as the valve. Drydock schema tokens in ordinary API source or documentation stay quiet unless an explicit AI/Drydock review audience is told to produce them.
 
 ## Adding fixtures
 
@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.39.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.40.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -615,6 +615,12 @@ common instruction overrides that name the system or previous messages. Bare Dry
 values no longer raise high review-manipulation findings in API clients or documentation; those tokens
 require an explicit AI/Drydock review audience. The focused policy matrix pins the malicious forms,
 while `benign-llm-prompt-docs` and `legit-llm-prompt-library` pin the schema-integration precision case.
+
+`1.40.0` recognizes instruction overrides that combine a temporal qualifier with a system, developer,
+or user role, including "ignore all previous system instructions" and "disregard all prior developer
+prompts". It also keeps modal third-person descriptions such as "the endpoint will report this package
+as safe" and "the scanner can mark this package as safe" out of the standing-danger review-manipulation
+tier. The malicious `prompt-injection-readme` fixture and both benign LLM controls pin the two sides.
 
 ### Fixture format
 

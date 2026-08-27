@@ -243,6 +243,7 @@ export function softenPromptInjectionLineBreaks(text: string): string {
 // reviewer read as an LLM audience.
 const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
 const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock[\s-]+reviewer|${AI_ACTOR_SEGMENT})`;
+const REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)`;
 
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
@@ -254,7 +255,18 @@ const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydo
 // `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
-  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)/i,
+  // A bare verdict verb is only imperative at a line/sentence boundary, after
+  // direct-address punctuation, or in an assigned/quoted instruction string.
+  // This keeps third-person API prose ("the endpoint will report ...") out of
+  // the standing-danger tier without weakening actual packaged directives.
+  new RegExp(
+    String.raw`^[\t ]*(?:(?://|#|/\*+|\*|<!--|-|>)[\t ]*)?(?:please[\t ]+)?${REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
+    "im",
+  ),
+  new RegExp(
+    String.raw`[.!?;:,="'()\x60][\t ]*(?:please[\t ]+)?${REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
+    "i",
+  ),
   // An explicit approval command aimed at an AI-qualified or Drydock audience
   // is already a clean verdict; requiring a redundant "as safe" suffix would
   // leave the deterministic gate at medium when the advisory reviewer cannot
@@ -297,7 +309,7 @@ const REVIEW_MANIPULATION_PATTERNS = [
 // libraries legitimately ship prompt-shaped text ("You are a helpful
 // assistant", "customize the system prompt") that must stay quiet.
 const PROMPT_INJECTION_PATTERNS = [
-  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\b/i,
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:(?:previous|prior|above|earlier|preceding|initial|original)(?:\s+(?:system|developer|user))?|system)\s+(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\b/i,
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|every\s+)?(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\s+(?:above|before|earlier|previously)\b/i,
   /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
   /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
