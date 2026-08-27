@@ -229,6 +229,14 @@ export function stripPromptInjectionEvasion(text: string): string {
   return text.replace(PROMPT_INJECTION_EVASION_CHARS, "");
 }
 
+// Instruction content aimed at any LLM/agent that reads package bytes — an AI
+// reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
+// A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
+// OpenAI Assistants thread); only the AI-qualified forms read as an LLM
+// audience.
+const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_ACTOR_SEGMENT})`;
+
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
 // each pattern needs either a review-like verdict aimed at the release object
@@ -240,6 +248,13 @@ export function stripPromptInjectionEvasion(text: string): string {
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
   /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
+  // An explicit approval command aimed at an AI-qualified audience is already
+  // a clean verdict; requiring a redundant "as safe" suffix would leave the
+  // deterministic gate at medium when the advisory reviewer cannot run.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?approve\s+(?:this|the)\s+(?:package|release|update|version|publish)\b`,
+    "i",
+  ),
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
   // object. Modals invite third-person subjects ("the scanner should not flag
   // minified code as suspicious"), broad support nouns ("do not report any
@@ -262,18 +277,10 @@ const REVIEW_MANIPULATION_PATTERNS = [
   /\b(?:skip|bypass|disable)\s+(?:(?:(?:the|this)\s+)?security\s+(?:review|scan|audit|check)\s+(?:of|for|on)\s+(?:this|the)\s+(?:package|release|update|version|code)|(?:this|the)\s+(?:package|release|update|version|code)(?:'s)?\s+security\s+(?:review|scan|audit|check))\b/i,
 ];
 
-// Instruction content aimed at any LLM/agent that reads package bytes — an AI
-// reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
 // Precision over recall: every pattern requires either an instruction-override
 // verb phrase or a direct address to an AI/agent audience, because LLM client
 // libraries legitimately ship prompt-shaped text ("You are a helpful
 // assistant", "customize the system prompt") that must stay quiet.
-// A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
-// OpenAI Assistants thread); only the AI-qualified forms read as an LLM
-// audience.
-const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
-const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_ACTOR_SEGMENT})`;
-
 const PROMPT_INJECTION_PATTERNS = [
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
   /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
