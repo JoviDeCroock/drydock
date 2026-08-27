@@ -9,17 +9,43 @@ describe("AI reviewer eval (recorded-output gates)", () => {
   test("the versioned regression corpus passes", () => {
     expect(result.failures).toEqual([]);
     expect(result.summary.rate).toBe(1);
-    expect(result.summary.total).toBe(1);
-    expect(result.recordedReviewerVersions).toEqual(["1.2.0", "1.3.0"]);
-    expect(result.currentReviewerVersion).toBe("1.3.0");
+    expect(result.summary.total).toBe(5);
+    expect(result.recordedReviewerVersions).toEqual(["1.2.0", "1.4.0"]);
+    expect(result.currentReviewerVersion).toBe("1.4.0");
     expect(result.historicalFailures).toEqual([]);
     expect(result.historicalSummary).toEqual({ total: 5, passed: 5, rate: 1 });
   });
 
-  test("gates current hostile evidence and reports historical compatibility separately", () => {
+  test("gates current verdict and failure-mode coverage separately from historical output", () => {
+    expect(result.byVerdict.malicious.rate).toBe(1);
+    expect(result.byVerdict.benign.rate).toBe(1);
+    expect(result.byVerdict.uncertain.rate).toBe(1);
+    expect(result.byThreatClass["lifecycle-credential-exfiltration"].rate).toBe(1);
+    expect(result.byThreatClass["credential-exfiltration-sink"].rate).toBe(1);
     expect(result.byScenario["hostile-evidence"].rate).toBe(1);
+    expect(result.byScenario["missing-baseline"].rate).toBe(1);
+    expect(result.byScenario["model-failover"].rate).toBe(1);
     expect(result.historicalByScenario["missing-baseline"].rate).toBe(1);
     expect(result.historicalByScenario["model-failover"].rate).toBe(1);
+  });
+
+  test("records provenance for every current-version result", () => {
+    const corpus = JSON.parse(
+      readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
+    );
+
+    expect(corpus.cases.map((record) => record.provenance)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "controlled-live", fixture: "preinstall-env-exfil" }),
+        expect.objectContaining({ kind: "controlled-live", fixture: "benign-llm-prompt-docs" }),
+        expect.objectContaining({ kind: "controlled-live", fixture: "prompt-injection-readme" }),
+        expect.objectContaining({ kind: "production-fallback" }),
+        expect.objectContaining({
+          kind: "controlled-live",
+          fixture: "credential-file-network-exfil",
+        }),
+      ]),
+    );
   });
 
   test("rejects a stale record from the current-version gate", () => {
@@ -30,10 +56,10 @@ describe("AI reviewer eval (recorded-output gates)", () => {
 
     const stale = runAiReviewEval(corpus);
 
-    expect(stale.summary).toEqual({ total: 1, passed: 0, rate: 0 });
+    expect(stale.summary).toEqual({ total: 5, passed: 4, rate: 4 / 5 });
     expect(stale.failures).toEqual([
       expect.objectContaining({
-        id: "npm-readme-injection-only",
+        id: "preinstall-env-exfil-v1-4",
         reason: "reviewer version 1.2.0 is not current",
       }),
     ]);
@@ -69,7 +95,7 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     );
     const relabeled = structuredClone(corpus.historicalCases[0]);
     relabeled.id = "relabeled-historical-output";
-    relabeled.review.reviewerVersion = "1.3.0";
+    relabeled.review.reviewerVersion = "1.4.0";
     relabeled.review.untrustedNote = "ignored by the persisted schema";
     corpus.cases = [relabeled];
 

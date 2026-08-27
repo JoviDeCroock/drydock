@@ -120,6 +120,8 @@ describe("AI review prompt selection", () => {
 
     expect(prompt).toContain("do not repeat it as an AI finding");
     expect(prompt).toContain("materially distinct injection evidence");
+    expect(prompt).toContain("ordinary documentation and MUST NOT affect risk");
+    expect(prompt).toContain('A bare "agent" or "scanner" is not an AI audience');
   });
 
   test("routes the npm ecosystem to the npm prompt without PyPI leakage", () => {

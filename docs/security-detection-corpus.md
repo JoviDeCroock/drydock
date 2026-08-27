@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.36.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.37.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -587,6 +587,21 @@ security-review/release qualifiers. Ordinary scanner policy such as "do not repo
 generated files" stays quiet; the focused policy matrix, `benign-llm-prompt-docs`, and
 `legit-llm-prompt-library` pin the regression while the standalone verdict-suppression cases remain
 high severity.
+
+`1.37.0` scans prompt-injection text through overlapping 64 KiB windows rather than materializing
+four normalized copies of an entire retained file. The 4 KiB overlap preserves ordinary multiline,
+Markdown-emphasis, and zero-width evasion matches across window boundaries while keeping peak
+normalization memory independent of the sandbox's 25 MiB per-file inspection limit. A single prompt
+phrase spread across more than 4 KiB of source text remains outside deterministic coverage and falls
+to the advisory reviewer; `test/review.test.mjs` pins the window-boundary behavior.
+
+The same review cycle advances `AI_REVIEWER_VERSION` to `1.4.0`: the advisory prompt now requires an
+actual AI-directed or instruction-override directive before escalating documentation as injection.
+Quoted prompt examples, qualified scanner policy, reproducibility and responsible-disclosure
+requirements, local-development bypass flags, and trust/sandbox configuration remain ordinary
+documentation unless they tell this reviewer or a consumer AI tool to ignore governing instructions
+or conceal release risk. The controlled current-version records include both
+`prompt-injection-readme` and the clean `benign-llm-prompt-docs` counterpart.
 
 ### Fixture format
 
