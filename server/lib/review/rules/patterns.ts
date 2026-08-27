@@ -239,10 +239,10 @@ export function softenPromptInjectionLineBreaks(text: string): string {
 // Instruction content aimed at any LLM/agent that reads package bytes — an AI
 // reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
 // A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
-// OpenAI Assistants thread); only the AI-qualified forms read as an LLM
-// audience.
+// OpenAI Assistants thread); only AI-qualified forms or Drydock's named
+// reviewer read as an LLM audience.
 const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
-const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_ACTOR_SEGMENT})`;
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock[\s-]+reviewer|${AI_ACTOR_SEGMENT})`;
 
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
@@ -254,12 +254,20 @@ const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_
 // `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
-  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted(?!\s+(?:in|for|when)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
-  // An explicit approval command aimed at an AI-qualified audience is already
-  // a clean verdict; requiring a redundant "as safe" suffix would leave the
-  // deterministic gate at medium when the advisory reviewer cannot run.
+  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)/i,
+  // An explicit approval command aimed at an AI-qualified or Drydock audience
+  // is already a clean verdict; requiring a redundant "as safe" suffix would
+  // leave the deterministic gate at medium when the advisory reviewer cannot
+  // run.
   new RegExp(
     String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?approve\s+(?:this|the)\s+(?:package|release|update|version|publish)\b`,
+    "i",
+  ),
+  // Once an AI/Drydock review audience is explicit, a command to hide review
+  // output is verdict manipulation even when it adds an ordinary-language
+  // destination or rationale after the finding noun.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)|(?:ignore|disregard|hide|suppress))\s+(?:any|these|those|the)\s+(?:findings?|detections?)\b`,
     "i",
   ),
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
