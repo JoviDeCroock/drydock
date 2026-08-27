@@ -8,7 +8,13 @@ import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { pluralize } from "../../lib/format";
 import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
-import { gettingStartedDone, markGettingStartedDone } from "../../models/getting-started";
+import {
+  closeGettingStartedPanel,
+  gettingStartedDone,
+  gettingStartedPanelOpen,
+  markGettingStartedDone,
+  openGettingStartedPanel,
+} from "../../models/getting-started";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import {
@@ -173,8 +179,6 @@ function DashboardOnboarding({
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
-  const openForOrganization = useSignal<string | null>(null);
-
   // Step 3 is the only step whose answer costs a request, so it is asked for
   // only while the panel could still open — never for an organization that has
   // dismissed it or already finished.
@@ -198,20 +202,16 @@ function DashboardOnboarding({
     const organizationId = activeOrganizationId.value;
     if (gettingStartedDone.value) return;
     if (scans.hasAnyScan.value === false || scans.hasAnyDecision.value === false) {
-      openForOrganization.value = organizationId;
+      openGettingStartedPanel(organizationId);
     }
   });
 
   const dismiss = () => {
-    openForOrganization.value = null;
+    closeGettingStartedPanel();
     markGettingStartedDone();
   };
 
-  // Latched against the organization it opened for, so switching organizations
-  // closes it rather than carrying one organization's funnel into another's.
-  const open = openForOrganization.value === activeOrganizationId.value;
-
-  if (open) {
+  if (gettingStartedPanelOpen.value) {
     return (
       <GettingStarted
         npmConnected={Boolean(npm.connection.value)}

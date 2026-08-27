@@ -32,6 +32,40 @@ afterEach(() => {
 });
 
 describe("getting-started done state", () => {
+  test("keeps an open panel latched while the reader visits a scan", async () => {
+    stubLocalStorage();
+    const {
+      closeGettingStartedPanel,
+      gettingStartedPanelOpen,
+      markGettingStartedDone,
+      openGettingStartedPanel,
+      setActiveOrganizationId,
+    } = await loadModule();
+    setActiveOrganizationId("org-a");
+    openGettingStartedPanel("org-a");
+
+    // Recording the decision can happen on the separate scan-detail route.
+    // Completion prevents future opens, but the existing latch survives until
+    // the returning dashboard renders the final tick and the reader closes it.
+    markGettingStartedDone();
+
+    expect(gettingStartedPanelOpen.value).toBe(true);
+    closeGettingStartedPanel();
+    expect(gettingStartedPanelOpen.value).toBe(false);
+  });
+
+  test("does not carry the open panel into another organization", async () => {
+    stubLocalStorage();
+    const { gettingStartedPanelOpen, openGettingStartedPanel, setActiveOrganizationId } =
+      await loadModule();
+    setActiveOrganizationId("org-a");
+    openGettingStartedPanel("org-a");
+
+    setActiveOrganizationId("org-b");
+
+    expect(gettingStartedPanelOpen.value).toBe(false);
+  });
+
   test("marks the active organization finished and remembers it", async () => {
     const store = stubLocalStorage();
     const { gettingStartedDone, markGettingStartedDone, setActiveOrganizationId } =

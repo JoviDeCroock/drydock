@@ -12,8 +12,8 @@ import { activeOrganizationId } from "./active-organization";
  *
  * "Done" means "do not open this panel again", not "hide it right now": the
  * panel that is already on screen when the last step ticks stays up so the tick
- * can be seen. Closing it is the page's business (`DashboardOnboarding`), not
- * this module's.
+ * can be seen. The session-scoped open latch below outlives the dashboard route,
+ * so a reader can open the scan, decide, and return to see that final tick.
  *
  * Keyed by organization because the funnel is per-organization: someone who has
  * onboarded one organization and then creates a second still needs the panel
@@ -55,6 +55,11 @@ const doneThisSession = signal<Record<string, true>>({});
 // session only.
 const doneWithoutOrganization = signal(false);
 
+// `undefined` means closed; `null` is a real latch for the rare state where the
+// active organization could not be resolved. Keeping this outside the dashboard
+// component preserves an open panel while the reader visits a scan detail page.
+const openForOrganization = signal<string | null | undefined>(undefined);
+
 export const gettingStartedDone = computed<boolean>(() => {
   const session = doneThisSession.value;
   const withoutOrganization = doneWithoutOrganization.value;
@@ -62,6 +67,20 @@ export const gettingStartedDone = computed<boolean>(() => {
   if (!organizationId) return withoutOrganization;
   return session[organizationId] === true || readStored()[organizationId] === true;
 });
+
+export const gettingStartedPanelOpen = computed<boolean>(() => {
+  const organizationId = openForOrganization.value;
+  const activeId = activeOrganizationId.value;
+  return organizationId !== undefined && organizationId === activeId;
+});
+
+export function openGettingStartedPanel(organizationId: string | null): void {
+  openForOrganization.value = organizationId;
+}
+
+export function closeGettingStartedPanel(): void {
+  openForOrganization.value = undefined;
+}
 
 /**
  * Stop opening the getting-started panel for the active organization. Called by
