@@ -16,6 +16,7 @@ import {
 } from "../../lib/auth/active-organization";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
+import { gateSetupEcosystemOptions } from "../../lib/ecosystems";
 import { rateLimitResponse } from "../../lib/platform/http";
 import { recordProductEvent } from "../../lib/platform/analytics";
 import {
@@ -48,12 +49,13 @@ const GITHUB_APP_PROXY_LIMIT = 60;
 const GITHUB_APP_PROXY_WINDOW_MS = 60 * 1000;
 
 installationRoutes.get("/config", (c) => {
+  const gateSetupEcosystems = gateSetupEcosystemOptions();
   const configured = isGithubAppConfigured(c.env);
   if (!configured) {
-    return c.json({ configured: false });
+    return c.json({ configured: false, gateSetupEcosystems });
   }
   const config = readGithubAppConfig(c.env);
-  return c.json({ configured: true, appSlug: config.appSlug });
+  return c.json({ configured: true, appSlug: config.appSlug, gateSetupEcosystems });
 });
 
 installationRoutes.post("/install", async (c) => {
