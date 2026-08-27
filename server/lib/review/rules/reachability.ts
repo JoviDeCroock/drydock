@@ -797,6 +797,11 @@ interface StaticDomConsumerElement {
   nextIndex: number;
 }
 
+interface StaticDomConsumerElementBinding {
+  properties: Set<string>;
+  inheritsExecutionContext: boolean;
+}
+
 function staticDomConsumerElementProperties(
   element: StaticDomConsumerElement,
 ): ReadonlySet<string> | undefined {
@@ -807,11 +812,17 @@ function staticDomConsumerElementProperties(
   return properties.get(element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase());
 }
 
+function staticDomConsumerElementInheritsExecutionContext(
+  element: StaticDomConsumerElement,
+): boolean {
+  return element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase() === "script";
+}
+
 function staticDomConsumerElementBindings(
   tokens: JsToken[],
   text: string,
-): Map<string, Set<string>> {
-  const bindings = new Map<string, Set<string>>();
+): Map<string, StaticDomConsumerElementBinding> {
+  const bindings = new Map<string, StaticDomConsumerElementBinding>();
   for (let index = 0; index < tokens.length - 2; index += 1) {
     const declaration = tokenText(tokens[index - 1], text);
     const binding = tokens[index];
@@ -825,13 +836,19 @@ function staticDomConsumerElementBindings(
       continue;
     }
     const element = staticDocumentCreateElement(tokens, text, index + 2);
-    const properties = element ? staticDomConsumerElementProperties(element) : undefined;
+    if (!element) continue;
+    const properties = staticDomConsumerElementProperties(element);
     if (!properties) continue;
     const bindingName = staticIdentifierName(binding, text);
     if (bindingName === null) continue;
-    const bindingProperties = bindings.get(bindingName) ?? new Set<string>();
-    for (const property of properties) bindingProperties.add(property);
-    bindings.set(bindingName, bindingProperties);
+    const bindingRecord = bindings.get(bindingName) ?? {
+      properties: new Set<string>(),
+      inheritsExecutionContext: false,
+    };
+    for (const property of properties) bindingRecord.properties.add(property);
+    bindingRecord.inheritsExecutionContext ||=
+      staticDomConsumerElementInheritsExecutionContext(element);
+    bindings.set(bindingName, bindingRecord);
   }
   return bindings;
 }
@@ -883,17 +900,23 @@ function staticDomConsumerResource(
   tokens: JsToken[],
   text: string,
   start: number,
-  consumerElementBindings: Map<string, Set<string>>,
+  consumerElementBindings: Map<string, StaticDomConsumerElementBinding>,
 ): WebExtensionResourceSpecifier | null {
   const binding = staticIdentifierName(tokens[start], text) ?? tokenText(tokens[start], text);
-  const resourceProperties = consumerElementBindings.get(binding);
-  if (!resourceProperties || isMemberSeparator(tokenText(tokens[start - 1], text))) {
+  const bindingRecord = consumerElementBindings.get(binding);
+  if (!bindingRecord || isMemberSeparator(tokenText(tokens[start - 1], text))) {
     return null;
   }
   const member = staticMemberAccess(tokens, text, start + 1);
   if (!member) return null;
 
-  return staticDomConsumerMemberResource(tokens, text, member, resourceProperties);
+  return staticDomConsumerMemberResource(
+    tokens,
+    text,
+    member,
+    bindingRecord.properties,
+    bindingRecord.inheritsExecutionContext,
+  );
 }
 
 function staticAppendedDomConsumerResource(
@@ -917,7 +940,13 @@ function staticAppendedDomConsumerResource(
   const member = staticMemberAccess(tokens, text, closeIndex + 1);
   if (!member) return null;
 
-  return staticDomConsumerMemberResource(tokens, text, member, resourceProperties);
+  return staticDomConsumerMemberResource(
+    tokens,
+    text,
+    member,
+    resourceProperties,
+    staticDomConsumerElementInheritsExecutionContext(element),
+  );
 }
 
 function staticDomConsumerMemberResource(
@@ -925,6 +954,7 @@ function staticDomConsumerMemberResource(
   text: string,
   member: { name: string; nextIndex: number },
   resourceProperties: ReadonlySet<string>,
+  inheritsExecutionContext: boolean,
 ): WebExtensionResourceSpecifier | null {
   if (member.name === "setAttribute" || member.name === "setAttributeNS") {
     const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
@@ -953,6 +983,7 @@ function staticDomConsumerMemberResource(
       ? {
           path: value.path,
           resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+          ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
         }
       : null;
   }
@@ -992,6 +1023,7 @@ function staticDomConsumerMemberResource(
   return {
     path: value.path,
     resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+    ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
   };
 }
 

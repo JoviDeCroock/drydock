@@ -2,7 +2,7 @@
   "id": "browser-static-syntax-reachability",
   "title": "static browser syntax aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for literal HTML appended with +=, new URL import-meta values converted through href including computed url access, quoted or template-literal computed WebExtension option keys and member access, Unicode-escaped WebExtension identifiers, escape-decoded static template resource paths, and resource assignment through an appended element's returned node.",
+  "intent": "Pins full shared capability severity for literal HTML appended with +=, new URL import-meta values converted through href including computed url access, quoted or template-literal computed WebExtension option keys and member access, Unicode-escaped WebExtension identifiers, escape-decoded static template resource paths, resource assignment through an appended element's returned node, and document-relative workers loaded by that injected script.",
   "slug": "static-syntax-reachability",
   "extensionId": "static-syntax-reachability@example.invalid",
   "version": "1.0.0",
@@ -122,8 +122,15 @@
     },
     {
       "path": "tests/appended-node.js",
-      "size": 14,
+      "size": 44,
       "sha256": "4848484848484848484848484848484848484848484848484848484848484848",
+      "flags": [],
+      "textSample": "new Worker(\"tests/appended-node-worker.js\");"
+    },
+    {
+      "path": "tests/appended-node-worker.js",
+      "size": 14,
+      "sha256": "5050505050505050505050505050505050505050505050505050505050505050",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -148,7 +155,11 @@
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/escaped.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/template-import.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/template-key.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/appended-node.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/appended-node-worker.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",

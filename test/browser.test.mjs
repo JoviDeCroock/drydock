@@ -2141,9 +2141,7 @@ describe("browser extension review adapter", () => {
         textSample: `<script src="${name}.js"></script>`,
       })),
       ...[
-        "injected",
         "attribute-injected",
-        "appended-return",
         "computed-template-member",
         "frame",
         "split-frame",
@@ -2168,6 +2166,34 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: "eval(payload);",
       })),
+      {
+        path: "tests/injected.js",
+        size: 39,
+        sha256: "c9".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/injected-worker.js");',
+      },
+      {
+        path: "tests/injected-worker.js",
+        size: 14,
+        sha256: "cc".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "tests/appended-return.js",
+        size: 46,
+        sha256: "ca".repeat(32),
+        flags: [],
+        textSample: 'new Worker("tests/appended-return-worker.js");',
+      },
+      {
+        path: "tests/appended-return-worker.js",
+        size: 14,
+        sha256: "cb".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
     ];
 
     const findings = createBrowserExtensionReview({
@@ -2176,9 +2202,9 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ file: "tests/injected.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/injected-worker.js", severity: "high" }),
         expect.objectContaining({ file: "tests/attribute-injected.js", severity: "high" }),
-        expect.objectContaining({ file: "tests/appended-return.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/appended-return-worker.js", severity: "high" }),
         expect.objectContaining({ file: "tests/computed-template-member.js", severity: "high" }),
         expect.objectContaining({ file: "tests/frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/split-frame.js", severity: "high" }),
