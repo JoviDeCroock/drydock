@@ -1,12 +1,17 @@
 import type { Finding } from "..";
-import { firstMatchingLine } from "../../platform/text-utils";
 import {
   PROMPT_INJECTION_PATTERN_SET,
   REVIEW_MANIPULATION_PATTERN_SET,
+  softenPromptInjectionLineBreaks,
   stripPromptInjectionEvasion,
 } from "./patterns";
 import { tag, testScope } from "./helpers";
-import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
+import {
+  changedPrefix,
+  changedStagedLines,
+  isUnreachableTestFile,
+  type RuleContext,
+} from "./context";
 
 // LLM prompt-injection rules. Package bytes are read by LLMs in two places we
 // care about: Drydock's own AI reviewer, and consumers' coding
@@ -28,24 +33,22 @@ import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./contex
 // in a README and reads clean to the target LLM. Patterns run against the raw
 // sample and a stripped copy — raw so underscore-bearing schema tokens
 // (`nothing_unusual`) keep matching, stripped so emphasis can't split a
-// phrase. Newlines survive stripping, so line numbers stay valid either way.
+// phrase. A second normalized form treats Markdown soft line breaks as spaces;
+// every normalization preserves line boundaries or offsets for attribution.
 export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
 
   for (const file of ctx.files) {
     const sample = file.textSample;
     if (!sample) continue;
-    const stripped = stripPromptInjectionEvasion(sample);
     const prefix = changedPrefix(ctx, file.path);
-    const changed = ctx.diffByPath.get(file.path)?.status;
-    const demote = isUnreachableTestFile(ctx, file.path) && changed === "unchanged";
-    const reviewLine = lineOfEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET);
-    const promptLine = lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET, reviewLine);
+    const reviewLine = firstPromptInjectionLine(sample, REVIEW_MANIPULATION_PATTERN_SET);
+    const promptLine = firstPromptInjectionLine(sample, PROMPT_INJECTION_PATTERN_SET, reviewLine);
 
     if (reviewLine !== undefined) {
       findings.push(
         testScope(
-          demote,
+          shouldDemoteTestMatch(ctx, file.path, REVIEW_MANIPULATION_PATTERN_SET),
           false,
           tag("fileReviewManipulation", {
             severity: "high",
@@ -65,7 +68,7 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
     if (promptLine !== undefined && promptLine !== reviewLine) {
       findings.push(
         testScope(
-          demote,
+          shouldDemoteTestMatch(ctx, file.path, PROMPT_INJECTION_PATTERN_SET),
           false,
           tag("filePromptInjection", {
             severity: "medium",
@@ -83,17 +86,20 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   return findings;
 }
 
-function lineOfEither(
+function firstPromptInjectionLine(
   sample: string,
-  stripped: string,
   patterns: RegExp[],
   excludedLine?: number,
 ): number | undefined {
-  const rawLine = firstMatchingLine(maskLine(sample, excludedLine), patterns);
-  const strippedLine = firstMatchingLine(maskLine(stripped, excludedLine), patterns);
-  if (rawLine === undefined) return strippedLine;
-  if (strippedLine === undefined) return rawLine;
-  return Math.min(rawLine, strippedLine);
+  const masked = maskLine(sample, excludedLine);
+  let firstLine: number | undefined;
+  for (const variant of promptInjectionScanVariants(masked)) {
+    const match = firstPatternMatch(variant.searchText, patterns);
+    if (!match) continue;
+    const line = lineNumberAt(variant.lineSource, match.index);
+    if (firstLine === undefined || line < firstLine) firstLine = line;
+  }
+  return firstLine;
 }
 
 function maskLine(text: string, line: number | undefined): string {
@@ -101,4 +107,94 @@ function maskLine(text: string, line: number | undefined): string {
   const lines = text.split("\n");
   lines[line - 1] = "";
   return lines.join("\n");
+}
+
+function shouldDemoteTestMatch(ctx: RuleContext, path: string, patterns: RegExp[]): boolean {
+  if (!isUnreachableTestFile(ctx, path)) return false;
+  const status = ctx.diffByPath.get(path)?.status;
+  if (status === "unchanged") return true;
+  if (status !== "modified") return false;
+  const previous = ctx.previousByPath.get(path);
+  const staged = ctx.files.find((file) => file.path === path);
+  if (!previous?.textSample || !staged?.textSample) return false;
+  if (previous.flags.includes("binary") || staged.flags.includes("binary")) return false;
+  return !promptInjectionPatternsMatchChangedLines(
+    staged.textSample,
+    changedStagedLines(previous.textSample, staged.textSample),
+    patterns,
+  );
+}
+
+export function promptInjectionPatternsMatchChangedLines(
+  sample: string,
+  changedLines: Set<number>,
+  patterns: RegExp[],
+): boolean {
+  if (changedLines.size === 0) return false;
+  for (const variant of promptInjectionScanVariants(sample)) {
+    const lineStarts = lineStartOffsets(variant.lineSource);
+    for (const pattern of patterns) {
+      const matcher = new RegExp(
+        pattern.source,
+        pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+      );
+      for (const match of variant.searchText.matchAll(matcher)) {
+        const startLine = lineNumberForStarts(lineStarts, match.index ?? 0);
+        const endLine = lineNumberForStarts(
+          lineStarts,
+          (match.index ?? 0) + Math.max(0, match[0].length - 1),
+        );
+        for (let line = startLine; line <= endLine; line += 1) {
+          if (changedLines.has(line)) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function promptInjectionScanVariants(sample: string): Array<{
+  searchText: string;
+  lineSource: string;
+}> {
+  const stripped = stripPromptInjectionEvasion(sample);
+  return [
+    { searchText: sample, lineSource: sample },
+    { searchText: stripped, lineSource: stripped },
+    { searchText: softenPromptInjectionLineBreaks(sample), lineSource: sample },
+    { searchText: softenPromptInjectionLineBreaks(stripped), lineSource: stripped },
+  ];
+}
+
+function firstPatternMatch(text: string, patterns: RegExp[]): RegExpExecArray | null {
+  let first: RegExpExecArray | null = null;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(text);
+    if (match && (!first || match.index < first.index)) first = match;
+  }
+  return first;
+}
+
+function lineNumberAt(text: string, index: number): number {
+  return lineNumberForStarts(lineStartOffsets(text), index);
+}
+
+function lineStartOffsets(text: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n") starts.push(index + 1);
+  }
+  return starts;
+}
+
+function lineNumberForStarts(starts: number[], index: number): number {
+  let low = 0;
+  let high = starts.length;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (starts[middle] <= index) low = middle;
+    else high = middle;
+  }
+  return low + 1;
 }

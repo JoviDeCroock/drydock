@@ -124,6 +124,7 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
     // metadata-vs-tarball mismatch rule to run; `details: null` skips it.
     return buildNpmFindings({
       staged: args.staged,
+      previousFiles: args.baseline?.files,
       details: null,
       fileDiff: args.fileDiff,
       manifestDiff: args.manifestDiff,
