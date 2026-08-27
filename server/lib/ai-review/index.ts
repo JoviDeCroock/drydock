@@ -84,9 +84,10 @@ async function tracedAiSdk(): Promise<typeof ai> {
 
 const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
 
-// One short jittered retry absorbs a capacity blip. A minute-based 429 or a
-// request timeout cannot be fixed by retrying the same whole agent loop after a
-// few hundred milliseconds, so those move directly to the next model.
+// One short jittered retry absorbs a capacity or provider 5xx blip. A
+// minute-based 429 or a request timeout cannot be fixed by retrying the same
+// whole agent loop after a few hundred milliseconds, so those move directly to
+// the next model.
 const AI_REVIEW_MAX_CAPACITY_ATTEMPTS = 2;
 const AI_REVIEW_RETRY_DELAY_MS = 500;
 const AI_REVIEW_RETRY_JITTER_MS = 500;
@@ -263,8 +264,12 @@ export async function analyzeWithAi(
         };
       } catch (err) {
         const outcome = classifyAiAttemptError(err);
-        const shouldRetry = outcome === "capacity" && attempt < AI_REVIEW_MAX_CAPACITY_ATTEMPTS;
-        const shouldFallback = !shouldRetry && outcome !== "error" && hasFallback;
+        const retryableServerError = outcome === "error" && isRetryableAiServerError(err);
+        const shouldRetry =
+          (outcome === "capacity" || retryableServerError) &&
+          attempt < AI_REVIEW_MAX_CAPACITY_ATTEMPTS;
+        const shouldFallback =
+          !shouldRetry && (outcome !== "error" || retryableServerError) && hasFallback;
         recordAiReviewAttempt(env, options, {
           model: candidateModel,
           attempt,
@@ -345,7 +350,7 @@ export function aiReviewTraceTelemetry(
 }
 
 // Workers AI capacity, quota, and timeout rejections are classified separately
-// because only capacity gets an in-model retry. The provider normalizes binding
+// because their retry/fallback policies differ. The provider normalizes binding
 // errors to APICallError-shaped values, but direct binding errors may still expose
 // only an internal code or name, so prefer structured fields before message text.
 type AiAttemptOutcome = "complete" | "invalid" | "rate_limited" | "capacity" | "timeout" | "error";
@@ -364,19 +369,23 @@ function classifyAiAttemptError(err: unknown): Exclude<AiAttemptOutcome, "comple
       : null;
   const internalCode = numericErrorField(data?.workersAIErrorCode ?? fields?.code);
   const statusCode = numericErrorField(fields?.statusCode);
+  const message = errorMessage(err);
 
   if (internalCode === 3040) return "capacity";
   if (internalCode === 3036) return "rate_limited";
   if (internalCode === 3007 || internalCode === 3008) return "timeout";
-  if (statusCode === 408 || fields?.name === "TimeoutError" || fields?.name === "ResponseAborted") {
+  if (
+    statusCode === 408 ||
+    statusCode === 504 ||
+    fields?.name === "TimeoutError" ||
+    fields?.name === "ResponseAborted"
+  ) {
     return "timeout";
   }
-  if (statusCode === 429) return "rate_limited";
-  if (statusCode === 502 || statusCode === 503) return "capacity";
-
-  const message = errorMessage(err);
   if (TIMEOUT_AI_ERROR_PATTERN.test(message)) return "timeout";
   if (CAPACITY_AI_ERROR_PATTERN.test(message)) return "capacity";
+  if (statusCode === 502 || statusCode === 503) return "capacity";
+  if (statusCode === 429) return "rate_limited";
   if (RATE_LIMITED_AI_ERROR_PATTERN.test(message)) return "rate_limited";
   return "error";
 }
@@ -385,6 +394,12 @@ function numericErrorField(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
   return undefined;
+}
+
+function isRetryableAiServerError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const statusCode = numericErrorField((err as Record<string, unknown>).statusCode);
+  return statusCode !== undefined && statusCode >= 500;
 }
 
 function sleep(ms: number): Promise<void> {

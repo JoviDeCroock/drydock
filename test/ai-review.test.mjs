@@ -628,6 +628,109 @@ describe("ai review orchestration", () => {
     expect(ai.model).toBe("fallback-reviewer");
   });
 
+  test("a REST-shaped 3040 response is retried as capacity before falling back", async () => {
+    skipRetryDelay();
+    let calls = 0;
+    const flakyModel = mockModel(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(
+          new Error(
+            'Workers AI API error (429 Too Many Requests): {"errors":[{"code":3040,"message":"No more data centers to forward the request to"}]}',
+          ),
+          { statusCode: 429 },
+        );
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-1",
+            toolName: "submit_review",
+            input: JSON.stringify(VALID_REVIEW),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, flakyModel);
+
+    expect(calls).toBe(2);
+    expect(ai.status).toBe("complete");
+  });
+
+  test("a persistent provider 500 retries once before falling back", async () => {
+    skipRetryDelay();
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("Workers AI API error (500 Internal Server Error)"), {
+            statusCode: 500,
+          });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(2);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a gateway 504 moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("AI Gateway request timed out"), { statusCode: 504 });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
   test("a rate limit moves directly to the fallback model", async () => {
     const calls = new Map();
     const modelFactory = (model) =>
