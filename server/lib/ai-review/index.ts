@@ -107,7 +107,10 @@ function isHighSignalReview(options: SelectiveAiReviewOptions): boolean {
   return (
     options.previousVersionAvailable === false ||
     options.ruleFindings.some(
-      (finding) => finding.severity === "critical" || finding.severity === "high",
+      (finding) =>
+        finding.severity === "critical" ||
+        finding.severity === "high" ||
+        finding.obfuscated === true,
     ) ||
     options.packageJsonDiff.entrypointsChanged === true ||
     options.packageJsonDiff.scripts.length > 0 ||

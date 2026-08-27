@@ -437,6 +437,24 @@ describe("ai review orchestration", () => {
     ]);
   });
 
+  test("keeps the strong model first for medium-severity obfuscation", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      ruleFindings: [{ ...aiFinding("medium", "src/index.js"), obfuscated: true }],
+      diff: [
+        {
+          path: "src/index.js",
+          status: "modified",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+  });
+
   test("a complete review without evidence does not raise package risk", async () => {
     const { review: ai } = await analyzeWithAi(
       {},

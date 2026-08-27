@@ -89,9 +89,9 @@ whether Kimi should inspect the release.
   script, or dependency delta, and at most five changed files): GLM 5.3 Flash →
   DeepSeek V4 Flash → Kimi K2.7 Code.
 - Medium signal: GLM 5.3 Flash → Kimi K2.7 Code → DeepSeek V4 Flash.
-- High signal (missing baseline, critical/high deterministic finding, or an
-  entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM 5.3 Flash →
-  DeepSeek V4 Flash.
+- High signal (missing baseline, critical/high or obfuscated deterministic
+  finding, or an entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM
+  5.3 Flash → DeepSeek V4 Flash.
 
 The agent is capped at 12 steps. A capacity/5xx failure gets one jittered retry;
 a 429 or timeout moves directly to the next model because a sub-second retry
