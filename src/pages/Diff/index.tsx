@@ -44,7 +44,6 @@ import {
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
 import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-ref";
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
-import { rememberOnboardingIntent } from "../../features/onboarding-intent";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
@@ -563,19 +562,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                     "while there is still time to say no. The maintainer keeps the final decision."}
             </Muted>
             <div class="flex gap-3 mt-1">
-              {/* Carry the package across the signup boundary. Someone who gets
-                  here arrived with a package they care about; without this the
-                  dashboard they land on knows nothing about them and opens with
-                  an empty field. Client-side only — see
-                  `src/features/onboarding-intent.ts`. */}
-              <LinkButton
-                href="/register"
-                onClick={() => {
-                  rememberOnboardingIntent({ ecosystem, packageName });
-                }}
-              >
-                Create account
-              </LinkButton>
+              <LinkButton href="/register">Create account</LinkButton>
               <LinkButton href="/docs" variant="secondary">
                 Read the docs
               </LinkButton>

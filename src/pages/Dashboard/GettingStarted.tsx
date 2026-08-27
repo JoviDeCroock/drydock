@@ -1,14 +1,6 @@
-import { useEffect } from "preact/hooks";
-import { type Signal, useSignal } from "@preact/signals";
+import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
-import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
-import {
-  clearOnboardingIntent,
-  type OnboardingIntent,
-  readOnboardingIntent,
-} from "../../features/onboarding-intent";
-import type { DiffEcosystem } from "../../lib/package-diff-path";
 import { resolveSuggestedDiffPath } from "../../models/package-diff";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -39,8 +31,7 @@ const STAGE_COMMAND = "npm stage publish";
  * a funnel it structurally could not follow.
  *
  * While the wait for a staged release lasts, the panel offers the one thing
- * that needs no token: the public diff of a package the reader already cares
- * about. If they arrived from `/diff`, that package is already known.
+ * that needs no token: a public npm package diff.
  */
 export function GettingStarted({
   npmConnected,
@@ -53,23 +44,6 @@ export function GettingStarted({
   hasAnyDecision: boolean;
   onDismiss: () => void;
 }) {
-  const intent = useSignal<OnboardingIntent | null>(readOnboardingIntent());
-
-  // The intent is a pre-signup breadcrumb, not durable state. Once this
-  // organization has a scan of its own, that scan is the better thing to talk
-  // about, so the breadcrumb has been consumed.
-  useEffect(() => {
-    if (!hasAnyScan) return;
-    clearOnboardingIntent();
-    intent.value = null;
-  }, [hasAnyScan]);
-
-  const dismiss = () => {
-    clearOnboardingIntent();
-    intent.value = null;
-    onDismiss();
-  };
-
   // The funnel's own endpoint: a release was reviewed and decided. Step 1 can
   // still be open at this point — a workflow gate reaches a first decision
   // without an npm token — so the step list stays honest either way.
@@ -81,7 +55,7 @@ export function GettingStarted({
         <SectionLabel
           as="h2"
           aside={
-            <Button variant="ghost" size="sm" onClick={dismiss} title="Hide this panel">
+            <Button variant="ghost" size="sm" onClick={onDismiss} title="Hide this panel">
               {complete ? "Done" : "Dismiss"}
             </Button>
           }
@@ -95,24 +69,10 @@ export function GettingStarted({
               release and gated run lands here from now on — close this when you are ready.
             </>
           ) : (
-            <Show<OnboardingIntent | null>
-              when={intent}
-              fallback={
-                <>
-                  Drydock reviews a release while it is still private, so the first review starts
-                  when you stage one.
-                </>
-              }
-            >
-              {(value) => (
-                <>
-                  You were reading the diff for{" "}
-                  <strong class="font-medium text-ink">{intentName(value)}</strong>. Drydock reviews
-                  that release while it is still private — here is how to get the next one reviewed
-                  before anyone can install it.
-                </>
-              )}
-            </Show>
+            <>
+              Drydock reviews a release while it is still private, so the first review starts when
+              you stage one.
+            </>
           )}
         </Muted>
       </div>
@@ -155,12 +115,9 @@ export function GettingStarted({
             <>A staged release has been reviewed for this organization.</>
           ) : (
             <>
-              Run <InlineCode>{STAGE_COMMAND}</InlineCode> from{" "}
-              <Show<OnboardingIntent | null> when={intent} fallback={<>your package directory</>}>
-                {(value) => <>your {intentName(value)} checkout</>}
-              </Show>
-              . npm holds the candidate privately until you approve it. Drydock finds it
-              automatically, or use <strong class="font-medium text-ink">Check npm</strong> below.
+              Run <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory. npm holds
+              the candidate privately until you approve it. Drydock finds it automatically, or use{" "}
+              <strong class="font-medium text-ink">Check npm</strong> below.
             </>
           )}
         </Step>
@@ -179,15 +136,11 @@ export function GettingStarted({
         </Step>
       </ol>
 
-      {hasAnyScan ? null : <FirstDiff intent={intent} />}
+      {hasAnyScan ? null : <FirstDiff />}
 
       <CiPublisherTrack />
     </Card>
   );
-}
-
-function intentName(intent: OnboardingIntent): string {
-  return intent.displayName ?? intent.packageName;
 }
 
 // The parallel track. A release built and published by a workflow never runs
@@ -214,11 +167,9 @@ function CiPublisherTrack() {
 // First value before any token: the same deterministic rules, run over a
 // package that is already published. Nothing here is organization state, so it
 // needs no npm connection and no staged release to wait for.
-function FirstDiff({ intent }: { intent: Signal<OnboardingIntent | null> }) {
+function FirstDiff() {
   const location = useLocation();
-  const remembered = intent.peek();
-  const ecosystem: DiffEcosystem = remembered?.ecosystem ?? "npm";
-  const packageName = useSignal(remembered?.packageName ?? "");
+  const packageName = useSignal("");
   const busy = useSignal(false);
   const error = useSignal<string | null>(null);
 
@@ -231,7 +182,7 @@ function FirstDiff({ intent }: { intent: Signal<OnboardingIntent | null> }) {
       // The same resolution the /diff landing form uses, so both entry points
       // agree on which version pair "latest release" means and on the error
       // copy when a package has only ever published once.
-      const resolved = await resolveSuggestedDiffPath(ecosystem, input);
+      const resolved = await resolveSuggestedDiffPath("npm", input);
       if ("error" in resolved) error.value = resolved.error;
       else location.route(resolved.path);
     } finally {
@@ -246,8 +197,7 @@ function FirstDiff({ intent }: { intent: Signal<OnboardingIntent | null> }) {
       </h3>
       <Muted class="text-[13px] m-0 leading-[1.6]">
         No token, no staged release, no wait — the same deterministic rules over the last two
-        published versions of {ecosystem === "npm" ? "an npm" : `a ${ecosystemLabel(ecosystem)}`}{" "}
-        package.
+        published versions of an npm package.
       </Muted>
       <form
         class="flex flex-wrap gap-2 items-center"
@@ -259,10 +209,8 @@ function FirstDiff({ intent }: { intent: Signal<OnboardingIntent | null> }) {
         <Input
           type="text"
           value={packageName}
-          placeholder={
-            ecosystem === "npm" ? "package name, e.g. react" : `${ecosystemLabel(ecosystem)} name`
-          }
-          aria-label={`${ecosystemLabel(ecosystem)} package name`}
+          placeholder="package name, e.g. react"
+          aria-label="npm package name"
           autoComplete="off"
           spellcheck={false}
           class="flex-1 min-w-[200px] max-w-[380px]"

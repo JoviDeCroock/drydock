@@ -9,6 +9,7 @@ const dashboardSource = readFileSync(
   new URL("../src/pages/Dashboard/index.tsx", import.meta.url),
   "utf8",
 );
+const diffSource = readFileSync(new URL("../src/pages/Diff/index.tsx", import.meta.url), "utf8");
 
 describe("dashboard onboarding contracts", () => {
   test("resolves the active organization before organization-scoped startup requests", () => {
@@ -30,5 +31,11 @@ describe("dashboard onboarding contracts", () => {
     expect(gettingStartedSource).not.toContain("published on your terms");
     expect(gettingStartedSource).toContain("with the decision still in your hands");
     expect(gettingStartedSource).toContain("An npm approval still needs your own");
+  });
+
+  test("does not personalize onboarding around an npm public diff", () => {
+    expect(gettingStartedSource).not.toContain("onboarding-intent");
+    expect(gettingStartedSource).not.toContain("You were reading the diff for");
+    expect(diffSource).not.toContain("rememberOnboardingIntent");
   });
 });
