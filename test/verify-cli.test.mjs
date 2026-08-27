@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { createDrydockClient, runCli } from "../packages/verify/src/index.mjs";
+import {
+  createDrydockClient,
+  runCli,
+  validatePolicy,
+  verifyDependencies,
+} from "../packages/verify/src/index.mjs";
 
 function consumerRepository(policy) {
   const cwd = mkdtempSync(path.join(tmpdir(), "drydock-verify-"));
@@ -14,7 +19,13 @@ function consumerRepository(policy) {
     path.join(cwd, "package-lock.json"),
     JSON.stringify({
       lockfileVersion: 3,
-      packages: { "": {}, "node_modules/left-pad": { version: "1.0.0" } },
+      packages: {
+        "": {},
+        "node_modules/left-pad": {
+          version: "1.0.0",
+          resolved: "https://registry.npmjs.org/left-pad/-/left-pad-1.0.0.tgz",
+        },
+      },
     }),
   );
   writeFileSync(path.join(cwd, "drydock.policy.json"), JSON.stringify(policy));
@@ -24,7 +35,13 @@ function consumerRepository(policy) {
     path.join(cwd, "package-lock.json"),
     JSON.stringify({
       lockfileVersion: 3,
-      packages: { "": {}, "node_modules/left-pad": { version: "2.0.0" } },
+      packages: {
+        "": {},
+        "node_modules/left-pad": {
+          version: "2.0.0",
+          resolved: "https://registry.npmjs.org/left-pad/-/left-pad-2.0.0.tgz",
+        },
+      },
     }),
   );
   return cwd;
@@ -34,7 +51,11 @@ function verdict(overrides = {}) {
   return {
     schema: "drydock.verdict.v1",
     grade: "notable",
-    to: { version: "2.0.0", publishedAt: "2026-08-01T00:00:00.000Z" },
+    to: {
+      version: "2.0.0",
+      publishedAt: "2026-08-01T00:00:00.000Z",
+      integrity: { sha1: "a".repeat(40) },
+    },
     capabilities: { escalations: [], confident: true },
     diffUrl: "https://drydock.org/diff/left-pad/1.0.0/2.0.0",
     ...overrides,
@@ -124,10 +145,12 @@ describe("drydock verify CLI", () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(urls[1]).toBe("https://drydock.org/public/reviews/npm/left-pad/2.0.0");
+    expect(urls[1]).toBe(
+      `https://drydock.org/public/reviews/npm/left-pad/2.0.0?sha1=${"a".repeat(40)}`,
+    );
   });
 
-  test("does not hide a known missing listed review behind fail-open verdict availability", async () => {
+  test("warns when a verdict outage also prevents byte-bound listed-review lookup", async () => {
     const cwd = consumerRepository({ requireListedReview: ["left-pad"], onUnavailable: "warn" });
     const exitCode = await runCli(["verify", "--base", "HEAD"], {
       cwd,
@@ -141,6 +164,36 @@ describe("drydock verify CLI", () => {
       stderr: { write: () => {} },
     });
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("routes unsupported dependency sources through onUnavailable without a public request", async () => {
+    let requests = 0;
+    const result = await verifyDependencies(
+      {
+        pairs: [
+          {
+            ecosystem: "npm",
+            name: "private-package",
+            from: "1.0.0",
+            to: "2.0.0",
+            unavailableReason: "dependency is not resolved from the public npm registry",
+          },
+        ],
+      },
+      {
+        policy: validatePolicy({ onUnavailable: "fail" }),
+        client: {
+          verdict: async () => requests++,
+          listedReview: async () => requests++,
+        },
+      },
+    );
+
+    expect(requests).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.results[0].violations).toContain(
+      "dependency is not resolved from the public npm registry",
+    );
   });
 });

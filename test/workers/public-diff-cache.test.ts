@@ -63,7 +63,7 @@ describe("public diff cache", () => {
       toVersion: "1.0.1",
     });
 
-    expect(key).toContain("public-diff:v7:npm:");
+    expect(key).toContain("public-diff:v8:npm:");
     expect(key).toContain(`rules=${DETERMINISTIC_RULES_VERSION}`);
     expect(key).toContain("risk=1");
   });

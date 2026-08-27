@@ -74,6 +74,10 @@ export interface PublicPackageDiff {
   // The verdict projection turns these into the release-age signal.
   fromPublishedAt?: string;
   toPublishedAt?: string;
+  // Complete-archive SHA-1 for npm sides. The verdict uses the target digest
+  // to bind listed-review evidence to the exact published bytes.
+  fromArchiveSha1?: string;
+  toArchiveSha1?: string;
   // Declared-tier source binding per side (repository the manifest/metadata
   // claims, normalized). `changed` marks a repository move between versions —
   // itself a signal. Never verified on the anonymous plane.
@@ -202,6 +206,8 @@ export async function loadPublicPackageDiff(
     capabilities,
     ...(sources.from.publishedAt ? { fromPublishedAt: sources.from.publishedAt } : {}),
     ...(sources.to.publishedAt ? { toPublishedAt: sources.to.publishedAt } : {}),
+    ...(sources.from.archiveSha1 ? { fromArchiveSha1: sources.from.archiveSha1 } : {}),
+    ...(sources.to.archiveSha1 ? { toArchiveSha1: sources.to.archiveSha1 } : {}),
     sourceBinding,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),

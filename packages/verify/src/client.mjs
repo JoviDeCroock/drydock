@@ -50,6 +50,13 @@ function assertVerdict(value) {
     !Array.isArray(value.capabilities.escalations) ||
     value.capabilities.escalations.some((capability) => typeof capability !== "string") ||
     typeof value.capabilities.confident !== "boolean" ||
+    !(
+      value.to.integrity === null ||
+      (value.to.integrity &&
+        typeof value.to.integrity === "object" &&
+        typeof value.to.integrity.sha1 === "string" &&
+        /^[a-f0-9]{40}$/i.test(value.to.integrity.sha1))
+    ) ||
     (value.diffUrl !== null && typeof value.diffUrl !== "string")
   ) {
     throw new Error("verdict response is incomplete");
@@ -98,9 +105,11 @@ export function createDrydockClient({
       return assertVerdict(await fetchJson(url, { fetchImpl, sleep }));
     },
 
-    async listedReview(pair) {
+    async listedReview(pair, publishedSha1) {
       const pathname = `/public/reviews/${encodeURIComponent(pair.ecosystem)}/${packagePath(pair.name)}/${encodeURIComponent(pair.to)}`;
-      return assertListedReview(await fetchJson(new URL(pathname, origin), { fetchImpl, sleep }));
+      const url = new URL(pathname, origin);
+      url.searchParams.set("sha1", publishedSha1);
+      return assertListedReview(await fetchJson(url, { fetchImpl, sleep }));
     },
   };
 }

@@ -1,5 +1,12 @@
 function markdown(value) {
-  return String(value).replaceAll("|", "\\|").replaceAll("\n", " ");
+  return String(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\n", " ");
 }
 
 function status(result) {

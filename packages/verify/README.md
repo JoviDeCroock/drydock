@@ -8,6 +8,12 @@ The CLI reads lockfiles as data and calls HTTPS endpoints. It never installs
 dependencies, runs lifecycle scripts, imports changed packages, or executes
 package-provided code.
 
+Only dependencies resolved from the canonical public npm registry are eligible
+for a public verdict. Private-registry, Git, tarball, and local sources are
+reported through `onUnavailable`; they are never compared with same-named
+public npm bytes. For pnpm, checked-in `.npmrc` registry and scope settings are
+used to classify locators without reading or transmitting credentials.
+
 ```sh
 npx drydock-verify verify --base origin/main
 ```
