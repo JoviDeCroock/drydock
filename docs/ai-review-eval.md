@@ -90,7 +90,7 @@ whether Kimi should inspect the release.
   finding, or an entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM
   5.3 Flash.
 
-The agent is capped at 12 steps. A capacity/5xx failure gets one jittered retry;
+The agent is capped at 20 steps. A capacity/5xx failure gets one jittered retry;
 a 429 or timeout moves directly to the next model because a sub-second retry
 cannot escape a minute quota. An invalid completed run also moves to the next
 model without re-running the same model. Do not add AI Gateway retries on top of

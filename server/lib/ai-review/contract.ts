@@ -134,7 +134,7 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
   return `${BASE_REVIEWER_SYSTEM_PROMPT}\n\n${ecosystemPrompt}\n\n${SEVERITY_GUIDANCE}`;
 }
 
-export const MAX_AGENT_STEPS = 12;
+export const MAX_AGENT_STEPS = 20;
 // Per-step output-token cap, sized comfortably above a worst-case submission so
 // findings plus summary serialize without truncation. A slight overshoot is
 // clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by

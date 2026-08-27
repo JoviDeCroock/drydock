@@ -592,6 +592,42 @@ describe("ai review orchestration", () => {
     expect(ai.model).toBe("fallback-reviewer");
   });
 
+  test("a typed Workers AI timeout moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("binding failed"), {
+            statusCode: 408,
+            data: { workersAIErrorCode: 3007 },
+          });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
   test("a rate limit moves directly to the fallback model", async () => {
     const calls = new Map();
     const modelFactory = (model) =>

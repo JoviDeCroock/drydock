@@ -345,23 +345,46 @@ export function aiReviewTraceTelemetry(
 }
 
 // Workers AI capacity, quota, and timeout rejections are classified separately
-// because only capacity gets an in-model retry. Matched on message text because
-// the binding throws plain Errors, not classified APICallErrors — `3040` is
-// "Capacity temporarily exceeded" and `3046` is "Request timeout".
+// because only capacity gets an in-model retry. The provider normalizes binding
+// errors to APICallError-shaped values, but direct binding errors may still expose
+// only an internal code or name, so prefer structured fields before message text.
 type AiAttemptOutcome = "complete" | "invalid" | "rate_limited" | "capacity" | "timeout" | "error";
 type AiAttemptAction = "done" | "retry" | "fallback" | "stop";
 
 const RATE_LIMITED_AI_ERROR_PATTERN = /\b429\b|rate.?limit|too many requests/i;
-const TIMEOUT_AI_ERROR_PATTERN = /\b(?:3046|408)\b|request timeout/i;
+const TIMEOUT_AI_ERROR_PATTERN = /\b(?:3007|3008|408)\b|request timeout|timed out/i;
 const CAPACITY_AI_ERROR_PATTERN =
   /\b(?:3040|502|503)\b|capacity .*exceeded|temporarily unavailable|overloaded/i;
 
 function classifyAiAttemptError(err: unknown): Exclude<AiAttemptOutcome, "complete" | "invalid"> {
+  const fields = err && typeof err === "object" ? (err as Record<string, unknown>) : null;
+  const data =
+    fields?.data && typeof fields.data === "object"
+      ? (fields.data as Record<string, unknown>)
+      : null;
+  const internalCode = numericErrorField(data?.workersAIErrorCode ?? fields?.code);
+  const statusCode = numericErrorField(fields?.statusCode);
+
+  if (internalCode === 3040) return "capacity";
+  if (internalCode === 3036) return "rate_limited";
+  if (internalCode === 3007 || internalCode === 3008) return "timeout";
+  if (statusCode === 408 || fields?.name === "TimeoutError" || fields?.name === "ResponseAborted") {
+    return "timeout";
+  }
+  if (statusCode === 429) return "rate_limited";
+  if (statusCode === 502 || statusCode === 503) return "capacity";
+
   const message = errorMessage(err);
-  if (RATE_LIMITED_AI_ERROR_PATTERN.test(message)) return "rate_limited";
   if (TIMEOUT_AI_ERROR_PATTERN.test(message)) return "timeout";
   if (CAPACITY_AI_ERROR_PATTERN.test(message)) return "capacity";
+  if (RATE_LIMITED_AI_ERROR_PATTERN.test(message)) return "rate_limited";
   return "error";
+}
+
+function numericErrorField(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  return undefined;
 }
 
 function sleep(ms: number): Promise<void> {
