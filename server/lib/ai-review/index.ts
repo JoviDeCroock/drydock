@@ -7,7 +7,6 @@ import {
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
-  MAX_LOW_SIGNAL_CHANGED_FILES,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
   type AiReviewSubmission,
@@ -37,7 +36,7 @@ export { AI_REVIEWER_VERSION } from "./contract";
 // makes the cached-input price, not the headline input price, the cost driver,
 // and it makes the context window a floor rather than a feature — evidence is
 // capped at MAX_TOTAL_TOOL_RESPONSE_CHARS, so anything past ~64k is unusable
-// spend. Each fallback is agentic and cache-discounted: a failover that cannot
+// spend. The fallback is agentic and cache-discounted: a failover that cannot
 // finish the loop returns `invalid`, which floors the scan at medium and
 // escalates to manual review, so a "cheap" model that misses the submission
 // costs more than it saves. Re-check all candidates against
@@ -46,8 +45,7 @@ export { AI_REVIEWER_VERSION } from "./contract";
 // AI_REVIEWER_VERSION with it.
 export const AI_MODEL = "@cf/zai-org/glm-5.3-flash";
 export const AI_FALLBACK_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const AI_ECONOMY_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
-export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL, AI_ECONOMY_MODEL] as const;
+export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
 // The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
@@ -95,10 +93,7 @@ const AI_REVIEW_RETRY_JITTER_MS = 500;
 
 export function selectModelCandidates(options: SelectiveAiReviewOptions): readonly string[] {
   if (isHighSignalReview(options)) {
-    return [AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL];
-  }
-  if (isLowSignalReview(options)) {
-    return [AI_MODEL, AI_ECONOMY_MODEL, AI_FALLBACK_MODEL];
+    return [AI_FALLBACK_MODEL, AI_MODEL];
   }
   return AI_MODEL_CANDIDATES;
 }
@@ -115,20 +110,6 @@ function isHighSignalReview(options: SelectiveAiReviewOptions): boolean {
     options.packageJsonDiff.entrypointsChanged === true ||
     options.packageJsonDiff.scripts.length > 0 ||
     options.packageJsonDiff.dependencies.length > 0
-  );
-}
-
-function isLowSignalReview(options: SelectiveAiReviewOptions): boolean {
-  return (
-    options.ruleFindings.length === 0 &&
-    options.packageJsonDiff.entrypointsChanged === false &&
-    options.packageJsonDiff.scripts.length === 0 &&
-    // A dependency add/change is a supply-chain vector even with no lifecycle
-    // script, so any manifest dependency delta keeps the strong model first.
-    options.packageJsonDiff.dependencies.length === 0 &&
-    options.previousVersionAvailable === true &&
-    options.diff.filter((entry) => entry.status !== "unchanged").length <=
-      MAX_LOW_SIGNAL_CHANGED_FILES
   );
 }
 

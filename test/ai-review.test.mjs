@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   AI_FALLBACK_MODEL,
-  AI_ECONOMY_MODEL,
   AI_MODEL,
   AI_MODEL_CANDIDATES,
   AI_REVIEWER_VERSION,
@@ -151,15 +150,10 @@ describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
     expect(AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
     expect(AI_FALLBACK_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
-    expect(AI_ECONOMY_MODEL).toBe("@cf/deepseek-ai/deepseek-v4-flash-0731");
-    expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL, AI_ECONOMY_MODEL]);
+    expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
-  test("keeps Kimi last for a clean low-signal release", () => {
-    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([
-      AI_MODEL,
-      AI_ECONOMY_MODEL,
-      AI_FALLBACK_MODEL,
-    ]);
+  test("uses GLM first for a clean low-signal release", () => {
+    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
   test("keeps the strong model first when deterministic findings are present", () => {
@@ -177,7 +171,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when lifecycle scripts change", () => {
@@ -198,7 +192,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when dependencies change", () => {
@@ -219,7 +213,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when entrypoints change", () => {
@@ -240,7 +234,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when no previous version is available", () => {
@@ -258,19 +252,13 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
-  test("keeps the strong model first when the changed-file count exceeds the threshold", () => {
+  test("uses GLM first for a medium-signal release", () => {
     const options = {
       ...BASE_OPTIONS,
-      diff: Array.from({ length: 6 }, (_, index) => ({
-        path: `src/file-${index}.js`,
-        status: "added",
-        stagedSize: 10,
-        stagedSha256: `sha-${index}`,
-        flags: [],
-      })),
+      ruleFindings: [aiFinding("medium", "src/index.js")],
     };
 
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
@@ -460,7 +448,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("a complete review without evidence does not raise package risk", async () => {

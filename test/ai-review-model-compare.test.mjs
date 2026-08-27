@@ -18,7 +18,6 @@ import {
 import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
 const KIMI = "@cf/moonshotai/kimi-k2.7-code";
-const FLASH = "@cf/deepseek-ai/deepseek-v4-flash-0731";
 const GLM = "@cf/zai-org/glm-5.3-flash";
 const QWEN_NO_CACHE = "@cf/qwen/qwen3.8-27b";
 
@@ -58,12 +57,7 @@ describe("estimateCost", () => {
     expect(qwen).toBeGreaterThan(kimi);
   });
 
-  test("is cheapest on the fallback model for an identical loop", () => {
-    expect(estimateCost(FLASH, usage())).toBeLessThan(estimateCost(KIMI, usage()));
-  });
-
-  test("prices GLM 5.3 Flash below the current models for an identical loop", () => {
-    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(FLASH, usage()));
+  test("prices GLM 5.3 Flash below Kimi for an identical loop", () => {
     expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(KIMI, usage()));
   });
 
@@ -303,7 +297,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI, FLASH],
+      models: [KIMI, GLM],
       corpus: twoCaseCorpus,
       analyze: stubAnalyze((model, options) => {
         seen.push([model, options.scanId]);
@@ -314,10 +308,10 @@ describe("runAiReviewModelComparison", () => {
     expect(seen).toEqual([
       [KIMI, "ai-review-live-case-a"],
       [KIMI, "ai-review-live-case-b"],
-      [FLASH, "ai-review-live-case-a"],
-      [FLASH, "ai-review-live-case-b"],
+      [GLM, "ai-review-live-case-a"],
+      [GLM, "ai-review-live-case-b"],
     ]);
-    expect(result.byModel.map((entry) => entry.model)).toEqual([KIMI, FLASH]);
+    expect(result.byModel.map((entry) => entry.model)).toEqual([KIMI, GLM]);
     expect(result.caseCount).toBe(2);
     expect(result.truncated).toBe(0);
   });
@@ -326,18 +320,18 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI, FLASH],
+      models: [KIMI, GLM],
       corpus: twoCaseCorpus,
       // Both models escalate everything: right on the malicious case, a false
       // positive on the benign one.
       analyze: stubAnalyze(() => ({})),
     });
 
-    const [kimi, flash] = result.byModel;
+    const [kimi, glm] = result.byModel;
     expect(kimi.catchRate).toBe(1);
     expect(kimi.falsePositiveRate).toBe(1);
-    expect(flash.catchRate).toBe(1);
-    expect(flash.totalCostUsd).toBeLessThan(kimi.totalCostUsd);
+    expect(glm.catchRate).toBe(1);
+    expect(glm.totalCostUsd).toBeLessThan(kimi.totalCostUsd);
   });
 
   test("reports how many fixtures a limit dropped", async () => {

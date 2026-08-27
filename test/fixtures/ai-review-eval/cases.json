@@ -1,6 +1,6 @@
 {
   "suiteVersion": 3,
-  "recordedReviewerVersion": "1.3.0",
+  "recordedReviewerVersion": "1.4.0",
   "cases": [
     {
       "id": "npm-install-exfiltration",
@@ -23,7 +23,7 @@
         ],
         "requiresManualReview": true,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.3.0"
+        "reviewerVersion": "1.4.0"
       }
     },
     {
@@ -39,7 +39,7 @@
         "findings": [],
         "requiresManualReview": false,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.3.0"
+        "reviewerVersion": "1.4.0"
       }
     },
     {
@@ -63,7 +63,7 @@
         ],
         "requiresManualReview": true,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.3.0"
+        "reviewerVersion": "1.4.0"
       }
     },
     {
@@ -79,7 +79,7 @@
         "findings": [],
         "requiresManualReview": false,
         "model": "@cf/moonshotai/kimi-k2.7-code",
-        "reviewerVersion": "1.3.0"
+        "reviewerVersion": "1.4.0"
       }
     },
     {
@@ -103,7 +103,7 @@
         ],
         "requiresManualReview": true,
         "model": "@cf/deepseek-ai/deepseek-v4-flash-0731",
-        "reviewerVersion": "1.3.0"
+        "reviewerVersion": "1.4.0"
       }
     }
   ]
