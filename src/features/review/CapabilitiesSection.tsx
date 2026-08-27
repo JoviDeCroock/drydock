@@ -1,5 +1,5 @@
-import type { Capability, CapabilityDelta } from "../../../server/lib/review";
-import { Badge } from "../../components/Badge";
+import type { Capability, CapabilityDelta, CapabilitySet } from "../../../server/lib/review";
+import { Badge, type BadgeTone } from "../../components/Badge";
 import { Muted, SectionLabel } from "../../components/Typography";
 
 // Reader-facing names for the capability keys. Kept short: these render as a
@@ -27,6 +27,7 @@ const CAPABILITY_LABELS: Record<Capability, string> = {
 export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
   const escalations = new Set(delta.escalations);
   const carried = delta.to.capabilities.filter((capability) => !escalations.has(capability));
+  const emptyState = capabilityEmptyState(delta.to);
 
   return (
     <section class="flex flex-col gap-3 min-w-0">
@@ -42,14 +43,25 @@ export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
             {CAPABILITY_LABELS[capability]}
           </Badge>
         ))}
-        {!delta.to.capabilities.length ? <Badge tone="ok">none detected</Badge> : null}
+        {emptyState ? <Badge tone={emptyState.tone}>{emptyState.label}</Badge> : null}
       </div>
-      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">{deltaDescription(delta)}</Muted>
+      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
+        {capabilityDeltaDescription(delta)}
+      </Muted>
     </section>
   );
 }
 
-function deltaDescription(delta: CapabilityDelta): string {
+export function capabilityEmptyState(
+  side: CapabilitySet,
+): { tone: BadgeTone; label: string } | null {
+  if (side.capabilities.length) return null;
+  return side.complete
+    ? { tone: "ok", label: "none detected" }
+    : { tone: "neutral", label: "none visible" };
+}
+
+export function capabilityDeltaDescription(delta: CapabilityDelta): string {
   const parts: string[] = [];
   if (delta.escalations.length) {
     parts.push(
@@ -61,13 +73,13 @@ function deltaDescription(delta: CapabilityDelta): string {
   }
   if (!delta.from) {
     parts.push("No comparable baseline, so nothing can honestly be called an escalation.");
-  } else if (!delta.escalations.length && !delta.reductions.length) {
+  } else if (delta.confident && !delta.escalations.length && !delta.reductions.length) {
     parts.push("No capability changes against the previous version.");
   }
   // The honesty constraint from the projection: an empty escalation list over
   // uninspected bytes must never read as "no escalation".
-  if (delta.from && !delta.confident) {
-    const uninspected = delta.from.uninspectedFiles + delta.to.uninspectedFiles;
+  const uninspected = (delta.from?.uninspectedFiles ?? 0) + delta.to.uninspectedFiles;
+  if (uninspected > 0) {
     parts.push(
       `Lower bound: ${uninspected} file ${uninspected === 1 ? "body" : "bodies"} exceeded the ` +
         "inspection tier and could carry capabilities this comparison cannot see.",

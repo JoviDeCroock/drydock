@@ -102,8 +102,9 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // candidate's publisher has no currently verified handle. v10 carries the
   // authenticated Rekor instance alongside its log-local index. v11 carries
   // the capability delta and declared source binding. v12 distinguishes a
-  // first release from a comparable empty baseline in that delta.
-  payloadVersion: "v12",
+  // first release from a comparable empty baseline in that delta. v13 aligns
+  // capability projection with deterministic code-matching semantics.
+  payloadVersion: "v13",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
