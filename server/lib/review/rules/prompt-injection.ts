@@ -35,6 +35,11 @@ import {
 // (`nothing_unusual`) keep matching, stripped so emphasis can't split a
 // phrase. A second normalized form treats Markdown soft line breaks as spaces;
 // every normalization preserves line boundaries or offsets for attribution.
+// Overlapping windows keep those normalized copies bounded: a retained text
+// body may be 25 MiB, while the parent Worker has a 128 MiB isolate budget.
+export const PROMPT_INJECTION_SCAN_WINDOW_CHARS = 64 * 1024;
+const PROMPT_INJECTION_SCAN_OVERLAP_CHARS = 4 * 1024;
+
 export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
 
@@ -91,22 +96,15 @@ function firstPromptInjectionLine(
   patterns: RegExp[],
   excludedLine?: number,
 ): number | undefined {
-  const masked = maskLine(sample, excludedLine);
   let firstLine: number | undefined;
-  for (const variant of promptInjectionScanVariants(masked)) {
-    const match = firstPatternMatch(variant.searchText, patterns);
-    if (!match) continue;
-    const line = lineNumberAt(variant.lineSource, match.index);
-    if (firstLine === undefined || line < firstLine) firstLine = line;
-  }
+  visitPromptInjectionMatches(sample, patterns, (startLine, endLine) => {
+    if (excludedLine !== undefined && startLine <= excludedLine && excludedLine <= endLine) {
+      return true;
+    }
+    if (firstLine === undefined || startLine < firstLine) firstLine = startLine;
+    return firstLine !== 1;
+  });
   return firstLine;
-}
-
-function maskLine(text: string, line: number | undefined): string {
-  if (line === undefined) return text;
-  const lines = text.split("\n");
-  lines[line - 1] = "";
-  return lines.join("\n");
 }
 
 function shouldDemoteTestMatch(ctx: RuleContext, path: string, patterns: RegExp[]): boolean {
@@ -131,70 +129,84 @@ export function promptInjectionPatternsMatchChangedLines(
   patterns: RegExp[],
 ): boolean {
   if (changedLines.size === 0) return false;
-  for (const variant of promptInjectionScanVariants(sample)) {
-    const lineStarts = lineStartOffsets(variant.lineSource);
-    for (const pattern of patterns) {
-      const matcher = new RegExp(
-        pattern.source,
-        pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
-      );
-      for (const match of variant.searchText.matchAll(matcher)) {
-        const startLine = lineNumberForStarts(lineStarts, match.index ?? 0);
-        const endLine = lineNumberForStarts(
-          lineStarts,
-          (match.index ?? 0) + Math.max(0, match[0].length - 1),
+  let matched = false;
+  visitPromptInjectionMatches(sample, patterns, (startLine, endLine) => {
+    for (let line = startLine; line <= endLine; line += 1) {
+      if (changedLines.has(line)) {
+        matched = true;
+        return false;
+      }
+    }
+    return true;
+  });
+  return matched;
+}
+
+function visitPromptInjectionMatches(
+  sample: string,
+  patterns: RegExp[],
+  visit: (startLine: number, endLine: number) => boolean,
+): void {
+  let windowStart = 0;
+  let windowFirstLine = 1;
+
+  while (windowStart < sample.length) {
+    const windowEnd = Math.min(sample.length, windowStart + PROMPT_INJECTION_SCAN_WINDOW_CHARS);
+    const window = sample.slice(windowStart, windowEnd);
+    for (const variant of promptInjectionScanVariants(window)) {
+      for (const pattern of patterns) {
+        const matcher = new RegExp(
+          pattern.source,
+          pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
         );
-        for (let line = startLine; line <= endLine; line += 1) {
-          if (changedLines.has(line)) return true;
+        for (const match of variant.searchText.matchAll(matcher)) {
+          const start = match.index ?? 0;
+          const end = start + Math.max(0, match[0].length - 1);
+          const startLine = windowFirstLine + countLineBreaks(variant.lineSource, 0, start);
+          const endLine = startLine + countLineBreaks(variant.lineSource, start, end);
+          if (!visit(startLine, endLine)) return;
         }
       }
     }
+
+    if (windowEnd === sample.length) return;
+    const nextWindowStart = windowEnd - PROMPT_INJECTION_SCAN_OVERLAP_CHARS;
+    windowFirstLine += countLineBreaks(sample, windowStart, nextWindowStart);
+    windowStart = nextWindowStart;
   }
-  return false;
 }
 
-function promptInjectionScanVariants(sample: string): Array<{
+function promptInjectionScanVariants(window: string): Array<{
   searchText: string;
   lineSource: string;
 }> {
-  const stripped = stripPromptInjectionEvasion(sample);
-  return [
-    { searchText: sample, lineSource: sample },
-    { searchText: stripped, lineSource: stripped },
-    { searchText: softenPromptInjectionLineBreaks(sample), lineSource: sample },
-    { searchText: softenPromptInjectionLineBreaks(stripped), lineSource: stripped },
-  ];
+  const variants = [{ searchText: window, lineSource: window }];
+  const stripped = stripPromptInjectionEvasion(window);
+  addPromptInjectionVariant(variants, stripped, stripped);
+  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(window), window);
+  addPromptInjectionVariant(variants, softenPromptInjectionLineBreaks(stripped), stripped);
+  return variants;
 }
 
-function firstPatternMatch(text: string, patterns: RegExp[]): RegExpExecArray | null {
-  let first: RegExpExecArray | null = null;
-  for (const pattern of patterns) {
-    pattern.lastIndex = 0;
-    const match = pattern.exec(text);
-    if (match && (!first || match.index < first.index)) first = match;
+function addPromptInjectionVariant(
+  variants: Array<{ searchText: string; lineSource: string }>,
+  searchText: string,
+  lineSource: string,
+): void {
+  if (
+    variants.some(
+      (variant) => variant.searchText === searchText && variant.lineSource === lineSource,
+    )
+  ) {
+    return;
   }
-  return first;
+  variants.push({ searchText, lineSource });
 }
 
-function lineNumberAt(text: string, index: number): number {
-  return lineNumberForStarts(lineStartOffsets(text), index);
-}
-
-function lineStartOffsets(text: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] === "\n") starts.push(index + 1);
+function countLineBreaks(text: string, start: number, end: number): number {
+  let count = 0;
+  for (let index = start; index < end; index += 1) {
+    if (text[index] === "\n") count += 1;
   }
-  return starts;
-}
-
-function lineNumberForStarts(starts: number[], index: number): number {
-  let low = 0;
-  let high = starts.length;
-  while (low + 1 < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (starts[middle] <= index) low = middle;
-    else high = middle;
-  }
-  return low + 1;
+  return count;
 }
