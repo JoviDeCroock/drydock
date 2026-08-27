@@ -43,12 +43,6 @@ export interface WrittenScanArtifacts extends ScanArtifactMetadata {
   artifactRunPrefix: string;
 }
 
-// `persistScan` claims a scan row by parking this prefix in `scans.report_digest`
-// for the length of its D1 batch. D1 applies a batch atomically, so the token
-// should never be externally visible; the read path recognizes it anyway so a
-// `report_digest_mismatch` stays an unambiguous corruption signal.
-export const PERSIST_CLAIM_DIGEST_PREFIX = "persist:";
-
 export interface ScanArtifactFileRow {
   path: string;
   status: string;

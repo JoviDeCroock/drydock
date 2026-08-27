@@ -7,7 +7,6 @@ import {
   parseReportFindings,
 } from "./parse";
 import {
-  PERSIST_CLAIM_DIGEST_PREFIX,
   SCAN_ARTIFACT_STORAGE_VERSION,
   type ScanArtifactFileRow,
   type ScanArtifactScanRow,
@@ -99,7 +98,6 @@ export async function loadScanArtifactMetadata(
   scan: ScanArtifactScanRow,
 ): Promise<ScanArtifactsDetail | null> {
   if (!bucket || !hasReportArtifactMetadata(scan)) return null;
-  if (isPersistInFlight(scan)) return null;
 
   try {
     const reportText = await readDigestVerifiedJsonText(bucket, {
@@ -159,7 +157,6 @@ async function loadScanArtifactsManifest(
   scan: ScanArtifactScanRow,
 ): Promise<ScanArtifactsManifestDetail | null> {
   if (!bucket || !hasArtifactMetadata(scan)) return null;
-  if (isPersistInFlight(scan)) return null;
 
   try {
     const manifestText = await readVerifiedJsonText(bucket, {
@@ -187,17 +184,6 @@ async function loadScanArtifactsManifest(
     emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });
     return null;
   }
-}
-
-// `persistScan` parks a claim token in `scans.report_digest` for the length of
-// its atomic D1 batch. D1 applies a batch as one implicit transaction, so a
-// reader should never observe it — this is defense in depth, and it is what
-// keeps `report_digest_mismatch` an unambiguous corruption signal worth
-// alerting on. Logged at `info`: the row heals itself when the batch commits.
-function isPersistInFlight(scan: ScanArtifactScanRow): boolean {
-  if (!scan.reportDigest?.startsWith(PERSIST_CLAIM_DIGEST_PREFIX)) return false;
-  emitArtifactFallback("persist_in_flight", scan, {}, "info");
-  return true;
 }
 
 function hasArtifactMetadata(scan: ScanArtifactScanRow): scan is ScanArtifactScanRow & {

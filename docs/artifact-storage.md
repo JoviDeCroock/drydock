@@ -49,15 +49,15 @@ User-initiated report downloads serve the same canonical `report.json` bytes wit
 
 ## Concurrent Completion Attempts
 
-A duplicate queue delivery can run a second completion attempt for the same scan. Each attempt writes its artifact set _before_ `persistScan` decides which one owns the D1 row, so the invariant that keeps this safe is structural: **an attempt's object set is unaddressable by any other attempt.** The `{runId}` segment is what provides it.
+A duplicate queue delivery can run a second completion attempt for the same scan. No application path produces one: every producer mints a fresh scan id and its own row, and `message.retry()` is called after the handler returns, so a retry is sequential and `claimScanForRun` skips it once the row is terminal. The trigger is Cloudflare Queues' at-least-once delivery — the same message delivered again while the first invocation is still alive. That is rare, but when it fires the corruption is certain rather than probabilistic: `manifest.generatedAt` is wall-clock, so two attempts never write identical manifest bytes.
+
+Each attempt writes its artifact set _before_ `persistScan` decides which one owns the D1 row, so the invariant that keeps this safe is structural: **an attempt's object set is unaddressable by any other attempt.** The `{runId}` segment is what provides it.
 
 Without it, both attempts wrote the same four keys. A loser whose R2 write landed after the winner's D1 batch committed left the row pointing at digests that no longer matched the stored bytes, and the detail read then failed closed to metadata-only — permanently, since nothing rewrites the objects. For a scan shared through a public report token that is worse than an empty page: `loadSharedScanDetail` attests over exactly those serialized bytes, so the same token would start serving different bytes under a different attested subject digest.
 
 An attempt that loses the claim (`persisted: false`) sweeps its own prefix and logs `scan.artifacts.run_discarded`. The sweep runs only on an explicit `persisted === false`, never from a `catch`: if `persistScan` throws, the D1 batch may or may not have committed, and deleting the run could destroy the winner's objects.
 
-One orphan class is accepted: an attempt that writes R2 and then crashes (isolate eviction, queue timeout) before `persistScan` returns leaks up to four objects. It is bounded by the queue retry budget and reclaimed by the scan/org prefix sweeps on deletion. To find one, correlate the logs — an orphan is a `scan.artifacts.written` `runId` for a scan with neither a completion nor a matching `scan.artifacts.run_discarded`.
-
-`persistScan` parks a `persist:<uuid>` claim token in `scans.report_digest` for the length of its atomic D1 batch. D1 applies a batch as one implicit transaction, so a reader should never observe it; the read path recognizes the token anyway and degrades with reason `persist_in_flight` at `info` rather than `report_digest_mismatch`. That keeps `report_digest_mismatch` an unambiguous corruption signal worth alerting on.
+One orphan class is accepted, and it is a deliberate trade rather than an oversight. An attempt that writes R2 and then fails or crashes before `persistScan` returns — a retryable D1 error, an isolate eviction, a queue timeout — leaks up to four objects, where the shared-key layout would have let the next attempt overwrite them. That is the cost of the guarantee above: a set that a later attempt can overwrite is a set that a _stale_ attempt can overwrite. Leaked objects are bounded by the queue retry budget (up to `MAX_SCAN_JOB_ATTEMPTS` sets per scan), are a few KB each, and are reclaimed by the scan/org prefix sweeps on deletion. There is no reaper; adding one would cost more than the leak. To find an orphan, correlate the logs — it is a `scan.artifacts.written` `runId` for a scan with neither a completion nor a matching `scan.artifacts.run_discarded`.
 
 ## Write And Read Flow
 

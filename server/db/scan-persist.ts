@@ -8,7 +8,7 @@ import {
   type PackageJsonSummary,
 } from "../lib/review";
 import type { ScanRiskBreakdown } from "../lib/review/risk";
-import { PERSIST_CLAIM_DIGEST_PREFIX, type ScanArtifactMetadata } from "../lib/scan/artifacts";
+import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { NON_TERMINAL_STATUSES } from "./scan-jobs";
 import {
@@ -107,7 +107,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     updatedAt: now,
   };
 
-  const claimToken = `${PERSIST_CLAIM_DIGEST_PREFIX}${crypto.randomUUID()}`;
+  const claimToken = `persist:${crypto.randomUUID()}`;
   const existing = await db
     .select({ id: scans.id, status: scans.status, reportDigest: scans.reportDigest })
     .from(scans)

@@ -1,14 +1,12 @@
 import { env } from "cloudflare:test";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
-import { PERSIST_CLAIM_DIGEST_PREFIX } from "../../server/lib/scan/artifacts";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
 import { scanArtifactPrefix } from "../../server/lib/scan/artifacts/keys";
-import { eq } from "drizzle-orm";
 
 function deferred() {
   let resolve!: () => void;
@@ -224,52 +222,5 @@ describe("scan completion atomicity", () => {
     expect(stored.objects.filter((object) => object.key.endsWith("/manifest.json"))).toHaveLength(
       2,
     );
-  });
-  // `persistScan` parks a claim token in `scans.report_digest` for the length of
-  // its atomic D1 batch. A reader should never see it — D1 applies a batch as one
-  // transaction — but if one ever does, it must degrade as a transient
-  // `persist_in_flight`, not as `report_digest_mismatch`. That keeps the mismatch
-  // reason an unambiguous corruption signal.
-  test("a parked persist claim token degrades as persist_in_flight, not a digest mismatch", async () => {
-    const { userId, organizationId } = await seedUserAndOrg();
-    const scanId = `scan_${crypto.randomUUID()}`;
-    const stageId = "stage-atomicity-000003";
-
-    const db = createDb(env.DB);
-    await createScanJob(db, { id: scanId, stageId, organizationId, ownerUserId: userId });
-    await claimScanForRun(db, scanId, organizationId);
-    await persistScanWithArtifacts(db, {
-      id: scanId,
-      stageId,
-      organizationId,
-      ownerUserId: userId,
-      packageJson: { name: "demo", version: "1.0.0" },
-      previousPackageJson: null,
-      risk: "low",
-      status: "complete",
-      summary: { ok: true },
-      ai: null,
-      files: [],
-      diff: [],
-      findings: [],
-    });
-
-    await db
-      .update(schema.scans)
-      .set({ reportDigest: `${PERSIST_CLAIM_DIGEST_PREFIX}${crypto.randomUUID()}` })
-      .where(eq(schema.scans.id, scanId));
-
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const detail = await getScan(db, scanId, organizationId, env.ARTIFACTS);
-
-    expect(detail?.findings).toEqual([]);
-    expect(logSpy).toHaveBeenCalledWith(
-      "scan.artifacts.fallback_read",
-      expect.objectContaining({ reason: "persist_in_flight" }),
-    );
-    expect(warnSpy).not.toHaveBeenCalled();
-    logSpy.mockRestore();
-    warnSpy.mockRestore();
   });
 });
