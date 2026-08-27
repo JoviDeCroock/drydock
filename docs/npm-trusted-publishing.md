@@ -21,7 +21,11 @@ This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in
 [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes) — Drydock
 GitHub App installed, release target configured, publish workflow uploading the
-packed tarballs plus `SHA256SUMS`.
+packed tarballs plus `SHA256SUMS`. The
+[guided setup wizard](./workflow-gates.md#guided-setup) builds that prerequisite
+for you and condenses the checklist below into the pull request it opens; the
+registry-side steps (1 and 2) stay manual, because only the npm account holder
+can take them.
 
 ## The recipe
 
