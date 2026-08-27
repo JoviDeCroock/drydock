@@ -65,7 +65,12 @@ describe("scan completion atomicity", () => {
     const stageId = "stage-atomicity-000001";
 
     const readerDb = createDb(env.DB);
-    await createScanJob(readerDb, { id: scanId, stageId, organizationId, ownerUserId: userId });
+    await createScanJob(readerDb, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+    });
     await claimScanForRun(readerDb, scanId, organizationId);
 
     const files = [
@@ -158,7 +163,12 @@ describe("scan completion atomicity", () => {
     const stageId = "stage-atomicity-000002";
 
     const db = createDb(env.DB);
-    await createScanJob(db, { id: scanId, stageId, organizationId, ownerUserId: userId });
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+    });
     await claimScanForRun(db, scanId, organizationId);
 
     const files = [
@@ -207,7 +217,10 @@ describe("scan completion atomicity", () => {
       db,
       seed("stale.finding", "stale completion should not survive"),
     );
-    expect(loser).toMatchObject({ persisted: false, reason: "already_terminal" });
+    expect(loser).toMatchObject({
+      persisted: false,
+      reason: "already_terminal",
+    });
 
     const detail = await getScan(db, scanId, organizationId, env.ARTIFACTS);
     expect(detail?.scan.reportDigest).toBe(winner.reportDigest);
@@ -215,10 +228,15 @@ describe("scan completion atomicity", () => {
       "install-script.implicit-node-gyp",
     ]);
 
-    // Each attempt owns its own prefix, so both manifests coexist and neither is
-    // addressable by the other.
+    // Each attempt owns its own prefix, so neither manifest is addressable by the
+    // other. Both survive here only because this helper calls `persistScan`
+    // directly: in production `persistResults` sweeps the loser's prefix once it
+    // sees `persisted: false`. Two sets is the pre-sweep state, and the point is
+    // that the winner's set is intact in it.
     expect(loser.artifacts.artifactRunPrefix).not.toBe(winner.artifacts.artifactRunPrefix);
-    const stored = await env.ARTIFACTS.list({ prefix: scanArtifactPrefix(organizationId, scanId) });
+    const stored = await env.ARTIFACTS.list({
+      prefix: scanArtifactPrefix(organizationId, scanId),
+    });
     expect(stored.objects.filter((object) => object.key.endsWith("/manifest.json"))).toHaveLength(
       2,
     );
