@@ -1,0 +1,118 @@
+{
+  "id": "browser-document-context-reachability",
+  "title": "runtime browser documents preserve executable context",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for Workers in runtime-opened and non-HTML web-accessible documents, inline handlers in literal srcdoc documents, content-script file objects nested under static spreads, and DevTools sidebar pages selected through setPage.",
+  "slug": "document-context-reachability",
+  "extensionId": "document-context-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "4141414141414141414141414141414141414141414141414141414141414141",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 450,
+      "sha256": "4242424242424242424242424242424242424242424242424242424242424242",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Document context reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"document-context-reachability@example.invalid\" } },\n  \"background\": { \"service_worker\": \"background.js\" },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"devtools_page\": \"devtools.html\",\n  \"web_accessible_resources\": [{ \"resources\": [\"tests/exposed.xhtml\"], \"matches\": [\"https://example.invalid/*\"] }]\n}\n"
+    },
+    {
+      "path": "background.js",
+      "size": 135,
+      "sha256": "4343434343434343434343434343434343434343434343434343434343434343",
+      "flags": [],
+      "textSample": "chrome.tabs.create({ url: \"tests/runtime.html\" });\nbrowser.contentScripts.register({ js: [...[{ ...{ file: \"tests/spread.js\" } }]] });\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 33,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "flags": [],
+      "textSample": "<script src=\"popup.js\"></script>\n"
+    },
+    {
+      "path": "popup.js",
+      "size": 148,
+      "sha256": "4545454545454545454545454545454545454545454545454545454545454545",
+      "flags": [],
+      "textSample": "const frame = document.createElement(\"iframe\");\nframe.srcdoc = `<body onload=\"new Worker('tests/srcdoc.js')\"></body>`;\ndocument.body.append(frame);\n"
+    },
+    {
+      "path": "devtools.html",
+      "size": 36,
+      "sha256": "4646464646464646464646464646464646464646464646464646464646464646",
+      "flags": [],
+      "textSample": "<script src=\"devtools.js\"></script>\n"
+    },
+    {
+      "path": "devtools.js",
+      "size": 112,
+      "sha256": "4747474747474747474747474747474747474747474747474747474747474747",
+      "flags": [],
+      "textSample": "chrome.devtools.panels.elements.createSidebarPane(\"Details\", sidebar => sidebar.setPage(\"tests/sidebar.html\"));\n"
+    },
+    {
+      "path": "tests/runtime.html",
+      "size": 48,
+      "sha256": "4848484848484848484848484848484848484848484848484848484848484848",
+      "flags": [],
+      "textSample": "<body onload=\"new Worker('runtime.js')\"></body>\n"
+    },
+    {
+      "path": "tests/exposed.xhtml",
+      "size": 92,
+      "sha256": "4949494949494949494949494949494949494949494949494949494949494949",
+      "flags": [],
+      "textSample": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body onload=\"new Worker('exposed.js')\"/></html>\n"
+    },
+    {
+      "path": "tests/sidebar.html",
+      "size": 35,
+      "sha256": "4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a",
+      "flags": [],
+      "textSample": "<script src=\"sidebar.js\"></script>\n"
+    },
+    {
+      "path": "tests/runtime.js",
+      "size": 15,
+      "sha256": "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/exposed.js",
+      "size": 15,
+      "sha256": "4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/srcdoc.js",
+      "size": 15,
+      "sha256": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/spread.js",
+      "size": 15,
+      "sha256": "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    },
+    {
+      "path": "tests/sidebar.js",
+      "size": 15,
+      "sha256": "4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f",
+      "flags": [],
+      "textSample": "eval(payload);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/runtime.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/exposed.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/srcdoc.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/spread.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/sidebar.js" }
+  ]
+}

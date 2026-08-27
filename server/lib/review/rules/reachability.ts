@@ -48,10 +48,16 @@ export interface ConsumerReachabilityDependency {
   documentBaseUrl?: string;
 }
 
+export interface ConsumerInlineDocumentDependencies {
+  dependencies: ConsumerReachabilityDependency[];
+  inlineScripts: Array<{ text: string; documentBaseUrl: string }>;
+}
+
 interface ConsumerReachabilityQueueEntry {
   path: string;
   documentBaseUrl?: string;
   workerEntryBaseUrl?: string;
+  sourceText?: string;
 }
 
 interface StaticConsumerDependencies {
@@ -82,8 +88,9 @@ export function consumerReachablePaths(
   consumerInlineDocumentDependencyPaths?: (
     html: string,
     documentBaseUrl: string,
-  ) => ConsumerReachabilityDependency[],
+  ) => ConsumerInlineDocumentDependencies,
   consumerInlineScriptTexts?: (path: string, file: FileRecord) => string[],
+  consumerDocumentBaseUrlForPath?: (path: string) => string | undefined,
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -99,8 +106,9 @@ export function consumerReachablePaths(
     path,
     documentBaseUrl,
     workerEntryBaseUrl,
+    sourceText,
   }: ConsumerReachabilityQueueEntry): string =>
-    `${path}\0${documentBaseUrl ?? ""}\0${workerEntryBaseUrl ?? ""}`;
+    `${path}\0${documentBaseUrl ?? ""}\0${workerEntryBaseUrl ?? ""}\0${sourceText ?? ""}`;
   const enqueue = (entry: ConsumerReachabilityQueueEntry): void => {
     const key = contextKey(entry);
     if (pendingContexts.has(key) || inspectedContexts.has(key)) return;
@@ -133,7 +141,7 @@ export function consumerReachablePaths(
     if (documentBases?.length) {
       for (const documentBaseUrl of documentBases) enqueue({ path: resolved, documentBaseUrl });
     } else {
-      enqueue({ path: resolved });
+      enqueue({ path: resolved, documentBaseUrl: consumerDocumentBaseUrlForPath?.(resolved) });
     }
   }
 
@@ -142,26 +150,31 @@ export function consumerReachablePaths(
   while (queue.length) {
     const queued = queue.pop();
     if (!queued) continue;
-    const { path, documentBaseUrl, workerEntryBaseUrl } = queued;
+    const { path, documentBaseUrl, workerEntryBaseUrl, sourceText } = queued;
     const queuedContextKey = contextKey(queued);
     pendingContexts.delete(queuedContextKey);
     if (inspectedContexts.has(queuedContextKey)) continue;
     inspectedContexts.add(queuedContextKey);
     reachable.add(path);
     const file = byNormalizedPath.get(path);
-    if (!file?.textSample) continue;
-    let dependencies = staticDependenciesByPath.get(path);
+    if (!sourceText && !file?.textSample) continue;
+    let dependencies = sourceText ? undefined : staticDependenciesByPath.get(path);
     if (!dependencies) {
-      const executableTexts = [
-        file.textSample,
-        ...(rootRelativeModuleImports ? (consumerInlineScriptTexts?.(path, file) ?? []) : []),
-      ];
+      const executableTexts = sourceText
+        ? [sourceText]
+        : [
+            file?.textSample ?? "",
+            ...(rootRelativeModuleImports && file
+              ? (consumerInlineScriptTexts?.(path, file) ?? [])
+              : []),
+          ];
       const browserDependencies = rootRelativeModuleImports
         ? executableTexts.map(staticWebExtensionDependencies)
         : [];
       dependencies = {
         documentBases: browserDependencies.flatMap((dependency) => dependency.documentBases),
-        fileDependencies: consumerFileDependencyPaths?.(path, file) ?? [],
+        fileDependencies:
+          sourceText || !file ? [] : (consumerFileDependencyPaths?.(path, file) ?? []),
         relativeSpecifiers: executableTexts.flatMap((text) =>
           relativeSpecifiers(text, rootRelativeModuleImports),
         ),
@@ -171,19 +184,26 @@ export function consumerReachablePaths(
           ? executableTexts.flatMap(staticWorkerScriptSpecifiers)
           : [],
       };
-      staticDependenciesByPath.set(path, dependencies);
+      if (!sourceText) staticDependenciesByPath.set(path, dependencies);
     }
     for (const dependency of dependencies.fileDependencies) {
       spendResolutionWork();
       const resolved = rootRelativeModuleImports
         ? resolveExactModulePath(dependency.path, byNormalizedPath)
         : resolveModulePath(dependency.path, byNormalizedPath);
-      if (resolved) enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+      if (resolved) {
+        enqueue({
+          path: resolved,
+          documentBaseUrl: dependency.documentBaseUrl ?? consumerDocumentBaseUrlForPath?.(resolved),
+        });
+      }
     }
     for (const specifier of dependencies.relativeSpecifiers) {
       spendResolutionWork();
       const resolved = rootRelativeModuleImports
-        ? resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
+        ? sourceText && documentBaseUrl
+          ? resolveBrowserDocumentModulePath(specifier, documentBaseUrl, byNormalizedPath)
+          : resolveBrowserScriptModulePath(path, specifier, byNormalizedPath)
         : resolveModulePath(joinRelative(path, specifier), byNormalizedPath);
       if (resolved) enqueue({ path: resolved, documentBaseUrl, workerEntryBaseUrl });
     }
@@ -238,7 +258,7 @@ export function consumerReachablePaths(
         inheritsExecutionContext: boolean | undefined,
       ): void => {
         if (!inheritsExecutionContext) {
-          enqueue({ path: resolved });
+          enqueue({ path: resolved, documentBaseUrl: consumerDocumentBaseUrlForPath?.(resolved) });
           return;
         }
         if (activeDocumentBaseUrls.size) {
@@ -261,12 +281,25 @@ export function consumerReachablePaths(
               resource.inlineDocument,
               activeDocumentBaseUrl,
             );
-            spendResolutionWork(inlineDependencies.length);
-            for (const dependency of inlineDependencies) {
+            spendResolutionWork(
+              inlineDependencies.dependencies.length + inlineDependencies.inlineScripts.length,
+            );
+            for (const dependency of inlineDependencies.dependencies) {
               const resolved = resolveExactModulePath(dependency.path, byNormalizedPath);
               if (resolved) {
-                enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+                enqueue({
+                  path: resolved,
+                  documentBaseUrl:
+                    dependency.documentBaseUrl ?? consumerDocumentBaseUrlForPath?.(resolved),
+                });
               }
+            }
+            for (const inlineScript of inlineDependencies.inlineScripts) {
+              enqueue({
+                path,
+                documentBaseUrl: inlineScript.documentBaseUrl,
+                sourceText: inlineScript.text,
+              });
             }
           }
           continue;
@@ -667,7 +700,8 @@ type WebExtensionResourceCall =
       argument: WebExtensionResourceArgument;
       resolution: WebExtensionResourceResolution;
     }
-  | { openIndex: number; source: "argument"; argumentIndex: number };
+  | { openIndex: number; source: "argument"; argumentIndex: number }
+  | { openIndex: number; source: "nested-call"; method: string };
 
 const STATIC_BROWSER_GLOBALS = new Set(["globalThis", "parent", "self", "this", "top", "window"]);
 const STATIC_WORKER_GLOBALS = new Set(["globalThis", "self", "this"]);
@@ -835,7 +869,7 @@ function staticWebExtensionDependencies(text: string): StaticWebExtensionDepende
           ),
         );
       }
-    } else {
+    } else if (call.source === "argument") {
       const path = staticLiteralCallArgument(
         tokens,
         text,
@@ -844,6 +878,17 @@ function staticWebExtensionDependencies(text: string): StaticWebExtensionDepende
         call.argumentIndex,
       );
       if (path !== null) resources.push({ path, resolution: "root" });
+    } else {
+      resources.push(
+        ...staticNestedLiteralCallPaths(
+          tokens,
+          text,
+          call.openIndex + 1,
+          closeIndex,
+          call.method,
+          "root",
+        ),
+      );
     }
   }
 
@@ -1543,11 +1588,19 @@ function webExtensionScriptCall(
   }
 
   let subnamespace: string | null = null;
+  let devtoolsPanelTarget: string | null = null;
   if (namespace === "devtools") {
     const member = staticMemberAccess(tokens, text, index);
     if (!member) return null;
     subnamespace = member.name;
     index = member.nextIndex;
+    if (subnamespace === "panels") {
+      const target = staticMemberAccess(tokens, text, index);
+      if (target && (target.name === "elements" || target.name === "sources")) {
+        devtoolsPanelTarget = target.name;
+        index = target.nextIndex;
+      }
+    }
   }
 
   if (
@@ -1715,7 +1768,38 @@ function webExtensionScriptCall(
   if (namespace === "devtools" && subnamespace === "panels" && method === "create") {
     return { openIndex, source: "argument", argumentIndex: 2 };
   }
+  if (
+    namespace === "devtools" &&
+    subnamespace === "panels" &&
+    devtoolsPanelTarget !== null &&
+    method === "createSidebarPane"
+  ) {
+    return { openIndex, source: "nested-call", method: "setPage" };
+  }
   return null;
+}
+
+function staticNestedLiteralCallPaths(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+  method: string,
+  resolution: WebExtensionResourceResolution,
+): WebExtensionResourceSpecifier[] {
+  const paths: WebExtensionResourceSpecifier[] = [];
+  for (let index = start; index < end; index += 1) {
+    const member = staticMemberAccess(tokens, text, index + 1);
+    if (member?.name !== method) continue;
+    const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+    if (openIndex === null || openIndex >= end) continue;
+    const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+    if (closeIndex === null || closeIndex > end) continue;
+    const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
+    if (path !== null) paths.push({ path, resolution });
+    index = closeIndex;
+  }
+  return paths;
 }
 
 function staticPropertyScriptPaths(
@@ -1865,6 +1949,33 @@ function staticNamedPropertyPaths(
   let depth = 0;
   for (let index = start; index < end; index += 1) {
     const token = tokenText(tokens[index], text);
+    if (token === "..." && tokenText(tokens[index + 1], text) === "[") {
+      const closeIndex = matchingPunctuation(tokens, text, index + 1, "[", "]");
+      if (closeIndex !== null && closeIndex < end) {
+        paths.push(
+          ...staticNamedPropertyPaths(tokens, text, index + 2, closeIndex, property, resolution),
+        );
+        index = closeIndex;
+        continue;
+      }
+    }
+    if (token === "..." && tokenText(tokens[index + 1], text) === "{") {
+      const closeIndex = matchingPunctuation(tokens, text, index + 1, "{", "}");
+      if (closeIndex !== null && closeIndex < end) {
+        paths.push(
+          ...staticNamedPropertyPaths(
+            tokens,
+            text,
+            index + 1,
+            closeIndex + 1,
+            property,
+            resolution,
+          ),
+        );
+        index = closeIndex;
+        continue;
+      }
+    }
     const valueIndex =
       depth === 1 ? staticObjectPropertyValueIndex(tokens, text, index, property) : null;
     if (valueIndex !== null) {

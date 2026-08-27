@@ -31,6 +31,16 @@ function manifestFile(overrides = {}, pretty = false) {
   };
 }
 
+function sourceFile(path, textSample, shaByte) {
+  return {
+    path,
+    size: Buffer.byteLength(textSample),
+    sha256: shaByte.repeat(32),
+    flags: [],
+    textSample,
+  };
+}
+
 describe("browser extension review adapter", () => {
   test("recognizes ZIP and XPI release artifacts", () => {
     expect(inferBrowserArtifactKind("dist/addon.zip")).toBe("zip");
@@ -939,6 +949,31 @@ describe("browser extension review adapter", () => {
     },
   );
 
+  test("treats non-HTML web-accessible documents as executable page contexts", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        background: undefined,
+        web_accessible_resources: ["tests/exposed.xhtml"],
+      }),
+      sourceFile(
+        "tests/exposed.xhtml",
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body onload="new Worker(\'payload.js\')"/></html>',
+        "a2",
+      ),
+      sourceFile("tests/payload.js", "eval(payload);", "a3"),
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
   test("follows template and noscript content as reachable (conservative over-approximation)", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
@@ -1841,6 +1876,60 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("gives runtime-opened documents their own Worker URL base", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile(),
+      sourceFile("background.js", 'chrome.tabs.create({ url: "tests/runtime.html" });', "a4"),
+      sourceFile("tests/runtime.html", "<body onload=\"new Worker('payload.js')\"></body>", "a5"),
+      sourceFile("tests/payload.js", "eval(payload);", "a6"),
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("follows static spread literals and DevTools sidebar pages", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ devtools_page: "devtools.html" }),
+      sourceFile(
+        "background.js",
+        'browser.contentScripts.register({ js: [...[{ ...{ file: "tests/spread.js" } }]] });',
+        "a7",
+      ),
+      sourceFile("devtools.html", '<script src="devtools.js"></script>', "a8"),
+      sourceFile(
+        "devtools.js",
+        'chrome.devtools.panels.elements.createSidebarPane("Details", sidebar => sidebar.setPage("tests/sidebar.html"));',
+        "a9",
+      ),
+      sourceFile("tests/sidebar.html", '<script src="sidebar.js"></script>', "aa"),
+      sourceFile("tests/spread.js", "eval(payload);", "ab"),
+      sourceFile("tests/sidebar.js", "eval(payload);", "ac"),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ severity: "high", file: "tests/spread.js" }),
+        expect.objectContaining({ severity: "high", file: "tests/sidebar.js" }),
+      ]),
+    );
+    expect(findings).toHaveLength(2);
   });
 
   test("fails loudly on recursive XML general entities", () => {
@@ -3268,6 +3357,33 @@ describe("browser extension review adapter", () => {
     const finding = review.ruleFindings.find(
       (candidate) => candidate.ruleId === "code.dynamic-evaluation",
     );
+    expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
+    expect(finding?.testScoped).not.toBe(true);
+  });
+
+  test("executes inline handlers discovered in a literal runtime srcdoc", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "popup.html" } }),
+      sourceFile("popup.html", '<script src="popup.js"></script>', "ad"),
+      sourceFile(
+        "popup.js",
+        [
+          'const frame = document.createElement("iframe");',
+          "frame.srcdoc = `<body onload=\"new Worker('tests/payload.js')\"></body>`;",
+          "document.body.append(frame);",
+        ].join("\n"),
+        "ae",
+      ),
+      sourceFile("tests/payload.js", "eval(payload);", "af"),
+    ];
+
+    const finding = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.find((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+
     expect(finding).toMatchObject({ severity: "high", file: "tests/payload.js" });
     expect(finding?.testScoped).not.toBe(true);
   });

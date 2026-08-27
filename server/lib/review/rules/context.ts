@@ -5,6 +5,7 @@ import {
   consumerReachablePaths,
   lifecycleScriptSeedPaths,
   normalizeReachabilityPath,
+  type ConsumerInlineDocumentDependencies,
   type ConsumerReachabilityDependency,
 } from "./reachability";
 import { isTestPath } from "./file-types";
@@ -49,12 +50,18 @@ export interface DeterministicFindingOptions {
   consumerInlineDocumentDependencyPaths?: (
     html: string,
     documentBaseUrl: string,
-  ) => ConsumerReachabilityDependency[];
+  ) => ConsumerInlineDocumentDependencies;
   /**
    * Literal JavaScript embedded in a reachable browser document, such as an
    * inline event handler. These sources inherit the owning document context.
    */
   consumerInlineScriptTexts?: (path: string, file: FileRecord) => string[];
+  /**
+   * Browser document URL for a resolved packaged page. Runtime navigation
+   * creates a fresh document context even when the edge did not inherit the
+   * caller's execution context.
+   */
+  consumerDocumentBaseUrlForPath?: (path: string) => string | undefined;
   /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
@@ -121,6 +128,7 @@ export function buildRuleContext(
       options.consumerFileDependencyPaths,
       options.consumerInlineDocumentDependencyPaths,
       options.consumerInlineScriptTexts,
+      options.consumerDocumentBaseUrlForPath,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
