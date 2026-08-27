@@ -513,15 +513,25 @@ export async function listBadgeCandidateScans(
 
 /**
  * Whether a package version has a feed-listed review whose package identity
- * the registry established. Sources without registry-backed package identity
- * are deliberately excluded: accepting a manifest claim here would let an
- * unrelated organization satisfy a consumer's maintainer-review policy.
+ * the registry established and whose verified staged bytes equal the published
+ * archive the consumer is installing. Sources without registry-backed package
+ * identity are deliberately excluded: their manifest can claim any package
+ * name, so accepting one here would let an unrelated organization satisfy a
+ * consumer's policy. Requiring the digest also keeps a mutable stage from
+ * satisfying the lookup after its reviewed bytes are replaced.
  */
 export async function hasListedMaintainerReview(
   db: AppDb,
-  input: { ecosystem: PublicEcosystem; packageName: string; version: string },
+  input: {
+    ecosystem: PublicEcosystem;
+    packageName: string;
+    version: string;
+    publishedSha1: string;
+  },
 ): Promise<boolean> {
   const packageKey = publicPackageLookupKey(input.ecosystem, input.packageName);
+  const integrityStatus = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.status')`;
+  const reviewedSha1 = sql`lower(json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.computed'))`;
   const [row] = await db
     .select({ scanId: scans.id })
     .from(scans)
@@ -533,6 +543,8 @@ export async function hasListedMaintainerReview(
         isNotNull(scans.publicFeedListedAt),
         eq(scans.status, "complete"),
         notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]),
+        sql`${integrityStatus} = 'verified'`,
+        sql`${reviewedSha1} = ${input.publishedSha1.toLowerCase()}`,
       ),
     )
     .limit(1);

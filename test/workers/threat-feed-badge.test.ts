@@ -81,6 +81,8 @@ async function seedCompletedScan(
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
+    artifactSha1?: string;
+    artifactIntegrityStatus?: "verified" | "unverified";
   } = {},
 ): Promise<string> {
   const db = createDb(env.DB);
@@ -89,6 +91,7 @@ async function seedCompletedScan(
   const packageName = options.packageName ?? "@org/pkg";
   const version = options.version ?? "1.1.0";
   const risk = options.risk ?? "low";
+  const artifactSha1 = options.artifactSha1 ?? "a".repeat(40);
   // Gate scans persist a provenance snapshot; staged-publish scans do not.
   const gateEcosystem =
     options.source === "published" || options.withoutProvenance
@@ -142,9 +145,29 @@ async function seedCompletedScan(
     status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
-      ...(publishedPair ? { stagedPublish: publishedPair } : {}),
-      ...(!gateEcosystem && !publishedPair && options.tag
-        ? { stagedPublish: { tag: options.tag } }
+      ...(publishedPair
+        ? { stagedPublish: publishedPair }
+        : !gateEcosystem
+        ? {
+            stagedPublish: {
+              ...(options.tag ? { tag: options.tag } : {}),
+              artifactIntegrity:
+                options.artifactIntegrityStatus === "unverified"
+                  ? {
+                      algorithm: "sha1",
+                      status: "unverified",
+                      declared: artifactSha1,
+                      computed: null,
+                      reason: "computed-digest-unavailable",
+                    }
+                  : {
+                      algorithm: "sha1",
+                      status: "verified",
+                      declared: artifactSha1,
+                      computed: artifactSha1,
+                    },
+            },
+          }
         : {}),
       ...(gateEcosystem
         ? {
@@ -274,16 +297,26 @@ async function fetchReviewLookup(
   ecosystem: string,
   packageName: string,
   version: string,
+  publishedSha1 = "a".repeat(40),
 ): Promise<{ status: number; body: { schema?: string; listed?: boolean } }> {
   const packagePath = packageName.split("/").map(encodeURIComponent).join("/");
   const res = await request(
     app,
-    `/public/reviews/${encodeURIComponent(ecosystem)}/${packagePath}/${encodeURIComponent(version)}`,
+    `/public/reviews/${encodeURIComponent(ecosystem)}/${packagePath}/${encodeURIComponent(version)}?sha1=${publishedSha1}`,
   );
   return { status: res.status, body: await res.json() };
 }
 
 describe("listed maintainer review lookup", () => {
+  test("requires a published artifact digest", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const res = await request(app, "/public/reviews/npm/example/1.0.0");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "published artifact digest is required" });
+  });
+
   test("requires an exact version whose registry-verified review is feed-listed", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -319,6 +352,39 @@ describe("listed maintainer review lookup", () => {
     await share(app, scanId, { threatFeed: true });
 
     expect((await fetchReviewLookup(app, "npm", packageName, "9.9.9")).body).toEqual({
+      schema: "drydock.review-lookup.v1",
+      listed: false,
+    });
+  });
+
+  test("binds the listed review to verified bytes of the published version", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const reviewedSha1 = "b".repeat(40);
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.0",
+      artifactSha1: reviewedSha1,
+    });
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchReviewLookup(app, "npm", packageName, "3.0.0", reviewedSha1)).body).toEqual({
+      schema: "drydock.review-lookup.v1",
+      listed: true,
+    });
+    expect(
+      (await fetchReviewLookup(app, "npm", packageName, "3.0.0", "c".repeat(40))).body,
+    ).toEqual({ schema: "drydock.review-lookup.v1", listed: false });
+
+    const unverifiedId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.1.0",
+      artifactSha1: reviewedSha1,
+      artifactIntegrityStatus: "unverified",
+    });
+    await share(app, unverifiedId, { threatFeed: true });
+    expect((await fetchReviewLookup(app, "npm", packageName, "3.1.0", reviewedSha1)).body).toEqual({
       schema: "drydock.review-lookup.v1",
       listed: false,
     });

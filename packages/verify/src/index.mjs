@@ -72,21 +72,31 @@ export async function verifyDependencies(
     let listedReview;
     let listedReviewUnavailable = false;
     const unavailable = [];
-    try {
-      verdict = await client.verdict(pair);
-    } catch (error) {
-      unavailable.push(
-        `verdict unavailable (${error instanceof Error ? error.message : String(error)})`,
-      );
+    if (pair.unavailableReason) {
+      unavailable.push(pair.unavailableReason);
+    } else {
+      try {
+        verdict = await client.verdict(pair);
+      } catch (error) {
+        unavailable.push(
+          `verdict unavailable (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
     }
     if (requiresListedReview(policy, pair.name)) {
-      try {
-        listedReview = await client.listedReview(pair);
-      } catch (error) {
+      const publishedSha1 = verdict?.to?.integrity?.sha1;
+      if (typeof publishedSha1 !== "string") {
         listedReviewUnavailable = true;
-        unavailable.push(
-          `listed review unavailable (${error instanceof Error ? error.message : String(error)})`,
-        );
+        unavailable.push("listed review unavailable (published artifact digest is unavailable)");
+      } else {
+        try {
+          listedReview = await client.listedReview(pair, publishedSha1);
+        } catch (error) {
+          listedReviewUnavailable = true;
+          unavailable.push(
+            `listed review unavailable (${error instanceof Error ? error.message : String(error)})`,
+          );
+        }
       }
     }
 

@@ -45,7 +45,8 @@ export const npmPublicDiff: PublicDiffAdapter = {
   // v6: payloads carry the capability delta, per-side publication timestamps,
   // and declared source binding; v5 entries would serve none of them. v7
   // aligns capability projection with deterministic code-matching semantics.
-  payloadVersion: "v7",
+  // v8 binds listed maintainer reviews to the published target archive digest.
+  payloadVersion: "v8",
 
   isValidPackageName: isValidNpmPackageName,
   normalizePackageName: (name) => name,
@@ -150,11 +151,13 @@ export const npmPublicDiff: PublicDiffAdapter = {
         files: fromArchive.files,
         packageJson: fromArchive.packageJson ?? null,
         ...(fromPublishedAt ? { publishedAt: fromPublishedAt } : {}),
+        ...(fromArchive.archiveSha1 ? { archiveSha1: fromArchive.archiveSha1 } : {}),
       },
       to: {
         files: toArchive.files,
         packageJson: toArchive.packageJson ?? null,
         ...(toPublishedAt ? { publishedAt: toPublishedAt } : {}),
+        ...(toArchive.archiveSha1 ? { archiveSha1: toArchive.archiveSha1 } : {}),
       },
       buildFindings: (fileDiff, manifestDiff) =>
         buildNpmFindings({
