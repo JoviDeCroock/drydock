@@ -243,7 +243,11 @@ export function softenPromptInjectionLineBreaks(text: string): string {
 // an LLM audience.
 const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
 const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock(?:[\s-]+reviewer)?|${AI_ACTOR_SEGMENT})`;
+const REVIEWED_RELEASE_SEGMENT = String.raw`(?:package|release|update|version|publish)`;
+const POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT = String.raw`(?:safe|benign|trusted|clean|harmless|verified|legitimate)`;
+const CLEAN_REVIEW_VERDICT_SEGMENT = String.raw`(?:${POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT}|not\s+(?:malicious|suspicious))`;
 const REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)`;
+const DIRECT_REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:(?:approve)\s+(?:(?:this|the)\s+)?${REVIEWED_RELEASE_SEGMENT}|(?:mark|report|assess|rate|label|classify|declare|say)\s+(?:(?:this|the)\s+)?${REVIEWED_RELEASE_SEGMENT}\b(?![^\n.!?]{0,40}\bnot\s+${POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT}\b)[^\n.!?]{0,40}\b(?:(?:as|is)\s+)?${CLEAN_REVIEW_VERDICT_SEGMENT})\b`;
 
 // Text that tries to steer the *automated security review itself* toward a
 // clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
@@ -267,12 +271,12 @@ const REVIEW_MANIPULATION_PATTERNS = [
     String.raw`[.!?;:,="'()\x60][\t ]*(?:please[\t ]+)?${REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
     "i",
   ),
-  // An explicit approval command aimed at an AI-qualified or Drydock audience
-  // is already a clean verdict; requiring a redundant "as safe" suffix would
-  // leave the deterministic gate at medium when the advisory reviewer cannot
-  // run.
+  // An explicit clean-verdict command aimed at an AI-qualified or Drydock
+  // audience does not need a determiner or one canonical verb. Requiring
+  // "approve this" or "mark this as safe" leaves equivalent direct commands
+  // below the standing-danger tier when the advisory reviewer cannot run.
   new RegExp(
-    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?approve\s+(?:this|the)\s+(?:package|release|update|version|publish)\b`,
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?${DIRECT_REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
     "i",
   ),
   // Once an AI/Drydock review audience is explicit, a command to hide review
@@ -328,7 +332,7 @@ const PROMPT_INJECTION_PATTERNS = [
   // punctuation followed by a directive or an explicit obligation so prose
   // that merely describes an AI tool stays quiet.
   new RegExp(
-    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat)\b`,
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat|say)\b`,
     "i",
   ),
   new RegExp(

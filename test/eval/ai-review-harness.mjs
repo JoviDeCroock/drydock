@@ -155,6 +155,7 @@ export function runAiReviewEval(corpus = JSON.parse(readFileSync(CORPUS_PATH, "u
     generatedAt: new Date().toISOString(),
     suiteVersion: corpus.suiteVersion,
     currentReviewerVersion: AI_REVIEWER_VERSION,
+    currentContractRecorded: results.length > 0,
     recordedReviewerVersions: [
       ...new Set(allResults.map((result) => result.review?.reviewerVersion ?? "legacy")),
     ].sort(),
@@ -199,6 +200,7 @@ function renderMarkdown(result) {
     `- generated: ${result.generatedAt}`,
     `- suite version: ${result.suiteVersion}`,
     `- current reviewer version: ${result.currentReviewerVersion}`,
+    `- current contract recorded: ${result.currentContractRecorded ? "yes" : "no; regenerate controlled outputs before claiming current-model coverage"}`,
     `- recorded output versions: ${result.recordedReviewerVersions.join(", ")}`,
     `- gated result: ${result.summary.passed}/${result.summary.total} (${percent(result.summary.rate)})`,
     `- historical compatibility: ${result.historicalSummary.passed}/${result.historicalSummary.total} (${percent(result.historicalSummary.rate)}, version-agnostic)`,

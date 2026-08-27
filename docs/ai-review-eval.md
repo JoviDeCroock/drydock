@@ -122,18 +122,17 @@ required fields, and unique case ids across both sets are validated before
 metrics are computed. The report keeps the two totals separate so historical
 output cannot be mistaken for current reviewer coverage. The gate also compares
 current and historical review bodies without their version field and rejects a
-current record that merely relabels an old output. The current-version gate
-contains prompt-injection-shaped hostile evidence. Unavailable evidence, a
-benign documentation release, install-time and credential compromise, and model
-failover remain under their original reviewer version in the historical
-compatibility set until controlled current-version runs replace them. Reports
-are written to `.context/eval/ai-review-eval.json` and
+current record that merely relabels an old output. The current-version gate may
+be empty immediately after a prompt or routing contract changes. In that state
+the report says the current contract is not recorded, and the previous outputs
+remain historical compatibility evidence; they must not be relabeled to make
+the gate green. Reports are written to `.context/eval/ai-review-eval.json` and
 `.context/eval/ai-review-eval.md`; a write failure fails the command.
 
-These are recorded outputs, so a green run proves the scoring contract and
-guards known current-version outputs; it does not prove the hosted model will
-reproduce them. Historical records never contribute to the gated result. Before
-promoting a new model or reviewer version, refresh the gated corpus from
+Recorded outputs prove the scoring contract and guard outputs from the contract
+that produced them; they do not prove the hosted model will reproduce them.
+Historical records never contribute to the gated result. Before promoting a new
+model or reviewer version, refresh the gated corpus from
 controlled live runs, redact evidence, have a human assign the verdict and
 threat class, then compare the new version by category. Keep model failover's
 runtime behavior covered by the mocked orchestration tests in
