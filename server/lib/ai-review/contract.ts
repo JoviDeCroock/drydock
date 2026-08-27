@@ -6,7 +6,7 @@ export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 // or model-routing policy changes in a way that can alter reviewer behavior.
 // Persisting this with each review keeps analytics and recorded eval cases from
 // silently comparing different reviewer contracts as though they were one.
-export const AI_REVIEWER_VERSION = "1.3.0";
+export const AI_REVIEWER_VERSION = "1.2.0";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
@@ -134,7 +134,7 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
   return `${BASE_REVIEWER_SYSTEM_PROMPT}\n\n${ecosystemPrompt}\n\n${SEVERITY_GUIDANCE}`;
 }
 
-export const MAX_AGENT_STEPS = 12;
+export const MAX_AGENT_STEPS = 20;
 // Per-step output-token cap, sized comfortably above a worst-case submission so
 // findings plus summary serialize without truncation. A slight overshoot is
 // clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by
@@ -144,8 +144,8 @@ export const MAX_REVIEW_OUTPUT_TOKENS = 8_000;
 export const MAX_CHANGED_FILE_MANIFEST = 300;
 export const MAX_TOOL_RESPONSE_CHARS = 16_000;
 export const MAX_TOTAL_TOOL_RESPONSE_CHARS = 48_000;
-// Beyond this many changed files, use the medium-signal fallback order instead
-// of leaving Kimi until last.
+// Low-signal releases can lead with the faster fallback model; beyond this many
+// changed files, keep the strong model first.
 export const MAX_LOW_SIGNAL_CHANGED_FILES = 5;
 const DEFAULT_TOOL_CHARS = 8_000;
 const MAX_READ_BATCH_PATHS = 10;

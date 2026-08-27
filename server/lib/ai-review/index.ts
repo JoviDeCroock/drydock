@@ -28,26 +28,23 @@ export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types
 export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
-// Reviewer model order: use the inexpensive agentic model for most releases,
-// while preserving Kimi as the first reviewer for pre-classified high-signal
-// changes. Model selection never depends on a weaker model's output.
+// Reviewer model order: prefer the strongest affordable model, then fail over.
 //
-// Every candidate must survive this loop's shape, not just answer a prompt: up
+// Both candidates must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
 // makes the cached-input price, not the headline input price, the cost driver,
 // and it makes the context window a floor rather than a feature — evidence is
 // capped at MAX_TOTAL_TOOL_RESPONSE_CHARS, so anything past ~64k is unusable
-// spend. Each fallback is agentic and cache-discounted: a failover that cannot
-// finish the loop returns `invalid`, which floors the scan at medium and
-// escalates to manual review, so a "cheap" model that misses the submission
-// costs more than it saves. Re-check all candidates against
-// docs/ai-review-eval.md's live comparison before changing them; model routing
-// changes require bumping
+// spend. The fallback is deliberately an agentic model with a deep cache
+// discount rather than the cheapest listing: a failover that cannot finish the
+// loop returns `invalid`, which floors the scan at medium and escalates to
+// manual review, so a "cheap" model that misses the submission costs more than
+// it saves. Re-check both against docs/ai-review-eval.md's live comparison
+// before changing either; changing them is a routing change, so bump
 // AI_REVIEWER_VERSION with it.
-export const AI_MODEL = "@cf/zai-org/glm-5.3-flash";
-export const AI_FALLBACK_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const AI_ECONOMY_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
-export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL, AI_ECONOMY_MODEL] as const;
+export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
+export const AI_FALLBACK_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
 // The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
@@ -86,36 +83,14 @@ async function tracedAiSdk(): Promise<typeof ai> {
 
 const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
 
-// One short jittered retry absorbs a capacity blip. A minute-based 429 or a
-// request timeout cannot be fixed by retrying the same whole agent loop after a
-// few hundred milliseconds, so those move directly to the next model.
-const AI_REVIEW_MAX_CAPACITY_ATTEMPTS = 2;
+// Workers AI transient failures are retried a bounded number of times before
+// moving to the next configured reviewer model. AI SDK and Gateway retries are
+// disabled below so every provider attempt remains visible to accounting.
+const AI_REVIEW_MAX_ATTEMPTS = 3;
 const AI_REVIEW_RETRY_DELAY_MS = 500;
-const AI_REVIEW_RETRY_JITTER_MS = 500;
 
 export function selectModelCandidates(options: SelectiveAiReviewOptions): readonly string[] {
-  if (isHighSignalReview(options)) {
-    return [AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL];
-  }
-  if (isLowSignalReview(options)) {
-    return [AI_MODEL, AI_ECONOMY_MODEL, AI_FALLBACK_MODEL];
-  }
-  return AI_MODEL_CANDIDATES;
-}
-
-function isHighSignalReview(options: SelectiveAiReviewOptions): boolean {
-  return (
-    options.previousVersionAvailable === false ||
-    options.ruleFindings.some(
-      (finding) =>
-        finding.severity === "critical" ||
-        finding.severity === "high" ||
-        finding.obfuscated === true,
-    ) ||
-    options.packageJsonDiff.entrypointsChanged === true ||
-    options.packageJsonDiff.scripts.length > 0 ||
-    options.packageJsonDiff.dependencies.length > 0
-  );
+  return isLowSignalReview(options) ? [AI_FALLBACK_MODEL, AI_MODEL] : AI_MODEL_CANDIDATES;
 }
 
 function isLowSignalReview(options: SelectiveAiReviewOptions): boolean {
@@ -162,7 +137,7 @@ export async function analyzeWithAi(
 
   for (const [modelIndex, candidateModel] of models.entries()) {
     const hasFallback = modelIndex < models.length - 1;
-    for (let attempt = 1; attempt <= AI_REVIEW_MAX_CAPACITY_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= AI_REVIEW_MAX_ATTEMPTS; attempt += 1) {
       const attemptStartedAtMs = Date.now();
       let completedStepUsage: AiReviewUsage | null = null;
       // Declared per attempt: a retried run starts the agentic loop from scratch,
@@ -259,19 +234,14 @@ export async function analyzeWithAi(
           return { review: textReview, usage };
         }
 
-        const action = hasFallback ? "fallback" : "stop";
         recordAiReviewAttempt(env, options, {
           model: candidateModel,
           attempt,
           outcome: "invalid",
-          action,
+          action: "stop",
           durationMs: durationMsSince(attemptStartedAtMs),
           usage,
         });
-        if (hasFallback) {
-          transientFailures.push(`${candidateModel}: invalid review`);
-          break;
-        }
         return {
           review: fallbackReview(
             candidateModel,
@@ -282,7 +252,7 @@ export async function analyzeWithAi(
         };
       } catch (err) {
         const outcome = classifyAiAttemptError(err);
-        const shouldRetry = outcome === "capacity" && attempt < AI_REVIEW_MAX_CAPACITY_ATTEMPTS;
+        const shouldRetry = outcome !== "error" && attempt < AI_REVIEW_MAX_ATTEMPTS;
         const shouldFallback = !shouldRetry && outcome !== "error" && hasFallback;
         recordAiReviewAttempt(env, options, {
           model: candidateModel,
@@ -294,7 +264,7 @@ export async function analyzeWithAi(
         });
 
         if (shouldRetry) {
-          await sleep(AI_REVIEW_RETRY_DELAY_MS + Math.random() * AI_REVIEW_RETRY_JITTER_MS);
+          await sleep(AI_REVIEW_RETRY_DELAY_MS * attempt);
           continue;
         }
         if (shouldFallback) {
@@ -364,14 +334,13 @@ export function aiReviewTraceTelemetry(
 }
 
 // Workers AI capacity, quota, and timeout rejections are classified separately
-// because only capacity gets an in-model retry. Matched on message text because
-// the binding throws plain Errors, not classified APICallErrors — `3040` is
-// "Capacity temporarily exceeded" and `3046` is "Request timeout".
+// for attempt telemetry. Match the provider message because binding errors are
+// not consistently typed; `3040` is out of capacity and `3007` is a timeout.
 type AiAttemptOutcome = "complete" | "invalid" | "rate_limited" | "capacity" | "timeout" | "error";
 type AiAttemptAction = "done" | "retry" | "fallback" | "stop";
 
 const RATE_LIMITED_AI_ERROR_PATTERN = /\b429\b|rate.?limit|too many requests/i;
-const TIMEOUT_AI_ERROR_PATTERN = /\b(?:3046|408)\b|request timeout/i;
+const TIMEOUT_AI_ERROR_PATTERN = /\b(?:3007|408)\b|request timeout/i;
 const CAPACITY_AI_ERROR_PATTERN =
   /\b(?:3040|502|503)\b|capacity .*exceeded|temporarily unavailable|overloaded/i;
 

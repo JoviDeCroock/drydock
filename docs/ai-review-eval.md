@@ -86,20 +86,16 @@ Routing is fixed before a model runs; output from a cheaper model never decides
 whether Kimi should inspect the release.
 
 - Low signal (baseline present, no deterministic findings, no entrypoint,
-  script, or dependency delta, and at most five changed files): GLM 5.3 Flash →
-  DeepSeek V4 Flash → Kimi K2.7 Code.
-- Medium signal: GLM 5.3 Flash → Kimi K2.7 Code → DeepSeek V4 Flash.
-- High signal (missing baseline, critical/high or obfuscated deterministic
-  finding, or an entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM
-  5.3 Flash → DeepSeek V4 Flash.
+  script, or dependency delta, and at most five changed files): DeepSeek V4
+  Flash → Kimi K2.7 Code.
+- All other releases: Kimi K2.7 Code → DeepSeek V4 Flash.
 
-The agent is capped at 12 steps. A capacity/5xx failure gets one jittered retry;
-a 429 or timeout moves directly to the next model because a sub-second retry
-cannot escape a minute quota. An invalid completed run also moves to the next
-model without re-running the same model. Do not add AI Gateway retries on top of
-this loop: each request pins Gateway attempts to one so account-level retry
-settings cannot multiply requests invisibly. Dynamic routing at individual
-inference-step granularity can also mix models inside one review.
+The agent is capped at 20 steps. Capacity, rate-limit, and timeout failures get
+up to three total attempts before moving to the next model; an invalid completed
+run stops without spending a second full evidence budget. AI SDK and AI Gateway
+retries are disabled inside each attempt so account-level settings cannot
+multiply requests invisibly. Dynamic routing at individual inference-step
+granularity can also mix models inside one review.
 
 Cloudflare's queue consumer already limits scan concurrency to ten and processes
 one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation
@@ -126,13 +122,14 @@ baseline includes prompt-injection-shaped hostile evidence, unavailable
 evidence, and a fallback-model result. Reports are written best-effort to
 `.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`.
 
-These are historical recorded outputs, so a green run proves the scoring
-contract and guards known outputs; it does not prove the current hosted model
-will reproduce them. Before treating the corpus as evidence for a new model or
-reviewer version, refresh it from controlled live runs, redact evidence, have a
-human assign the verdict and threat class, then update its recorded provenance
-and compare the new version by category. Keep model failover's runtime behavior
-covered by the mocked orchestration tests in `test/ai-review.test.mjs` as well.
+These are recorded outputs, so a green run proves the scoring contract and
+guards known outputs; it does not prove the current hosted model will reproduce
+them. The test still requires current-contract coverage before merge. Before
+promoting a new model or reviewer version, refresh the corpus from controlled
+live runs, redact evidence, have a human assign the verdict and threat class,
+then update its recorded provenance and compare the new version by category.
+Keep model failover's runtime behavior covered by the mocked orchestration tests
+in `test/ai-review.test.mjs` as well.
 
 ## Live model comparison
 
@@ -150,7 +147,7 @@ is gated behind `AI_REVIEW_LIVE_EVAL` and never runs in `pnpm test` or
 `pnpm run verify`. Reports land in `.context/eval/ai-review-model-compare.json`
 and `.context/eval/ai-review-model-compare.md`.
 
-Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the three
+Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
 routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating; the report
 states how many were dropped), `AI_REVIEW_LIVE_GATEWAY`.
 

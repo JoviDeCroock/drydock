@@ -19,7 +19,6 @@ import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-revie
 
 const KIMI = "@cf/moonshotai/kimi-k2.7-code";
 const FLASH = "@cf/deepseek-ai/deepseek-v4-flash-0731";
-const GLM = "@cf/zai-org/glm-5.3-flash";
 const QWEN_NO_CACHE = "@cf/qwen/qwen3.8-27b";
 
 function usage(overrides = {}) {
@@ -60,11 +59,6 @@ describe("estimateCost", () => {
 
   test("is cheapest on the fallback model for an identical loop", () => {
     expect(estimateCost(FLASH, usage())).toBeLessThan(estimateCost(KIMI, usage()));
-  });
-
-  test("prices GLM 5.3 Flash below the current models for an identical loop", () => {
-    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(FLASH, usage()));
-    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(KIMI, usage()));
   });
 
   test("never counts more cached tokens than billed input", () => {

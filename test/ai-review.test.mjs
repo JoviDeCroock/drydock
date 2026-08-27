@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   AI_FALLBACK_MODEL,
-  AI_ECONOMY_MODEL,
   AI_MODEL,
   AI_MODEL_CANDIDATES,
   AI_REVIEWER_VERSION,
@@ -149,17 +148,12 @@ describe("AI review prompt selection", () => {
 
 describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
-    expect(AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
-    expect(AI_FALLBACK_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
-    expect(AI_ECONOMY_MODEL).toBe("@cf/deepseek-ai/deepseek-v4-flash-0731");
-    expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL, AI_ECONOMY_MODEL]);
+    expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
+    expect(AI_FALLBACK_MODEL).toBe("@cf/deepseek-ai/deepseek-v4-flash-0731");
+    expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
-  test("keeps Kimi last for a clean low-signal release", () => {
-    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([
-      AI_MODEL,
-      AI_ECONOMY_MODEL,
-      AI_FALLBACK_MODEL,
-    ]);
+  test("selects the cheaper model first for a clean low-signal release", () => {
+    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when deterministic findings are present", () => {
@@ -177,7 +171,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps the strong model first when lifecycle scripts change", () => {
@@ -198,7 +192,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps the strong model first when dependencies change", () => {
@@ -219,7 +213,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps the strong model first when entrypoints change", () => {
@@ -240,7 +234,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps the strong model first when no previous version is available", () => {
@@ -258,7 +252,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps the strong model first when the changed-file count exceeds the threshold", () => {
@@ -459,7 +453,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("a complete review without evidence does not raise package risk", async () => {
@@ -569,13 +563,14 @@ describe("ai review orchestration", () => {
     expect(ai.summary).toBe("No unusual changes.");
   });
 
-  test("a request timeout moves directly to the fallback model", async () => {
+  test("a persistent request timeout exhausts retries before fallback", async () => {
+    skipRetryDelay();
     const calls = new Map();
     const modelFactory = (model) =>
       mockModel(async () => {
         calls.set(model, (calls.get(model) ?? 0) + 1);
         if (model === "primary-reviewer") {
-          throw new Error("AiError: AiError: Request timeout (ca4ebee2)");
+          throw new Error("3007: Request timeout (ca4ebee2)");
         }
         return generateResult(
           [
@@ -597,13 +592,14 @@ describe("ai review orchestration", () => {
       modelFactory,
     );
 
-    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("primary-reviewer")).toBe(3);
     expect(calls.get("fallback-reviewer")).toBe(1);
     expect(ai.status).toBe("complete");
     expect(ai.model).toBe("fallback-reviewer");
   });
 
-  test("a rate limit moves directly to the fallback model", async () => {
+  test("a persistent rate limit exhausts retries before fallback", async () => {
+    skipRetryDelay();
     const calls = new Map();
     const modelFactory = (model) =>
       mockModel(async () => {
@@ -629,7 +625,7 @@ describe("ai review orchestration", () => {
       modelFactory,
     );
 
-    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("primary-reviewer")).toBe(3);
     expect(calls.get("fallback-reviewer")).toBe(1);
     expect(ai.model).toBe("fallback-reviewer");
   });
@@ -645,7 +641,7 @@ describe("ai review orchestration", () => {
     const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, downModel);
 
     // Retried up to the attempt cap before degrading, not retried forever.
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(ai.status).toBe("unavailable");
     expect(ai.summary).toContain("Capacity temporarily exceeded");
     expect(computeScanRisk([], ai)).toBe("medium");
@@ -680,13 +676,13 @@ describe("ai review orchestration", () => {
       modelFactory,
     );
 
-    expect(calls.get("primary-reviewer")).toBe(2);
+    expect(calls.get("primary-reviewer")).toBe(3);
     expect(calls.get("fallback-reviewer")).toBe(1);
     expect(ai.status).toBe("complete");
     expect(ai.model).toBe("fallback-reviewer");
   });
 
-  test("an invalid review moves to the fallback model without retrying the same model", async () => {
+  test("an invalid completed review stops without spending a fallback attempt", async () => {
     const calls = new Map();
     const modelFactory = (model) =>
       mockModel(async () => {
@@ -715,9 +711,9 @@ describe("ai review orchestration", () => {
     );
 
     expect(calls.get("primary-reviewer")).toBe(1);
-    expect(calls.get("fallback-reviewer")).toBe(1);
-    expect(ai.status).toBe("complete");
-    expect(ai.model).toBe("fallback-reviewer");
+    expect(calls.get("fallback-reviewer")).toBeUndefined();
+    expect(ai.status).toBe("invalid");
+    expect(ai.model).toBe("primary-reviewer");
   });
 
   test("records anonymous per-model attempt outcomes and fallback actions", async () => {
@@ -743,8 +739,10 @@ describe("ai review orchestration", () => {
       modelFactory,
     );
 
-    expect(points).toHaveLength(2);
+    expect(points).toHaveLength(4);
     expect(points.map((point) => point.blobs.slice(2))).toEqual([
+      ["", "npm", "rate_limited", "retry", "primary-reviewer", AI_REVIEWER_VERSION],
+      ["", "npm", "rate_limited", "retry", "primary-reviewer", AI_REVIEWER_VERSION],
       ["", "npm", "rate_limited", "fallback", "primary-reviewer", AI_REVIEWER_VERSION],
       ["", "npm", "complete", "done", "fallback-reviewer", AI_REVIEWER_VERSION],
     ]);
@@ -778,10 +776,10 @@ describe("ai review orchestration", () => {
 
     await analyzeWithAi(env, ["primary-reviewer", "fallback-reviewer"], BASE_OPTIONS, modelFactory);
 
-    expect(points).toHaveLength(2);
+    expect(points).toHaveLength(4);
     expect(points[0].blobs.slice(4)).toEqual([
       "rate_limited",
-      "fallback",
+      "retry",
       "primary-reviewer",
       AI_REVIEWER_VERSION,
     ]);
