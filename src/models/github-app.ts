@@ -126,9 +126,15 @@ export function retryWorkflowGate(gateId: string): Promise<{ gate: PublicWorkflo
   );
 }
 
+export interface GateSetupEcosystemOption {
+  id: string;
+  label: string;
+}
+
 export interface GithubAppConfigState {
   configured: boolean;
   appSlug?: string;
+  gateSetupEcosystems: GateSetupEcosystemOption[];
 }
 
 export type GithubAppInstallStatus = "idle" | "starting" | "completing" | "loading";
@@ -196,7 +202,7 @@ export const GithubAppModel = createModel(() => {
       } catch (err) {
         if (requestId !== configRequestId) return;
         error.value = errorMessage(err);
-        config.value = { configured: false };
+        config.value = { configured: false, gateSetupEcosystems: [] };
       } finally {
         if (requestId === configRequestId) configLoaded.value = true;
       }
@@ -231,7 +237,7 @@ export const GithubAppModel = createModel(() => {
         window.location.assign(data.installUrl);
       } catch (err) {
         if (err instanceof ApiError && err.code === "github_app_not_configured") {
-          config.value = { configured: false };
+          config.value = { configured: false, gateSetupEcosystems: [] };
           error.value =
             "GitHub App is not configured yet on this Drydock instance. Ask the operator to add the GitHub App secrets.";
         } else {
