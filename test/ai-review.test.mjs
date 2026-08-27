@@ -7,6 +7,7 @@ import {
   AI_REVIEWER_VERSION,
   analyzeWithAi,
   aiGatewayMetadataHeader,
+  aiReviewRequestHeaders,
   aiReviewTraceTelemetry,
   displayedAiResult,
   selectModelCandidates,
@@ -147,12 +148,12 @@ describe("AI review prompt selection", () => {
 
 describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
-    expect(AI_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
-    expect(AI_FALLBACK_MODEL).toBe("@cf/deepseek-ai/deepseek-v4-flash-0731");
+    expect(AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
+    expect(AI_FALLBACK_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
-  test("selects the cheaper model first for a clean low-signal release", () => {
-    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+  test("uses GLM first for a clean low-signal release", () => {
+    expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
   test("keeps the strong model first when deterministic findings are present", () => {
@@ -170,7 +171,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when lifecycle scripts change", () => {
@@ -191,7 +192,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when dependencies change", () => {
@@ -212,7 +213,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when entrypoints change", () => {
@@ -233,7 +234,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
   test("keeps the strong model first when no previous version is available", () => {
@@ -251,22 +252,16 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
   });
 
-  test("keeps the strong model first when the changed-file count exceeds the threshold", () => {
+  test("uses GLM first for a medium-signal release", () => {
     const options = {
       ...BASE_OPTIONS,
-      diff: Array.from({ length: 6 }, (_, index) => ({
-        path: `src/file-${index}.js`,
-        status: "added",
-        stagedSize: 10,
-        stagedSha256: `sha-${index}`,
-        flags: [],
-      })),
+      ruleFindings: [aiFinding("medium", "src/index.js")],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("keeps AI Gateway metadata within the five-field log limit", () => {
@@ -289,6 +284,13 @@ describe("ai review orchestration", () => {
       ecosystem: "npm",
       attempt: 2,
       stageId: "stage_123",
+    });
+  });
+
+  test("keeps Gateway logs metadata-only and disables hidden retries", () => {
+    expect(aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1)).toMatchObject({
+      "cf-aig-collect-log-payload": "false",
+      "cf-aig-max-attempts": "1",
     });
   });
 
@@ -431,6 +433,24 @@ describe("ai review orchestration", () => {
     ]);
   });
 
+  test("keeps the strong model first for medium-severity obfuscation", () => {
+    const options = {
+      ...BASE_OPTIONS,
+      ruleFindings: [{ ...aiFinding("medium", "src/index.js"), obfuscated: true }],
+      diff: [
+        {
+          path: "src/index.js",
+          status: "modified",
+          stagedSize: 10,
+          stagedSha256: "sha-1",
+          flags: [],
+        },
+      ],
+    };
+
+    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+  });
+
   test("a complete review without evidence does not raise package risk", async () => {
     const { review: ai } = await analyzeWithAi(
       {},
@@ -538,13 +558,88 @@ describe("ai review orchestration", () => {
     expect(ai.summary).toBe("No unusual changes.");
   });
 
-  test("a transient request timeout is retried and the review completes", async () => {
+  test("a request timeout moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw new Error("AiError: AiError: Request timeout (ca4ebee2)");
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a typed Workers AI timeout moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("binding failed"), {
+            statusCode: 408,
+            data: { workersAIErrorCode: 3007 },
+          });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a REST-shaped 3040 response is retried as capacity before falling back", async () => {
     skipRetryDelay();
     let calls = 0;
     const flakyModel = mockModel(async () => {
       calls += 1;
       if (calls === 1) {
-        throw new Error("AiError: AiError: Request timeout (ca4ebee2)");
+        throw Object.assign(
+          new Error(
+            'Workers AI API error (429 Too Many Requests): {"errors":[{"code":3040,"message":"No more data centers to forward the request to"}]}',
+          ),
+          { statusCode: 429 },
+        );
       }
       return generateResult(
         [
@@ -563,7 +658,108 @@ describe("ai review orchestration", () => {
 
     expect(calls).toBe(2);
     expect(ai.status).toBe("complete");
-    expect(ai.summary).toBe("No unusual changes.");
+  });
+
+  test("a persistent provider 500 retries once before falling back", async () => {
+    skipRetryDelay();
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("Workers AI API error (500 Internal Server Error)"), {
+            statusCode: 500,
+          });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(2);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a gateway 504 moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          throw Object.assign(new Error("AI Gateway request timed out"), { statusCode: 504 });
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("a rate limit moves directly to the fallback model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") throw new Error("429: too many requests");
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.model).toBe("fallback-reviewer");
   });
 
   test("a persistent capacity error exhausts retries and fails safe to unavailable", async () => {
@@ -577,7 +773,7 @@ describe("ai review orchestration", () => {
     const { review: ai } = await analyzeWithAi({}, "mock-reviewer", BASE_OPTIONS, downModel);
 
     // Retried up to the attempt cap before degrading, not retried forever.
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     expect(ai.status).toBe("unavailable");
     expect(ai.summary).toContain("Capacity temporarily exceeded");
     expect(computeScanRisk([], ai)).toBe("medium");
@@ -612,10 +808,112 @@ describe("ai review orchestration", () => {
       modelFactory,
     );
 
-    expect(calls.get("primary-reviewer")).toBe(3);
+    expect(calls.get("primary-reviewer")).toBe(2);
     expect(calls.get("fallback-reviewer")).toBe(1);
     expect(ai.status).toBe("complete");
     expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("an invalid review moves to the fallback model without retrying the same model", async () => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") {
+          return generateResult([{ type: "text", text: "review incomplete" }], "stop");
+        }
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test("records anonymous per-model attempt outcomes and fallback actions", async () => {
+    const points = [];
+    const env = {
+      PRODUCT_ANALYTICS: { writeDataPoint: (point) => points.push(point) },
+    };
+    const modelFactory = (model) =>
+      model === "primary-reviewer"
+        ? mockModel(async () => {
+            throw new Error("429: too many requests");
+          })
+        : submittingModel(VALID_REVIEW);
+
+    await analyzeWithAi(
+      env,
+      ["primary-reviewer", "fallback-reviewer"],
+      {
+        ...BASE_OPTIONS,
+        organizationId: "org_private",
+        scanId: "scan_private",
+      },
+      modelFactory,
+    );
+
+    expect(points).toHaveLength(2);
+    expect(points.map((point) => point.blobs.slice(2))).toEqual([
+      ["", "npm", "rate_limited", "fallback", "primary-reviewer", AI_REVIEWER_VERSION],
+      ["", "npm", "complete", "done", "fallback-reviewer", AI_REVIEWER_VERSION],
+    ]);
+    expect(JSON.stringify(points)).not.toMatch(/org_private|scan_private/);
+  });
+
+  test("records usage from completed steps when a later provider call falls back", async () => {
+    const points = [];
+    const env = {
+      PRODUCT_ANALYTICS: { writeDataPoint: (point) => points.push(point) },
+    };
+    let primaryCalls = 0;
+    const modelFactory = (model) =>
+      model === "primary-reviewer"
+        ? mockModel(async () => {
+            primaryCalls += 1;
+            if (primaryCalls > 1) throw new Error("429: too many requests");
+            return generateResult(
+              [
+                {
+                  type: "tool-call",
+                  toolCallId: "read-1",
+                  toolName: "read",
+                  input: JSON.stringify({ paths: ["index.js"] }),
+                },
+              ],
+              "tool-calls",
+            );
+          })
+        : submittingModel(VALID_REVIEW);
+
+    await analyzeWithAi(env, ["primary-reviewer", "fallback-reviewer"], BASE_OPTIONS, modelFactory);
+
+    expect(points).toHaveLength(2);
+    expect(points[0].blobs.slice(4)).toEqual([
+      "rate_limited",
+      "fallback",
+      "primary-reviewer",
+      AI_REVIEWER_VERSION,
+    ]);
+    expect(points[0].doubles.slice(1)).toEqual([1, 1, 10, 0, 10, 20]);
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {

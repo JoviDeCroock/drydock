@@ -110,7 +110,8 @@ low-volume one out of the dataset.
 | `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                           |
 | `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran            |
 | `scan.decided`             | both decision paths           | time-to-decision; agreement with the grade           |
-| `ai_review.finished`       | `maybeRunAiReview`            | reviewer health — the silent-failure rate            |
+| `ai_review.finished`       | `maybeRunAiReview`            | review-level health — the silent-failure rate        |
+| `ai_review.attempted`      | `analyzeWithAi`               | per-model cost, throttling, retries, and fallback    |
 | `ai_review.decided`        | both decision paths           | feedback by assessment and reviewer version          |
 | `npm_connection.validated` | npm connection validation     | onboarding funnel                                    |
 | `public_diff.viewed`       | `loadRequestedDiff`           | growth-loop traffic, cache hit rate                  |
@@ -144,6 +145,15 @@ provider usage is written as zero, so distinguish "not reported" only through
 the status/model context rather than treating zero as a measured free
 invocation.
 
+`ai_review.attempted` makes recovered provider failures visible. Its dimensions
+are outcome, action, model, and reviewer version; doubles are duration, attempt,
+steps, input/cache/output/total tokens. Organization is always blank, and no
+scan, stage, package, prompt, evidence, or Gateway log identifier is retained.
+Use this event—not the final model on `ai_review.finished`—to attribute cost by
+model after fallback. Usage from completed agent steps is retained when a later
+step fails, and every request pins AI Gateway to one attempt so a recorded step
+cannot hide account-level Gateway retries.
+
 `ai_review.decided` joins a later maintainer action to the already-persisted AI
 review without retaining a scan id or package data. Disabled-review placeholders
 emit no feedback event. Its dimensions are decision, status, release assessment,
@@ -166,6 +176,26 @@ curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_eng
 Sampling: Analytics Engine samples under load and exposes `_sample_interval`.
 Multiply by it (`SUM(_sample_interval)`) for counts, rather than using
 `count()`, once volume is high enough for sampling to engage.
+
+For `ai_review.attempted`, `blob5` is outcome, `blob6` action, `blob7` model,
+and `blob8` reviewer version. Alert over a rolling five-minute window when any
+of these hold:
+
+- `rate_limited` is non-zero or exceeds 0.1% of attempts;
+- `capacity` exceeds 1%, `fallback` exceeds 2%, or terminal failures exceed
+  0.5%;
+- the sum of `double3` (completed agent steps, an approximation of provider
+  requests) exceeds 80% of the current documented text-generation allocation;
+- Kimi steps exceed 60% of its current model-specific allocation; or
+- the oldest pending scan is more than two minutes old.
+
+Provider limits can change, so keep the numeric RPM values in the Cloudflare
+alert configuration rather than duplicating them in application code. A failed
+agent attempt can report zero steps when the provider supplies no usage, so use
+AI Gateway request metrics as the exact RPM source and Analytics Engine as the
+privacy-preserving routing/fallback source. Keep Gateway metadata logging and
+the per-request one-attempt override enabled, but keep payload collection off so
+private package evidence is never retained in request or response logs.
 
 ## Optional binding
 

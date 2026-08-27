@@ -60,6 +60,7 @@ vi.mock("../server/lib/ai-review/index.ts", async () => ({
 const { runScanPipeline } = await import("../server/lib/scan/pipeline");
 const { npmAdapter } = await import("../server/lib/ecosystems/npm");
 const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/sample-retention");
+const { AI_MODEL } = await import("../server/lib/ai-review/index.ts");
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
@@ -425,7 +426,7 @@ describe("scan pipeline baseline selection", () => {
       status: "unavailable",
       summary: "AI review failed; deterministic findings remain available.",
       findings: [],
-      model: "@cf/moonshotai/kimi-k2.7-code",
+      model: AI_MODEL,
     });
     expect(aiReviewMock.runSelectiveAiReview.mock.calls[0]?.[1]).toMatchObject({
       scanId: "scan_ai_failure",

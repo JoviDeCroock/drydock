@@ -1,5 +1,6 @@
 {
-  "suiteVersion": 1,
+  "suiteVersion": 2,
+  "recordedReviewerVersion": "1.2.0",
   "cases": [
     {
       "id": "npm-install-exfiltration",

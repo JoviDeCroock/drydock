@@ -10,9 +10,10 @@ behaviors before the reviewer contract changes.
 `AI_REVIEWER_VERSION` in `server/lib/ai-review/contract.ts` identifies the
 prompt, evidence tools, model routing, and response contract as one unit. Every
 new review persists that version and includes it in traces and analytics. Bump
-it whenever a change can alter reviewer behavior; copy or regenerate the eval
-records for the new version in the same change. Historical rows parse with a
-`null` version and analytics labels them `legacy`.
+it whenever a change can alter reviewer behavior. Historical recorded outputs
+keep the version and model that actually produced them; regenerate and
+adjudicate the corpus before marking a new contract as recorded. Historical
+rows without a version parse as `null` and analytics labels them `legacy`.
 
 ## Submission bounds
 
@@ -57,9 +58,19 @@ evidence, not the canonical scan record.
 
 ## Aggregate execution and decision feedback
 
-`ai_review.finished` records status, model, reviewer version, duration, finding
-count, steps, and token counts in Analytics Engine. It answers availability,
-latency, model-routing, and cost questions without storing package evidence.
+`ai_review.finished` records status, final model, reviewer version, duration,
+finding count, steps, and token counts in Analytics Engine. It answers
+review-level availability and latency without storing package evidence.
+
+`ai_review.attempted` records every model-level agent attempt, including attempts
+that are recovered by a retry or fallback. Its dimensions are outcome
+(`complete`, `invalid`, `rate_limited`, `capacity`, `timeout`, or `error`), next
+action (`done`, `retry`, `fallback`, or `stop`), model, and reviewer version;
+doubles carry duration, attempt number, steps, and token counts. It deliberately
+has no organization, scan, stage, package, prompt, or evidence identifier. Use
+this event for model cost, throttling, and failover analysis: attributing all
+tokens in `ai_review.finished` to its final model would miss an invalid model's
+already-spent budget.
 
 When a maintainer later publishes or discards a reviewed release,
 `ai_review.decided` records that action beside the persisted review's status,
@@ -70,6 +81,30 @@ or a separately adjudicated corpus, not raw agreement rates.
 Disabled-review placeholders do not emit this event because no reviewer attempt
 occurred.
 
+## Model routing and capacity
+
+Routing is fixed before a model runs; output from a cheaper model never decides
+whether Kimi should inspect the release.
+
+- Low or medium signal: GLM 5.3 Flash → Kimi K2.7 Code.
+- High signal (missing baseline, critical/high or obfuscated deterministic
+  finding, or an entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM
+  5.3 Flash.
+
+The agent is capped at 20 steps. A capacity/5xx failure gets one jittered retry;
+a 429 or timeout moves directly to the next model because a sub-second retry
+cannot escape a minute quota. An invalid completed run also moves to the next
+model without re-running the same model. Do not add AI Gateway retries on top of
+this loop: each request pins Gateway attempts to one so account-level retry
+settings cannot multiply requests invisibly. Dynamic routing at individual
+inference-step granularity can also mix models inside one review.
+
+Cloudflare's queue consumer already limits scan concurrency to ten and processes
+one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation
+pool below 80% of its documented limit and Kimi below 60% of its model-specific
+limit; lower queue concurrency or split AI review into a dedicated capacity
+queue before those budgets become sustained constraints.
+
 ## Offline eval
 
 Run:
@@ -79,20 +114,23 @@ pnpm run eval:ai
 ```
 
 The test reads `test/fixtures/ai-review-eval/cases.json`, validates every result
-through the real persisted-review schema, requires the current reviewer
-version, and scores malicious catch behavior, benign cleanliness, and safe
-uncertainty escalation. The baseline includes prompt-injection-shaped hostile
-evidence, unavailable evidence, and a fallback-model result. Reports are
-written best-effort to `.context/eval/ai-review-eval.json` and
-`.context/eval/ai-review-eval.md`.
+through the real persisted-review schema, requires every result to match the
+corpus's explicit recorded reviewer version, and scores malicious catch
+behavior, benign cleanliness, and safe uncertainty escalation. The report shows
+that historical version beside the current runtime version so an old output can
+never be relabeled as evidence from a new model or routing contract, and says
+explicitly whether the current contract has recorded coverage. The
+baseline includes prompt-injection-shaped hostile evidence, unavailable
+evidence, and a fallback-model result. Reports are written best-effort to
+`.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`.
 
-These are recorded outputs, so a green run proves the scoring contract and
-guards known outputs; it does not prove the current hosted model will reproduce
-them. Before promoting a new model or reviewer version, refresh the corpus from
-controlled live runs, redact evidence, have a human assign the verdict and
-threat class, then compare the new version by category. Keep model failover's
-runtime behavior covered by the mocked orchestration tests in
-`test/ai-review.test.mjs` as well.
+These are historical recorded outputs, so a green run proves the scoring
+contract and guards known outputs; it does not prove the current hosted model
+will reproduce them. Before treating the corpus as evidence for a new model or
+reviewer version, refresh it from controlled live runs, redact evidence, have a
+human assign the verdict and threat class, then update its recorded provenance
+and compare the new version by category. Keep model failover's runtime behavior
+covered by the mocked orchestration tests in `test/ai-review.test.mjs` as well.
 
 ## Live model comparison
 
@@ -151,8 +189,8 @@ the reviewer refuses to use; treat it as a floor to clear, not a feature to buy.
 
 1. Bump `AI_REVIEWER_VERSION` for behavioral changes. Model routing is part of
    that contract: changing `AI_MODEL` or `AI_FALLBACK_MODEL` is a version bump,
-   and the recorded eval records must be reissued at the new version in the
-   same change.
+   but historical outputs must keep their original version and model until they
+   are regenerated under the new contract.
 2. Run the normal reviewer tests and `pnpm run eval:ai`.
 3. For a routing change, run `pnpm run eval:ai:live` over the candidate set and
    read completion rate before detection quality before cost. Refresh

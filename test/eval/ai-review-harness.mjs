@@ -43,14 +43,14 @@ export function isUncertaintyEscalated(review) {
   );
 }
 
-function evaluateCase(record) {
+function evaluateCase(record, recordedReviewerVersion) {
   const review = parsePersistedAiReview(record.review);
   if (!review) return { ...record, passed: false, reason: "invalid persisted review shape" };
-  if (review.reviewerVersion !== AI_REVIEWER_VERSION) {
+  if (review.reviewerVersion !== recordedReviewerVersion) {
     return {
       ...record,
       passed: false,
-      reason: `reviewer version ${review.reviewerVersion ?? "legacy"} is not current`,
+      reason: `reviewer version ${review.reviewerVersion ?? "legacy"} does not match recorded provenance ${recordedReviewerVersion}`,
     };
   }
 
@@ -80,12 +80,16 @@ function groupMetrics(results, key) {
 
 export function runAiReviewEval() {
   const corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"));
-  const results = corpus.cases.map(evaluateCase);
+  const results = corpus.cases.map((record) =>
+    evaluateCase(record, corpus.recordedReviewerVersion),
+  );
   const passed = results.filter((result) => result.passed).length;
   return {
     generatedAt: new Date().toISOString(),
     suiteVersion: corpus.suiteVersion,
-    reviewerVersion: AI_REVIEWER_VERSION,
+    recordedReviewerVersion: corpus.recordedReviewerVersion,
+    currentReviewerVersion: AI_REVIEWER_VERSION,
+    currentContractRecorded: corpus.recordedReviewerVersion === AI_REVIEWER_VERSION,
     summary: { total: results.length, passed, rate: passed / results.length },
     byVerdict: groupMetrics(results, "verdict"),
     byThreatClass: groupMetrics(results, "threatClass"),
@@ -125,8 +129,10 @@ function renderMarkdown(result) {
     "",
     `- generated: ${result.generatedAt}`,
     `- suite version: ${result.suiteVersion}`,
-    `- reviewer version: ${result.reviewerVersion}`,
-    `- gated result: ${result.summary.passed}/${result.summary.total} (${percent(result.summary.rate)})`,
+    `- recorded reviewer version: ${result.recordedReviewerVersion}`,
+    `- current reviewer version: ${result.currentReviewerVersion}`,
+    `- current contract recorded: ${result.currentContractRecorded ? "yes" : "no; run the live comparison before claiming current-model evidence"}`,
+    `- historical scoring result: ${result.summary.passed}/${result.summary.total} (${percent(result.summary.rate)})`,
     "",
     ...renderGroups("Verdicts", result.byVerdict),
     ...renderGroups("Threat classes", result.byThreatClass),
