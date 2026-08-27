@@ -301,8 +301,10 @@ const PROMPT_INJECTION_PATTERNS = [
     "i",
   ),
   /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,
-  /\byou\s+are\s+now\s+in\s+(?:developer|DAN|jailbreak|unrestricted|god)\s+mode\b/i,
-  /\bdo\s+not\s+(?:tell|inform|alert|warn)\s+the\s+(?:user|human|operator|developer)\b/i,
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*you\s+are\s+now\s+in\s+(?:developer|DAN|jailbreak|unrestricted|god)\s+mode\b`,
+    "i",
+  ),
 ];
 
 export const REVIEW_MANIPULATION_PATTERN_SET = REVIEW_MANIPULATION_PATTERNS;

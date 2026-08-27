@@ -40,7 +40,7 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
     const changed = ctx.diffByPath.get(file.path)?.status;
     const demote = isUnreachableTestFile(ctx, file.path) && changed === "unchanged";
     const reviewLine = lineOfEither(sample, stripped, REVIEW_MANIPULATION_PATTERN_SET);
-    const promptLine = lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET);
+    const promptLine = lineOfEither(sample, stripped, PROMPT_INJECTION_PATTERN_SET, reviewLine);
 
     if (reviewLine !== undefined) {
       findings.push(
@@ -83,6 +83,22 @@ export function promptInjectionFindings(ctx: RuleContext): Finding[] {
   return findings;
 }
 
-function lineOfEither(sample: string, stripped: string, patterns: RegExp[]): number | undefined {
-  return firstMatchingLine(sample, patterns) ?? firstMatchingLine(stripped, patterns);
+function lineOfEither(
+  sample: string,
+  stripped: string,
+  patterns: RegExp[],
+  excludedLine?: number,
+): number | undefined {
+  const rawLine = firstMatchingLine(maskLine(sample, excludedLine), patterns);
+  const strippedLine = firstMatchingLine(maskLine(stripped, excludedLine), patterns);
+  if (rawLine === undefined) return strippedLine;
+  if (strippedLine === undefined) return rawLine;
+  return Math.min(rawLine, strippedLine);
+}
+
+function maskLine(text: string, line: number | undefined): string {
+  if (line === undefined) return text;
+  const lines = text.split("\n");
+  lines[line - 1] = "";
+  return lines.join("\n");
 }

@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.31.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -556,6 +556,13 @@ deterministic injection row single-sourced and reserving AI finding rows for mat
 evidence the phrase-based rules missed. The recorded eval gains `npm-readme-injection-only`, where
 injection text beside inert code must alone produce a high/suspicious review without a duplicate AI
 finding row.
+
+`1.32.0` preserves a distinct generic prompt-injection row when an earlier line in the same file
+already matches both prompt-injection tiers, so changed-line annotation cannot lose the newly added
+attempt from release risk. It also removes unqualified developer-mode and user-notification phrases
+from the generic matcher: ordinary UI copy and account-enumeration guidance are not injection without
+an AI-qualified audience or instruction-override context. The focused policy tests and both benign LLM
+fixtures pin those precision cases.
 
 ### Fixture format
 
