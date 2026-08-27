@@ -2,7 +2,7 @@
   "id": "browser-static-syntax-reachability",
   "title": "static browser syntax aliases remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for literal HTML appended with +=, new URL import-meta values converted through href, computed literal WebExtension option keys, and Unicode-escaped WebExtension identifiers.",
+  "intent": "Pins full shared capability severity for literal HTML appended with +=, new URL import-meta values converted through href including computed url access, quoted or template-literal computed WebExtension option keys, Unicode-escaped WebExtension identifiers, and escape-decoded static template resource paths.",
   "slug": "static-syntax-reachability",
   "extensionId": "static-syntax-reachability@example.invalid",
   "version": "1.0.0",
@@ -24,17 +24,17 @@
     },
     {
       "path": "popup.js",
-      "size": 164,
+      "size": 256,
       "sha256": "3434343434343434343434343434343434343434343434343434343434343434",
       "flags": [],
-      "textSample": "document.body.innerHTML += \"<iframe src='tests/appended.html'></iframe>\"; location.href = new URL(\"./tests/module-url.html\", import.meta.url).href;"
+      "textSample": "document.body.innerHTML += \"<iframe src='tests/appended.html'></iframe>\"; location.href = new URL(\"./tests/module-url.html\", import.meta.url).href; location.assign(new URL(\"./tests/computed-module-url.html\", import.meta[\"url\"]).href);"
     },
     {
       "path": "background.js",
-      "size": 116,
+      "size": 232,
       "sha256": "3535353535353535353535353535353535353535353535353535353535353535",
       "flags": [],
-      "textSample": "chrome.tabs.create({[\"url\"]: \"tests/computed.html\"}); chrome.ta\\u0062s.create({url: \"tests/escaped.html\"});"
+      "textSample": "chrome.tabs.create({[\"url\"]: \"tests/computed.html\"}); chrome.ta\\u0062s.create({url: \"tests/escaped.html\"}); importScripts(`tests/\\x74emplate-import.js`); chrome.scripting.executeScript({[`files`]: [\"tests/template-key.js\"]});"
     },
     {
       "path": "tests/appended.html",
@@ -91,13 +91,48 @@
       "sha256": "4343434343434343434343434343434343434343434343434343434343434343",
       "flags": [],
       "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/computed-module-url.html",
+      "size": 52,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "flags": [],
+      "textSample": "<script src=\"computed-module-url.js\"></script>"
+    },
+    {
+      "path": "tests/computed-module-url.js",
+      "size": 14,
+      "sha256": "4545454545454545454545454545454545454545454545454545454545454545",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/template-import.js",
+      "size": 14,
+      "sha256": "4646464646464646464646464646464646464646464646464646464646464646",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/template-key.js",
+      "size": 14,
+      "sha256": "4747474747474747474747474747474747474747474747474747474747474747",
+      "flags": [],
+      "textSample": "eval(payload);"
     }
   ],
   "expectedRisk": "high",
   "expectedFindings": [
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/appended.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/module-url.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/computed-module-url.js"
+    },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/computed.js" },
-    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/escaped.js" }
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/escaped.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/template-import.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/template-key.js" }
   ]
 }

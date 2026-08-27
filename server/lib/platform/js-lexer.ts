@@ -529,6 +529,32 @@ export function jsTokenText(src: string, token: JsToken): string {
   return src.slice(token.start, token.end);
 }
 
+export function decodeJsNoSubstitutionTemplate(source: string): string | null {
+  if (source.length < 2 || source[0] !== "`" || source.at(-1) !== "`") return null;
+  const end = source.length - 1;
+  let value = "";
+  for (let index = 1; index < end;) {
+    const character = source[index];
+    if (character === "\\") {
+      const { text, len } = decodeEscape(source, index);
+      if (index + len > end) return null;
+      value += text;
+      index += len;
+      continue;
+    }
+    if (character === "$" && source[index + 1] === "{") return null;
+    if (character === "`" || character === undefined) return null;
+    if (character === "\r") {
+      value += "\n";
+      index += source[index + 1] === "\n" ? 2 : 1;
+      continue;
+    }
+    value += character;
+    index += 1;
+  }
+  return value;
+}
+
 function scanString(src: string, i: number): { end: number; value: string } {
   const n = src.length;
   const quote = src[i];

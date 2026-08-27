@@ -1,5 +1,10 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
-import { jsTokenText, type JsToken, tokenizeJs } from "../../platform/js-lexer";
+import {
+  decodeJsNoSubstitutionTemplate,
+  jsTokenText,
+  type JsToken,
+  tokenizeJs,
+} from "../../platform/js-lexer";
 import {
   decodeUrlPathForArchiveLookup,
   encodeArchiveLookupPathForUrl,
@@ -1717,19 +1722,19 @@ function staticImportMetaUrlPath(
     return null;
   }
   const closeIndex = matchingPunctuation(tokens, text, start + 2, "(", ")");
-  if (closeIndex !== start + 10) return null;
+  if (closeIndex === null) return null;
   const path = staticScriptPath(tokens[start + 3], text);
   if (
     path === null ||
     tokenText(tokens[start + 4], text) !== "," ||
     tokenText(tokens[start + 5], text) !== "import" ||
     tokenText(tokens[start + 6], text) !== "." ||
-    tokenText(tokens[start + 7], text) !== "meta" ||
-    tokenText(tokens[start + 8], text) !== "." ||
-    tokenText(tokens[start + 9], text) !== "url"
+    tokenText(tokens[start + 7], text) !== "meta"
   ) {
     return null;
   }
+  const url = staticMemberAccess(tokens, text, start + 8);
+  if (url?.name !== "url" || url.nextIndex !== closeIndex) return null;
   let nextIndex = closeIndex + 1;
   const href = staticMemberAccess(tokens, text, nextIndex);
   if (href?.name === "href") nextIndex = href.nextIndex;
@@ -1791,7 +1796,7 @@ function staticLiteralCallArgument(
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {
   if (!token) return null;
   if (token.type === "ident") return staticIdentifierName(token, text);
-  return token.type === "string" ? (token.value ?? null) : null;
+  return staticScriptPath(token, text);
 }
 
 function staticObjectPropertyValueIndex(
@@ -1826,8 +1831,7 @@ function staticScriptPath(token: JsToken | undefined, text: string): string | nu
   if (!token) return null;
   if (token.type === "string") return token.value ?? null;
   if (token.type !== "template") return null;
-  const raw = tokenText(token, text);
-  return raw.includes("${") ? null : raw.slice(1, -1);
+  return decodeJsNoSubstitutionTemplate(tokenText(token, text));
 }
 
 function matchingPunctuation(

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { jsTokenText, tokenizeJs } from "../server/lib/platform/js-lexer";
+import {
+  decodeJsNoSubstitutionTemplate,
+  jsTokenText,
+  tokenizeJs,
+} from "../server/lib/platform/js-lexer";
 
 // `/` is the one character whose meaning a lexer cannot read off the preceding
 // character alone, and both consumers are hurt by getting it wrong: the constant
@@ -53,6 +57,19 @@ describe("tokenizeJs comments", () => {
     expect(kinds(interpolation)).toBe(
       "ident:const ident:value punct:= template:`${/* note\n*/--> ` fake\n1}` punct:; ident:safe punct:( punct:) punct:;",
     );
+  });
+});
+
+describe("decodeJsNoSubstitutionTemplate", () => {
+  test("decodes static template escapes without evaluating substitutions", () => {
+    expect(decodeJsNoSubstitutionTemplate("`tests/\\x70ayload.js`")).toBe("tests/payload.js");
+    expect(decodeJsNoSubstitutionTemplate("`tests/\\u{70}ayload.js`")).toBe("tests/payload.js");
+    expect(decodeJsNoSubstitutionTemplate("`tests/line\\\ncontinued.js`")).toBe(
+      "tests/linecontinued.js",
+    );
+    expect(decodeJsNoSubstitutionTemplate("`tests/\\${name}.js`")).toBe("tests/${name}.js");
+    expect(decodeJsNoSubstitutionTemplate("`tests/${name}.js`")).toBeNull();
+    expect(decodeJsNoSubstitutionTemplate("`tests/unterminated\\`")).toBeNull();
   });
 });
 

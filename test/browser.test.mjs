@@ -2261,6 +2261,7 @@ describe("browser extension review adapter", () => {
         textSample: [
           'document.body.innerHTML += "<iframe src=\\"tests/appended.html\\"></iframe>";',
           'location.href = new URL("./tests/module-url.html", import.meta.url).href;',
+          'location.assign(new URL("./tests/computed-module-url.html", import.meta["url"]).href);',
         ].join("\n"),
       },
       {
@@ -2271,24 +2272,35 @@ describe("browser extension review adapter", () => {
         textSample: [
           'chrome.tabs.create({["url"]: "tests/computed.html"});',
           'chrome.ta\\u0062s.create({url: "tests/escaped.html"});',
+          "importScripts(`tests/\\x74emplate-import.js`);",
+          'chrome.scripting.executeScript({[`files`]: ["tests/template-key.js"]});',
         ].join("\n"),
       },
-      ...["appended", "module-url", "computed", "escaped"].flatMap((name, index) => [
-        {
-          path: `tests/${name}.html`,
-          size: 41,
-          sha256: (212 + index).toString(16).repeat(32),
-          flags: [],
-          textSample: `<script src="${name}.js"></script>`,
-        },
-        {
-          path: `tests/${name}.js`,
-          size: 14,
-          sha256: (216 + index).toString(16).repeat(32),
-          flags: [],
-          textSample: "eval(payload);",
-        },
-      ]),
+      ...["appended", "module-url", "computed-module-url", "computed", "escaped"].flatMap(
+        (name, index) => [
+          {
+            path: `tests/${name}.html`,
+            size: 41,
+            sha256: (212 + index).toString(16).repeat(32),
+            flags: [],
+            textSample: `<script src="${name}.js"></script>`,
+          },
+          {
+            path: `tests/${name}.js`,
+            size: 14,
+            sha256: (218 + index).toString(16).repeat(32),
+            flags: [],
+            textSample: "eval(payload);",
+          },
+        ],
+      ),
+      ...["template-import", "template-key"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: (223 + index).toString(16).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
     ];
 
     const findings = createBrowserExtensionReview({
@@ -2297,12 +2309,18 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining(
-        ["appended", "module-url", "computed", "escaped"].map((name) =>
-          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
-        ),
+        [
+          "appended",
+          "module-url",
+          "computed-module-url",
+          "computed",
+          "escaped",
+          "template-import",
+          "template-key",
+        ].map((name) => expect.objectContaining({ file: `tests/${name}.js`, severity: "high" })),
       ),
     );
-    expect(findings).toHaveLength(4);
+    expect(findings).toHaveLength(7);
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
