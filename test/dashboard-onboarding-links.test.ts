@@ -33,6 +33,11 @@ describe("dashboard onboarding contracts", () => {
     expect(gettingStartedSource).toContain("An npm approval still needs your own");
   });
 
+  test("does not treat every created scan as a completed review", () => {
+    expect(gettingStartedSource).not.toContain("has been reviewed for this organization");
+    expect(gettingStartedSource).toContain("has reached Drydock for review");
+  });
+
   test("does not personalize onboarding around an npm public diff", () => {
     expect(gettingStartedSource).not.toContain("onboarding-intent");
     expect(gettingStartedSource).not.toContain("You were reading the diff for");

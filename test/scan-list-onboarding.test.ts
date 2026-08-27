@@ -223,6 +223,45 @@ describe("ScanListModel onboarding progress", () => {
     expect(asked).toEqual(["undecided"]);
   });
 
+  test("a same-organization refresh preserves a recorded decision", async () => {
+    let decisionRecorded = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "https://drydock.test");
+        if (init?.method === "POST") {
+          decisionRecorded = true;
+          return Promise.resolve(
+            jsonResponse({
+              scan: scan({ decision: "publish" }),
+              files: [],
+              findings: [],
+              events: [],
+            }),
+          );
+        }
+        const filter = url.searchParams.get("filter") ?? "undecided";
+        const scans =
+          filter === "undecided"
+            ? decisionRecorded
+              ? []
+              : [scan()]
+            : filter === "all" && decisionRecorded
+              ? [scan({ decision: "publish" })]
+              : [];
+        return Promise.resolve(jsonResponse({ scans, nextCursor: null, filter }));
+      }),
+    );
+    const model = new ScanListModel();
+    await model.refresh();
+    await model.setDecision("scan-1", "publish", null);
+
+    await model.refresh();
+
+    expect(model.hasAnyScan.value).toBe(true);
+    expect(model.hasAnyDecision.value).toBe(true);
+  });
+
   test("a refresh stranded by an organization switch cannot clobber the new answer", async () => {
     // org-a's "has any scan at all?" probe never resolves until the end, which
     // is what strands its refresh mid-flight across the switch to org-b.

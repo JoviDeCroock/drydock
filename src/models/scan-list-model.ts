@@ -106,11 +106,11 @@ export const ScanListModel = createModel(() => {
         hasAnyScan.value = null;
         await resolveHasAnyScan({ requestId, mutationId, organizationId });
       }
-      // Resolved on every refresh for the same reason `hasAnyScan` is: an
-      // organization switch runs through here, and a stale answer would tick
-      // the funnel's last step for an organization that has decided nothing.
-      // A decided row in the page just fetched settles it for free; an
-      // organization with no scans at all cannot have decided one.
+      // A decided row in the page just fetched settles the answer for free; an
+      // organization with no scans at all cannot have decided one. Preserve a
+      // known `true` across same-organization refreshes: decisions can change
+      // but cannot be cleared, and completed scans cannot be deleted. The
+      // organization effect below resets the answer when the scope changes.
       //
       // Guarded because the `hasAnyScan` probe above is awaited: a refresh
       // whose organization was switched away from resumes here, and would
@@ -119,11 +119,12 @@ export const ScanListModel = createModel(() => {
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       ++decisionProbeGeneration;
       decisionProbe = null;
-      hasAnyDecision.value = hasDecidedScan(data.scans)
-        ? true
-        : hasAnyScan.peek() === false
-          ? false
-          : null;
+      hasAnyDecision.value =
+        hasAnyDecision.peek() === true || hasDecidedScan(data.scans)
+          ? true
+          : hasAnyScan.peek() === false
+            ? false
+            : null;
     } catch (err) {
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       error.value = errorMessage(err);

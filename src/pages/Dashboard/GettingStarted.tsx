@@ -112,7 +112,7 @@ export function GettingStarted({
           }
         >
           {hasAnyScan ? (
-            <>A staged release has been reviewed for this organization.</>
+            <>A release has reached Drydock for review in this organization.</>
           ) : (
             <>
               Run <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory. npm holds

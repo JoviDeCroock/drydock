@@ -48,7 +48,7 @@ move it into `src/features/` instead.
 ## Dashboard onboarding funnel
 
 `src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a
-first staged publish reviewed, a first decision recorded. `DashboardOnboarding`
+first release reaching Drydock for review, a first decision recorded. `DashboardOnboarding`
 in `src/pages/Dashboard/index.tsx` decides when it opens and latches that
 against the organization it opened for in `src/models/getting-started.ts`; the
 session-scoped latch survives a visit to the scan detail route, and nothing but
