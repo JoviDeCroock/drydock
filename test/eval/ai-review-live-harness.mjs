@@ -253,6 +253,8 @@ export function buildLiveCases(corpus = loadCorpus()) {
 export function scoreRun(testCase, result) {
   const review = result.review;
   const usage = result.usage ?? null;
+  const usageAvailable =
+    typeof usage?.inputTokens === "number" && typeof usage.outputTokens === "number";
   const completed = review.status === "complete";
   const passed =
     testCase.verdict === "malicious"
@@ -275,7 +277,7 @@ export function scoreRun(testCase, result) {
     findingCount: review.findings.length,
     requiresManualReview: review.requiresManualReview,
     summary: review.summary,
-    usageAvailable: usage !== null,
+    usageAvailable,
     steps: usage?.steps ?? 0,
     inputTokens: usage?.inputTokens ?? 0,
     cachedInputTokens: usage?.cachedInputTokens ?? 0,

@@ -204,6 +204,24 @@ describe("scoreRun", () => {
     expect(run.inputTokens).toBe(0);
     expect(run.steps).toBe(0);
   });
+
+  test("excludes provider usage without token counts from cost metrics", () => {
+    const run = scoreRun(maliciousCase, {
+      review: review(),
+      usage: {
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        steps: 6,
+      },
+    });
+    const summary = summarizeModel(KIMI, [run]);
+
+    expect(run.usageAvailable).toBe(false);
+    expect(summary.costCoverage).toBe(0);
+    expect(summary.avgCostUsd).toBeNull();
+  });
 });
 
 describe("summarizeModel", () => {
