@@ -63,6 +63,21 @@ export type AnalyticsEvent =
       totalTokens: number;
     }
   | {
+      name: "ai_review.attempted";
+      ecosystem: string;
+      model: string;
+      reviewerVersion: string;
+      outcome: string;
+      action: string;
+      durationMs: number;
+      attempt: number;
+      steps: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }
+  | {
       name: "ai_review.decided";
       organizationId: string;
       ecosystem: string;
@@ -127,6 +142,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "scan.discarded",
   "scan.decided",
   "ai_review.finished",
+  "ai_review.attempted",
   "ai_review.decided",
   "npm_connection.validated",
   "public_diff.viewed",
@@ -216,6 +232,21 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [
           event.durationMs,
           event.findingCount,
+          event.steps,
+          event.inputTokens,
+          event.cachedInputTokens,
+          event.outputTokens,
+          event.totalTokens,
+        ],
+      );
+    case "ai_review.attempted":
+      return base(
+        "",
+        event.ecosystem,
+        [event.outcome, event.action, event.model, event.reviewerVersion],
+        [
+          event.durationMs,
+          event.attempt,
           event.steps,
           event.inputTokens,
           event.cachedInputTokens,

@@ -35,8 +35,7 @@ import {
 } from "../../server/lib/review";
 import { AI_REVIEWER_VERSION } from "../../server/lib/ai-review/contract.ts";
 import {
-  AI_FALLBACK_MODEL,
-  AI_MODEL,
+  AI_MODEL_CANDIDATES,
   aiReviewRequestHeaders,
   analyzeWithAi,
 } from "../../server/lib/ai-review/index.ts";
@@ -47,12 +46,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Workers AI list prices, USD per million tokens, from
 // https://developers.cloudflare.com/workers-ai/platform/pricing/ (checked
-// 2026-08-19). `cachedInput: null` means the model has no cached-input tier
+// 2026-08-27). `cachedInput: null` means the model has no cached-input tier
 // published — every step of the agent loop re-bills the whole prefix at the
 // full input rate, which is why a low `input` price is not a low cost.
 // Refresh these alongside any routing change; a stale table silently reorders
 // the comparison.
 export const MODEL_PRICING = {
+  "@cf/zai-org/glm-5.3-flash": { input: 0.15, output: 0.5, cachedInput: 0.03 },
   "@cf/moonshotai/kimi-k2.7-code": { input: 0.95, output: 4.0, cachedInput: 0.19 },
   "@cf/deepseek-ai/deepseek-v4-flash-0731": { input: 0.44, output: 1.32, cachedInput: 0.014 },
   "@cf/deepseek-ai/deepseek-v4-pro-0813": { input: 1.32, output: 3.96, cachedInput: 0.044 },
@@ -61,7 +61,7 @@ export const MODEL_PRICING = {
   "@cf/qwen/qwen3-30b-a3b-fp8": { input: 0.051, output: 0.335, cachedInput: null },
 };
 
-export const DEFAULT_COMPARISON_MODELS = [AI_MODEL, AI_FALLBACK_MODEL];
+export const DEFAULT_COMPARISON_MODELS = [...AI_MODEL_CANDIDATES];
 
 const PER_MILLION = 1_000_000;
 

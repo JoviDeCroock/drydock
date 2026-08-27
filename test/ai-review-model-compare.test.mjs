@@ -15,10 +15,11 @@ import {
   scoreRun,
   summarizeModel,
 } from "./eval/ai-review-live-harness.mjs";
-import { AI_FALLBACK_MODEL, AI_MODEL } from "../server/lib/ai-review/index.ts";
+import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
 const KIMI = "@cf/moonshotai/kimi-k2.7-code";
 const FLASH = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+const GLM = "@cf/zai-org/glm-5.3-flash";
 const QWEN_NO_CACHE = "@cf/qwen/qwen3.8-27b";
 
 function usage(overrides = {}) {
@@ -37,7 +38,7 @@ describe("model pricing table", () => {
     for (const model of DEFAULT_COMPARISON_MODELS) {
       expect(MODEL_PRICING[model]).toBeDefined();
     }
-    expect(DEFAULT_COMPARISON_MODELS).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(DEFAULT_COMPARISON_MODELS).toEqual(AI_MODEL_CANDIDATES);
   });
 });
 
@@ -59,6 +60,11 @@ describe("estimateCost", () => {
 
   test("is cheapest on the fallback model for an identical loop", () => {
     expect(estimateCost(FLASH, usage())).toBeLessThan(estimateCost(KIMI, usage()));
+  });
+
+  test("prices GLM 5.3 Flash below the current models for an identical loop", () => {
+    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(FLASH, usage()));
+    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(KIMI, usage()));
   });
 
   test("never counts more cached tokens than billed input", () => {
@@ -121,7 +127,7 @@ function review(overrides = {}) {
     findings: [],
     requiresManualReview: true,
     model: KIMI,
-    reviewerVersion: "1.2.0",
+    reviewerVersion: AI_REVIEWER_VERSION,
     ...overrides,
   };
 }
@@ -211,7 +217,7 @@ describe("summarizeModel", () => {
 describe("renderMarkdown", () => {
   const base = {
     generatedAt: "2026-08-19T00:00:00.000Z",
-    reviewerVersion: "1.2.0",
+    reviewerVersion: AI_REVIEWER_VERSION,
     models: [KIMI],
     caseCount: 2,
     skipped: [{ id: "pypi-x", ecosystem: "pypi", reason: "non-npm fixture shape" }],

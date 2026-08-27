@@ -21,28 +21,33 @@ import type {
   SelectiveAiReviewOptions,
 } from "./types";
 import { errorMessage } from "../platform/errors";
+import { recordProductEvent } from "../platform/analytics";
+import { durationMsSince } from "../platform/observability";
 
 export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types";
 export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
-// Reviewer model order: prefer the strongest affordable model, then fail over.
+// Reviewer model order: use the inexpensive agentic model for most releases,
+// while preserving Kimi as the first reviewer for pre-classified high-signal
+// changes. Model selection never depends on a weaker model's output.
 //
-// Both candidates must survive this loop's shape, not just answer a prompt: up
+// Every candidate must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
 // makes the cached-input price, not the headline input price, the cost driver,
 // and it makes the context window a floor rather than a feature — evidence is
 // capped at MAX_TOTAL_TOOL_RESPONSE_CHARS, so anything past ~64k is unusable
-// spend. The fallback is deliberately an agentic model with a deep cache
-// discount rather than the cheapest listing: a failover that cannot finish the
-// loop returns `invalid`, which floors the scan at medium and escalates to
-// manual review, so a "cheap" model that misses the submission costs more than
-// it saves. Re-check both against docs/ai-review-eval.md's live comparison
-// before changing either; changing them is a routing change, so bump
+// spend. Each fallback is agentic and cache-discounted: a failover that cannot
+// finish the loop returns `invalid`, which floors the scan at medium and
+// escalates to manual review, so a "cheap" model that misses the submission
+// costs more than it saves. Re-check all candidates against
+// docs/ai-review-eval.md's live comparison before changing them; model routing
+// changes require bumping
 // AI_REVIEWER_VERSION with it.
-export const AI_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const AI_FALLBACK_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
-export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
+export const AI_MODEL = "@cf/zai-org/glm-5.3-flash";
+export const AI_FALLBACK_MODEL = "@cf/moonshotai/kimi-k2.7-code";
+export const AI_ECONOMY_MODEL = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL, AI_ECONOMY_MODEL] as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
 // The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
@@ -81,18 +86,33 @@ async function tracedAiSdk(): Promise<typeof ai> {
 
 const DEFAULT_CACHE_AFFINITY = "staged-publish-review-agentic-release-reviewer-v1";
 
-// Workers AI rejects requests under load with transient errors the model itself
-// asks us to retry (e.g. "3040: Capacity temporarily exceeded, please try
-// again."). These surface as plain Errors, so the AI SDK's built-in maxRetries —
-// which only fires for APICallErrors it classifies retryable — never kicks in,
-// and a busy moment would otherwise degrade straight to `unavailable` (escalating
-// the scan to manual review). Retry a bounded number of times with linear backoff
-// before moving to the next configured reviewer model.
-const AI_REVIEW_MAX_ATTEMPTS = 3;
+// One short jittered retry absorbs a capacity blip. A minute-based 429 or a
+// request timeout cannot be fixed by retrying the same whole agent loop after a
+// few hundred milliseconds, so those move directly to the next model.
+const AI_REVIEW_MAX_CAPACITY_ATTEMPTS = 2;
 const AI_REVIEW_RETRY_DELAY_MS = 500;
+const AI_REVIEW_RETRY_JITTER_MS = 500;
 
 export function selectModelCandidates(options: SelectiveAiReviewOptions): readonly string[] {
-  return isLowSignalReview(options) ? [AI_FALLBACK_MODEL, AI_MODEL] : AI_MODEL_CANDIDATES;
+  if (isHighSignalReview(options)) {
+    return [AI_FALLBACK_MODEL, AI_MODEL, AI_ECONOMY_MODEL];
+  }
+  if (isLowSignalReview(options)) {
+    return [AI_MODEL, AI_ECONOMY_MODEL, AI_FALLBACK_MODEL];
+  }
+  return AI_MODEL_CANDIDATES;
+}
+
+function isHighSignalReview(options: SelectiveAiReviewOptions): boolean {
+  return (
+    options.previousVersionAvailable === false ||
+    options.ruleFindings.some(
+      (finding) => finding.severity === "critical" || finding.severity === "high",
+    ) ||
+    options.packageJsonDiff.entrypointsChanged === true ||
+    options.packageJsonDiff.scripts.length > 0 ||
+    options.packageJsonDiff.dependencies.length > 0
+  );
 }
 
 function isLowSignalReview(options: SelectiveAiReviewOptions): boolean {
@@ -137,9 +157,10 @@ export async function analyzeWithAi(
   const traceConversationId = crypto.randomUUID();
   const tracedAi = await tracedAiSdk();
 
-  for (const candidateModel of models) {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= AI_REVIEW_MAX_ATTEMPTS; attempt += 1) {
+  for (const [modelIndex, candidateModel] of models.entries()) {
+    const hasFallback = modelIndex < models.length - 1;
+    for (let attempt = 1; attempt <= AI_REVIEW_MAX_CAPACITY_ATTEMPTS; attempt += 1) {
+      const attemptStartedAtMs = Date.now();
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
@@ -199,21 +220,51 @@ export async function analyzeWithAi(
           },
           temperature: 0,
           maxOutputTokens: MAX_REVIEW_OUTPUT_TOKENS,
+          // This loop owns model-level retry and fallback. Provider retries here
+          // would be invisible to `ai_review.attempted` and multiply spend.
+          maxRetries: 0,
         });
 
         const usage = toUsage(result.totalUsage, result.steps.length);
 
         if (submittedReview) {
+          recordAiReviewAttempt(env, options, {
+            model: candidateModel,
+            attempt,
+            outcome: "complete",
+            action: "done",
+            durationMs: durationMsSince(attemptStartedAtMs),
+            usage,
+          });
           return { review: normalizeParsedReview(candidateModel, submittedReview), usage };
         }
 
         const textReview = normalizeAiResponse(candidateModel, result.text);
         if (textReview.status === "complete") {
+          recordAiReviewAttempt(env, options, {
+            model: candidateModel,
+            attempt,
+            outcome: "complete",
+            action: "done",
+            durationMs: durationMsSince(attemptStartedAtMs),
+            usage,
+          });
           return { review: textReview, usage };
         }
 
-        // A model that produced no valid review is not a transient failure — the
-        // evidence budget was spent — so return the `invalid` fallback without retrying.
+        const action = hasFallback ? "fallback" : "stop";
+        recordAiReviewAttempt(env, options, {
+          model: candidateModel,
+          attempt,
+          outcome: "invalid",
+          action,
+          durationMs: durationMsSince(attemptStartedAtMs),
+          usage,
+        });
+        if (hasFallback) {
+          transientFailures.push(`${candidateModel}: invalid review`);
+          break;
+        }
         return {
           review: fallbackReview(
             candidateModel,
@@ -223,34 +274,41 @@ export async function analyzeWithAi(
           usage,
         };
       } catch (err) {
-        lastError = err;
-        // Only retry transient capacity/overload failures; a malformed request or a
-        // code bug fails identically every time, so retrying just wastes budget.
-        if (attempt < AI_REVIEW_MAX_ATTEMPTS && isRetryableAiError(err)) {
-          await sleep(AI_REVIEW_RETRY_DELAY_MS * attempt);
+        const outcome = classifyAiAttemptError(err);
+        const shouldRetry = outcome === "capacity" && attempt < AI_REVIEW_MAX_CAPACITY_ATTEMPTS;
+        const shouldFallback = !shouldRetry && outcome !== "error" && hasFallback;
+        recordAiReviewAttempt(env, options, {
+          model: candidateModel,
+          attempt,
+          outcome,
+          action: shouldRetry ? "retry" : shouldFallback ? "fallback" : "stop",
+          durationMs: durationMsSince(attemptStartedAtMs),
+          usage: null,
+        });
+
+        if (shouldRetry) {
+          await sleep(AI_REVIEW_RETRY_DELAY_MS + Math.random() * AI_REVIEW_RETRY_JITTER_MS);
           continue;
         }
-        break;
+        if (shouldFallback) {
+          transientFailures.push(`${candidateModel}: ${errorMessage(err)}`);
+          break;
+        }
+
+        return {
+          review: fallbackReview(
+            candidateModel,
+            "unavailable",
+            `Assistant review didn't run: ${modelFailureSummary(
+              transientFailures,
+              candidateModel,
+              err,
+            )}`,
+          ),
+          usage: null,
+        };
       }
     }
-
-    if (isRetryableAiError(lastError) && candidateModel !== models[models.length - 1]) {
-      transientFailures.push(`${candidateModel}: ${errorMessage(lastError)}`);
-      continue;
-    }
-
-    return {
-      review: fallbackReview(
-        candidateModel,
-        "unavailable",
-        `Assistant review didn't run: ${modelFailureSummary(
-          transientFailures,
-          candidateModel,
-          lastError,
-        )}`,
-      ),
-      usage: null,
-    };
   }
 
   return {
@@ -298,20 +356,59 @@ export function aiReviewTraceTelemetry(
   };
 }
 
-// Workers AI capacity/overload/rate-limit/time-out rejections are transient and
-// worth a retry; anything else (bad request, code bug) is not. Matched on
-// message text because the binding throws plain Errors, not classified
-// APICallErrors — `3040` is "Capacity temporarily exceeded" and `3046` is
-// "Request timeout".
-const RETRYABLE_AI_ERROR_PATTERN =
-  /\b(?:3040|3046|408|429|502|503)\b|capacity .*exceeded|request timeout|temporarily unavailable|overloaded|rate.?limit|too many requests/i;
+// Workers AI capacity, quota, and timeout rejections are classified separately
+// because only capacity gets an in-model retry. Matched on message text because
+// the binding throws plain Errors, not classified APICallErrors — `3040` is
+// "Capacity temporarily exceeded" and `3046` is "Request timeout".
+type AiAttemptOutcome = "complete" | "invalid" | "rate_limited" | "capacity" | "timeout" | "error";
+type AiAttemptAction = "done" | "retry" | "fallback" | "stop";
 
-function isRetryableAiError(err: unknown): boolean {
-  return RETRYABLE_AI_ERROR_PATTERN.test(errorMessage(err));
+const RATE_LIMITED_AI_ERROR_PATTERN = /\b429\b|rate.?limit|too many requests/i;
+const TIMEOUT_AI_ERROR_PATTERN = /\b(?:3046|408)\b|request timeout/i;
+const CAPACITY_AI_ERROR_PATTERN =
+  /\b(?:3040|502|503)\b|capacity .*exceeded|temporarily unavailable|overloaded/i;
+
+function classifyAiAttemptError(err: unknown): Exclude<AiAttemptOutcome, "complete" | "invalid"> {
+  const message = errorMessage(err);
+  if (RATE_LIMITED_AI_ERROR_PATTERN.test(message)) return "rate_limited";
+  if (TIMEOUT_AI_ERROR_PATTERN.test(message)) return "timeout";
+  if (CAPACITY_AI_ERROR_PATTERN.test(message)) return "capacity";
+  return "error";
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface AiAttemptTelemetry {
+  model: string;
+  attempt: number;
+  outcome: AiAttemptOutcome;
+  action: AiAttemptAction;
+  durationMs: number;
+  usage: AiReviewUsage | null;
+}
+
+function recordAiReviewAttempt(
+  env: Cloudflare.Env,
+  options: SelectiveAiReviewOptions,
+  attempt: AiAttemptTelemetry,
+): void {
+  recordProductEvent(env, {
+    name: "ai_review.attempted",
+    ecosystem: options.ecosystem,
+    model: attempt.model,
+    reviewerVersion: AI_REVIEWER_VERSION,
+    outcome: attempt.outcome,
+    action: attempt.action,
+    durationMs: attempt.durationMs,
+    attempt: attempt.attempt,
+    steps: attempt.usage?.steps ?? 0,
+    inputTokens: attempt.usage?.inputTokens ?? 0,
+    cachedInputTokens: attempt.usage?.cachedInputTokens ?? 0,
+    outputTokens: attempt.usage?.outputTokens ?? 0,
+    totalTokens: attempt.usage?.totalTokens ?? 0,
+  });
 }
 
 // The per-request headers that decide cache affinity and Gateway attribution.

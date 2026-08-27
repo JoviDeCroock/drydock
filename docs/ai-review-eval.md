@@ -57,9 +57,19 @@ evidence, not the canonical scan record.
 
 ## Aggregate execution and decision feedback
 
-`ai_review.finished` records status, model, reviewer version, duration, finding
-count, steps, and token counts in Analytics Engine. It answers availability,
-latency, model-routing, and cost questions without storing package evidence.
+`ai_review.finished` records status, final model, reviewer version, duration,
+finding count, steps, and token counts in Analytics Engine. It answers
+review-level availability and latency without storing package evidence.
+
+`ai_review.attempted` records every model-level agent attempt, including attempts
+that are recovered by a retry or fallback. Its dimensions are outcome
+(`complete`, `invalid`, `rate_limited`, `capacity`, `timeout`, or `error`), next
+action (`done`, `retry`, `fallback`, or `stop`), model, and reviewer version;
+doubles carry duration, attempt number, steps, and token counts. It deliberately
+has no organization, scan, stage, package, prompt, or evidence identifier. Use
+this event for model cost, throttling, and failover analysis: attributing all
+tokens in `ai_review.finished` to its final model would miss an invalid model's
+already-spent budget.
 
 When a maintainer later publishes or discards a reviewed release,
 `ai_review.decided` records that action beside the persisted review's status,
@@ -69,6 +79,32 @@ reasons, or make a mistake. Promotion decisions need confirmed incident labels
 or a separately adjudicated corpus, not raw agreement rates.
 Disabled-review placeholders do not emit this event because no reviewer attempt
 occurred.
+
+## Model routing and capacity
+
+Routing is fixed before a model runs; output from a cheaper model never decides
+whether Kimi should inspect the release.
+
+- Low signal (baseline present, no deterministic findings, no entrypoint,
+  script, or dependency delta, and at most five changed files): GLM 5.3 Flash →
+  DeepSeek V4 Flash → Kimi K2.7 Code.
+- Medium signal: GLM 5.3 Flash → Kimi K2.7 Code → DeepSeek V4 Flash.
+- High signal (missing baseline, critical/high deterministic finding, or an
+  entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM 5.3 Flash →
+  DeepSeek V4 Flash.
+
+The agent is capped at 12 steps. A capacity/5xx failure gets one jittered retry;
+a 429 or timeout moves directly to the next model because a sub-second retry
+cannot escape a minute quota. An invalid completed run also moves to the next
+model without re-running the same model. Do not add AI Gateway retries on top of
+this loop: nested retry layers multiply requests and spend, and dynamic routing
+at individual inference-step granularity can mix models inside one review.
+
+Cloudflare's queue consumer already limits scan concurrency to ten and processes
+one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation
+pool below 80% of its documented limit and Kimi below 60% of its model-specific
+limit; lower queue concurrency or split AI review into a dedicated capacity
+queue before those budgets become sustained constraints.
 
 ## Offline eval
 
@@ -110,7 +146,7 @@ is gated behind `AI_REVIEW_LIVE_EVAL` and never runs in `pnpm test` or
 `pnpm run verify`. Reports land in `.context/eval/ai-review-model-compare.json`
 and `.context/eval/ai-review-model-compare.md`.
 
-Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
+Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the three
 routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating; the report
 states how many were dropped), `AI_REVIEW_LIVE_GATEWAY`.
 
