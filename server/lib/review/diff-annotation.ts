@@ -1,4 +1,3 @@
-import { diffLines } from "diff";
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import {
@@ -12,8 +11,9 @@ import {
   REVIEW_MANIPULATION_PATTERN_SET,
   safeJson,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
-  stripPromptInjectionEvasion,
 } from "./rules";
+import { changedStagedLines, splitComparableLines } from "./rules/context";
+import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import type {
   CodePatternSet,
   FileRecord,
@@ -199,29 +199,6 @@ function changedStagedLinesForPath(
   return lines;
 }
 
-function changedStagedLines(previous: string, staged: string): Set<number> {
-  const changed = new Set<number>();
-  let stagedLine = 0;
-  for (const part of diffLines(previous, staged)) {
-    const lines = splitComparableLines(part.value);
-    if (part.added) {
-      for (const _line of lines) {
-        stagedLine += 1;
-        changed.add(stagedLine);
-      }
-    } else if (!part.removed) {
-      stagedLine += lines.length;
-    }
-  }
-  return changed;
-}
-
-function splitComparableLines(text: string): string[] {
-  const lines = text.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
-
 function findingPatternMatchesChangedLine(
   finding: { file: string; ruleId?: string | null },
   stagedText: string | undefined,
@@ -234,18 +211,16 @@ function findingPatternMatchesChangedLine(
   if (isPropagationFinding(finding)) {
     return hasMatchingCodeLine(stagedText, patterns, changedLines);
   }
+  if (isPromptInjectionFinding(finding)) {
+    return promptInjectionPatternsMatchChangedLines(stagedText, changedLines, patterns);
+  }
   const lines = splitComparableLines(stagedText);
   for (const lineNumber of changedLines) {
     const line = lines[lineNumber - 1];
     if (line === undefined) continue;
-    const candidates = isPromptInjectionFinding(finding)
-      ? [line, stripPromptInjectionEvasion(line)]
-      : [line];
-    for (const candidate of candidates) {
-      for (const pattern of patterns) {
-        pattern.lastIndex = 0;
-        if (pattern.test(candidate)) return true;
-      }
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(line)) return true;
     }
   }
   return false;

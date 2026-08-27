@@ -1,4 +1,5 @@
 import { isRootGypPath, normalizeStringRecord } from "../../tar-parser.js";
+import { diffLines } from "diff";
 import type { CodePatternSet, DiffEntry, FileRecord, PackageJsonSummary } from "..";
 import { codePatternsFor, type JS_PATTERN_SET } from "./patterns";
 import {
@@ -14,6 +15,7 @@ export type EntrypointResolution = "npm" | "vscode";
 
 export interface DeterministicFindingOptions {
   codePatternSet?: CodePatternSet;
+  previousFiles?: FileRecord[];
   /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
@@ -28,6 +30,7 @@ export interface DeterministicFindingOptions {
 // not recomputed per family.
 export interface RuleContext {
   files: FileRecord[];
+  previousByPath: Map<string, FileRecord>;
   diff: DiffEntry[];
   diffByPath: Map<string, DiffEntry>;
   packageJson: PackageJsonSummary | null;
@@ -61,6 +64,7 @@ export function buildRuleContext(
   const implicitScripts = normalizeStringRecord(packageJson?.implicitScripts);
   return {
     files,
+    previousByPath: new Map((options.previousFiles ?? []).map((file) => [file.path, file])),
     diff,
     diffByPath,
     packageJson,
@@ -85,6 +89,29 @@ export function buildRuleContext(
     codePatternSet: options.codePatternSet,
     entrypointResolution: options.entrypointResolution ?? null,
   };
+}
+
+export function changedStagedLines(previous: string, staged: string): Set<number> {
+  const changed = new Set<number>();
+  let stagedLine = 0;
+  for (const part of diffLines(previous, staged)) {
+    const lines = splitComparableLines(part.value);
+    if (part.added) {
+      for (const _line of lines) {
+        stagedLine += 1;
+        changed.add(stagedLine);
+      }
+    } else if (!part.removed) {
+      stagedLine += lines.length;
+    }
+  }
+  return changed;
+}
+
+export function splitComparableLines(text: string): string[] {
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines;
 }
 
 // Prefix shared by file-scoped rules so evidence reflects whether the match

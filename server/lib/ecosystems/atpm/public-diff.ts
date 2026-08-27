@@ -203,6 +203,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
             manifest: toArchive.packageJson ?? null,
             suspiciousTarEntries: toArchive.suspiciousEntries,
           },
+          previousFiles: fromArchive?.files,
           details: null,
           fileDiff,
           manifestDiff,

@@ -229,6 +229,13 @@ export function stripPromptInjectionEvasion(text: string): string {
   return text.replace(PROMPT_INJECTION_EVASION_CHARS, "");
 }
 
+// A Markdown soft line break is whitespace to both renderers and LLMs. Replace
+// each newline code unit with a space so phrase patterns can span wrapped text
+// without changing offsets used to recover the original line number.
+export function softenPromptInjectionLineBreaks(text: string): string {
+  return text.replace(/[\r\n]/g, " ");
+}
+
 // Instruction content aimed at any LLM/agent that reads package bytes — an AI
 // reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
 // A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
@@ -247,7 +254,7 @@ const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|${AI_
 // `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
 // findings/detections object.
 const REVIEW_MANIPULATION_PATTERNS = [
-  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
+  /\b(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\bas\s+(?:safe|benign|trusted(?!\s+(?:in|for|when)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b/i,
   // An explicit approval command aimed at an AI-qualified audience is already
   // a clean verdict; requiring a redundant "as safe" suffix would leave the
   // deterministic gate at medium when the advisory reviewer cannot run.
@@ -262,7 +269,7 @@ const REVIEW_MANIPULATION_PATTERNS = [
   // changelog/SECURITY.md prose ("don't report duplicate findings", "do not
   // report findings without a proof of concept") — all idiomatic in exactly
   // the linter/scanner packages npm is full of.
-  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b/i,
+  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b(?!\s+without\s+(?:(?:a|an)\s+)?(?:reproducible\s+(?:example|case|steps?)|proof(?:\s+of\s+concept)?|evidence)\b)/i,
   /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
   // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
   // with a space; the underscore/hyphen form is schema-targeting.

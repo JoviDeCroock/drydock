@@ -143,6 +143,7 @@ function buildNpmLiveCase(record) {
   const allRuleFindings = redactFindings([
     ...deterministicFindings(stagedFiles, diff, record.fx.stagedPackageJson, {
       entrypointResolution: "npm",
+      previousFiles,
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
   ]);
