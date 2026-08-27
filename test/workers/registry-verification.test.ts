@@ -1,11 +1,20 @@
 import { createExecutionContext, env } from "cloudflare:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import {
+  updateNpmConnectionValidation,
+  upsertNpmConnection,
+} from "../../server/db/npm-connections";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
+import {
+  createScanJob,
+  markScanRegistryVerified,
+  recordRegistryDigestMismatch,
+} from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { getWorkflowGateAdapter } from "../../server/lib/ecosystems";
+import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import {
   REGISTRY_VERIFICATION_INITIAL_DELAY_SECONDS,
   REGISTRY_VERIFICATION_MISMATCH_GRACE_MS,
@@ -13,7 +22,6 @@ import {
   executeRegistryVerificationJob,
   runRegistryVerificationCron,
 } from "../../server/lib/workflow-gates/registry-verification";
-import { markScanRegistryVerified } from "../../server/db/scans";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -108,10 +116,120 @@ async function seedApprovedGate(decidedAt: Date) {
       updatedAt: now,
     })
     .where(eq(schema.scans.id, scanId));
-  return { db, organizationId, gateId, scanId };
+  return { db, organizationId, gateId, scanId, userId };
+}
+
+async function connectPrivateNpmRegistry(
+  seeded: Awaited<ReturnType<typeof seedApprovedGate>>,
+  registryUrl: string,
+) {
+  const encrypted = await encryptNpmToken(env, `npm_registry_verification_${crypto.randomUUID()}`);
+  await upsertNpmConnection(seeded.db, {
+    organizationId: seeded.organizationId,
+    registryUrl,
+    label: "Private registry",
+    ...encrypted,
+    createdByUserId: seeded.userId,
+  });
+  await updateNpmConnectionValidation(seeded.db, {
+    organizationId: seeded.organizationId,
+    validationStatus: "valid",
+    validatedAt: new Date(),
+  });
 }
 
 describe("post-publish registry verification", () => {
+  test("does not fall through to public npm when a private release is absent", async () => {
+    const seeded = await seedApprovedGate(new Date());
+    const registryUrl = `https://registry-${crypto.randomUUID()}.example.test`;
+    await connectPrivateNpmRegistry(seeded, registryUrl);
+    const fetchMock = vi.fn(async () => Response.json({ versions: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      getWorkflowGateAdapter("npm").verifyPublishedRelease?.(
+        {
+          env,
+          executionCtx: createExecutionContext(),
+          db: seeded.db,
+          organizationId: seeded.organizationId,
+        },
+        {
+          packageName: `private-${crypto.randomUUID()}`,
+          version: "1.2.3",
+          artifacts: [{ path: "demo.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+        },
+      ),
+    ).resolves.toEqual({ status: "not_published" });
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([request]) => String(request).startsWith(registryUrl))).toBe(
+      true,
+    );
+    await markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date());
+  });
+
+  test("does not fall through to public npm when a private metadata request fails", async () => {
+    const seeded = await seedApprovedGate(new Date());
+    const registryUrl = `https://registry-${crypto.randomUUID()}.example.test`;
+    await connectPrivateNpmRegistry(seeded, registryUrl);
+    const fetchMock = vi.fn(async () => {
+      throw new Error("private registry unavailable");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      getWorkflowGateAdapter("npm").verifyPublishedRelease?.(
+        {
+          env,
+          executionCtx: createExecutionContext(),
+          db: seeded.db,
+          organizationId: seeded.organizationId,
+        },
+        {
+          packageName: `private-${crypto.randomUUID()}`,
+          version: "1.2.3",
+          artifacts: [{ path: "demo.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+        },
+      ),
+    ).resolves.toEqual({ status: "not_published" });
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([request]) => String(request).startsWith(registryUrl))).toBe(
+      true,
+    );
+    await markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date());
+  });
+
+  test("allows credential-free fallback only on the same registry authority", async () => {
+    const seeded = await seedApprovedGate(new Date());
+    const registryUrl = `https://registry-${crypto.randomUUID()}.example.test`;
+    await connectPrivateNpmRegistry(seeded, registryUrl);
+    await updateNpmConnectionValidation(seeded.db, {
+      organizationId: seeded.organizationId,
+      validationStatus: "invalid",
+    });
+    const fetchMock = vi.fn(async () => Response.json({ versions: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      getWorkflowGateAdapter("npm").verifyPublishedRelease?.(
+        {
+          env: { ...env, NPM_REGISTRY: registryUrl },
+          executionCtx: createExecutionContext(),
+          db: seeded.db,
+          organizationId: seeded.organizationId,
+        },
+        {
+          packageName: `public-${crypto.randomUUID()}`,
+          version: "1.2.3",
+          artifacts: [{ path: "demo.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+        },
+      ),
+    ).resolves.toEqual({ status: "not_published" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0]).startsWith(registryUrl)).toBe(true);
+    await markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date());
+  });
+
   test("PyPI compares the complete registry digest set with the reviewed release", async () => {
     vi.stubGlobal(
       "fetch",
@@ -190,7 +308,12 @@ describe("post-publish registry verification", () => {
     const verifiedEvents = await seeded.db
       .select({ id: schema.scanEvents.id })
       .from(schema.scanEvents)
-      .where(eq(schema.scanEvents.type, "scan.registry_digest_verified"));
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, seeded.scanId),
+          eq(schema.scanEvents.type, "scan.registry_digest_verified"),
+        ),
+      );
     expect(verifiedEvents).toHaveLength(1);
     await expect(
       markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date()),
@@ -198,7 +321,12 @@ describe("post-publish registry verification", () => {
     const eventsAfterRetry = await seeded.db
       .select({ id: schema.scanEvents.id })
       .from(schema.scanEvents)
-      .where(eq(schema.scanEvents.type, "scan.registry_digest_verified"));
+      .where(
+        and(
+          eq(schema.scanEvents.scanId, seeded.scanId),
+          eq(schema.scanEvents.type, "scan.registry_digest_verified"),
+        ),
+      );
     expect(eventsAfterRetry).toHaveLength(1);
   });
 
@@ -267,6 +395,46 @@ describe("post-publish registry verification", () => {
     expect(alarms).toHaveLength(1);
   });
 
+  test("keeps verified and terminal mismatch transitions mutually exclusive", async () => {
+    const mismatchFirst = await seedApprovedGate(new Date());
+    const mismatch = {
+      scanId: mismatchFirst.scanId,
+      organizationId: mismatchFirst.organizationId,
+      ecosystem: "pypi",
+      packageName: "demo",
+      version: "1.2.3",
+      reviewedDigests: ["a".repeat(64)],
+      publishedDigests: ["b".repeat(64)],
+      now: new Date(),
+    };
+    await expect(recordRegistryDigestMismatch(mismatchFirst.db, mismatch)).resolves.toBe(true);
+    await expect(
+      markScanRegistryVerified(
+        mismatchFirst.db,
+        mismatchFirst.scanId,
+        mismatchFirst.organizationId,
+        new Date(),
+      ),
+    ).resolves.toBe(false);
+
+    const verifiedFirst = await seedApprovedGate(new Date());
+    await expect(
+      markScanRegistryVerified(
+        verifiedFirst.db,
+        verifiedFirst.scanId,
+        verifiedFirst.organizationId,
+        new Date(),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      recordRegistryDigestMismatch(verifiedFirst.db, {
+        ...mismatch,
+        scanId: verifiedFirst.scanId,
+        organizationId: verifiedFirst.organizationId,
+      }),
+    ).resolves.toBe(false);
+  });
+
   test("cron re-enqueues approved scans that have not reached a terminal verification", async () => {
     const seeded = await seedApprovedGate(new Date(Date.now() - 60_000));
     const send = vi.fn().mockResolvedValue(undefined);
@@ -280,5 +448,26 @@ describe("post-publish registry verification", () => {
       organizationId: seeded.organizationId,
       gateId: seeded.gateId,
     });
+  });
+
+  test("bounded cron sweeps rotate past long-lived pending gates", async () => {
+    const sweepNow = new Date();
+    const cleanupDb = createDb(env.DB);
+    await cleanupDb
+      .update(schema.scans)
+      .set({ registryVerifiedAt: sweepNow })
+      .where(eq(schema.scans.source, "workflow_gate"));
+    const first = await seedApprovedGate(new Date(sweepNow.getTime() - 2 * 60_000));
+    const second = await seedApprovedGate(new Date(sweepNow.getTime() - 60_000));
+    const send = vi.fn().mockResolvedValue(undefined);
+    const bindings = { ...env, SCAN_QUEUE: { send } } as unknown as Cloudflare.Env;
+
+    await runRegistryVerificationCron(bindings, createExecutionContext(), first.db, sweepNow, 1);
+    await runRegistryVerificationCron(bindings, createExecutionContext(), first.db, sweepNow, 1);
+
+    expect(send.mock.calls.map(([message]) => message.gateId)).toEqual([
+      first.gateId,
+      second.gateId,
+    ]);
   });
 });

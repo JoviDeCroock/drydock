@@ -223,17 +223,6 @@ export async function loadPublicPackageDiff(
   return payload;
 }
 
-/**
- * Full analysis identity of a payload this module computes: its payload
- * projection, ecosystem deterministic-rules segment, and risk-aggregation
- * version. The verdict cites this so consumers can distinguish any analysis
- * change for the same package/version pair.
- */
-export function publicDiffAnalysisVersion(
-  adapter: Pick<PublicDiffAdapter, "rulesVersionSegment" | "payloadVersion">,
-): string {
-  return `${adapter.rulesVersionSegment}+risk-${PUBLIC_DIFF_RISK_VERSION}+payload-${adapter.payloadVersion}`;
-}
 export async function computePublicDiffCacheKey(input: {
   ecosystem: string;
   packageName: string;

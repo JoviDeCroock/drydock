@@ -85,12 +85,34 @@ export async function listGatesPendingRegistryVerification(
         )`,
       ),
     )
-    .orderBy(asc(githubWorkflowGates.decidedAt))
+    .orderBy(
+      asc(githubWorkflowGates.registryVerificationAttemptedAt),
+      asc(githubWorkflowGates.decidedAt),
+    )
     .limit(limit);
   return rows.filter(
     (row): row is { organizationId: string; gateId: string; decidedAt: Date | null } =>
       Boolean(row.organizationId && row.gateId),
   );
+}
+
+/** Rotate a selected gate behind never-attempted and older retry candidates. */
+export async function markGateRegistryVerificationAttempted(
+  db: AppDb,
+  input: { organizationId: string; gateId: string; attemptedAt: Date },
+): Promise<boolean> {
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({ registryVerificationAttemptedAt: input.attemptedAt, updatedAt: input.attemptedAt })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, input.gateId),
+        eq(githubWorkflowGates.organizationId, input.organizationId),
+        eq(githubWorkflowGates.status, "approved"),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  return updated.length > 0;
 }
 
 /** CAS the manifest-claimed → registry-verified trust transition. */
@@ -105,6 +127,10 @@ export async function markScanRegistryVerified(
     eq(scans.organizationId, organizationId),
     eq(scans.source, "workflow_gate"),
     isNull(scans.registryVerifiedAt),
+    sql`not exists (
+      select 1 from ${scanEvents}
+      where ${scanEvents.id} = ${MISMATCH_EVENT_PREFIX} || ${scans.id}
+    )`,
   );
   const [, updated] = await db.batch([
     // Insert first, but only while the same CAS claim is live. D1 batches are
@@ -179,20 +205,29 @@ export async function recordRegistryDigestMismatch(
 ): Promise<boolean> {
   const inserted = await db
     .insert(scanEvents)
-    .values({
-      id: `${MISMATCH_EVENT_PREFIX}${input.scanId}`,
-      organizationId: input.organizationId,
-      scanId: input.scanId,
-      type: "scan.registry_digest_mismatch",
-      metadataJson: {
-        ecosystem: input.ecosystem,
-        packageName: input.packageName,
-        version: input.version,
-        reviewedDigests: input.reviewedDigests,
-        publishedDigests: input.publishedDigests,
-      },
-      createdAt: input.now,
-    })
+    .select(sql`
+      select
+        ${`${MISMATCH_EVENT_PREFIX}${input.scanId}`},
+        ${input.organizationId},
+        ${null},
+        ${input.scanId},
+        ${"scan.registry_digest_mismatch"},
+        ${JSON.stringify({
+          ecosystem: input.ecosystem,
+          packageName: input.packageName,
+          version: input.version,
+          reviewedDigests: input.reviewedDigests,
+          publishedDigests: input.publishedDigests,
+        })},
+        ${input.now.getTime()}
+      where exists (
+        select 1 from ${scans}
+        where ${scans.id} = ${input.scanId}
+          and ${scans.organizationId} = ${input.organizationId}
+          and ${scans.source} = 'workflow_gate'
+          and ${scans.registryVerifiedAt} is null
+      )
+    `)
     .onConflictDoNothing()
     .returning({ id: scanEvents.id });
   return inserted.length > 0;
