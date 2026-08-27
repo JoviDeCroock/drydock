@@ -11,6 +11,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import { isSettledRegistryStatus } from "../lib/npm-stage-follow-up";
 import { apiFetch, apiJson } from "./api";
 
 export interface ScanVersionsResponse {
@@ -255,10 +256,16 @@ export type DecisionStatus = "idle" | "saving" | "error";
 export type DeleteStatus = "idle" | "deleting" | "error";
 
 export function scanMatchesDecisionFilter(
-  scan: Pick<ScanListItem, "decision">,
+  scan: Pick<ScanListItem, "decision" | "registryStatusSupersededAt" | "registryVersionStatus">,
   filter: ScanDecisionFilter,
 ): boolean {
   if (filter === "all") return true;
-  if (filter === "undecided") return !scan.decision;
+  if (filter === "undecided") {
+    return (
+      !scan.decision &&
+      scan.registryStatusSupersededAt == null &&
+      !isSettledRegistryStatus(scan.registryVersionStatus)
+    );
+  }
   return scan.decision === filter;
 }

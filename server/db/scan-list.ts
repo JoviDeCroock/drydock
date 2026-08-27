@@ -5,7 +5,8 @@
  * reading its risk figures off the denormalized summary so a page of rows
  * never has to load findings.
  */
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, notInArray, or } from "drizzle-orm";
+import { SETTLED_NPM_VERSION_STATUSES } from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
 import type { ScanDecisionFilter } from "./scan-decisions";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
@@ -68,8 +69,16 @@ export async function listScans(
   if (decisionFilter === "undecided") {
     // Superseded reviews are immutable history, not pending work: the decision
     // route refuses them, so leaving them in the default queue creates rows the
-    // reviewer can never resolve. They remain visible under the `all` filter.
-    conditions.push(isNull(scans.decision), isNull(scans.registryStatusSupersededAt));
+    // reviewer can never resolve. Settled npm releases are no longer pending,
+    // but remain decidable history. Both stay visible under the `all` filter.
+    conditions.push(
+      isNull(scans.decision),
+      isNull(scans.registryStatusSupersededAt),
+      or(
+        isNull(scans.registryVersionStatus),
+        notInArray(scans.registryVersionStatus, [...SETTLED_NPM_VERSION_STATUSES]),
+      )!,
+    );
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 

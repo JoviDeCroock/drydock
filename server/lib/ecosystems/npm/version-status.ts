@@ -12,6 +12,11 @@ import { reliableFetch } from "../../platform/reliable-fetch";
  */
 const NPM_VERSION_STATUSES = ["published", "validating", "staged", "blocked", "deleted"] as const;
 
+// Keep this aligned with the client-side stage-action set in
+// `src/lib/npm-stage-follow-up.ts`; importing server runtime code into the UI
+// would cross the client/server boundary.
+export const SETTLED_NPM_VERSION_STATUSES = ["published", "blocked", "deleted"] as const;
+
 export type NpmVersionStatus = (typeof NPM_VERSION_STATUSES)[number];
 
 /**

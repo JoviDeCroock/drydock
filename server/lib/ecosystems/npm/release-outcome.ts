@@ -21,6 +21,8 @@ const PENDING_RECHECK_MS = 5 * 60 * 1000;
 const STAGED_RECHECK_MS = 60 * 60 * 1000;
 const PUBLISHED_RECHECK_MS = 24 * 60 * 60 * 1000;
 
+// After every review has received its first lookup, stop rechecking releases
+// older than this floor.
 const MAX_RELEASE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const FORGOTTEN_APPROVAL_DELAY_MS = 6 * 60 * 60 * 1000;

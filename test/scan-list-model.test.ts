@@ -203,6 +203,34 @@ describe("scanMatchesDecisionFilter", () => {
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "publish")).toBe(false);
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "all")).toBe(true);
   });
+
+  test.each(["published", "blocked", "deleted"])(
+    "excludes a settled %s release from undecided but not all",
+    (registryVersionStatus) => {
+      const scan = { decision: null, registryVersionStatus };
+
+      expect(scanMatchesDecisionFilter(scan, "undecided")).toBe(false);
+      expect(scanMatchesDecisionFilter(scan, "all")).toBe(true);
+    },
+  );
+
+  test.each([null, "staged", "validating"])(
+    "keeps an unsettled %s release in undecided",
+    (registryVersionStatus) => {
+      expect(
+        scanMatchesDecisionFilter({ decision: null, registryVersionStatus }, "undecided"),
+      ).toBe(true);
+    },
+  );
+
+  test("excludes superseded history from undecided", () => {
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryStatusSupersededAt: "2026-08-27T00:00:00.000Z" },
+        "undecided",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("ScanListModel hasAnyScan", () => {

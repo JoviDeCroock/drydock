@@ -73,6 +73,7 @@ async function seedCompletedScan(
     createdAt?: Date;
     source?: ScanSource;
     registryUrl?: string | null;
+    registryVersionStatusAttemptedAt?: Date;
   } = {},
 ) {
   const db = createDb(env.DB);
@@ -102,10 +103,15 @@ async function seedCompletedScan(
     diff: [],
     findings: [],
   });
-  if (overrides.createdAt) {
+  if (overrides.createdAt || overrides.registryVersionStatusAttemptedAt) {
     await db
       .update(schema.scans)
-      .set({ createdAt: overrides.createdAt })
+      .set({
+        ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+        ...(overrides.registryVersionStatusAttemptedAt
+          ? { registryVersionStatusAttemptedAt: overrides.registryVersionStatusAttemptedAt }
+          : {}),
+      })
       .where(eq(schema.scans.id, scanId));
   }
   return { scanId, stageId };
@@ -410,6 +416,69 @@ describe("registry version status resolution", () => {
     expect(scan.registryVersionStatus).toBe("blocked");
     expect(scan.registryVersionStatusAt).toBeTruthy();
     expect(scan.registryVersionStatusAttemptedAt).toBeTruthy();
+  });
+
+  test.each(["published", "blocked", "deleted"])(
+    "keeps a %s release as decidable history but removes it from the undecided queue",
+    async (status) => {
+      const org = await seedOrg();
+      const { scanId } = await seedCompletedScan(org);
+      const db = createDb(env.DB);
+      stubRegistry(() => statusResponse(status));
+
+      await resolveNpmReleaseOutcomes({
+        db,
+        env,
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      });
+
+      const undecided = await listScans(db, org.organizationId);
+      expect(undecided.scans.map((scan) => scan.id)).not.toContain(scanId);
+      const history = await listScans(db, org.organizationId, { decisionFilter: "all" });
+      expect(history.scans).toContainEqual(
+        expect.objectContaining({ id: scanId, registryVersionStatus: status }),
+      );
+      await expect(
+        recordScanDecision(db, {
+          scanId,
+          organizationId: org.organizationId,
+          decision: "publish",
+          actorUserId: org.userId,
+        }),
+      ).resolves.toBeTruthy();
+      expect((await readScan(scanId)).decision).toBe("publish");
+    },
+  );
+
+  test("keeps staged, validating, and unresolved releases in the undecided queue", async () => {
+    const org = await seedOrg();
+    const staged = await seedCompletedScan(org, { version: "2.5.0" });
+    const validating = await seedCompletedScan(org, { version: "2.5.1" });
+    const unresolved = await seedCompletedScan(org, { version: "2.5.2" });
+    const db = createDb(env.DB);
+    stubRegistry((url) => {
+      const version = decodeURIComponent(new URL(url).pathname.split("/").at(-2)!);
+      if (version === "2.5.0") return statusResponse("staged", PACKAGE, version);
+      if (version === "2.5.1") return statusResponse("validating", PACKAGE, version);
+      return new Response(null, { status: 404 });
+    });
+
+    await resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    const undecided = await listScans(db, org.organizationId);
+    expect(new Set(undecided.scans.map((scan) => scan.id))).toEqual(
+      new Set([staged.scanId, validating.scanId, unresolved.scanId]),
+    );
+    expect((await readScan(unresolved.scanId)).registryVersionStatus).toBeNull();
+    expect((await readScan(unresolved.scanId)).registryVersionStatusAttemptedAt).toBeTruthy();
   });
 
   test("binds the lookup to registry coordinates when hostile tarball metadata disagrees", async () => {
@@ -910,9 +979,13 @@ describe("registry version status resolution", () => {
     expect(second.checked).toBe(1);
   });
 
-  test("does not chase releases older than the age floor", async () => {
+  test("does not recheck attempted releases older than the age floor", async () => {
     const org = await seedOrg();
-    await seedCompletedScan(org, { createdAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) });
+    const old = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    await seedCompletedScan(org, {
+      createdAt: old,
+      registryVersionStatusAttemptedAt: old,
+    });
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -925,6 +998,66 @@ describe("registry version status resolution", () => {
 
     expect(result.checked).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("gives a never-attempted old review one lookup, then stops", async () => {
+    const org = await seedOrg();
+    const now = new Date();
+    const { scanId } = await seedCompletedScan(org, {
+      createdAt: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+    });
+    const fetchMock = stubRegistry(() => new Response(null, { status: 404 }));
+    const args = {
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    const first = await resolveNpmReleaseOutcomes({ ...args, now });
+    const second = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(now.getTime() + 10 * 60 * 1000),
+    });
+
+    expect(first.checked).toBe(1);
+    expect(second.checked).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await readScan(scanId)).registryVersionStatusAttemptedAt).toBeTruthy();
+  });
+
+  test("checks recent releases before draining the legacy first-lookup backlog", async () => {
+    const org = await seedOrg();
+    const now = new Date();
+    const oldCreatedAt = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const oldOne = await seedCompletedScan(org, { version: "2.9.0", createdAt: oldCreatedAt });
+    const oldTwo = await seedCompletedScan(org, { version: "2.9.1", createdAt: oldCreatedAt });
+    const recent = await seedCompletedScan(org, { version: "3.0.0" });
+    const fetchMock = stubRegistry(() => new Response(null, { status: 404 }));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      stagedItems: [{ id: recent.stageId, packageName: PACKAGE, version: "3.0.0" }],
+      now,
+      lookupLimit: 2,
+    });
+
+    expect(result.checked).toBe(2);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(
+      expect.arrayContaining([expect.stringContaining("/3.0.0/status")]),
+    );
+    expect((await readScan(recent.scanId)).registryVersionStatusAttemptedAt).toBeTruthy();
+    const attemptedLegacyCount = await Promise.all(
+      [oldOne.scanId, oldTwo.scanId].map(async (scanId) =>
+        Boolean((await readScan(scanId)).registryVersionStatusAttemptedAt),
+      ),
+    );
+    expect(attemptedLegacyCount.filter(Boolean)).toHaveLength(1);
   });
 
   test("does not ask npm about workflow-gate scans from other ecosystems", async () => {
@@ -1347,6 +1480,42 @@ describe("staged failure refinement", () => {
     expect(refined.error.code).toBe(code);
     expect(refined.error.message).not.toContain("token");
     expect(refined.registryStatus).toBe(status);
+  });
+
+  test("keeps a failed blocked scan under all but out of undecided", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    const scanId = crypto.randomUUID();
+    const stageId = `stage-${scanId.slice(0, 8)}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      packageName: PACKAGE,
+      stagedVersion: VERSION,
+      registryUrl: REGISTRY_URL,
+    });
+    stubRegistry(() => statusResponse("blocked"));
+
+    const refined = await refine(org, scanId, stageId);
+    await markScanFailed(db, scanId, org.organizationId, refined.error);
+    await recordRegistryVersionStatus(db, {
+      scanId,
+      organizationId: org.organizationId,
+      status: refined.registryStatus,
+    });
+
+    const undecided = await listScans(db, org.organizationId);
+    expect(undecided.scans.map((scan) => scan.id)).not.toContain(scanId);
+    const history = await listScans(db, org.organizationId, { decisionFilter: "all" });
+    expect(history.scans).toContainEqual(
+      expect.objectContaining({
+        id: scanId,
+        status: "failed",
+        registryVersionStatus: "blocked",
+      }),
+    );
   });
 
   test.each(["staged", "validating"])(
