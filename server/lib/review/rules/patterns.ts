@@ -267,7 +267,7 @@ const REVIEW_MANIPULATION_PATTERNS = [
   // output is verdict manipulation even when it adds an ordinary-language
   // destination or rationale after the finding noun.
   new RegExp(
-    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)|(?:ignore|disregard|hide|suppress))\s+(?:any|these|those|the)\s+(?:findings?|detections?)\b`,
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:(?:(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)|(?:ignore|disregard|hide|suppress))\s+(?:any|all|these|those|the)|(?:report|return)\s+no)\s+(?:findings?|detections?)\b`,
     "i",
   ),
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
@@ -279,13 +279,13 @@ const REVIEW_MANIPULATION_PATTERNS = [
   // or an explicitly review-scoped qualifier reaches the high tier.
   /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b(?=\s*(?:[.!?]|$)|\s+(?:in|for|from|about)\s+(?:this|the)\s+(?:(?:(?:automated|AI)\s+)?(?:security\s+)?(?:review|scan|audit)|package|release|update|version)\b)/i,
   /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
-  // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
-  // with a space; the underscore/hyphen form is schema-targeting.
-  /\bnothing[_-]unusual\b/i,
-  // Schema form only (camelCase or snake_case, no spaces): prose like "each
-  // alert requires manual review to rule out false positives" is ordinary
-  // security-tool documentation.
-  /\brequires_?manual_?review\b[^\n]{0,20}\bfalse\b(?!\s+positive)/i,
+  // Drydock's schema tokens are ordinary source in an API client or integration.
+  // They become verdict manipulation only when an explicit review audience is
+  // told to produce them.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:report|return|reply(?:\s+with)?|respond(?:\s+with)?|output|submit|set|use)\b[^\n.!?]{0,50}\b(?:nothing[_-]unusual|requires_?manual_?review\b[^\n.!?]{0,20}\bfalse)\b`,
+    "i",
+  ),
   // Security tooling legitimately documents switches such as "bypass the
   // security check during local development". Require the directive to name
   // this package/release as the object being exempted from review.
@@ -297,8 +297,8 @@ const REVIEW_MANIPULATION_PATTERNS = [
 // libraries legitimately ship prompt-shaped text ("You are a helpful
 // assistant", "customize the system prompt") that must stay quiet.
 const PROMPT_INJECTION_PATTERNS = [
-  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|prompts?|rules?|directives?|commands?|context)\b/i,
-  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|every\s+)?(?:instructions?|prompts?|rules?|directives?|commands?|context)\s+(?:above|before|earlier|previously)\b/i,
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier|preceding|system|initial|original)\s+(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\b/i,
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|every\s+)?(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\s+(?:above|before|earlier|previously)\b/i,
   /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
   /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
   /\b(?:replace|overwrite)\s+your\s+system\s+prompt\b/i,
