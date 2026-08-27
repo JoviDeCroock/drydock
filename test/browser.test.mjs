@@ -2378,6 +2378,64 @@ describe("browser extension review adapter", () => {
     expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
   });
 
+  test("follows pathname and module-relative WebExtension navigation", () => {
+    const path = "dist/navigation-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Navigation helper", "1.0.0", [
+      { path, sha256: SHA },
+    ]);
+    const files = [
+      manifestFile({ action: { default_popup: "ui/popup.html" } }),
+      {
+        path: "ui/popup.html",
+        size: 55,
+        sha256: "e0".repeat(32),
+        flags: [],
+        textSample: '<script type="module" src="navigation.js"></script>',
+      },
+      {
+        path: "ui/navigation.js",
+        size: 160,
+        sha256: "e1".repeat(32),
+        flags: [],
+        textSample: [
+          'location.pathname = "/tests/pathname.html";',
+          'chrome.tabs.create({ url: new URL("../tests/module-api.html", import.meta.url).href });',
+          'chrome.windows.create({ url: [new URL("../tests/module-array.html", import.meta.url).href] });',
+        ].join("\n"),
+      },
+      ...["pathname", "module-api", "module-array"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 41,
+          sha256: (226 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: (232 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining(
+        ["pathname", "module-api", "module-array"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+      ),
+    );
+    expect(findings).toHaveLength(3);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
   test("follows nested browser-rendered SHTML documents", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

@@ -1214,12 +1214,33 @@ function staticBrowserNavigationResource(
   if (member.name === "href" && tokenText(tokens[member.nextIndex], text) === "=") {
     return staticBrowserNavigationAssignmentResource(tokens, text, member.nextIndex + 1);
   }
+  if (member.name === "pathname" && tokenText(tokens[member.nextIndex], text) === "=") {
+    return staticBrowserPathnameAssignmentResource(tokens, text, member.nextIndex + 1);
+  }
   if (member.name !== "assign" && member.name !== "replace") return null;
   const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
   if (openIndex === null) return null;
   const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
   if (closeIndex === null) return null;
   return staticBrowserNavigationCallResource(tokens, text, openIndex, closeIndex);
+}
+
+function staticBrowserPathnameAssignmentResource(
+  tokens: JsToken[],
+  text: string,
+  valueIndex: number,
+): WebExtensionResourceSpecifier | null {
+  const path = staticScriptPath(tokens[valueIndex], text);
+  if (path === null) return null;
+  const allowedFollowingTokens = ["", ",", ";", ")", "]", "}"];
+  const value: StaticWebExtensionResourcePath = {
+    path,
+    nextIndex: valueIndex + 1,
+    runtimeUrl: false,
+    moduleUrl: false,
+  };
+  if (!browserNavigationAssignmentEnds(tokens, text, value, allowedFollowingTokens)) return null;
+  return { path, resolution: "document-root" };
 }
 
 function staticBrowserNavigationCallResource(
@@ -1520,10 +1541,10 @@ function staticPropertyScriptPaths(
     if (valueIndex !== null) {
       if (valueShape === "string" || valueShape === "string-or-string-array") {
         const value = staticWebExtensionResourcePath(tokens, text, valueIndex, [",", "}"]);
-        if (value !== null && !value.moduleUrl) {
+        if (value !== null && (!value.moduleUrl || property === "url")) {
           paths.push({
             path: value.path,
-            resolution: value.runtimeUrl ? "root" : resolution,
+            resolution: value.moduleUrl ? "module" : value.runtimeUrl ? "root" : resolution,
           });
           continue;
         }
@@ -1546,10 +1567,10 @@ function staticPropertyScriptPaths(
           nestedDepth === 0
             ? staticWebExtensionResourcePath(tokens, text, itemIndex, [",", "]"])
             : null;
-        if (value !== null && !value.moduleUrl) {
+        if (value !== null && (!value.moduleUrl || property === "url")) {
           paths.push({
             path: value.path,
-            resolution: value.runtimeUrl ? "root" : resolution,
+            resolution: value.moduleUrl ? "module" : value.runtimeUrl ? "root" : resolution,
           });
           itemIndex = value.nextIndex - 1;
           continue;
