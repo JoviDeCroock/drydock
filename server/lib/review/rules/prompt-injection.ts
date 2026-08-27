@@ -37,7 +37,7 @@ import {
 // every normalization preserves line boundaries or offsets for attribution.
 // Overlapping windows keep those normalized copies bounded: a retained text
 // body may be 25 MiB, while the parent Worker has a 128 MiB isolate budget.
-export const PROMPT_INJECTION_SCAN_WINDOW_CHARS = 64 * 1024;
+const PROMPT_INJECTION_SCAN_WINDOW_CHARS = 64 * 1024;
 const PROMPT_INJECTION_SCAN_OVERLAP_CHARS = 4 * 1024;
 
 export function promptInjectionFindings(ctx: RuleContext): Finding[] {
