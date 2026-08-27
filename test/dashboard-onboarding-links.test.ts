@@ -25,4 +25,10 @@ describe("dashboard onboarding contracts", () => {
     expect(gettingStartedSource).toContain('href="/dashboard/settings?tab=integrations"');
     expect(gettingStartedSource).not.toContain('href="/dashboard/settings#gate-setup"');
   });
+
+  test("does not treat a recorded decision as proof that npm published the release", () => {
+    expect(gettingStartedSource).not.toContain("published on your terms");
+    expect(gettingStartedSource).toContain("with the decision still in your hands");
+    expect(gettingStartedSource).toContain("An npm approval still needs your own");
+  });
 });

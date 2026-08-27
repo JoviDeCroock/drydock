@@ -91,8 +91,8 @@ export function GettingStarted({
         <Muted class="text-[13px] m-0">
           {complete ? (
             <>
-              Reviewed before it shipped, and published on your terms. Every staged release and
-              gated run lands here from now on — close this when you are ready.
+              Reviewed before it shipped, with the decision still in your hands. Every staged
+              release and gated run lands here from now on — close this when you are ready.
             </>
           ) : (
             <Show<OnboardingIntent | null>
@@ -167,8 +167,8 @@ export function GettingStarted({
         <Step index={3} title="Review and decide" done={hasAnyDecision}>
           {hasAnyDecision ? (
             <>
-              A decision is recorded for this organization. Releasing it still took your own 2FA —
-              Drydock never publishes.
+              A decision is recorded for this organization. An npm approval still needs your own 2FA
+              — Drydock never publishes.
             </>
           ) : (
             <>
