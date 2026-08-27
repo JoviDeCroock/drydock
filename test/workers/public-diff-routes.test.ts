@@ -44,6 +44,8 @@ function cachedPayload(packageName: string): PublicPackageDiff {
       confident: true,
     },
     sourceBinding: { from: null, to: null, changed: false },
+    fromArchiveSha1: "a".repeat(40),
+    toArchiveSha1: "b".repeat(40),
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
 }
@@ -475,6 +477,7 @@ describe("public package-diff routes", () => {
       package: packageName,
       rulesVersion: "1.31.0+risk-1+payload-v7",
       grade: "needs-review",
+      to: { integrity: { sha1: "b".repeat(40) } },
       findingCounts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
       diffUrl: `http://example.com/diff/${packageName}/1.0.0/1.0.1`,
     });

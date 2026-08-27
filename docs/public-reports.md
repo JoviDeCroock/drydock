@@ -69,9 +69,11 @@ for unknown, malformed, or revoked tokens.
 - `GET /public/reviews/:ecosystem/:package/:version` — a minimal
   `drydock.review-lookup.v1` response for consumer policy (`{ listed: boolean }`).
   It returns true only for an exact version whose registry-established review
-  is both shared and feed-listed. Workflow-gate manifest claims remain visible
-  in badges/feed entries as unverified evidence but cannot satisfy an automated
-  maintainer-review requirement.
+  is both shared and feed-listed, whose staged artifact integrity was verified,
+  and whose computed SHA-1 equals the required published `?sha1=` digest.
+  Workflow-gate manifest claims remain visible in badges/feed entries as
+  unverified evidence but cannot satisfy an automated maintainer-review
+  requirement.
 
 ## Shared file samples
 

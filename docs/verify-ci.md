@@ -12,6 +12,16 @@ They consider direct and transitive packages. When one package has an ambiguous
 many-to-one or one-to-many version change, the CLI omits that pair instead of
 linking a confidently wrong diff. `yarn.lock` is not supported in v1.
 
+Public verdicts apply only to bytes resolved from the canonical public npm
+registry. For `package-lock.json`, the installed path and `resolved` URL exclude
+workspace records, private registries, Git dependencies, direct tarballs, and
+local sources. For pnpm, locator schemes plus the repository's `.npmrc`
+`registry` / `@scope:registry` settings establish the same boundary; registry
+credentials are ignored. A changed non-public pair is unavailable evidence and
+follows `onUnavailable`, never a lookup of a same-named public package. Lockfile
+renames retain their old path through Git rename detection, so moving a package
+inside a monorepo does not erase the comparison.
+
 ## Policy
 
 Commit `drydock.policy.json` at the repository root:
@@ -41,7 +51,9 @@ Commit `drydock.policy.json` at the repository root:
   public `drydock.review-lookup.v1` endpoint. An ordinary anonymous diff does
   not satisfy this policy, and neither does a workflow-gate review whose package
   name is only manifest-claimed; the lookup requires registry-established
-  package identity.
+  package identity. It also requires the verified SHA-1 of the reviewed staged
+  archive to equal the SHA-1 Drydock recomputed over the published target
+  archive, so a mutable stage rewritten after review cannot satisfy the policy.
 - `onUnavailable` is `fail` by default. `warn` keeps CI available during a
   Drydock or registry outage but leaves the unavailable reason in the check
   table. It does not weaken a verdict that was fetched successfully.

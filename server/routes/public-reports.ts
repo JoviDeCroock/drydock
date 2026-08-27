@@ -54,6 +54,7 @@ const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
 const SHARE_INCLUDES_FILES_HEADER = "x-drydock-share-includes-files";
 export const REVIEW_LOOKUP_SCHEMA = "drydock.review-lookup.v1";
 const REVIEW_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.!_+~-]{0,127}$/;
+const SHA1_RE = /^[a-f0-9]{40}$/i;
 
 publicReportsRoutes.use("*", async (c, next) => {
   await next();
@@ -157,7 +158,10 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 // than the badge and threat feed: only a registry-established package identity
 // can satisfy a maintainer-review requirement. A workflow-gate manifest claim
 // remains visible on the human surfaces but can never become automated proof
-// that the package's maintainer reviewed this version.
+// that the package's maintainer reviewed this version. The caller supplies the
+// published archive SHA-1 from drydock.verdict.v1; the DB match requires the
+// scan to have verified exactly those staged bytes, so version text cannot
+// bridge a mutable rewrite.
 publicReportsRoutes.get("/reviews/:ecosystem/*", async (c) => {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
@@ -184,11 +188,16 @@ publicReportsRoutes.get("/reviews/:ecosystem/*", async (c) => {
   ) {
     return c.json({ error: "invalid review identity" }, 400);
   }
+  const publishedSha1 = c.req.query("sha1") ?? "";
+  if (!SHA1_RE.test(publishedSha1)) {
+    return c.json({ error: "published artifact digest is required" }, 400);
+  }
 
   const listed = await hasListedMaintainerReview(createDb(c.env.DB), {
     ecosystem,
     packageName,
     version,
+    publishedSha1,
   });
   return c.json({ schema: REVIEW_LOOKUP_SCHEMA, listed }, 200, { "cache-control": "no-store" });
 });
