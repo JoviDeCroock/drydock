@@ -514,23 +514,26 @@ export default function DocsPage() {
                     Drydock GitHub App on the account that hosts your repository.
                   </>,
                   <>
-                    In the repository, create a GitHub Environment such as{" "}
-                    <InlineCode>production</InlineCode> and enable Drydock as a custom deployment
-                    protection rule.
+                    Open <InlineCode>Guided gate setup</InlineCode> in the same settings tab and
+                    pick the repository. Drydock creates the GitHub Environment, registers itself as
+                    that environment's deployment protection rule, generates the publish workflow
+                    for your package, and opens a pull request with it.
                   </>,
                   <>
-                    Back in Drydock settings, map that repository and environment to the
-                    organization. You can optionally narrow the gate to one artifact name.
-                  </>,
-                  <>
-                    Add a build job that uploads release candidates and a publish job that uses the
-                    protected environment. Start from one of the examples below.
+                    Create the release target in the last step of the wizard, then review and merge
+                    the workflow pull request.
                   </>,
                 ]}
               />
+              <Callout label="Every step has a manual path">
+                The wizard works through your App installation, which may not grant repository
+                administration or workflow write access. When GitHub refuses a step, Drydock says
+                which permission is missing and shows what to do by hand — including the generated
+                workflow, ready to copy. The examples below are the same files the wizard writes.
+              </Callout>
               <div class="flex flex-wrap gap-2 pt-1">
-                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                  Open Organization settings
+                <LinkButton href="/dashboard/settings#gate-setup" size="sm">
+                  Open the setup wizard
                 </LinkButton>
               </div>
             </Subsection>
