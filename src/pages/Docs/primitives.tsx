@@ -10,6 +10,7 @@ import { useEffect, useMemo } from "preact/hooks";
 import { type Signal, useComputed } from "@preact/signals";
 import { Badge, type BadgeTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
+import { CopyButton } from "../../components/CopyButton";
 import { cn } from "../../components/cn";
 import { MonoLabel } from "../../components/Typography";
 import { ensureHighlighter, highlighterReady, tokenizeLines } from "../../components/highlight";
@@ -342,11 +343,16 @@ export function CodeBlock({
         embedded ? "border-0 rounded-none" : "rounded-md border border-border",
       )}
     >
-      {name ? (
-        <div class="px-4 py-2 border-b border-border font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+      {/* One toolbar for both shapes: the optional file name on the left, the
+          copy affordance on the right. The block's own text stays selectable —
+          copying a workflow file by hand means dragging across a scrolling
+          <pre>, which is where docs readers give up. */}
+      <div class="px-4 py-2 border-b border-border flex items-center justify-between gap-3">
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle min-w-0 truncate">
           {name}
-        </div>
-      ) : null}
+        </span>
+        <CopyButton text={children} />
+      </div>
       <pre class="m-0 p-4 overflow-x-auto font-mono text-[12px] leading-[1.55] text-ink">
         <code>
           {tokens ? (

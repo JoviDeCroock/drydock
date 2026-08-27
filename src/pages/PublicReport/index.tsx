@@ -61,17 +61,39 @@ interface LoadedPublicReport {
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
 
+/**
+ * The share token *is* the capability, so `/reports` with no token is not a
+ * revoked link — it is someone who trimmed the URL, or a chat client that cut
+ * the token off the end. That state gets an explainer, and never a lookup: an
+ * empty token would only 404 and render "invalid or revoked" at a visitor who
+ * was never given a link in the first place.
+ */
+export function hasShareToken(token: string | null | undefined): boolean {
+  return typeof token === "string" && token.trim() !== "";
+}
+
 export default function PublicReportPage() {
   const route = useRoute();
   const token = route.params.token ?? "";
+  const tokenPresent = hasShareToken(token);
   const authed = useAuthedSession();
   const report = useSignal<LoadedPublicReport | null>(null);
   const errorState = useSignal<"none" | "not_found" | "failed">("none");
+  // The prerendered `/reports` document is also the shell served for every
+  // `/reports/:token` request (see `assetFallbackRequest`), so the explainer
+  // must not be in the server-rendered output — a share link would flash "there
+  // is no public index" before the bundle takes over. Deferring it to the
+  // client keeps the loading skeleton as the shell for both.
+  const mounted = useSignal(false);
+  useEffect(() => {
+    mounted.value = true;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     report.value = null;
     errorState.value = "none";
+    if (!hasShareToken(token)) return;
     void (async () => {
       const keyRequest = fetch("/public/attestation-key", {
         headers: { accept: "application/json" },
@@ -118,6 +140,56 @@ export default function PublicReportPage() {
   const changedFiles = useComputed(
     () => report.value?.data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [],
   );
+
+  if (!tokenPresent) {
+    if (!mounted.value) {
+      return (
+        <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
+          <LoadingState title="Loading public review" detail="fetching report" />
+        </PageShell>
+      );
+    }
+    return (
+      <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
+        <header class="flex flex-col gap-2">
+          <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
+            Public release review
+          </p>
+          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">This page needs a link</h1>
+          <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
+            A Drydock public report is a single release review that the package's owner chose to
+            share: the same canonical report export Drydock produced for them — risk, findings, and
+            the files the release changed — served read-only at its own link.
+          </Muted>
+        </header>
+
+        <Card class="flex flex-col gap-3">
+          <SectionLabel as="h2">Why there is no index</SectionLabel>
+          <EmptyLine>
+            The link is the permission. Each report has its own unguessable address, reports are
+            never listed or searchable, and the owner can revoke a link at any time — so{" "}
+            <code class="font-mono text-[12px] text-ink">/reports</code> on its own has nothing to
+            show. If someone sent you a report, open their full link: chat clients and mail readers
+            sometimes cut the token off the end.
+          </EmptyLine>
+        </Card>
+
+        <section class="flex flex-col gap-3">
+          <SectionLabel as="h2">Where to go next</SectionLabel>
+          <EmptyLine>
+            You can diff any published npm, PyPI, or atpm package against its previous version
+            without an account, or read how staged reviews, sharing, and signed attestations work.
+          </EmptyLine>
+          <div class="flex flex-wrap gap-2">
+            <LinkButton href="/diff">Diff a package</LinkButton>
+            <LinkButton href="/docs" variant="secondary">
+              Read the docs
+            </LinkButton>
+          </div>
+        </section>
+      </PageShell>
+    );
+  }
 
   if (errorState.value === "not_found") {
     return (

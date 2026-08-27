@@ -16,7 +16,9 @@ export function buildQueryUrl(updates: QueryUpdates): string {
     }
   }
   const search = params.toString();
-  return window.location.pathname + (search ? `?${search}` : "");
+  // Preserve the hash: query writes go through history.replaceState, and
+  // rebuilding the URL without it silently drops #anchor deep links.
+  return window.location.pathname + (search ? `?${search}` : "") + window.location.hash;
 }
 
 function currentLocationKey(): string {
@@ -90,7 +92,9 @@ export function useQuerySignal<T>(signal: Signal<T>, options: QuerySignalOptions
     }
     const write = () => {
       const next = buildQueryUrl({ [name]: serialized });
-      if (next !== currentLocationKey()) location.route(next, true);
+      // Compare including the hash — buildQueryUrl carries it, so a
+      // hash-free key would make every write with an anchor look dirty.
+      if (next !== currentLocationKey() + window.location.hash) location.route(next, true);
     };
     if (!debounceMs) {
       write();

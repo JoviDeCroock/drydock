@@ -17,6 +17,12 @@ a shields.io badge per package and an opt-in public threat feed.
   `scan.share_revoked`) and surface in the organization audit log.
 - The UI entry point is the **Share** button on the scan detail header; the
   public page renders at `/reports/:token`.
+- `/reports` with no token is not an error state: there is no public index to
+  land on, so the page skips the lookup entirely and explains what a public
+  report is, why reports are unlisted, and points at `/diff` and the docs. Only
+  a token that is present and rejected gets the "invalid or revoked" message.
+  The explainer renders after mount, because the prerendered `/reports`
+  document is also the shell served for every `/reports/:token` request.
 - Restaging the same registry package/version retires the older stage identity
   and its public share capability. The obsolete review also leaves the badge
   and threat feed; already-cached derived responses may remain visible for the

@@ -1,5 +1,4 @@
 import { useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import {
   dismissStageCommandPrompt,
@@ -7,6 +6,7 @@ import {
   type StageCommandPrompt,
 } from "../../../models/stage-command-prompt";
 import { Button, LinkButton } from "../../../components/Button";
+import { CopyButton } from "../../../components/CopyButton";
 import { Dialog } from "../../../components/Dialog";
 
 /**
@@ -30,22 +30,8 @@ export function StageCommandDialogHost() {
 }
 
 function StageCommandDialog({ prompt }: { prompt: StageCommandPrompt }) {
-  // null while untouched so the <Show> boundary renders nothing until a copy is
-  // actually attempted.
-  const copyState = useSignal<"copied" | "failed" | null>(null);
   const approving = prompt.decision === "publish";
   const target = [prompt.packageName, prompt.stagedVersion].filter(Boolean).join("@");
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(prompt.command);
-      copyState.value = "copied";
-    } catch {
-      // Clipboard access is denied outside secure contexts and in some
-      // permission setups; the command stays selectable either way.
-      copyState.value = "failed";
-    }
-  };
 
   return (
     <Dialog
@@ -77,18 +63,9 @@ function StageCommandDialog({ prompt }: { prompt: StageCommandPrompt }) {
         <code class="font-mono text-[12px] leading-[1.6] text-ink bg-surface-2 border border-border rounded px-2.5 py-2 whitespace-pre-wrap break-words">
           {prompt.command}
         </code>
-        <div class="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => void copy()}>
-            Copy command
-          </Button>
-          {/* aria-live so the confirmation reaches screen readers; the button
-              label stays stable so its accessible name does not shift. */}
-          <span class="text-[12px] text-ink-subtle" aria-live="polite">
-            <Show<"copied" | "failed" | null> when={copyState}>
-              {(state) => (state === "copied" ? "Copied." : "Copy failed — select it manually.")}
-            </Show>
-          </span>
-        </div>
+        {/* The command above stays selectable, which is what CopyButton's
+            failure message points at when the clipboard is unavailable. */}
+        <CopyButton text={prompt.command} label="Copy command" />
       </div>
 
       <p class="m-0 text-[12px] leading-[1.6] text-ink-subtle">
