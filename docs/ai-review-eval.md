@@ -111,27 +111,28 @@ Run:
 pnpm run eval:ai
 ```
 
-The test reads `test/fixtures/ai-review-eval/cases.json`, validates every result
-through the real persisted-review schema, requires every result to match the
-corpus's explicit recorded reviewer version, and scores malicious catch
+The test reads `test/fixtures/ai-review-eval/cases.json` and validates every
+result through the real persisted-review schema and scores malicious catch
 behavior, benign cleanliness, and safe uncertainty escalation through the
-production `computeScanRisk` roll-up. Corpus metadata, non-empty required fields,
-and unique case ids are validated before metrics are computed; the gate also
-holds minimum verdict/scenario coverage. The report shows the historical version
-beside the current runtime version so an old output can never be relabeled as
-evidence from a new model or routing contract, and says explicitly whether the
-current contract has recorded coverage. The baseline includes
+production `computeScanRisk` roll-up. Records under `cases` are the gated
+current-version corpus: a stale `reviewerVersion` fails the gate. Records under
+`historicalCases` retain their original version and are scored only as a
+version-agnostic persisted-shape compatibility set. Corpus metadata, non-empty
+required fields, and unique case ids across both sets are validated before
+metrics are computed. The report keeps the two totals separate so historical
+output cannot be mistaken for current reviewer coverage. The corpus includes
 prompt-injection-shaped hostile evidence, unavailable evidence, and a fallback
 model result. Reports are written to `.context/eval/ai-review-eval.json` and
 `.context/eval/ai-review-eval.md`; a write failure fails the command.
 
-These are historical recorded outputs, so a green run proves the scoring
-contract and guards known outputs; it does not prove the current hosted model
-will reproduce them. Before treating the corpus as evidence for a new model or
-reviewer version, refresh it from controlled live runs, redact evidence, have a
-human assign the verdict and threat class, then update its recorded provenance
-and compare the new version by category. Keep model failover's runtime behavior
-covered by the mocked orchestration tests in `test/ai-review.test.mjs` as well.
+These are recorded outputs, so a green run proves the scoring contract and
+guards known current-version outputs; it does not prove the hosted model will
+reproduce them. Historical records never contribute to the gated result. Before
+promoting a new model or reviewer version, refresh the gated corpus from
+controlled live runs, redact evidence, have a human assign the verdict and
+threat class, then compare the new version by category. Keep model failover's
+runtime behavior covered by the mocked orchestration tests in
+`test/ai-review.test.mjs` as well.
 
 ## Live model comparison
 

@@ -25,8 +25,6 @@ export {
   REVIEW_MANIPULATION_PATTERN_SET,
   SECRET_PATTERNS,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
-  softenPromptInjectionLineBreaks,
-  stripPromptInjectionEvasion,
 } from "./patterns";
 export { safeJson } from "./helpers";
 export type { DeterministicFindingOptions } from "./context";

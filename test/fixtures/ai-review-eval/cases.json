@@ -1,7 +1,6 @@
 {
   "suiteVersion": 2,
-  "recordedReviewerVersion": "1.2.0",
-  "cases": [
+  "historicalCases": [
     {
       "id": "npm-install-exfiltration",
       "verdict": "malicious",
@@ -105,7 +104,9 @@
         "model": "@cf/deepseek-ai/deepseek-v4-flash-0731",
         "reviewerVersion": "1.2.0"
       }
-    },
+    }
+  ],
+  "cases": [
     {
       "id": "npm-readme-injection-only",
       "verdict": "malicious",
