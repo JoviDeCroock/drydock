@@ -17,11 +17,7 @@ import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 // cannot pull a packaged file into the consumer graph. An unproven test-path
 // edge receives the documented test-only demotion, so ecosystem-specific URL
 // resolution must be opted in when the runtime supports it.
-const RELATIVE_SPECIFIER_PATTERNS = [
-  /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
-  /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
-];
-const ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS = [/\bimport\s*\(\s*["'](\/[^"'\n]+)["']\s*\)/g];
+const RELATIVE_SPECIFIER_PATTERNS = [/\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g];
 const RESOLUTION_SUFFIXES = [
   "",
   ".js",
@@ -580,23 +576,17 @@ export function scriptCommandTokens(command: string): string[] {
 
 function relativeSpecifiers(text: string, rootRelativeModuleImports: boolean): string[] {
   const specifiers: string[] = [];
-  const patterns = rootRelativeModuleImports
-    ? [...RELATIVE_SPECIFIER_PATTERNS, ...ROOT_RELATIVE_MODULE_SPECIFIER_PATTERNS]
-    : RELATIVE_SPECIFIER_PATTERNS;
-  for (const pattern of patterns) {
+  for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
       specifiers.push(match[1]);
     }
   }
-  specifiers.push(...staticModuleDeclarationSpecifiers(text, rootRelativeModuleImports));
+  specifiers.push(...staticModuleSpecifiers(text, rootRelativeModuleImports));
   return specifiers;
 }
 
-function staticModuleDeclarationSpecifiers(
-  text: string,
-  rootRelativeModuleImports: boolean,
-): string[] {
+function staticModuleSpecifiers(text: string, rootRelativeModuleImports: boolean): string[] {
   const tokens = tokenizeJs(text, { sourceGoal: "module" }).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
@@ -605,10 +595,25 @@ function staticModuleDeclarationSpecifiers(
     const declaration = tokenText(tokens[index], text);
     if (declaration !== "import" && declaration !== "export") continue;
     if (isMemberSeparator(tokenText(tokens[index - 1], text))) continue;
-    if (
-      declaration === "import" &&
-      (tokenText(tokens[index + 1], text) === "(" || tokenText(tokens[index + 1], text) === ".")
-    ) {
+    if (declaration === "import" && tokenText(tokens[index + 1], text) === "(") {
+      const closeIndex = matchingPunctuation(tokens, text, index + 1, "(", ")");
+      if (closeIndex === null) continue;
+      const firstArgument = staticCallArgumentRanges(tokens, text, index + 2, closeIndex)[0];
+      const pathToken = firstArgument ? tokens[firstArgument[0]] : undefined;
+      const path =
+        firstArgument && firstArgument[1] === firstArgument[0] + 1 && pathToken?.type === "string"
+          ? pathToken.value
+          : null;
+      if (
+        path?.startsWith("./") ||
+        path?.startsWith("../") ||
+        (rootRelativeModuleImports && path?.startsWith("/"))
+      ) {
+        specifiers.push(path);
+      }
+      continue;
+    }
+    if (declaration === "import" && tokenText(tokens[index + 1], text) === ".") {
       continue;
     }
     if (
@@ -1326,7 +1331,7 @@ function staticBrowserDynamicImportResource(
   if (
     !resource ||
     resource.nextIndex !== firstArgument[1] ||
-    (!resource.runtimeUrl && !resource.moduleUrl)
+    (!resource.runtimeUrl && !resource.moduleUrl && !resource.documentUrl)
   ) {
     return null;
   }
@@ -1336,7 +1341,9 @@ function staticBrowserDynamicImportResource(
       ? resource.modulePathname
         ? "module-pathname"
         : "module"
-      : "root",
+      : resource.documentUrl
+        ? "document"
+        : "root",
     inheritsExecutionContext: true,
   };
 }
@@ -2031,6 +2038,7 @@ interface StaticWebExtensionResourcePath {
   runtimeUrl: boolean;
   moduleUrl: boolean;
   modulePathname: boolean;
+  documentUrl?: boolean;
 }
 
 function staticWebExtensionResourcePath(
@@ -2071,6 +2079,20 @@ function staticWebExtensionResourcePath(
       runtimeUrl: false,
       moduleUrl: true,
       modulePathname: moduleUrl.projection === "pathname",
+    };
+  }
+  const documentUrl = staticCurrentDocumentUrlPath(tokens, text, start);
+  if (documentUrl !== null) {
+    if (!allowedFollowingTokens.includes(tokenText(tokens[documentUrl.nextIndex], text))) {
+      return null;
+    }
+    return {
+      path: documentUrl.path,
+      nextIndex: documentUrl.nextIndex,
+      runtimeUrl: false,
+      moduleUrl: false,
+      modulePathname: false,
+      documentUrl: true,
     };
   }
   const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
@@ -2122,7 +2144,10 @@ function staticWebExtensionGetUrlPath(
   tokens: JsToken[],
   text: string,
   start: number,
-): Omit<StaticWebExtensionResourcePath, "runtimeUrl" | "moduleUrl" | "modulePathname"> | null {
+): Omit<
+  StaticWebExtensionResourcePath,
+  "runtimeUrl" | "moduleUrl" | "modulePathname" | "documentUrl"
+> | null {
   let index = start;
   let global = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(global)) {
@@ -2144,6 +2169,49 @@ function staticWebExtensionGetUrlPath(
   if (closeIndex === null) return null;
   const path = staticLiteralCallArgument(tokens, text, openIndex + 1, closeIndex, 0);
   return path === null ? null : { path, nextIndex: closeIndex + 1 };
+}
+
+function staticCurrentDocumentUrlPath(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): { path: string; nextIndex: number } | null {
+  if (
+    tokenText(tokens[start], text) !== "new" ||
+    tokenText(tokens[start + 1], text) !== "URL" ||
+    tokenText(tokens[start + 2], text) !== "("
+  ) {
+    return null;
+  }
+  const closeIndex = matchingPunctuation(tokens, text, start + 2, "(", ")");
+  if (closeIndex === null) return null;
+  const path = staticScriptPath(tokens[start + 3], text);
+  if (path === null || tokenText(tokens[start + 4], text) !== ",") return null;
+  let baseIndex = start + 5;
+  let base = staticIdentifierName(tokens[baseIndex], text);
+  if (base === "globalThis" || base === "self" || base === "window") {
+    const globalMember = staticMemberAccess(tokens, text, baseIndex + 1);
+    if (!globalMember) return null;
+    base = globalMember.name;
+    baseIndex = globalMember.nextIndex;
+  } else {
+    baseIndex += 1;
+  }
+  const baseProperty = staticMemberAccess(tokens, text, baseIndex);
+  if (
+    !baseProperty ||
+    !(
+      (base === "location" && baseProperty.name === "href") ||
+      (base === "document" && (baseProperty.name === "baseURI" || baseProperty.name === "URL"))
+    ) ||
+    baseProperty.nextIndex !== closeIndex
+  ) {
+    return null;
+  }
+  const projection = staticMemberAccess(tokens, text, closeIndex + 1);
+  return projection?.name === "href"
+    ? { path, nextIndex: projection.nextIndex }
+    : { path, nextIndex: closeIndex + 1 };
 }
 
 function resolveBrowserDocumentModulePath(

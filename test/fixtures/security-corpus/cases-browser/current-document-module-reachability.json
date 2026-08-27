@@ -1,0 +1,67 @@
+{
+  "id": "browser-current-document-module-reachability",
+  "title": "current-document URLs and commented module imports remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for a packaged document navigated through new URL with location.href and a literal dynamic import preceded by a bundler comment, while a concatenated import stays test-scoped.",
+  "slug": "current-document-module-reachability",
+  "extensionId": "current-document-module-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 270,
+      "sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Current document module reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"current-document-module-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"pages/popup.html\" }\n}\n"
+    },
+    {
+      "path": "pages/popup.html",
+      "size": 51,
+      "sha256": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>"
+    },
+    {
+      "path": "pages/popup.js",
+      "size": 150,
+      "sha256": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+      "flags": [],
+      "textSample": "window.open(new URL(\"../tests/navigation.html\", location.href)); import(/* webpackChunkName: \"payload\" */ \"../tests/imported.js\"); import(/* webpackChunkName: \"dynamic\" */ \"../tests/\" + moduleName);"
+    },
+    {
+      "path": "tests/navigation.html",
+      "size": 45,
+      "sha256": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+      "flags": [],
+      "textSample": "<script src=\"navigation.js\"></script>"
+    },
+    {
+      "path": "tests/navigation.js",
+      "size": 14,
+      "sha256": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/imported.js",
+      "size": 14,
+      "sha256": "b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dynamic.js",
+      "size": 14,
+      "sha256": "b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/navigation.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/imported.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/dynamic.js" }
+  ]
+}

@@ -2592,6 +2592,88 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(13);
   });
 
+  test("follows current-document URLs and commented literal dynamic imports", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "pages/popup.html" } }),
+      {
+        path: "pages/popup.html",
+        size: 51,
+        sha256: "a1".repeat(32),
+        flags: [],
+        textSample: '<script type="module" src="popup.js"></script>',
+      },
+      {
+        path: "pages/popup.js",
+        size: 190,
+        sha256: "a2".repeat(32),
+        flags: [],
+        textSample: [
+          'window.open(new URL("../tests/location.html", location.href));',
+          'window.open(new URL("../tests/base.html", document.baseURI).href);',
+          'import(/* webpackChunkName: "payload" */ "../tests/imported.js");',
+          'import(/* webpackChunkName: "dynamic" */ "../tests/" + moduleName);',
+        ].join("\n"),
+      },
+      ...["location", "base"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 41,
+          sha256: (163 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: (165 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+      {
+        path: "tests/imported.js",
+        size: 14,
+        sha256: "a7".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+      {
+        path: "tests/dynamic.js",
+        size: 14,
+        sha256: "a8".repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      },
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining(
+        ["location", "base", "imported"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+      ),
+    );
+    expect(
+      findings
+        .filter((finding) => finding.severity === "high")
+        .every((finding) => finding.testScoped !== true),
+    ).toBe(true);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        file: "tests/dynamic.js",
+        severity: "medium",
+        testScoped: true,
+      }),
+    );
+    expect(findings).toHaveLength(4);
+  });
+
   test("follows sandbox inline code and static resource spreads", () => {
     const path = "dist/sandbox-helper.zip";
     const manifest = buildBrowserReleaseManifest("sandbox-helper@example.invalid", "1.0.0", [
