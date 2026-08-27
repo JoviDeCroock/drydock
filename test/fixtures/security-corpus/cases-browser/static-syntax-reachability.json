@@ -1,0 +1,103 @@
+{
+  "id": "browser-static-syntax-reachability",
+  "title": "static browser syntax aliases remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for literal HTML appended with +=, new URL import-meta values converted through href, computed literal WebExtension option keys, and Unicode-escaped WebExtension identifiers.",
+  "slug": "static-syntax-reachability",
+  "extensionId": "static-syntax-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "3131313131313131313131313131313131313131313131313131313131313131",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 340,
+      "sha256": "3232323232323232323232323232323232323232323232323232323232323232",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Static syntax reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"static-syntax-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"background\": { \"service_worker\": \"background.js\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 51,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>"
+    },
+    {
+      "path": "popup.js",
+      "size": 164,
+      "sha256": "3434343434343434343434343434343434343434343434343434343434343434",
+      "flags": [],
+      "textSample": "document.body.innerHTML += \"<iframe src='tests/appended.html'></iframe>\"; location.href = new URL(\"./tests/module-url.html\", import.meta.url).href;"
+    },
+    {
+      "path": "background.js",
+      "size": 116,
+      "sha256": "3535353535353535353535353535353535353535353535353535353535353535",
+      "flags": [],
+      "textSample": "chrome.tabs.create({[\"url\"]: \"tests/computed.html\"}); chrome.ta\\u0062s.create({url: \"tests/escaped.html\"});"
+    },
+    {
+      "path": "tests/appended.html",
+      "size": 43,
+      "sha256": "3636363636363636363636363636363636363636363636363636363636363636",
+      "flags": [],
+      "textSample": "<script src=\"appended.js\"></script>"
+    },
+    {
+      "path": "tests/appended.js",
+      "size": 14,
+      "sha256": "3737373737373737373737373737373737373737373737373737373737373737",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/module-url.html",
+      "size": 45,
+      "sha256": "3838383838383838383838383838383838383838383838383838383838383838",
+      "flags": [],
+      "textSample": "<script src=\"module-url.js\"></script>"
+    },
+    {
+      "path": "tests/module-url.js",
+      "size": 14,
+      "sha256": "3939393939393939393939393939393939393939393939393939393939393939",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/computed.html",
+      "size": 43,
+      "sha256": "4040404040404040404040404040404040404040404040404040404040404040",
+      "flags": [],
+      "textSample": "<script src=\"computed.js\"></script>"
+    },
+    {
+      "path": "tests/computed.js",
+      "size": 14,
+      "sha256": "4141414141414141414141414141414141414141414141414141414141414141",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/escaped.html",
+      "size": 42,
+      "sha256": "4242424242424242424242424242424242424242424242424242424242424242",
+      "flags": [],
+      "textSample": "<script src=\"escaped.js\"></script>"
+    },
+    {
+      "path": "tests/escaped.js",
+      "size": 14,
+      "sha256": "4343434343434343434343434343434343434343434343434343434343434343",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/appended.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/module-url.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/computed.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/escaped.js" }
+  ]
+}

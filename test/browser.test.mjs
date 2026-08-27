@@ -2238,6 +2238,74 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(6);
   });
 
+  test("follows equivalent static browser resource syntax", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({
+        action: { default_popup: "popup.html" },
+        background: { service_worker: "background.js" },
+      }),
+      {
+        path: "popup.html",
+        size: 39,
+        sha256: "d1".repeat(32),
+        flags: [],
+        textSample: '<script type="module" src="popup.js"></script>',
+      },
+      {
+        path: "popup.js",
+        size: 190,
+        sha256: "d2".repeat(32),
+        flags: [],
+        textSample: [
+          'document.body.innerHTML += "<iframe src=\\"tests/appended.html\\"></iframe>";',
+          'location.href = new URL("./tests/module-url.html", import.meta.url).href;',
+        ].join("\n"),
+      },
+      {
+        path: "background.js",
+        size: 140,
+        sha256: "d3".repeat(32),
+        flags: [],
+        textSample: [
+          'chrome.tabs.create({["url"]: "tests/computed.html"});',
+          'chrome.ta\\u0062s.create({url: "tests/escaped.html"});',
+        ].join("\n"),
+      },
+      ...["appended", "module-url", "computed", "escaped"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 41,
+          sha256: (212 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: (216 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining(
+        ["appended", "module-url", "computed", "escaped"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+      ),
+    );
+    expect(findings).toHaveLength(4);
+    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+  });
+
   test("follows nested browser-rendered SHTML documents", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

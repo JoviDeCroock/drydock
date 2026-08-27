@@ -814,9 +814,11 @@ function staticDomConsumerElementBindings(
         ).get(element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase())
       : undefined;
     if (!properties) continue;
-    const bindingProperties = bindings.get(tokenText(binding, text)) ?? new Set<string>();
+    const bindingName = staticIdentifierName(binding, text);
+    if (bindingName === null) continue;
+    const bindingProperties = bindings.get(bindingName) ?? new Set<string>();
     for (const property of properties) bindingProperties.add(property);
-    bindings.set(tokenText(binding, text), bindingProperties);
+    bindings.set(bindingName, bindingProperties);
   }
   return bindings;
 }
@@ -827,7 +829,7 @@ function staticDocumentCreateElement(
   start: number,
 ): StaticDomConsumerElement | null {
   let index = start;
-  const first = tokenText(tokens[index], text);
+  const first = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(first)) {
     let member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;
@@ -868,7 +870,7 @@ function staticDomConsumerResource(
   start: number,
   consumerElementBindings: Map<string, Set<string>>,
 ): WebExtensionResourceSpecifier | null {
-  const binding = tokenText(tokens[start], text);
+  const binding = staticIdentifierName(tokens[start], text) ?? tokenText(tokens[start], text);
   const resourceProperties = consumerElementBindings.get(binding);
   if (!resourceProperties || isMemberSeparator(tokenText(tokens[start - 1], text))) {
     return null;
@@ -957,7 +959,8 @@ function staticDomInlineDocuments(
     const valueIndex = assignmentIndex + 1;
     const inlineDocument = staticScriptPath(tokens[valueIndex], text);
     if (
-      tokenText(tokens[assignmentIndex], text) === "=" &&
+      (tokenText(tokens[assignmentIndex], text) === "=" ||
+        tokenText(tokens[assignmentIndex], text) === "+=") &&
       inlineDocument !== null &&
       browserNavigationAssignmentEnds(
         tokens,
@@ -1020,7 +1023,7 @@ function staticDocumentWriteCallOpenIndex(
   if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
 
   let index = start;
-  const first = tokenText(tokens[index], text);
+  const first = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(first)) {
     let member = staticMemberAccess(tokens, text, index + 1);
     if (!member) return null;
@@ -1083,7 +1086,7 @@ function staticBrowserNavigationResource(
   if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
 
   let index = start;
-  const first = tokenText(tokens[index], text);
+  const first = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (first === "open") {
     const openIndex = staticCallOpenIndex(tokens, text, index + 1);
     if (openIndex === null) return null;
@@ -1216,7 +1219,7 @@ function webExtensionScriptCall(
   if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
 
   let index = start;
-  let first = tokenText(tokens[index], text);
+  let first = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   let browserQualified = false;
   if (STATIC_BROWSER_GLOBALS.has(first)) {
     const globalMember = staticMemberAccess(tokens, text, index + 1);
@@ -1430,6 +1433,59 @@ function staticPropertyScriptPaths(
   let depth = 0;
   for (let index = start; index < end; index += 1) {
     const token = tokenText(tokens[index], text);
+    const valueIndex =
+      depth === propertyDepth
+        ? staticObjectPropertyValueIndex(tokens, text, index, property)
+        : null;
+    if (valueIndex !== null) {
+      if (valueShape === "string" || valueShape === "string-or-string-array") {
+        const value = staticWebExtensionResourcePath(tokens, text, valueIndex, [",", "}"]);
+        if (value !== null && !value.moduleUrl) {
+          paths.push({
+            path: value.path,
+            resolution: value.runtimeUrl ? "root" : resolution,
+          });
+          continue;
+        }
+        if (valueShape === "string") continue;
+      }
+      if (tokenText(tokens[valueIndex], text) !== "[") continue;
+      const closeIndex = matchingPunctuation(tokens, text, valueIndex, "[", "]");
+      if (closeIndex === null || closeIndex > end) continue;
+      if (valueShape === "file-object-array") {
+        paths.push(
+          ...staticNamedPropertyPaths(tokens, text, valueIndex + 1, closeIndex, "file", resolution),
+        );
+        index = closeIndex;
+        continue;
+      }
+      let nestedDepth = 0;
+      for (let itemIndex = valueIndex + 1; itemIndex < closeIndex; itemIndex += 1) {
+        const item = tokenText(tokens[itemIndex], text);
+        const value =
+          nestedDepth === 0
+            ? staticWebExtensionResourcePath(tokens, text, itemIndex, [",", "]"])
+            : null;
+        if (value !== null && !value.moduleUrl) {
+          paths.push({
+            path: value.path,
+            resolution: value.runtimeUrl ? "root" : resolution,
+          });
+          itemIndex = value.nextIndex - 1;
+          continue;
+        }
+        if (item === "[" || item === "{" || item === "(") {
+          nestedDepth += 1;
+          continue;
+        }
+        if (item === "]" || item === "}" || item === ")") {
+          nestedDepth -= 1;
+          continue;
+        }
+      }
+      index = closeIndex;
+      continue;
+    }
     if (token === "[" || token === "{" || token === "(") {
       depth += 1;
       continue;
@@ -1438,57 +1494,6 @@ function staticPropertyScriptPaths(
       depth -= 1;
       continue;
     }
-    if (depth !== propertyDepth) continue;
-    if (staticPropertyName(tokens[index], text) !== property) continue;
-    if (tokenText(tokens[index + 1], text) !== ":") continue;
-
-    const valueIndex = index + 2;
-    if (valueShape === "string" || valueShape === "string-or-string-array") {
-      const value = staticWebExtensionResourcePath(tokens, text, valueIndex, [",", "}"]);
-      if (value !== null && !value.moduleUrl) {
-        paths.push({
-          path: value.path,
-          resolution: value.runtimeUrl ? "root" : resolution,
-        });
-        continue;
-      }
-      if (valueShape === "string") continue;
-    }
-    if (tokenText(tokens[valueIndex], text) !== "[") continue;
-    const closeIndex = matchingPunctuation(tokens, text, valueIndex, "[", "]");
-    if (closeIndex === null || closeIndex > end) continue;
-    if (valueShape === "file-object-array") {
-      paths.push(
-        ...staticNamedPropertyPaths(tokens, text, valueIndex + 1, closeIndex, "file", resolution),
-      );
-      index = closeIndex;
-      continue;
-    }
-    let nestedDepth = 0;
-    for (let itemIndex = valueIndex + 1; itemIndex < closeIndex; itemIndex += 1) {
-      const item = tokenText(tokens[itemIndex], text);
-      const value =
-        nestedDepth === 0
-          ? staticWebExtensionResourcePath(tokens, text, itemIndex, [",", "]"])
-          : null;
-      if (value !== null && !value.moduleUrl) {
-        paths.push({
-          path: value.path,
-          resolution: value.runtimeUrl ? "root" : resolution,
-        });
-        itemIndex = value.nextIndex - 1;
-        continue;
-      }
-      if (item === "[" || item === "{" || item === "(") {
-        nestedDepth += 1;
-        continue;
-      }
-      if (item === "]" || item === "}" || item === ")") {
-        nestedDepth -= 1;
-        continue;
-      }
-    }
-    index = closeIndex;
   }
   return paths;
 }
@@ -1505,6 +1510,18 @@ function staticNamedPropertyPaths(
   let depth = 0;
   for (let index = start; index < end; index += 1) {
     const token = tokenText(tokens[index], text);
+    const valueIndex =
+      depth === 1 ? staticObjectPropertyValueIndex(tokens, text, index, property) : null;
+    if (valueIndex !== null) {
+      const value = staticWebExtensionResourcePath(tokens, text, valueIndex, [",", "}"]);
+      if (value !== null && !value.moduleUrl) {
+        paths.push({
+          path: value.path,
+          resolution: value.runtimeUrl ? "root" : resolution,
+        });
+      }
+      continue;
+    }
     if (token === "[" || token === "{" || token === "(") {
       depth += 1;
       continue;
@@ -1512,16 +1529,6 @@ function staticNamedPropertyPaths(
     if (token === "]" || token === "}" || token === ")") {
       depth -= 1;
       continue;
-    }
-    if (depth !== 1) continue;
-    if (staticPropertyName(tokens[index], text) !== property) continue;
-    if (tokenText(tokens[index + 1], text) !== ":") continue;
-    const value = staticWebExtensionResourcePath(tokens, text, index + 2, [",", "}"]);
-    if (value !== null && !value.moduleUrl) {
-      paths.push({
-        path: value.path,
-        resolution: value.runtimeUrl ? "root" : resolution,
-      });
     }
   }
   return paths;
@@ -1569,18 +1576,14 @@ function staticWebExtensionResourcePath(
   if (literal !== null) {
     return { path: literal, nextIndex: start + 1, runtimeUrl: false, moduleUrl: false };
   }
-  const modulePath = staticImportMetaUrlPath(tokens, text, start);
-  if (modulePath !== null) {
-    const closeIndex = matchingPunctuation(tokens, text, start + 2, "(", ")");
-    if (
-      closeIndex === null ||
-      !allowedFollowingTokens.includes(tokenText(tokens[closeIndex + 1], text))
-    ) {
+  const moduleUrl = staticImportMetaUrlPath(tokens, text, start);
+  if (moduleUrl !== null) {
+    if (!allowedFollowingTokens.includes(tokenText(tokens[moduleUrl.nextIndex], text))) {
       return null;
     }
     return {
-      path: modulePath,
-      nextIndex: closeIndex + 1,
+      path: moduleUrl.path,
+      nextIndex: moduleUrl.nextIndex,
       runtimeUrl: false,
       moduleUrl: true,
     };
@@ -1603,7 +1606,9 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
   for (let index = 0; index < tokens.length - 3; index += 1) {
     if (tokenText(tokens[index], text) !== "new") continue;
     let constructorIndex = index + 1;
-    let constructor = tokenText(tokens[constructorIndex], text);
+    let constructor =
+      staticIdentifierName(tokens[constructorIndex], text) ??
+      tokenText(tokens[constructorIndex], text);
     if (STATIC_BROWSER_GLOBALS.has(constructor)) {
       const globalMember = staticMemberAccess(tokens, text, constructorIndex + 1);
       if (!globalMember) continue;
@@ -1617,9 +1622,9 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
       specifiers.push({ path: documentPath, resolution: "document" });
       continue;
     }
-    const modulePath = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
-    if (modulePath !== null) {
-      specifiers.push({ path: modulePath, resolution: "module" });
+    const moduleUrl = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
+    if (moduleUrl !== null) {
+      specifiers.push({ path: moduleUrl.path, resolution: "module" });
       continue;
     }
     const rootPath = staticWebExtensionResourcePath(tokens, text, constructorIndex + 2, [")", ","]);
@@ -1634,7 +1639,7 @@ function staticWebExtensionGetUrlPath(
   start: number,
 ): Omit<StaticWebExtensionResourcePath, "runtimeUrl" | "moduleUrl"> | null {
   let index = start;
-  let global = tokenText(tokens[index], text);
+  let global = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(global)) {
     const globalMember = staticMemberAccess(tokens, text, index + 1);
     if (!globalMember || (globalMember.name !== "chrome" && globalMember.name !== "browser")) {
@@ -1699,7 +1704,11 @@ function resolveBrowserScriptModulePath(
   return baseUrl ? resolveBrowserDocumentModulePath(specifier, baseUrl, byNormalizedPath) : null;
 }
 
-function staticImportMetaUrlPath(tokens: JsToken[], text: string, start: number): string | null {
+function staticImportMetaUrlPath(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): { path: string; nextIndex: number } | null {
   if (
     tokenText(tokens[start], text) !== "new" ||
     tokenText(tokens[start + 1], text) !== "URL" ||
@@ -1721,7 +1730,10 @@ function staticImportMetaUrlPath(tokens: JsToken[], text: string, start: number)
   ) {
     return null;
   }
-  return path;
+  let nextIndex = closeIndex + 1;
+  const href = staticMemberAccess(tokens, text, nextIndex);
+  if (href?.name === "href") nextIndex = href.nextIndex;
+  return { path, nextIndex };
 }
 
 function staticMemberAccess(
@@ -1741,8 +1753,8 @@ function staticMemberAccess(
   }
   if (separator !== "." && separator !== "?.") return null;
   const property = tokens[separatorIndex + 1];
-  if (property?.type !== "ident") return null;
-  return { name: tokenText(property, text), nextIndex: separatorIndex + 2 };
+  const name = staticIdentifierName(property, text);
+  return name === null ? null : { name, nextIndex: separatorIndex + 2 };
 }
 
 function staticCallOpenIndex(tokens: JsToken[], text: string, index: number): number | null {
@@ -1778,8 +1790,36 @@ function staticLiteralCallArgument(
 
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {
   if (!token) return null;
-  if (token.type === "ident") return tokenText(token, text);
+  if (token.type === "ident") return staticIdentifierName(token, text);
   return token.type === "string" ? (token.value ?? null) : null;
+}
+
+function staticObjectPropertyValueIndex(
+  tokens: JsToken[],
+  text: string,
+  index: number,
+  property: string,
+): number | null {
+  const directName = staticPropertyName(tokens[index], text);
+  if (directName === property && tokenText(tokens[index + 1], text) === ":") return index + 2;
+  if (
+    tokenText(tokens[index], text) !== "[" ||
+    staticPropertyName(tokens[index + 1], text) !== property ||
+    tokenText(tokens[index + 2], text) !== "]" ||
+    tokenText(tokens[index + 3], text) !== ":"
+  ) {
+    return null;
+  }
+  return index + 4;
+}
+
+function staticIdentifierName(token: JsToken | undefined, text: string): string | null {
+  if (token?.type !== "ident") return null;
+  return tokenText(token, text).replace(
+    /\\u(?:\{([0-9a-f]+)\}|([0-9a-f]{4}))/gi,
+    (_match, braced: string | undefined, fixed: string | undefined) =>
+      String.fromCodePoint(Number.parseInt(braced ?? fixed ?? "0", 16)),
+  );
 }
 
 function staticScriptPath(token: JsToken | undefined, text: string): string | null {
