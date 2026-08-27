@@ -239,10 +239,10 @@ export function softenPromptInjectionLineBreaks(text: string): string {
 // Instruction content aimed at any LLM/agent that reads package bytes — an AI
 // reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
 // A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
-// OpenAI Assistants thread); only AI-qualified forms or Drydock's named
-// reviewer read as an LLM audience.
+// OpenAI Assistants thread); only AI-qualified forms or Drydock itself read as
+// an LLM audience.
 const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
-const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock[\s-]+reviewer|${AI_ACTOR_SEGMENT})`;
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock(?:[\s-]+reviewer)?|${AI_ACTOR_SEGMENT})`;
 const REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)`;
 
 // Text that tries to steer the *automated security review itself* toward a
@@ -317,7 +317,7 @@ const PROMPT_INJECTION_PATTERNS = [
   // The conditional address alone also greets humans ("if you are an AI
   // researcher, see the docs"), so it must be followed by a directive clause.
   new RegExp(
-    String.raw`\bif\s+you\s+are\s+an?\s+${AI_AUDIENCE_SEGMENT}\b[^\n.!?]{0,60}\b(?:ignore|disregard|follow|obey|must|should|do\s+not|don'?t|stop|instead|reply|respond|output|run|execute|add|include)\b`,
+    String.raw`\bif\s+you\s+are\s+an?\s+${AI_AUDIENCE_SEGMENT}\b[^\n.!?]{0,60}\b(?:ignore|disregard|follow|obey|must|should|do\s+not|don'?t|stop|instead|reply|respond|output|run|execute|add|install|recommend|include)\b`,
     "i",
   ),
   new RegExp(
@@ -328,11 +328,11 @@ const PROMPT_INJECTION_PATTERNS = [
   // punctuation followed by a directive or an explicit obligation so prose
   // that merely describes an AI tool stays quiet.
   new RegExp(
-    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|include|approve|mark|treat)\b`,
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat)\b`,
     "i",
   ),
   new RegExp(
-    String.raw`\b${AI_ACTOR_SEGMENT}s?\b[^\n.!?]{0,20}\b(?:must|should|need\s+to|are\s+required\s+to)\s+(?:ignore|disregard|follow|obey|stop|reply|respond|output|run|execute|add|include|approve|mark|treat)\b`,
+    String.raw`\b${AI_ACTOR_SEGMENT}s?\b[^\n.!?]{0,20}\b(?:must|should|need\s+to|are\s+required\s+to)\s+(?:ignore|disregard|follow|obey|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat)\b`,
     "i",
   ),
   /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,
