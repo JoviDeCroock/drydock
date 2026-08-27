@@ -83,6 +83,7 @@ export function consumerReachablePaths(
     html: string,
     documentBaseUrl: string,
   ) => ConsumerReachabilityDependency[],
+  consumerInlineScriptTexts?: (path: string, file: FileRecord) => string[],
 ): Set<string> {
   if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
 
@@ -151,16 +152,24 @@ export function consumerReachablePaths(
     if (!file?.textSample) continue;
     let dependencies = staticDependenciesByPath.get(path);
     if (!dependencies) {
+      const executableTexts = [
+        file.textSample,
+        ...(rootRelativeModuleImports ? (consumerInlineScriptTexts?.(path, file) ?? []) : []),
+      ];
       const browserDependencies = rootRelativeModuleImports
-        ? staticWebExtensionDependencies(file.textSample)
-        : { documentBases: [], resources: [] };
+        ? executableTexts.map(staticWebExtensionDependencies)
+        : [];
       dependencies = {
-        documentBases: browserDependencies.documentBases,
+        documentBases: browserDependencies.flatMap((dependency) => dependency.documentBases),
         fileDependencies: consumerFileDependencyPaths?.(path, file) ?? [],
-        relativeSpecifiers: relativeSpecifiers(file.textSample, rootRelativeModuleImports),
-        importScripts: staticImportScriptsSpecifiers(file.textSample),
-        webExtensionResources: browserDependencies.resources,
-        workers: rootRelativeModuleImports ? staticWorkerScriptSpecifiers(file.textSample) : [],
+        relativeSpecifiers: executableTexts.flatMap((text) =>
+          relativeSpecifiers(text, rootRelativeModuleImports),
+        ),
+        importScripts: executableTexts.flatMap(staticImportScriptsSpecifiers),
+        webExtensionResources: browserDependencies.flatMap((dependency) => dependency.resources),
+        workers: rootRelativeModuleImports
+          ? executableTexts.flatMap(staticWorkerScriptSpecifiers)
+          : [],
       };
       staticDependenciesByPath.set(path, dependencies);
     }
@@ -1757,38 +1766,29 @@ function staticPropertyScriptPaths(
         index = closeIndex;
         continue;
       }
-      let nestedDepth = 0;
-      for (let itemIndex = valueIndex + 1; itemIndex < closeIndex; itemIndex += 1) {
-        const item = tokenText(tokens[itemIndex], text);
-        const value =
-          nestedDepth === 0
-            ? staticWebExtensionResourcePath(tokens, text, itemIndex, [",", "]"])
-            : null;
-        if (value !== null && (!value.moduleUrl || property === "url")) {
-          paths.push({
-            path: value.path,
-            resolution: value.moduleUrl
-              ? value.modulePathname
-                ? "module-pathname"
-                : "module"
-              : value.runtimeUrl
-                ? "root"
-                : resolution,
-          });
-          itemIndex = value.nextIndex - 1;
-          continue;
-        }
-        if (item === "[" || item === "{" || item === "(") {
-          nestedDepth += 1;
-          continue;
-        }
-        if (item === "]" || item === "}" || item === ")") {
-          nestedDepth -= 1;
-          continue;
-        }
-      }
+      paths.push(
+        ...staticArrayResourcePaths(tokens, text, valueIndex, closeIndex, property, resolution),
+      );
       index = closeIndex;
       continue;
+    }
+    if (depth === propertyDepth && token === "..." && tokenText(tokens[index + 1], text) === "{") {
+      const closeIndex = matchingPunctuation(tokens, text, index + 1, "{", "}");
+      if (closeIndex !== null && closeIndex < end) {
+        paths.push(
+          ...staticPropertyScriptPaths(
+            tokens,
+            text,
+            index + 1,
+            closeIndex + 1,
+            property,
+            valueShape,
+            resolution,
+          ),
+        );
+        index = closeIndex;
+        continue;
+      }
     }
     if (token === "[" || token === "{" || token === "(") {
       depth += 1;
@@ -1798,6 +1798,57 @@ function staticPropertyScriptPaths(
       depth -= 1;
       continue;
     }
+  }
+  return paths;
+}
+
+function staticArrayResourcePaths(
+  tokens: JsToken[],
+  text: string,
+  openIndex: number,
+  closeIndex: number,
+  property: WebExtensionResourceProperty,
+  resolution: WebExtensionResourceResolution,
+): WebExtensionResourceSpecifier[] {
+  const paths: WebExtensionResourceSpecifier[] = [];
+  let depth = 0;
+  for (let index = openIndex + 1; index < closeIndex; index += 1) {
+    const item = tokenText(tokens[index], text);
+    if (depth === 0 && item === "..." && tokenText(tokens[index + 1], text) === "[") {
+      const nestedCloseIndex = matchingPunctuation(tokens, text, index + 1, "[", "]");
+      if (nestedCloseIndex !== null && nestedCloseIndex < closeIndex) {
+        paths.push(
+          ...staticArrayResourcePaths(
+            tokens,
+            text,
+            index + 1,
+            nestedCloseIndex,
+            property,
+            resolution,
+          ),
+        );
+        index = nestedCloseIndex;
+        continue;
+      }
+    }
+    const value =
+      depth === 0 ? staticWebExtensionResourcePath(tokens, text, index, [",", "]"]) : null;
+    if (value !== null && (!value.moduleUrl || property === "url")) {
+      paths.push({
+        path: value.path,
+        resolution: value.moduleUrl
+          ? value.modulePathname
+            ? "module-pathname"
+            : "module"
+          : value.runtimeUrl
+            ? "root"
+            : resolution,
+      });
+      index = value.nextIndex - 1;
+      continue;
+    }
+    if (item === "[" || item === "{" || item === "(") depth += 1;
+    else if (item === "]" || item === "}" || item === ")") depth -= 1;
   }
   return paths;
 }

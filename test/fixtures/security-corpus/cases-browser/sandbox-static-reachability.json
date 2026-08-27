@@ -1,0 +1,83 @@
+{
+  "id": "browser-sandbox-static-reachability",
+  "title": "sandbox inline code and static spread resources remain reviewable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for packaged scripts reached from sandbox inline scripts, inline event handlers, and literal object or array spreads in browser navigation APIs, and requires a browser finding when the separate sandbox CSP permits remote script.",
+  "slug": "sandbox-static-reachability",
+  "extensionId": "sandbox-static-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "3131313131313131313131313131313131313131313131313131313131313131",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 520,
+      "sha256": "3232323232323232323232323232323232323232323232323232323232323232",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Sandbox static reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"sandbox-static-reachability@example.invalid\" } },\n  \"background\": { \"service_worker\": \"background.js\" },\n  \"sandbox\": { \"pages\": [\"sandbox.html\"] },\n  \"content_security_policy\": {\n    \"extension_pages\": \"script-src 'self'\",\n    \"sandbox\": \"sandbox allow-scripts; script-src 'self' https://example.invalid\"\n  }\n}\n"
+    },
+    {
+      "path": "sandbox.html",
+      "size": 280,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "flags": [],
+      "textSample": "<script>const inline = document.createElement(\"script\"); inline.src = \"tests/inline.js\"; document.body.append(inline);</script>\n<button onclick=\"const handler = document.createElement('script'); handler.src = 'tests/handler.js'; document.body.append(handler)\">Run</button>"
+    },
+    {
+      "path": "background.js",
+      "size": 150,
+      "sha256": "3434343434343434343434343434343434343434343434343434343434343434",
+      "flags": [],
+      "textSample": "chrome.tabs.create({...{ url: \"tests/object-spread.html\" }});\nchrome.windows.create({ url: [...[\"tests/array-spread.html\"]] });"
+    },
+    {
+      "path": "tests/object-spread.html",
+      "size": 47,
+      "sha256": "3535353535353535353535353535353535353535353535353535353535353535",
+      "flags": [],
+      "textSample": "<script src=\"object-spread.js\"></script>"
+    },
+    {
+      "path": "tests/object-spread.js",
+      "size": 14,
+      "sha256": "3636363636363636363636363636363636363636363636363636363636363636",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/array-spread.html",
+      "size": 46,
+      "sha256": "3737373737373737373737373737373737373737373737373737373737373737",
+      "flags": [],
+      "textSample": "<script src=\"array-spread.js\"></script>"
+    },
+    {
+      "path": "tests/array-spread.js",
+      "size": 14,
+      "sha256": "3838383838383838383838383838383838383838383838383838383838383838",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/inline.js",
+      "size": 14,
+      "sha256": "3939393939393939393939393939393939393939393939393939393939393939",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/handler.js",
+      "size": 14,
+      "sha256": "4040404040404040404040404040404040404040404040404040404040404040",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/object-spread.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/array-spread.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/inline.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/handler.js" },
+    { "ruleId": "browser.unsafe-extension-csp", "severity": "high", "file": "manifest.json" }
+  ]
+}

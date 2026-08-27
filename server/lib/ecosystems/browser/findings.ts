@@ -12,6 +12,7 @@ import {
   browserExtensionCandidateName,
   createBrowserHtmlConsumerDependencyResolver,
   createBrowserInlineDocumentConsumerDependencyResolver,
+  createBrowserInlineScriptResolver,
   findBrowserManifestFile,
   isBrowserConsumerDocumentPath,
   parseBrowserExtensionManifest,
@@ -116,6 +117,7 @@ export function buildBrowserFindings(args: {
     args.staged.files,
   );
   const browserInlineDocumentDependencies = createBrowserInlineDocumentConsumerDependencyResolver();
+  const browserInlineScripts = createBrowserInlineScriptResolver(args.staged.files);
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
@@ -130,6 +132,7 @@ export function buildBrowserFindings(args: {
       consumerFileDependencyPaths: (path) =>
         isBrowserConsumerDocumentPath(path) ? browserDocumentDependencies(path) : [],
       consumerInlineDocumentDependencyPaths: browserInlineDocumentDependencies,
+      consumerInlineScriptTexts: (path) => browserInlineScripts(path),
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, { fileDiff: args.fileDiff }),
@@ -239,16 +242,26 @@ function browserManifestFindings(
     );
   }
 
-  const unsafeCsp = unsafeExtensionCspEvidence(manifest.contentSecurityPolicy);
-  if (unsafeCsp) {
+  const unsafePolicies = [
+    {
+      evidence: unsafeExtensionCspEvidence(manifest.contentSecurityPolicy, "extension"),
+      lineProperty: "content_security_policy",
+    },
+    {
+      evidence: unsafeExtensionCspEvidence(manifest.sandboxContentSecurityPolicy, "sandbox", true),
+      lineProperty: manifest.manifestVersion === 2 ? "sandbox" : "content_security_policy",
+    },
+  ];
+  for (const unsafeCsp of unsafePolicies) {
+    if (!unsafeCsp.evidence) continue;
     findings.push(
       browserTag("unsafeExtensionCsp", {
         severity: "high",
         file: "manifest.json",
-        line: firstJsonPropertyLine(manifestFile?.textSample, "content_security_policy"),
-        evidence: unsafeCsp,
+        line: firstJsonPropertyLine(manifestFile?.textSample, unsafeCsp.lineProperty),
+        evidence: unsafeCsp.evidence,
         reason:
-          "an extension CSP that permits dynamic or remotely hosted script weakens the reviewed-archive boundary",
+          "a page CSP that permits dynamic or remotely hosted script weakens the reviewed-archive boundary",
       }),
     );
   }
@@ -270,7 +283,11 @@ function isBroadExternalOrigin(value: string): boolean {
   return isBroadHostPattern(normalized);
 }
 
-function unsafeExtensionCspEvidence(value: string | null): string | null {
+function unsafeExtensionCspEvidence(
+  value: string | null,
+  policy: "extension" | "sandbox",
+  allowUnsafeEval = false,
+): string | null {
   if (!value) return null;
   const directives = parseCspDirectives(value);
   const evalDirective = directives.has("script-src")
@@ -279,10 +296,11 @@ function unsafeExtensionCspEvidence(value: string | null): string | null {
       ? "default-src"
       : null;
   if (
+    !allowUnsafeEval &&
     evalDirective &&
     directives.get(evalDirective)?.some((source) => source.trim().toLowerCase() === "'unsafe-eval'")
   ) {
-    return `extension CSP ${evalDirective} permits 'unsafe-eval'`;
+    return `${policy} CSP ${evalDirective} permits 'unsafe-eval'`;
   }
   const inspected = new Set<string>();
   for (const chain of EXECUTABLE_CSP_DIRECTIVE_CHAINS) {
@@ -296,11 +314,11 @@ function unsafeExtensionCspEvidence(value: string | null): string | null {
         directive === "default-src") &&
       sources.some((source) => source.trim().toLowerCase() === "'strict-dynamic'")
     ) {
-      return `extension CSP ${directive} delegates script trust through 'strict-dynamic'`;
+      return `${policy} CSP ${directive} delegates script trust through 'strict-dynamic'`;
     }
     const nonPackageSource = sources.find(isNonPackageScriptSource);
     if (nonPackageSource) {
-      return `extension CSP ${directive} permits non-package script source ${nonPackageSource}`;
+      return `${policy} CSP ${directive} permits non-package script source ${nonPackageSource}`;
     }
   }
   return null;

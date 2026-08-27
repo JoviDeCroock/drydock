@@ -107,6 +107,12 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
       : isRecord(csp) && typeof csp.extension_pages === "string"
         ? csp.extension_pages
         : null;
+  const sandboxContentSecurityPolicy =
+    raw.manifest_version === 2 && isRecord(raw.sandbox)
+      ? manifestRecordString(raw.sandbox, "content_security_policy")
+      : isRecord(csp) && typeof csp.sandbox === "string"
+        ? csp.sandbox
+        : null;
 
   return {
     file,
@@ -137,6 +143,7 @@ export function parseBrowserExtensionManifest(files: FileRecord[]): {
         extensionPageConsumers.documentBaseUrlsByPath,
       ),
       contentSecurityPolicy,
+      sandboxContentSecurityPolicy,
     },
   };
 }
@@ -504,6 +511,11 @@ interface HtmlPageConsumers {
   documentBaseUrlsByPath: Record<string, string[]>;
 }
 
+interface BrowserDocumentConsumers {
+  dependencies: Array<{ path: string; documentBaseUrl?: string }>;
+  documentBaseUrls: string[];
+}
+
 function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): HtmlPageConsumers {
   const entrypoints = new Set(pagePaths);
   const documentBaseUrlsByPath = new Map<string, Set<string>>();
@@ -514,7 +526,13 @@ function htmlPageConsumerEntrypoints(files: FileRecord[], pagePaths: string[]): 
     const pagePath = pageQueue.pop();
     if (pagePath === undefined || inspectedPages.has(pagePath)) continue;
     inspectedPages.add(pagePath);
-    for (const dependency of browserDocumentConsumerEdges(filesByPath, pagePath)) {
+    const consumers = browserDocumentConsumers(filesByPath, pagePath);
+    if (consumers.documentBaseUrls.length) {
+      const bases = documentBaseUrlsByPath.get(pagePath) ?? new Set<string>();
+      for (const base of consumers.documentBaseUrls) bases.add(base);
+      documentBaseUrlsByPath.set(pagePath, bases);
+    }
+    for (const dependency of consumers.dependencies) {
       entrypoints.add(dependency.path);
       if (dependency.documentBaseUrl !== undefined) {
         const bases = documentBaseUrlsByPath.get(dependency.path) ?? new Set<string>();
@@ -540,8 +558,21 @@ export function createBrowserHtmlConsumerDependencyResolver(
   const filesByPath = new Map(files.map((file) => [file.path, file]));
   return (pagePath) =>
     isBrowserConsumerDocumentPath(pagePath)
-      ? browserDocumentConsumerEdges(filesByPath, pagePath)
+      ? browserDocumentConsumers(filesByPath, pagePath).dependencies
       : [];
+}
+
+export function createBrowserInlineScriptResolver(
+  files: FileRecord[],
+): (pagePath: string) => string[] {
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  return (pagePath) => {
+    if (!isBrowserConsumerDocumentPath(pagePath)) return [];
+    const text = filesByPath.get(pagePath)?.textSample;
+    return text
+      ? scanDocumentConsumerTokens(text, BROWSER_XML_DOCUMENT_PATH_RE.test(pagePath)).inlineScripts
+      : [];
+  };
 }
 
 // Direct consumer edges of one packaged document. Callers decide which paths
@@ -551,15 +582,15 @@ export function createBrowserHtmlConsumerDependencyResolver(
 // every base candidate the document could plausibly use (see
 // `documentBaseCandidates`), so mistracking which <base> a browser would pick
 // can only add edges, never hide one.
-function browserDocumentConsumerEdges(
+function browserDocumentConsumers(
   filesByPath: Map<string, FileRecord>,
   pagePath: string,
-): Array<{ path: string; documentBaseUrl?: string }> {
+): BrowserDocumentConsumers {
   const text = filesByPath.get(pagePath)?.textSample;
-  if (!text) return [];
+  if (!text) return { dependencies: [], documentBaseUrls: [] };
   const pageUrl = extensionPageUrl(pagePath);
-  if (!pageUrl) return [];
-  return browserDocumentConsumerEdgesFromText(
+  if (!pageUrl) return { dependencies: [], documentBaseUrls: [] };
+  return browserDocumentConsumersFromText(
     text,
     pageUrl,
     pagePath,
@@ -584,17 +615,19 @@ export function createBrowserInlineDocumentConsumerDependencyResolver(): (
     ) {
       return [];
     }
-    return browserDocumentConsumerEdgesFromText(html, base, "inline srcdoc document", false);
+    return browserDocumentConsumersFromText(html, base, "inline srcdoc document", false)
+      .dependencies;
   };
 }
 
-function browserDocumentConsumerEdgesFromText(
+function browserDocumentConsumersFromText(
   text: string,
   pageUrl: URL,
   documentLabel: string,
   xmlSyntax: boolean,
-): Array<{ path: string; documentBaseUrl?: string }> {
+): BrowserDocumentConsumers {
   const edges = new Map<string, { path: string; documentBaseUrl?: string }>();
+  let documentBaseUrls: string[] = [];
   let resolutionBudget = MAX_DOCUMENT_CONSUMER_RESOLUTIONS;
   const spendResolutionBudget = (work: number): void => {
     resolutionBudget -= work;
@@ -602,10 +635,16 @@ function browserDocumentConsumerEdgesFromText(
       throw new Error(`document ${documentLabel} exceeds the consumer resolution work budget`);
     }
   };
-  const inlineQueue: Array<{ html: string; fallbackBases: URL[]; xmlSyntax: boolean }> = [
+  const inlineQueue: Array<{
+    html: string;
+    fallbackBases: URL[];
+    root: boolean;
+    xmlSyntax: boolean;
+  }> = [
     {
       html: text,
       fallbackBases: [pageUrl],
+      root: true,
       xmlSyntax,
     },
   ];
@@ -615,11 +654,12 @@ function browserDocumentConsumerEdgesFromText(
     const tokens = scanDocumentConsumerTokens(inline.html, inline.xmlSyntax);
     spendResolutionBudget(tokens.baseHrefs.length * inline.fallbackBases.length);
     const bases = documentBaseCandidates(inline.fallbackBases, tokens.baseHrefs);
+    if (inline.root) documentBaseUrls = bases.map((base) => base.href);
     spendResolutionBudget(
       (tokens.scriptSources.length + tokens.resourceSources.length) * bases.length,
     );
     for (const html of tokens.inlineDocuments) {
-      inlineQueue.push({ html, fallbackBases: bases, xmlSyntax: false });
+      inlineQueue.push({ html, fallbackBases: bases, root: false, xmlSyntax: false });
     }
     for (const source of tokens.scriptSources) {
       for (const base of bases) {
@@ -634,7 +674,7 @@ function browserDocumentConsumerEdgesFromText(
       }
     }
   }
-  return [...edges.values()];
+  return { dependencies: [...edges.values()], documentBaseUrls };
 }
 
 export function isBrowserConsumerDocumentPath(path: string): boolean {
@@ -660,6 +700,7 @@ interface DocumentConsumerTokens {
   scriptSources: string[];
   resourceSources: string[];
   inlineDocuments: string[];
+  inlineScripts: string[];
   baseHrefs: string[];
 }
 
@@ -684,6 +725,7 @@ function scanDocumentConsumerTokens(html: string, xmlSyntax = false): DocumentCo
     scriptSources: [],
     resourceSources: [],
     inlineDocuments: [],
+    inlineScripts: [],
     baseHrefs: [],
   };
   let index = 0;
@@ -757,6 +799,10 @@ function collectDocumentConsumerAttribute(
   attributeName: string,
   value: string,
 ): void {
+  if (/^on/i.test(attributeName)) {
+    tokens.inlineScripts.push(value);
+    return;
+  }
   if (attributeName === "srcdoc") {
     tokens.inlineDocuments.push(value);
     return;
@@ -788,6 +834,7 @@ function scanXmlDocumentConsumerTokens(xml: string, tokens: DocumentConsumerToke
     scriptSources: [],
     resourceSources: [],
     inlineDocuments: [],
+    inlineScripts: [],
     baseHrefs: [],
   };
   const parser = new SaxesParser({ xmlns: true });
@@ -847,7 +894,13 @@ function mergeSupplementalDocumentConsumerTokens(
   tokens: DocumentConsumerTokens,
   supplemental: DocumentConsumerTokens,
 ): void {
-  for (const key of ["scriptSources", "resourceSources", "inlineDocuments", "baseHrefs"] as const) {
+  for (const key of [
+    "scriptSources",
+    "resourceSources",
+    "inlineDocuments",
+    "inlineScripts",
+    "baseHrefs",
+  ] as const) {
     const seen = new Set(tokens[key]);
     for (const value of supplemental[key]) {
       if (seen.has(value)) continue;

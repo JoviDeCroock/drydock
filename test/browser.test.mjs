@@ -2503,6 +2503,137 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(13);
   });
 
+  test("follows sandbox inline code and static resource spreads", () => {
+    const path = "dist/sandbox-helper.zip";
+    const manifest = buildBrowserReleaseManifest("sandbox-helper@example.invalid", "1.0.0", [
+      { path, sha256: SHA },
+    ]);
+    const files = [
+      manifestFile({
+        name: "Sandbox helper",
+        version: "1.0.0",
+        browser_specific_settings: { gecko: { id: "sandbox-helper@example.invalid" } },
+        background: { service_worker: "background.js" },
+        sandbox: { pages: ["sandbox.html"] },
+        content_security_policy: {
+          extension_pages: "script-src 'self'",
+          sandbox: "sandbox allow-scripts; script-src 'self' https://example.invalid",
+        },
+      }),
+      {
+        path: "sandbox.html",
+        size: 280,
+        sha256: "e4".repeat(32),
+        flags: [],
+        textSample: [
+          '<script>const inline = document.createElement("script"); inline.src = "tests/inline.js"; document.body.append(inline);</script>',
+          "<button onclick=\"const handler = document.createElement('script'); handler.src = 'tests/handler.js'; document.body.append(handler)\">Run</button>",
+        ].join("\n"),
+      },
+      {
+        path: "background.js",
+        size: 150,
+        sha256: "e5".repeat(32),
+        flags: [],
+        textSample: [
+          'chrome.tabs.create({...{ url: "tests/object-spread.html" }});',
+          'chrome.windows.create({ url: [...["tests/array-spread.html"]] });',
+        ].join("\n"),
+      },
+      ...["object-spread", "array-spread"].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 41,
+          sha256: (236 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: (238 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+      ...["inline", "handler"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: (240 + index).toString(16).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.consumerDocumentBaseUrlsByPath["sandbox.html"]).toEqual([
+      "drydock-extension://artifact/sandbox.html",
+    ]);
+    expect(parsed.sandboxContentSecurityPolicy).toBe(
+      "sandbox allow-scripts; script-src 'self' https://example.invalid",
+    );
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings;
+    const dynamicEvaluation = findings.filter(
+      (candidate) => candidate.ruleId === "code.dynamic-evaluation",
+    );
+    expect(dynamicEvaluation).toEqual(
+      expect.arrayContaining(
+        ["inline", "handler", "object-spread", "array-spread"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+      ),
+    );
+    expect(dynamicEvaluation).toHaveLength(4);
+    expect(dynamicEvaluation.every((finding) => finding.testScoped !== true)).toBe(true);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        ruleId: "browser.unsafe-extension-csp",
+        evidence:
+          "sandbox CSP script-src permits non-package script source https://example.invalid",
+      }),
+    );
+  });
+
+  test("reads Manifest V2 sandbox CSP separately from extension CSP", () => {
+    const path = "dist/manifest-v2-sandbox.zip";
+    const files = [
+      manifestFile({
+        manifest_version: 2,
+        content_security_policy: "script-src 'self'; object-src 'self'",
+        sandbox: {
+          pages: ["sandbox.html"],
+          content_security_policy: "sandbox allow-scripts; script-src 'self' 'unsafe-eval'",
+        },
+      }),
+      {
+        path: "sandbox.html",
+        size: 13,
+        sha256: "f2".repeat(32),
+        flags: [],
+        textSample: "<main></main>",
+      },
+    ];
+    const parsed = parseBrowserExtensionManifest(files).manifest;
+    expect(parsed.contentSecurityPolicy).toBe("script-src 'self'; object-src 'self'");
+    expect(parsed.sandboxContentSecurityPolicy).toBe(
+      "sandbox allow-scripts; script-src 'self' 'unsafe-eval'",
+    );
+    const manifest = buildBrowserReleaseManifest("Manifest V2 sandbox", "1.0.0", [
+      { path, sha256: SHA },
+    ]);
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings;
+    expect(findings).not.toContainEqual(
+      expect.objectContaining({ ruleId: "browser.unsafe-extension-csp" }),
+    );
+  });
+
   test("follows pathname and module-relative WebExtension navigation", () => {
     const path = "dist/navigation-helper.zip";
     const manifest = buildBrowserReleaseManifest("Navigation helper", "1.0.0", [

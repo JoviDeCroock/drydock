@@ -51,6 +51,11 @@ export interface DeterministicFindingOptions {
     documentBaseUrl: string,
   ) => ConsumerReachabilityDependency[];
   /**
+   * Literal JavaScript embedded in a reachable browser document, such as an
+   * inline event handler. These sources inherit the owning document context.
+   */
+  consumerInlineScriptTexts?: (path: string, file: FileRecord) => string[];
+  /**
    * Opt an ecosystem into manifest-entrypoint resolution. Deliberately has no
    * default: the rule reads `package.json` semantics, and an ecosystem that
    * merely happens to carry a root `package.json` (a Python sdist bundling JS
@@ -115,6 +120,7 @@ export function buildRuleContext(
       options.consumerDocumentBaseUrlsByPath,
       options.consumerFileDependencyPaths,
       options.consumerInlineDocumentDependencyPaths,
+      options.consumerInlineScriptTexts,
     ),
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
