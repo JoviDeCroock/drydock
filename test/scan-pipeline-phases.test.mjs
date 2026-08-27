@@ -646,9 +646,10 @@ describe("persistResults", () => {
     const findings = runDeterministicFindings(adapter, resolved, diff);
     const riskSummary = scoreRisk(findings.annotatedFindings, disabledAi);
     const identity = { scanId: "scan-1", stageId: "stage-1", organizationId: "org-1" };
+    const bucket = createMemoryArtifactBucket();
 
     const { result, persisted } = await persistResults({
-      env: { ARTIFACTS: createMemoryArtifactBucket() },
+      env: { ARTIFACTS: bucket },
       db: {},
       session: { userId: "user-1" },
       adapter,
@@ -694,6 +695,11 @@ describe("persistResults", () => {
     // The advisory envelope rides the summary blob and the scan result verbatim.
     expect(persistArg.summary.intentEnvelope).toEqual(absentIntentEnvelope);
     expect(result.intentEnvelope).toEqual(absentIntentEnvelope);
+
+    // The winning attempt keeps every object it wrote. This is the mirror of the
+    // discard case below: a refactor that swept the run unconditionally would
+    // strand the scan it just persisted.
+    expect(bucket.objects.size).toBe(4);
   });
 
   test("persists AI finding records after the rule findings with combined annotations", async () => {
@@ -729,15 +735,20 @@ describe("persistResults", () => {
     expect(persistArg.riskSummary.artifactRisk).toBe("critical");
   });
 
-  test("propagates a non-persisted outcome from persistScan", async () => {
+  // An attempt writes its artifact set before it can know whether it owns the D1
+  // row. A loser therefore has to take its own objects back out — otherwise they
+  // sit in R2 unreferenced by any scan.
+  test("propagates a non-persisted outcome from persistScan and discards its artifact run", async () => {
     dbMock.persistScan.mockResolvedValueOnce({ persisted: false, reason: "already_terminal" });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const adapter = makeAdapter();
     const diff = computeDiff(resolved);
     const findings = runDeterministicFindings(adapter, resolved, diff);
     const riskSummary = scoreRisk(findings.annotatedFindings, disabledAi);
+    const bucket = createMemoryArtifactBucket();
 
     const { persisted } = await persistResults({
-      env: { ARTIFACTS: createMemoryArtifactBucket() },
+      env: { ARTIFACTS: bucket },
       db: {},
       session: { userId: "user-1" },
       adapter,
@@ -752,6 +763,12 @@ describe("persistResults", () => {
     });
 
     expect(persisted).toBe(false);
+    expect(bucket.objects.size).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "scan.artifacts.run_discarded",
+      expect.objectContaining({ scanId: "scan-1", reason: "already_terminal" }),
+    );
+    warnSpy.mockRestore();
   });
 });
 

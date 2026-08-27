@@ -31,6 +31,18 @@ export interface ScanArtifactMetadata {
   diffArtifactKey: string;
 }
 
+/**
+ * What a write attempt produced. Extends the persisted column set with the R2
+ * prefix holding only this attempt's objects, so a caller that loses the D1
+ * claim can sweep exactly its own bytes. The prefix is not a D1 column: a
+ * committed row addresses its objects through the key columns above, and
+ * deriving a prefix from one of those keys would be unsafe (a pre-run-id key
+ * strips to the scan's whole `v{N}/` directory).
+ */
+export interface WrittenScanArtifacts extends ScanArtifactMetadata {
+  artifactRunPrefix: string;
+}
+
 export interface ScanArtifactFileRow {
   path: string;
   status: string;

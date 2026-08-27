@@ -1,12 +1,12 @@
-import { putVerifiedJson } from "./json-io";
-import { artifactKeys } from "./keys";
+import { deleteArtifactsByPrefix, putVerifiedJson } from "./json-io";
+import { artifactKeys, scanArtifactRunPrefix } from "./keys";
 import {
   SCAN_ARTIFACT_STORAGE_VERSION,
   SCAN_ARTIFACT_WRITE_ATTEMPTS,
   type ScanArtifactFileRow,
-  type ScanArtifactMetadata,
   type ScanArtifactsManifest,
   type WriteScanArtifactsInput,
+  type WrittenScanArtifacts,
 } from "./types";
 import { type DiffEntry, type FileRecord } from "../../review";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
@@ -50,7 +50,7 @@ function clipDisplaySample(
 export async function writeScanArtifactsWithRetry(
   bucket: R2Bucket | undefined,
   input: WriteScanArtifactsInput,
-): Promise<ScanArtifactMetadata> {
+): Promise<WrittenScanArtifacts> {
   if (!bucket) {
     emitOperationalEvent("error", "scan.artifacts.binding_missing", {
       scanId: input.scanId,
@@ -58,31 +58,59 @@ export async function writeScanArtifactsWithRetry(
     });
     throw new Error("ARTIFACTS binding is required to persist a completed scan");
   }
+  // One run id for the whole retry loop: a retry is the *same* completion
+  // attempt, so it replaces its own partial objects instead of orphaning them.
+  // Concurrent completion attempts each run this function, so they still get
+  // disjoint prefixes.
+  const runId = crypto.randomUUID();
   let lastError: unknown;
   for (let attempt = 1; attempt <= SCAN_ARTIFACT_WRITE_ATTEMPTS; attempt += 1) {
     try {
-      return await writeScanArtifacts(bucket, input);
+      return await writeScanArtifacts(bucket, input, { runId });
     } catch (err) {
       lastError = err;
       const finalAttempt = attempt === SCAN_ARTIFACT_WRITE_ATTEMPTS;
       emitOperationalEvent(finalAttempt ? "error" : "warn", "scan.artifacts.write_failed", {
         scanId: input.scanId,
         organizationId: input.organizationId,
+        runId,
         attempt,
         finalAttempt,
         error: describeOperationalError(err),
       });
-      if (finalAttempt) throw err;
+      if (finalAttempt) {
+        // D1 persistence has not started, so nothing can reference this run.
+        // Sweep any objects a later put/readback failure left behind before the
+        // queue retries with a new run id. The helper is fail-soft: cleanup
+        // failure is logged without replacing the original write error.
+        await deleteArtifactsByPrefix(
+          bucket,
+          scanArtifactRunPrefix(input.organizationId, input.scanId, runId),
+          {
+            organizationId: input.organizationId,
+            scanId: input.scanId,
+            scope: "run",
+            reason: "write_failed",
+          },
+        );
+        throw err;
+      }
     }
   }
   throw lastError instanceof Error ? lastError : new Error("scan artifact write failed");
 }
 
+/**
+ * `options.runId` lets the retry loop above reuse one prefix across attempts.
+ * Left unset, each call mints its own — which is what an isolated caller wants.
+ */
 export async function writeScanArtifacts(
   bucket: R2Bucket,
   input: WriteScanArtifactsInput,
-): Promise<ScanArtifactMetadata> {
-  const keys = artifactKeys(input.organizationId, input.scanId);
+  options: { runId?: string } = {},
+): Promise<WrittenScanArtifacts> {
+  const runId = options.runId ?? crypto.randomUUID();
+  const keys = artifactKeys(input.organizationId, input.scanId, runId);
   const files = scanFileRowsForArtifacts(input.files, input.diff);
   const filesJson = stableJson({
     version: SCAN_ARTIFACT_STORAGE_VERSION,
@@ -139,6 +167,7 @@ export async function writeScanArtifacts(
   emitOperationalEvent("info", "scan.artifacts.written", {
     scanId: input.scanId,
     organizationId: input.organizationId,
+    runId,
     storageVersion: SCAN_ARTIFACT_STORAGE_VERSION,
     reportSize: descriptors.report.size,
     fileSampleCount: files.length,
@@ -146,6 +175,7 @@ export async function writeScanArtifacts(
   });
 
   return {
+    artifactRunPrefix: scanArtifactRunPrefix(input.organizationId, input.scanId, runId),
     artifactStorageVersion: SCAN_ARTIFACT_STORAGE_VERSION,
     artifactManifestKey: manifestDescriptor.key,
     artifactManifestDigest: manifestDescriptor.digest,

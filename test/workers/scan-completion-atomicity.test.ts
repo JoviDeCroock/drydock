@@ -6,6 +6,7 @@ import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
+import { scanArtifactPrefix } from "../../server/lib/scan/artifacts/keys";
 
 function deferred() {
   let resolve!: () => void;
@@ -64,7 +65,12 @@ describe("scan completion atomicity", () => {
     const stageId = "stage-atomicity-000001";
 
     const readerDb = createDb(env.DB);
-    await createScanJob(readerDb, { id: scanId, stageId, organizationId, ownerUserId: userId });
+    await createScanJob(readerDb, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+    });
     await claimScanForRun(readerDb, scanId, organizationId);
 
     const files = [
@@ -144,5 +150,95 @@ describe("scan completion atomicity", () => {
     expect(finalDetail?.findings.map((finding) => finding.ruleId)).toEqual([
       "install-script.implicit-node-gyp",
     ]);
+  });
+  // Two completion attempts for the same scan both write an artifact set. Before
+  // per-run key prefixes they addressed the same four objects, so a loser that
+  // wrote R2 after the winner's D1 batch committed left the row pointing at
+  // digests that no longer matched the stored bytes — the detail read then failed
+  // closed to metadata forever. The interleaving is the plain sequential one: the
+  // loser only learns it lost *after* its R2 write.
+  test("a stale attempt's artifact write cannot strand the winner's detail read", async () => {
+    const { userId, organizationId } = await seedUserAndOrg();
+    const scanId = `scan_${crypto.randomUUID()}`;
+    const stageId = "stage-atomicity-000002";
+
+    const db = createDb(env.DB);
+    await createScanJob(db, {
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+    });
+    await claimScanForRun(db, scanId, organizationId);
+
+    const files = [
+      {
+        path: "binding.gyp",
+        size: 64,
+        sha256: "abc",
+        flags: [],
+        textSample: '{ "targets": [] }\n',
+      },
+    ];
+    const diff = createPackageDiff([], files);
+    const seed = (ruleId: string, reason: string) => ({
+      id: scanId,
+      stageId,
+      organizationId,
+      ownerUserId: userId,
+      packageJson: { name: "demo", version: "1.0.0" },
+      previousPackageJson: null,
+      risk: "high",
+      status: "complete",
+      summary: { ok: true },
+      ai: null,
+      files,
+      diff,
+      findings: [
+        {
+          severity: "high",
+          file: "binding.gyp",
+          evidence: "implicit install: node-gyp rebuild",
+          reason,
+          ruleId,
+        },
+      ],
+    });
+
+    const winner = await persistScanWithArtifacts(
+      db,
+      seed("install-script.implicit-node-gyp", "package builds a native addon on install"),
+    );
+    expect(winner.persisted).toBe(true);
+
+    // A different ruleId means different report bytes and a different digest, so
+    // a shared key would overwrite the winner's report with a mismatching one.
+    const loser = await persistScanWithArtifacts(
+      db,
+      seed("stale.finding", "stale completion should not survive"),
+    );
+    expect(loser).toMatchObject({
+      persisted: false,
+      reason: "already_terminal",
+    });
+
+    const detail = await getScan(db, scanId, organizationId, env.ARTIFACTS);
+    expect(detail?.scan.reportDigest).toBe(winner.reportDigest);
+    expect(detail?.findings.map((finding) => finding.ruleId)).toEqual([
+      "install-script.implicit-node-gyp",
+    ]);
+
+    // Each attempt owns its own prefix, so neither manifest is addressable by the
+    // other. Both survive here only because this helper calls `persistScan`
+    // directly: in production `persistResults` sweeps the loser's prefix once it
+    // sees `persisted: false`. Two sets is the pre-sweep state, and the point is
+    // that the winner's set is intact in it.
+    expect(loser.artifacts.artifactRunPrefix).not.toBe(winner.artifacts.artifactRunPrefix);
+    const stored = await env.ARTIFACTS.list({
+      prefix: scanArtifactPrefix(organizationId, scanId),
+    });
+    expect(stored.objects.filter((object) => object.key.endsWith("/manifest.json"))).toHaveLength(
+      2,
+    );
   });
 });

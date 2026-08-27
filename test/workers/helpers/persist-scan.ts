@@ -56,5 +56,5 @@ export async function persistScanWithArtifacts(db: AppDb, input: SeedInput) {
     report: { version: 1, digest: reportDigest },
     artifacts,
   });
-  return { ...result, reportDigest };
+  return { ...result, reportDigest, artifacts };
 }

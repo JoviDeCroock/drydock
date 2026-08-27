@@ -13,6 +13,6 @@ export {
   scanArtifactReadBucket,
 } from "./read";
 
-export { deleteOrganizationArtifacts, deleteScanArtifacts } from "./delete";
+export { deleteOrganizationArtifacts, deleteScanArtifacts, discardScanArtifactRun } from "./delete";
 
 export { projectAiReviewFindings } from "./parse";

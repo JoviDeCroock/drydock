@@ -114,9 +114,14 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
     .limit(1);
   if (existing[0] && !NON_TERMINAL_STATUSES.some((status) => status === existing[0]?.status)) {
-    return { persisted: false, reason: "already_terminal" as const };
+    return { persisted: false as const, reason: "already_terminal" as const };
   }
 
+  // The UPDATE branch assumes the existing row is non-terminal and therefore
+  // carries NULL artifact key columns: the pre-read above and `claimScanForRun`
+  // both refuse terminal rows, and the sole production caller always persists
+  // `status: "complete"`. A caller that persists a non-terminal status would
+  // break that, and would have to sweep the artifact run this overwrites.
   const claimScan = existing[0]
     ? db
         .update(scans)
@@ -175,7 +180,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
 
   const [claimed] = await db.batch(batch);
   if (Array.isArray(claimed) && claimed.length === 0) {
-    return { persisted: false, reason: "already_terminal" as const };
+    return { persisted: false as const, reason: "already_terminal" as const };
   }
   return { persisted: true as const };
 }
