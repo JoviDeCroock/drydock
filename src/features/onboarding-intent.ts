@@ -90,10 +90,14 @@ function parseIntent(raw: string): OnboardingIntent | null {
 
 /** Record the package a reader was on when they left for signup. */
 export function rememberOnboardingIntent(intent: {
-  ecosystem: Extract<DiffEcosystem, "npm">;
+  ecosystem: DiffEcosystem;
   packageName: string;
   displayName?: string | null;
 }): void {
+  if (intent.ecosystem !== "npm") {
+    clearOnboardingIntent();
+    return;
+  }
   if (typeof localStorage === "undefined") return;
   if (!isUsableName(intent.packageName)) return;
   const stored: OnboardingIntent = {

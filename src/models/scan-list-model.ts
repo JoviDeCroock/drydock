@@ -49,6 +49,8 @@ export const ScanListModel = createModel(() => {
   // it. See `resolveHasAnyDecision`.
   const hasAnyDecision = signal<boolean | null>(null);
   let decisionProbe: Promise<void> | null = null;
+  let decisionProbeGeneration = 0;
+  let onboardingOrganizationId = activeOrganizationId.peek();
   // `Check npm` resolves registry outcomes under Worker `waitUntil`, after the
   // discovery response returns. Incrementing this signal starts a bounded
   // refresh sequence; a later request or model disposal cancels the old one.
@@ -59,6 +61,8 @@ export const ScanListModel = createModel(() => {
   let listMutationId = 0;
 
   async function refresh(options: ScanListRefreshOptions = {}): Promise<void> {
+    ++decisionProbeGeneration;
+    decisionProbe = null;
     const requestId = ++refreshRequestId;
     const mutationId = ++listMutationId;
     const organizationId = activeOrganizationId.peek();
@@ -113,6 +117,7 @@ export const ScanListModel = createModel(() => {
       // otherwise reset the current organization's answer to null and drop its
       // in-flight probe.
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
+      ++decisionProbeGeneration;
       decisionProbe = null;
       hasAnyDecision.value = hasDecidedScan(data.scans)
         ? true
@@ -182,10 +187,16 @@ export const ScanListModel = createModel(() => {
   // ticked, or shown, on a guess.
   async function probeHasAnyDecision(): Promise<void> {
     const organizationId = activeOrganizationId.peek();
+    const generation = decisionProbeGeneration;
     try {
       for (const decisionFilter of ["publish", "no_publish"] as const) {
         const data = await listScans({ filter: decisionFilter, limit: 1 });
-        if (activeOrganizationId.peek() !== organizationId) return;
+        if (
+          activeOrganizationId.peek() !== organizationId ||
+          generation !== decisionProbeGeneration
+        ) {
+          return;
+        }
         if (data.scans.length > 0) {
           hasAnyDecision.value = true;
           return;
@@ -204,6 +215,16 @@ export const ScanListModel = createModel(() => {
     void filter.value;
     if (!loaded.peek()) return;
     void refresh();
+  });
+
+  effect(() => {
+    const organizationId = activeOrganizationId.value;
+    if (organizationId === onboardingOrganizationId) return;
+    onboardingOrganizationId = organizationId;
+    ++decisionProbeGeneration;
+    decisionProbe = null;
+    hasAnyScan.value = null;
+    hasAnyDecision.value = null;
   });
 
   effect(() => {
@@ -259,9 +280,13 @@ export const ScanListModel = createModel(() => {
         hasAnyDecision.value = true;
         return;
       }
-      decisionProbe ??= probeHasAnyDecision().finally(() => {
-        decisionProbe = null;
-      });
+      if (!decisionProbe) {
+        const probe = probeHasAnyDecision();
+        const tracked = probe.finally(() => {
+          if (decisionProbe === tracked) decisionProbe = null;
+        });
+        decisionProbe = tracked;
+      }
       await decisionProbe;
     },
 
@@ -305,6 +330,7 @@ export const ScanListModel = createModel(() => {
         const updated = await setScanDecision(id, decision, reason);
         // Fence out a refresh that started before this authoritative write.
         ++listMutationId;
+        ++decisionProbeGeneration;
         const activeFilter = this.filter.peek();
         this.scans.value = this.scans.value
           .map((scan) =>
@@ -334,6 +360,7 @@ export const ScanListModel = createModel(() => {
         await deleteScan(id);
         // Do not let an older list response resurrect the deleted row.
         ++listMutationId;
+        ++decisionProbeGeneration;
         this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
         // Deleting the organization's only scan puts it back in the
         // never-scanned state, so the getting-started panel has to come back.

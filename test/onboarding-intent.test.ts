@@ -45,6 +45,19 @@ describe("onboarding intent", () => {
     expect(store.has(STORAGE_KEY)).toBe(false);
   });
 
+  test.each(["pypi", "atpm"] as const)(
+    "clears an older npm intent when signup starts from a %s diff",
+    (ecosystem) => {
+      const store = stubLocalStorage();
+      rememberOnboardingIntent({ ecosystem: "npm", packageName: "left-pad" });
+
+      rememberOnboardingIntent({ ecosystem, packageName: "example" });
+
+      expect(store.has(STORAGE_KEY)).toBe(false);
+      expect(readOnboardingIntent()).toBe(null);
+    },
+  );
+
   test("reads as no intent when nothing was stored", () => {
     stubLocalStorage();
 

@@ -571,7 +571,6 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               <LinkButton
                 href="/register"
                 onClick={() => {
-                  if (ecosystem !== "npm") return;
                   rememberOnboardingIntent({ ecosystem, packageName });
                 }}
               >

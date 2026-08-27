@@ -204,7 +204,7 @@ function CiPublisherTrack() {
           the same decision.
         </Muted>
       </div>
-      <LinkButton variant="secondary" size="sm" href="/dashboard/settings#gate-setup">
+      <LinkButton variant="secondary" size="sm" href="/dashboard/settings?tab=integrations">
         Set up a workflow gate
       </LinkButton>
     </div>

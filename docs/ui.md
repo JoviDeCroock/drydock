@@ -60,7 +60,9 @@ while the panel could still open. Completion and dismissal are both recorded per
 organization in `src/models/getting-started.ts` (localStorage) as "do not open
 again", which is also what stops the probe from repeating on later visits. An
 unresolved (`null`) answer opens nothing — neither onboarding surface appears on
-a guess.
+a guess. Switching organizations immediately resets both progress answers to
+`null`, so the new organization cannot inherit a panel latch or completion tick
+from the previous one while its list request is in flight.
 
 `src/features/onboarding-intent.ts` carries an npm `{ecosystem, packageName}`
 from the anonymous `/diff` page's "Create account" CTA to the dashboard, so a
@@ -71,7 +73,8 @@ is client-side only and untrusted; a stored value that does not parse, is not
 npm, or has aged out is dropped rather than rendered. The dashboard clears it
 once the organization has a scan of its own or the panel is dismissed. It lives
 in `src/features/` because two pages share it and pages may not import each
-other.
+other. Starting signup from a non-npm diff also clears any older npm breadcrumb
+so a previous browsing path cannot personalize the new session.
 
 ## Copy and density
 

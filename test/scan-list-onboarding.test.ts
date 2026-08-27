@@ -143,6 +143,50 @@ describe("ScanListModel onboarding progress", () => {
     expect(asked).toEqual(["undecided", "publish", "no_publish"]);
   });
 
+  test("a completed decision write cannot be downgraded by an older probe", async () => {
+    let resolveBlockedProbe!: (response: Response) => void;
+    let blockedProbeStarted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "https://drydock.test");
+        if (init?.method === "POST") {
+          return Promise.resolve(
+            jsonResponse({
+              scan: scan({ decision: "publish" }),
+              files: [],
+              findings: [],
+              events: [],
+            }),
+          );
+        }
+        const filter = url.searchParams.get("filter") ?? "undecided";
+        if (filter === "undecided") {
+          return Promise.resolve(
+            jsonResponse({ scans: [scan()], nextCursor: null, filter: "undecided" }),
+          );
+        }
+        if (filter === "publish") {
+          return Promise.resolve(jsonResponse({ scans: [], nextCursor: null, filter: "publish" }));
+        }
+        blockedProbeStarted = true;
+        return new Promise<Response>((resolve) => {
+          resolveBlockedProbe = resolve;
+        });
+      }),
+    );
+    const model = new ScanListModel();
+    await model.refresh();
+
+    const probe = model.resolveHasAnyDecision();
+    await vi.waitFor(() => expect(blockedProbeStarted).toBe(true));
+    await model.setDecision("scan-1", "publish", null);
+    resolveBlockedProbe(jsonResponse({ scans: [], nextCursor: null, filter: "no_publish" }));
+    await probe;
+
+    expect(model.hasAnyDecision.value).toBe(true);
+  });
+
   test("a settled answer is not re-probed", async () => {
     const asked = stubScanList({ undecided: [scan()] });
     const model = new ScanListModel();
@@ -238,6 +282,21 @@ describe("ScanListModel onboarding progress", () => {
       "org-b:undecided",
       "org-b:publish",
     ]);
+  });
+
+  test("switching organizations invalidates the previous onboarding answers immediately", async () => {
+    setActiveOrganizationId("org-a");
+    const asked = stubScanList({});
+    const model = new ScanListModel();
+    await model.refresh();
+    expect(model.hasAnyScan.value).toBe(false);
+    expect(model.hasAnyDecision.value).toBe(false);
+
+    setActiveOrganizationId("org-b");
+
+    expect(model.hasAnyScan.value).toBe(null);
+    expect(model.hasAnyDecision.value).toBe(null);
+    expect(asked).toEqual(["undecided", "all"]);
   });
 
   test("an unreachable API leaves the step unknown rather than guessing", async () => {

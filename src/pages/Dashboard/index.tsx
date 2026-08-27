@@ -181,6 +181,7 @@ function DashboardOnboarding({
   useSignalEffect(() => {
     if (gettingStartedDone.value) return;
     if (!scans.loaded.value) return;
+    if (scans.refreshing.value) return;
     if (scans.hasAnyScan.value !== true) return;
     if (scans.hasAnyDecision.value !== null) return;
     void scans.resolveHasAnyDecision();
