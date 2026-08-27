@@ -212,7 +212,14 @@ function findingPatternMatchesChangedLine(
     return hasMatchingCodeLine(stagedText, patterns, changedLines);
   }
   if (isPromptInjectionFinding(finding)) {
-    return promptInjectionPatternsMatchChangedLines(stagedText, changedLines, patterns);
+    return promptInjectionPatternsMatchChangedLines(
+      stagedText,
+      changedLines,
+      patterns,
+      finding.ruleId === DETERMINISTIC_RULE_IDS.filePromptInjection
+        ? REVIEW_MANIPULATION_PATTERN_SET
+        : [],
+    );
   }
   const lines = splitComparableLines(stagedText);
   for (const lineNumber of changedLines) {
