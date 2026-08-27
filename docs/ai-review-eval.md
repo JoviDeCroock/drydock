@@ -97,8 +97,9 @@ The agent is capped at 12 steps. A capacity/5xx failure gets one jittered retry;
 a 429 or timeout moves directly to the next model because a sub-second retry
 cannot escape a minute quota. An invalid completed run also moves to the next
 model without re-running the same model. Do not add AI Gateway retries on top of
-this loop: nested retry layers multiply requests and spend, and dynamic routing
-at individual inference-step granularity can mix models inside one review.
+this loop: each request pins Gateway attempts to one so account-level retry
+settings cannot multiply requests invisibly. Dynamic routing at individual
+inference-step granularity can also mix models inside one review.
 
 Cloudflare's queue consumer already limits scan concurrency to ten and processes
 one scan per batch, smoothing ordinary bursts. Track the aggregate text-generation
@@ -115,20 +116,23 @@ pnpm run eval:ai
 ```
 
 The test reads `test/fixtures/ai-review-eval/cases.json`, validates every result
-through the real persisted-review schema, requires the current reviewer
-version, and scores malicious catch behavior, benign cleanliness, and safe
-uncertainty escalation. The baseline includes prompt-injection-shaped hostile
-evidence, unavailable evidence, and a fallback-model result. Reports are
-written best-effort to `.context/eval/ai-review-eval.json` and
-`.context/eval/ai-review-eval.md`.
+through the real persisted-review schema, requires every result to match the
+corpus's explicit recorded reviewer version, and scores malicious catch
+behavior, benign cleanliness, and safe uncertainty escalation. The report shows
+that historical version beside the current runtime version so an old output can
+never be relabeled as evidence from a new model or routing contract, and says
+explicitly whether the current contract has recorded coverage. The
+baseline includes prompt-injection-shaped hostile evidence, unavailable
+evidence, and a fallback-model result. Reports are written best-effort to
+`.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`.
 
-These are recorded outputs, so a green run proves the scoring contract and
-guards known outputs; it does not prove the current hosted model will reproduce
-them. Before promoting a new model or reviewer version, refresh the corpus from
-controlled live runs, redact evidence, have a human assign the verdict and
-threat class, then compare the new version by category. Keep model failover's
-runtime behavior covered by the mocked orchestration tests in
-`test/ai-review.test.mjs` as well.
+These are historical recorded outputs, so a green run proves the scoring
+contract and guards known outputs; it does not prove the current hosted model
+will reproduce them. Before treating the corpus as evidence for a new model or
+reviewer version, refresh it from controlled live runs, redact evidence, have a
+human assign the verdict and threat class, then update its recorded provenance
+and compare the new version by category. Keep model failover's runtime behavior
+covered by the mocked orchestration tests in `test/ai-review.test.mjs` as well.
 
 ## Live model comparison
 

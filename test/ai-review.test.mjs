@@ -8,6 +8,7 @@ import {
   AI_REVIEWER_VERSION,
   analyzeWithAi,
   aiGatewayMetadataHeader,
+  aiReviewRequestHeaders,
   aiReviewTraceTelemetry,
   displayedAiResult,
   selectModelCandidates,
@@ -295,6 +296,12 @@ describe("ai review orchestration", () => {
       ecosystem: "npm",
       attempt: 2,
       stageId: "stage_123",
+    });
+  });
+
+  test("disables Gateway retries so every provider call is counted by the attempt loop", () => {
+    expect(aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1)).toMatchObject({
+      "cf-aig-max-attempts": "1",
     });
   });
 
@@ -742,6 +749,43 @@ describe("ai review orchestration", () => {
       ["", "npm", "complete", "done", "fallback-reviewer", AI_REVIEWER_VERSION],
     ]);
     expect(JSON.stringify(points)).not.toMatch(/org_private|scan_private/);
+  });
+
+  test("records usage from completed steps when a later provider call falls back", async () => {
+    const points = [];
+    const env = {
+      PRODUCT_ANALYTICS: { writeDataPoint: (point) => points.push(point) },
+    };
+    let primaryCalls = 0;
+    const modelFactory = (model) =>
+      model === "primary-reviewer"
+        ? mockModel(async () => {
+            primaryCalls += 1;
+            if (primaryCalls > 1) throw new Error("429: too many requests");
+            return generateResult(
+              [
+                {
+                  type: "tool-call",
+                  toolCallId: "read-1",
+                  toolName: "read",
+                  input: JSON.stringify({ paths: ["index.js"] }),
+                },
+              ],
+              "tool-calls",
+            );
+          })
+        : submittingModel(VALID_REVIEW);
+
+    await analyzeWithAi(env, ["primary-reviewer", "fallback-reviewer"], BASE_OPTIONS, modelFactory);
+
+    expect(points).toHaveLength(2);
+    expect(points[0].blobs.slice(4)).toEqual([
+      "rate_limited",
+      "fallback",
+      "primary-reviewer",
+      AI_REVIEWER_VERSION,
+    ]);
+    expect(points[0].doubles.slice(1)).toEqual([1, 1, 10, 0, 10, 20]);
   });
 
   test("a complete submission slightly over the summary bound is clamped, not discarded", async () => {

@@ -150,7 +150,9 @@ are outcome, action, model, and reviewer version; doubles are duration, attempt,
 steps, input/cache/output/total tokens. Organization is always blank, and no
 scan, stage, package, prompt, evidence, or Gateway log identifier is retained.
 Use this event—not the final model on `ai_review.finished`—to attribute cost by
-model after fallback.
+model after fallback. Usage from completed agent steps is retained when a later
+step fails, and every request pins AI Gateway to one attempt so a recorded step
+cannot hide account-level Gateway retries.
 
 `ai_review.decided` joins a later maintainer action to the already-persisted AI
 review without retaining a scan id or package data. Disabled-review placeholders
@@ -192,7 +194,7 @@ alert configuration rather than duplicating them in application code. A failed
 agent attempt can report zero steps when the provider supplies no usage, so use
 AI Gateway request metrics as the exact RPM source and Analytics Engine as the
 privacy-preserving routing/fallback source. Keep Gateway payload logging and
-Gateway-level retries disabled.
+the per-request one-attempt override enabled.
 
 ## Optional binding
 

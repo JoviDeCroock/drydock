@@ -164,6 +164,7 @@ export async function analyzeWithAi(
     const hasFallback = modelIndex < models.length - 1;
     for (let attempt = 1; attempt <= AI_REVIEW_MAX_CAPACITY_ATTEMPTS; attempt += 1) {
       const attemptStartedAtMs = Date.now();
+      let completedStepUsage: AiReviewUsage | null = null;
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
@@ -226,6 +227,9 @@ export async function analyzeWithAi(
           // This loop owns model-level retry and fallback. Provider retries here
           // would be invisible to `ai_review.attempted` and multiply spend.
           maxRetries: 0,
+          onStepEnd: ({ usage: stepUsage }) => {
+            completedStepUsage = addAiReviewUsage(completedStepUsage, toUsage(stepUsage, 1));
+          },
         });
 
         const usage = toUsage(result.totalUsage, result.steps.length);
@@ -286,7 +290,7 @@ export async function analyzeWithAi(
           outcome,
           action: shouldRetry ? "retry" : shouldFallback ? "fallback" : "stop",
           durationMs: durationMsSince(attemptStartedAtMs),
-          usage: null,
+          usage: completedStepUsage,
         });
 
         if (shouldRetry) {
@@ -428,6 +432,9 @@ export function aiReviewRequestHeaders(
   return {
     "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
     "cf-aig-metadata": aiGatewayMetadataHeader(options, model, attempt),
+    // Account-level Gateway retries would be invisible to per-attempt usage
+    // accounting. One Gateway attempt leaves retry/fallback ownership here.
+    "cf-aig-max-attempts": "1",
   };
 }
 
@@ -475,6 +482,21 @@ function toUsage(usage: LanguageModelUsage, steps: number): AiReviewUsage {
     totalTokens: usage.totalTokens ?? null,
     steps,
   };
+}
+
+function addAiReviewUsage(total: AiReviewUsage | null, next: AiReviewUsage): AiReviewUsage {
+  if (!total) return next;
+  return {
+    inputTokens: addNullableTokenCounts(total.inputTokens, next.inputTokens),
+    cachedInputTokens: addNullableTokenCounts(total.cachedInputTokens, next.cachedInputTokens),
+    outputTokens: addNullableTokenCounts(total.outputTokens, next.outputTokens),
+    totalTokens: addNullableTokenCounts(total.totalTokens, next.totalTokens),
+    steps: total.steps + next.steps,
+  };
+}
+
+function addNullableTokenCounts(left: number | null, right: number | null): number | null {
+  return left === null && right === null ? null : (left ?? 0) + (right ?? 0);
 }
 
 function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined): string {
