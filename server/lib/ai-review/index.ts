@@ -401,6 +401,9 @@ export function aiReviewRequestHeaders(
   return {
     "x-session-affinity": scanScopedCacheAffinity(env, options.scanId),
     "cf-aig-metadata": aiGatewayMetadataHeader(options, model, attempt),
+    // Gateway metrics stay available without retaining private package evidence
+    // from the request and response bodies.
+    "cf-aig-collect-log-payload": "false",
     // Account-level Gateway retries would be invisible to per-attempt usage
     // accounting. One Gateway attempt leaves retry/fallback ownership here.
     "cf-aig-max-attempts": "1",

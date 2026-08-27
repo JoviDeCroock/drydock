@@ -293,8 +293,9 @@ describe("ai review orchestration", () => {
     });
   });
 
-  test("disables Gateway retries so every provider call is counted by the attempt loop", () => {
+  test("keeps Gateway logs metadata-only and disables hidden retries", () => {
     expect(aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1)).toMatchObject({
+      "cf-aig-collect-log-payload": "false",
       "cf-aig-max-attempts": "1",
     });
   });
