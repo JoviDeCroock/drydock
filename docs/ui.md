@@ -45,6 +45,34 @@ what is tied to the persisted scan model (`scanFilesToFileRecords`,
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
 
+## Dashboard onboarding funnel
+
+`src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a
+first staged publish reviewed, a first decision recorded. `DashboardOnboarding`
+in `src/pages/Dashboard/index.tsx` decides when it opens and latches that
+against the organization it opened for; nothing but the reader's dismiss control
+(or an organization switch) closes it. That latch is what lets the third step be
+seen ticking — a panel that unmounted the moment the funnel completed would take
+the tick with it. Only the first two steps are free: the list defaults to the
+`undecided` filter, so `ScanListModel.hasAnyDecision` stays `null` until
+`resolveHasAnyDecision()` runs two one-row probes, and the dashboard asks only
+while the panel could still open. Completion and dismissal are both recorded per
+organization in `src/models/getting-started.ts` (localStorage) as "do not open
+again", which is also what stops the probe from repeating on later visits. An
+unresolved (`null`) answer opens nothing — neither onboarding surface appears on
+a guess.
+
+`src/features/onboarding-intent.ts` carries an npm `{ecosystem, packageName}`
+from the anonymous `/diff` page's "Create account" CTA to the dashboard, so a
+new account opens on the npm package its owner was already reading. PyPI and
+atpm do not enter this npm-specific funnel: their private-review paths differ,
+so presenting `npm stage publish` as their next step would be false. The value
+is client-side only and untrusted; a stored value that does not parse, is not
+npm, or has aged out is dropped rather than rendered. The dashboard clears it
+once the organization has a scan of its own or the panel is dismissed. It lives
+in `src/features/` because two pages share it and pages may not import each
+other.
+
 ## Copy and density
 
 - Lead with maintainer action and release risk, not internal pipeline detail.

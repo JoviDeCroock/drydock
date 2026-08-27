@@ -6,7 +6,9 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { pluralize } from "../../lib/format";
+import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
+import { gettingStartedDone, markGettingStartedDone } from "../../models/getting-started";
 import { NpmConnectionModel } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import {
@@ -133,14 +135,7 @@ export default function DashboardPage() {
 
       {workspaceLoaded ? (
         <>
-          {/* The getting-started panel supersedes the bare "npm not connected"
-              callout for an organization with no scans: it says the same thing
-              as step 1 and then explains what comes after it. */}
-          {scans.hasAnyScan.value === false ? (
-            <GettingStarted npmConnected={Boolean(npm.connection.value)} />
-          ) : !npm.connection.value ? (
-            <NpmSetupCallout />
-          ) : null}
+          <DashboardOnboarding scans={scans} npm={npm} />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
       ) : (
@@ -157,6 +152,76 @@ export default function DashboardPage() {
       )}
     </PageShell>
   );
+}
+
+// Which of the two onboarding surfaces an organization sees, if either.
+//
+// The getting-started panel supersedes the bare "npm not connected" callout
+// while the funnel is unfinished: it says the same thing as step 1 and then
+// explains what comes after it. Neither opens on a guess — an unresolved (null)
+// answer shows nothing rather than telling a maintainer with a hundred reviews
+// to get their first one.
+//
+// Opening is latched per organization, which is what lets the last step be seen
+// ticking: recording a first decision finishes the funnel, and a panel that
+// vanished at that moment would take the tick with it. Once open it stays until
+// the reader dismisses it; "finished" only means it will not open again.
+function DashboardOnboarding({
+  scans,
+  npm,
+}: {
+  scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+}) {
+  const openForOrganization = useSignal<string | null>(null);
+
+  // Step 3 is the only step whose answer costs a request, so it is asked for
+  // only while the panel could still open — never for an organization that has
+  // dismissed it or already finished.
+  useSignalEffect(() => {
+    if (gettingStartedDone.value) return;
+    if (!scans.loaded.value) return;
+    if (scans.hasAnyScan.value !== true) return;
+    if (scans.hasAnyDecision.value !== null) return;
+    void scans.resolveHasAnyDecision();
+  });
+
+  // A completed funnel is recorded as finished, which is what keeps the probe
+  // above from running again on every later dashboard load in this browser. It
+  // deliberately does not close a panel that is already open.
+  useSignalEffect(() => {
+    if (scans.hasAnyDecision.value === true) markGettingStartedDone();
+  });
+
+  useSignalEffect(() => {
+    const organizationId = activeOrganizationId.value;
+    if (gettingStartedDone.value) return;
+    if (scans.hasAnyScan.value === false || scans.hasAnyDecision.value === false) {
+      openForOrganization.value = organizationId;
+    }
+  });
+
+  const dismiss = () => {
+    openForOrganization.value = null;
+    markGettingStartedDone();
+  };
+
+  // Latched against the organization it opened for, so switching organizations
+  // closes it rather than carrying one organization's funnel into another's.
+  const open = openForOrganization.value === activeOrganizationId.value;
+
+  if (open) {
+    return (
+      <GettingStarted
+        npmConnected={Boolean(npm.connection.value)}
+        hasAnyScan={scans.hasAnyScan.value === true}
+        hasAnyDecision={scans.hasAnyDecision.value === true}
+        onDismiss={dismiss}
+      />
+    );
+  }
+  if (!npm.connection.value) return <NpmSetupCallout />;
+  return null;
 }
 
 function DashboardHeader() {
@@ -223,8 +288,16 @@ function RecentReviewsSection({
   const showNoOpenMessage = Boolean(
     discovery && !discoveryError && !discovery.created && !discovery.found,
   );
+  // Why "Check npm" is disabled, as text. It used to be a `title` tooltip only,
+  // which is invisible on touch and to keyboard users — the two audiences most
+  // likely to be stuck on a button that does nothing when pressed.
+  const discoveryBlockedReason = ready ? null : npmConnectionBlockedReason(npm.connection.value);
   const showDiscoveryFeedback = Boolean(
-    discoveryError || showFreshness || showStartedMessage || showNoOpenMessage,
+    discoveryError ||
+    discoveryBlockedReason ||
+    showFreshness ||
+    showStartedMessage ||
+    showNoOpenMessage,
   );
 
   return (
@@ -266,6 +339,15 @@ function RecentReviewsSection({
       {showDiscoveryFeedback ? (
         <div class="px-5 pb-4 flex flex-col gap-2">
           {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
+          {discoveryBlockedReason ? (
+            <Muted class="text-[13px] m-0">
+              {discoveryBlockedReason}{" "}
+              <a href="/dashboard/settings?tab=integrations" class="underline">
+                Open settings
+              </a>
+              .
+            </Muted>
+          ) : null}
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
           {showStartedMessage && discovery ? (
             <Muted class="text-[13px] m-0">
@@ -419,6 +501,14 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
     default:
       return "No reviews yet. Check npm or wait for auto-discovery to find a staged release.";
   }
+}
+
+// Two different problems wear the same disabled button, and the fix differs:
+// there is no token at all, or there is one npm has not accepted.
+function npmConnectionBlockedReason(connection: { validationStatus: string } | null): string {
+  return connection
+    ? "Check npm is unavailable: the stored npm token has not validated. Revalidate it in Settings → Integrations."
+    : "Check npm is unavailable until an npm token is connected in Settings → Integrations.";
 }
 
 function formatStartedScanLabel(scan: { packageName: string | null; version: string | null }) {
