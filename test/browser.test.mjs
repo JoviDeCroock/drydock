@@ -2292,6 +2292,72 @@ describe("browser extension review adapter", () => {
     expect(findings).toHaveLength(6);
   });
 
+  test("follows worklet modules, form targets, and dynamically assigned document bases", () => {
+    const path = "dist/tab-helper.zip";
+    const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);
+    const files = [
+      manifestFile({ action: { default_popup: "ui/popup.html" } }),
+      {
+        path: "ui/popup.html",
+        size: 39,
+        sha256: "e0".repeat(32),
+        flags: [],
+        textSample: '<script type="module" src="popup.js"></script>',
+      },
+      {
+        path: "ui/popup.js",
+        size: 1,
+        sha256: "e1".repeat(32),
+        flags: [],
+        textSample: [
+          'CSS.paintWorklet.addModule(chrome.runtime.getURL("tests/paint.js"));',
+          'new AudioContext().audioWorklet.addModule("../tests/audio.js");',
+          'const form = document.createElement("form");',
+          'form.action = chrome.runtime.getURL("tests/form-target.html");',
+          'const base = document.createElement("base");',
+          'base.href = "/tests/";',
+          "document.head.append(base);",
+          'const script = document.createElement("script");',
+          'script.src = "base-payload.js";',
+          "document.body.append(script);",
+          'tool.paintWorklet.addModule(chrome.runtime.getURL("tests/decoy.js"));',
+        ].join("\n"),
+      },
+      {
+        path: "tests/form-target.html",
+        size: 39,
+        sha256: "e2".repeat(32),
+        flags: [],
+        textSample: '<script src="form-payload.js"></script>',
+      },
+      ...["paint", "audio", "form-payload", "base-payload", "decoy"].map((name, index) => ({
+        path: `tests/${name}.js`,
+        size: 14,
+        sha256: (227 + index).toString(16).repeat(32),
+        flags: [],
+        textSample: "eval(payload);",
+      })),
+    ];
+
+    const findings = createBrowserExtensionReview({
+      manifest,
+      artifact: { path, sha256: SHA, files },
+    }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        ...["paint", "audio", "form-payload", "base-payload"].map((name) =>
+          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
+        ),
+        expect.objectContaining({
+          file: "tests/decoy.js",
+          severity: "medium",
+          testScoped: true,
+        }),
+      ]),
+    );
+    expect(findings).toHaveLength(5);
+  });
+
   test("follows equivalent static browser resource syntax", () => {
     const path = "dist/tab-helper.zip";
     const manifest = buildBrowserReleaseManifest("Tab helper", "1.2.0", [{ path, sha256: SHA }]);

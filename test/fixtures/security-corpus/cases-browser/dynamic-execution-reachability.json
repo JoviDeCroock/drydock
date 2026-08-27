@@ -1,0 +1,83 @@
+{
+  "id": "browser-dynamic-execution-reachability",
+  "title": "dynamic browser execution sinks remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for paint and audio worklet modules, dynamically assigned form targets, and relative script sources resolved after a reachable extension page assigns a dynamic base URL.",
+  "slug": "dynamic-execution-reachability",
+  "extensionId": "dynamic-execution-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 287,
+      "sha256": "5656565656565656565656565656565656565656565656565656565656565656",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Dynamic execution reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"dynamic-execution-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"ui/popup.html\" }\n}\n"
+    },
+    {
+      "path": "ui/popup.html",
+      "size": 51,
+      "sha256": "5757575757575757575757575757575757575757575757575757575757575757",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>"
+    },
+    {
+      "path": "ui/popup.js",
+      "size": 477,
+      "sha256": "5858585858585858585858585858585858585858585858585858585858585858",
+      "flags": [],
+      "textSample": "CSS.paintWorklet.addModule(chrome.runtime.getURL(\"tests/paint.js\")); new AudioContext().audioWorklet.addModule(\"../tests/audio.js\"); const form = document.createElement(\"form\"); form.action = chrome.runtime.getURL(\"tests/form-target.html\"); const base = document.createElement(\"base\"); base.href = \"/tests/\"; document.head.append(base); const script = document.createElement(\"script\"); script.src = \"base-payload.js\"; document.body.append(script);"
+    },
+    {
+      "path": "tests/form-target.html",
+      "size": 39,
+      "sha256": "5959595959595959595959595959595959595959595959595959595959595959",
+      "flags": [],
+      "textSample": "<script src=\"form-payload.js\"></script>"
+    },
+    {
+      "path": "tests/paint.js",
+      "size": 14,
+      "sha256": "6060606060606060606060606060606060606060606060606060606060606060",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/audio.js",
+      "size": 14,
+      "sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/form-payload.js",
+      "size": 14,
+      "sha256": "6262626262626262626262626262626262626262626262626262626262626262",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/base-payload.js",
+      "size": 14,
+      "sha256": "6363636363636363636363636363636363636363636363636363636363636363",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/paint.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/audio.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/form-payload.js"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/base-payload.js"
+    }
+  ]
+}

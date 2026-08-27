@@ -55,6 +55,7 @@ interface ConsumerReachabilityQueueEntry {
 }
 
 interface StaticConsumerDependencies {
+  documentBases: DynamicDocumentBaseSpecifier[];
   fileDependencies: ConsumerReachabilityDependency[];
   importScripts: ImportScriptsSpecifier[];
   relativeSpecifiers: string[];
@@ -150,13 +151,15 @@ export function consumerReachablePaths(
     if (!file?.textSample) continue;
     let dependencies = staticDependenciesByPath.get(path);
     if (!dependencies) {
+      const browserDependencies = rootRelativeModuleImports
+        ? staticWebExtensionDependencies(file.textSample)
+        : { documentBases: [], resources: [] };
       dependencies = {
+        documentBases: browserDependencies.documentBases,
         fileDependencies: consumerFileDependencyPaths?.(path, file) ?? [],
         relativeSpecifiers: relativeSpecifiers(file.textSample, rootRelativeModuleImports),
         importScripts: staticImportScriptsSpecifiers(file.textSample),
-        webExtensionResources: rootRelativeModuleImports
-          ? staticWebExtensionResourceSpecifiers(file.textSample)
-          : [],
+        webExtensionResources: browserDependencies.resources,
         workers: rootRelativeModuleImports ? staticWorkerScriptSpecifiers(file.textSample) : [],
       };
       staticDependenciesByPath.set(path, dependencies);
@@ -205,22 +208,40 @@ export function consumerReachablePaths(
       }
     }
     if (rootRelativeModuleImports) {
+      const activeDocumentBaseUrls = new Set(documentBaseUrl ? [documentBaseUrl] : []);
+      if (documentBaseUrl) {
+        for (const base of dependencies.documentBases) {
+          spendResolutionWork();
+          const resolutionBaseUrl =
+            base.resolution === "root"
+              ? BROWSER_ARCHIVE_ROOT.href
+              : base.resolution === "document-module"
+                ? browserArchiveUrl(path)
+                : documentBaseUrl;
+          const resolvedBaseUrl = resolutionBaseUrl
+            ? resolveBrowserDocumentUrl(base.documentBasePath, resolutionBaseUrl)
+            : null;
+          if (resolvedBaseUrl) activeDocumentBaseUrls.add(resolvedBaseUrl);
+        }
+      }
       for (const resource of dependencies.webExtensionResources) {
         if ("inlineDocument" in resource) {
-          if (!documentBaseUrl || !consumerInlineDocumentDependencyPaths) continue;
-          remainingInlineDocumentCharacters -= resource.inlineDocument.length;
-          if (remainingInlineDocumentCharacters < 0) {
-            throw new Error("consumer reachability exceeds the inline-document work budget");
-          }
-          const inlineDependencies = consumerInlineDocumentDependencyPaths(
-            resource.inlineDocument,
-            documentBaseUrl,
-          );
-          spendResolutionWork(inlineDependencies.length);
-          for (const dependency of inlineDependencies) {
-            const resolved = resolveExactModulePath(dependency.path, byNormalizedPath);
-            if (resolved) {
-              enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+          if (!consumerInlineDocumentDependencyPaths) continue;
+          for (const activeDocumentBaseUrl of activeDocumentBaseUrls) {
+            remainingInlineDocumentCharacters -= resource.inlineDocument.length;
+            if (remainingInlineDocumentCharacters < 0) {
+              throw new Error("consumer reachability exceeds the inline-document work budget");
+            }
+            const inlineDependencies = consumerInlineDocumentDependencyPaths(
+              resource.inlineDocument,
+              activeDocumentBaseUrl,
+            );
+            spendResolutionWork(inlineDependencies.length);
+            for (const dependency of inlineDependencies) {
+              const resolved = resolveExactModulePath(dependency.path, byNormalizedPath);
+              if (resolved) {
+                enqueue({ path: resolved, documentBaseUrl: dependency.documentBaseUrl });
+              }
             }
           }
           continue;
@@ -253,11 +274,9 @@ export function consumerReachablePaths(
                 ? [BROWSER_ARCHIVE_ROOT.href]
                 : []
               : resource.resolution === "document"
-                ? documentBaseUrl
-                  ? [documentBaseUrl]
-                  : []
-                : documentBaseUrl
-                  ? [BROWSER_ARCHIVE_ROOT.href, documentBaseUrl]
+                ? [...activeDocumentBaseUrls]
+                : activeDocumentBaseUrls.size
+                  ? [BROWSER_ARCHIVE_ROOT.href, ...activeDocumentBaseUrls]
                   : [BROWSER_ARCHIVE_ROOT.href];
         for (const baseUrl of new Set(baseUrls)) {
           spendResolutionWork();
@@ -594,6 +613,16 @@ type WebExtensionResourceSpecifier =
     }
   | { inlineDocument: string };
 
+interface DynamicDocumentBaseSpecifier {
+  documentBasePath: string;
+  resolution: "document" | "document-module" | "root";
+}
+
+interface StaticWebExtensionDependencies {
+  documentBases: DynamicDocumentBaseSpecifier[];
+  resources: WebExtensionResourceSpecifier[];
+}
+
 interface ImportScriptsSpecifier {
   path: string;
   resolution: "extension-root" | "script";
@@ -717,23 +746,38 @@ function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
 // Follow only literal resource properties on the statically named APIs; dynamic
 // expressions remain unproven. The shared lexer keeps API-shaped text in
 // comments, strings, and regular expressions inert.
-function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourceSpecifier[] {
+function staticWebExtensionDependencies(text: string): StaticWebExtensionDependencies {
   const tokens = tokenizeJs(text).filter(
     (token) => token.type !== "ws" && token.type !== "comment",
   );
-  const specifiers: WebExtensionResourceSpecifier[] = [];
-  const domConsumerElementBindings = staticDomConsumerElementBindings(tokens, text);
+  const documentBases: DynamicDocumentBaseSpecifier[] = [];
+  const resources: WebExtensionResourceSpecifier[] = [];
+  const domConsumerBindings = staticDomConsumerBindings(tokens, text);
 
   for (let index = 0; index < tokens.length; index += 1) {
     const dynamicImport = staticBrowserDynamicImportResource(tokens, text, index);
-    if (dynamicImport) specifiers.push(dynamicImport);
+    if (dynamicImport) resources.push(dynamicImport);
     const navigation = staticBrowserNavigationResource(tokens, text, index);
-    if (navigation) specifiers.push(navigation);
-    const domResource = staticDomConsumerResource(tokens, text, index, domConsumerElementBindings);
-    if (domResource) specifiers.push(domResource);
+    if (navigation) resources.push(navigation);
+    const worklet = staticWorkletModuleResource(tokens, text, index);
+    if (worklet) resources.push(worklet);
+    const documentBase = staticDynamicDocumentBaseResource(
+      tokens,
+      text,
+      index,
+      domConsumerBindings.documentBases,
+    );
+    if (documentBase) documentBases.push(documentBase);
+    const domResource = staticDomConsumerResource(
+      tokens,
+      text,
+      index,
+      domConsumerBindings.elements,
+    );
+    if (domResource) resources.push(domResource);
     const appendedDomResource = staticAppendedDomConsumerResource(tokens, text, index);
-    if (appendedDomResource) specifiers.push(appendedDomResource);
-    specifiers.push(...staticDomInlineDocuments(tokens, text, index));
+    if (appendedDomResource) resources.push(appendedDomResource);
+    resources.push(...staticDomInlineDocuments(tokens, text, index));
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
@@ -745,7 +789,7 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
           ? argumentRanges.slice(0, 1)
           : argumentRanges.filter(([start]) => tokenText(tokens[start], text) === "{").slice(0, 1);
       for (const [start, end] of selectedRanges) {
-        specifiers.push(
+        resources.push(
           ...staticPropertyScriptPaths(
             tokens,
             text,
@@ -765,11 +809,11 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
         closeIndex,
         call.argumentIndex,
       );
-      if (path !== null) specifiers.push({ path, resolution: "root" });
+      if (path !== null) resources.push({ path, resolution: "root" });
     }
   }
 
-  return specifiers;
+  return { documentBases, resources };
 }
 
 // Packaged scripts and documents can become executable without a WebExtension
@@ -780,11 +824,14 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
 const DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
   ["a", new Set(["href"])],
   ["area", new Set(["href"])],
+  ["button", new Set(["formAction", "formaction"])],
   ["script", new Set(["src"])],
   ["frame", new Set(["src"])],
   ["iframe", new Set(["src", "srcdoc"])],
   ["embed", new Set(["src"])],
   ["object", new Set(["data"])],
+  ["form", new Set(["action"])],
+  ["input", new Set(["formAction", "formaction"])],
 ]);
 const SVG_DOM_CONSUMER_ELEMENT_PROPERTIES = new Map<string, ReadonlySet<string>>([
   ["a", new Set(["href"])],
@@ -800,6 +847,11 @@ interface StaticDomConsumerElement {
 interface StaticDomConsumerElementBinding {
   properties: Set<string>;
   inheritsExecutionContext: boolean;
+}
+
+interface StaticDomConsumerBindings {
+  documentBases: Set<string>;
+  elements: Map<string, StaticDomConsumerElementBinding>;
 }
 
 function staticDomConsumerElementProperties(
@@ -818,11 +870,9 @@ function staticDomConsumerElementInheritsExecutionContext(
   return element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase() === "script";
 }
 
-function staticDomConsumerElementBindings(
-  tokens: JsToken[],
-  text: string,
-): Map<string, StaticDomConsumerElementBinding> {
-  const bindings = new Map<string, StaticDomConsumerElementBinding>();
+function staticDomConsumerBindings(tokens: JsToken[], text: string): StaticDomConsumerBindings {
+  const documentBases = new Set<string>();
+  const elements = new Map<string, StaticDomConsumerElementBinding>();
   for (let index = 0; index < tokens.length - 2; index += 1) {
     const declaration = tokenText(tokens[index - 1], text);
     const binding = tokens[index];
@@ -837,20 +887,26 @@ function staticDomConsumerElementBindings(
     }
     const element = staticDocumentCreateElement(tokens, text, index + 2);
     if (!element) continue;
-    const properties = staticDomConsumerElementProperties(element);
-    if (!properties) continue;
     const bindingName = staticIdentifierName(binding, text);
     if (bindingName === null) continue;
-    const bindingRecord = bindings.get(bindingName) ?? {
+    if (
+      element.namespace === "html" &&
+      element.tag.slice(element.tag.lastIndexOf(":") + 1).toLowerCase() === "base"
+    ) {
+      documentBases.add(bindingName);
+    }
+    const properties = staticDomConsumerElementProperties(element);
+    if (!properties) continue;
+    const bindingRecord = elements.get(bindingName) ?? {
       properties: new Set<string>(),
       inheritsExecutionContext: false,
     };
     for (const property of properties) bindingRecord.properties.add(property);
     bindingRecord.inheritsExecutionContext ||=
       staticDomConsumerElementInheritsExecutionContext(element);
-    bindings.set(bindingName, bindingRecord);
+    elements.set(bindingName, bindingRecord);
   }
-  return bindings;
+  return { documentBases, elements };
 }
 
 function staticDocumentCreateElement(
@@ -919,6 +975,30 @@ function staticDomConsumerResource(
   );
 }
 
+function staticDynamicDocumentBaseResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  documentBaseBindings: ReadonlySet<string>,
+): DynamicDocumentBaseSpecifier | null {
+  const binding = staticIdentifierName(tokens[start], text) ?? tokenText(tokens[start], text);
+  if (!documentBaseBindings.has(binding) || isMemberSeparator(tokenText(tokens[start - 1], text))) {
+    return null;
+  }
+  const member = staticMemberAccess(tokens, text, start + 1);
+  if (!member) return null;
+  const resource = staticDomConsumerMemberResource(tokens, text, member, new Set(["href"]), false);
+  if (!resource || "inlineDocument" in resource) return null;
+  if (
+    resource.resolution !== "document" &&
+    resource.resolution !== "document-module" &&
+    resource.resolution !== "root"
+  ) {
+    return null;
+  }
+  return { documentBasePath: resource.path, resolution: resource.resolution };
+}
+
 function staticAppendedDomConsumerResource(
   tokens: JsToken[],
   text: string,
@@ -979,13 +1059,12 @@ function staticDomConsumerMemberResource(
     const value = staticWebExtensionResourcePath(tokens, text, valueStart, [
       tokenText(tokens[valueEnd], text),
     ]);
-    return value?.nextIndex === valueEnd
-      ? {
-          path: value.path,
-          resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
-          ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
-        }
-      : null;
+    if (value?.nextIndex !== valueEnd) return null;
+    return {
+      path: value.path,
+      resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
+      ...(inheritsExecutionContext ? { inheritsExecutionContext: true } : {}),
+    };
   }
 
   if (!resourceProperties.has(member.name)) return null;
@@ -1155,6 +1234,45 @@ function staticBrowserDynamicImportResource(
     path: resource.path,
     resolution: resource.moduleUrl ? "module" : "root",
     inheritsExecutionContext: true,
+  };
+}
+
+function staticWorkletModuleResource(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): WebExtensionResourceSpecifier | null {
+  const current = staticIdentifierName(tokens[start], text) ?? tokenText(tokens[start], text);
+  let workletMember: { name: string; nextIndex: number } | null = null;
+  if (current === "CSS" && !isMemberSeparator(tokenText(tokens[start - 1], text))) {
+    const member = staticMemberAccess(tokens, text, start + 1);
+    if (member && ["animationWorklet", "layoutWorklet", "paintWorklet"].includes(member.name)) {
+      workletMember = member;
+    }
+  } else if (
+    current === "audioWorklet" &&
+    (isMemberSeparator(tokenText(tokens[start - 1], text)) ||
+      tokenText(tokens[start - 1], text) === "]")
+  ) {
+    workletMember = { name: current, nextIndex: start + 1 };
+  }
+  if (!workletMember) return null;
+
+  const addModule = staticMemberAccess(tokens, text, workletMember.nextIndex);
+  if (addModule?.name !== "addModule") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, addModule.nextIndex);
+  if (openIndex === null) return null;
+  const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+  if (closeIndex === null) return null;
+  const firstArgument = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)[0];
+  if (!firstArgument) return null;
+  const resource = staticWebExtensionResourcePath(tokens, text, firstArgument[0], [
+    tokenText(tokens[firstArgument[1]], text),
+  ]);
+  if (!resource || resource.nextIndex !== firstArgument[1]) return null;
+  return {
+    path: resource.path,
+    resolution: resource.moduleUrl ? "document-module" : resource.runtimeUrl ? "root" : "document",
   };
 }
 
@@ -1773,6 +1891,18 @@ function resolveBrowserDocumentModulePath(
     if (resolved.protocol !== base.protocol || resolved.host !== base.host) return null;
     const path = decodeUrlPathForArchiveLookup(resolved.pathname.replace(/^\/+/, ""));
     return resolveExactModulePath(path, byNormalizedPath);
+  } catch {
+    return null;
+  }
+}
+
+function resolveBrowserDocumentUrl(specifier: string, documentBaseUrl: string): string | null {
+  try {
+    const base = new URL(documentBaseUrl);
+    const resolved = new URL(specifier, base);
+    return resolved.protocol === base.protocol && resolved.host === base.host
+      ? resolved.href
+      : null;
   } catch {
     return null;
   }
