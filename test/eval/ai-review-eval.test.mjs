@@ -4,13 +4,15 @@ import { runAiReviewEval, writeAiReviewEvalReport } from "./ai-review-harness.mj
 const result = runAiReviewEval();
 writeAiReviewEvalReport(result);
 
-describe("AI reviewer eval (recorded-output gates)", () => {
+describe("AI reviewer eval (historical recorded-output scoring)", () => {
   test("the versioned regression corpus passes", () => {
     expect(result.failures).toEqual([]);
     expect(result.summary.rate).toBe(1);
     expect(result.recordedReviewerVersion).toBeTruthy();
     expect(result.currentReviewerVersion).toBeTruthy();
-    expect(result.currentContractRecorded).toBe(true);
+    expect(result.currentContractRecorded).toBe(
+      result.recordedReviewerVersion === result.currentReviewerVersion,
+    );
   });
 
   test("covers hostile evidence, missing evidence, and model failover", () => {

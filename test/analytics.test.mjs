@@ -168,7 +168,7 @@ describe("recordProductEvent", () => {
         outcome: "rate_limited",
         action: "fallback",
         model: "@cf/meta/llama",
-        reviewerVersion: "1.2.0",
+        reviewerVersion: "1.3.0",
         durationMs: 50,
         attempt: 1,
         steps: 0,
