@@ -75,6 +75,12 @@ New scan reports persist this split as a risk breakdown in `summary_json.risk`:
 - `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and is the primary scan risk stored in `scans.risk` so deterministic evidence cannot be hidden by context classification;
 - `contextRisk` covers findings that were not part of the release delta.
 
+When `BaselineInfo.comparisonSkipped` says no trustworthy comparison was available,
+`releaseRisk` conservatively falls back to `artifactRisk`. A low delta score in that
+state would mean only that nothing was compared, so it is not safe to expose as the
+release headline. Workflow gates still use the explicit skip state to require manual
+review rather than automatically rejecting the release for its package context.
+
 When a modified-file finding cannot be resolved against line-level diff evidence (no recorded line, or no usable text samples to diff), the annotator falls back to finding-set baselining: it re-runs the deterministic rules over the baseline files and classifies the finding as package context when the same rule already fired on the same file in the baseline version. Without a baseline counterpart the classification still fails open to release delta, so missing baseline data can only make the report louder, never quieter.
 
 That fail-open direction is what licenses the baseline-side sample cap described in [`architecture.md`](./architecture.md): baseline bodies are retained up to `BASELINE_TEXT_SAMPLE_LIMIT` per file (manifests exempt, clipped bodies flagged `baseline-truncated`) rather than whole, because a short baseline body can only cost baseline evidence — fewer baseline fingerprints and more lines reading as added — which classifies _more_ findings as release deltas. The reviewed side is never capped, and baseline text is never persisted: the workbench's "previous version" pane is served by the separate `/compare` path, which downloads and caches the published tarball on its own.

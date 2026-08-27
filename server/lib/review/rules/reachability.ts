@@ -796,8 +796,8 @@ function staticWebExtensionDependencies(text: string): StaticWebExtensionDepende
       domConsumerBindings.elements,
     );
     if (domResource) resources.push(domResource);
-    const appendedDomResource = staticAppendedDomConsumerResource(tokens, text, index);
-    if (appendedDomResource) resources.push(appendedDomResource);
+    const insertedDomResource = staticInsertedDomConsumerResource(tokens, text, index);
+    if (insertedDomResource) resources.push(insertedDomResource);
     resources.push(...staticDomInlineDocuments(tokens, text, index));
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
@@ -1020,19 +1020,19 @@ function staticDynamicDocumentBaseResource(
   return { documentBasePath: resource.path, resolution: resource.resolution };
 }
 
-function staticAppendedDomConsumerResource(
+function staticInsertedDomConsumerResource(
   tokens: JsToken[],
   text: string,
   start: number,
 ): WebExtensionResourceSpecifier | null {
-  const appendChild = staticMemberAccess(tokens, text, start);
-  if (appendChild?.name !== "appendChild") return null;
-  const openIndex = staticCallOpenIndex(tokens, text, appendChild.nextIndex);
+  const insertion = staticMemberAccess(tokens, text, start);
+  if (insertion?.name !== "appendChild" && insertion?.name !== "insertBefore") return null;
+  const openIndex = staticCallOpenIndex(tokens, text, insertion.nextIndex);
   if (openIndex === null) return null;
   const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
   if (closeIndex === null) return null;
   const arguments_ = staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex);
-  if (arguments_.length !== 1) return null;
+  if (arguments_.length !== (insertion.name === "appendChild" ? 1 : 2)) return null;
   const [elementStart, elementEnd] = arguments_[0];
   const element = staticDocumentCreateElement(tokens, text, elementStart);
   if (!element || element.nextIndex !== elementEnd) return null;
@@ -1281,10 +1281,22 @@ function staticWorkletModuleResource(
   text: string,
   start: number,
 ): WebExtensionResourceSpecifier | null {
-  const current = staticIdentifierName(tokens[start], text) ?? tokenText(tokens[start], text);
+  let index = start;
+  let current = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
+  if (STATIC_BROWSER_GLOBALS.has(current)) {
+    let globalMember = staticMemberAccess(tokens, text, index + 1);
+    if (!globalMember) return null;
+    while (STATIC_BROWSER_GLOBALS.has(globalMember.name)) {
+      globalMember = staticMemberAccess(tokens, text, globalMember.nextIndex);
+      if (!globalMember) return null;
+    }
+    if (globalMember.name !== "CSS") return null;
+    current = globalMember.name;
+    index = globalMember.nextIndex - 1;
+  }
   let workletMember: { name: string; nextIndex: number } | null = null;
   if (current === "CSS" && !isMemberSeparator(tokenText(tokens[start - 1], text))) {
-    const member = staticMemberAccess(tokens, text, start + 1);
+    const member = staticMemberAccess(tokens, text, index + 1);
     if (member && ["animationWorklet", "layoutWorklet", "paintWorklet"].includes(member.name)) {
       workletMember = member;
     }

@@ -2,7 +2,7 @@
   "id": "browser-dynamic-execution-reachability",
   "title": "dynamic browser execution sinks remain consumer-reachable",
   "category": "browser-extension",
-  "intent": "Pins full shared capability severity for paint and audio worklet modules, dynamically assigned form targets, and nested relative script sources resolved after a reachable extension page assigns a dynamic base URL.",
+  "intent": "Pins full shared capability severity for unqualified and globally qualified CSS worklet modules, audio worklet modules, dynamically assigned form targets, and nested relative script sources resolved after a reachable extension page assigns a dynamic base URL.",
   "slug": "dynamic-execution-reachability",
   "extensionId": "dynamic-execution-reachability@example.invalid",
   "version": "1.0.0",
@@ -27,7 +27,7 @@
       "size": 477,
       "sha256": "5858585858585858585858585858585858585858585858585858585858585858",
       "flags": [],
-      "textSample": "CSS.paintWorklet.addModule(chrome.runtime.getURL(\"tests/paint.js\")); new AudioContext().audioWorklet.addModule(\"../tests/audio.js\"); const form = document.createElement(\"form\"); form.action = chrome.runtime.getURL(\"tests/form-target.html\"); const base = document.createElement(\"base\"); base.href = \"/tests/\"; document.head.append(base); const script = document.createElement(\"script\"); script.src = \"base-payload.js\"; document.body.append(script);"
+      "textSample": "CSS.paintWorklet.addModule(chrome.runtime.getURL(\"tests/paint.js\")); window.CSS.animationWorklet.addModule(chrome.runtime.getURL(\"tests/global-paint.js\")); new AudioContext().audioWorklet.addModule(\"../tests/audio.js\"); const form = document.createElement(\"form\"); form.action = chrome.runtime.getURL(\"tests/form-target.html\"); const base = document.createElement(\"base\"); base.href = \"/tests/\"; document.head.append(base); const script = document.createElement(\"script\"); script.src = \"base-payload.js\"; document.body.append(script);"
     },
     {
       "path": "tests/form-target.html",
@@ -47,6 +47,13 @@
       "path": "tests/audio.js",
       "size": 14,
       "sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/global-paint.js",
+      "size": 14,
+      "sha256": "6868686868686868686868686868686868686868686868686868686868686868",
       "flags": [],
       "textSample": "eval(payload);"
     },
@@ -76,6 +83,11 @@
   "expectedFindings": [
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/paint.js" },
     { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/audio.js" },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "tests/global-paint.js"
+    },
     {
       "ruleId": "code.dynamic-evaluation",
       "severity": "high",

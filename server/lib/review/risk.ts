@@ -52,9 +52,15 @@ export function computeScanRiskBreakdown(
   );
   const scoredFindings =
     approvedCount === 0 ? ruleFindings : [...releaseFindings, ...scoredContextFindings];
+  const artifactRisk = computeScanRisk(scoredFindings, aiFindings);
   return {
-    artifactRisk: computeScanRisk(scoredFindings, aiFindings),
-    releaseRisk: computeScanRisk(releaseFindings, aiFindings),
+    artifactRisk,
+    // Without a trustworthy baseline, a low delta score is only an absence of
+    // comparison evidence. Preserve the artifact risk as the public lower bound;
+    // callers still use the explicit skip state to require manual review.
+    releaseRisk: options.baselineComparisonSkipped
+      ? artifactRisk
+      : computeScanRisk(releaseFindings, aiFindings),
     contextRisk: computeRisk(scoredContextFindings),
     releaseFindingCount: releaseFindings.length,
     contextFindingCount: contextFindings.length,

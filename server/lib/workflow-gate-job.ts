@@ -430,7 +430,7 @@ interface ReviewedPackage {
   packageName: string | null;
   version: string | null;
   releaseRisk: RiskLevel;
-  /** The published baseline was not downloaded, so `releaseRisk` graded nothing. */
+  /** The published baseline was not downloaded, so the recommendation must stay manual. */
   baselineComparisonSkipped: boolean;
 }
 

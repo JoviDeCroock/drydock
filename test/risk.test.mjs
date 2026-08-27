@@ -450,6 +450,7 @@ describe("release memory and a skipped baseline", () => {
       baselineComparisonSkipped: true,
     });
     expect(result.artifactRisk).toBe("high");
+    expect(result.releaseRisk).toBe("high");
     expect(result.contextRisk).toBe("high");
     expect(result.priorApprovedContextFindingCount).toBe(0);
   });
@@ -457,6 +458,7 @@ describe("release memory and a skipped baseline", () => {
   test("the same scan with a real baseline still discounts", () => {
     const result = computeScanRiskBreakdown(findings, makeAiReview(), matched);
     expect(result.artifactRisk).toBe("low");
+    expect(result.releaseRisk).toBe("low");
     expect(result.priorApprovedContextFindingCount).toBe(2);
   });
 });

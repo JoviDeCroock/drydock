@@ -2073,6 +2073,7 @@ describe("browser extension review adapter", () => {
           'attributeScript.setAttribute("src", chrome.runtime.getURL("tests/attribute-injected.js"));',
           "document.documentElement.append(attributeScript);",
           'document.body.appendChild(document.createElement("script")).src = chrome.runtime.getURL("tests/appended-return.js");',
+          'document.body.insertBefore(document.createElement("script"), null).src = chrome.runtime.getURL("tests/inserted-return.js");',
           'const computedTemplateScript = document.createElement("script");',
           "computedTemplateScript.src = chrome[`runtime`][`getURL`](`tests/computed-template-member.js`);",
           'const frame = document.createElement("iframe");',
@@ -2142,6 +2143,7 @@ describe("browser extension review adapter", () => {
       })),
       ...[
         "attribute-injected",
+        "inserted-return",
         "computed-template-member",
         "frame",
         "split-frame",
@@ -2205,6 +2207,7 @@ describe("browser extension review adapter", () => {
         expect.objectContaining({ file: "tests/injected-worker.js", severity: "high" }),
         expect.objectContaining({ file: "tests/attribute-injected.js", severity: "high" }),
         expect.objectContaining({ file: "tests/appended-return-worker.js", severity: "high" }),
+        expect.objectContaining({ file: "tests/inserted-return.js", severity: "high" }),
         expect.objectContaining({ file: "tests/computed-template-member.js", severity: "high" }),
         expect.objectContaining({ file: "tests/frame.js", severity: "high" }),
         expect.objectContaining({ file: "tests/split-frame.js", severity: "high" }),
@@ -2228,7 +2231,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(20);
+    expect(findings).toHaveLength(21);
   });
 
   test("follows literal HTML written by reachable extension scripts", () => {
@@ -2311,6 +2314,8 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: [
           'CSS.paintWorklet.addModule(chrome.runtime.getURL("tests/paint.js"));',
+          'window.CSS.animationWorklet.addModule(chrome.runtime.getURL("tests/window-worklet.js"));',
+          'globalThis.CSS["layoutWorklet"].addModule(chrome.runtime.getURL("tests/global-worklet.js"));',
           'new AudioContext().audioWorklet.addModule("../tests/audio.js");',
           'const form = document.createElement("form");',
           'form.action = chrome.runtime.getURL("tests/form-target.html");',
@@ -2320,7 +2325,7 @@ describe("browser extension review adapter", () => {
           'const script = document.createElement("script");',
           'script.src = "base-payload.js";',
           "document.body.append(script);",
-          'tool.paintWorklet.addModule(chrome.runtime.getURL("tests/decoy.js"));',
+          'tool.CSS.paintWorklet.addModule(chrome.runtime.getURL("tests/decoy.js"));',
         ].join("\n"),
       },
       {
@@ -2330,7 +2335,15 @@ describe("browser extension review adapter", () => {
         flags: [],
         textSample: '<script src="form-payload.js"></script>',
       },
-      ...["paint", "audio", "form-payload", "base-payload", "decoy"].map((name, index) => ({
+      ...[
+        "paint",
+        "window-worklet",
+        "global-worklet",
+        "audio",
+        "form-payload",
+        "base-payload",
+        "decoy",
+      ].map((name, index) => ({
         path: `tests/${name}.js`,
         size: 14,
         sha256: (227 + index).toString(16).repeat(32),
@@ -2355,9 +2368,15 @@ describe("browser extension review adapter", () => {
     }).ruleFindings.filter((candidate) => candidate.ruleId === "code.dynamic-evaluation");
     expect(findings).toEqual(
       expect.arrayContaining([
-        ...["paint", "audio", "form-payload", "base-payload", "nested-base"].map((name) =>
-          expect.objectContaining({ file: `tests/${name}.js`, severity: "high" }),
-        ),
+        ...[
+          "paint",
+          "window-worklet",
+          "global-worklet",
+          "audio",
+          "form-payload",
+          "base-payload",
+          "nested-base",
+        ].map((name) => expect.objectContaining({ file: `tests/${name}.js`, severity: "high" })),
         expect.objectContaining({
           file: "tests/decoy.js",
           severity: "medium",
@@ -2365,7 +2384,7 @@ describe("browser extension review adapter", () => {
         }),
       ]),
     );
-    expect(findings).toHaveLength(6);
+    expect(findings).toHaveLength(8);
   });
 
   test("follows equivalent static browser resource syntax", () => {
