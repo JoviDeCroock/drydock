@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import {
   AI_REVIEWER_VERSION,
   parsePersistedAiReview,
@@ -127,8 +128,28 @@ function groupMetrics(results, key) {
 
 export function runAiReviewEval(corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"))) {
   validateAiReviewCorpus(corpus);
-  const results = corpus.cases.map((record) => evaluateCase(record, AI_REVIEWER_VERSION));
-  const historicalResults = (corpus.historicalCases ?? []).map((record) => evaluateCase(record));
+  const historicalCases = corpus.historicalCases ?? [];
+  const historicalResults = historicalCases.map((record) => evaluateCase(record));
+  const results = corpus.cases.map((record) => {
+    const result = evaluateCase(record, AI_REVIEWER_VERSION);
+    if (
+      result.passed &&
+      result.review &&
+      historicalResults.some((historical) =>
+        isDeepStrictEqual(
+          withoutReviewerVersion(result.review),
+          withoutReviewerVersion(historical.review),
+        ),
+      )
+    ) {
+      return {
+        ...result,
+        passed: false,
+        reason: "current record duplicates a historical reviewer output",
+      };
+    }
+    return result;
+  });
   const allResults = [...results, ...historicalResults];
   return {
     generatedAt: new Date().toISOString(),
@@ -146,6 +167,12 @@ export function runAiReviewEval(corpus = JSON.parse(readFileSync(CORPUS_PATH, "u
     historicalByScenario: groupMetrics(historicalResults, "scenario"),
     historicalFailures: failures(historicalResults),
   };
+}
+
+function withoutReviewerVersion(review) {
+  if (!review || typeof review !== "object" || Array.isArray(review)) return review;
+  const { reviewerVersion: _reviewerVersion, ...output } = review;
+  return output;
 }
 
 function percent(value) {

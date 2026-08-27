@@ -9,23 +9,15 @@ describe("AI reviewer eval (recorded-output gates)", () => {
   test("the versioned regression corpus passes", () => {
     expect(result.failures).toEqual([]);
     expect(result.summary.rate).toBe(1);
-    expect(result.summary.total).toBe(6);
+    expect(result.summary.total).toBe(1);
     expect(result.recordedReviewerVersions).toEqual(["1.2.0", "1.3.0"]);
     expect(result.currentReviewerVersion).toBe("1.3.0");
     expect(result.historicalFailures).toEqual([]);
     expect(result.historicalSummary).toEqual({ total: 5, passed: 5, rate: 1 });
   });
 
-  test("gates current verdict and failure-mode coverage separately from historical output", () => {
-    expect(result.byVerdict.malicious.rate).toBe(1);
-    expect(result.byVerdict.benign.rate).toBe(1);
-    expect(result.byVerdict.uncertain.rate).toBe(1);
-    expect(result.byThreatClass["install-time-execution"].rate).toBe(1);
-    expect(result.byThreatClass["credential-access"].rate).toBe(1);
-    expect(result.byThreatClass["benign-hard-negative"].rate).toBe(1);
+  test("gates current hostile evidence and reports historical compatibility separately", () => {
     expect(result.byScenario["hostile-evidence"].rate).toBe(1);
-    expect(result.byScenario["missing-baseline"].rate).toBe(1);
-    expect(result.byScenario["model-failover"].rate).toBe(1);
     expect(result.historicalByScenario["missing-baseline"].rate).toBe(1);
     expect(result.historicalByScenario["model-failover"].rate).toBe(1);
   });
@@ -34,14 +26,11 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     const corpus = JSON.parse(
       readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
     );
-    const currentInjection = corpus.cases.find(
-      (record) => record.id === "npm-readme-injection-only",
-    );
-    currentInjection.review.reviewerVersion = "1.2.0";
+    corpus.cases[0].review.reviewerVersion = "1.2.0";
 
     const stale = runAiReviewEval(corpus);
 
-    expect(stale.summary).toEqual({ total: 6, passed: 5, rate: 5 / 6 });
+    expect(stale.summary).toEqual({ total: 1, passed: 0, rate: 0 });
     expect(stale.failures).toEqual([
       expect.objectContaining({
         id: "npm-readme-injection-only",
@@ -72,5 +61,26 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     expect(() => runAiReviewEval({ suiteVersion: 1, cases: [] })).toThrow(
       /cases must contain at least one record/,
     );
+  });
+
+  test("rejects a historical output relabeled as the current reviewer version", () => {
+    const corpus = JSON.parse(
+      readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
+    );
+    const relabeled = structuredClone(corpus.historicalCases[0]);
+    relabeled.id = "relabeled-historical-output";
+    relabeled.review.reviewerVersion = "1.3.0";
+    relabeled.review.untrustedNote = "ignored by the persisted schema";
+    corpus.cases = [relabeled];
+
+    const duplicated = runAiReviewEval(corpus);
+
+    expect(duplicated.summary).toEqual({ total: 1, passed: 0, rate: 0 });
+    expect(duplicated.failures).toEqual([
+      expect.objectContaining({
+        id: "relabeled-historical-output",
+        reason: "current record duplicates a historical reviewer output",
+      }),
+    ]);
   });
 });

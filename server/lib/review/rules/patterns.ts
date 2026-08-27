@@ -265,11 +265,11 @@ const REVIEW_MANIPULATION_PATTERNS = [
   // Suppression is imperative-only ("do not"/"don't") with a determiner on the
   // object. Modals invite third-person subjects ("the scanner should not flag
   // minified code as suspicious"), broad support nouns ("do not report any
-  // issues here") are ordinary project guidance, and a bare object matches
-  // changelog/SECURITY.md prose ("don't report duplicate findings", "do not
-  // report findings without a proof of concept") — all idiomatic in exactly
-  // the linter/scanner packages npm is full of.
-  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b(?!\s+without\s+(?:(?:a|an)\s+)?(?:reproducible\s+(?:example|case|steps?)|proof(?:\s+of\s+concept)?|evidence)\b)/i,
+  // issues here") are ordinary project guidance. Qualified policy text ("do
+  // not report any findings from generated files") is also ordinary in the
+  // linter/scanner packages npm is full of, so only a sentence-ending command
+  // or an explicitly review-scoped qualifier reaches the high tier.
+  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b(?=\s*(?:[.!?]|$)|\s+(?:in|for|from|about)\s+(?:this|the)\s+(?:(?:(?:automated|AI)\s+)?(?:security\s+)?(?:review|scan|audit)|package|release|update|version)\b)/i,
   /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
   // Drydock's releaseAssessment enum value. Prose writes "nothing unusual"
   // with a space; the underscore/hyphen form is schema-targeting.
