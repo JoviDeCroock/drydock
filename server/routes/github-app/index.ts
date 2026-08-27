@@ -8,6 +8,7 @@
  */
 import { Hono } from "hono";
 import type { Bindings, Variables } from "../../types";
+import { gateSetupRoutes } from "./gate-setup";
 import { installationRoutes } from "./installations";
 import { releaseTargetRoutes } from "./release-targets";
 import { workflowGateRoutes } from "./workflow-gates";
@@ -16,4 +17,5 @@ export const githubAppRoutes = new Hono<{ Bindings: Bindings; Variables: Variabl
 
 githubAppRoutes.route("/", installationRoutes);
 githubAppRoutes.route("/", releaseTargetRoutes);
+githubAppRoutes.route("/", gateSetupRoutes);
 githubAppRoutes.route("/", workflowGateRoutes);
