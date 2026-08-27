@@ -120,12 +120,15 @@ current-version corpus: a stale `reviewerVersion` fails the gate. Records under
 version-agnostic persisted-shape compatibility set. Corpus metadata, non-empty
 required fields, and unique case ids across both sets are validated before
 metrics are computed. The report keeps the two totals separate so historical
-output cannot be mistaken for current reviewer coverage. The corpus includes
-prompt-injection-shaped hostile evidence, unavailable evidence, a benign
-documentation release, install-time and credential compromise, and a
-fallback-model result. Reports are written to
-`.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`; a
-write failure fails the command.
+output cannot be mistaken for current reviewer coverage. The gate also compares
+current and historical review bodies without their version field and rejects a
+current record that merely relabels an old output. The current-version gate
+contains prompt-injection-shaped hostile evidence. Unavailable evidence, a
+benign documentation release, install-time and credential compromise, and model
+failover remain under their original reviewer version in the historical
+compatibility set until controlled current-version runs replace them. Reports
+are written to `.context/eval/ai-review-eval.json` and
+`.context/eval/ai-review-eval.md`; a write failure fails the command.
 
 These are recorded outputs, so a green run proves the scoring contract and
 guards known current-version outputs; it does not prove the hosted model will
