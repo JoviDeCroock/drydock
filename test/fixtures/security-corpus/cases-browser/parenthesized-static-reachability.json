@@ -1,0 +1,105 @@
+{
+  "id": "browser-parenthesized-static-reachability",
+  "title": "parenthesized browser resource expressions remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity when grouping parentheses wrap literal navigation, WebExtension option objects, runtime URL workers, worker imports, and DOM-created executable elements, while grouped dynamic expressions remain unproven.",
+  "slug": "parenthesized-static-reachability",
+  "extensionId": "parenthesized-static-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "1010101010101010101010101010101010101010101010101010101010101010",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 360,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Parenthesized static reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"parenthesized-static-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" },\n  \"background\": { \"service_worker\": \"background.js\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 51,
+      "sha256": "1212121212121212121212121212121212121212121212121212121212121212",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>"
+    },
+    {
+      "path": "popup.js",
+      "size": 220,
+      "sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+      "flags": [],
+      "textSample": "location.assign((\"tests/navigation.html\")); const script = (document.createElement(\"script\")); script.src = (\"tests/dom.js\"); document.body.append(script);"
+    },
+    {
+      "path": "background.js",
+      "size": 170,
+      "sha256": "1414141414141414141414141414141414141414141414141414141414141414",
+      "flags": [],
+      "textSample": "new Worker((chrome.runtime.getURL((\"tests/worker.js\")))); chrome.tabs.create(({ url: (\"tests/api.html\") })); importScripts((\"tests/import.js\")); new Worker((\"tests/dynamic.js\") + suffix);"
+    },
+    {
+      "path": "tests/navigation.html",
+      "size": 45,
+      "sha256": "1515151515151515151515151515151515151515151515151515151515151515",
+      "flags": [],
+      "textSample": "<script src=\"navigation.js\"></script>"
+    },
+    {
+      "path": "tests/navigation.js",
+      "size": 14,
+      "sha256": "1616161616161616161616161616161616161616161616161616161616161616",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/api.html",
+      "size": 38,
+      "sha256": "1717171717171717171717171717171717171717171717171717171717171717",
+      "flags": [],
+      "textSample": "<script src=\"api.js\"></script>"
+    },
+    {
+      "path": "tests/api.js",
+      "size": 14,
+      "sha256": "1818181818181818181818181818181818181818181818181818181818181818",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dom.js",
+      "size": 14,
+      "sha256": "1919191919191919191919191919191919191919191919191919191919191919",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/worker.js",
+      "size": 14,
+      "sha256": "2020202020202020202020202020202020202020202020202020202020202020",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/import.js",
+      "size": 14,
+      "sha256": "2121212121212121212121212121212121212121212121212121212121212121",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/dynamic.js",
+      "size": 14,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "flags": [],
+      "textSample": "eval(payload);"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/navigation.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/api.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/dom.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/worker.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/import.js" },
+    { "ruleId": "code.dynamic-evaluation", "severity": "medium", "file": "tests/dynamic.js" }
+  ]
+}

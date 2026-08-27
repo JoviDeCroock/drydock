@@ -2411,6 +2411,8 @@ describe("browser extension review adapter", () => {
           'document.body.innerHTML += "<iframe src=\\"tests/appended.html\\"></iframe>";',
           'location.href = new URL("./tests/module-url.html", import.meta.url).href;',
           'location.assign(new URL("./tests/computed-module-url.html", import.meta["url"]).href);',
+          'location.assign(("tests/grouped-navigation.html"));',
+          'const groupedScript = (document.createElement("script")); groupedScript.src = ("tests/grouped-dom.js"); document.body.append(groupedScript);',
         ].join("\n"),
       },
       {
@@ -2423,27 +2425,44 @@ describe("browser extension review adapter", () => {
           'chrome.ta\\u0062s.create({url: "tests/escaped.html"});',
           "importScripts(`tests/\\x74emplate-import.js`);",
           'chrome.scripting.executeScript({[`files`]: ["tests/template-key.js"]});',
+          'new Worker((chrome.runtime.getURL(("tests/grouped-worker.js"))));',
+          'chrome.tabs.create(({url: ("tests/grouped-api.html")}));',
+          'importScripts(("tests/grouped-import.js"));',
+          'new Worker(("tests/grouped-dynamic.js") + suffix);',
         ].join("\n"),
       },
-      ...["appended", "module-url", "computed-module-url", "computed", "escaped"].flatMap(
-        (name, index) => [
-          {
-            path: `tests/${name}.html`,
-            size: 41,
-            sha256: (212 + index).toString(16).repeat(32),
-            flags: [],
-            textSample: `<script src="${name}.js"></script>`,
-          },
-          {
-            path: `tests/${name}.js`,
-            size: 14,
-            sha256: (218 + index).toString(16).repeat(32),
-            flags: [],
-            textSample: "eval(payload);",
-          },
-        ],
-      ),
-      ...["template-import", "template-key"].map((name, index) => ({
+      ...[
+        "appended",
+        "module-url",
+        "computed-module-url",
+        "computed",
+        "escaped",
+        "grouped-navigation",
+        "grouped-api",
+      ].flatMap((name, index) => [
+        {
+          path: `tests/${name}.html`,
+          size: 41,
+          sha256: (212 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: `<script src="${name}.js"></script>`,
+        },
+        {
+          path: `tests/${name}.js`,
+          size: 14,
+          sha256: (218 + index).toString(16).repeat(32),
+          flags: [],
+          textSample: "eval(payload);",
+        },
+      ]),
+      ...[
+        "template-import",
+        "template-key",
+        "grouped-dom",
+        "grouped-worker",
+        "grouped-import",
+        "grouped-dynamic",
+      ].map((name, index) => ({
         path: `tests/${name}.js`,
         size: 14,
         sha256: (223 + index).toString(16).repeat(32),
@@ -2466,11 +2485,22 @@ describe("browser extension review adapter", () => {
           "escaped",
           "template-import",
           "template-key",
+          "grouped-navigation",
+          "grouped-api",
+          "grouped-dom",
+          "grouped-worker",
+          "grouped-import",
         ].map((name) => expect.objectContaining({ file: `tests/${name}.js`, severity: "high" })),
       ),
     );
-    expect(findings).toHaveLength(7);
-    expect(findings.every((finding) => finding.testScoped !== true)).toBe(true);
+    expect(findings).toContainEqual(
+      expect.objectContaining({
+        file: "tests/grouped-dynamic.js",
+        severity: "medium",
+        testScoped: true,
+      }),
+    );
+    expect(findings).toHaveLength(13);
   });
 
   test("follows pathname and module-relative WebExtension navigation", () => {

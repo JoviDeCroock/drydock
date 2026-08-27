@@ -747,15 +747,14 @@ function staticImportScriptsSpecifiers(text: string): ImportScriptsSpecifier[] {
     const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
     if (closeIndex === null) continue;
     for (const [start, end] of staticCallArgumentRanges(tokens, text, openIndex + 1, closeIndex)) {
-      if (end === start + 1) {
-        const path = staticScriptPath(tokens[start], text);
-        if (path !== null) specifiers.push({ path, resolution: "script" });
-        continue;
-      }
-      const runtimeUrl = staticWebExtensionGetUrlPath(tokens, text, start);
-      if (runtimeUrl?.nextIndex === end) {
-        specifiers.push({ path: runtimeUrl.path, resolution: "extension-root" });
-      }
+      const resource = staticWebExtensionResourcePath(tokens, text, start, [
+        tokenText(tokens[end], text),
+      ]);
+      if (resource?.nextIndex !== end || resource.moduleUrl) continue;
+      specifiers.push({
+        path: resource.path,
+        resolution: resource.runtimeUrl ? "extension-root" : "script",
+      });
     }
     index = closeIndex;
   }
@@ -804,7 +803,12 @@ function staticWebExtensionDependencies(text: string): StaticWebExtensionDepende
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
     if (closeIndex === null) continue;
     if (call.source === "property") {
-      const argumentRanges = staticCallArgumentRanges(tokens, text, call.openIndex + 1, closeIndex);
+      const argumentRanges = staticCallArgumentRanges(
+        tokens,
+        text,
+        call.openIndex + 1,
+        closeIndex,
+      ).map(([start, end]) => staticUnwrappedExpressionRange(tokens, text, start, end));
       const selectedRanges =
         call.argument === "first"
           ? argumentRanges.slice(0, 1)
@@ -935,6 +939,13 @@ function staticDocumentCreateElement(
   text: string,
   start: number,
 ): StaticDomConsumerElement | null {
+  if (tokenText(tokens[start], text) === "(") {
+    const closeIndex = matchingPunctuation(tokens, text, start, "(", ")");
+    if (closeIndex === null) return null;
+    const element = staticDocumentCreateElement(tokens, text, start + 1);
+    return element?.nextIndex === closeIndex ? { ...element, nextIndex: closeIndex + 1 } : null;
+  }
+
   let index = start;
   const first = staticIdentifierName(tokens[index], text) ?? tokenText(tokens[index], text);
   if (STATIC_BROWSER_GLOBALS.has(first)) {
@@ -1866,6 +1877,17 @@ function staticWebExtensionResourcePath(
   start: number,
   allowedFollowingTokens: string[],
 ): StaticWebExtensionResourcePath | null {
+  if (tokenText(tokens[start], text) === "(") {
+    const closeIndex = matchingPunctuation(tokens, text, start, "(", ")");
+    if (closeIndex === null) return null;
+    const grouped = staticWebExtensionResourcePath(tokens, text, start + 1, [")"]);
+    const nextIndex = closeIndex + 1;
+    return grouped?.nextIndex === closeIndex &&
+      allowedFollowingTokens.includes(tokenText(tokens[nextIndex], text))
+      ? { ...grouped, nextIndex }
+      : null;
+  }
+
   const literal = staticScriptPath(tokens[start], text);
   if (literal !== null) {
     return {
@@ -1918,21 +1940,18 @@ function staticWorkerScriptSpecifiers(text: string): WorkerScriptSpecifier[] {
     }
     if (constructor !== "Worker" && constructor !== "SharedWorker") continue;
     if (tokenText(tokens[constructorIndex + 1], text) !== "(") continue;
-    const documentPath = staticScriptPath(tokens[constructorIndex + 2], text);
-    if (documentPath !== null) {
-      specifiers.push({ path: documentPath, resolution: "document" });
-      continue;
-    }
-    const moduleUrl = staticImportMetaUrlPath(tokens, text, constructorIndex + 2);
-    if (moduleUrl !== null) {
-      specifiers.push({
-        path: moduleUrl.path,
-        resolution: moduleUrl.projection === "pathname" ? "module-pathname" : "module",
-      });
-      continue;
-    }
-    const rootPath = staticWebExtensionResourcePath(tokens, text, constructorIndex + 2, [")", ","]);
-    if (rootPath?.runtimeUrl) specifiers.push({ path: rootPath.path, resolution: "root" });
+    const resource = staticWebExtensionResourcePath(tokens, text, constructorIndex + 2, [")", ","]);
+    if (!resource) continue;
+    specifiers.push({
+      path: resource.path,
+      resolution: resource.runtimeUrl
+        ? "root"
+        : resource.moduleUrl
+          ? resource.modulePathname
+            ? "module-pathname"
+            : "module"
+          : "document",
+    });
   }
   return specifiers;
 }
@@ -2112,12 +2131,35 @@ function staticLiteralCallArgument(
     else if (value === "]" || value === "}" || value === ")") depth -= 1;
     if (value !== "," || depth !== 0) continue;
     if (argument === targetArgument) {
-      return index === argumentStart + 1 ? staticScriptPath(tokens[argumentStart], text) : null;
+      const [startIndex, endIndex] = staticUnwrappedExpressionRange(
+        tokens,
+        text,
+        argumentStart,
+        index,
+      );
+      return endIndex === startIndex + 1 ? staticScriptPath(tokens[startIndex], text) : null;
     }
     argument += 1;
     argumentStart = index + 1;
   }
   return null;
+}
+
+function staticUnwrappedExpressionRange(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+  end: number,
+): [start: number, end: number] {
+  let expressionStart = start;
+  let expressionEnd = end;
+  while (tokenText(tokens[expressionStart], text) === "(") {
+    const closeIndex = matchingPunctuation(tokens, text, expressionStart, "(", ")");
+    if (closeIndex !== expressionEnd - 1) break;
+    expressionStart += 1;
+    expressionEnd = closeIndex;
+  }
+  return [expressionStart, expressionEnd];
 }
 
 function staticPropertyName(token: JsToken | undefined, text: string): string | null {
