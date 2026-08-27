@@ -726,6 +726,7 @@ function staticWebExtensionResourceSpecifiers(text: string): WebExtensionResourc
     if (navigation) specifiers.push(navigation);
     const domResource = staticDomConsumerResource(tokens, text, index, domConsumerElementBindings);
     if (domResource) specifiers.push(domResource);
+    specifiers.push(...staticDomInlineDocuments(tokens, text, index));
     const call = webExtensionScriptCall(tokens, text, index);
     if (!call) continue;
     const closeIndex = matchingPunctuation(tokens, text, call.openIndex, "(", ")");
@@ -942,6 +943,102 @@ function staticDomConsumerResource(
     path: value.path,
     resolution: value.moduleUrl ? "document-module" : value.runtimeUrl ? "root" : "document",
   };
+}
+
+function staticDomInlineDocuments(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): Array<{ inlineDocument: string }> {
+  const documents: Array<{ inlineDocument: string }> = [];
+  const member = staticMemberAccess(tokens, text, start);
+  if (member?.name === "innerHTML" || member?.name === "outerHTML") {
+    const assignmentIndex = member.nextIndex;
+    const valueIndex = assignmentIndex + 1;
+    const inlineDocument = staticScriptPath(tokens[valueIndex], text);
+    if (
+      tokenText(tokens[assignmentIndex], text) === "=" &&
+      inlineDocument !== null &&
+      browserNavigationAssignmentEnds(
+        tokens,
+        text,
+        {
+          path: inlineDocument,
+          nextIndex: valueIndex + 1,
+          runtimeUrl: false,
+          moduleUrl: false,
+        },
+        ["", ",", ";", ")", "]", "}"],
+      )
+    ) {
+      documents.push({ inlineDocument });
+    }
+  }
+
+  if (member?.name === "insertAdjacentHTML") {
+    const openIndex = staticCallOpenIndex(tokens, text, member.nextIndex);
+    if (openIndex !== null) {
+      const closeIndex = matchingPunctuation(tokens, text, openIndex, "(", ")");
+      if (closeIndex !== null) {
+        const inlineDocument = staticLiteralCallArgument(
+          tokens,
+          text,
+          openIndex + 1,
+          closeIndex,
+          1,
+        );
+        if (inlineDocument !== null) documents.push({ inlineDocument });
+      }
+    }
+  }
+
+  const writeOpenIndex = staticDocumentWriteCallOpenIndex(tokens, text, start);
+  if (writeOpenIndex === null) return documents;
+  const writeCloseIndex = matchingPunctuation(tokens, text, writeOpenIndex, "(", ")");
+  if (writeCloseIndex === null) return documents;
+  const fragments: string[] = [];
+  for (const [fragmentStart, fragmentEnd] of staticCallArgumentRanges(
+    tokens,
+    text,
+    writeOpenIndex + 1,
+    writeCloseIndex,
+  )) {
+    if (fragmentEnd !== fragmentStart + 1) return documents;
+    const fragment = staticScriptPath(tokens[fragmentStart], text);
+    if (fragment === null) return documents;
+    fragments.push(fragment);
+  }
+  if (fragments.length) documents.push({ inlineDocument: fragments.join("") });
+  return documents;
+}
+
+function staticDocumentWriteCallOpenIndex(
+  tokens: JsToken[],
+  text: string,
+  start: number,
+): number | null {
+  if (start > 0 && isMemberSeparator(tokenText(tokens[start - 1], text))) return null;
+
+  let index = start;
+  const first = tokenText(tokens[index], text);
+  if (STATIC_BROWSER_GLOBALS.has(first)) {
+    let member = staticMemberAccess(tokens, text, index + 1);
+    if (!member) return null;
+    while (STATIC_BROWSER_GLOBALS.has(member.name)) {
+      member = staticMemberAccess(tokens, text, member.nextIndex);
+      if (!member) return null;
+    }
+    if (member.name !== "document") return null;
+    index = member.nextIndex;
+  } else if (first === "document") {
+    index += 1;
+  } else {
+    return null;
+  }
+
+  const method = staticMemberAccess(tokens, text, index);
+  if (method?.name !== "write" && method?.name !== "writeln") return null;
+  return staticCallOpenIndex(tokens, text, method.nextIndex);
 }
 
 function staticBrowserDynamicImportResource(

@@ -1,0 +1,59 @@
+{
+  "id": "browser-literal-html-document-reachability",
+  "title": "literal HTML sinks and SHTML documents remain consumer-reachable",
+  "category": "browser-extension",
+  "intent": "Pins full shared capability severity for a script written through document.write and for a payload nested inside a browser-rendered SHTML document selected through innerHTML.",
+  "slug": "literal-html-document-reachability",
+  "extensionId": "literal-html-document-reachability@example.invalid",
+  "version": "1.0.0",
+  "sha256": "2121212121212121212121212121212121212121212121212121212121212121",
+  "stagedFiles": [
+    {
+      "path": "manifest.json",
+      "size": 278,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "flags": [],
+      "textSample": "{\n  \"manifest_version\": 3,\n  \"name\": \"Literal HTML document reachability\",\n  \"version\": \"1.0.0\",\n  \"browser_specific_settings\": { \"gecko\": { \"id\": \"literal-html-document-reachability@example.invalid\" } },\n  \"action\": { \"default_popup\": \"popup.html\" }\n}\n"
+    },
+    {
+      "path": "popup.html",
+      "size": 39,
+      "sha256": "2323232323232323232323232323232323232323232323232323232323232323",
+      "flags": [],
+      "textSample": "<script type=\"module\" src=\"popup.js\"></script>"
+    },
+    {
+      "path": "popup.js",
+      "size": 180,
+      "sha256": "2424242424242424242424242424242424242424242424242424242424242424",
+      "flags": [],
+      "textSample": "document.write(\"<script src='tests/written.js'></script>\"); document.body.innerHTML = \"<iframe src='tests/nested.shtml'></iframe>\";"
+    },
+    {
+      "path": "tests/written.js",
+      "size": 14,
+      "sha256": "2525252525252525252525252525252525252525252525252525252525252525",
+      "flags": [],
+      "textSample": "eval(payload);"
+    },
+    {
+      "path": "tests/nested.shtml",
+      "size": 46,
+      "sha256": "2626262626262626262626262626262626262626262626262626262626262626",
+      "flags": [],
+      "textSample": "<script src=\"nested-payload.js\"></script>"
+    },
+    {
+      "path": "tests/nested-payload.js",
+      "size": 54,
+      "sha256": "2727272727272727272727272727272727272727272727272727272727272727",
+      "flags": [],
+      "textSample": "fetch(\"https://example.invalid/payload\");"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    { "ruleId": "code.dynamic-evaluation", "severity": "high", "file": "tests/written.js" },
+    { "ruleId": "code.network-access", "severity": "medium", "file": "tests/nested-payload.js" }
+  ]
+}
