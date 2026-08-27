@@ -1,14 +1,28 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
-const source = readFileSync(
+const gettingStartedSource = readFileSync(
   new URL("../src/pages/Dashboard/GettingStarted.tsx", import.meta.url),
   "utf8",
 );
+const dashboardSource = readFileSync(
+  new URL("../src/pages/Dashboard/index.tsx", import.meta.url),
+  "utf8",
+);
 
-describe("dashboard onboarding links", () => {
+describe("dashboard onboarding contracts", () => {
+  test("resolves the active organization before organization-scoped startup requests", () => {
+    const organizationLoad = dashboardSource.indexOf("await organizations.load();");
+    const organizationScopedLoads = dashboardSource.indexOf(
+      "await Promise.all([scans.refresh(), npm.load()]);",
+    );
+
+    expect(organizationLoad).toBeGreaterThan(-1);
+    expect(organizationScopedLoads).toBeGreaterThan(organizationLoad);
+  });
+
   test("opens the settings integrations tab for workflow-gate setup", () => {
-    expect(source).toContain('href="/dashboard/settings?tab=integrations"');
-    expect(source).not.toContain('href="/dashboard/settings#gate-setup"');
+    expect(gettingStartedSource).toContain('href="/dashboard/settings?tab=integrations"');
+    expect(gettingStartedSource).not.toContain('href="/dashboard/settings#gate-setup"');
   });
 });

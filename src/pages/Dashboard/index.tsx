@@ -72,7 +72,12 @@ export default function DashboardPage() {
         return;
       }
       sessionChecked.value = true;
-      await Promise.all([organizations.load(), scans.refresh(), npm.load()]);
+      // A first visit has no stored organization ID. Resolve it before the
+      // organization-scoped requests so their active scope cannot change while
+      // they are in flight.
+      await organizations.load();
+      if (cancelled) return;
+      await Promise.all([scans.refresh(), npm.load()]);
     })();
     return () => {
       cancelled = true;
