@@ -4,6 +4,7 @@ import {
   getOrRecordRegistryMismatchObservedAt,
   listGateScansPendingRegistryVerification,
   listGatesPendingRegistryVerification,
+  markGateRegistryVerificationAttempted,
   markScanRegistryVerified,
   recordRegistryDigestMismatch,
 } from "../../db/scans";
@@ -155,7 +156,14 @@ export async function enqueueRegistryVerification(
   executionCtx: ExecutionContext,
   message: RegistryVerificationQueueMessage,
   db?: AppDb,
+  now = new Date(),
 ): Promise<void> {
+  const registryDb = db ?? createDb(env.DB);
+  await markGateRegistryVerificationAttempted(registryDb, {
+    organizationId: message.organizationId,
+    gateId: message.gateId,
+    attemptedAt: now,
+  });
   if (env.SCAN_QUEUE) {
     try {
       await env.SCAN_QUEUE.send(message, {
@@ -171,7 +179,7 @@ export async function enqueueRegistryVerification(
       return;
     }
   }
-  await executeRegistryVerificationJob(env, executionCtx, message, db);
+  await executeRegistryVerificationJob(env, executionCtx, message, registryDb, now);
 }
 
 /** Cron backstop for lost queue sends and releases that were not yet visible. */
@@ -179,8 +187,10 @@ export async function runRegistryVerificationCron(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
   db: AppDb = createDb(env.DB),
+  now = new Date(),
+  limit = 100,
 ): Promise<{ gates: number; queued: number; inline: number }> {
-  const gates = await listGatesPendingRegistryVerification(db);
+  const gates = await listGatesPendingRegistryVerification(db, limit, now);
   let queued = 0;
   let inline = 0;
   for (const gate of gates) {
@@ -189,6 +199,11 @@ export async function runRegistryVerificationCron(
       organizationId: gate.organizationId,
       gateId: gate.gateId,
     };
+    await markGateRegistryVerificationAttempted(db, {
+      organizationId: gate.organizationId,
+      gateId: gate.gateId,
+      attemptedAt: now,
+    });
     if (env.SCAN_QUEUE) {
       try {
         await env.SCAN_QUEUE.send(message);
@@ -202,7 +217,7 @@ export async function runRegistryVerificationCron(
         });
       }
     }
-    await executeRegistryVerificationJob(env, executionCtx, message, db);
+    await executeRegistryVerificationJob(env, executionCtx, message, db, now);
     inline++;
   }
   return { gates: gates.length, queued, inline };

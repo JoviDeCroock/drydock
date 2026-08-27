@@ -45,6 +45,7 @@ export {
   getOrRecordRegistryMismatchObservedAt,
   listGateScansPendingRegistryVerification,
   listGatesPendingRegistryVerification,
+  markGateRegistryVerificationAttempted,
   markScanRegistryVerified,
   recordRegistryDigestMismatch,
   type RegistryVerificationScan,

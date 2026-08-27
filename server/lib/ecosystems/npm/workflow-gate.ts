@@ -1,6 +1,7 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
 import { createNpmBroker } from "./broker";
-import { allowInsecureLocalRegistry } from "./connection";
+import { getNpmConnectionRegistryUrl } from "../../../db/npm-connections";
+import { allowInsecureLocalRegistry, normalizeRegistryUrl } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
 import { fetchPackageMetadataCached } from "./registry-cache";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
@@ -57,27 +58,47 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
     );
     try {
       let published: Awaited<ReturnType<typeof downloadPublishedTarball>> | undefined;
-      try {
-        const metadata = await broker.fetchPackageMetadata(input.packageName);
-        const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
-        if (tarballUrl) published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
-      } catch {
-        // A public gate does not require an organization npm connection. Fall
-        // through to the credential-free registry path; private registries can
-        // still verify through the broker above when a connection exists.
+      const allowInsecureLocalhost = allowInsecureLocalRegistry(ctx.env);
+      const deploymentRegistry = normalizeRegistryUrl(ctx.env.NPM_REGISTRY, {
+        allowInsecureLocalhost,
+      });
+      const organizationRegistry = await getNpmConnectionRegistryUrl(ctx.db, ctx.organizationId);
+      const sameRegistryAuthority =
+        organizationRegistry !== null &&
+        normalizeRegistryUrl(organizationRegistry, { allowInsecureLocalhost }) ===
+          deploymentRegistry;
+      // An organization connection chooses the registry authority. Absence or a
+      // transient error on that registry must stay pending there: falling
+      // through to the worker-wide registry leaks private names and can compare
+      // the gate against an unrelated public package with the same identity.
+      if (organizationRegistry) {
+        try {
+          const metadata = await broker.fetchPackageMetadata(input.packageName);
+          const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
+          if (tarballUrl) {
+            published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
+          } else if (!sameRegistryAuthority) {
+            return { status: "not_published" };
+          }
+        } catch (err) {
+          if (!sameRegistryAuthority) throw err;
+        }
       }
       if (!published) {
+        // A public gate still requires no npm connection. Only the complete
+        // absence of an organization authority, or a connection to this exact
+        // same registry, selects the credential-free deployment path.
         const metadata = await fetchPackageMetadataCached(ctx.env, ctx.executionCtx, {
           packageName: input.packageName,
-          registryUrl: ctx.env.NPM_REGISTRY,
+          registryUrl: deploymentRegistry,
           cacheScope: "registry-verification:public",
           abbreviated: true,
         });
         const tarballUrl = metadata.versions?.[input.version]?.dist?.tarball;
         if (!tarballUrl) return { status: "not_published" };
         published = await downloadPublishedTarball(ctx.env, ctx.executionCtx, tarballUrl, {
-          registryUrl: ctx.env.NPM_REGISTRY,
-          allowInsecureLocalhost: allowInsecureLocalRegistry(ctx.env),
+          registryUrl: deploymentRegistry,
+          allowInsecureLocalhost,
           maxFiles: 1,
         });
       }
