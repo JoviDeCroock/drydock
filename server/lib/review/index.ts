@@ -52,7 +52,11 @@ export {
   packageJsonDiffFindings,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./rules";
-export { annotateFindingsWithDiffStatus, normalizeFindingDiffStatus } from "./diff-annotation";
+export {
+  annotateFindingsWithDiffStatus,
+  normalizeFindingDiffStatus,
+  projectReleaseRuleFindings,
+} from "./diff-annotation";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };

@@ -5,27 +5,20 @@ import {
   AI_REVIEWER_VERSION,
   parsePersistedAiReview,
 } from "../../server/lib/ai-review/contract.ts";
+import { computeScanRisk } from "../../server/lib/review/risk.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_PATH = join(__dirname, "..", "fixtures", "ai-review-eval", "cases.json");
 const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 
 export function isMaliciousCaught(review) {
-  return (
-    review.status === "complete" &&
-    (RISK_RANK[review.risk] >= RISK_RANK.high ||
-      review.releaseAssessment === "suspicious" ||
-      review.releaseAssessment === "blocked" ||
-      review.findings.some(
-        (finding) => finding.severity === "high" || finding.severity === "critical",
-      ))
-  );
+  return review.status === "complete" && RISK_RANK[computeScanRisk([], review)] >= RISK_RANK.high;
 }
 
 export function isBenignClean(review) {
   return (
     review.status === "complete" &&
-    review.risk === "low" &&
+    computeScanRisk([], review) === "low" &&
     review.releaseAssessment === "nothing_unusual" &&
     review.requiresManualReview === false &&
     review.findings.every(
@@ -35,12 +28,42 @@ export function isBenignClean(review) {
 }
 
 export function isUncertaintyEscalated(review) {
-  return (
-    review.status !== "complete" ||
-    review.requiresManualReview ||
-    review.releaseAssessment !== "nothing_unusual" ||
-    RISK_RANK[review.risk] >= RISK_RANK.medium
-  );
+  return RISK_RANK[computeScanRisk([], review)] >= RISK_RANK.medium;
+}
+
+function requireNonEmptyString(value, field) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`AI review eval ${field} must be a non-empty string`);
+  }
+}
+
+export function validateAiReviewCorpus(corpus) {
+  if (!corpus || typeof corpus !== "object" || Array.isArray(corpus)) {
+    throw new Error("AI review eval corpus must be an object");
+  }
+  if (!Number.isInteger(corpus.suiteVersion) || corpus.suiteVersion < 1) {
+    throw new Error("AI review eval suiteVersion must be a positive integer");
+  }
+  if (!Array.isArray(corpus.cases) || corpus.cases.length === 0) {
+    throw new Error("AI review eval cases must contain at least one record");
+  }
+  requireNonEmptyString(corpus.recordedReviewerVersion, "recordedReviewerVersion");
+
+  const ids = new Set();
+  for (const [index, record] of corpus.cases.entries()) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      throw new Error(`AI review eval case ${index} must be an object`);
+    }
+    requireNonEmptyString(record.id, `case ${index} id`);
+    if (ids.has(record.id)) throw new Error(`AI review eval duplicate case id ${record.id}`);
+    ids.add(record.id);
+    if (!new Set(["malicious", "benign", "uncertain"]).has(record.verdict)) {
+      throw new Error(`AI review eval case ${record.id} has invalid verdict`);
+    }
+    requireNonEmptyString(record.threatClass, `case ${record.id} threatClass`);
+    requireNonEmptyString(record.scenario, `case ${record.id} scenario`);
+  }
+  return corpus;
 }
 
 function evaluateCase(record, recordedReviewerVersion) {
@@ -78,8 +101,8 @@ function groupMetrics(results, key) {
   );
 }
 
-export function runAiReviewEval() {
-  const corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"));
+export function runAiReviewEval(corpus = JSON.parse(readFileSync(CORPUS_PATH, "utf8"))) {
+  validateAiReviewCorpus(corpus);
   const results = corpus.cases.map((record) =>
     evaluateCase(record, corpus.recordedReviewerVersion),
   );
@@ -149,12 +172,8 @@ function renderMarkdown(result) {
 }
 
 export function writeAiReviewEvalReport(result) {
-  try {
-    const outDir = join(__dirname, "..", "..", ".context", "eval");
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, "ai-review-eval.json"), JSON.stringify(result, null, 2));
-    writeFileSync(join(outDir, "ai-review-eval.md"), renderMarkdown(result));
-  } catch {
-    // Report writing is best-effort; never fail the eval over a filesystem issue.
-  }
+  const outDir = join(__dirname, "..", "..", ".context", "eval");
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "ai-review-eval.json"), JSON.stringify(result, null, 2));
+  writeFileSync(join(outDir, "ai-review-eval.md"), renderMarkdown(result));
 }

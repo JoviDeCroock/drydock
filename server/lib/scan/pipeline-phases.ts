@@ -30,6 +30,7 @@ import {
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
+  projectReleaseRuleFindings,
   redactFileRecords,
   redactFindings,
   redactJson,
@@ -180,9 +181,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
     codePatternSet: adapter.codePatternSet,
     baselineComparisonSkipped: Boolean(baseline.baseline.comparisonSkipped),
   });
-  const releaseRuleFindings = stripFindingAnnotations(
-    annotatedFindings.filter((finding) => finding.releaseDelta),
-  );
+  const releaseRuleFindings = projectReleaseRuleFindings(annotatedFindings);
 
   return {
     ruleFindings,
@@ -621,18 +620,4 @@ function pipelineSafety(): ScanResult["safety"] {
     fileExplorerPolicy:
       "package file previews are escaped text and secret-redacted before persistence; no package-provided HTML/script/image execution",
   };
-}
-
-function stripFindingAnnotations(
-  findings: Array<Finding & { diffStatus?: string; releaseDelta?: boolean }>,
-): Finding[] {
-  return findings.map((finding) => ({
-    severity: finding.severity,
-    file: finding.file,
-    evidence: finding.evidence,
-    reason: finding.reason,
-    ...(finding.line !== undefined ? { line: finding.line } : {}),
-    ...(finding.ruleId !== undefined ? { ruleId: finding.ruleId } : {}),
-    ...(finding.ruleVersion !== undefined ? { ruleVersion: finding.ruleVersion } : {}),
-  }));
 }

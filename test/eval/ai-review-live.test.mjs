@@ -49,7 +49,7 @@ const limit = parseLimit(process.env.AI_REVIEW_LIVE_LIMIT);
 
 describe.skipIf(!enabled)("AI reviewer live model comparison", () => {
   test(
-    "compares candidate models over the npm security corpus",
+    "compares candidate models over the staged security corpora",
     { timeout: 3_600_000 },
     async () => {
       if (!accountId || !apiKey) {

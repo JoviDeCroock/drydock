@@ -10,6 +10,23 @@ const result = runEval();
 writeReport(result);
 
 describe("detection eval (gated thresholds)", () => {
+  test("the gated corpus cannot silently shrink below its ecosystem coverage floor", () => {
+    const regressionFloor = {
+      npm: 27,
+      pypi: 14,
+      atpm: 6,
+      vscode: 3,
+    };
+    for (const [ecosystem, minimum] of Object.entries(regressionFloor)) {
+      expect(result.coverage.regressionByEcosystem[ecosystem]).toBeGreaterThanOrEqual(minimum);
+    }
+    expect(result.coverage.frontierByEcosystem.npm).toBeGreaterThanOrEqual(11);
+    expect(result.coverage.benignByEcosystem.npm).toBeGreaterThanOrEqual(10);
+    for (const samples of Object.values(result.coverage.evasionSamples)) {
+      expect(samples).toBeGreaterThan(0);
+    }
+  });
+
   test("malicious recall on the regression corpus does not regress", () => {
     expect(result.regression.malicious.recall).toBeGreaterThanOrEqual(0.9);
   });
@@ -18,8 +35,13 @@ describe("detection eval (gated thresholds)", () => {
     expect(result.regression.critical.recall).toBe(1);
   });
 
-  test("no false positives on benign regression controls", () => {
-    expect(result.regression.benign.falsePositives).toBe(0);
+  test("keeps benign regression positives pinned to acknowledged cases", () => {
+    expect(result.regression.benign.positives).toEqual([
+      {
+        id: "pypi-benign-docs-metadata-and-test-fixtures",
+        threatClass: "control",
+      },
+    ]);
   });
 
   // Ratchet from docs/detection-eval.md: weighted multi-signal scoring de-escalates

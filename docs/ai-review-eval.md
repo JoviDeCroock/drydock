@@ -116,13 +116,16 @@ pnpm run eval:ai
 The test reads `test/fixtures/ai-review-eval/cases.json`, validates every result
 through the real persisted-review schema, requires every result to match the
 corpus's explicit recorded reviewer version, and scores malicious catch
-behavior, benign cleanliness, and safe uncertainty escalation. The report shows
-that historical version beside the current runtime version so an old output can
-never be relabeled as evidence from a new model or routing contract, and says
-explicitly whether the current contract has recorded coverage. The
-baseline includes prompt-injection-shaped hostile evidence, unavailable
-evidence, and a fallback-model result. Reports are written best-effort to
-`.context/eval/ai-review-eval.json` and `.context/eval/ai-review-eval.md`.
+behavior, benign cleanliness, and safe uncertainty escalation through the
+production `computeScanRisk` roll-up. Corpus metadata, non-empty required fields,
+and unique case ids are validated before metrics are computed; the gate also
+holds minimum verdict/scenario coverage. The report shows the historical version
+beside the current runtime version so an old output can never be relabeled as
+evidence from a new model or routing contract, and says explicitly whether the
+current contract has recorded coverage. The baseline includes
+prompt-injection-shaped hostile evidence, unavailable evidence, and a fallback
+model result. Reports are written to `.context/eval/ai-review-eval.json` and
+`.context/eval/ai-review-eval.md`; a write failure fails the command.
 
 These are historical recorded outputs, so a green run proves the scoring
 contract and guards known outputs; it does not prove the current hosted model
@@ -142,15 +145,23 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm run eval:ai:live
 ```
 
 It drives the real `analyzeWithAi` agent loop against real Workers AI models
-over the npm security corpus, one model at a time (no failover, or the
-comparison would measure the wrong model). It is paid and network-bound, so it
-is gated behind `AI_REVIEW_LIVE_EVAL` and never runs in `pnpm test` or
-`pnpm run verify`. Reports land in `.context/eval/ai-review-model-compare.json`
-and `.context/eval/ai-review-model-compare.md`.
+over the npm, PyPI, and VS Code security corpora, one model at a time (no
+failover, or the comparison would measure the wrong model). Each ecosystem case
+is built through its production acquisition/review helpers. atpm remains an
+explicit skip because it is public-diff-only and does not run staged AI review.
+It is paid and network-bound, so it is gated behind `AI_REVIEW_LIVE_EVAL` and
+never runs in `pnpm test` or `pnpm run verify`. Reports land in
+`.context/eval/ai-review-model-compare.json` and
+`.context/eval/ai-review-model-compare.md`; a write failure fails the command.
 
 Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
 routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating; the report
 states how many were dropped), `AI_REVIEW_LIVE_GATEWAY`.
+
+The harness rejects empty/duplicate model lists and invalid limits before any
+network call. A thrown fixture invocation becomes an explicit `harness_error`
+run and the comparison continues, preserving the rest of a paid run while
+keeping completion and error rates honest.
 
 It reports three things, in priority order:
 
@@ -173,13 +184,9 @@ It reports three things, in priority order:
    they were checked — refresh it with any routing change, because a stale table
    silently reorders the comparison.
 
-Two things the harness deliberately does not do. It asserts no winner: picking a
-model is a judgement call across all three axes. And it covers npm-shaped
-fixtures only: today that is 46 fixtures (33 malicious, 13 benign). The 14 PyPI
-fixtures carry adapter-shaped inputs and appear in the report's `skipped` list
-rather than being dropped silently; VS Code fixtures are not loaded by the
-detection corpus loader at all, so covering VSIX means extending `loadCorpus`
-first.
+The harness deliberately asserts no winner: picking a model is a judgement call
+across all three axes. Unsupported ecosystems and fixtures omitted by `--limit`
+remain explicit in the report rather than disappearing from its denominator.
 
 Context window is not a selection criterion. Evidence is capped at
 `MAX_TOTAL_TOOL_RESPONSE_CHARS`, so any window past that is spend on capacity

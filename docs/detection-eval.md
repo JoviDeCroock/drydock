@@ -6,7 +6,7 @@ regex/sampling blind spots into numbers we can move.
 
 It is deliberately separate from the golden corpus tests
 (`test/security-corpus.test.mjs`, `test/security-corpus-pypi.test.mjs`,
-`test/security-corpus-atpm.test.mjs`), which
+`test/security-corpus-atpm.test.mjs`, `test/security-corpus-vscode.test.mjs`), which
 assert exact rule output and exist to catch regressions. Two different jobs:
 
 |            | Golden regression (existing)              | Eval harness (this)                                        |
@@ -18,7 +18,8 @@ assert exact rule output and exist to catch regressions. Two different jobs:
 
 The harness reuses the real detection code (`deterministicFindings` + risk for
 npm, `createPyPiReleaseCandidateReview` for PyPI, and `atpmRecordFindings` for
-atpm), so it can never drift from what production runs.
+atpm, and `createVscodeExtensionReview` for VS Code), so it can never drift from
+what production runs.
 
 ## Running it
 
@@ -27,8 +28,9 @@ pnpm run eval        # runs the gated thresholds and writes the report
 ```
 
 The report is written to `.context/eval/detection-eval.md` (and `.json`), which
-is gitignored. `pnpm test` also runs the gated thresholds, since the harness is
-a normal Vitest file (`test/eval/detection-eval.test.mjs`).
+is gitignored. A report write failure fails the command rather than leaving a
+green run with missing evidence. `pnpm test` also runs the gated thresholds,
+since the harness is a normal Vitest file (`test/eval/detection-eval.test.mjs`).
 
 ## CI visibility
 
@@ -45,12 +47,15 @@ test/fixtures/security-corpus/
   cases/          npm golden cases     (regression set, also consumed by the eval)
   cases-pypi/     PyPI golden cases    (regression set)
   cases-atpm/     atpm provenance golden cases (regression set)
+  cases-vscode/   VS Code extension golden cases (regression set)
   cases-frontier/ truth-labeled hard cases the rules may MISS  (reported, not gated)
   cases-benign/   benign hard-negatives that the rules may flag (reported, not gated)
 ```
 
-`cases/`, `cases-pypi/`, and `cases-atpm/` keep their existing golden schema; the eval infers
-their labels. `cases-frontier/` and `cases-benign/` use the v2 schema below and
+The four ecosystem regression directories keep their existing golden schema;
+the eval infers any omitted labels. The gate also holds a per-ecosystem coverage
+floor, so deleting fixtures or an entire directory cannot turn into a vacuous
+100% recall. `cases-frontier/` and `cases-benign/` use the v2 schema below and
 are eval-only (the golden tests never read them, so a frontier miss or a benign
 false positive does not break the regression suite).
 
@@ -62,8 +67,8 @@ Additive over the golden schema — all golden fields still work.
 {
   "id": "npm-assembled-require-exfil",
   "title": "…",
-  "ecosystem": "npm",                  // npm | pypi | atpm (default npm)
-  "verdict": "malicious",              // malicious | benign | suspicious
+  "ecosystem": "npm",                  // npm | pypi | atpm | vscode (default npm)
+  "verdict": "malicious",              // malicious | benign
   "threatClass": "obfuscated-dropper", // taxonomy, see below
   "source": "synthetic-adversarial",   // synthetic | synthetic-adversarial | real-sanitized | benign-popular
   "provenance": "incident + how it was defanged", // required for source: real-sanitized
@@ -98,9 +103,13 @@ or regressed attestations plus a matching-provenance control.
 ## Metrics
 
 - **Regression recall (gated).** Malicious recall over `cases/` + `cases-pypi/` +
-  `cases-atpm/`.
+  `cases-atpm/` + `cases-vscode/`.
   This set is golden-tuned, so it is ~100% by construction — its job is
   regression protection, not quality measurement.
+- **Benign regression positives (gated by exact id).** Explicitly benign golden
+  controls remain truth-labeled even when the product intentionally surfaces a
+  warning. The acknowledged list currently contains the PyPI test-key control;
+  any additional positive fails the gate instead of being absorbed into a count.
 - **Frontier recall (reported).** Recall over `cases-frontier/`, which are
   labeled by _truth_ and intentionally hard. These are where real detection gaps
   show up. Starts low; that is the point.
@@ -146,8 +155,7 @@ Gated metrics (`detection-eval.test.mjs`):
 
 - malicious recall ≥ 90%
 - every `expectMinRisk: critical` case caught (100%)
-- zero false positives on benign controls (no `>= medium` finding on a clean
-  regression control)
+- benign regression positives exactly match the acknowledged fixture ids
 - benign hard-negative FP rate < 10% (risk roll-up `>= medium`)
 
 Frontier recall and evasion robustness are reported, not gated, so they can start

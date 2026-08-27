@@ -27,12 +27,31 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWorkersAI } from "workers-ai-provider";
 import {
+  annotateFindingsWithDiffStatus,
   computeRisk,
   createPackageDiff,
   deterministicFindings,
   packageJsonDiffFindings,
+  projectReleaseRuleFindings,
+  redactFileRecords,
+  redactFindings,
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
+import {
+  acquireStagedPyPi,
+  baselineFromPreviousArtifacts,
+  stagedSampleRetention,
+} from "../../server/lib/ecosystems/pypi/acquire";
+import { pypiAdapter, createPyPiReleaseCandidateReview } from "../../server/lib/ecosystems/pypi";
+import {
+  buildVscodeReleaseManifest,
+  createVscodeExtensionReview,
+  normalizeVsixFiles,
+} from "../../server/lib/ecosystems/vscode";
+import {
+  packageJsonSummaryForVscode,
+  parseVscodeExtensionManifest,
+} from "../../server/lib/ecosystems/vscode/manifest";
 import { AI_REVIEWER_VERSION } from "../../server/lib/ai-review/contract.ts";
 import {
   AI_MODEL_CANDIDATES,
@@ -81,59 +100,149 @@ export function estimateCost(model, usage) {
   );
 }
 
-// The reviewer's npm evidence contract, built from the same detection code the
-// product runs so the comparison can never drift from what ships. PyPI fixtures
-// carry adapter-shaped inputs instead of `stagedFiles` and are reported as
-// skipped rather than silently dropped. VS Code fixtures never reach here at
-// all: `loadCorpus` does not read `cases-vscode`, so extending this to VSIX
-// means extending the detection corpus loader first.
+function liveCase(record, deterministicRisk, options) {
+  return {
+    id: record.id,
+    title: record.title,
+    kind: record.kind,
+    verdict: record.verdict,
+    threatClass: record.threatClass,
+    deterministicRisk,
+    options: {
+      scanId: `ai-review-live-${record.id}`,
+      organizationId: "ai-review-live-eval",
+      ...options,
+    },
+  };
+}
+
+function releaseRuleFindings(ruleFindings, diff, files, previousFiles, codePatternSet) {
+  return projectReleaseRuleFindings(
+    annotateFindingsWithDiffStatus(ruleFindings, diff, {
+      stagedFiles: files,
+      previousFiles,
+      codePatternSet,
+    }),
+  );
+}
+
+function buildNpmLiveCase(record) {
+  const previousFiles = record.fx.previousFiles ?? [];
+  const stagedFiles = record.fx.stagedFiles;
+  const diff = createPackageDiff(previousFiles, stagedFiles);
+  const packageJsonDiff = summarizePackageJsonDiff(
+    record.fx.previousPackageJson,
+    record.fx.stagedPackageJson,
+  );
+  const allRuleFindings = redactFindings([
+    ...deterministicFindings(stagedFiles, diff, record.fx.stagedPackageJson, {
+      entrypointResolution: "npm",
+    }),
+    ...packageJsonDiffFindings(packageJsonDiff),
+  ]);
+  const files = redactFileRecords(stagedFiles);
+  const previous = redactFileRecords(previousFiles);
+  const ruleFindings = releaseRuleFindings(allRuleFindings, diff, files, previous, "javascript");
+  return liveCase(record, computeRisk(allRuleFindings), {
+    ecosystem: "npm",
+    files,
+    previousFiles: previous,
+    diff,
+    packageJsonDiff,
+    ruleFindings,
+    previousVersionAvailable: previousFiles.length > 0,
+  });
+}
+
+function buildPyPiLiveCase(record) {
+  const input = pypiAdapter.parseInput({
+    manifest: record.fx.manifest,
+    artifacts: record.fx.artifacts,
+    previousArtifacts: record.fx.previousArtifacts,
+  });
+  const staged = acquireStagedPyPi(input);
+  const baseline = baselineFromPreviousArtifacts(input, stagedSampleRetention(staged.details));
+  const review = createPyPiReleaseCandidateReview(input);
+  const files = redactFileRecords(staged.artifact.files);
+  const previousFiles = redactFileRecords(baseline.artifact?.files ?? []);
+  return liveCase(record, review.risk, {
+    ecosystem: "pypi",
+    files,
+    previousFiles,
+    diff: review.diff,
+    packageJsonDiff: summarizePackageJsonDiff(
+      baseline.artifact?.manifest,
+      staged.artifact.manifest,
+    ),
+    ruleFindings: releaseRuleFindings(
+      review.ruleFindings,
+      review.diff,
+      files,
+      previousFiles,
+      "python",
+    ),
+    previousVersionAvailable: baseline.artifact !== null,
+  });
+}
+
+function buildVscodeLiveCase(record) {
+  const fx = record.fx;
+  const path = fx.artifactPath ?? `dist/${fx.extensionId}-${fx.version}.vsix`;
+  const manifest = buildVscodeReleaseManifest(fx.extensionId, fx.version, [
+    { path, sha256: fx.sha256 },
+  ]);
+  const review = createVscodeExtensionReview({
+    manifest,
+    artifact: { path, sha256: fx.sha256, files: fx.stagedFiles },
+    ...(fx.previousFiles
+      ? {
+          previousArtifact: { path, sha256: fx.previousSha256, files: fx.previousFiles },
+        }
+      : {}),
+  });
+  const files = normalizeVsixFiles(fx.stagedFiles);
+  const previousFiles = normalizeVsixFiles(fx.previousFiles ?? []);
+  const redactedFiles = redactFileRecords(files);
+  const redactedPreviousFiles = redactFileRecords(previousFiles);
+  const stagedManifest = packageJsonSummaryForVscode(parseVscodeExtensionManifest(files).manifest);
+  const previousManifest = previousFiles.length
+    ? packageJsonSummaryForVscode(parseVscodeExtensionManifest(previousFiles).manifest)
+    : null;
+  return liveCase(record, review.risk, {
+    ecosystem: "vscode",
+    files: redactedFiles,
+    previousFiles: redactedPreviousFiles,
+    diff: review.diff,
+    packageJsonDiff: summarizePackageJsonDiff(previousManifest, stagedManifest),
+    ruleFindings: releaseRuleFindings(
+      review.ruleFindings,
+      review.diff,
+      redactedFiles,
+      redactedPreviousFiles,
+      "javascript",
+    ),
+    previousVersionAvailable: previousFiles.length > 0,
+  });
+}
+
+// Build every staged ecosystem through its production acquisition/review
+// helpers. atpm is public-diff-only, so it remains an explicit skip.
 export function buildLiveCases(corpus = loadCorpus()) {
   const records = [...corpus.regression, ...corpus.frontier, ...corpus.benign];
   const cases = [];
   const skipped = [];
 
   for (const record of records) {
-    if (record.ecosystem !== "npm" || !record.fx.stagedFiles) {
-      skipped.push({ id: record.id, ecosystem: record.ecosystem, reason: "non-npm fixture shape" });
-      continue;
+    if (record.ecosystem === "npm") cases.push(buildNpmLiveCase(record));
+    else if (record.ecosystem === "pypi") cases.push(buildPyPiLiveCase(record));
+    else if (record.ecosystem === "vscode") cases.push(buildVscodeLiveCase(record));
+    else {
+      skipped.push({
+        id: record.id,
+        ecosystem: record.ecosystem,
+        reason: "ecosystem does not run staged AI review",
+      });
     }
-
-    const previousFiles = record.fx.previousFiles ?? [];
-    const stagedFiles = record.fx.stagedFiles;
-    const diff = createPackageDiff(previousFiles, stagedFiles);
-    const packageJsonDiff = summarizePackageJsonDiff(
-      record.fx.previousPackageJson,
-      record.fx.stagedPackageJson,
-    );
-    const ruleFindings = [
-      ...deterministicFindings(stagedFiles, diff, record.fx.stagedPackageJson, {
-        entrypointResolution: "npm",
-      }),
-      ...packageJsonDiffFindings(packageJsonDiff),
-    ];
-
-    cases.push({
-      id: record.id,
-      title: record.title,
-      kind: record.kind,
-      verdict: record.verdict,
-      threatClass: record.threatClass,
-      deterministicRisk: computeRisk(ruleFindings),
-      options: {
-        // A stable per-fixture scan id keeps cache affinity consistent across
-        // models, so the cached-token share reflects the loop's own prefix
-        // reuse rather than which fixture happened to run first.
-        scanId: `ai-review-live-${record.id}`,
-        organizationId: "ai-review-live-eval",
-        ecosystem: "npm",
-        files: stagedFiles,
-        previousFiles,
-        diff,
-        packageJsonDiff,
-        ruleFindings,
-        previousVersionAvailable: previousFiles.length > 0,
-      },
-    });
   }
 
   return { cases, skipped };
@@ -173,6 +282,30 @@ export function scoreRun(testCase, result) {
   };
 }
 
+function scoreHarnessError(testCase, error, durationMs) {
+  return {
+    id: testCase.id,
+    kind: testCase.kind,
+    verdict: testCase.verdict,
+    threatClass: testCase.threatClass,
+    deterministicRisk: testCase.deterministicRisk,
+    status: "harness_error",
+    completed: false,
+    passed: false,
+    risk: "unknown",
+    releaseAssessment: "not_assessed",
+    findingCount: 0,
+    requiresManualReview: true,
+    summary: "The live eval run failed before producing a review.",
+    steps: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    durationMs,
+    errorName: error instanceof Error ? error.name : "UnknownError",
+  };
+}
+
 function mean(values) {
   return values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
 }
@@ -185,9 +318,10 @@ export function summarizeModel(model, runs) {
   const malicious = runs.filter((run) => run.verdict === "malicious");
   const benign = runs.filter((run) => run.verdict === "benign");
   const completed = runs.filter((run) => run.completed);
-  const costs = runs.map((run) => estimateCost(model, run)).filter((cost) => cost !== null);
-  const totalInput = runs.reduce((total, run) => total + run.inputTokens, 0);
-  const totalCached = runs.reduce((total, run) => total + run.cachedInputTokens, 0);
+  const measuredRuns = runs.filter((run) => run.status !== "harness_error");
+  const costs = measuredRuns.map((run) => estimateCost(model, run)).filter((cost) => cost !== null);
+  const totalInput = measuredRuns.reduce((total, run) => total + run.inputTokens, 0);
+  const totalCached = measuredRuns.reduce((total, run) => total + run.cachedInputTokens, 0);
 
   return {
     model,
@@ -198,13 +332,18 @@ export function summarizeModel(model, runs) {
     completionRate: rate(completed.length, runs.length),
     invalidRate: rate(runs.filter((run) => run.status === "invalid").length, runs.length),
     unavailableRate: rate(runs.filter((run) => run.status === "unavailable").length, runs.length),
+    harnessErrorRate: rate(
+      runs.filter((run) => run.status === "harness_error").length,
+      runs.length,
+    ),
+    costCoverage: rate(costs.length, runs.length),
     catchRate: rate(malicious.filter((run) => run.passed).length, malicious.length),
     falsePositiveRate: rate(benign.filter((run) => !run.passed).length, benign.length),
     manualReviewRate: rate(runs.filter((run) => run.requiresManualReview).length, runs.length),
-    avgSteps: mean(runs.map((run) => run.steps)),
+    avgSteps: mean(measuredRuns.map((run) => run.steps)),
     avgDurationMs: mean(runs.map((run) => run.durationMs)),
-    avgInputTokens: mean(runs.map((run) => run.inputTokens)),
-    avgOutputTokens: mean(runs.map((run) => run.outputTokens)),
+    avgInputTokens: mean(measuredRuns.map((run) => run.inputTokens)),
+    avgOutputTokens: mean(measuredRuns.map((run) => run.outputTokens)),
     cachedInputShare: totalInput ? totalCached / totalInput : 0,
     avgCostUsd: costs.length ? mean(costs) : null,
     totalCostUsd: costs.length ? costs.reduce((total, cost) => total + cost, 0) : null,
@@ -237,24 +376,43 @@ export async function runAiReviewModelComparison({
   // truncation bookkeeping without spending money on the network.
   analyze = analyzeWithAi,
 } = {}) {
+  if (!Array.isArray(models) || models.length === 0) {
+    throw new Error("Live AI comparison needs at least one model");
+  }
+  const models_ = models.map((model) => String(model).trim());
+  if (models_.some((model) => !model)) {
+    throw new Error("Live AI comparison model ids must be non-empty strings");
+  }
+  if (new Set(models_).size !== models_.length) {
+    throw new Error("Live AI comparison received a duplicate model id");
+  }
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    throw new Error("Live AI comparison limit must be a positive integer");
+  }
+
   const { cases: allCases, skipped } = buildLiveCases(corpus);
+  if (allCases.length === 0) throw new Error("Live AI comparison has no supported fixtures");
   const cases = typeof limit === "number" ? allCases.slice(0, limit) : allCases;
-  const models_ = [...models];
   const byModel = [];
 
   for (const model of models_) {
     const runs = [];
     for (const testCase of cases) {
       const startedAt = Date.now();
-      // One model at a time: `analyzeWithAi` takes a candidate list and fails
-      // over, which is exactly what a per-model comparison must not do.
-      const result = await analyze(
-        {},
-        [model],
-        testCase.options,
-        liveLanguageModelFactory({ accountId, apiKey, gatewayId }, testCase.options),
-      );
-      const run = scoreRun(testCase, { ...result, durationMs: Date.now() - startedAt });
+      let run;
+      try {
+        // One model at a time: `analyzeWithAi` takes a candidate list and fails
+        // over, which is exactly what a per-model comparison must not do.
+        const result = await analyze(
+          {},
+          [model],
+          testCase.options,
+          liveLanguageModelFactory({ accountId, apiKey, gatewayId }, testCase.options),
+        );
+        run = scoreRun(testCase, { ...result, durationMs: Date.now() - startedAt });
+      } catch (error) {
+        run = scoreHarnessError(testCase, error, Date.now() - startedAt);
+      }
       runs.push(run);
       onProgress?.({ model, run });
     }
@@ -290,10 +448,10 @@ export function renderMarkdown(result) {
     `- fixtures per model: ${result.caseCount}`,
   ];
   if (result.truncated) {
-    lines.push(`- **truncated**: ${result.truncated} npm fixtures not run (\`--limit\`)`);
+    lines.push(`- **truncated**: ${result.truncated} staged fixtures not run (\`--limit\`)`);
   }
   if (result.skipped.length) {
-    lines.push(`- skipped (non-npm fixture shape): ${result.skipped.length}`);
+    lines.push(`- skipped (no staged AI review): ${result.skipped.length}`);
   }
   lines.push(
     "",
@@ -322,7 +480,8 @@ export function renderMarkdown(result) {
     const misses = entry.runs.filter((run) => !run.passed);
     lines.push(`## ${entry.model}`, "");
     lines.push(
-      `- invalid: ${percent(entry.invalidRate)} · unavailable: ${percent(entry.unavailableRate)}`,
+      `- invalid: ${percent(entry.invalidRate)} · unavailable: ${percent(entry.unavailableRate)} · harness errors: ${percent(entry.harnessErrorRate)}`,
+      `- cost coverage: ${percent(entry.costCoverage)} (unpriced or errored runs excluded)`,
       `- avg latency: ${(entry.avgDurationMs / 1000).toFixed(1)}s · avg tokens in/out: ${entry.avgInputTokens.toFixed(0)}/${entry.avgOutputTokens.toFixed(0)}`,
       "",
       misses.length ? "Misses:" : "Misses: none.",
@@ -340,13 +499,8 @@ export function renderMarkdown(result) {
 }
 
 export function writeAiReviewModelComparisonReport(result) {
-  try {
-    const outDir = join(__dirname, "..", "..", ".context", "eval");
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, "ai-review-model-compare.json"), JSON.stringify(result, null, 2));
-    writeFileSync(join(outDir, "ai-review-model-compare.md"), renderMarkdown(result));
-  } catch {
-    // Report writing is best-effort; never fail a paid live run over a
-    // filesystem issue.
-  }
+  const outDir = join(__dirname, "..", "..", ".context", "eval");
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "ai-review-model-compare.json"), JSON.stringify(result, null, 2));
+  writeFileSync(join(outDir, "ai-review-model-compare.md"), renderMarkdown(result));
 }

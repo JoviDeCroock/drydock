@@ -16,8 +16,25 @@ import type {
   FindingAnnotationOptions,
   FindingDiffAnnotation,
   FindingDiffStatus,
+  Finding,
   PackageJsonSummary,
 } from "./";
+
+export function projectReleaseRuleFindings(
+  findings: Array<Finding & FindingDiffAnnotation>,
+): Finding[] {
+  return findings
+    .filter((finding) => finding.releaseDelta)
+    .map((finding) => ({
+      severity: finding.severity,
+      file: finding.file,
+      evidence: finding.evidence,
+      reason: finding.reason,
+      ...(finding.line !== undefined ? { line: finding.line } : {}),
+      ...(finding.ruleId !== undefined ? { ruleId: finding.ruleId } : {}),
+      ...(finding.ruleVersion !== undefined ? { ruleVersion: finding.ruleVersion } : {}),
+    }));
+}
 
 export function annotateFindingsWithDiffStatus<
   T extends {
