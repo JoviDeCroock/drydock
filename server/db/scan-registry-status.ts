@@ -300,7 +300,10 @@ export async function listScansAwaitingRegistryStatus(
         isNotNull(scans.registryPackageName),
         isNotNull(scans.registryVersion),
         isNull(scans.registryStatusSupersededAt),
-        gte(scans.createdAt, options.createdAfter),
+        or(
+          gte(scans.createdAt, options.createdAfter),
+          isNull(scans.registryVersionStatusAttemptedAt),
+        )!,
         notExists(
           db
             .select({ id: newerScan.id })
@@ -325,6 +328,9 @@ export async function listScansAwaitingRegistryStatus(
       ),
     )
     .orderBy(
+      asc(
+        sql<number>`case when ${scans.createdAt} >= ${options.createdAfter.getTime()} then 0 else 1 end`,
+      ),
       asc(sql<number>`coalesce(${scans.registryVersionStatusAttemptedAt}, ${scans.createdAt})`),
       asc(scans.createdAt),
       asc(scans.id),

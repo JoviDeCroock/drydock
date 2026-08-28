@@ -99,6 +99,22 @@ describe("ScanListModel decisions", () => {
     expect(model.scans.value[0]?.riskSummary?.releaseRisk).toBe("none");
   });
 
+  test("removes a decided release from published-without-decision", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(scanDetail("publish")))),
+    );
+
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, registryVersionStatus: "published" }];
+    model.filter.value = "published_without_decision";
+
+    await model.setDecision("scan-1", "publish", "reviewed after release");
+
+    expect(model.decisionStatus.value).toBe("idle");
+    expect(model.scans.value).toEqual([]);
+  });
+
   test("does not let an older refresh restore a decided scan", async () => {
     const refreshResponse = deferred<Response>();
     const fetchMock = vi
@@ -202,6 +218,83 @@ describe("scanMatchesDecisionFilter", () => {
     expect(scanMatchesDecisionFilter({ decision: "publish" }, "publish")).toBe(true);
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "publish")).toBe(false);
     expect(scanMatchesDecisionFilter({ decision: "no_publish" }, "all")).toBe(true);
+  });
+
+  test.each(["published", "blocked", "deleted"])(
+    "excludes a settled %s release from undecided but not all",
+    (registryVersionStatus) => {
+      const scan = { decision: null, registryVersionStatus };
+
+      expect(scanMatchesDecisionFilter(scan, "undecided")).toBe(false);
+      expect(scanMatchesDecisionFilter(scan, "all")).toBe(true);
+    },
+  );
+
+  test.each([null, "staged", "validating"])(
+    "keeps an unsettled %s release in undecided",
+    (registryVersionStatus) => {
+      expect(
+        scanMatchesDecisionFilter({ decision: null, registryVersionStatus }, "undecided"),
+      ).toBe(true);
+    },
+  );
+
+  test("matches published or subsequently deleted releases without a decision", () => {
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "published" },
+        "published_without_decision",
+      ),
+    ).toBe(true);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "deleted" },
+        "published_without_decision",
+      ),
+    ).toBe(true);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: "publish", registryVersionStatus: "published" },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "blocked" },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+    expect(
+      scanMatchesDecisionFilter(
+        {
+          decision: null,
+          registryVersionStatus: "published",
+          registryStatusSupersededAt: "2026-08-28T00:00:00.000Z",
+        },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+  });
+
+  test.each([
+    ["published", true],
+    ["deleted", true],
+    ["blocked", false],
+  ] as const)("uses a derived %s failure outcome for list filtering", (outcome, wasPublished) => {
+    const scan = { decision: null, registryReleaseOutcome: outcome };
+
+    expect(scanMatchesDecisionFilter(scan, "undecided")).toBe(false);
+    expect(scanMatchesDecisionFilter(scan, "published_without_decision")).toBe(wasPublished);
+    expect(scanMatchesDecisionFilter(scan, "all")).toBe(true);
+  });
+
+  test("excludes superseded history from undecided", () => {
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryStatusSupersededAt: "2026-08-27T00:00:00.000Z" },
+        "undecided",
+      ),
+    ).toBe(false);
   });
 });
 

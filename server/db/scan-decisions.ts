@@ -18,7 +18,13 @@ import { githubWorkflowGates, scans } from "./schema";
 export const SCAN_DECISIONS = ["publish", "no_publish"] as const;
 export type ScanDecision = (typeof SCAN_DECISIONS)[number];
 
-export const SCAN_DECISION_FILTERS = ["undecided", "publish", "no_publish", "all"] as const;
+export const SCAN_DECISION_FILTERS = [
+  "undecided",
+  "published_without_decision",
+  "publish",
+  "no_publish",
+  "all",
+] as const;
 export type ScanDecisionFilter = (typeof SCAN_DECISION_FILTERS)[number];
 
 export interface RecordScanDecisionInput {

@@ -436,6 +436,10 @@ function RecentReviewsSection({
 
 const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "undecided", label: "Undecided" },
+  {
+    value: "published_without_decision",
+    label: "Published without Drydock decision",
+  },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
@@ -466,7 +470,7 @@ function ScanStateSelect({
       <span aria-hidden class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         State
       </span>
-      <span class="w-[160px]">
+      <span class="w-[260px]">
         <Select
           id="scan-state-filter"
           size="sm"
@@ -500,6 +504,8 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
   switch (filter) {
     case "undecided":
       return "Nothing waiting on you. Switch to All to see earlier reviews.";
+    case "published_without_decision":
+      return "No npm releases were published without a Drydock decision.";
     case "publish":
       return "No approved reviews yet.";
     case "no_publish":

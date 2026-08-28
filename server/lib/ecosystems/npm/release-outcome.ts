@@ -12,7 +12,11 @@ import { notifyStagedReleaseAwaitingApproval } from "../../notify";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { emitOperationalEvent } from "../../platform/observability";
-import { fetchNpmVersionStatus, type NpmVersionStatus } from "./version-status";
+import {
+  fetchNpmVersionStatus,
+  NPM_RELEASE_OUTCOME_FAILURE_CODES,
+  type NpmVersionStatus,
+} from "./version-status";
 
 const LOOKUPS_PER_SWEEP = 16;
 const LOOKUP_CONCURRENCY = 4;
@@ -21,6 +25,8 @@ const PENDING_RECHECK_MS = 5 * 60 * 1000;
 const STAGED_RECHECK_MS = 60 * 60 * 1000;
 const PUBLISHED_RECHECK_MS = 24 * 60 * 60 * 1000;
 
+// After every review has received its first lookup, stop rechecking releases
+// older than this floor.
 const MAX_RELEASE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const FORGOTTEN_APPROVAL_DELAY_MS = 6 * 60 * 60 * 1000;
@@ -172,15 +178,15 @@ export async function resolveNpmReleaseOutcomes(
 
 const RELEASE_OUTCOME_FAILURES: Partial<Record<NpmVersionStatus, StagedReleaseFailure>> = {
   published: {
-    code: "staged_release_published",
+    code: NPM_RELEASE_OUTCOME_FAILURE_CODES.published,
     message: "This version was approved and published to npm before the review could read it.",
   },
   deleted: {
-    code: "staged_release_deleted",
+    code: NPM_RELEASE_OUTCOME_FAILURE_CODES.deleted,
     message: "This version was published to npm and then removed before the review could read it.",
   },
   blocked: {
-    code: "staged_release_blocked",
+    code: NPM_RELEASE_OUTCOME_FAILURE_CODES.blocked,
     message: "npm blocked this version during its own validation, so its staged bytes are gone.",
   },
 };

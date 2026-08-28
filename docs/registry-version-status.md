@@ -63,11 +63,15 @@ five-organization sweep cap bounds status traffic across the invocation. They us
 recheck floors by last known status: 5 minutes for never-asked and `validating`,
 1 hour for `staged`, and 24 hours for `published`, which can later become
 `deleted`. The terminal `blocked` and `deleted` states are never rechecked.
-Reviews older than 30 days stop being asked about at all. Only npm staged-publish scans are eligible;
+Every never-attempted review receives one lookup regardless of age. Once that
+attempt is stamped, reviews older than 30 days stop being asked about. Recent
+work is drained before that legacy first-lookup backlog, so historical reviews
+cannot consume a sweep while a current release waits. Only npm staged-publish scans are eligible;
 workflow-gate scans are excluded because their package coordinates may describe
-PyPI or VS Code releases. Due rows share one oldest-work timeline: creation time
-until the first lookup, then the last-attempt time. This drains new work without
-letting continuous arrivals starve validating, staged, or published rechecks.
+PyPI or VS Code releases. Within each age tier, due rows share one oldest-work
+timeline: creation time until the first lookup, then the last-attempt time. This
+drains new work without letting continuous arrivals starve validating, staged,
+or published rechecks.
 Status writes are fenced by that attempt timestamp, so an older overlapping
 sweep cannot replace a newer answer.
 
@@ -92,7 +96,16 @@ reviews cannot keep presenting a live-looking verdict or command for an obsolete
 stage ID. Any public report capability, badge, or threat-feed listing attached
 to the obsolete stage is retired at the same time. Superseded reviews cannot
 accept or update decisions; they remain under **All** as history but leave the
-default **Undecided** work queue. Failure
+default **Undecided** work queue. Likewise, a review with no Drydock decision
+leaves **Undecided** once npm reports `published`, `blocked`, or `deleted`, or a
+terminal scan failure proves the same outcome, because the stage is no longer
+actionable. It remains under **All** with its npm status badge when one was
+persisted. Completed reviews, unlike superseded history, can still accept a
+decision for the audit trail; failed reviews remain read-only history.
+**Published without Drydock decision** isolates both `published` and
+subsequently `deleted` releases that still have no decision, including a manual
+scan that failed because npm published before the review could read the tarball.
+`blocked` releases are excluded because they did not go live. Failure
 refinement rechecks ownership after its registry request so a concurrent restage
 cannot attribute the replacement stage's outcome to the older scan. The reminder
 marker remains as send-once history. Deleting a failed newer scan therefore
@@ -131,7 +144,9 @@ to review. The recorded `reason` now says which.
 Failed scans are not eligible for the background sweep. They therefore persist
 only terminal `blocked` and `deleted` registry statuses; a `published` lookup is
 kept in the refined failure message instead of storing a snapshot that could
-later become stale.
+later become stale. The dashboard list derives a settled release outcome from
+that safe failure code for queue and audit filtering without presenting it as a
+fresh registry-status badge.
 
 ## Forgotten-approval reminder
 
