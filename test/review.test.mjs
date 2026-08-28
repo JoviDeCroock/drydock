@@ -5,6 +5,7 @@ import {
   createPackageDiff,
   deterministicFindings,
   packageJsonDiffFindings,
+  projectReleaseRuleFindings,
   summarizePackageJsonDiff,
   tarSuspiciousEntryFindings,
 } from "../server/lib/review";
@@ -1032,6 +1033,24 @@ describe("review", () => {
       diffStatus: "modified",
       releaseDelta: true,
     });
+  });
+
+  test("projects only release-scoped findings without persistence annotations", () => {
+    const base = {
+      severity: "high",
+      file: "index.js",
+      evidence: "network-capable code path",
+      reason: "release code opens a network connection",
+      ruleId: "code.network-access",
+      ruleVersion: "1.0.0",
+    };
+
+    expect(
+      projectReleaseRuleFindings([
+        { ...base, diffStatus: "added", releaseDelta: true },
+        { ...base, file: "existing.js", diffStatus: "unchanged", releaseDelta: false },
+      ]),
+    ).toEqual([base]);
   });
 
   test("classifies manifest-diff dependency findings as release delta regardless of line", () => {

@@ -182,6 +182,7 @@ describe("AI review evidence tools", () => {
       maxToolResponseChars: expect.any(Number),
       maxTotalToolResponseChars: expect.any(Number),
     });
+    expect(payload.deterministicRisk).toBe("low");
 
     // One file list, not two: the diff list is gone and the manifest subsumes it.
     expect(payload).not.toHaveProperty("changedFileDiff");

@@ -9,10 +9,11 @@
 //   - npm:  createPackageDiff + deterministicFindings + packageJsonDiffFindings
 //   - pypi: createPyPiReleaseCandidateReview
 //   - atpm: atpmRecordFindings
+//   - vscode: createVscodeExtensionReview
 //
 // See docs/detection-eval.md for the design and the fixture v2 schema.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -27,6 +28,10 @@ import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
 } from "../../server/lib/ecosystems/pypi";
+import {
+  buildVscodeReleaseManifest,
+  createVscodeExtensionReview,
+} from "../../server/lib/ecosystems/vscode";
 import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,12 +52,13 @@ const SIGNIFICANT_SEVERITY = SEVERITY_RANK.medium;
 // tracks what the product actually surfaces. Clean regression controls are held
 // to the stricter "no significant finding at all" bar below.
 const SIGNIFICANT_RISK = RISK_RANK.medium;
+const SUPPORTED_ECOSYSTEMS = new Set(["npm", "pypi", "atpm", "vscode"]);
+const SUPPORTED_VERDICTS = new Set(["malicious", "benign"]);
 
 const riskRank = (level) => RISK_RANK[level] ?? 0;
 const severityRank = (severity) => SEVERITY_RANK[severity] ?? 0;
 
 function readCases(dir) {
-  if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((file) => file.endsWith(".json"))
     .sort()
@@ -69,6 +75,21 @@ function normalize(fx, kind, ecosystem) {
   );
   const derivedVerdict = fx.expectedRisk === "low" && !significant ? "benign" : "malicious";
   const verdict = fx.verdict ?? derivedVerdict;
+  const expectMinRisk =
+    fx.expectMinRisk ?? fx.expectedRisk ?? (verdict === "benign" ? "low" : "high");
+  const expectAnyRule = fx.expectAnyRule ?? [...new Set(expectedFindings.map((f) => f.ruleId))];
+  if (!SUPPORTED_ECOSYSTEMS.has(ecosystem)) {
+    throw new Error(`Detection eval fixture ${fx.id ?? "<unknown>"} has unsupported ecosystem`);
+  }
+  if (!SUPPORTED_VERDICTS.has(verdict)) {
+    throw new Error(`Detection eval fixture ${fx.id ?? "<unknown>"} has invalid verdict`);
+  }
+  if (!Object.hasOwn(RISK_RANK, expectMinRisk)) {
+    throw new Error(`Detection eval fixture ${fx.id ?? "<unknown>"} has invalid expectMinRisk`);
+  }
+  if (!Array.isArray(expectAnyRule) || expectAnyRule.some((ruleId) => typeof ruleId !== "string")) {
+    throw new Error(`Detection eval fixture ${fx.id ?? "<unknown>"} has invalid expectAnyRule`);
+  }
   return {
     id: fx.id,
     title: fx.title ?? fx.id,
@@ -77,8 +98,8 @@ function normalize(fx, kind, ecosystem) {
     verdict,
     threatClass: fx.threatClass ?? fx.category ?? "unclassified",
     source: fx.source ?? "synthetic",
-    expectMinRisk: fx.expectMinRisk ?? fx.expectedRisk ?? (verdict === "benign" ? "low" : "high"),
-    expectAnyRule: fx.expectAnyRule ?? [...new Set(expectedFindings.map((f) => f.ruleId))],
+    expectMinRisk,
+    expectAnyRule,
     fx,
   };
 }
@@ -88,6 +109,9 @@ export function loadCorpus() {
     ...readCases(join(CORPUS_DIR, "cases")).map((fx) => normalize(fx, "regression", "npm")),
     ...readCases(join(CORPUS_DIR, "cases-pypi")).map((fx) => normalize(fx, "regression", "pypi")),
     ...readCases(join(CORPUS_DIR, "cases-atpm")).map((fx) => normalize(fx, "regression", "atpm")),
+    ...readCases(join(CORPUS_DIR, "cases-vscode")).map((fx) =>
+      normalize(fx, "regression", "vscode"),
+    ),
   ];
   const frontier = readCases(join(CORPUS_DIR, "cases-frontier")).map((fx) =>
     normalize(fx, "frontier", fx.ecosystem ?? "npm"),
@@ -95,12 +119,39 @@ export function loadCorpus() {
   const benign = readCases(join(CORPUS_DIR, "cases-benign")).map((fx) =>
     normalize(fx, "benign", fx.ecosystem ?? "npm"),
   );
+  const records = [...regression, ...frontier, ...benign];
+  const ids = new Set();
+  for (const record of records) {
+    if (!record.id) throw new Error("Detection eval fixtures must have a non-empty id");
+    if (ids.has(record.id)) throw new Error(`Duplicate detection eval fixture id ${record.id}`);
+    ids.add(record.id);
+  }
   return { regression, frontier, benign };
 }
 
 function detect(record, fxOverride) {
   const fx = fxOverride ?? record.fx;
   if (record.ecosystem === "atpm") return createAtpmCorpusReview(fx);
+  if (record.ecosystem === "vscode") {
+    const path = fx.artifactPath ?? `dist/${fx.extensionId}-${fx.version}.vsix`;
+    const manifest = buildVscodeReleaseManifest(fx.extensionId, fx.version, [
+      { path, sha256: fx.sha256 },
+    ]);
+    const review = createVscodeExtensionReview({
+      manifest,
+      artifact: { path, sha256: fx.sha256, files: fx.stagedFiles },
+      ...(fx.previousFiles
+        ? {
+            previousArtifact: {
+              path,
+              sha256: fx.previousSha256,
+              files: fx.previousFiles,
+            },
+          }
+        : {}),
+    });
+    return { risk: review.risk, findings: review.ruleFindings };
+  }
   if (record.ecosystem === "pypi") {
     const review = createPyPiReleaseCandidateReview({
       manifest: parsePyPiReleaseManifest(fx.manifest),
@@ -199,8 +250,19 @@ function recallOf(records) {
   return {
     total: records.length,
     passed: passed.length,
-    recall: records.length ? passed.length / records.length : 1,
+    recall: records.length ? passed.length / records.length : null,
   };
+}
+
+function countByEcosystem(records) {
+  return Object.fromEntries(
+    [...new Set(records.map((record) => record.ecosystem))]
+      .sort()
+      .map((ecosystem) => [
+        ecosystem,
+        records.filter((record) => record.ecosystem === ecosystem).length,
+      ]),
+  );
 }
 
 export function runEval() {
@@ -253,15 +315,30 @@ export function runEval() {
   return {
     generatedAt: new Date().toISOString(),
     rulesVersion: DETERMINISTIC_RULES_VERSION,
+    coverage: {
+      regressionByEcosystem: countByEcosystem(regression),
+      frontierByEcosystem: countByEcosystem(frontier),
+      benignByEcosystem: countByEcosystem(benign),
+      evasionSamples: Object.fromEntries(
+        Object.entries(evasion).map(([name, stats]) => [name, stats.samples]),
+      ),
+    },
     regression: {
       malicious: recallOf(regMalicious),
       critical: recallOf(regCritical),
-      benign: { total: regBenign.length, falsePositives: benignFalsePositives.length },
+      benign: {
+        total: regBenign.length,
+        falsePositives: benignFalsePositives.length,
+        positives: benignFalsePositives.map((record) => ({
+          id: record.id,
+          threatClass: record.threatClass,
+        })),
+      },
     },
     frontier: {
       total: frontier.length,
       passed: frontier.length - frontierMisses.length,
-      recall: frontier.length ? (frontier.length - frontierMisses.length) / frontier.length : 1,
+      recall: frontier.length ? (frontier.length - frontierMisses.length) / frontier.length : null,
       misses: frontierMisses.map((r) => ({ id: r.id, threatClass: r.threatClass })),
     },
     benignHardNegatives: {
@@ -285,6 +362,21 @@ function renderMarkdown(result) {
   lines.push(`- generated: ${result.generatedAt}`);
   lines.push(`- deterministic rules version: ${result.rulesVersion}`);
   lines.push("");
+  lines.push("## Corpus coverage (gated)");
+  lines.push("");
+  lines.push("| ecosystem | regression | frontier | benign hard-negatives |");
+  lines.push("| --- | --- | --- | --- |");
+  const ecosystems = new Set([
+    ...Object.keys(result.coverage.regressionByEcosystem),
+    ...Object.keys(result.coverage.frontierByEcosystem),
+    ...Object.keys(result.coverage.benignByEcosystem),
+  ]);
+  for (const ecosystem of [...ecosystems].sort()) {
+    lines.push(
+      `| ${ecosystem} | ${result.coverage.regressionByEcosystem[ecosystem] ?? 0} | ${result.coverage.frontierByEcosystem[ecosystem] ?? 0} | ${result.coverage.benignByEcosystem[ecosystem] ?? 0} |`,
+    );
+  }
+  lines.push("");
   lines.push("## Regression (gated)");
   lines.push("");
   lines.push("| metric | value |");
@@ -298,6 +390,12 @@ function renderMarkdown(result) {
   lines.push(
     `| benign control false positives | ${result.regression.benign.falsePositives}/${result.regression.benign.total} |`,
   );
+  if (result.regression.benign.positives.length) {
+    lines.push("", "Acknowledged positives:", "");
+    for (const positive of result.regression.benign.positives) {
+      lines.push(`- \`${positive.id}\` (${positive.threatClass})`);
+    }
+  }
   lines.push("");
   lines.push("## Frontier (reported — truth-labeled hard cases)");
   lines.push("");
@@ -308,7 +406,7 @@ function renderMarkdown(result) {
     lines.push(`- MISS \`${miss.id}\` (${miss.threatClass})`);
   }
   lines.push("");
-  lines.push("## Benign hard-negatives (reported — false-positive precision)");
+  lines.push("## Benign hard-negatives (gated — false-positive precision)");
   lines.push("");
   lines.push(
     `false positives ${result.benignHardNegatives.falsePositives}/${result.benignHardNegatives.total} (${pct(result.benignHardNegatives.fpRate)})`,
@@ -331,12 +429,8 @@ function renderMarkdown(result) {
 }
 
 export function writeReport(result) {
-  try {
-    const outDir = join(__dirname, "..", "..", ".context", "eval");
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, "detection-eval.json"), JSON.stringify(result, null, 2));
-    writeFileSync(join(outDir, "detection-eval.md"), renderMarkdown(result));
-  } catch {
-    // Report writing is best-effort; never fail the eval over a filesystem issue.
-  }
+  const outDir = join(__dirname, "..", "..", ".context", "eval");
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "detection-eval.json"), JSON.stringify(result, null, 2));
+  writeFileSync(join(outDir, "detection-eval.md"), renderMarkdown(result));
 }

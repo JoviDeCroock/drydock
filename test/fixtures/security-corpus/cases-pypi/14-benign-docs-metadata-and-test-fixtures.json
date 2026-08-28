@@ -2,6 +2,7 @@
   "id": "pypi-benign-docs-metadata-and-test-fixtures",
   "title": "README prose in PKG-INFO, placeholder doc credentials, sdist directory entries, and test-suite fixture material stay demoted",
   "category": "control",
+  "verdict": "benign",
   "intent": "modeled on the requests 2.34.1->2.34.2 public diff: packaging metadata embedding capability-looking README prose must not raise code.* findings, placeholder proxy credentials in docs are not secrets, setuptools' explicit directory tar records are the archive norm, and test-suite certs/env reads demote (never drop) to test-scoped severities",
   "manifest": {
     "schema": "drydock.release-artifacts.v1",

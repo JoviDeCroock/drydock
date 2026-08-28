@@ -14,6 +14,7 @@ import {
   runAiReviewModelComparison,
   scoreRun,
   summarizeModel,
+  writeAiReviewModelComparisonReport,
 } from "./eval/ai-review-live-harness.mjs";
 import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
@@ -74,11 +75,11 @@ describe("estimateCost", () => {
 });
 
 describe("buildLiveCases", () => {
-  test("builds npm reviewer options from the security corpus", () => {
+  test("builds reviewer options from the staged security corpora", () => {
     const { cases } = buildLiveCases();
     expect(cases.length).toBeGreaterThan(0);
     for (const testCase of cases) {
-      expect(testCase.options.ecosystem).toBe("npm");
+      expect(["npm", "pypi", "vscode"]).toContain(testCase.options.ecosystem);
       expect(testCase.options.files.length).toBeGreaterThan(0);
       expect(Array.isArray(testCase.options.diff)).toBe(true);
       expect(Array.isArray(testCase.options.ruleFindings)).toBe(true);
@@ -94,12 +95,20 @@ describe("buildLiveCases", () => {
     expect(new Set(first).size).toBe(first.length);
   });
 
-  test("reports non-npm fixtures as skipped instead of dropping them silently", () => {
+  test("reports unsupported fixtures as skipped instead of dropping them silently", () => {
     const { cases, skipped } = buildLiveCases();
     expect(skipped.length).toBeGreaterThan(0);
     for (const entry of skipped) expect(entry.reason).toBeTruthy();
     const ids = new Set(cases.map((testCase) => testCase.id));
     for (const entry of skipped) expect(ids.has(entry.id)).toBe(false);
+  });
+
+  test("builds every staged ecosystem and only skips unsupported atpm fixtures", () => {
+    const { cases, skipped } = buildLiveCases();
+    expect(new Set(cases.map((testCase) => testCase.options.ecosystem))).toEqual(
+      new Set(["npm", "pypi", "vscode"]),
+    );
+    expect(new Set(skipped.map((entry) => entry.ecosystem))).toEqual(new Set(["atpm"]));
   });
 
   test("carries the deterministic risk alongside each case", () => {
@@ -108,7 +117,28 @@ describe("buildLiveCases", () => {
     expect(malicious.length).toBeGreaterThan(0);
     for (const testCase of cases) {
       expect(["low", "medium", "high", "critical"]).toContain(testCase.deterministicRisk);
+      expect(["low", "medium", "high", "critical"]).toContain(testCase.releaseDeterministicRisk);
     }
+  });
+
+  test("uses release-scoped findings and truth labels for baseline-backed PyPI cases", () => {
+    const { cases } = buildLiveCases();
+    const benign = cases.find(
+      (testCase) => testCase.id === "pypi-benign-docs-metadata-and-test-fixtures",
+    );
+    const malicious = cases.find(
+      (testCase) => testCase.id === "pypi-wheel-baseline-credential-added",
+    );
+
+    expect(benign).toMatchObject({
+      verdict: "benign",
+      deterministicRisk: "medium",
+      releaseDeterministicRisk: "low",
+    });
+    expect(benign.options.ruleFindings).toEqual([]);
+    expect(malicious.options.ruleFindings.map((finding) => finding.ruleId)).toEqual(
+      expect.arrayContaining(["diff.credential-file-added", "file.secret-content"]),
+    );
   });
 });
 
@@ -131,14 +161,20 @@ const maliciousCase = {
   kind: "regression",
   verdict: "malicious",
   threatClass: "t",
-  deterministicRisk: "critical",
+  expectMinRisk: "high",
+  deterministicRisk: "low",
+  releaseDeterministicRisk: "low",
+  options: { ruleFindings: [] },
 };
 const benignCase = {
   id: "b",
   kind: "benign",
   verdict: "benign",
   threatClass: "t",
+  expectMinRisk: "low",
   deterministicRisk: "low",
+  releaseDeterministicRisk: "low",
+  options: { ruleFindings: [] },
 };
 
 describe("scoreRun", () => {
@@ -158,6 +194,44 @@ describe("scoreRun", () => {
     expect(scoreRun(maliciousCase, { review: cleared, usage: usage() }).passed).toBe(false);
   });
 
+  test("uses the fixture risk floor and production deterministic roll-up", () => {
+    const mediumFinding = {
+      severity: "medium",
+      file: "package.json",
+      evidence: "bin added",
+      reason: "new command surface",
+      ruleId: "diff.bin-added",
+    };
+    const testCase = {
+      ...maliciousCase,
+      expectMinRisk: "medium",
+      deterministicRisk: "medium",
+      releaseDeterministicRisk: "medium",
+      options: { ruleFindings: [mediumFinding] },
+    };
+    const cleared = review({
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      requiresManualReview: false,
+    });
+
+    expect(scoreRun(testCase, { review: cleared, usage: usage() })).toMatchObject({
+      passed: true,
+      aiCaught: false,
+      productRisk: "medium",
+    });
+  });
+
+  test("does not call a low production risk caught from assessment copy alone", () => {
+    const inconsistent = review({
+      risk: "low",
+      releaseAssessment: "blocked",
+      findings: [],
+      requiresManualReview: false,
+    });
+    expect(scoreRun(maliciousCase, { review: inconsistent, usage: usage() }).passed).toBe(false);
+  });
+
   test("fails a benign fixture the model escalated", () => {
     expect(scoreRun(benignCase, { review: review(), usage: usage() }).passed).toBe(false);
   });
@@ -166,8 +240,27 @@ describe("scoreRun", () => {
     const run = scoreRun(maliciousCase, { review: review({ status: "invalid" }), usage: null });
     expect(run.completed).toBe(false);
     expect(run.status).toBe("invalid");
+    expect(run.usageAvailable).toBe(false);
     expect(run.inputTokens).toBe(0);
     expect(run.steps).toBe(0);
+  });
+
+  test("excludes provider usage without token counts from cost metrics", () => {
+    const run = scoreRun(maliciousCase, {
+      review: review(),
+      usage: {
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        totalTokens: null,
+        steps: 6,
+      },
+    });
+    const summary = summarizeModel(KIMI, [run]);
+
+    expect(run.usageAvailable).toBe(false);
+    expect(summary.costCoverage).toBe(0);
+    expect(summary.avgCostUsd).toBeNull();
   });
 });
 
@@ -193,7 +286,7 @@ describe("summarizeModel", () => {
     const summary = summarizeModel(KIMI, runs);
     expect(summary.completionRate).toBeCloseTo(2 / 3, 6);
     expect(summary.invalidRate).toBeCloseTo(1 / 3, 6);
-    expect(summary.catchRate).toBeCloseTo(1 / 2, 6);
+    expect(summary.productCoverageRate).toBeCloseTo(1 / 2, 6);
     expect(summary.falsePositiveRate).toBe(0);
   });
 
@@ -201,10 +294,18 @@ describe("summarizeModel", () => {
     expect(summarizeModel(KIMI, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
   });
 
+  test("excludes runs without usage from cost coverage and token averages", () => {
+    const summary = summarizeModel(KIMI, runs);
+    expect(summary.costCoverage).toBeCloseTo(2 / 3, 6);
+    expect(summary.avgInputTokens).toBe(100_000);
+    expect(summary.avgOutputTokens).toBe(3_000);
+    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(KIMI, usage()), 6);
+  });
+
   test("leaves rates null rather than inventing a denominator", () => {
     const summary = summarizeModel(KIMI, [runs[0]]);
     expect(summary.falsePositiveRate).toBeNull();
-    expect(summary.catchRate).toBe(1);
+    expect(summary.productCoverageRate).toBe(1);
   });
 });
 
@@ -214,7 +315,7 @@ describe("renderMarkdown", () => {
     reviewerVersion: AI_REVIEWER_VERSION,
     models: [KIMI],
     caseCount: 2,
-    skipped: [{ id: "pypi-x", ecosystem: "pypi", reason: "non-npm fixture shape" }],
+    skipped: [{ id: "atpm-x", ecosystem: "atpm", reason: "no staged AI review" }],
     truncated: 0,
     byModel: [
       summarizeModel(KIMI, [scoreRun(maliciousCase, { review: review(), usage: usage() })]),
@@ -224,8 +325,8 @@ describe("renderMarkdown", () => {
   test("renders a comparison row per model", () => {
     const markdown = renderMarkdown(base);
     expect(markdown).toContain(KIMI);
-    expect(markdown).toContain("Misses: none.");
-    expect(markdown).toContain("skipped (non-npm fixture shape): 1");
+    expect(markdown).toContain("Expectation misses: none.");
+    expect(markdown).toContain("skipped (no staged AI review): 1");
   });
 
   test("says so loudly when the run was truncated", () => {
@@ -245,6 +346,12 @@ describe("renderMarkdown", () => {
       }),
     ]);
     expect(renderMarkdown({ ...base, byModel: [missed] })).toContain("`m` (malicious/t)");
+  });
+});
+
+describe("writeAiReviewModelComparisonReport", () => {
+  test("rejects a report stem that could escape the eval directory", () => {
+    expect(() => writeAiReviewModelComparisonReport({}, "../outside")).toThrow(/simple filename/);
   });
 });
 
@@ -328,9 +435,9 @@ describe("runAiReviewModelComparison", () => {
     });
 
     const [kimi, glm] = result.byModel;
-    expect(kimi.catchRate).toBe(1);
+    expect(kimi.productCoverageRate).toBe(1);
     expect(kimi.falsePositiveRate).toBe(1);
-    expect(glm.catchRate).toBe(1);
+    expect(glm.productCoverageRate).toBe(1);
     expect(glm.totalCostUsd).toBeLessThan(kimi.totalCostUsd);
   });
 
@@ -350,5 +457,100 @@ describe("runAiReviewModelComparison", () => {
     expect(result.truncated).toBe(1);
     expect(calls).toEqual(["case-a"]);
     expect(renderMarkdown(result)).toContain("**truncated**: 1");
+  });
+
+  test("resumes after a stable fixture offset", async () => {
+    const calls = [];
+    const result = await runAiReviewModelComparison({
+      accountId: "acct",
+      apiKey: "key",
+      models: [GLM],
+      corpus: twoCaseCorpus,
+      offset: 1,
+      analyze: stubAnalyze((_model, options) => {
+        calls.push(options.scanId);
+        return {};
+      }),
+    });
+
+    expect(calls).toEqual(["ai-review-live-case-b"]);
+    expect(result.offset).toBe(1);
+    expect(result.truncated).toBe(0);
+    expect(renderMarkdown(result)).toContain("resumed after fixtures: 1");
+  });
+
+  test("runs an explicit fixture selection in the requested order", async () => {
+    const calls = [];
+    const result = await runAiReviewModelComparison({
+      accountId: "acct",
+      apiKey: "key",
+      models: [GLM],
+      corpus: twoCaseCorpus,
+      caseIds: ["case-b", "case-a"],
+      direct: true,
+      analyze: stubAnalyze((_model, options) => {
+        calls.push(options.scanId);
+        return {};
+      }),
+    });
+
+    expect(calls).toEqual(["ai-review-live-case-b", "ai-review-live-case-a"]);
+    expect(result.transport).toBe("direct");
+    expect(result.selectedCaseIds).toEqual(["case-b", "case-a"]);
+    expect(result.truncated).toBe(0);
+    expect(renderMarkdown(result)).toContain("selected fixtures: 2");
+  });
+
+  test("rejects unknown fixture selections before inference", async () => {
+    await expect(
+      runAiReviewModelComparison({
+        accountId: "acct",
+        apiKey: "key",
+        models: [GLM],
+        corpus: twoCaseCorpus,
+        caseIds: ["missing"],
+        analyze: stubAnalyze(() => ({})),
+      }),
+    ).rejects.toThrow(/unknown case ids: missing/);
+  });
+
+  test("records a thrown fixture run and continues the paid comparison", async () => {
+    const progress = [];
+    const result = await runAiReviewModelComparison({
+      accountId: "acct",
+      apiKey: "key",
+      models: [KIMI],
+      corpus: twoCaseCorpus,
+      analyze: async (_env, _models, options) => {
+        if (options.scanId.endsWith("case-a")) throw new TypeError("provider payload");
+        return { review: review(), usage: usage() };
+      },
+      onProgress: ({ run }) => progress.push([run.id, run.status]),
+    });
+
+    expect(progress).toEqual([
+      ["case-a", "harness_error"],
+      ["case-b", "complete"],
+    ]);
+    expect(result.byModel[0].harnessErrorRate).toBe(0.5);
+    expect(result.byModel[0].costCoverage).toBe(0.5);
+    expect(result.byModel[0].runs[0]).toMatchObject({
+      passed: false,
+      errorName: "TypeError",
+    });
+    expect(renderMarkdown(result)).toContain("harness errors: 50%");
+  });
+
+  test("rejects empty or duplicate model lists before making network calls", async () => {
+    await expect(
+      runAiReviewModelComparison({ corpus: twoCaseCorpus, models: [], analyze: async () => {} }),
+    ).rejects.toThrow(/at least one model/);
+    await expect(
+      runAiReviewModelComparison({
+        corpus: twoCaseCorpus,
+        models: [KIMI, KIMI],
+        analyze: async () => {},
+      }),
+    ).rejects.toThrow(/duplicate model/);
   });
 });

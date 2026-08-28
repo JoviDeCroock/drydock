@@ -4,10 +4,12 @@ import {
   AI_FALLBACK_MODEL,
   AI_MODEL,
   AI_MODEL_CANDIDATES,
+  AI_REASONING_EFFORT,
   AI_REVIEWER_VERSION,
   analyzeWithAi,
   aiGatewayMetadataHeader,
   aiReviewRequestHeaders,
+  aiReviewReasoningEffort,
   aiReviewTraceTelemetry,
   displayedAiResult,
   selectModelCandidates,
@@ -118,6 +120,7 @@ describe("AI review prompt selection", () => {
     const prompt = buildReviewerSystemPrompt("npm");
 
     expect(prompt).toContain("Ecosystem: npm.");
+    expect(prompt).toContain("maintainer-only tooling");
     expect(prompt).not.toContain("Ecosystem: PyPI.");
   });
 
@@ -125,7 +128,18 @@ describe("AI review prompt selection", () => {
     const prompt = buildReviewerSystemPrompt("pypi");
 
     expect(prompt).toContain("Ecosystem: PyPI.");
+    expect(prompt).toContain("nested inside an ordinary package directory are inert");
+    expect(prompt).toContain("require an observable execution path or another risk signal");
+    expect(prompt).toContain("may legally omit its hash or size");
     expect(prompt).not.toContain("optionalDependencies");
+  });
+
+  test("separates immutable deterministic evidence from additive AI risk", () => {
+    const prompt = buildReviewerSystemPrompt("npm");
+
+    expect(prompt).toContain("application scores them separately");
+    expect(prompt).toContain("do not copy a deterministic finding into the AI findings");
+    expect(prompt).not.toContain("never downgrade them");
   });
 
   test("routes the vscode ecosystem to the VS Code prompt without npm/PyPI leakage", () => {
@@ -151,12 +165,15 @@ describe("ai review orchestration", () => {
     expect(AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
     expect(AI_FALLBACK_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
+    expect(AI_REASONING_EFFORT).toBe("high");
+    expect(aiReviewReasoningEffort(AI_MODEL)).toBe("high");
+    expect(aiReviewReasoningEffort(AI_FALLBACK_MODEL)).toBeUndefined();
   });
   test("uses GLM first for a clean low-signal release", () => {
     expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
-  test("keeps the strong model first when deterministic findings are present", () => {
+  test("keeps GLM first when deterministic findings are present", () => {
     const options = {
       ...BASE_OPTIONS,
       ruleFindings: [aiFinding("high", "package.json")],
@@ -171,10 +188,10 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps the strong model first when lifecycle scripts change", () => {
+  test("keeps GLM first when lifecycle scripts change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -192,10 +209,10 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps the strong model first when dependencies change", () => {
+  test("keeps GLM first when dependencies change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -213,10 +230,10 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps the strong model first when entrypoints change", () => {
+  test("keeps GLM first when entrypoints change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -234,10 +251,10 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps the strong model first when no previous version is available", () => {
+  test("keeps GLM first when no previous version is available", () => {
     const options = {
       ...BASE_OPTIONS,
       previousVersionAvailable: false,
@@ -252,7 +269,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("uses GLM first for a medium-signal release", () => {
@@ -433,7 +450,7 @@ describe("ai review orchestration", () => {
     ]);
   });
 
-  test("keeps the strong model first for medium-severity obfuscation", () => {
+  test("keeps GLM first for medium-severity obfuscation", () => {
     const options = {
       ...BASE_OPTIONS,
       ruleFindings: [{ ...aiFinding("medium", "src/index.js"), obfuscated: true }],
@@ -448,7 +465,7 @@ describe("ai review orchestration", () => {
       ],
     };
 
-    expect(selectModelCandidates(options)).toEqual([AI_FALLBACK_MODEL, AI_MODEL]);
+    expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
   test("a complete review without evidence does not raise package risk", async () => {

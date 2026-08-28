@@ -8,7 +8,10 @@
 //
 // Optional: AI_REVIEW_LIVE_MODELS (comma-separated model ids to compare),
 // AI_REVIEW_LIVE_LIMIT (cap fixtures per model while iterating),
-// AI_REVIEW_LIVE_GATEWAY (AI Gateway id).
+// AI_REVIEW_LIVE_OFFSET (skip completed fixtures when resuming),
+// AI_REVIEW_LIVE_CASES (comma-separated fixture ids), AI_REVIEW_LIVE_GATEWAY
+// (AI Gateway id), AI_REVIEW_LIVE_DIRECT=1 (bypass Gateway for credentials that
+// can call Workers AI directly but cannot authenticate to the configured Gateway).
 //
 // This asserts nothing about which model wins — picking a model is a judgement
 // call over detection quality, completion rate, and cost together. It fails
@@ -45,11 +48,26 @@ function parseLimit(raw) {
   return limit;
 }
 
+function parseOffset(raw) {
+  if (!raw) return 0;
+  const offset = Number(raw);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(
+      `AI_REVIEW_LIVE_OFFSET must be a non-negative integer, got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return offset;
+}
+
 const limit = parseLimit(process.env.AI_REVIEW_LIVE_LIMIT);
+const offset = parseOffset(process.env.AI_REVIEW_LIVE_OFFSET);
+const caseIds = process.env.AI_REVIEW_LIVE_CASES
+  ? process.env.AI_REVIEW_LIVE_CASES.split(",").map((id) => id.trim())
+  : undefined;
 
 describe.skipIf(!enabled)("AI reviewer live model comparison", () => {
   test(
-    "compares candidate models over the npm security corpus",
+    "compares candidate models over the staged security corpora",
     { timeout: 3_600_000 },
     async () => {
       if (!accountId || !apiKey) {
@@ -64,6 +82,9 @@ describe.skipIf(!enabled)("AI reviewer live model comparison", () => {
         gatewayId: process.env.AI_REVIEW_LIVE_GATEWAY || undefined,
         models,
         limit,
+        offset,
+        caseIds,
+        direct: process.env.AI_REVIEW_LIVE_DIRECT === "1",
         onProgress: ({ model, run }) => {
           process.stdout.write(
             `  ${model} ${run.id}: ${run.status} risk=${run.risk} steps=${run.steps} ${run.passed ? "pass" : "MISS"}\n`,
@@ -71,7 +92,10 @@ describe.skipIf(!enabled)("AI reviewer live model comparison", () => {
         },
       });
 
-      writeAiReviewModelComparisonReport(result);
+      writeAiReviewModelComparisonReport(
+        result,
+        process.env.AI_REVIEW_LIVE_REPORT_STEM || undefined,
+      );
       process.stdout.write(`\n${renderMarkdown(result)}\n`);
 
       expect(result.byModel.some((entry) => entry.completionRate > 0)).toBe(true);

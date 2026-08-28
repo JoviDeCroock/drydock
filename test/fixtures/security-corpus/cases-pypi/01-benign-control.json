@@ -80,10 +80,10 @@
         },
         {
           "path": "demo_package-1.2.0/setup.py",
-          "size": 80,
+          "size": 108,
           "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
           "flags": [],
-          "textSample": "from setuptools import setup\n\nsetup(name=\"demo-package\", version=\"1.2.0\")\n"
+          "textSample": "from setuptools import setup\n\nsetup(name=\"demo-package\", version=\"1.2.0\", install_requires=[\"requests>=2\"])\n"
         },
         {
           "path": "demo_package-1.2.0/demo_package/__init__.py",
