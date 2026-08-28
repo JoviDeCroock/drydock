@@ -11,8 +11,10 @@ package-provided code.
 Only dependencies resolved from the canonical public npm registry are eligible
 for a public verdict. Private-registry, Git, tarball, and local sources are
 reported through `onUnavailable`; they are never compared with same-named
-public npm bytes. For pnpm, checked-in `.npmrc` registry and scope settings are
-used to classify locators without reading or transmitting credentials.
+public npm bytes. For pnpm, each compared revision's checked-in `.npmrc`
+registry and scope settings classify its own locators without reading or
+transmitting credentials. Lockfile renames and same-directory replacements
+between the two supported formats preserve the comparison.
 
 ```sh
 npx drydock-verify verify --base origin/main
