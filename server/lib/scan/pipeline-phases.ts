@@ -36,6 +36,7 @@ import {
   dependencyEvidenceFindings,
   EMPTY_DEPENDENCY_REVIEW,
   failedDependencyReview,
+  MAX_RECORDED_DEPENDENCIES,
   mergeDependencyReviews,
   redactFileRecords,
   redactFindings,
@@ -436,12 +437,17 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
     stagedManifest: findings.redactedStagedManifest,
     stagedFiles: findings.redactedStagedFiles,
   };
+  const maxRecordedDependencies = Math.max(
+    0,
+    MAX_RECORDED_DEPENDENCIES - findings.dependencyReview.dependencies.length,
+  );
   try {
     const inspected = redactJson(
       await adapter.inspectAddedDependencies(ctx, {
         manifestDiff: diff.manifestDiff,
         stagedManifest: selectionOptions.stagedManifest,
         stagedFiles: selectionOptions.stagedFiles,
+        maxRecordedDependencies,
         scanId: identity.scanId,
         organizationId: identity.organizationId,
       }),
@@ -472,10 +478,14 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
       adapterId: adapter.id,
       error: describeOperationalError(err),
     });
-    const review = failedDependencyReview(diff.manifestDiff, {
-      stagedManifest: selectionOptions.stagedManifest,
-      stagedFiles: selectionOptions.stagedFiles,
-    });
+    const review = failedDependencyReview(
+      diff.manifestDiff,
+      {
+        stagedManifest: selectionOptions.stagedManifest,
+        stagedFiles: selectionOptions.stagedFiles,
+      },
+      maxRecordedDependencies,
+    );
     const parent = {
       name: findings.redactedStagedManifest?.name ?? null,
       version: findings.redactedStagedManifest?.version ?? null,

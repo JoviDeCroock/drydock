@@ -9,8 +9,10 @@ import {
   normalizeDependencyEvidence,
   normalizeDependencyReview,
   reconcileDependencyReviewFindings,
+  selectAddedDependencyDeclarations,
   selectAddedDependencies,
   selectAddedRegistryDependencyDeclarations,
+  selectBundledAddedDependencyDeclarations,
   selectBundledAddedDependencies,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
@@ -72,6 +74,55 @@ describe("normalizeDependencyEvidence", () => {
         },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("selectAddedDependencyDeclarations", () => {
+  test.each([
+    [
+      "an optional peer becoming required",
+      {
+        name: "p",
+        peerDependencies: { shared: "^2.0.0" },
+        peerDependenciesMeta: { shared: { optional: true } },
+      },
+      { name: "p", peerDependencies: { shared: "^2.0.0" } },
+      [{ name: "shared", section: "peerDependencies", declaredSpec: "^2.0.0" }],
+    ],
+    [
+      "an optional override with a different installed spec",
+      { name: "p", dependencies: { shared: "^1.0.0" } },
+      {
+        name: "p",
+        dependencies: { shared: "^1.0.0" },
+        optionalDependencies: { shared: "^2.0.0" },
+      },
+      [{ name: "shared", section: "optionalDependencies", declaredSpec: "^2.0.0" }],
+    ],
+    [
+      "a required peer beside a different installed spec",
+      { name: "p", dependencies: { shared: "^1.0.0" } },
+      {
+        name: "p",
+        dependencies: { shared: "^1.0.0" },
+        peerDependencies: { shared: "^2.0.0" },
+      },
+      [{ name: "shared", section: "peerDependencies", declaredSpec: "^2.0.0" }],
+    ],
+    [
+      "a required peer moved under dependencies at a different spec",
+      { name: "p", peerDependencies: { shared: "^1.0.0" } },
+      {
+        name: "p",
+        dependencies: { shared: "^2.0.0" },
+        peerDependencies: { shared: "^2.0.0" },
+      },
+      [{ name: "shared", section: "dependencies", declaredSpec: "^2.0.0" }],
+    ],
+  ])("keeps declaration identity for %s", (_label, previous, staged, expected) => {
+    const diff = diffOf(previous, staged);
+    expect(selectAddedDependencyDeclarations(diff)).toEqual(expected);
+    expect(selectAddedRegistryDependencyDeclarations(diff)).toEqual(expected);
   });
 });
 
@@ -323,6 +374,15 @@ describe("selectAddedDependencies", () => {
         ],
       }).map((entry) => entry.name),
     ).toEqual(["embedded"]);
+    expect(
+      selectBundledAddedDependencyDeclarations(diffOf(null, staged), {
+        includeWithoutBaseline: true,
+        stagedManifest: staged,
+        stagedFiles: [
+          file("node_modules/embedded/package.json", '{"name":"embedded","version":"1.0.0"}'),
+        ],
+      }),
+    ).toEqual([{ name: "embedded", section: "dependencies", declaredSpec: "1.0.0" }]);
   });
 
   test("skips declared bundled dependencies only when their bytes are embedded", () => {

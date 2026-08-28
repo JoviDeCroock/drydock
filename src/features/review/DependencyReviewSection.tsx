@@ -174,7 +174,11 @@ function partialReviewCopy(review: DependencyReview): string {
 
 function DependencyRow(dependency: ReviewedDependencyEvidence) {
   return (
-    <li class="flex flex-col gap-2 px-3 py-3 min-w-0">
+    <li
+      id={dependencyEvidenceDomId(dependency)}
+      data-dependency-name={dependency.name}
+      class="flex flex-col gap-2 px-3 py-3 min-w-0 scroll-mt-6"
+    >
       <div class="flex flex-wrap items-center gap-2 min-w-0">
         <Badge tone={observationTone(dependency)}>{observationLabel(dependency)}</Badge>
         <code class="font-mono text-[13px] text-ink break-all min-w-0">

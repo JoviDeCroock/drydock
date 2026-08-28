@@ -33,6 +33,7 @@ import { classifyDependencyInstallRisk, hasObservedInstallRisk } from "./depende
 import {
   dependencyDeclarationKind,
   selectAddedDependencies,
+  selectBundledAddedDependencies,
   type AddedDependency,
   type DependencySelectionOptions,
 } from "./dependency-selection";
@@ -167,23 +168,34 @@ export function dependencyDeclarationKey(
 /** The direct, newly installable declarations issue #595 puts in scope. */
 export function selectAddedDependencyDeclarations(
   manifestDiff: PackageJsonDiff,
+  options: Pick<DependencySelectionOptions, "includeWithoutBaseline"> = {},
 ): AddedDependencyDeclaration[] {
-  if (!manifestDiff.hasPreviousManifest) return [];
+  const effective = selectAddedDependencies(manifestDiff, options);
+  if (!effective.length) return [];
+  const effectiveKeys = new Set(
+    effective.map((dependency) =>
+      dependencyDeclarationKey(dependency.name, dependency.section, dependency.spec),
+    ),
+  );
+  const effectiveNames = new Set(effective.map((dependency) => dependency.name));
   const sectionOrder: DependencySection[] = [
     "dependencies",
     "optionalDependencies",
     "peerDependencies",
   ];
   return manifestDiff.dependencies
-    .filter(
-      (entry) =>
-        entry.status === "added" &&
-        entry.staged !== undefined &&
-        !entry.previouslyInstalled &&
-        (entry.section === "dependencies" ||
-          entry.section === "optionalDependencies" ||
-          (entry.section === "peerDependencies" && !entry.stagedPeerOptional)),
-    )
+    .filter((entry) => {
+      const supported =
+        entry.section === "dependencies" ||
+        entry.section === "optionalDependencies" ||
+        (entry.section === "peerDependencies" && !entry.stagedPeerOptional);
+      if (entry.staged === undefined || !supported) {
+        return false;
+      }
+      const section = entry.section ?? "dependencies";
+      const key = dependencyDeclarationKey(entry.key, section, entry.staged);
+      return effectiveKeys.has(key) || (entry.status === "added" && effectiveNames.has(entry.key));
+    })
     .map((entry) => ({
       name: entry.key,
       section: entry.section ?? "dependencies",
@@ -196,6 +208,21 @@ export function selectAddedDependencyDeclarations(
     );
 }
 
+/** Direct declarations whose reviewed bytes are embedded in the parent artifact. */
+export function selectBundledAddedDependencyDeclarations(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions = {},
+): AddedDependencyDeclaration[] {
+  const bundledNames = new Set(
+    selectBundledAddedDependencies(manifestDiff, options).map((dependency) => dependency.name),
+  );
+  return selectAddedDependencyDeclarations(manifestDiff, {
+    includeWithoutBaseline: options.includeWithoutBaseline,
+  }).filter(
+    (dependency) => dependency.section !== "peerDependencies" && bundledNames.has(dependency.name),
+  );
+}
+
 /** Direct declarations whose bytes must come from the registry, not the parent artifact. */
 export function selectAddedRegistryDependencyDeclarations(
   manifestDiff: PackageJsonDiff,
@@ -204,7 +231,9 @@ export function selectAddedRegistryDependencyDeclarations(
   const registryNames = new Set(
     selectAddedDependencies(manifestDiff, options).map((dependency) => dependency.name),
   );
-  return selectAddedDependencyDeclarations(manifestDiff).filter(
+  return selectAddedDependencyDeclarations(manifestDiff, {
+    includeWithoutBaseline: options.includeWithoutBaseline,
+  }).filter(
     (dependency) => dependency.section === "peerDependencies" || registryNames.has(dependency.name),
   );
 }
@@ -447,6 +476,7 @@ export function dependencyEvidenceFindings(
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
         ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} → ${behaviors}`,
+        dependency: findingDependencyCoordinate(evidence, parent),
         reason: nativeExecution
           ? "this release introduces a dependency whose install-time path can invoke a native executable or load a native module; confirm that the binary and its install entrypoint are expected before approving, because every consumer install inherits that native execution"
           : !strong
@@ -463,6 +493,7 @@ export function dependencyEvidenceFindings(
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
         ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} runs ${evidence.automaticExecution.map((entry) => entry.name).join(", ")} on install`,
+        dependency: findingDependencyCoordinate(evidence, parent),
         reason:
           "a newly introduced dependency executes code on every consumer install; nothing in its install path matched a downloader or credential pattern, but the execution itself is new behavior this release adds to consumer machines",
       });
@@ -472,6 +503,7 @@ export function dependencyEvidenceFindings(
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
         ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} — ${describeCapabilities(evidence.capabilities)}`,
+        dependency: findingDependencyCoordinate(evidence, parent),
         reason:
           "recorded so the newly introduced dependency's reviewed contents are visible; nothing in it runs automatically on install, so being new is not by itself a reason to hold the release",
       });
@@ -515,6 +547,7 @@ function integrityMismatchFinding(
     file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
     ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUnavailable,
     evidence: `${dependencyPathLabel(parent, evidence)} — registry ${digestLabel(evidence.declaredDigest)} != reviewed ${digestLabel(evidence.reviewedDigest)}`,
+    dependency: findingDependencyCoordinate(evidence, parent),
     reason:
       "the dependency bytes Drydock reviewed do not match the digest the registry advertised, so the reviewed artifact cannot be trusted as the dependency consumers install; re-fetch and resolve the registry integrity failure before approving",
   };
@@ -533,7 +566,21 @@ function uninspectableFinding(
     file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
     ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUnavailable,
     evidence: `${dependencyPathLabel(parent, evidence)} — ${UNINSPECTABLE_EVIDENCE[evidence.reason ?? "artifact-unavailable"]}`,
+    dependency: findingDependencyCoordinate(evidence, parent),
     reason: UNINSPECTABLE_REASON_TEXT,
+  };
+}
+
+function findingDependencyCoordinate(
+  evidence: ReviewedDependencyEvidence,
+  parent: { name: string | null; version: string | null },
+): NonNullable<Finding["dependency"]> {
+  return {
+    name: evidence.name,
+    version: evidence.resolvedVersion,
+    path: dependencyPathLabel(parent, evidence),
+    section: evidence.section,
+    declaredSpec: evidence.declaredSpec,
   };
 }
 
@@ -568,6 +615,7 @@ const UNINSPECTABLE_EVIDENCE: Record<DependencyUninspectableReason, string> = {
 export function failedDependencyReview(
   manifestDiff: PackageJsonDiff,
   options: DependencySelectionOptions = {},
+  maxRecordedDependencies = MAX_RECORDED_DEPENDENCIES,
 ): DependencyReview {
   const selected = selectAddedRegistryDependencyDeclarations(manifestDiff, options).map(
     (dependency) => ({
@@ -578,8 +626,12 @@ export function failedDependencyReview(
     }),
   );
   if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
+  const recordLimit = Math.max(
+    0,
+    Math.min(MAX_RECORDED_DEPENDENCIES, Math.trunc(maxRecordedDependencies)),
+  );
   const recorded = selected
-    .slice(0, MAX_RECORDED_DEPENDENCIES)
+    .slice(0, recordLimit)
     .map((dependency) => uninspectableEvidence(dependency, "review-failed"));
   return {
     status: "partial",

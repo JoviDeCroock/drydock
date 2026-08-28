@@ -158,6 +158,8 @@ export interface DependencyInspectionArgs {
   manifestDiff: PackageJsonDiff;
   stagedManifest: PackageJsonSummary | null;
   stagedFiles: FileRecord[];
+  /** Remaining slots in the release-wide persisted dependency evidence budget. */
+  maxRecordedDependencies: number;
   scanId: string;
   organizationId: string;
 }
