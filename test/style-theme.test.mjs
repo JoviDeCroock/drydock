@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 // light-mode bug these protect against was invisible in normal development
 // (the site renders fine in dark mode), so it needs a source-level guard.
 const css = readFileSync(fileURLToPath(new URL("../src/style.css", import.meta.url)), "utf8");
+const html = readFileSync(fileURLToPath(new URL("../index.html", import.meta.url)), "utf8");
 const loading = readFileSync(
   fileURLToPath(new URL("../src/components/Loading.tsx", import.meta.url)),
   "utf8",
@@ -64,6 +65,25 @@ describe("theme tokens", () => {
     const darkBg = tokenInBlock(dark, "--color-bg");
     expect(lightBg?.toLowerCase()).toBe("#fafafa");
     expect(darkBg?.toLowerCase()).toBe("#0a0a0a");
+  });
+
+  test("browser chrome theme colors match the page backgrounds", () => {
+    const lightBg = css.match(/--color-bg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    const darkBg = tokenInBlock(dark, "--color-bg");
+    const themeColors = new Map(
+      [
+        ...html.matchAll(
+          /<meta name="theme-color" content="(#[0-9a-fA-F]{6})" media="\(prefers-color-scheme: (dark|light)\)" \/>/g,
+        ),
+      ].map(([, color, scheme]) => [scheme, color.toLowerCase()]),
+    );
+
+    expect(themeColors).toEqual(
+      new Map([
+        ["dark", darkBg?.toLowerCase()],
+        ["light", lightBg?.toLowerCase()],
+      ]),
+    );
   });
 
   test("dark --color-ink-subtle passes WCAG AA on every dark surface", () => {

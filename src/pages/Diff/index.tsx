@@ -116,6 +116,7 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {spec.packageName}
         </h1>
+        <MonoDetail parts={["public package diff"]} />
         <Show
           when={error}
           fallback={
@@ -156,6 +157,7 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {packageName}
         </h1>
+        <MonoDetail parts={["public package diff"]} />
         <Show
           when={error}
           fallback={
