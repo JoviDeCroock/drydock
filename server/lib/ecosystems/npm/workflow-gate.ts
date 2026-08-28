@@ -1,6 +1,6 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
 import { createNpmBroker } from "./broker";
-import { getNpmConnectionRegistryUrl } from "../../../db/npm-connections";
+import { getNpmConnectionAuthority } from "../../../db/npm-connections";
 import { allowInsecureLocalRegistry, normalizeRegistryUrl } from "./connection";
 import { downloadPublishedTarball } from "./published-tarball";
 import { fetchPackageMetadataCached } from "./registry-cache";
@@ -52,17 +52,15 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
   },
 
   async verifyPublishedRelease(ctx, input) {
-    const broker = createNpmBroker(
-      { ...ctx, session: { userId: "registry-verification" } },
-      { organizationId: ctx.organizationId },
-    );
+    let broker: ReturnType<typeof createNpmBroker> | null = null;
     try {
       let published: Awaited<ReturnType<typeof downloadPublishedTarball>> | undefined;
       const allowInsecureLocalhost = allowInsecureLocalRegistry(ctx.env);
       const deploymentRegistry = normalizeRegistryUrl(ctx.env.NPM_REGISTRY, {
         allowInsecureLocalhost,
       });
-      const organizationRegistry = await getNpmConnectionRegistryUrl(ctx.db, ctx.organizationId);
+      const authority = await getNpmConnectionAuthority(ctx.db, ctx.organizationId);
+      const organizationRegistry = authority?.registryUrl ?? null;
       const sameRegistryAuthority =
         organizationRegistry !== null &&
         normalizeRegistryUrl(organizationRegistry, { allowInsecureLocalhost }) ===
@@ -71,17 +69,17 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
       // transient error on that registry must stay pending there: falling
       // through to the worker-wide registry leaks private names and can compare
       // the gate against an unrelated public package with the same identity.
-      if (organizationRegistry) {
-        try {
-          const metadata = await broker.fetchPackageMetadata(input.packageName);
-          const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
-          if (tarballUrl) {
-            published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
-          } else if (!sameRegistryAuthority) {
-            return { status: "not_published" };
-          }
-        } catch (err) {
-          if (!sameRegistryAuthority) throw err;
+      if (authority && (authority.validationStatus === "valid" || !sameRegistryAuthority)) {
+        broker = createNpmBroker(
+          { ...ctx, session: { userId: "registry-verification" } },
+          { organizationId: ctx.organizationId, registryUrl: authority.registryUrl },
+        );
+        const metadata = await broker.fetchPackageMetadata(input.packageName);
+        const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
+        if (tarballUrl) {
+          published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
+        } else if (!sameRegistryAuthority) {
+          return { status: "not_published" };
         }
       }
       if (!published) {
@@ -109,7 +107,7 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
         ? { status: "verified" }
         : { status: "mismatch", reviewedDigests, publishedDigests };
     } finally {
-      await broker.dispose();
+      await broker?.dispose();
     }
   },
 };

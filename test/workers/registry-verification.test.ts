@@ -14,6 +14,7 @@ import {
 } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { getWorkflowGateAdapter } from "../../server/lib/ecosystems";
+import { createNpmBroker } from "../../server/lib/ecosystems/npm/broker";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import {
   REGISTRY_VERIFICATION_INITIAL_DELAY_SECONDS,
@@ -227,6 +228,69 @@ describe("post-publish registry verification", () => {
     ).resolves.toEqual({ status: "not_published" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0]).startsWith(registryUrl)).toBe(true);
+    await markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date());
+  });
+
+  test("pins the broker when the organization registry changes during verification", async () => {
+    const seeded = await seedApprovedGate(new Date());
+    const deploymentRegistry = `https://registry-${crypto.randomUUID()}.example.test`;
+    const replacementRegistry = `https://private-${crypto.randomUUID()}.example.test`;
+    await connectPrivateNpmRegistry(seeded, deploymentRegistry);
+    const fetchMock = vi.fn(async () => Response.json({ versions: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const localExecutionCtx = createExecutionContext();
+    let pinnedRegistry: string | null | undefined;
+    const executionCtx = {
+      exports: {
+        NpmAdapterBroker: ({
+          props,
+        }: {
+          props: { organizationId: string; registryUrl?: string | null };
+        }) => {
+          pinnedRegistry = props.registryUrl;
+          const broker = createNpmBroker(
+            {
+              env: { ...env, NPM_REGISTRY: deploymentRegistry },
+              executionCtx: localExecutionCtx,
+              db: seeded.db,
+              session: { userId: "registry-verification" },
+            },
+            props,
+          );
+          return new Proxy(broker, {
+            get(target, property, receiver) {
+              if (property === "fetchPackageMetadata") {
+                return async (name: string) => {
+                  await connectPrivateNpmRegistry(seeded, replacementRegistry);
+                  return target.fetchPackageMetadata(name);
+                };
+              }
+              const value = Reflect.get(target, property, receiver) as unknown;
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          });
+        },
+      },
+    } as unknown as ExecutionContext;
+
+    await expect(
+      getWorkflowGateAdapter("npm").verifyPublishedRelease?.(
+        {
+          env: { ...env, NPM_REGISTRY: deploymentRegistry },
+          executionCtx,
+          db: seeded.db,
+          organizationId: seeded.organizationId,
+        },
+        {
+          packageName: `private-${crypto.randomUUID()}`,
+          version: "1.2.3",
+          artifacts: [{ path: "demo.tgz", kind: "tarball", sha256: "a".repeat(64) }],
+        },
+      ),
+    ).rejects.toThrow("npm registry changed after this scan was queued");
+    expect(pinnedRegistry).toBe(deploymentRegistry);
+    expect(fetchMock).not.toHaveBeenCalled();
     await markScanRegistryVerified(seeded.db, seeded.scanId, seeded.organizationId, new Date());
   });
 

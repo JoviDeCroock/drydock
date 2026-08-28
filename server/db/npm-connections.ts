@@ -72,16 +72,19 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
 }
 
 /** Credential-free registry authority lookup for orchestration paths. */
-export async function getNpmConnectionRegistryUrl(
+export async function getNpmConnectionAuthority(
   db: AppDb,
   organizationId: string,
-): Promise<string | null> {
+): Promise<{ registryUrl: string; validationStatus: string } | null> {
   const [connection] = await db
-    .select({ registryUrl: npmConnections.registryUrl })
+    .select({
+      registryUrl: npmConnections.registryUrl,
+      validationStatus: npmConnections.validationStatus,
+    })
     .from(npmConnections)
     .where(eq(npmConnections.organizationId, organizationId))
     .limit(1);
-  return connection?.registryUrl ?? null;
+  return connection ?? null;
 }
 
 export async function listAutoDiscoveryNpmConnections(db: AppDb) {
