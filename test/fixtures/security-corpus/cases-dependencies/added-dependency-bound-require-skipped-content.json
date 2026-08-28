@@ -56,7 +56,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>bound-require-install@1.0.0"
     }

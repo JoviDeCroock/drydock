@@ -2,26 +2,44 @@ import type { ComponentChildren } from "preact";
 import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
-import { normalizeDependencyReview } from "../../../../server/lib/review/dependency-evidence";
+import {
+  normalizeDependencyEvidence,
+  normalizeDependencyReview,
+} from "../../../../server/lib/review/dependency-evidence";
 import { DependencyReviewSection } from "../../../features/review/DependencyReviewSection";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
+import { dependencyDeclarationKey } from "../../../../server/lib/review/dependency-evidence";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
   const dependencyReview = normalizeDependencyReview(summary.dependencyReview);
+  const dependencyEvidence = normalizeDependencyEvidence(
+    summary.dependencyReview && typeof summary.dependencyReview === "object"
+      ? (summary.dependencyReview as { evidence?: unknown }).evidence
+      : null,
+  );
+  const dependencyEvidenceByDeclaration = Object.fromEntries(
+    (dependencyEvidence ?? []).map((entry) => [
+      dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec),
+      entry,
+    ]),
+  );
   return (
     <section class="flex flex-col gap-6">
       {/* Sits above the manifest diff on purpose: the manifest shows that a
           dependency line was added, this shows what adding it ships. */}
-      {dependencyReview ? <DependencyReviewSection review={dependencyReview} /> : null}
+      {dependencyReview || dependencyEvidence?.length ? (
+        <DependencyReviewSection review={dependencyReview} evidence={dependencyEvidence ?? []} />
+      ) : null}
 
       <ReportSection title="Manifest changes">
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView
             diff={summary.packageJsonDiff}
+            dependencyEvidenceByDeclaration={dependencyEvidenceByDeclaration}
             // PyPI dependencies are not npm packages, so the public npm diff
             // view cannot show them; npm and VS Code manifests both resolve
             // their dependencies from the npm registry. A gated scan names its

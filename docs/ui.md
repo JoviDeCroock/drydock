@@ -46,7 +46,7 @@ What they use lives in `src/features/review/`:
   caller's `children`, because what a "previous side" is differs per surface.
 - `DependencyReviewSection.tsx` — the dependencies a release newly introduces and
   what Drydock found in their artifacts. Rendered by the scan workbench and the
-  public report from the same re-validated persisted blob, so a shared report
+  public report from the same re-validated exact-evidence rows, so a shared report
   and the maintainer's own view cannot disagree about what a release ships. Its
   copy carries the resolution-honesty labelling (exact version vs review-time
   snapshot vs dist-tag), which is the part reviewers act on — see

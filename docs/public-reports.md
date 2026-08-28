@@ -51,8 +51,10 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
   `/api/v1/scans/:id/report.json`). Carries the file **diff** (paths, statuses,
-  sizes, hashes) but no file _bodies_, no scan events, and no
-  organization/user identifiers.
+  sizes, hashes) but no file _bodies_, dependency file bodies, scan events, or
+  organization/user identifiers. Newly added npm dependencies appear as
+  validated `dependencies.evidence`; dependency findings retain their
+  structured package/version/path coordinates.
   `x-drydock-share-includes-files: 1|0` says whether this share opted into file
   samples without changing the canonical, attested report bytes.
 - `GET /public/reports/:token/file?path=` — one redacted staged file sample, so

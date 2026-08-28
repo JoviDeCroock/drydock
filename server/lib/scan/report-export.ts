@@ -4,7 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
-import { normalizeDependencyReview } from "../review";
+import { normalizeDependencyEvidence, normalizeDependencyReview } from "../review";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -82,10 +82,11 @@ export function buildReportExport(detail: ScanDetail) {
     releaseConsistency: exportReleaseConsistency(summary.releaseConsistency),
     // Dependencies this release newly introduced and what Drydock found in
     // their bytes. Exported after shape validation (the only retained network
-    // location is an HTTP(S) origin; registry-controlled paths are discarded)
+    // location is a credential-free public npm URL, or localhost in e2e data)
     // so the record stays useful after the dependency version is unpublished.
     // Additive + optional: scans from before the dependency review export null.
     dependencyReview: normalizeDependencyReview(summary.dependencyReview),
+    dependencies: exportDependencyEvidence(summary.dependencyReview),
     packageJsonDiff: summary.packageJsonDiff ?? null,
     diff: summary.diff ?? null,
     // Deterministic findings only. A completed AI review's findings are carried
@@ -107,8 +108,15 @@ export function buildReportExport(detail: ScanDetail) {
         releaseDelta: finding.releaseDelta ?? null,
         evidence: finding.evidence,
         reason: finding.reason,
+        dependency: "dependency" in finding && finding.dependency ? finding.dependency : undefined,
       })),
   };
+}
+
+function exportDependencyEvidence(value: unknown): { evidence: unknown[] } | null {
+  if (!isRecord(value) || !Array.isArray(value.evidence)) return null;
+  const evidence = normalizeDependencyEvidence(value.evidence);
+  return evidence ? { evidence } : null;
 }
 
 function exportRegistryStatus(scan: ScanDetail["scan"]) {

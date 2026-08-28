@@ -72,7 +72,7 @@ Session records carry an IP address and user agent, so they are not kept past th
 The sandbox parses untrusted bytes under archive/file/expanded-size caps and returns evidence only. Direct Internet egress is intercepted. Registry/artifact fetches go through constrained brokers:
 
 - `NpmStageGateway` for npm staged tarballs, metadata, and previous-version tarballs;
-- credential-free dependency-artifact downloads, origin-checked against the configured registry exactly like a baseline tarball and parsed in the same credentials-free sandbox;
+- credential-free dependency-artifact downloads pinned to `https://registry.npmjs.org` (localhost only in e2e) and parsed in the same credentials-free sandbox;
 - PyPI artifact downloads restricted to `https://files.pythonhosted.org`;
 - GitHub artifact downloads scoped to the workflow-gate installation/run being reviewed.
 

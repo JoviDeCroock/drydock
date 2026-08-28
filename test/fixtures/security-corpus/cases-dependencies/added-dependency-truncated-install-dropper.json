@@ -52,12 +52,12 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-risk",
+      "ruleId": "dependency.install-time-capability",
       "severity": "critical",
       "file": "<dependency>truncated-dropper@1.0.0:package.json"
     },
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>truncated-dropper@1.0.0"
     }

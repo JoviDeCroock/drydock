@@ -1,0 +1,58 @@
+{
+  "id": "dependency-artifact-range-resolved",
+  "title": "Range-resolved dependency has a benign install lifecycle",
+  "category": "dependency-supply-chain",
+  "intent": "Range honesty stays evidence metadata and lifecycle execution alone does not become critical.",
+  "previousPackageJson": { "name": "parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "dependencies": { "build-dep": "^1.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "build-dep": {
+      "declaredSpec": "^1.0.0",
+      "resolvedVersion": "1.4.0",
+      "packageJson": {
+        "name": "build-dep",
+        "version": "1.4.0",
+        "scripts": { "postinstall": "node build.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 100,
+          "sha256": "manifest",
+          "flags": [],
+          "textSample": "{\"name\":\"build-dep\",\"version\":\"1.4.0\",\"scripts\":{\"postinstall\":\"node build.js\"}}"
+        },
+        {
+          "path": "build.js",
+          "size": 30,
+          "sha256": "build",
+          "flags": [],
+          "textSample": "console.log('building');"
+        }
+      ]
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" },
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "medium",
+      "file": "dependency/build-dep@1.4.0/package.json"
+    }
+  ]
+}

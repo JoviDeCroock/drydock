@@ -30,7 +30,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>embedded-helper"
     }

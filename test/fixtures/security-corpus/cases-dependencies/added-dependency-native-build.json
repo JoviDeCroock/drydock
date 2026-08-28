@@ -51,7 +51,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-execution",
+      "ruleId": "dependency.install-time-capability",
       "severity": "medium",
       "file": "<dependency>native-resize@0.9.3:package.json"
     }

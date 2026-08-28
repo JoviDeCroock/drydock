@@ -7,6 +7,7 @@ import { Badge } from "../../components/Badge";
 import { FindingCard, FindingRow, GroupedFindingCard } from "../../components/FindingCard";
 import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
 import type { FindingWithDiffStatus } from "./types";
+import { dependencyEvidenceDomId } from "../../lib/dependency-evidence-navigation";
 
 const DEFAULT_DESCRIPTION =
   "Deterministic rules scan the full staged artifact; assistant-labeled signals are advisory " +
@@ -82,10 +83,31 @@ function FindingGrid({
   // dependency-artifact.* findings cite a path inside ANOTHER package's
   // artifact — neither is a file in this artifact, so the label must not become
   // an open-in-the-diff button.
-  const selectFile = (file: string) =>
-    onSelect && file !== RELEASE_PROCESS_FINDING_FILE && !isDependencyFindingFile(file)
-      ? () => onSelect(file)
+  const selectFinding = (finding: FindingWithDiffStatus["finding"]) => {
+    const dependency = finding.dependency;
+    if (dependency) {
+      return () => {
+        const target =
+          dependency.section && dependency.declaredSpec
+            ? document.getElementById(
+                dependencyEvidenceDomId({
+                  name: dependency.name,
+                  section: dependency.section,
+                  declaredSpec: dependency.declaredSpec,
+                }),
+              )
+            : Array.from(document.querySelectorAll<HTMLElement>("[data-dependency-name]")).find(
+                (element) => element.dataset.dependencyName === dependency.name,
+              );
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+    }
+    return onSelect &&
+      finding.file !== RELEASE_PROCESS_FINDING_FILE &&
+      !isDependencyFindingFile(finding.file)
+      ? () => onSelect(finding.file)
       : undefined;
+  };
   const groups = groupFindingsByRule(
     findings.map((item) => ({
       ruleId: item.finding.ruleId,
@@ -104,7 +126,7 @@ function FindingGrid({
           // a diff entry (prefixed, truncated, or hallucinated), so they are not
           // wired to open the diff workbench — clicking would dead-end on an
           // empty state. Deterministic findings always cite a canonical path.
-          const canOpen = onSelect && finding.source !== "ai";
+          const canOpen = (onSelect || finding.dependency) && finding.source !== "ai";
           return (
             <FindingCard
               key={finding.id}
@@ -115,7 +137,7 @@ function FindingGrid({
               diffLabel={findingDiffStatusLabel(diffStatus)}
               ruleId={finding.ruleId}
               source={finding.source}
-              onSelect={canOpen ? selectFile(finding.file) : undefined}
+              onSelect={canOpen ? selectFinding(finding) : undefined}
             >
               <FindingRow label="evidence" value={finding.evidence} />
               <FindingRow label="reason" value={finding.reason} />
@@ -133,7 +155,7 @@ function FindingGrid({
               line: item.finding.line,
               diffStatus: item.diffStatus === "unknown" ? null : item.diffStatus,
               diffLabel: findingDiffStatusLabel(item.diffStatus),
-              onSelect: selectFile(item.finding.file),
+              onSelect: selectFinding(item.finding),
             }))}
           >
             <FindingRow label="evidence" value={first.evidence} />

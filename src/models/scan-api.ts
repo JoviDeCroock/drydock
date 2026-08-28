@@ -133,6 +133,13 @@ export interface PersistedScanDetail {
     source: string;
     ruleId?: string | null;
     ruleVersion?: string | null;
+    dependency?: {
+      name: string;
+      version: string | null;
+      path: string;
+      section?: import("../../server/lib/review").DependencySection;
+      declaredSpec?: string;
+    };
     diffStatus?: FindingDiffStatus;
     releaseDelta?: boolean;
   }>;

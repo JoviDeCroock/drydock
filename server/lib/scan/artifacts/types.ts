@@ -4,7 +4,12 @@
  * An artifact set is the offloaded body of a scan — its files, its diff, and
  * its report — written once and thereafter read back digest-verified.
  */
-import { type DiffEntry, type FileRecord, type FindingDiffAnnotation } from "../../review";
+import {
+  type DependencyEvidence,
+  type DiffEntry,
+  type FileRecord,
+  type FindingDiffAnnotation,
+} from "../../review";
 import { SCAN_FILE_SAMPLE_LIMIT } from "../../sample-retention";
 
 export const SCAN_ARTIFACT_STORAGE_VERSION = 1;
@@ -67,6 +72,13 @@ export interface ScanArtifactFindingRow {
   source: string;
   ruleId: string | null;
   ruleVersion: string | null;
+  dependency?: {
+    name: string;
+    version: string | null;
+    path: string;
+    section?: import("../../review").DependencySection;
+    declaredSpec?: string;
+  };
 }
 
 export interface ScanArtifactScanRow {
@@ -90,6 +102,7 @@ export interface ScanArtifactsDetail {
   // duplicate `scan_findings` rows are no longer written to D1.
   findings: ScanArtifactFindingRow[];
   findingAnnotations: Map<string, FindingDiffAnnotation>;
+  dependencyEvidence: DependencyEvidence[] | null;
 }
 
 export interface ScanArtifactsManifestDetail {

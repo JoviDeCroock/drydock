@@ -42,6 +42,7 @@ export interface PublicReport {
   diff: PublicReportDiffEntry[] | null;
   // Re-validated by the rendering surface because older reports omit it.
   dependencyReview?: unknown;
+  dependencies?: { evidence?: unknown } | null;
   findings: PublicReportFinding[];
 }
 

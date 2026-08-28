@@ -10,6 +10,7 @@ import type { IntentEnvelope } from "./lib/intent-envelope";
 import type { ScanRiskBreakdown } from "./lib/review/risk";
 import type {
   DependencyReview,
+  DependencyEvidence,
   DiffEntry,
   Finding,
   PackageJsonDiff,
@@ -66,6 +67,7 @@ export interface ScanResult {
   // for each. Unlike the advisory blocks above, its findings DO feed risk —
   // they are deterministic evidence about code this release starts shipping.
   dependencyReview: DependencyReview;
+  dependencyEvidence: DependencyEvidence[];
   safety: {
     tokenExposedToSandbox: boolean;
     directSandboxNetwork: boolean;

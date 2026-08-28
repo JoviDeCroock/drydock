@@ -53,7 +53,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-risk",
+      "ruleId": "dependency.install-time-capability",
       "severity": "medium",
       "file": "<dependency>network-tests@1.0.0:package.json"
     }

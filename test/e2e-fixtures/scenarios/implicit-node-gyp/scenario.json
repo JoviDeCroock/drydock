@@ -22,7 +22,7 @@
     "ruleIds": [
       "install-script.implicit-node-gyp",
       "dependency.major-bump",
-      "dependency-artifact.uninspectable"
+      "dependency.artifact-unavailable"
     ],
     "baseline": {
       "version": "1.0.0",

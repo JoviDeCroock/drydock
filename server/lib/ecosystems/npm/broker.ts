@@ -9,6 +9,8 @@ import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../.
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
 
+const PUBLIC_DEPENDENCY_REGISTRY = "https://registry.npmjs.org";
+
 export interface NpmBroker extends AdapterBroker {
   fetchPackageMetadata(name: string): Promise<RegistryMetadata | null>;
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
@@ -21,11 +23,10 @@ export interface NpmBroker extends AdapterBroker {
    * Deliberately a separate method from {@link NpmBroker.fetchPackageMetadata}
    * rather than a flag on it: the two differ in exactly the property that
    * matters (whether the org's token is attached), and a boolean parameter is
-   * the kind of thing a later refactor flips by accident. The org's connection
-   * is still resolved, but only for its registry URL — a self-hosted mirror
-   * must keep working. These reads deliberately bypass metadata caching so a
-   * moving range or dist-tag is assessed against the registry's current
-   * version snapshot.
+   * the kind of thing a later refactor flips by accident. Production is pinned
+   * to the public npm registry; localhost is admitted only by the e2e flag.
+   * These reads deliberately bypass metadata caching so a moving range or
+   * dist-tag is assessed against the registry's current version snapshot.
    */
   fetchAnonymousPackageMetadata(
     name: string,
@@ -49,8 +50,14 @@ export interface NpmBroker extends AdapterBroker {
   registryUrl(): Promise<string>;
 }
 
+export type NpmPublicDependencyClient = Pick<
+  NpmBroker,
+  "fetchAnonymousPackageMetadata" | "downloadAnonymousTarball" | "registryUrl"
+>;
+
 export interface NpmBrokerDownloadOptions {
   maxFiles?: number;
+  maxBytes?: number;
   /** Remaining dependency-review deadline, enforced inside the broker. */
   timeoutMs?: number;
   /**
@@ -162,7 +169,11 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
   }
 
   async registryUrl(): Promise<string> {
-    return this.registryUrlSnapshot();
+    if (!allowInsecureLocalRegistry(this.env)) return PUBLIC_DEPENDENCY_REGISTRY;
+    return publicDependencyRegistry(
+      this.env,
+      this.ctx.props.registryUrl ?? (await this.registryUrlSnapshot()),
+    );
   }
 
   private async resolveCredentials(): Promise<ResolvedCredentials> {
@@ -208,6 +219,7 @@ async function downloadAnonymousTarball(
     registryUrl: registry,
     allowInsecureLocalhost: allowInsecureLocalRegistry(env),
     maxFiles: opts.maxFiles,
+    maxBytes: opts.maxBytes,
     maxTextSampleChars: opts.maxTextSampleChars,
     signal,
     // Custom registries may mutate version-pinned URLs. Dependency evidence
@@ -218,7 +230,7 @@ async function downloadAnonymousTarball(
     // Drydock recomputes is directly comparable to the one the registry
     // advertised. SHA-1 rides along for versions old enough to carry only
     // `dist.shasum`.
-    archiveDigestAlgorithms: ["SHA-512", "SHA-1"],
+    archiveDigestAlgorithms: ["SHA-256", "SHA-512", "SHA-1"],
   });
 }
 
@@ -228,15 +240,7 @@ function timeoutSignal(timeoutMs: number | undefined): AbortSignal | undefined {
     : AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs)));
 }
 
-/**
- * Which registry this organization publishes to — without decrypting anything.
- *
- * The credential-free dependency path needs a registry origin and nothing else,
- * and routing it through `resolveNpmCredentials` would decrypt a token it must
- * never send. Same connection preconditions as the credentialed path, so a
- * scan cannot silently fall back to the public registry for an organization
- * whose connection is missing or unvalidated.
- */
+/** Resolve the configured origin only for the explicitly enabled local-test registry path. */
 async function resolveNpmRegistryUrl(db: AppDb, organizationId: string): Promise<string> {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
@@ -368,7 +372,11 @@ class LocalNpmBroker implements NpmBroker {
   }
 
   async registryUrl(): Promise<string> {
-    return this.registryUrlSnapshot();
+    if (!allowInsecureLocalRegistry(this.ctx.env)) return PUBLIC_DEPENDENCY_REGISTRY;
+    return publicDependencyRegistry(
+      this.ctx.env,
+      this.props.registryUrl ?? (await this.registryUrlSnapshot()),
+    );
   }
 
   private async resolve(): Promise<ResolvedCredentials> {
@@ -379,6 +387,47 @@ class LocalNpmBroker implements NpmBroker {
       this.props.registryUrl,
     );
   }
+}
+
+function publicDependencyRegistry(env: Cloudflare.Env, configured: string): string {
+  if (allowInsecureLocalRegistry(env)) {
+    try {
+      const url = new URL(configured);
+      if (
+        url.hostname === "127.0.0.1" ||
+        url.hostname === "localhost" ||
+        url.hostname === "::1" ||
+        url.hostname === "[::1]"
+      ) {
+        return configured;
+      }
+    } catch {
+      // The connection validator owns malformed configured URLs. The
+      // credential-free dependency path still stays pinned to npm public.
+    }
+  }
+  return PUBLIC_DEPENDENCY_REGISTRY;
+}
+
+/** Credential-free public npm client used by dependency inspection. */
+export function createPublicNpmDependencyClient(ctx: AdapterContext): NpmPublicDependencyClient {
+  const registry = publicDependencyRegistry(ctx.env, ctx.env.NPM_REGISTRY);
+  return {
+    registryUrl: async () => registry,
+    fetchAnonymousPackageMetadata: (name, opts) =>
+      fetchAnonymousPackageMetadata(ctx.env, registry, name, timeoutSignal(opts?.timeoutMs)),
+    downloadAnonymousTarball: (tarballUrl, opts) =>
+      runRpcSafe(() =>
+        downloadAnonymousTarball(
+          ctx.env,
+          ctx.executionCtx,
+          registry,
+          tarballUrl,
+          opts,
+          timeoutSignal(opts.timeoutMs),
+        ),
+      ),
+  };
 }
 
 interface CtxWithExports {

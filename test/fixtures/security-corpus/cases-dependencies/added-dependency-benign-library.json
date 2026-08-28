@@ -46,7 +46,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.capability",
+      "ruleId": "dependency.install-time-capability",
       "severity": "info",
       "file": "<dependency>tiny-fetch@1.2.4"
     }

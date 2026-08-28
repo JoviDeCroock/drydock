@@ -31,6 +31,7 @@ import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION } from "./rules";
 import { isRecord } from "../platform/guards";
 import { classifyDependencyInstallRisk, hasObservedInstallRisk } from "./dependency-analysis";
 import {
+  dependencyDeclarationKind,
   selectAddedDependencies,
   type AddedDependency,
   type DependencySelectionOptions,
@@ -53,7 +54,7 @@ const DEPENDENCY_FINDING_FILE_PREFIX = "<dependency>";
 
 /** True for the synthetic labels {@link dependencyFindingFile} produces. */
 export function isDependencyFindingFile(file: string): boolean {
-  return file.startsWith(DEPENDENCY_FINDING_FILE_PREFIX);
+  return file.startsWith(DEPENDENCY_FINDING_FILE_PREFIX) || file.startsWith("dependency/");
 }
 
 function dependencyFindingFile(name: string, version: string | null, path?: string): string {
@@ -106,6 +107,108 @@ export interface DependencyInstallObservation {
   dynamicInstallTarget?: true;
 }
 
+export type DependencyInspectionOutcome =
+  | "inspected"
+  | "unresolved-spec"
+  | "not-found"
+  | "no-matching-version"
+  | "metadata-unavailable"
+  | "fetch-failed"
+  | "too-large"
+  | "count-capped"
+  | "time-capped";
+
+/** Durable, ecosystem-neutral evidence for one selected dependency artifact. */
+export interface DependencyEvidence {
+  name: string;
+  section: DependencySection;
+  declaredSpec: string;
+  path: string;
+  outcome: DependencyInspectionOutcome;
+  outcomeDetail: string;
+  resolution: {
+    kind: "exact" | "range" | "dist-tag";
+    version: string;
+    tarballUrl: string;
+    registryIntegrity: string | null;
+    resolvedAt: string;
+  } | null;
+  artifact: {
+    sha256: string;
+    sha512: string;
+    fileCount: number;
+    totalBytes: number;
+    integrityMatched: boolean | null;
+  } | null;
+  entrypoints: {
+    lifecycleScripts: string[];
+    hasInstallLifecycle: boolean;
+    gypfile: boolean;
+    binCount: number;
+  } | null;
+  findingCount: number;
+}
+
+export interface AddedDependencyDeclaration {
+  name: string;
+  section: DependencySection;
+  declaredSpec: string;
+}
+
+/** Collision-free identity for one manifest declaration across review surfaces. */
+export function dependencyDeclarationKey(
+  name: string,
+  section: DependencySection,
+  declaredSpec: string,
+): string {
+  return JSON.stringify([section, name, declaredSpec]);
+}
+
+/** The direct, newly installable declarations issue #595 puts in scope. */
+export function selectAddedDependencyDeclarations(
+  manifestDiff: PackageJsonDiff,
+): AddedDependencyDeclaration[] {
+  if (!manifestDiff.hasPreviousManifest) return [];
+  const sectionOrder: DependencySection[] = [
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ];
+  return manifestDiff.dependencies
+    .filter(
+      (entry) =>
+        entry.status === "added" &&
+        entry.staged !== undefined &&
+        !entry.previouslyInstalled &&
+        (entry.section === "dependencies" ||
+          entry.section === "optionalDependencies" ||
+          (entry.section === "peerDependencies" && !entry.stagedPeerOptional)),
+    )
+    .map((entry) => ({
+      name: entry.key,
+      section: entry.section ?? "dependencies",
+      declaredSpec: entry.staged as string,
+    }))
+    .sort(
+      (a, b) =>
+        sectionOrder.indexOf(a.section) - sectionOrder.indexOf(b.section) ||
+        a.name.localeCompare(b.name),
+    );
+}
+
+/** Direct declarations whose bytes must come from the registry, not the parent artifact. */
+export function selectAddedRegistryDependencyDeclarations(
+  manifestDiff: PackageJsonDiff,
+  options: DependencySelectionOptions = {},
+): AddedDependencyDeclaration[] {
+  const registryNames = new Set(
+    selectAddedDependencies(manifestDiff, options).map((dependency) => dependency.name),
+  );
+  return selectAddedDependencyDeclarations(manifestDiff).filter(
+    (dependency) => dependency.section === "peerDependencies" || registryNames.has(dependency.name),
+  );
+}
+
 /**
  * The durable record for one newly introduced dependency.
  *
@@ -114,7 +217,7 @@ export interface DependencyInstallObservation {
  * advertised, the digest recomputed from the bytes actually fetched, and the
  * install observations all survive the artifact disappearing.
  */
-export interface DependencyEvidence {
+export interface ReviewedDependencyEvidence {
   name: string;
   /** Manifest section that introduced it (this is the graph edge's label). */
   section: DependencySection;
@@ -163,7 +266,11 @@ export interface DependencyReview {
   uninspectableCount: number;
   /** Selected dependencies omitted from `dependencies` to bound persisted evidence. */
   omittedCount?: number;
-  dependencies: DependencyEvidence[];
+  dependencies: ReviewedDependencyEvidence[];
+  /** Ephemeral adapter output consumed by the pipeline before persistence. */
+  evidence?: DependencyEvidence[];
+  /** Ephemeral deterministic findings produced while dependency bytes are live. */
+  findings?: Finding[];
 }
 
 export const EMPTY_DEPENDENCY_REVIEW: DependencyReview = {
@@ -211,13 +318,13 @@ export function mergeDependencyReviews(...reviews: DependencyReview[]): Dependen
  * records are capped separately so a hostile manifest cannot inflate the
  * persisted report without bound.
  */
-export const MAX_INSPECTED_DEPENDENCIES = 6;
+export const MAX_INSPECTED_DEPENDENCIES = 8;
 
 /** Maximum per-dependency records persisted for one release. */
 export const MAX_RECORDED_DEPENDENCIES = 64;
 
 /** Entries retained per dependency artifact. Well under the sandbox's own cap. */
-export const DEPENDENCY_ARTIFACT_MAX_FILES = 600;
+export const DEPENDENCY_ARTIFACT_MAX_FILES = 800;
 
 /**
  * Per-file text sample kept from a dependency artifact.
@@ -230,28 +337,15 @@ export const DEPENDENCY_ARTIFACT_MAX_FILES = 600;
  */
 export const DEPENDENCY_TEXT_SAMPLE_LIMIT = 256 * 1024;
 
-const SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS = new Set<string>([
-  DETERMINISTIC_RULE_IDS.dependencyAdded,
-  DETERMINISTIC_RULE_IDS.dependencyOptionalAdded,
-]);
-
 /**
  * Replace the manifest-only "this dependency was not inspected" signal once
  * the dependency pass has a more precise terminal record for that declaration.
  */
 export function reconcileDependencyReviewFindings<T extends Finding>(
   findings: T[],
-  review: DependencyReview,
+  _review: DependencyReview,
 ): T[] {
-  const reviewedDeclarations = new Set(
-    review.dependencies.map((dependency) => `${dependency.name}: ${dependency.declaredSpec}`),
-  );
-  if (!reviewedDeclarations.size) return findings;
-  return findings.filter(
-    (finding) =>
-      !SUPERSEDED_DEPENDENCY_DECLARATION_RULE_IDS.has(finding.ruleId ?? "") ||
-      !reviewedDeclarations.has(finding.evidence),
-  );
+  return findings;
 }
 
 /**
@@ -260,7 +354,7 @@ export function reconcileDependencyReviewFindings<T extends Finding>(
  */
 function dependencyPathLabel(
   parent: { name: string | null; version: string | null },
-  evidence: DependencyEvidence,
+  evidence: ReviewedDependencyEvidence,
   entrypoint?: DependencyExecutionEntrypoint,
 ): string {
   const parentCoordinate = parent.name
@@ -351,7 +445,7 @@ export function dependencyEvidenceFindings(
       findings.push({
         severity: classification.severity,
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
-        ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallRisk,
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} → ${behaviors}`,
         reason: nativeExecution
           ? "this release introduces a dependency whose install-time path can invoke a native executable or load a native module; confirm that the binary and its install entrypoint are expected before approving, because every consumer install inherits that native execution"
@@ -367,7 +461,7 @@ export function dependencyEvidenceFindings(
       findings.push({
         severity: "medium",
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion, "package.json"),
-        ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactInstallExecution,
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} runs ${evidence.automaticExecution.map((entry) => entry.name).join(", ")} on install`,
         reason:
           "a newly introduced dependency executes code on every consumer install; nothing in its install path matched a downloader or credential pattern, but the execution itself is new behavior this release adds to consumer machines",
@@ -376,7 +470,7 @@ export function dependencyEvidenceFindings(
       findings.push({
         severity: "info",
         file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
-        ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactCapability,
+        ruleId: DETERMINISTIC_RULE_IDS.dependencyInstallTimeCapability,
         evidence: `${path} — ${describeCapabilities(evidence.capabilities)}`,
         reason:
           "recorded so the newly introduced dependency's reviewed contents are visible; nothing in it runs automatically on install, so being new is not by itself a reason to hold the release",
@@ -399,27 +493,27 @@ export function dependencyEvidenceFindings(
  * not one per entry: a refactor that adds many dependencies would otherwise
  * fill the packet with identical signals and inflate persisted evidence.
  */
-function aggregatedGapFinding(skipped: DependencyEvidence[], total: number): Finding {
+function aggregatedGapFinding(skipped: ReviewedDependencyEvidence[], total: number): Finding {
   const shown = skipped.slice(0, 8);
   const names = shown.map((entry) => `${entry.name}@${entry.declaredSpec}`).join(", ");
   const suffix = total > shown.length ? `; ${total - shown.length} more omitted` : "";
   return {
     severity: "medium",
     file: DEPENDENCY_FINDING_FILE_PREFIX,
-    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUninspectable,
+    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUnavailable,
     evidence: `${total} newly added ${total === 1 ? "dependency was" : "dependencies were"} not reviewed${names ? `: ${names}` : ""}${suffix}`,
     reason: UNINSPECTABLE_REASON_TEXT,
   };
 }
 
 function integrityMismatchFinding(
-  evidence: DependencyEvidence,
+  evidence: ReviewedDependencyEvidence,
   parent: { name: string | null; version: string | null },
 ): Finding {
   return {
     severity: "critical",
     file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
-    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactIntegrityMismatch,
+    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUnavailable,
     evidence: `${dependencyPathLabel(parent, evidence)} — registry ${digestLabel(evidence.declaredDigest)} != reviewed ${digestLabel(evidence.reviewedDigest)}`,
     reason:
       "the dependency bytes Drydock reviewed do not match the digest the registry advertised, so the reviewed artifact cannot be trusted as the dependency consumers install; re-fetch and resolve the registry integrity failure before approving",
@@ -431,13 +525,13 @@ function digestLabel(digest: DependencyDigest | null): string {
 }
 
 function uninspectableFinding(
-  evidence: DependencyEvidence,
+  evidence: ReviewedDependencyEvidence,
   parent: { name: string | null; version: string | null },
 ): Finding {
   return {
     severity: "medium",
     file: dependencyFindingFile(evidence.name, evidence.resolvedVersion),
-    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUninspectable,
+    ruleId: DETERMINISTIC_RULE_IDS.dependencyArtifactUnavailable,
     evidence: `${dependencyPathLabel(parent, evidence)} — ${UNINSPECTABLE_EVIDENCE[evidence.reason ?? "artifact-unavailable"]}`,
     reason: UNINSPECTABLE_REASON_TEXT,
   };
@@ -475,7 +569,14 @@ export function failedDependencyReview(
   manifestDiff: PackageJsonDiff,
   options: DependencySelectionOptions = {},
 ): DependencyReview {
-  const selected = selectAddedDependencies(manifestDiff, options);
+  const selected = selectAddedRegistryDependencyDeclarations(manifestDiff, options).map(
+    (dependency) => ({
+      name: dependency.name,
+      section: dependency.section,
+      spec: dependency.declaredSpec,
+      declarationKind: dependencyDeclarationKind(dependency.declaredSpec),
+    }),
+  );
   if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
   const recorded = selected
     .slice(0, MAX_RECORDED_DEPENDENCIES)
@@ -493,7 +594,7 @@ export function failedDependencyReview(
 function uninspectableEvidence(
   dependency: AddedDependency,
   reason: DependencyUninspectableReason,
-): DependencyEvidence {
+): ReviewedDependencyEvidence {
   return {
     name: boundedText(dependency.name, 256),
     section: dependency.section,
@@ -544,6 +645,115 @@ function describeCapabilities(capabilities: string[]): string {
     .join(", ");
 }
 
+export function normalizeDependencyEvidence(value: unknown): DependencyEvidence[] | null {
+  if (!Array.isArray(value) || value.length > MAX_RECORDED_DEPENDENCIES) return null;
+  const evidence: DependencyEvidence[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) return null;
+    if (
+      typeof entry.name !== "string" ||
+      (entry.section !== "dependencies" &&
+        entry.section !== "optionalDependencies" &&
+        entry.section !== "peerDependencies") ||
+      typeof entry.declaredSpec !== "string" ||
+      typeof entry.path !== "string" ||
+      !isDependencyInspectionOutcome(entry.outcome) ||
+      typeof entry.outcomeDetail !== "string" ||
+      typeof entry.findingCount !== "number"
+    ) {
+      return null;
+    }
+    const resolution = normalizeResolution(entry.resolution);
+    const artifact = normalizeArtifact(entry.artifact);
+    const entrypoints = normalizeEntrypoints(entry.entrypoints);
+    if (resolution === undefined || artifact === undefined || entrypoints === undefined)
+      return null;
+    evidence.push({
+      name: entry.name,
+      section: entry.section,
+      declaredSpec: entry.declaredSpec,
+      path: entry.path,
+      outcome: entry.outcome,
+      outcomeDetail: entry.outcomeDetail,
+      resolution,
+      artifact,
+      entrypoints,
+      findingCount: entry.findingCount,
+    });
+  }
+  return evidence;
+}
+
+function isDependencyInspectionOutcome(value: unknown): value is DependencyInspectionOutcome {
+  return [
+    "inspected",
+    "unresolved-spec",
+    "not-found",
+    "no-matching-version",
+    "metadata-unavailable",
+    "fetch-failed",
+    "too-large",
+    "count-capped",
+    "time-capped",
+  ].includes(value as string);
+}
+
+function normalizeResolution(value: unknown): DependencyEvidence["resolution"] | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  if (
+    (value.kind !== "exact" && value.kind !== "range" && value.kind !== "dist-tag") ||
+    typeof value.version !== "string" ||
+    typeof value.tarballUrl !== "string" ||
+    (value.registryIntegrity !== null && typeof value.registryIntegrity !== "string") ||
+    typeof value.resolvedAt !== "string"
+  ) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value.tarballUrl);
+    const isPublicRegistry =
+      url.protocol === "https:" && url.hostname.toLowerCase() === "registry.npmjs.org";
+    const isLocalTestRegistry =
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+    if (url.username || url.password || (!isPublicRegistry && !isLocalTestRegistry))
+      return undefined;
+  } catch {
+    return undefined;
+  }
+  return value as unknown as DependencyEvidence["resolution"];
+}
+
+function normalizeArtifact(value: unknown): DependencyEvidence["artifact"] | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  if (
+    typeof value.sha256 !== "string" ||
+    typeof value.sha512 !== "string" ||
+    typeof value.fileCount !== "number" ||
+    typeof value.totalBytes !== "number" ||
+    (value.integrityMatched !== null && typeof value.integrityMatched !== "boolean")
+  ) {
+    return undefined;
+  }
+  return value as unknown as DependencyEvidence["artifact"];
+}
+
+function normalizeEntrypoints(value: unknown): DependencyEvidence["entrypoints"] | undefined {
+  if (value === null) return null;
+  if (!isRecord(value) || !Array.isArray(value.lifecycleScripts)) return undefined;
+  if (
+    !value.lifecycleScripts.every((script) => typeof script === "string") ||
+    typeof value.hasInstallLifecycle !== "boolean" ||
+    typeof value.gypfile !== "boolean" ||
+    typeof value.binCount !== "number"
+  ) {
+    return undefined;
+  }
+  return value as unknown as DependencyEvidence["entrypoints"];
+}
+
 /**
  * Re-validate a persisted dependency review read back from D1/R2.
  *
@@ -559,9 +769,9 @@ export function normalizeDependencyReview(value: unknown): DependencyReview | nu
       : null;
   if (!status) return null;
   const overflowCount = Math.max(0, value.dependencies.length - MAX_RECORDED_DEPENDENCIES);
-  const dependencies: DependencyEvidence[] = [];
+  const dependencies: ReviewedDependencyEvidence[] = [];
   for (const entry of value.dependencies.slice(0, MAX_RECORDED_DEPENDENCIES)) {
-    const normalized = normalizeDependencyEvidence(entry);
+    const normalized = normalizeReviewedDependencyEvidence(entry);
     // Dropping one registry-controlled row while retaining the raw complete
     // status/counts fabricates a clean review. Reject the blob as a unit.
     if (!normalized) return null;
@@ -630,7 +840,7 @@ export function sanitizeDependencyArtifactOrigin(value: unknown): string | null 
   }
 }
 
-function normalizeDependencyEvidence(value: unknown): DependencyEvidence | null {
+function normalizeReviewedDependencyEvidence(value: unknown): ReviewedDependencyEvidence | null {
   if (!isRecord(value)) return null;
   const { name, declaredSpec } = value;
   if (typeof name !== "string" || typeof declaredSpec !== "string") return null;

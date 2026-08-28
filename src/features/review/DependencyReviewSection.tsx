@@ -1,11 +1,16 @@
 import type { ComponentChildren } from "preact";
 import type {
   DependencyEvidence,
+  ReviewedDependencyEvidence,
   DependencyReview,
 } from "../../../server/lib/review/dependency-evidence";
-import { classifyDependencyInstallRisk } from "../../../server/lib/review/dependency-evidence";
+import {
+  classifyDependencyInstallRisk,
+  dependencyDeclarationKey,
+} from "../../../server/lib/review/dependency-evidence";
 import { Badge, type BadgeTone } from "../../components/Badge";
 import { EmptyLine, SectionLabel } from "../../components/Typography";
+import { dependencyEvidenceDomId } from "../../lib/dependency-evidence-navigation";
 
 // The dependencies a release newly introduces, and what Drydock found inside
 // their bytes. Shared by the authenticated scan workbench and the public
@@ -16,7 +21,15 @@ import { EmptyLine, SectionLabel } from "../../components/Typography";
 // resolution has to be labelled as a review-time *snapshot*. An exact spec
 // pins the version coordinate more tightly, but only the recorded digest says
 // which bytes Drydock actually reviewed.
-export function DependencyReviewSection({ review }: { review: DependencyReview }) {
+export function DependencyReviewSection({
+  review,
+  evidence = [],
+}: {
+  review?: DependencyReview | null;
+  evidence?: DependencyEvidence[];
+}) {
+  if (evidence.length) return <DependencyEvidenceSection review={review} evidence={evidence} />;
+  if (!review) return null;
   if (review.status === "not-applicable" || !review.dependencies.length) return null;
 
   return (
@@ -32,12 +45,124 @@ export function DependencyReviewSection({ review }: { review: DependencyReview }
       </p>
       <ul class="list-none p-0 m-0 border border-border rounded-lg overflow-hidden divide-y divide-border">
         {review.dependencies.map((dependency) => (
-          <DependencyRow key={`${dependency.name}@${dependency.declaredSpec}`} {...dependency} />
+          <DependencyRow
+            key={dependencyDeclarationKey(
+              dependency.name,
+              dependency.section,
+              dependency.declaredSpec,
+            )}
+            {...dependency}
+          />
         ))}
       </ul>
       {review.status === "partial" ? <EmptyLine>{partialReviewCopy(review)}</EmptyLine> : null}
     </section>
   );
+}
+
+function DependencyEvidenceSection({
+  review,
+  evidence,
+}: {
+  review?: DependencyReview | null;
+  evidence: DependencyEvidence[];
+}) {
+  const evidenceKeys = new Set(
+    evidence.map((entry) =>
+      dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec),
+    ),
+  );
+  const additionalDependencies = (review?.dependencies ?? []).filter(
+    (dependency) =>
+      !evidenceKeys.has(
+        dependencyDeclarationKey(dependency.name, dependency.section, dependency.declaredSpec),
+      ),
+  );
+  const inspected =
+    review?.inspectedCount ?? evidence.filter((entry) => entry.outcome === "inspected").length;
+  const selected = review?.selectedCount ?? evidence.length;
+  return (
+    <section class="flex flex-col gap-3 min-w-0">
+      <SectionLabel as="h2" aside={`${inspected}/${selected} reviewed`}>
+        New dependencies
+      </SectionLabel>
+      <p class="m-0 text-[13px] leading-[1.55] text-ink-muted max-w-[760px]">
+        Drydock obtained these newly added direct dependencies from credential-free registry reads
+        or their exact bundled bytes, then scanned them without installing or executing package
+        code. Range and dist-tag resolutions are review-time snapshots, not provenance.
+      </p>
+      <ul class="list-none p-0 m-0 border border-border rounded-lg overflow-hidden divide-y divide-border">
+        {evidence.map((entry) => (
+          <li
+            id={dependencyEvidenceDomId(entry)}
+            data-dependency-name={entry.name}
+            key={JSON.stringify([entry.section, entry.name, entry.declaredSpec])}
+            class="flex flex-col gap-2 px-3 py-3 min-w-0 scroll-mt-6"
+          >
+            <div class="flex flex-wrap items-center gap-2 min-w-0">
+              <Badge tone={entry.outcome === "inspected" ? "ok" : "medium"}>
+                {entry.outcome === "inspected" ? "reviewed" : "manual review required"}
+              </Badge>
+              <code class="font-mono text-[13px] text-ink break-all min-w-0">
+                {entry.name}@{entry.resolution?.version ?? "unresolved"}
+              </code>
+              <Badge tone="neutral">{entry.section}</Badge>
+              <Badge tone="neutral">{resolutionLabel(entry)}</Badge>
+            </div>
+            <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
+              {entry.outcome === "inspected"
+                ? entry.path
+                : `Unreviewed code: ${entry.outcomeDetail || entry.outcome}. Verify this dependency manually before approving.`}
+            </p>
+            <dl class="m-0 grid grid-cols-[132px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[13px]">
+              {entry.entrypoints?.lifecycleScripts.length ? (
+                <DetailRow label="runs on install">
+                  <code class="font-mono text-[12px] text-ink-muted break-all">
+                    {entry.entrypoints.lifecycleScripts.join(", ")}
+                  </code>
+                </DetailRow>
+              ) : null}
+              {entry.artifact?.sha512 ? (
+                <DetailRow label="reviewed bytes">
+                  <details>
+                    <summary class="font-mono text-[11px] text-ink-muted cursor-pointer">
+                      sha512 digest
+                    </summary>
+                    <code class="font-mono text-[11px] text-ink-muted break-all">
+                      {entry.artifact.sha512}
+                    </code>
+                  </details>
+                </DetailRow>
+              ) : null}
+              <DetailRow label="findings">{entry.findingCount}</DetailRow>
+            </dl>
+          </li>
+        ))}
+        {additionalDependencies.map((dependency) => (
+          <DependencyRow
+            key={dependencyDeclarationKey(
+              dependency.name,
+              dependency.section,
+              dependency.declaredSpec,
+            )}
+            {...dependency}
+          />
+        ))}
+      </ul>
+      {review?.status === "partial" ? <EmptyLine>{partialReviewCopy(review)}</EmptyLine> : null}
+    </section>
+  );
+}
+
+function resolutionLabel(entry: DependencyEvidence): string {
+  if (!entry.resolution) {
+    if (entry.outcome === "metadata-unavailable") return "metadata unavailable";
+    if (entry.outcome === "no-matching-version") return "no matching version";
+    return entry.outcome;
+  }
+  if (entry.resolution.kind === "exact") return `pinned ${entry.resolution.version}`;
+  if (entry.resolution.kind === "dist-tag") return `dist-tag ${entry.declaredSpec || "latest"}`;
+  return `resolved from range ${entry.declaredSpec}`;
 }
 
 function partialReviewCopy(review: DependencyReview): string {
@@ -47,7 +172,7 @@ function partialReviewCopy(review: DependencyReview): string {
   return "Dependency review did not cover every selected dependency. The ones marked not reviewed need a manual look before approving.";
 }
 
-function DependencyRow(dependency: DependencyEvidence) {
+function DependencyRow(dependency: ReviewedDependencyEvidence) {
   return (
     <li class="flex flex-col gap-2 px-3 py-3 min-w-0">
       <div class="flex flex-wrap items-center gap-2 min-w-0">
@@ -110,7 +235,7 @@ function countLabel(review: DependencyReview): string {
   return `${review.inspectedCount}/${review.selectedCount} ${noun} reviewed`;
 }
 
-function observationTone(dependency: DependencyEvidence): BadgeTone {
+function observationTone(dependency: ReviewedDependencyEvidence): BadgeTone {
   if (dependency.digestVerified === false) return "critical";
   const installRisk =
     dependency.observation.execution === "observed"
@@ -122,7 +247,7 @@ function observationTone(dependency: DependencyEvidence): BadgeTone {
   return "ok";
 }
 
-function observationLabel(dependency: DependencyEvidence): string {
+function observationLabel(dependency: ReviewedDependencyEvidence): string {
   if (dependency.digestVerified === false) return "integrity mismatch";
   if (dependency.observation.execution === "observed") {
     if (dependency.observation.risk === "observed") return "install-time risk";
@@ -133,7 +258,7 @@ function observationLabel(dependency: DependencyEvidence): string {
   return "reviewed";
 }
 
-function describeDependency(dependency: DependencyEvidence): string {
+function describeDependency(dependency: ReviewedDependencyEvidence): string {
   if (dependency.digestVerified === false) {
     return "The fetched artifact does not match the digest advertised by the registry. Treat this review as invalid until the integrity failure is resolved.";
   }
@@ -175,7 +300,7 @@ function describeDependency(dependency: DependencyEvidence): string {
 }
 
 function dependencyDescriptionWithCoverageGap(
-  dependency: DependencyEvidence,
+  dependency: ReviewedDependencyEvidence,
   knownBehavior: string,
 ): string {
   return dependency.status === "uninspectable"
@@ -211,7 +336,7 @@ const UNINSPECTABLE_COPY: Record<string, string> = {
 // An exact spec pins the version coordinate, not the artifact bytes. The
 // recorded digest is the only byte-level evidence, and custom registries can
 // mutate a version in place.
-function resolutionQualifier(dependency: DependencyEvidence): string {
+function resolutionQualifier(dependency: ReviewedDependencyEvidence): string {
   switch (dependency.declarationKind) {
     case "exact":
       return "— exact version selected at review time; digest records the reviewed bytes";

@@ -195,7 +195,7 @@ describe("scan report JSON export", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    await persistScan(db, {
+    await persistScanWithArtifacts(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -231,6 +231,37 @@ describe("scan report JSON export", () => {
               observation: { execution: "observed", risk: "observed" },
             },
           ],
+          evidence: [
+            {
+              name: "proc-macro1",
+              section: "dependencies",
+              declaredSpec: "0.1.0",
+              path: "arrayref-like@0.3.10 → proc-macro1@0.1.0",
+              outcome: "inspected",
+              outcomeDetail: "artifact inspected",
+              resolution: {
+                kind: "exact",
+                version: "0.1.0",
+                tarballUrl: "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz",
+                registryIntegrity: "sha512-Zm9vYmFy",
+                resolvedAt: "2026-08-28T00:00:00.000Z",
+              },
+              artifact: {
+                sha256: "aa",
+                sha512: "bb",
+                fileCount: 3,
+                totalBytes: 300,
+                integrityMatched: true,
+              },
+              entrypoints: {
+                lifecycleScripts: ["postinstall"],
+                hasInstallLifecycle: true,
+                gypfile: false,
+                binCount: 0,
+              },
+              findingCount: 1,
+            },
+          ],
         },
       },
       ai: null,
@@ -247,6 +278,7 @@ describe("scan report JSON export", () => {
         status: string;
         dependencies: Array<Record<string, unknown>>;
       } | null;
+      dependencies: { evidence: Array<Record<string, unknown>> } | null;
     };
     // The whole point of persisting this: the version can be unpublished
     // tomorrow and the record still says what was declared, what it resolved
@@ -259,14 +291,20 @@ describe("scan report JSON export", () => {
       digestVerified: true,
       observation: { execution: "observed", risk: "observed" },
     });
+    expect(body.dependencies?.evidence[0]).toMatchObject({
+      name: "proc-macro1",
+      outcome: "inspected",
+      artifact: { sha256: "aa", sha512: "bb", integrityMatched: true },
+    });
   });
 
   test("a scan persisted before the dependency review exports null for it", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);
     const res = await getReport(buildTestApp(owner), scanId);
-    const body = (await res.json()) as { dependencyReview: unknown };
+    const body = (await res.json()) as { dependencyReview: unknown; dependencies: unknown };
     expect(body.dependencyReview).toBeNull();
+    expect(body.dependencies).toBeNull();
   });
 
   test("surfaces reviewed-artifact provenance digests for a gate review", async () => {

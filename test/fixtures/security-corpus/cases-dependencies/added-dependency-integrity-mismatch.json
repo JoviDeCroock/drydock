@@ -54,7 +54,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.integrity-mismatch",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "critical",
       "file": "<dependency>mutated-dependency@1.0.0"
     }
