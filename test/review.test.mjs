@@ -984,8 +984,8 @@ describe("review", () => {
     const dependencyWithoutBaseline = annotateFindingsWithDiffStatus(
       [
         {
-          file: "<dependency>new-package@1.0.0:package.json",
-          ruleId: "dependency-artifact.install-execution",
+          file: "dependency/new-package@1.0.0/package.json",
+          ruleId: "dependency.install-time-capability",
           severity: "medium",
         },
       ],

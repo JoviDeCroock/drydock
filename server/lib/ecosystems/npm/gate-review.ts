@@ -9,10 +9,7 @@ import type {
 } from "../package-adapter";
 import { acquireBaselineNpm } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
-import {
-  inspectAddedNpmDependenciesForAdapter,
-  inspectBundledNpmDependenciesForAdapter,
-} from "./dependency-artifacts";
+import { inspectAddedNpmDependenciesForAdapter } from "./dependency-artifacts";
 import { buildNpmFindings } from "./findings";
 import {
   buildNpmReleaseManifest,
@@ -145,12 +142,8 @@ export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
     };
   },
 
-  inspectAddedDependencies(_ctx, broker, args) {
-    return inspectAddedNpmDependenciesForAdapter(broker, args);
-  },
-
-  inspectEmbeddedAddedDependencies(args) {
-    return inspectBundledNpmDependenciesForAdapter(args);
+  inspectAddedDependencies(ctx, args) {
+    return inspectAddedNpmDependenciesForAdapter(ctx, args);
   },
 
   summarizeDetails(details) {

@@ -77,23 +77,13 @@ export const DETERMINISTIC_RULES = {
   dependencyOptionalAdded: { id: "dependency.optional-added", risk: "anchor" },
   dependencyAdded: { id: "dependency.added", risk: "anchor" },
   dependencyMajorBump: { id: "dependency.major-bump", risk: "anchor" },
-  dependencyArtifactInstallRisk: {
-    id: "dependency-artifact.install-risk",
+  dependencyInstallTimeCapability: {
+    id: "dependency.install-time-capability",
     risk: "anchor",
     standingDanger: true,
   },
-  dependencyArtifactInstallExecution: {
-    id: "dependency-artifact.install-execution",
-    risk: "anchor",
-  },
-  dependencyArtifactCapability: { id: "dependency-artifact.capability", risk: "anchor" },
-  dependencyArtifactIntegrityMismatch: {
-    id: "dependency-artifact.integrity-mismatch",
-    risk: "anchor",
-    standingDanger: true,
-  },
-  dependencyArtifactUninspectable: {
-    id: "dependency-artifact.uninspectable",
+  dependencyArtifactUnavailable: {
+    id: "dependency.artifact-unavailable",
     risk: "anchor",
   },
   stageMetadataMismatch: { id: "stage.metadata-mismatch", risk: "anchor" },

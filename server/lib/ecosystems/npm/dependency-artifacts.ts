@@ -8,8 +8,8 @@
 // Two rules bound this module, both from issue #595 and AGENTS.md:
 //
 //   1. Every fetch here is CREDENTIAL-FREE. The organization's npm token is
-//      resolved only to learn which registry to talk to; it is never attached
-//      to a dependency request. A dependency that only a credential could
+//      never consulted and is never attached to a dependency request. A
+//      dependency that only a credential could
 //      reach therefore records as `metadata-unavailable` and fails visibly
 //      into manual review — private-dependency support is a separate
 //      credential and cache-isolation review, not something this path may
@@ -20,37 +20,40 @@
 
 import {
   assessDependencyArtifact,
-  dependencyDeclarationKind,
+  dependencyDeclarationKey,
+  dependencyScanFindings,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
   EMPTY_DEPENDENCY_REVIEW,
-  failedDependencyReview,
   MAX_INSPECTED_DEPENDENCIES,
   MAX_RECORDED_DEPENDENCIES,
   sanitizeDependencyArtifactOrigin,
-  selectAddedDependencies,
+  selectAddedRegistryDependencyDeclarations,
   selectBundledAddedDependencies,
   type AddedDependency,
   type DependencyDigest,
+  type DependencyArtifactForReview,
   type DependencyEvidence,
+  type ReviewedDependencyEvidence,
   type DependencyReview,
   type DependencyUninspectableReason,
   type FileRecord,
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
-import { exactDependencyVersion } from "../../review/dependency-specs";
+import { highestSatisfying, parseVersionSpec } from "../../review/dependency-specs";
 import {
   describeOperationalError,
   durationMsSince,
   emitOperationalEvent,
 } from "../../platform/observability";
+import { mapWithConcurrency } from "../../platform/concurrency";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import { parsePackageJson, type TarSuspiciousEntry } from "../../tar-parser.js";
 import { isValidNpmPackageName, type RegistryMetadata } from "./registry";
-import { maxSatisfyingVersion } from "./semver";
-import type { NpmBroker } from "./broker";
+import { createPublicNpmDependencyClient, type NpmPublicDependencyClient } from "./broker";
 import type {
+  AdapterContext,
   DependencyInspectionArgs,
   EmbeddedDependencyInspectionArgs,
 } from "../package-adapter";
@@ -62,7 +65,9 @@ import type {
  * is spent, remaining dependencies record as `budget-exhausted` (a visible gap)
  * instead of holding the release's own review hostage to a slow registry.
  */
-const DEPENDENCY_REVIEW_BUDGET_MS = 20_000;
+export const DEPENDENCY_REVIEW_BUDGET_MS = 30_000;
+export const DEPENDENCY_ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
+export const DEPENDENCY_INSPECTION_CONCURRENCY = 2;
 
 /**
  * `PackageAdapter.inspectAddedDependencies` for both npm adapters.
@@ -73,19 +78,19 @@ const DEPENDENCY_REVIEW_BUDGET_MS = 20_000;
  * hold a publish.
  */
 export function inspectAddedNpmDependenciesForAdapter(
-  broker: NpmBroker,
+  ctx: AdapterContext,
   args: DependencyInspectionArgs,
 ): Promise<DependencyReview> {
+  const client = createPublicNpmDependencyClient(ctx);
   return inspectAddedNpmDependencies({
     manifestDiff: args.manifestDiff,
-    baselineManifestUnavailable: args.baselineManifestUnavailable,
     stagedManifest: args.stagedManifest,
     stagedFiles: args.stagedFiles,
     // A thunk, not a value: the overwhelming majority of releases add no
     // dependency, and resolving the registry costs a D1 read. Nothing should
     // happen at all for those scans.
-    resolveRegistryUrl: () => broker.registryUrl(),
-    broker,
+    resolveRegistryUrl: () => client.registryUrl(),
+    broker: client,
     scanId: args.scanId,
     organizationId: args.organizationId,
   });
@@ -123,7 +128,7 @@ function inspectBundledDependency(
   dependency: AddedDependency,
   stagedFiles: EmbeddedDependencyInspectionArgs["stagedFiles"],
   stagedSuspiciousEntries: EmbeddedDependencyInspectionArgs["stagedSuspiciousEntries"],
-): DependencyEvidence {
+): ReviewedDependencyEvidence {
   const prefix = `node_modules/${dependency.name}/`;
   const root = prefix.slice(0, -1);
   const files = stagedFiles
@@ -156,12 +161,11 @@ function inspectBundledDependency(
 
 export interface InspectDependenciesArgs {
   manifestDiff: PackageJsonDiff;
-  baselineManifestUnavailable?: boolean;
   stagedManifest?: DependencyInspectionArgs["stagedManifest"];
   stagedFiles?: DependencyInspectionArgs["stagedFiles"];
   /** Registry the organization's connection points at; used origin-only, never with its token. */
   resolveRegistryUrl: () => Promise<string>;
-  broker: NpmBroker;
+  broker: NpmPublicDependencyClient;
   scanId: string;
   organizationId: string;
   /** Injectable clock so the budget is testable without real time. */
@@ -188,69 +192,102 @@ export async function inspectAddedNpmDependencies(
       organizationId: args.organizationId,
       error: describeOperationalError(err),
     });
-    return failedDependencyReview(args.manifestDiff, selectionOptions(args));
+    const selected = selectedAddedDependencies(args);
+    if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
+    const now = args.now ?? Date.now;
+    const startedAt = now();
+    const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
+    return completeReview(
+      args,
+      selected,
+      recorded,
+      recorded.map((dependency) => uninspectable(dependency, null, "review-failed")),
+      {},
+      null,
+      startedAt,
+      now,
+    );
   }
 }
 
 async function inspectAddedNpmDependenciesInternal(
   args: InspectDependenciesArgs,
 ): Promise<DependencyReview> {
-  const selected = selectAddedDependencies(args.manifestDiff, selectionOptions(args));
-  if (!selected.length) {
-    return failedDependencyReview(args.manifestDiff, selectionOptions(args));
-  }
+  const selected = selectedAddedDependencies(args);
+  if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
 
   const now = args.now ?? Date.now;
   const budgetMs = args.budgetMs ?? DEPENDENCY_REVIEW_BUDGET_MS;
   const startedAt = now();
-  const dependencies: DependencyEvidence[] = [];
+  const dependencies: ReviewedDependencyEvidence[] = [];
+  const artifacts: Record<string, DependencyArtifactForReview> = {};
   const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
   const registry = await settleWithin(args.resolveRegistryUrl(), budgetMs);
   if (registry.timedOut) {
     for (const dependency of recorded) {
       dependencies.push(uninspectable(dependency, null, "budget-exhausted"));
     }
-    return completeReview(args, selected, recorded, dependencies, null, startedAt, now);
+    return completeReview(args, selected, recorded, dependencies, artifacts, null, startedAt, now);
   }
   const registryHost = hostOf(registry.value);
-  let deadlineSpent = false;
-
-  for (const [index, dependency] of recorded.entries()) {
-    const remainingMs = budgetMs - durationMsSince(startedAt, now());
-    const overBudget = deadlineSpent || index >= MAX_INSPECTED_DEPENDENCIES || remainingMs <= 0;
-    if (overBudget) {
-      dependencies.push(uninspectable(dependency, registryHost, "budget-exhausted"));
-      continue;
-    }
-    let cancelled = false;
-    const operationStartedAt = Date.now();
-    const deadline: DependencyInspectionDeadline = {
-      cancelled: () => cancelled,
-      remainingMs: () => Math.max(0, remainingMs - (Date.now() - operationStartedAt)),
-    };
-    const inspected = await settleWithin(
-      inspectOne(args, dependency, registryHost, deadline),
-      remainingMs,
-      () => {
-        cancelled = true;
-      },
-    );
-    if (inspected.timedOut) {
-      deadlineSpent = true;
-      dependencies.push(uninspectable(dependency, registryHost, "budget-exhausted"));
-    } else {
-      dependencies.push(inspected.value);
+  const inspectable = recorded.slice(0, MAX_INSPECTED_DEPENDENCIES);
+  const inspectedResults = await mapWithConcurrency(
+    inspectable,
+    DEPENDENCY_INSPECTION_CONCURRENCY,
+    async (dependency) => {
+      const remainingMs = budgetMs - durationMsSince(startedAt, now());
+      if (remainingMs <= 0) {
+        return { evidence: uninspectable(dependency, registryHost, "budget-exhausted") };
+      }
+      let cancelled = false;
+      const operationStartedAt = Date.now();
+      const deadline: DependencyInspectionDeadline = {
+        cancelled: () => cancelled,
+        remainingMs: () => Math.max(0, remainingMs - (Date.now() - operationStartedAt)),
+      };
+      const inspected = await settleWithin(
+        inspectOne(args, dependency, registryHost, deadline),
+        remainingMs,
+        () => {
+          cancelled = true;
+        },
+      );
+      if (inspected.timedOut) {
+        return { evidence: uninspectable(dependency, registryHost, "budget-exhausted") };
+      }
+      return inspected.value;
+    },
+  );
+  for (const [index, result] of inspectedResults.entries()) {
+    dependencies.push(result.evidence);
+    const declaration = inspectable[index];
+    if (result.artifact) {
+      artifacts[dependencyDeclarationKey(declaration.name, declaration.section, declaration.spec)] =
+        result.artifact;
     }
   }
+  for (const dependency of recorded.slice(MAX_INSPECTED_DEPENDENCIES)) {
+    dependencies.push(uninspectable(dependency, registryHost, "budget-exhausted"));
+  }
 
-  return completeReview(args, selected, recorded, dependencies, registryHost, startedAt, now);
+  return completeReview(
+    args,
+    selected,
+    recorded,
+    dependencies,
+    artifacts,
+    registryHost,
+    startedAt,
+    now,
+  );
 }
 
 function completeReview(
   args: InspectDependenciesArgs,
   selected: AddedDependency[],
   recorded: AddedDependency[],
-  dependencies: DependencyEvidence[],
+  dependencies: ReviewedDependencyEvidence[],
+  artifacts: Record<string, DependencyArtifactForReview>,
   registryHost: string | null,
   startedAt: number,
   now: () => number,
@@ -276,6 +313,53 @@ function completeReview(
     ).length,
   });
 
+  const evidence = dependencies.map((entry, index) => {
+    const key = dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec);
+    const inspected = artifacts[key];
+    if (!inspected) {
+      const durable = toDependencyEvidence(entry, args.stagedManifest);
+      return index >= MAX_INSPECTED_DEPENDENCIES
+        ? {
+            ...durable,
+            outcome: "count-capped" as const,
+            outcomeDetail: `inspection capped at ${MAX_INSPECTED_DEPENDENCIES} dependencies`,
+          }
+        : durable;
+    }
+    const { files: _files, packageJson: _packageJson, ...durable } = inspected;
+    return durable;
+  });
+  const composerArtifacts = Object.fromEntries(
+    evidence.map((entry) => [
+      dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec),
+      artifacts[dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec)] ?? {
+        ...entry,
+        files: [],
+        packageJson: null,
+      },
+    ]),
+  );
+  const findings = dependencyScanFindings(
+    recorded.map((dependency) => ({
+      name: dependency.name,
+      section: dependency.section,
+      declaredSpec: dependency.spec,
+    })),
+    composerArtifacts,
+    {
+      name: args.stagedManifest?.name ?? null,
+      version: args.stagedManifest?.version ?? null,
+    },
+    omittedCount,
+  );
+  for (const entry of evidence) {
+    entry.findingCount = findings.filter(
+      (finding) =>
+        finding.dependency?.name === entry.name &&
+        finding.dependency.section === entry.section &&
+        finding.dependency.declaredSpec === entry.declaredSpec,
+    ).length;
+  }
   return {
     status: skipped || uninspectableCount ? "partial" : "complete",
     selectedCount: selected.length,
@@ -283,15 +367,28 @@ function completeReview(
     uninspectableCount,
     omittedCount,
     dependencies,
+    evidence,
+    findings,
   };
 }
 
-function selectionOptions(args: InspectDependenciesArgs) {
-  return {
-    includeWithoutBaseline: args.baselineManifestUnavailable,
+function selectedAddedDependencies(args: InspectDependenciesArgs): AddedDependency[] {
+  return selectAddedRegistryDependencyDeclarations(args.manifestDiff, {
     stagedManifest: args.stagedManifest,
     stagedFiles: args.stagedFiles,
-  };
+  }).map((dependency) => ({
+    name: dependency.name,
+    section: dependency.section,
+    spec: dependency.declaredSpec,
+    declarationKind: declarationKind(dependency.declaredSpec),
+  }));
+}
+
+function declarationKind(spec: string): AddedDependency["declarationKind"] {
+  const parsed = parseVersionSpec(spec);
+  if (parsed.kind === "dist-tag") return "tag";
+  if (parsed.kind === "unresolvable") return "unusual";
+  return parsed.kind;
 }
 
 async function settleWithin<T>(
@@ -329,18 +426,21 @@ async function inspectOne(
   dependency: AddedDependency,
   registryHost: string | null,
   deadline: DependencyInspectionDeadline,
-): Promise<DependencyEvidence> {
+): Promise<{
+  evidence: ReviewedDependencyEvidence;
+  artifact?: DependencyArtifactForReview;
+}> {
   // A spec that does not name a registry package cannot be resolved to bytes
   // at all: git/URL/workspace specs, and names npm itself would reject. Both
   // are already flagged on the manifest side (`dependency.unusual-spec`); here
   // they are recorded as a coverage gap so the report cannot imply the
   // dependency was reviewed.
   if (dependency.declarationKind === "unusual" || !isValidNpmPackageName(dependency.name)) {
-    return uninspectable(dependency, registryHost, "unresolvable-spec");
+    return { evidence: uninspectable(dependency, registryHost, "unresolvable-spec") };
   }
 
   if (deadline.cancelled() || deadline.remainingMs() <= 0) {
-    return uninspectable(dependency, registryHost, "budget-exhausted");
+    return { evidence: uninspectable(dependency, registryHost, "budget-exhausted") };
   }
   const metadata = await args.broker.fetchAnonymousPackageMetadata(dependency.name, {
     timeoutMs: deadline.remainingMs(),
@@ -350,29 +450,38 @@ async function inspectOne(
   // much more expensive tarball download. The production broker also applies
   // the same remaining deadline to the underlying network request.
   if (deadline.cancelled() || deadline.remainingMs() <= 0) {
-    return uninspectable(dependency, registryHost, "budget-exhausted");
+    return { evidence: uninspectable(dependency, registryHost, "budget-exhausted") };
   }
-  if (!metadata) return uninspectable(dependency, registryHost, "metadata-unavailable");
+  if (!metadata) {
+    return { evidence: uninspectable(dependency, registryHost, "metadata-unavailable") };
+  }
 
   const resolved = resolveDependencyVersion(metadata, dependency.spec);
   if (!resolved) {
-    return uninspectable(
-      dependency,
-      registryHost,
-      Object.keys(metadata.versions ?? {}).length ? "no-matching-version" : "metadata-unavailable",
-    );
+    return {
+      evidence: uninspectable(
+        dependency,
+        registryHost,
+        Object.keys(metadata.versions ?? {}).length
+          ? "no-matching-version"
+          : "metadata-unavailable",
+      ),
+    };
   }
 
   const dist = metadata.versions?.[resolved]?.dist;
   const tarballUrl = dist?.tarball;
   if (!tarballUrl) {
-    return uninspectable(dependency, registryHost, "artifact-unavailable", resolved);
+    return {
+      evidence: uninspectable(dependency, registryHost, "artifact-unavailable", resolved),
+    };
   }
 
   let download;
   try {
     download = await args.broker.downloadAnonymousTarball(tarballUrl, {
       maxFiles: DEPENDENCY_ARTIFACT_MAX_FILES,
+      maxBytes: DEPENDENCY_ARTIFACT_MAX_BYTES,
       maxTextSampleChars: DEPENDENCY_TEXT_SAMPLE_LIMIT,
       timeoutMs: deadline.remainingMs(),
     });
@@ -386,18 +495,20 @@ async function inspectOne(
       status: detail?.status ?? null,
       error: describeOperationalError(err),
     });
-    return uninspectable(
-      dependency,
-      registryHost,
-      downloadFailureReason(detail),
-      resolved,
-      tarballUrl,
-      declaredDigest(dist),
-    );
+    return {
+      evidence: uninspectable(
+        dependency,
+        registryHost,
+        downloadFailureReason(detail),
+        resolved,
+        tarballUrl,
+        declaredDigest(dist),
+      ),
+    };
   }
 
   if (deadline.cancelled() || deadline.remainingMs() <= 0) {
-    return uninspectable(dependency, registryHost, "budget-exhausted");
+    return { evidence: uninspectable(dependency, registryHost, "budget-exhausted") };
   }
 
   const reviewedDigest: DependencyDigest | null = download.archiveSha512
@@ -407,7 +518,7 @@ async function inspectOne(
       : null;
   const declared = declaredDigest(dist, reviewedDigest);
 
-  return inspectAcquiredDependency(dependency, {
+  const acquired: AcquiredDependencyArtifact = {
     files: download.files,
     manifest: download.packageJson ?? null,
     suspiciousEntries: download.suspiciousEntries ?? [],
@@ -417,7 +528,116 @@ async function inspectOne(
     declaredDigest: declared,
     reviewedDigest,
     reviewedSha1: download.archiveSha1,
-  });
+  };
+  const evidence = inspectAcquiredDependency(dependency, acquired);
+  const integrityMismatch = evidence.digestVerified === false;
+  return {
+    evidence,
+    ...(evidence.status === "inspected"
+      ? {
+          artifact: {
+            ...toDependencyEvidence(evidence, args.stagedManifest),
+            outcome: integrityMismatch ? "fetch-failed" : "inspected",
+            outcomeDetail: integrityMismatch
+              ? "downloaded artifact did not match registry integrity metadata"
+              : "artifact inspected",
+            entrypoints: integrityMismatch
+              ? null
+              : toDependencyEvidence(evidence, args.stagedManifest).entrypoints,
+            resolution: {
+              kind:
+                evidence.declarationKind === "tag"
+                  ? "dist-tag"
+                  : evidence.declarationKind === "exact"
+                    ? "exact"
+                    : "range",
+              version: resolved,
+              tarballUrl: sanitizeDependencyTarballUrl(tarballUrl),
+              registryIntegrity: declared ? `${declared.algorithm}-${declared.value}` : null,
+              resolvedAt: new Date().toISOString(),
+            },
+            artifact: {
+              sha256: download.archiveSha256?.toLowerCase() ?? "",
+              sha512: download.archiveSha512?.toLowerCase() ?? "",
+              fileCount: acquired.files.length,
+              totalBytes: acquired.files.reduce((total, file) => total + file.size, 0),
+              integrityMatched: evidence.digestVerified,
+            },
+            files: acquired.files,
+            packageJson: integrityMismatch ? null : acquired.manifest,
+          },
+        }
+      : {}),
+  };
+}
+
+function toDependencyEvidence(
+  evidence: ReviewedDependencyEvidence,
+  parent: PackageJsonSummary | null | undefined,
+): DependencyEvidence {
+  const outcome =
+    evidence.status === "inspected"
+      ? "inspected"
+      : evidence.reason === "unresolvable-spec"
+        ? "unresolved-spec"
+        : evidence.reason === "no-matching-version"
+          ? "no-matching-version"
+          : evidence.reason === "metadata-unavailable"
+            ? "metadata-unavailable"
+            : evidence.reason === "artifact-too-large"
+              ? "too-large"
+              : evidence.reason === "budget-exhausted"
+                ? "time-capped"
+                : "fetch-failed";
+  const version = evidence.resolvedVersion;
+  const path = `${parent?.name ?? "parent"}@${parent?.version ?? "unknown"} → ${evidence.name}@${version ?? "unresolved"}`;
+  return {
+    name: evidence.name,
+    section: evidence.section,
+    declaredSpec: evidence.declaredSpec,
+    path,
+    outcome,
+    outcomeDetail: evidence.reason ?? "artifact inspected",
+    resolution:
+      version && evidence.artifactOrigin
+        ? {
+            kind:
+              evidence.declarationKind === "tag"
+                ? "dist-tag"
+                : evidence.declarationKind === "exact"
+                  ? "exact"
+                  : "range",
+            version,
+            tarballUrl: evidence.artifactOrigin,
+            registryIntegrity: evidence.declaredDigest
+              ? `${evidence.declaredDigest.algorithm}-${evidence.declaredDigest.value}`
+              : null,
+            resolvedAt: new Date().toISOString(),
+          }
+        : null,
+    artifact:
+      evidence.reviewedDigest && evidence.fileCount !== null
+        ? {
+            sha256:
+              evidence.reviewedDigest.algorithm === "sha256" ? evidence.reviewedDigest.value : "",
+            sha512:
+              evidence.reviewedDigest.algorithm === "sha512" ? evidence.reviewedDigest.value : "",
+            fileCount: evidence.fileCount,
+            totalBytes: 0,
+            integrityMatched: evidence.digestVerified,
+          }
+        : null,
+    entrypoints:
+      evidence.status === "inspected"
+        ? {
+            lifecycleScripts: evidence.automaticExecution.map((entry) => entry.name),
+            hasInstallLifecycle: evidence.automaticExecution.length > 0,
+            gypfile: evidence.automaticExecution.some((entry) => entry.kind === "node-gyp"),
+            binCount: 0,
+          }
+        : null,
+    findingCount: 0,
+  };
 }
 
 interface AcquiredDependencyArtifact {
@@ -438,7 +658,7 @@ interface AcquiredDependencyArtifact {
 function inspectAcquiredDependency(
   dependency: AddedDependency,
   artifact: AcquiredDependencyArtifact,
-): DependencyEvidence {
+): ReviewedDependencyEvidence {
   const hasIncompleteBody = artifact.files.some(
     (file) => file.flags.includes("baseline-truncated") || file.flags.includes("content-skipped"),
   );
@@ -500,10 +720,10 @@ function uninspectableAcquired(
   reason: DependencyUninspectableReason,
   artifact: AcquiredDependencyArtifact,
   assessment?: Pick<
-    DependencyEvidence,
+    ReviewedDependencyEvidence,
     "automaticExecution" | "capabilities" | "installReachableCapabilities" | "observation"
   >,
-): DependencyEvidence {
+): ReviewedDependencyEvidence {
   return uninspectable(
     dependency,
     artifact.registryHost,
@@ -537,30 +757,16 @@ function isAmbiguousDependencyArchiveEntry(entry: TarSuspiciousEntry): boolean {
 export function resolveDependencyVersion(metadata: RegistryMetadata, spec: string): string | null {
   const versions = Object.keys(metadata.versions ?? {});
   if (!versions.length) return null;
-  const trimmed = spec.trim();
-  const kind = dependencyDeclarationKind(trimmed);
-  if (kind === "unusual") return null;
-  if (kind === "exact") {
-    const exact = exactDependencyVersion(trimmed);
-    return exact && versions.includes(exact) ? exact : null;
+  const parsed = parseVersionSpec(spec);
+  if (parsed.kind === "unresolvable") return null;
+  if (parsed.kind === "exact") {
+    return versions.includes(parsed.version) ? parsed.version : null;
   }
-  if (kind === "tag") {
-    const tagged = metadata["dist-tags"]?.[trimmed];
+  if (parsed.kind === "dist-tag") {
+    const tagged = metadata["dist-tags"]?.[parsed.tag];
     return tagged && versions.includes(tagged) ? tagged : null;
   }
-  const latest = metadata["dist-tags"]?.latest;
-  if (
-    latest &&
-    versions.includes(latest) &&
-    !metadata.versions?.[latest]?.deprecated &&
-    maxSatisfyingVersion([latest], trimmed)
-  ) {
-    return latest;
-  }
-  const nonDeprecated = versions.filter((version) => !metadata.versions?.[version]?.deprecated);
-  const preferred = maxSatisfyingVersion(nonDeprecated, trimmed);
-  if (preferred) return preferred;
-  return maxSatisfyingVersion(versions, trimmed);
+  return highestSatisfying(versions, parsed.spec);
 }
 
 /**
@@ -658,10 +864,10 @@ function uninspectable(
   reviewedSha1: string | null | undefined = null,
   fileCount: number | null = null,
   assessment?: Pick<
-    DependencyEvidence,
+    ReviewedDependencyEvidence,
     "automaticExecution" | "capabilities" | "installReachableCapabilities" | "observation"
   >,
-): DependencyEvidence {
+): ReviewedDependencyEvidence {
   return {
     name: boundedText(dependency.name, 256),
     section: dependency.section,
@@ -685,6 +891,15 @@ function uninspectable(
 
 function boundedText(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
+}
+
+function sanitizeDependencyTarballUrl(value: string): string {
+  const url = new URL(value);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function hostOf(registryUrl: string): string | null {

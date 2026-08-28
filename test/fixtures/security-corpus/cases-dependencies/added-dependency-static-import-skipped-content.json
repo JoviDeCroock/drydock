@@ -52,7 +52,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>static-import-install@1.0.0"
     }

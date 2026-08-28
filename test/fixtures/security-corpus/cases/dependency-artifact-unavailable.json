@@ -1,0 +1,36 @@
+{
+  "id": "dependency-artifact-unavailable",
+  "title": "Added dependency is absent from the public registry",
+  "category": "dependency-supply-chain",
+  "intent": "A public 404 fails visibly into manual review and names dependency-confusion risk.",
+  "previousPackageJson": { "name": "parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "dependencies": { "private-looking-dep": "1.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "private-looking-dep": {
+      "declaredSpec": "1.0.0",
+      "outcome": "not-found",
+      "outcomeDetail": "public registry returned 404",
+      "files": [],
+      "packageJson": null
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" },
+    { "ruleId": "dependency.artifact-unavailable", "severity": "medium", "file": "package.json" }
+  ]
+}

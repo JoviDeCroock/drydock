@@ -132,7 +132,7 @@ describe("resolveDependencyVersion", () => {
     expect(resolveDependencyVersion(metadata, "next")).toBe("1.4.7");
   });
 
-  test("a range prefers the default tag when it satisfies the range", () => {
+  test("a range resolves to its highest satisfying version", () => {
     expect(
       resolveDependencyVersion(
         {
@@ -141,14 +141,14 @@ describe("resolveDependencyVersion", () => {
         },
         "^1.0.0",
       ),
-    ).toBe("1.0.0");
+    ).toBe("1.4.7");
   });
 
   test("a range falls back to its highest match when latest is outside it", () => {
     expect(resolveDependencyVersion(metadata, "^1.0.0")).toBe("1.4.7");
   });
 
-  test("a range skips a deprecated latest when a non-deprecated match exists", () => {
+  test("range ordering is independent of deprecation metadata", () => {
     expect(
       resolveDependencyVersion(
         {
@@ -157,7 +157,7 @@ describe("resolveDependencyVersion", () => {
         },
         "^1.0.0",
       ),
-    ).toBe("1.0.0");
+    ).toBe("1.1.0");
   });
 
   test("a range uses the highest deprecated match only when every match is deprecated", () => {
@@ -223,11 +223,11 @@ describe("NpmBroker registry snapshot", () => {
     );
 
     await expect(Promise.all([broker.registryUrl(), broker.registryUrl()])).resolves.toEqual([
-      "https://registry-a.test",
-      "https://registry-a.test",
+      "https://registry.npmjs.org",
+      "https://registry.npmjs.org",
     ]);
-    await expect(broker.registryUrl()).resolves.toBe("https://registry-a.test");
-    expect(npmConnectionMock.getNpmConnection).toHaveBeenCalledTimes(1);
+    await expect(broker.registryUrl()).resolves.toBe("https://registry.npmjs.org");
+    expect(npmConnectionMock.getNpmConnection).not.toHaveBeenCalled();
   });
 });
 
@@ -339,6 +339,7 @@ describe("inspectAddedNpmDependencies", () => {
 
     expect(broker.calls.downloads[0].url).toBe(fetchedUrl);
     expect(review.dependencies[0].artifactOrigin).toBe("https://registry.npmjs.org");
+    expect(review.evidence[0].resolution.tarballUrl).toBe(safeUrl);
   });
 
   test("a digest the registry and the bytes disagree on is recorded as unverified-false", async () => {
@@ -359,6 +360,16 @@ describe("inspectAddedNpmDependencies", () => {
       { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
     );
     expect(review.dependencies[0].digestVerified).toBe(false);
+    expect(review.evidence[0]).toMatchObject({
+      outcome: "fetch-failed",
+      outcomeDetail: "downloaded artifact did not match registry integrity metadata",
+      entrypoints: null,
+    });
+    expect(review.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "dependency.artifact-unavailable", severity: "medium" }),
+      ]),
+    );
   });
 
   test("a registry that answers nothing to a credential-free request fails visibly", async () => {
@@ -374,7 +385,114 @@ describe("inspectAddedNpmDependencies", () => {
       status: "uninspectable",
       reason: "metadata-unavailable",
     });
+    expect(review.evidence[0]).toMatchObject({
+      outcome: "metadata-unavailable",
+      outcomeDetail: "metadata-unavailable",
+    });
     expect(broker.calls.downloads).toEqual([]);
+  });
+
+  test("a published package with no version matching the declaration is distinct from a metadata miss", async () => {
+    const broker = brokerStub({ metadata: { added: packument("added", { "1.0.0": {} }) } });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { added: "^2.0.0" } },
+    );
+
+    expect(review.dependencies[0]).toMatchObject({
+      status: "uninspectable",
+      reason: "no-matching-version",
+    });
+    expect(review.evidence[0]).toMatchObject({
+      outcome: "no-matching-version",
+      outcomeDetail: "no-matching-version",
+    });
+    expect(broker.calls.downloads).toEqual([]);
+  });
+
+  test("keeps same-name declarations in separate sections bound to their own artifacts", async () => {
+    const metadata = { shared: packument("shared", { "1.0.0": {}, "2.0.0": {} }) };
+    const downloads = Object.fromEntries(
+      ["1.0.0", "2.0.0"].map((version) => [
+        `https://registry.npmjs.org/shared/-/shared-${version}.tgz`,
+        {
+          files: [file("package.json", JSON.stringify({ name: "shared", version }))],
+          packageJson: { name: "shared", version },
+        },
+      ]),
+    );
+    const broker = brokerStub({ metadata, downloads });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      {
+        name: "p",
+        version: "1.0.1",
+        dependencies: { shared: "1.0.0" },
+        peerDependencies: { shared: "2.0.0" },
+      },
+    );
+
+    expect(review.evidence).toEqual([
+      expect.objectContaining({
+        name: "shared",
+        section: "dependencies",
+        declaredSpec: "1.0.0",
+        outcome: "inspected",
+        resolution: expect.objectContaining({ version: "1.0.0" }),
+      }),
+      expect.objectContaining({
+        name: "shared",
+        section: "peerDependencies",
+        declaredSpec: "2.0.0",
+        outcome: "inspected",
+        resolution: expect.objectContaining({ version: "2.0.0" }),
+      }),
+    ]);
+    expect(broker.calls.metadata).toEqual(["shared", "shared"]);
+    expect(broker.calls.downloads.map(({ url }) => url)).toEqual([
+      "https://registry.npmjs.org/shared/-/shared-1.0.0.tgz",
+      "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz",
+    ]);
+  });
+
+  test("still fetches a same-name required peer when the runtime declaration is bundled", async () => {
+    const broker = brokerStub({
+      metadata: { shared: packument("shared", { "2.0.0": {} }) },
+      downloads: {
+        "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz": {
+          files: [file("package.json", '{"name":"shared","version":"2.0.0"}')],
+          packageJson: { name: "shared", version: "2.0.0" },
+        },
+      },
+    });
+    const staged = {
+      name: "p",
+      version: "1.0.1",
+      dependencies: { shared: "1.0.0" },
+      peerDependencies: { shared: "2.0.0" },
+      bundleDependencies: ["shared"],
+    };
+    const review = await inspect(broker, { name: "p", version: "1.0.0" }, staged, {
+      stagedManifest: staged,
+      stagedFiles: [
+        file("node_modules/shared/package.json", '{"name":"shared","version":"1.0.0"}'),
+      ],
+    });
+
+    expect(review.evidence).toEqual([
+      expect.objectContaining({
+        name: "shared",
+        section: "peerDependencies",
+        declaredSpec: "2.0.0",
+        outcome: "inspected",
+        resolution: expect.objectContaining({ version: "2.0.0" }),
+      }),
+    ]);
+    expect(broker.calls.downloads.map(({ url }) => url)).toEqual([
+      "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz",
+    ]);
   });
 
   test("a git spec is recorded as unresolvable without any fetch", async () => {
@@ -434,12 +552,12 @@ describe("inspectAddedNpmDependencies", () => {
         dependencies: Object.fromEntries(names.map((name) => [name, "1.0.0"])),
       },
     );
-    expect(review.status).toBe("partial");
+    expect(review.status).toBe("complete");
     expect(review.selectedCount).toBe(8);
-    expect(review.inspectedCount).toBe(6);
+    expect(review.inspectedCount).toBe(8);
     expect(
       review.dependencies.filter((entry) => entry.reason === "budget-exhausted").map((e) => e.name),
-    ).toEqual(["g", "h"]);
+    ).toEqual([]);
   });
 
   test("the wall-clock budget stops fetching without failing the review", async () => {
@@ -561,11 +679,21 @@ describe("inspectAddedNpmDependencies", () => {
     expect(review).toMatchObject({
       status: "partial",
       selectedCount: 80,
-      inspectedCount: 6,
-      uninspectableCount: 74,
+      inspectedCount: 8,
+      uninspectableCount: 72,
       omittedCount: 16,
     });
     expect(review.dependencies).toHaveLength(64);
+    expect(review.evidence).toHaveLength(64);
+    expect(
+      review.findings.filter((finding) => finding.ruleId === "dependency.artifact-unavailable"),
+    ).toHaveLength(57);
+    expect(review.findings.at(-1)).toEqual(
+      expect.objectContaining({
+        ruleId: "dependency.artifact-unavailable",
+        evidence: expect.stringContaining("16 additional direct dependencies"),
+      }),
+    );
   });
 
   test("a registry lookup failure remains a visible review gap", async () => {
@@ -587,7 +715,7 @@ describe("inspectAddedNpmDependencies", () => {
     });
   });
 
-  test("a baseline acquisition gap reviews every staged install dependency", async () => {
+  test("a release without a baseline does not treat its whole manifest as added", async () => {
     const broker = brokerStub();
     const review = await inspect(
       broker,
@@ -595,10 +723,8 @@ describe("inspectAddedNpmDependencies", () => {
       { name: "p", version: "1.0.0", dependencies: { added: "1.0.0" } },
       { baselineManifestUnavailable: true },
     );
-    expect(review).toMatchObject({
-      selectedCount: 1,
-      dependencies: [{ name: "added", reason: "metadata-unavailable" }],
-    });
+    expect(review).toEqual(expect.objectContaining({ status: "not-applicable", selectedCount: 0 }));
+    expect(broker.calls.metadata).toEqual([]);
   });
 
   test("a release that adds no installable dependency does no work at all", async () => {
@@ -740,11 +866,12 @@ describe("inspectAddedNpmDependencies", () => {
       { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
     );
     expect(broker.calls.downloads[0].opts).toMatchObject({
-      maxFiles: 600,
+      maxFiles: 800,
+      maxBytes: 25 * 1024 * 1024,
       maxTextSampleChars: 256 * 1024,
     });
     expect(broker.calls.downloads[0].opts.timeoutMs).toBeGreaterThan(0);
-    expect(broker.calls.downloads[0].opts.timeoutMs).toBeLessThanOrEqual(20_000);
+    expect(broker.calls.downloads[0].opts.timeoutMs).toBeLessThanOrEqual(30_000);
   });
 
   test.each(["baseline-truncated", "content-skipped"])(

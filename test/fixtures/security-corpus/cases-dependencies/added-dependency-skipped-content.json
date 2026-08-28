@@ -50,7 +50,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>skipped-body@1.0.0"
     }

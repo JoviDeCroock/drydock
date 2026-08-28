@@ -61,7 +61,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>wrapped-loader@1.0.0"
     }

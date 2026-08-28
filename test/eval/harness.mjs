@@ -33,6 +33,7 @@ import {
   createVscodeExtensionReview,
 } from "../../server/lib/ecosystems/vscode";
 import { createAtpmCorpusReview } from "../helpers/atpm-security-corpus.mjs";
+import { dependencyCorpusFindings } from "../helpers/dependency-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS_DIR = join(__dirname, "..", "fixtures", "security-corpus");
@@ -169,6 +170,7 @@ function detect(record, fxOverride) {
       entrypointResolution: "npm",
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
+    ...dependencyCorpusFindings(fx, packageJsonDiff),
   ];
   return { risk: computeRisk(findings), findings };
 }

@@ -68,7 +68,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-risk",
+      "ruleId": "dependency.install-time-capability",
       "severity": "high",
       "file": "<dependency>native-installer@1.0.0:package.json"
     }

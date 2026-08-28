@@ -47,12 +47,12 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.integrity-mismatch",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "critical",
       "file": "<dependency>mutated-and-truncated@1.0.0"
     },
     {
-      "ruleId": "dependency-artifact.uninspectable",
+      "ruleId": "dependency.artifact-unavailable",
       "severity": "medium",
       "file": "<dependency>mutated-and-truncated@1.0.0"
     }

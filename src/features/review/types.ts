@@ -15,6 +15,13 @@ export interface ReviewFinding {
   line?: number | null;
   source: string;
   ruleId?: string | null;
+  dependency?: {
+    name: string;
+    version: string | null;
+    path: string;
+    section?: import("../../../server/lib/review").DependencySection;
+    declaredSpec?: string;
+  };
 }
 
 // A review finding paired with its status against the active comparison.

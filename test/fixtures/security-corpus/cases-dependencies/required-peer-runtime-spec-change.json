@@ -53,7 +53,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-execution",
+      "ruleId": "dependency.install-time-capability",
       "severity": "medium",
       "file": "<dependency>setup-helper@2.0.0:package.json"
     }

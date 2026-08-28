@@ -25,7 +25,10 @@ import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ReportDiffPanel } from "./ReportDiffPanel";
-import { normalizeDependencyReview } from "../../../server/lib/review/dependency-evidence";
+import {
+  normalizeDependencyEvidence,
+  normalizeDependencyReview,
+} from "../../../server/lib/review/dependency-evidence";
 
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
@@ -199,6 +202,7 @@ export default function PublicReportPage() {
     (entry) => entry.status !== "unchanged",
   ).length;
   const dependencyReview = normalizeDependencyReview(data.dependencyReview);
+  const dependencyEvidence = normalizeDependencyEvidence(data.dependencies?.evidence);
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
@@ -289,7 +293,9 @@ export default function PublicReportPage() {
         )}
       </Show>
 
-      {dependencyReview ? <DependencyReviewSection review={dependencyReview} /> : null}
+      {dependencyReview || dependencyEvidence?.length ? (
+        <DependencyReviewSection review={dependencyReview} evidence={dependencyEvidence ?? []} />
+      ) : null}
 
       <section class="flex flex-col gap-3">
         <SectionLabel as="h2">Verify this report</SectionLabel>

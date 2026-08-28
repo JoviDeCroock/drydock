@@ -6,9 +6,11 @@ import {
   computeRisk,
   dependencyEvidenceFindings,
   mergeDependencyReviews,
+  normalizeDependencyEvidence,
   normalizeDependencyReview,
   reconcileDependencyReviewFindings,
   selectAddedDependencies,
+  selectAddedRegistryDependencyDeclarations,
   selectBundledAddedDependencies,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
@@ -22,6 +24,56 @@ function diffOf(previous, staged) {
 function file(path, textSample) {
   return { path, size: textSample.length, sha256: "", textSample, flags: [] };
 }
+
+describe("normalizeDependencyEvidence", () => {
+  const evidence = {
+    name: "safe-dependency",
+    section: "dependencies",
+    declaredSpec: "^1.0.0",
+    path: "parent@1.0.0 → safe-dependency@1.2.0",
+    outcome: "inspected",
+    outcomeDetail: "artifact inspected",
+    resolution: {
+      kind: "range",
+      version: "1.2.0",
+      tarballUrl: "https://registry.npmjs.org/safe-dependency/-/safe-dependency-1.2.0.tgz",
+      registryIntegrity: null,
+      resolvedAt: "2026-08-28T00:00:00.000Z",
+    },
+    artifact: {
+      sha256: "aa",
+      sha512: "bb",
+      fileCount: 2,
+      totalBytes: 100,
+      integrityMatched: null,
+    },
+    entrypoints: {
+      lifecycleScripts: [],
+      hasInstallLifecycle: false,
+      gypfile: false,
+      binCount: 0,
+    },
+    findingCount: 0,
+  };
+
+  test("accepts bounded public-registry evidence", () => {
+    expect(normalizeDependencyEvidence([evidence])).toEqual([evidence]);
+  });
+
+  test("rejects credentialed or alternate-host artifact URLs", () => {
+    expect(
+      normalizeDependencyEvidence([
+        {
+          ...evidence,
+          resolution: {
+            ...evidence.resolution,
+            tarballUrl: "https://token@packages.example.invalid/signed.tgz",
+          },
+        },
+      ]),
+    ).toBeNull();
+  });
+});
 
 describe("selectAddedDependencies", () => {
   test("selects newly added runtime and optional dependencies", () => {
@@ -294,6 +346,25 @@ describe("selectAddedDependencies", () => {
         ],
       }).map((entry) => entry.name),
     ).toEqual(["embedded"]);
+  });
+
+  test("selects a required peer separately when its same-name runtime declaration is bundled", () => {
+    const staged = {
+      name: "p",
+      dependencies: { shared: "1.0.0" },
+      peerDependencies: { shared: "2.0.0" },
+      bundleDependencies: ["shared"],
+    };
+    const selected = selectAddedRegistryDependencyDeclarations(diffOf({ name: "p" }, staged), {
+      stagedManifest: staged,
+      stagedFiles: [
+        file("node_modules/shared/package.json", '{"name":"shared","version":"1.0.0"}'),
+      ],
+    });
+
+    expect(selected).toEqual([
+      { name: "shared", section: "peerDependencies", declaredSpec: "2.0.0" },
+    ]);
   });
 
   test("keeps a declared bundled dependency embedded when its manifest body was not retained", () => {
@@ -1255,7 +1326,7 @@ describe("classifyDependencyInstallRisk", () => {
 });
 
 describe("reconcileDependencyReviewFindings", () => {
-  test("replaces only the declaration finding for a dependency with terminal evidence", () => {
+  test("keeps declaration findings alongside separately fetched artifact evidence", () => {
     const findings = [
       { ruleId: "dependency.added", evidence: "clean-dep: 1.0.0" },
       { ruleId: "dependency.optional-added", evidence: "optional-dep: ^2.0.0" },
@@ -1269,10 +1340,7 @@ describe("reconcileDependencyReviewFindings", () => {
       ],
     };
 
-    expect(reconcileDependencyReviewFindings(findings, review)).toEqual([
-      { ruleId: "dependency.major-bump", evidence: "clean-dep: 0.9.0 → 1.0.0" },
-      { ruleId: "dependency.added", evidence: "omitted-dep: 3.0.0" },
-    ]);
+    expect(reconcileDependencyReviewFindings(findings, review)).toEqual(findings);
   });
 });
 
@@ -1325,7 +1393,7 @@ describe("dependencyEvidenceFindings", () => {
       parent,
     );
     expect(finding.severity).toBe("critical");
-    expect(finding.ruleId).toBe("dependency-artifact.install-risk");
+    expect(finding.ruleId).toBe("dependency.install-time-capability");
     expect(finding.evidence).toContain("left-pad@1.4.0 → proc-macro1@0.1.0");
     expect(finding.evidence).toContain("package.json#scripts.postinstall");
     expect(finding.ruleVersion).toBe(DETERMINISTIC_RULES_VERSION);
@@ -1346,7 +1414,7 @@ describe("dependencyEvidenceFindings", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       severity: "critical",
-      ruleId: "dependency-artifact.integrity-mismatch",
+      ruleId: "dependency.artifact-unavailable",
     });
     expect(computeRisk(findings)).toBe("critical");
   });
@@ -1365,8 +1433,8 @@ describe("dependencyEvidenceFindings", () => {
       parent,
     );
     expect(findings.map((finding) => finding.ruleId)).toEqual([
-      "dependency-artifact.integrity-mismatch",
-      "dependency-artifact.uninspectable",
+      "dependency.artifact-unavailable",
+      "dependency.artifact-unavailable",
     ]);
     expect(computeRisk(findings)).toBe("critical");
   });
@@ -1483,7 +1551,7 @@ describe("dependencyEvidenceFindings", () => {
       parent,
     );
     expect(finding.severity).toBe("medium");
-    expect(finding.ruleId).toBe("dependency-artifact.uninspectable");
+    expect(finding.ruleId).toBe("dependency.artifact-unavailable");
     expect(finding.evidence).toContain("credential-free");
     expect(computeRisk([finding])).toBe("medium");
   });
@@ -1504,8 +1572,8 @@ describe("dependencyEvidenceFindings", () => {
     );
 
     expect(findings.map((finding) => [finding.ruleId, finding.severity])).toEqual([
-      ["dependency-artifact.install-risk", "critical"],
-      ["dependency-artifact.uninspectable", "medium"],
+      ["dependency.install-time-capability", "critical"],
+      ["dependency.artifact-unavailable", "medium"],
     ]);
     expect(computeRisk(findings)).toBe("critical");
   });
@@ -1556,7 +1624,7 @@ describe("dependencyEvidenceFindings", () => {
     );
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
-      ruleId: "dependency-artifact.uninspectable",
+      ruleId: "dependency.artifact-unavailable",
       severity: "medium",
     });
     expect(findings[0].evidence).toContain("6 newly added dependencies were not reviewed");

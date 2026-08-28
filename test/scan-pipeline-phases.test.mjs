@@ -293,7 +293,7 @@ describe("runDeterministicFindings", () => {
     expect(out.ruleFindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          ruleId: "dependency-artifact.install-risk",
+          ruleId: "dependency.install-time-capability",
           severity: "high",
         }),
       ]),
@@ -570,27 +570,25 @@ describe("analyzeRelease", () => {
 
     expect(inspectAddedDependencies).toHaveBeenCalledWith(
       ctx,
-      expect.anything(),
       expect.objectContaining({
         scanId: "scan-1",
         organizationId: "org-1",
-        baselineManifestUnavailable: false,
         stagedManifest: expect.objectContaining({ name: "pkg", version: "1.0.1" }),
         stagedFiles: expect.arrayContaining([expect.objectContaining({ path: "package.json" })]),
       }),
     );
     const finding = out.findings.ruleFindings.find(
-      (entry) => entry.ruleId === "dependency-artifact.install-risk",
+      (entry) => entry.ruleId === "dependency.install-time-capability",
     );
     expect(finding.severity).toBe("critical");
     // Release-scoped: the whole point of the family is what THIS release starts
     // shipping, so it has to reach `releaseRisk` and therefore the gate.
     const annotated = out.findings.annotatedFindings.find(
-      (entry) => entry.ruleId === "dependency-artifact.install-risk",
+      (entry) => entry.ruleId === "dependency.install-time-capability",
     );
     expect(annotated.releaseDelta).toBe(true);
     expect(out.findings.releaseRuleFindings.map((entry) => entry.ruleId)).toContain(
-      "dependency-artifact.install-risk",
+      "dependency.install-time-capability",
     );
     expect(out.findings.dependencyReview.dependencies).toHaveLength(1);
     expect(JSON.stringify(out.findings.dependencyReview)).not.toContain(NPM_TOKEN);
@@ -601,7 +599,7 @@ describe("analyzeRelease", () => {
     ["dependencies", "dependency.added", "medium"],
     ["optionalDependencies", "dependency.optional-added", "high"],
   ])(
-    "a clean reviewed %s declaration replaces its manifest-only finding",
+    "a clean reviewed %s declaration keeps its manifest delta finding",
     async (section, ruleId, severity) => {
       const acquired = clonedResolved();
       acquired.staged.artifact.manifest[section] = { "clean-dep": "1.0.0" };
@@ -661,10 +659,12 @@ describe("analyzeRelease", () => {
         identity,
       );
 
-      expect(out.findings.ruleFindings).toEqual([]);
-      expect(out.findings.annotatedFindings).toEqual([]);
-      expect(out.findings.releaseRuleFindings).toEqual([]);
-      expect(scoreRisk(out.findings.annotatedFindings, disabledAi).releaseRisk).toBe("low");
+      expect(out.findings.ruleFindings).toEqual([expect.objectContaining({ ruleId, severity })]);
+      expect(out.findings.annotatedFindings).toEqual([
+        expect.objectContaining({ ruleId, releaseDelta: true }),
+      ]);
+      expect(out.findings.releaseRuleFindings).toEqual([expect.objectContaining({ ruleId })]);
+      expect(scoreRisk(out.findings.annotatedFindings, disabledAi).releaseRisk).toBe(severity);
     },
   );
 
@@ -730,14 +730,17 @@ describe("analyzeRelease", () => {
       uninspectableCount: 1,
       dependencies: [{ name: "added", reason: "review-failed" }],
     });
+    expect(out.findings.dependencyEvidence).toEqual([
+      expect.objectContaining({ name: "added", outcome: "fetch-failed", findingCount: 1 }),
+    ]);
     const dependencyFinding = out.findings.ruleFindings.find(
-      (entry) => entry.ruleId === "dependency-artifact.uninspectable",
+      (entry) => entry.ruleId === "dependency.artifact-unavailable",
     );
     expect(dependencyFinding).toMatchObject({ severity: "medium" });
   });
 
   test.each(["baseline-unavailable", "package-json-missing-name-or-version"])(
-    "marks a missing baseline manifest as unavailable for %s",
+    "skips dependency inspection without a baseline manifest for %s",
     async (reason) => {
       const acquired = clonedResolved();
       acquired.staged.artifact.manifest.dependencies = { added: "1.0.0" };
@@ -764,13 +767,16 @@ describe("analyzeRelease", () => {
       });
       const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
 
-      await analyzeRelease(adapter, ctx, { stageId: "stage-1" }, { dispose() {} }, identity);
-
-      expect(inspectAddedDependencies).toHaveBeenCalledWith(
+      const out = await analyzeRelease(
+        adapter,
         ctx,
-        expect.anything(),
-        expect.objectContaining({ baselineManifestUnavailable: true }),
+        { stageId: "stage-1" },
+        { dispose() {} },
+        identity,
       );
+
+      expect(inspectAddedDependencies).not.toHaveBeenCalled();
+      expect(out.findings.dependencyEvidence).toEqual([]);
     },
   );
 

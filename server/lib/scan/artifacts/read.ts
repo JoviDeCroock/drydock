@@ -4,7 +4,6 @@ import {
   parseFilesArtifact,
   parseManifest,
   parseReportArtifactMetadata,
-  parseReportFindings,
 } from "./parse";
 import {
   SCAN_ARTIFACT_STORAGE_VERSION,
@@ -74,18 +73,19 @@ export async function loadScanArtifacts(
       }),
     ]);
 
-    const reportFindings = parseReportFindings(reportText, scan.id);
+    const reportMetadata = parseReportArtifactMetadata(reportText, scan.id);
     const files = filesText === null ? [] : parseFilesArtifact(filesText, scan.id);
     const diff = parseDiffArtifact(diffText, scan.id);
-    if (!files || !diff || !reportFindings) {
+    if (!files || !diff || !reportMetadata) {
       emitArtifactFallback("artifact_payload_invalid", scan);
       return null;
     }
     return {
       files,
       diff,
-      findings: reportFindings.findings,
-      findingAnnotations: reportFindings.annotations,
+      findings: reportMetadata.findings,
+      findingAnnotations: reportMetadata.findingAnnotations,
+      dependencyEvidence: reportMetadata.dependencyEvidence,
     };
   } catch (err) {
     emitArtifactFallback("read_failed", scan, { error: describeOperationalError(err) });

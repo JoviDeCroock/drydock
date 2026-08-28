@@ -173,8 +173,8 @@ function keyFinding(
       line: firstJsonPropertyLine(stagedPackageJsonText, key, findingSpec),
       evidence: `${key}: ${findingSpec}`,
       reason: installsNewCode
-        ? "a newly added dependency ships third-party code this scan does not inspect into every consumer install — the event-stream/flatmap-stream and node-ipc/peacenotwar vector — so review the new dependency's own contents before approving"
-        : "a newly added peer dependency requires every consumer to install this third-party package, which this scan does not inspect — review the dependency's own contents before approving",
+        ? "a newly added dependency ships third-party code into every consumer install — Drydock separately resolves, fetches, and scans its review-time artifact, whose dependency evidence must be checked before approval"
+        : "a newly added peer dependency requires every consumer to install this third-party package — Drydock separately resolves, fetches, and scans its review-time artifact, whose dependency evidence must be checked before approval",
     });
   }
 

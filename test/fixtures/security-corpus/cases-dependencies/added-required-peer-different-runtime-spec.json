@@ -54,7 +54,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.install-risk",
+      "ruleId": "dependency.install-time-capability",
       "severity": "high",
       "file": "<dependency>peer-helper@2.0.0:package.json"
     }

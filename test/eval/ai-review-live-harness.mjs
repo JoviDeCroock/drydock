@@ -63,6 +63,7 @@ import {
 } from "../../server/lib/ai-review/index.ts";
 import { isBenignClean, isMaliciousCaught, isUncertaintyEscalated } from "./ai-review-harness.mjs";
 import { loadCorpus } from "./harness.mjs";
+import { dependencyCorpusFindings } from "../helpers/dependency-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -145,6 +146,7 @@ function buildNpmLiveCase(record) {
       entrypointResolution: "npm",
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
+    ...dependencyCorpusFindings(record.fx, packageJsonDiff),
   ]);
   const files = redactFileRecords(stagedFiles);
   const previous = redactFileRecords(previousFiles);

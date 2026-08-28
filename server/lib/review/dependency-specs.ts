@@ -4,6 +4,8 @@
 // dependency.major-bump finding and the "view diff" link rendered for the same
 // manifest row derive from the same parser.
 
+import { maxSatisfyingVersion, parseRange } from "../ecosystems/npm/semver";
+
 export function unusualDependencySpecKind(spec: string): string | null {
   const normalized = spec.trim().toLowerCase();
   if (/^(?:github|gitlab|bitbucket):/.test(normalized)) return "git-hosted";
@@ -17,6 +19,41 @@ export function unusualDependencySpecKind(spec: string): string | null {
   // hand-crafted publish, and the bare name does not resolve on the registry.
   if (/^(?:workspace|catalog|link|portal):/.test(normalized)) return "workspace-protocol";
   return null;
+}
+
+export type ParsedVersionSpec =
+  | { kind: "exact"; version: string }
+  | { kind: "range"; spec: string }
+  | { kind: "dist-tag"; tag: string }
+  | { kind: "unresolvable"; reason: string };
+
+/** Classify a dependency declaration before registry metadata is consulted. */
+export function parseVersionSpec(spec: string): ParsedVersionSpec {
+  const trimmed = spec.trim();
+  const unusual = unusualDependencySpecKind(trimmed);
+  if (unusual) return { kind: "unresolvable", reason: unusual };
+
+  const exact = exactDependencyVersion(trimmed);
+  if (exact) return { kind: "exact", version: exact };
+
+  // npm treats a missing selector and `*` as the `latest` dist-tag. Keep that
+  // registry-controlled resolution visible instead of presenting it as a
+  // semver range that permanently names one version.
+  if (!trimmed || trimmed === "*") return { kind: "dist-tag", tag: "latest" };
+
+  if (parseRange(trimmed)) return { kind: "range", spec: trimmed };
+  if (/^[A-Za-z][0-9A-Za-z._-]*$/.test(trimmed)) {
+    return { kind: "dist-tag", tag: trimmed };
+  }
+  return { kind: "unresolvable", reason: "unsupported registry spec" };
+}
+
+/** Highest published version admitted by a parseable exact/range declaration. */
+export function highestSatisfying(versions: string[], spec: string): string | null {
+  const parsed = parseVersionSpec(spec);
+  if (parsed.kind === "exact") return versions.includes(parsed.version) ? parsed.version : null;
+  if (parsed.kind !== "range") return null;
+  return maxSatisfyingVersion(versions, parsed.spec);
 }
 
 // The major-version intervals consumers can resolve from a plain registry spec.

@@ -1,163 +1,88 @@
 # Dependency-artifact review
 
-Drydock reviews the exact bytes of the release in front of it. A release that **adds a dependency** ships third-party code into every consumer install without any of those bytes appearing in the reviewed artifact — the manifest gains one line, and the report used to stop there.
-
-That is a real propagation path, not a hypothetical one:
-
-1. a maintainer account or release workflow is compromised;
-2. the candidate release adds a dependency;
-3. that dependency executes during install or build and fetches a payload;
-4. consumers trust the parent package and inherit the payload.
-
-The 2026 `arrayref` compromise is the reference case: `arrayref@0.3.10` added `proc-macro1`, whose `build.rs` downloaded a malicious payload, and the malicious versions were pulled afterwards — which is also why the review record has to survive the artifact disappearing.
-
-Dependency-artifact review closes that gap for **newly introduced direct dependencies** on the npm release paths (staged publish and workflow gate). It is not SCA, not reputation scoring, and not a vulnerability database. It extends exact-artifact release review to the new third-party code a candidate release starts pulling in.
-
-## What a review packet can now say
-
-> This release introduces `arrayref@0.3.10 → proc-macro1@0.1.0 → package.json#scripts.postinstall → shell command that fetches and executes remote code`.
+Drydock reviews the exact bytes of a candidate release. A release can also introduce third-party code with a one-line manifest change, while none of that dependency's bytes appear in the parent artifact. Dependency-artifact review closes that gap for newly added direct npm dependencies without installing or executing package code.
 
 ## Scope
 
-Selected (`selectAddedDependencies`, `server/lib/review/dependency-selection.ts`):
+The pass runs for npm staged-publish and workflow-gate reviews when a baseline `package.json` is available. `selectAddedDependencyDeclarations` selects, in deterministic section order:
 
-- `dependencies` and `optionalDependencies` — a plain consumer install downloads both;
-- **required** peers — npm 7+ installs peers automatically, so a required peer this release newly declares, or changes from optional to required without the same runtime spec already installed, is code that starts arriving in consumer trees because of it; a same-named runtime declaration suppresses review only when its effective spec matches the new peer;
-- a required peer moved into an installing section with a different spec — the changed range can resolve package bytes that were not covered by the previous release's peer declaration.
+- newly added `dependencies`;
+- newly added `optionalDependencies`;
+- newly added required `peerDependencies`.
 
-When the same key appears in both `dependencies` and `optionalDependencies`, npm treats the optional declaration as the effective install spec. Selection follows that precedence so Drydock reviews the version consumers actually resolve.
+It excludes development dependencies, optional peers, declarations already represented by the previous release's installed set, bundled children, and all dependencies of a release with no baseline. It reviews direct additions only; recursive transitive inspection is out of scope.
 
-Deliberately excluded:
+The existing `dependency.added` manifest finding remains in the report. Artifact findings are separate evidence about the bytes selected by that declaration.
 
-- `devDependencies` — no consumer install fetches them;
-- optional peers (`peerDependenciesMeta[name].optional`) — a consumer opts into those rather than inheriting them;
-- keys that were already installed at the same effective spec and merely moved between sections — a relocation ships no new code; moving to or adding an overriding declaration at a different spec is reviewed because npm can resolve different bytes;
-- dependencies declared through `bundleDependencies` / `bundledDependencies` whose direct child under `node_modules/` has a `package.json` are not fetched from the registry. npm still runs lifecycle scripts inside bundled children, so Drydock assesses the exact embedded child subtree and its own manifest before the raw parent files are released. A readable manifest must carry the matching name and a version; a hash-only, malformed, or mismatched manifest fails visibly as incomplete embedded evidence rather than redirecting review to different registry bytes, while a placeholder directory with no child manifest does not suppress registry review;
-- every dependency of a first-ever release (no baseline manifest), where the whole list diffs as "added" and inspecting it would describe the package rather than the release.
+## Resolution and acquisition
 
-A missing baseline manifest caused by metadata, connection, download, or parsing failure is not a first release. A parseable staged manifest that lacks its package name or version is likewise an acquisition gap rather than proof that no prior release exists. In those cases Drydock conservatively selects every staged install dependency so the comparison gap cannot turn dependency review into `not-applicable`.
+`server/lib/review/dependency-specs.ts` classifies a declaration as exact, range, dist-tag, or unresolvable. Empty and wildcard declarations resolve through `latest`; exact versions select only themselves; ranges select the highest satisfying published version; tags use the matching packument dist-tag. Git, URL, file, workspace, and otherwise unsupported specs fail visibly as unresolved.
 
-The same relocation and previously-installed signals the `dependency.added` rule reads are reused here, so one surface cannot say "no new dependency" while the other says the opposite.
+`server/lib/ecosystems/npm/dependency-artifacts.ts` resolves and downloads only from the public npm registry, `https://registry.npmjs.org`. Localhost HTTP is allowed only in the explicit e2e environment. Packument and tarball requests are credential-free and never pass through `NpmStageGateway`; a private dependency therefore becomes an inspection gap instead of receiving the organization's token.
 
-Transitive closure is **out of scope** for now. So is any ecosystem other than npm — PyPI build backends and Cargo build scripts are the natural next adapters, and the capability is optional on `PackageAdapter` precisely so they can be added without touching the pipeline.
+The pass is bounded per release:
 
-## How a dependency is reviewed
+- at most 8 dependency artifacts are inspected;
+- at most 2 inspections run concurrently;
+- the pass has a 30-second wall-clock budget;
+- each tarball is capped at 25 MiB and 800 files.
 
-`server/lib/ecosystems/npm/dependency-artifacts.ts` owns resolution and acquisition, `server/lib/review/dependency-selection.ts` owns dependency selection, `server/lib/review/dependency-analysis.ts` owns install observations, and `server/lib/review/dependency-evidence.ts` owns persistence and finding projection.
+Up to 64 selected declarations receive individual evidence rows. If more declarations are selected, one aggregate `dependency.artifact-unavailable` finding records the omitted count so the report stays bounded without presenting the remainder as reviewed. Results retain declaration order even though acquisition is concurrent.
 
-1. **Resolve** the declared spec against the registry's published versions. Drydock classifies the declaration before consulting registry-controlled dist-tags: an exact coordinate selects only that version, a range — including npm's `v1` / `v1.2` partial forms — goes through the bounded matcher, and only a tag declaration can read the matching packument tag. This prevents a custom registry from redefining an exact or range-shaped key such as `1.0.0`, `1`, or `v1.2` as a tag. A dist-tag is a moving pointer, not a range. For a range, Drydock mirrors npm's default-tag preference without letting a deprecated `latest` override a healthy match: use non-deprecated `latest` when it satisfies the range, otherwise use the highest non-deprecated satisfying version, and consider deprecated versions only when every satisfying version is deprecated. The bounded matcher in `server/lib/ecosystems/npm/semver.ts` rejects non-canonical numeric identifiers, unsafe integers, invalid prerelease identifiers, oversized specs, excessive union branches/comparators, and grammar it cannot represent rather than selecting bytes npm would ignore or spending unbounded synchronous CPU. npm ignores numeric components after a wildcard (`1.x.2` is the `1.x` range), accepts an unbounded wildcard endpoint in a hyphen range, ignores a prerelease suffix attached to an explicit wildcard such as `1.2.x-beta`, and expands partial upper bounds to an exclusive `-0` prerelease boundary; Drydock mirrors those behaviors instead of resolving different bytes from a consumer install.
-2. **Acquire exact bytes.** Registry dependencies stream into the credentials-free sandbox exactly like the previous-version baseline. Bundled direct children are read from their embedded `node_modules/<name>/` subtree instead, so a registry snapshot can never replace the bytes consumers actually receive. Neither path installs or executes package code.
-3. **Assess** the parsed bytes with the same deterministic rule set the reviewed release gets, then record install execution and dangerous behavior as separate observations. When danger-shaped behavior exists but the install graph cannot prove or disprove the edge, risk is `unknown`, never a safety verdict.
-4. **Record** the declaration, the review-time resolution, the digest the registry advertised, the digest recomputed from the bytes fetched, and the observations. Artifact provenance retains only the registry origin; every registry-controlled path, plus URL userinfo, query parameters, and fragments, is discarded before persistence so signed download capabilities cannot enter a public report. Bundled evidence carries no registry digest because the parent artifact's own digest binds those embedded bytes.
+The sandbox parses bytes without lifecycle scripts, dependency installation, imports, builds, or active rendering. While raw dependency files are available, the ordinary deterministic scanner runs with npm entrypoint resolution. Raw files are then discarded.
 
-### Observations
+## Evidence contract
 
-Coverage, execution, and risk are intentionally separate:
+Each persisted `DependencyEvidence` row records:
 
-| Axis      | Values                                  | Meaning                                                                                                     |
-| --------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Coverage  | `inspected` / `uninspectable`           | Whether the exact artifact bytes and install metadata were completely available to the bounded analyzer.    |
-| Execution | `observed` / `not-observed` / `unknown` | Whether an automatic install or build entrypoint was observed.                                              |
-| Risk      | `observed` / `not-observed` / `unknown` | Whether the install path reaches danger-shaped behavior; `unknown` means the graph could not close an edge. |
+- the dependency name, section, declared spec, and parent-to-child path;
+- an outcome: `inspected`, `unresolved-spec`, `no-matching-version`, `metadata-unavailable`, `fetch-failed`, `too-large`, `count-capped`, or `time-capped`;
+- the review-time resolution kind, version, public tarball URL, registry integrity, and timestamp when resolution succeeded;
+- recomputed SHA-256/SHA-512, file count, byte count, and integrity comparison when bytes were read;
+- lifecycle, `gypfile`, and binary-entrypoint observations;
+- the number of findings joined to that dependency.
 
-An aggregate review is `complete` only when every selected dependency is inspected. Any uninspectable or omitted dependency makes it `partial`. Coverage does not erase observations already proven by retained bytes: a dependency can carry both a critical install-risk finding and a medium coverage gap when an unrelated body was omitted or an archive entry made extraction ambiguous.
+A review-time range or tag resolution is a snapshot, not permanent provenance. Integrity disagreement is an inspection failure: untrusted bytes are not scanned as though the advertised artifact had been reviewed.
 
-"Something runs on install" means a `preinstall`/`install`/`postinstall` script, or an implicit `node-gyp` build. Process execution alone is deliberately **not** a danger capability: prebuilt-binary packages spawn `node-gyp` by design, and treating that as blocking would make every release adding a native dependency unapprovable — which is how a tier stops meaning anything. When the install-reachable path invokes or loads a bundled native artifact, however, Drydock reports a high-risk native execution path rather than describing it as network-capable. That includes a lifecycle command that names the native executable directly; the lifecycle invocation is already the process-launch edge. If a computed loader, process call, or shell command can select the bundled native artifact, the observation remains `unknown` rather than proven, but stays high risk because opaque native execution is still a possible install outcome.
+Persisted and exported evidence is shape-validated. Retained tarball URLs must be credential-free public npm URLs (or localhost URLs in e2e data), so registry-controlled signed URLs and alternate hosts cannot enter a public report.
 
-### Findings and severity
+## Findings and risk
 
-Findings are namespaced to the dependency path with a synthetic `<dependency>name@version:path` file label. There is no such file in the release's own diff, so the label is never an open-in-the-workbench link (`isDependencyFindingFile`).
+Findings produced inside a dependency preserve their ordinary deterministic rule IDs and carry structured dependency coordinates. Their synthetic file is namespaced as:
 
-Gate severity is policy applied after observation. **Certainty** asks whether the install hook can statically reach the behavior; static reachability can miss a dynamic edge, so unknown reach is demoted rather than dropped. **Strong** asks whether the behavior has a benign reading — remote shell, credential access, dynamic evaluation, and embedded secrets do not; a plain HTTPS download does.
+```text
+dependency/<name>@<resolved-version>/<path>
+```
 
-| Rule ID                                  | Severity   | When                                                                                                                                                                         |
-| ---------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dependency-artifact.install-risk`       | `critical` | Strong behavior, provably reachable from the install hook. The arrayref shape.                                                                                               |
-| `dependency-artifact.install-risk`       | `high`     | Strong behavior present but unproven reach, a provably reachable install-time download, **or** a bundled native artifact invoked, loaded, or selectable by the install path. |
-| `dependency-artifact.install-risk`       | `medium`   | Install-time download present but unproven reach.                                                                                                                            |
-| `dependency-artifact.install-execution`  | `medium`   | Runs on install, nothing of the above behind it.                                                                                                                             |
-| `dependency-artifact.capability`         | `info`     | Reviewed, nothing runs on install; records what the artifact can do.                                                                                                         |
-| `dependency-artifact.integrity-mismatch` | `critical` | Fetched bytes disagree with the digest advertised by the registry; the review is invalid.                                                                                    |
-| `dependency-artifact.uninspectable`      | `medium`   | Drydock could not review the dependency's own bytes.                                                                                                                         |
+That namespace is release-scoped but is never treated as a parent-package file in the diff workbench. Dependency findings are normally capped at `medium`; `file.secret-content` retains its scanner severity.
 
-Both `critical` and `high` land on "block manual approval", so an install-time download does hold the release — a newly added dependency that fetches on every consumer install is worth reading once. It sits a tier below the dropper because `prebuild-install` fetching a platform binary and a dropper fetching a payload look identical to a scanner, and spending `critical` on `sharp` leaves nothing for the dropper. `added-dependency-prebuilt-downloader` in the corpus is that call, written down.
+Two dependency-specific rules express the release-level conclusion:
 
-Reachability comes from `lifecycleReachablePaths` (`server/lib/review/rules/reachability.ts`), which seeds **only** from install/build entrypoints — narrower than the consumer-reachable walk, because "installing this runs it" and "requiring this can run it" are different claims. Named scripts reached through `npm run` / `npm run-script` are part of that install chain and are expanded recursively, including invocations with npm config flags before or after the subcommand. An active explicit or implicit `node-gyp` build also seeds root GYP files and the package paths their commands name; merely shipping a GYP command while `gypfile` is disabled is capability context, not proof of automatic execution. Inline commands in the expanded chain are scanned separately: the whole manifest is one file, so a capability elsewhere in `scripts.test` or another unrelated field must not be attributed to every consumer install merely because its finding is filed against `package.json`. Computed module and process edges inside `node -e` / `node --eval` bodies receive the same omitted-body treatment as install-reachable files. The walk follows relative module specifiers — including static template, optional-call, bracketed `module.require`, and import-attributes forms — plus statically named local child-process and shell-source targets. That includes dot- or bracket-property child-process calls, `fork()` targets, quoted direct Node lifecycle paths, and every relative preload, import, or entry script passed through a static Node interpreter argv. Simple aliases of `require` and `createRequire(...)`, including renamed ESM factory imports and functions bound from `module.require`, are treated conservatively as dynamic loaders. Escaped relative loader literals, constant-folded computed loader or process callees, and transparent or `(0, callee)` sequence wrappers also remain conservative when the static graph cannot represent their target exactly. Computed or aliased child-process targets — including bracket-property calls, renamed CommonJS destructuring, and ESM imports — plus computed Node argv, direct Node lifecycle operands, shell-expanded lifecycle executables behind command wrappers or control keywords, computed arguments passed to shell `eval`, nested `sh -c` bodies, and shell-source targets receive the same treatment, because the bounded graph cannot name the file they execute. Alias propagation uses a linear worklist rather than repeatedly rescanning package-controlled source. If any possible target body was omitted, the dependency is visibly uninspectable instead of receiving a clean observation. Other unproven edges downgrade severity rather than disappearing.
+| Rule ID                              | Severity             | Meaning                                                                                                                                                                                    |
+| ------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dependency.install-time-capability` | `high` or `critical` | An automatic install/build entrypoint combines with a non-test capability. Remote shell, credential plus network access, or obfuscated execution is critical; other combinations are high. |
+| `dependency.artifact-unavailable`    | `medium`             | The exact dependency artifact could not be resolved, fetched, verified, parsed, or inspected within a bound.                                                                               |
 
-The whole family is release-scoped (`isReleaseScopedFinding`), so it counts toward `releaseRisk` and therefore reaches the workflow gate. That remains true when baseline acquisition failed: the file diff status is honestly `unknown`, but evidence about a dependency this release introduces must not be downgraded to package context. A `critical` install-risk finding puts the release at "block manual approval".
+The composer is `dependencyScanFindings` in `server/lib/review/rules/dependency-artifact.ts`. It reuses the production deterministic matcher, drops rules that are meaningless for a dependency sub-artifact (`file.outside-files-list` and `package-json.entrypoint-missing`), and stamps the current deterministic rules version. AI review may explain these findings but cannot downgrade them.
 
-`info` when no install execution is observed is the load-bearing choice in the other direction: adding a dependency is normal software work, and a benign new dependency must not make a release high risk just for being new.
+## Persistence and UI
 
-### Where it runs in the pipeline
+The pipeline runs dependency acquisition after the parent release artifacts are resolved, then merges artifact findings into the ordinary finding/risk path. Redacted evidence is stored in the canonical `report.json`, exposed on scan detail as `dependencyEvidence`, and exported in `drydock.report.v2` as `dependencies.evidence`. Structured dependency coordinates are also retained on exported findings.
 
-`analyzeRelease` runs the pass **after** `releaseResolvedArtifacts`, not before. The pass makes bounded network calls and needs only the redacted manifest diff, so keeping both unredacted package sides alive for its duration would raise the scan's peak memory — which is what caps reviewable package size. `applyDependencyReview` folds the resulting findings back into the same `DeterministicFindings` arrays, so they are redacted, annotated, scored, and persisted exactly like any other rule finding. `test/scan-pipeline-phases.test.mjs` pins the ordering.
+The authenticated scan view and public report use the same `DependencyReviewSection`. It distinguishes reviewed rows from manual-review gaps, shows exact/range/tag resolution honestly, and links an added `package.json` row to its dependency evidence card. Declaration identity includes section, name, and declared spec so the same package in multiple manifest sections remains tied to the correct artifact and findings. Risk-signal navigation selects that exact dependency card rather than trying to open a synthetic path in the parent diff.
 
-## Resolution honesty
+## Verification
 
-A review-time resolution is a **snapshot**, never permanent provenance. The report distinguishes:
-
-- **exact evidence** — the candidate's bytes, the dependency declaration, and the dependency bytes Drydock fetched with the digest it recomputed from them;
-- **resolved snapshot** — the version selected at review time (`declarationKind: "range"`);
-- **dist-tag exposure** — the declaration points at a moving tag, so the bytes can change with no manifest change at all (`"tag"`);
-- **exact version** — the declaration fixes the version coordinate, but not the bytes; the recomputed digest remains the byte-level review evidence (`"exact"`);
-- **unresolved / uninspected** — no artifact was read, so the release cannot be represented as fully reviewed (`"unusual"`, or any `uninspectable` reason).
-
-`digestVerified` is three-valued on purpose: `true` when the registry's advertised digest and the recomputed digest agree, `false` when they disagree, and `null` when one was missing or unsupported. A missing digest is unverified, never a match. When an SRI lists several SHA-512 digests, matching any one follows npm's integrity semantics; the matching digest is the one retained in the evidence row. A valid legacy `dist.shasum` is used only when `dist.integrity` is absent. If integrity is present but has no supported SHA-512 token or exceeds the retained metadata bound, Drydock preserves that presence and does not fall through to SHA-1 and claim that the registry's authoritative SRI was verified.
-
-## Failing visibly
-
-Every way a dependency can end up unreviewed produces an evidence record and a `medium` finding, which floors the release at "review carefully":
-
-| Reason                 | Cause                                                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `unresolvable-spec`    | git / URL / workspace-protocol spec, or grammar the range parser cannot model.                                       |
-| `no-matching-version`  | Nothing published satisfies the spec.                                                                                |
-| `metadata-unavailable` | The registry answered nothing to a credential-free request — the private-dependency case.                            |
-| `artifact-unavailable` | The tarball could not be downloaded.                                                                                 |
-| `artifact-too-large`   | Past the sandbox's size or entry caps.                                                                               |
-| `artifact-unparseable` | Not a parseable package archive.                                                                                     |
-| `artifact-ambiguous`   | Links, duplicate paths, or visually-confusable paths make extraction semantics ambiguous.                            |
-| `artifact-truncated`   | At least one file was clipped or retained hash-only; partial evidence is not graded as the complete artifact.        |
-| `manifest-unavailable` | The archive has no readable root `package.json`, or a bundled child's manifest does not match its declared identity. |
-| `budget-exhausted`     | The dependency-count cap or the whole-pass deadline stopped the review before this artifact was fetched.             |
-| `review-failed`        | The adapter-level dependency pass failed before the dependency could be inspected.                                   |
-
-`budget-exhausted` and `review-failed` records aggregate into bounded findings — a refactor or hostile manifest with many dependencies must not fill the packet with identical mediums or inflate persisted evidence. An omitted count without any retained terminal gap row still produces one aggregate uninspectable finding. The report preserves the full selected/uninspectable counts, retains at most `MAX_RECORDED_DEPENDENCIES` (64) individual rows, and discloses the omitted count.
-
-## Safety and bounds
-
-- Dependency bytes are hostile evidence, handled exactly like the reviewed release's bytes: downloaded by the trusted parent, streamed into the credentials-free sandbox, never installed, never executed, never imported.
-- **Every dependency fetch is credential-free, and the token is never even decrypted on this path.** `NpmBroker.registryUrl()` reads the connection row for its registry URL and stops there — asking which registry to talk to cannot become a reason to hold a credential in scope. The broker snapshots that URL on its first lookup so provenance, metadata, and tarball origin checks cannot drift to different registry connections during one scan. It applies the same connection preconditions as the credentialed path, so a scan cannot silently fall back to the public registry for an organization whose connection is missing or unvalidated, and it is resolved lazily so a release that adds no dependency does no work at all. `NpmBroker.fetchAnonymousPackageMetadata` / `downloadAnonymousTarball` are separate methods rather than a flag on the credentialed ones, because the two differ in exactly the property that matters and a boolean parameter is the kind of thing a later refactor flips by accident. A dependency only a credential could reach records as `metadata-unavailable`; private-dependency support needs its own credential and cache-isolation review.
-- Anonymous packuments and dependency tarballs bypass shared registry caches so a range or dist-tag and its bytes come from the registry's current snapshot. This matters for custom registries that may mutate a version-pinned URL in place; the recomputed digest then binds the evidence to the bytes fetched in this pass.
-- Bounds per release: `MAX_INSPECTED_DEPENDENCIES` (6) registry artifacts fetched, `MAX_RECORDED_DEPENDENCIES` (64) evidence rows persisted across embedded and registry evidence, `DEPENDENCY_ARTIFACT_MAX_FILES` (600) full-text entries retained per fetched artifact, `DEPENDENCY_TEXT_SAMPLE_LIMIT` (256 KiB) per file, a 32 MiB packument body cap with a 15 s body-read deadline, npm ranges capped at 4,096 characters / 64 union branches / 32 comparator tokens per branch / 64 expanded comparators total, and a 20 s wall-clock deadline for the network pass. Any file clipped by the text-sample cap or retained hash-only with `content-skipped` makes that dependency visibly `artifact-truncated`, without discarding behavior already proven by retained files. If an install-reachable module or inline Node lifecycle body uses a computed, bound, wrapped, or escaped-relative `require()` / `module.require()` / `import()`, computes, aliases, or wraps a local child-process target, calls one through bracket-property syntax, or selects a lifecycle executable through shell expansion or computed shell `eval`, every deliberately omitted file body is treated as a possible target regardless of extension. Static Node interpreter argv contributes every relative package path rather than stopping after the first. Active node-gyp commands apply the same completeness rule to omitted package paths named by root GYP files. A missing/unreadable root manifest, an invalid bundled identity, or an archive with active non-regular, duplicate, or confusable paths likewise fails visibly without discarding behavior proven by readable bytes. A prefix or digest without complete, unambiguous install evidence is never treated as a complete review. The deadline includes registry-connection lookup, aborts anonymous metadata bodies and tarball streams inside the broker, stops awaiting an in-flight broker call, and fences a late metadata response from starting an artifact fetch. Archive size caps are the sandbox's own.
-- The pass adds evidence to the release, but a terminal dependency record replaces the older manifest-only `dependency.added` or `dependency.optional-added` finding for the same declaration. That keeps an inspected dependency with no observed install behavior low risk and lets the more precise observation or uninspectable evidence set the gate tier. Dependencies omitted by the record budget keep their declaration-only finding. An adapter without the capability yields an empty review, while a capable adapter that throws yields a bounded `review-failed` coverage gap for every selected dependency. Failures are logged (`scan.dependency_review.failed`) and remain visible to the gate.
-- AI review may explain dependency evidence but cannot downgrade it — the same rule that applies to every other deterministic finding.
-
-## Persistence
-
-The review is secret-redacted before finding projection and persisted in `scans.summary_json.dependencyReview`, in the digested report payload, and in the `drydock.report.v2` export (`dependencyReview`, `null` for scans that predate the feature). Findings persist as ordinary `scan_findings` rows.
-
-That is deliberate: the `arrayref` malicious versions were unpublished after the fact. Once the version is gone, the record still says what was declared, what it resolved to, which bytes were read, what digest they had, and what they did. Persisted blobs are re-validated through `normalizeDependencyReview` on the way out rather than trusted. Validation is all-or-nothing: if any retained dependency row is malformed or its counts cannot account for every retained and omitted row, the whole blob renders as "no dependency review". A recognized but stale outer status is derived from the validated rows and counts, so `not-applicable` cannot hide retained evidence.
-
-## Surfaces
-
-`src/features/review/DependencyReviewSection.tsx` renders the section in both the authenticated scan workbench and the public report, above the manifest diff — the manifest shows that a dependency line was added, this shows what adding it ships. Its tone and explanatory copy use the same policy mapping as deterministic finding projection, so unknown medium/high evidence is not presented as observed critical behavior.
-
-## Tests
-
-| Layer                                                                                              | Covers                                                                                   |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `test/npm-semver.test.mjs`                                                                         | Range grammar, prerelease rules, structural bounds, unresolvable specs.                  |
-| `test/dependency-evidence.test.mjs`                                                                | Selection, assessment, finding projection, persisted-blob validation.                    |
-| `test/npm-dependency-artifacts.test.mjs`                                                           | Resolution, digest binding, every uninspectable path, deadlines, record budgets.         |
-| `test/security-corpus-dependencies.test.mjs` + `test/fixtures/security-corpus/cases-dependencies/` | Golden fixtures, including benign, invalid-artifact, and reachability calibration cases. |
-| `test/scan-pipeline-phases.test.mjs`                                                               | Adapter-capability wiring, release scoping, degrade-on-throw.                            |
-| `test/workers/scan-report-export.test.ts`                                                          | The persisted record survives into the export.                                           |
-| `test/e2e/local-registry.spec.ts` (`added-dependency`)                                             | End-to-end against the fake registry, plus the credential-free journal assertion.        |
+- `test/dependency-resolution.test.mjs` covers spec classification and highest-satisfying selection.
+- `test/dependency-artifact-findings.test.mjs` covers namespacing, severity caps, install-time roll-ups, and unavailable evidence.
+- `test/npm-dependency-artifacts.test.mjs` covers anonymous acquisition, integrity, budgets, and ordering.
+- `test/fixtures/security-corpus/cases/dependency-artifact-*.json` and the npm frontier fixture exercise the production composer in the golden corpus and eval harness.
+- `test/scan-pipeline-phases.test.mjs` covers pipeline integration and fail-visible adapter errors.
+- `test/e2e/local-registry.spec.ts` covers the added-dependency flow and asserts that dependency registry requests carry no npm authorization.
 
 ## Follow-up scope
 
-- Recursive inspection of the newly introduced transitive closure, with depth and node budgets.
-- Consumer-side lockfile review for Dependabot/Renovate PRs.
-- Re-evaluation when a reviewed dependency is yanked, deleted, or receives an advisory.
-- Ecosystem adapters for Cargo build scripts and PyPI build backends.
+- recursive, depth- and node-bounded transitive inspection;
+- lockfile-aware consumer review;
+- re-evaluation after yanks, deletion, or new advisories;
+- equivalent adapters for other ecosystems.

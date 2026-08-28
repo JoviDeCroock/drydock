@@ -31,6 +31,8 @@ import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
   projectReleaseRuleFindings,
+  dependencyDeclarationKey,
+  dependencyScanFindings,
   dependencyEvidenceFindings,
   EMPTY_DEPENDENCY_REVIEW,
   failedDependencyReview,
@@ -43,6 +45,7 @@ import {
   DETERMINISTIC_RULES_VERSION,
   type CodePatternSet,
   type DependencyReview,
+  type DependencyEvidence,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -111,6 +114,7 @@ export interface ArtifactFacts {
 
 export interface DeterministicFindings {
   ruleFindings: Finding[];
+  dependencyEvidence: DependencyEvidence[];
   /**
    * Durable record of the dependencies this release newly introduces. Empty
    * (`not-applicable`) for adapters without the capability and for releases
@@ -217,6 +221,7 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 
   return {
     ruleFindings,
+    dependencyEvidence: [],
     dependencyReview: embeddedDependencyReview,
     redactedStagedFiles,
     redactedPreviousFiles,
@@ -363,6 +368,7 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
 ): void {
   const combinedReview = mergeDependencyReviews(findings.dependencyReview, review);
   findings.dependencyReview = combinedReview;
+  findings.dependencyEvidence = review.evidence ?? [];
   const ruleFindings = reconcileDependencyReviewFindings(findings.ruleFindings, combinedReview);
   findings.ruleFindings.splice(0, findings.ruleFindings.length, ...ruleFindings);
   const annotatedFindings = reconcileDependencyReviewFindings(
@@ -380,10 +386,11 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
     ...releaseRuleFindings,
   );
   const dependencyFindings = redactFindings(
-    dependencyEvidenceFindings(review, {
-      name: parent.name,
-      version: parent.stagedVersion,
-    }),
+    review.findings ??
+      dependencyEvidenceFindings(review, {
+        name: parent.name,
+        version: parent.stagedVersion,
+      }),
   );
   if (!dependencyFindings.length) return;
 
@@ -395,9 +402,7 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
   });
   findings.ruleFindings.push(...dependencyFindings);
   findings.annotatedFindings.push(...annotated);
-  findings.releaseRuleFindings.push(
-    ...stripFindingAnnotations(annotated.filter((finding) => finding.releaseDelta)),
-  );
+  findings.releaseRuleFindings.push(...projectReleaseRuleFindings(annotated));
 }
 
 /**
@@ -414,29 +419,48 @@ function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
 async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
   adapter: PackageAdapter<TInput, TBroker>,
   ctx: AdapterContext,
-  broker: TBroker,
+  _broker: TBroker,
   diff: ComputedDiff,
   findings: DeterministicFindings,
-  baseline: BaselineInfo,
+  _baseline: BaselineInfo,
   identity: PipelineIdentity,
 ): Promise<DependencyReview> {
-  if (!adapter.inspectAddedDependencies) return EMPTY_DEPENDENCY_REVIEW;
+  if (!adapter.inspectAddedDependencies || !diff.manifestDiff.hasPreviousManifest) {
+    return EMPTY_DEPENDENCY_REVIEW;
+  }
   const selectionOptions = {
-    includeWithoutBaseline: baselineManifestUnavailable(diff, baseline),
     stagedManifest: findings.redactedStagedManifest,
     stagedFiles: findings.redactedStagedFiles,
   };
   try {
-    return redactJson(
-      await adapter.inspectAddedDependencies(ctx, broker, {
+    const inspected = redactJson(
+      await adapter.inspectAddedDependencies(ctx, {
         manifestDiff: diff.manifestDiff,
-        baselineManifestUnavailable: selectionOptions.includeWithoutBaseline,
         stagedManifest: selectionOptions.stagedManifest,
         stagedFiles: selectionOptions.stagedFiles,
         scanId: identity.scanId,
         organizationId: identity.organizationId,
       }),
     );
+    if ("dependencies" in inspected) return inspected;
+    const inspectedCount = inspected.evidence.filter(
+      (entry) => entry.outcome === "inspected",
+    ).length;
+    return {
+      status:
+        inspected.evidence.length === 0
+          ? "not-applicable"
+          : inspectedCount === inspected.evidence.length
+            ? "complete"
+            : "partial",
+      selectedCount: inspected.evidence.length,
+      inspectedCount,
+      uninspectableCount: inspected.evidence.length - inspectedCount,
+      omittedCount: 0,
+      dependencies: [],
+      evidence: inspected.evidence,
+      findings: inspected.findings,
+    };
   } catch (err) {
     emitOperationalEvent("warn", "scan.dependency_review.failed", {
       scanId: identity.scanId,
@@ -444,7 +468,38 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
       adapterId: adapter.id,
       error: describeOperationalError(err),
     });
-    return failedDependencyReview(diff.manifestDiff, selectionOptions);
+    const review = failedDependencyReview(diff.manifestDiff, {
+      stagedManifest: selectionOptions.stagedManifest,
+      stagedFiles: selectionOptions.stagedFiles,
+    });
+    const parent = {
+      name: findings.redactedStagedManifest?.name ?? null,
+      version: findings.redactedStagedManifest?.version ?? null,
+    };
+    const evidence: DependencyEvidence[] = review.dependencies.map((dependency) => ({
+      name: dependency.name,
+      section: dependency.section,
+      declaredSpec: dependency.declaredSpec,
+      path: `${parent.name ?? "parent"}@${parent.version ?? "unknown"} -> ${dependency.name}@unresolved`,
+      outcome: "fetch-failed",
+      outcomeDetail: "dependency inspection failed before the artifact could be reviewed",
+      resolution: null,
+      artifact: null,
+      entrypoints: null,
+      findingCount: 1,
+    }));
+    const dependencyFindings = dependencyScanFindings(
+      evidence.map(({ name, section, declaredSpec }) => ({ name, section, declaredSpec })),
+      Object.fromEntries(
+        evidence.map((entry) => [
+          dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec),
+          { ...entry, files: [], packageJson: null },
+        ]),
+      ),
+      parent,
+      review.omittedCount,
+    );
+    return { ...review, evidence, findings: dependencyFindings };
   }
 }
 
@@ -603,6 +658,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
     dependencyReview: findings.dependencyReview,
+    dependencyEvidence: findings.dependencyEvidence,
     safety,
   };
 
@@ -641,6 +697,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     // unpublished: the declaration, the review-time resolution, both digests,
     // and the verdict are all here even once the artifact is gone.
     dependencyReview: findings.dependencyReview,
+    dependencyEvidence: findings.dependencyEvidence,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -680,7 +737,10 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
-      dependencyReview: findings.dependencyReview,
+      dependencyReview: {
+        ...findings.dependencyReview,
+        evidence: findings.dependencyEvidence,
+      },
       safety: result.safety,
     },
     ai: args.aiFindings,

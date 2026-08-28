@@ -57,7 +57,7 @@
   ],
   "expectedFindings": [
     {
-      "ruleId": "dependency-artifact.capability",
+      "ruleId": "dependency.install-time-capability",
       "severity": "info",
       "file": "<dependency>dormant-gyp@1.0.0"
     }
