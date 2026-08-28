@@ -48,18 +48,18 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     const corpus = JSON.parse(
       readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
     );
-    corpus.cases = [
-      structuredClone(
-        corpus.historicalCases.find((record) => record.id === "preinstall-env-exfil-v1-4"),
-      ),
-    ];
+    const staleRecord = structuredClone(
+      corpus.historicalCases.find((record) => record.id === "preinstall-env-exfil-v1-4"),
+    );
+    staleRecord.id = "stale-current-output";
+    corpus.cases = [staleRecord];
 
     const stale = runAiReviewEval(corpus);
 
     expect(stale.summary).toEqual({ total: 1, passed: 0, rate: 0 });
     expect(stale.failures).toEqual([
       expect.objectContaining({
-        id: "preinstall-env-exfil-v1-4",
+        id: "stale-current-output",
         reason: "reviewer version 1.4.0 is not current",
       }),
     ]);
@@ -69,7 +69,9 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     const corpus = JSON.parse(
       readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
     );
-    corpus.cases.push({ ...corpus.cases[0] });
+    const duplicate = structuredClone(corpus.historicalCases[0]);
+    duplicate.id = "duplicate-current-output";
+    corpus.cases.push(duplicate, structuredClone(duplicate));
 
     expect(() => runAiReviewEval(corpus)).toThrow(/duplicate case id/);
   });
@@ -78,7 +80,7 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     const corpus = JSON.parse(
       readFileSync(new URL("../fixtures/ai-review-eval/cases.json", import.meta.url), "utf8"),
     );
-    corpus.historicalCases.push({ ...corpus.cases[0] });
+    corpus.cases.push(structuredClone(corpus.historicalCases[0]));
 
     expect(() => runAiReviewEval(corpus)).toThrow(/duplicate case id/);
   });
