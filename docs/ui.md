@@ -45,6 +45,27 @@ what is tied to the persisted scan model (`scanFilesToFileRecords`,
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
 
+## Dashboard onboarding funnel
+
+`src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a
+first release reaching Drydock for review, a first decision recorded. `DashboardOnboarding`
+in `src/pages/Dashboard/index.tsx` decides when it opens and latches that
+against the organization it opened for in `src/models/getting-started.ts`; the
+session-scoped latch survives a visit to the scan detail route, and nothing but
+the reader's dismiss control (or an organization switch) closes it. That latch
+is what lets the third step be seen ticking — a panel that unmounted the moment
+the funnel completed would take the tick with it. Only the first two steps are
+free: the list defaults to the
+`undecided` filter, so `ScanListModel.hasAnyDecision` stays `null` until
+`resolveHasAnyDecision()` runs two one-row probes, and the dashboard asks only
+while the panel could still open. Completion and dismissal are both recorded per
+organization in `src/models/getting-started.ts` (localStorage) as "do not open
+again", which is also what stops the probe from repeating on later visits. An
+unresolved (`null`) answer opens nothing — neither onboarding surface appears on
+a guess. Switching organizations immediately resets both progress answers to
+`null`, so the new organization cannot inherit a panel latch or completion tick
+from the previous one while its list request is in flight.
+
 ## Copy and density
 
 - Lead with maintainer action and release risk, not internal pipeline detail.

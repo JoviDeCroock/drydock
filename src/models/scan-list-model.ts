@@ -42,6 +42,15 @@ export const ScanListModel = createModel(() => {
   // review looks identical to one who has never run a scan — and only the
   // second should be shown the getting-started panel.
   const hasAnyScan = signal<boolean | null>(null);
+  // Whether this organization has ever recorded a decision — the last step of
+  // the getting-started funnel. `null` means not yet determined, and stays that
+  // way until something asks: answering it costs requests the rest of the
+  // dashboard has no use for, so an organization past onboarding never pays for
+  // it. See `resolveHasAnyDecision`.
+  const hasAnyDecision = signal<boolean | null>(null);
+  let decisionProbe: Promise<void> | null = null;
+  let decisionProbeGeneration = 0;
+  let onboardingOrganizationId = activeOrganizationId.peek();
   // `Check npm` resolves registry outcomes under Worker `waitUntil`, after the
   // discovery response returns. Incrementing this signal starts a bounded
   // refresh sequence; a later request or model disposal cancels the old one.
@@ -52,6 +61,8 @@ export const ScanListModel = createModel(() => {
   let listMutationId = 0;
 
   async function refresh(options: ScanListRefreshOptions = {}): Promise<void> {
+    ++decisionProbeGeneration;
+    decisionProbe = null;
     const requestId = ++refreshRequestId;
     const mutationId = ++listMutationId;
     const organizationId = activeOrganizationId.peek();
@@ -95,6 +106,25 @@ export const ScanListModel = createModel(() => {
         hasAnyScan.value = null;
         await resolveHasAnyScan({ requestId, mutationId, organizationId });
       }
+      // A decided row in the page just fetched settles the answer for free; an
+      // organization with no scans at all cannot have decided one. Preserve a
+      // known `true` across same-organization refreshes: decisions can change
+      // but cannot be cleared, and completed scans cannot be deleted. The
+      // organization effect below resets the answer when the scope changes.
+      //
+      // Guarded because the `hasAnyScan` probe above is awaited: a refresh
+      // whose organization was switched away from resumes here, and would
+      // otherwise reset the current organization's answer to null and drop its
+      // in-flight probe.
+      if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
+      ++decisionProbeGeneration;
+      decisionProbe = null;
+      hasAnyDecision.value =
+        hasAnyDecision.peek() === true || hasDecidedScan(data.scans)
+          ? true
+          : hasAnyScan.peek() === false
+            ? false
+            : null;
     } catch (err) {
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       error.value = errorMessage(err);
@@ -146,6 +176,39 @@ export const ScanListModel = createModel(() => {
     }
   }
 
+  function hasDecidedScan(list: ScanListItem[]): boolean {
+    return list.some((scan) => Boolean(scan.decision));
+  }
+
+  // Two one-row probes for the question the list cannot answer: the dashboard
+  // defaults to the "undecided" filter, so a page of undecided reviews says
+  // nothing about whether anything was ever decided. Approvals are asked about
+  // first and short-circuit, so the common case is a single request. Failure
+  // leaves `hasAnyDecision` null, which renders nothing — the funnel is never
+  // ticked, or shown, on a guess.
+  async function probeHasAnyDecision(): Promise<void> {
+    const organizationId = activeOrganizationId.peek();
+    const generation = decisionProbeGeneration;
+    try {
+      for (const decisionFilter of ["publish", "no_publish"] as const) {
+        const data = await listScans({ filter: decisionFilter, limit: 1 });
+        if (
+          activeOrganizationId.peek() !== organizationId ||
+          generation !== decisionProbeGeneration
+        ) {
+          return;
+        }
+        if (data.scans.length > 0) {
+          hasAnyDecision.value = true;
+          return;
+        }
+      }
+      hasAnyDecision.value = false;
+    } catch {
+      // Leave unknown.
+    }
+  }
+
   // Re-fetch when the filter changes. The first load is driven externally
   // (after auth) so callers can sequence it with other startup work; this
   // effect only kicks in for filter changes that happen after that.
@@ -153,6 +216,16 @@ export const ScanListModel = createModel(() => {
     void filter.value;
     if (!loaded.peek()) return;
     void refresh();
+  });
+
+  effect(() => {
+    const organizationId = activeOrganizationId.value;
+    if (organizationId === onboardingOrganizationId) return;
+    onboardingOrganizationId = organizationId;
+    ++decisionProbeGeneration;
+    decisionProbe = null;
+    hasAnyScan.value = null;
+    hasAnyDecision.value = null;
   });
 
   effect(() => {
@@ -194,7 +267,29 @@ export const ScanListModel = createModel(() => {
     deleteStatus,
     deleteError,
     hasAnyScan,
+    hasAnyDecision,
     refresh,
+
+    /**
+     * Settle the funnel's last step. Called by the getting-started panel only,
+     * so an organization that is past onboarding never spends a request on it.
+     * Concurrent callers share one probe.
+     */
+    async resolveHasAnyDecision(): Promise<void> {
+      if (hasAnyDecision.peek() !== null) return;
+      if (hasDecidedScan(scans.peek())) {
+        hasAnyDecision.value = true;
+        return;
+      }
+      if (!decisionProbe) {
+        const probe = probeHasAnyDecision();
+        const tracked = probe.finally(() => {
+          if (decisionProbe === tracked) decisionProbe = null;
+        });
+        decisionProbe = tracked;
+      }
+      await decisionProbe;
+    },
 
     scheduleRegistryStatusRefreshes(): void {
       registryStatusRefreshRequest.value += 1;
@@ -236,6 +331,7 @@ export const ScanListModel = createModel(() => {
         const updated = await setScanDecision(id, decision, reason);
         // Fence out a refresh that started before this authoritative write.
         ++listMutationId;
+        ++decisionProbeGeneration;
         const activeFilter = this.filter.peek();
         this.scans.value = this.scans.value
           .map((scan) =>
@@ -248,6 +344,9 @@ export const ScanListModel = createModel(() => {
               : scan,
           )
           .filter((scan) => scanMatchesDecisionFilter(scan, activeFilter));
+        // The funnel's last step, ticked by the write that completes it — the
+        // row itself is usually filtered out of the list a line above.
+        this.hasAnyDecision.value = true;
         this.decisionStatus.value = "idle";
       } catch (err) {
         this.decisionError.value = errorMessage(err);
@@ -262,6 +361,7 @@ export const ScanListModel = createModel(() => {
         await deleteScan(id);
         // Do not let an older list response resurrect the deleted row.
         ++listMutationId;
+        ++decisionProbeGeneration;
         this.scans.value = this.scans.value.filter((scan) => scan.id !== id);
         // Deleting the organization's only scan puts it back in the
         // never-scanned state, so the getting-started panel has to come back.
@@ -271,6 +371,10 @@ export const ScanListModel = createModel(() => {
         if (this.scans.value.length === 0) {
           this.hasAnyScan.value = null;
           await resolveHasAnyScan();
+          // Same reasoning for the funnel's last step: with the list emptied,
+          // what is known about decisions came from rows that may be gone.
+          decisionProbe = null;
+          this.hasAnyDecision.value = this.hasAnyScan.peek() === false ? false : null;
         }
         this.deleteStatus.value = "idle";
         return true;
