@@ -11,7 +11,7 @@ import { Card } from "../../components/Card";
 import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, Muted } from "../../components/Typography";
+import { Muted } from "../../components/Typography";
 import { SocialSignIn } from "./SocialSignIn";
 
 export default function LoginPage() {
@@ -114,8 +114,7 @@ export default function LoginPage() {
     return (
       <PageShell width="narrow">
         <Card class="flex flex-col gap-4">
-          <Eyebrow>Verify your email</Eyebrow>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">One more step</h1>
+          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify your email</h1>
           <Alert tone="info">
             Your email isn't verified yet. We sent a verification link to{" "}
             {needsVerificationFor.value}.
@@ -149,7 +148,6 @@ export default function LoginPage() {
     return (
       <PageShell width="narrow">
         <Card class="flex flex-col gap-4">
-          <Eyebrow>Two-factor authentication</Eyebrow>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Verify it's you</h1>
           <Muted class="text-[13px] m-0">
             <Show when={useBackup} fallback="Enter the 6-digit code from your authenticator app.">
@@ -205,7 +203,6 @@ export default function LoginPage() {
   return (
     <PageShell width="narrow">
       <Card class="flex flex-col gap-4">
-        <Eyebrow>Welcome back</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Sign in</h1>
         <Muted class="text-[13px] m-0">
           Sign in to review held releases and revisit saved reports.

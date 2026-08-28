@@ -34,7 +34,7 @@ import { Menu, MenuItem, MenuLink } from "../../components/Menu";
 import { OrgSwitcher } from "../../components/OrgSwitcher";
 import { PageShell } from "../../components/PageShell";
 import { Select } from "../../components/Select";
-import { EmptyLine, Eyebrow, Muted, SectionLabel } from "../../components/Typography";
+import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
 import { GettingStarted } from "./GettingStarted";
 import { DeleteScanDialog } from "./ScanDetail/DeleteScanDialog";
@@ -233,7 +233,6 @@ function DashboardOnboarding({
 function DashboardHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
-      <Eyebrow>Review workspace</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Ready for the next release</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
         Review held npm, PyPI, and VS Code candidates before maintainers let them go live.

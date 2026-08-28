@@ -62,7 +62,7 @@ describe("theme tokens", () => {
     // Light value lives in the top-level @theme; dark value lives in the media block.
     const lightBg = css.match(/--color-bg:\s*(#[0-9a-fA-F]{6})/)?.[1];
     const darkBg = tokenInBlock(dark, "--color-bg");
-    expect(lightBg?.toLowerCase()).toBe("#fafaf9");
+    expect(lightBg?.toLowerCase()).toBe("#fafafa");
     expect(darkBg?.toLowerCase()).toBe("#0a0a0a");
   });
 

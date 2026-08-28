@@ -2,28 +2,6 @@ import type { ComponentChildren } from "preact";
 import { Fragment } from "preact";
 import { cn } from "./cn";
 
-export function Eyebrow({
-  children,
-  tone = "subtle",
-  class: className,
-}: {
-  children: ComponentChildren;
-  tone?: "subtle" | "accent";
-  class?: string;
-}) {
-  return (
-    <p
-      class={cn(
-        "font-mono text-[12px] uppercase tracking-[0.1em] m-0",
-        tone === "accent" ? "text-accent" : "text-ink-subtle",
-        className,
-      )}
-    >
-      {children}
-    </p>
-  );
-}
-
 // Section labels name both top-level sections and nested subsections, so every
 // caller chooses its semantic level explicitly. Preflight keeps headings at
 // inherited size/weight, so the visual treatment is unchanged. `aside` puts

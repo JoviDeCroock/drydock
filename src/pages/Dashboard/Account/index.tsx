@@ -7,7 +7,7 @@ import { LinkButton } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
-import { Eyebrow, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
+import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import { TwoFactorSection } from "./TwoFactorSection";
 import { DeleteAccountSection } from "./DeleteAccountSection";
@@ -86,7 +86,6 @@ export default function AccountPage() {
 function AccountHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
-      <Eyebrow>Account</Eyebrow>
       <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Account settings</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
         Manage the security of your personal account. These settings apply to you across every

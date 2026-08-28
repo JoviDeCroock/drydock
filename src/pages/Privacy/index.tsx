@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { LinkButton } from "../../components/Button";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, Prose, SectionLabel } from "../../components/Typography";
+import { Prose, SectionLabel } from "../../components/Typography";
 import { privacyPageSeo, PageSeo } from "../../lib/seo";
 
 const EFFECTIVE_DATE = "2026-07-28";
@@ -14,7 +14,6 @@ export default function PrivacyPage() {
     <PageShell width="doc" class="gap-12">
       <PageSeo metadata={privacyPageSeo} />
       <header class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Legal</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Privacy Policy
         </h1>

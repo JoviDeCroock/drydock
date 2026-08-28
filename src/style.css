@@ -12,14 +12,14 @@
   --font-mono:
     "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace;
 
-  --color-bg: #fafaf9;
+  --color-bg: #fafafa;
   --color-surface: #ffffff;
   --color-surface-2: #f4f4f5;
-  --color-border: #e7e5e4;
-  --color-border-strong: #d6d3d1;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
   --color-ink: #18181b;
-  --color-ink-muted: #57534e;
-  --color-ink-subtle: #6b6660;
+  --color-ink-muted: #52525b;
+  --color-ink-subtle: #5d5d65;
 
   --color-accent: #c2410c;
   --color-accent-hover: #9a3412;

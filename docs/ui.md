@@ -21,7 +21,7 @@ This file is only a compact implementation map.
 
 Prefer existing primitives in `src/components/` before adding one-off classes:
 
-- layout/content: `PageShell`, `Card`, `SectionLabel`, `Eyebrow`, `Toolbar`;
+- layout/content: `PageShell`, `Card`, `SectionLabel`, `Toolbar`;
 - controls: `Button`, `LinkButton`, `Input`, `Field`, `Select`, `Tabs`;
 - feedback/status: `Badge`, `Alert`, `Progress`, `EmptyState`, `Skeleton`;
 - data/review: table, diff, finding, and risk-summary components colocated with their surfaces.

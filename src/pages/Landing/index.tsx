@@ -10,7 +10,7 @@ import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { SeverityBar } from "../../components/SeverityBar";
 import { StatusStrip, StatusStripItem } from "../../components/StatusStrip";
-import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
+import { MonoDetail, SectionLabel } from "../../components/Typography";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
@@ -28,7 +28,6 @@ export default function LandingPage() {
       <PageSeo metadata={homePageSeo} />
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Pre-publish package security</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Review the package artifact before it ships.
         </h1>
@@ -474,17 +473,18 @@ function ScanPreview() {
               <span key="status">complete</span>,
             ]}
           />
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge tone="critical">block manual approval</Badge>
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p class="m-0 text-lg font-semibold tracking-[-0.01em] text-danger-text">
+              Manual review required
+            </p>
             <Badge tone="critical">release critical</Badge>
-            <Badge tone="medium">3 findings</Badge>
           </div>
           <SeverityBar counts={{ critical: 2, medium: 1 }} class="max-w-[420px]" />
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] divide-y md:divide-y-0 md:divide-x divide-border">
           <aside class="p-4 flex flex-col gap-2 bg-bg/40">
-            <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
               Release tree
             </span>
             <ul class="list-none p-0 m-0 flex flex-col gap-0.5 font-mono text-[12px]">
@@ -546,7 +546,7 @@ function PreviewPane({ selected }: { selected: Signal<PreviewFileKey> }) {
           <Badge tone={file.status}>{file.status}</Badge>
           <code class="font-mono text-xs text-ink-muted truncate">{file.path}</code>
         </div>
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           4.2.0 → 4.3.0
         </span>
       </div>
@@ -715,7 +715,7 @@ function FindingAnnotation({
     <div class={cn("border-t border-border border-l-2 px-4 py-3 flex flex-col gap-1.5", toneClass)}>
       <div class="flex items-center gap-2 flex-wrap">
         <Badge tone={severity}>{severity}</Badge>
-        <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
           {caption}
         </span>
       </div>

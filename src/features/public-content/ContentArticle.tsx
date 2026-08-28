@@ -2,14 +2,14 @@
  * The shared shell for Drydock's short public content pages — the focused
  * discovery guides and the incident analyses.
  *
- * Both surfaces are the same document: an eyebrow/headline/lead hero, a small
+ * Both surfaces are the same document: a headline/lead hero, a small
  * number of label-led prose sections, and a way onward. Keeping the shell here
  * means the two page directories describe *content* and never re-derive the
  * marketing type scale, which is where the copies would drift first.
  */
 import type { ComponentChildren } from "preact";
 import { Card } from "../../components/Card";
-import { Eyebrow, MonoDetail, SectionLabel } from "../../components/Typography";
+import { MonoDetail, SectionLabel } from "../../components/Typography";
 
 export interface ContentArticleSection {
   label: string;
@@ -18,13 +18,11 @@ export interface ContentArticleSection {
 }
 
 export function ContentArticleHero({
-  eyebrow,
   heading,
   lead,
   details,
   actions,
 }: {
-  eyebrow: string;
   heading: string;
   lead: string;
   details?: string[];
@@ -32,7 +30,6 @@ export function ContentArticleHero({
 }) {
   return (
     <header class="pt-8 pb-2 md:pt-12 border-t border-border flex flex-col gap-5">
-      <Eyebrow tone="accent">{eyebrow}</Eyebrow>
       <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
         {heading}
       </h1>

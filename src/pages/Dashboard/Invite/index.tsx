@@ -10,7 +10,7 @@ import { LinkButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
-import { Eyebrow, Muted } from "../../../components/Typography";
+import { Muted } from "../../../components/Typography";
 
 type InviteState = "checking" | "accepting" | "error";
 
@@ -63,7 +63,6 @@ export default function InvitePage() {
     return (
       <PageShell width="narrow">
         <Card class="flex flex-col gap-4">
-          <Eyebrow>Organization invitation</Eyebrow>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
             We couldn't accept this invite
           </h1>

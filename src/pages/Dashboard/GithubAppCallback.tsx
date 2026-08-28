@@ -14,7 +14,7 @@ import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { MonoDetail, Muted, SectionLabel } from "../../components/Typography";
 import { UserMenu } from "../../components/UserMenu";
 
 const SETTINGS_PATH = "/dashboard/settings";
@@ -90,7 +90,6 @@ export default function GithubAppCallbackPage() {
       }
     >
       <header class="flex flex-col gap-2 max-w-[640px]">
-        <Eyebrow>GitHub App install</Eyebrow>
         <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">{heading}</h1>
         <Muted class="text-[14px] leading-[1.55] m-0">
           We're confirming the install with GitHub and storing the installation against your active
