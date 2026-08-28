@@ -99,6 +99,22 @@ describe("ScanListModel decisions", () => {
     expect(model.scans.value[0]?.riskSummary?.releaseRisk).toBe("none");
   });
 
+  test("removes a decided release from published-without-decision", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(scanDetail("publish")))),
+    );
+
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, registryVersionStatus: "published" }];
+    model.filter.value = "published_without_decision";
+
+    await model.setDecision("scan-1", "publish", "reviewed after release");
+
+    expect(model.decisionStatus.value).toBe("idle");
+    expect(model.scans.value).toEqual([]);
+  });
+
   test("does not let an older refresh restore a decided scan", async () => {
     const refreshResponse = deferred<Response>();
     const fetchMock = vi
@@ -222,6 +238,37 @@ describe("scanMatchesDecisionFilter", () => {
       ).toBe(true);
     },
   );
+
+  test("matches only live published scans without a decision in the bypass filter", () => {
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "published" },
+        "published_without_decision",
+      ),
+    ).toBe(true);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: "publish", registryVersionStatus: "published" },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "blocked" },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+    expect(
+      scanMatchesDecisionFilter(
+        {
+          decision: null,
+          registryVersionStatus: "published",
+          registryStatusSupersededAt: "2026-08-28T00:00:00.000Z",
+        },
+        "published_without_decision",
+      ),
+    ).toBe(false);
+  });
 
   test("excludes superseded history from undecided", () => {
     expect(

@@ -100,7 +100,10 @@ default **Undecided** work queue. Likewise, a review with no Drydock decision
 leaves **Undecided** once npm reports `published`, `blocked`, or `deleted`, because
 the stage is no longer actionable. It remains under **All** with its npm status
 badge and, unlike superseded history, can still accept a decision for the audit
-trail. Failure
+trail. **Published without Drydock decision** isolates the `published` rows in
+that history that still have no decision, making releases that bypassed the
+review decision easy to audit; `blocked` and `deleted` rows are excluded because
+they did not go live. Failure
 refinement rechecks ownership after its registry request so a concurrent restage
 cannot attribute the replacement stage's outcome to the older scan. The reminder
 marker remains as send-once history. Deleting a failed newer scan therefore

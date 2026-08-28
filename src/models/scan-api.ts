@@ -43,7 +43,12 @@ export interface ScanFileResponse {
 }
 
 export type ScanDecision = "publish" | "no_publish";
-export type ScanDecisionFilter = "undecided" | "publish" | "no_publish" | "all";
+export type ScanDecisionFilter =
+  | "undecided"
+  | "published_without_decision"
+  | "publish"
+  | "no_publish"
+  | "all";
 
 interface ScanRiskSummary {
   artifactRisk: string;
@@ -260,6 +265,13 @@ export function scanMatchesDecisionFilter(
   filter: ScanDecisionFilter,
 ): boolean {
   if (filter === "all") return true;
+  if (filter === "published_without_decision") {
+    return (
+      !scan.decision &&
+      scan.registryStatusSupersededAt == null &&
+      scan.registryVersionStatus === "published"
+    );
+  }
   if (filter === "undecided") {
     return (
       !scan.decision &&

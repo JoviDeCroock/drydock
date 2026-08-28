@@ -79,6 +79,12 @@ export async function listScans(
         notInArray(scans.registryVersionStatus, [...SETTLED_NPM_VERSION_STATUSES]),
       )!,
     );
+  } else if (decisionFilter === "published_without_decision") {
+    conditions.push(
+      isNull(scans.decision),
+      isNull(scans.registryStatusSupersededAt),
+      eq(scans.registryVersionStatus, "published"),
+    );
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 

@@ -440,6 +440,12 @@ describe("registry version status resolution", () => {
       expect(history.scans).toContainEqual(
         expect.objectContaining({ id: scanId, registryVersionStatus: status }),
       );
+      const publishedWithoutDecision = await listScans(db, org.organizationId, {
+        decisionFilter: "published_without_decision",
+      });
+      expect(publishedWithoutDecision.scans.map((scan) => scan.id)).toEqual(
+        status === "published" ? [scanId] : [],
+      );
       await expect(
         recordScanDecision(db, {
           scanId,
@@ -449,6 +455,10 @@ describe("registry version status resolution", () => {
         }),
       ).resolves.toBeTruthy();
       expect((await readScan(scanId)).decision).toBe("publish");
+      const afterDecision = await listScans(db, org.organizationId, {
+        decisionFilter: "published_without_decision",
+      });
+      expect(afterDecision.scans.map((scan) => scan.id)).not.toContain(scanId);
     },
   );
 
