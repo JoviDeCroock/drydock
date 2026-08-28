@@ -14,6 +14,7 @@ import {
   runAiReviewModelComparison,
   scoreRun,
   summarizeModel,
+  writeAiReviewModelComparisonReport,
 } from "./eval/ai-review-live-harness.mjs";
 import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
@@ -116,6 +117,7 @@ describe("buildLiveCases", () => {
     expect(malicious.length).toBeGreaterThan(0);
     for (const testCase of cases) {
       expect(["low", "medium", "high", "critical"]).toContain(testCase.deterministicRisk);
+      expect(["low", "medium", "high", "critical"]).toContain(testCase.releaseDeterministicRisk);
     }
   });
 
@@ -128,7 +130,11 @@ describe("buildLiveCases", () => {
       (testCase) => testCase.id === "pypi-wheel-baseline-credential-added",
     );
 
-    expect(benign).toMatchObject({ verdict: "benign", deterministicRisk: "medium" });
+    expect(benign).toMatchObject({
+      verdict: "benign",
+      deterministicRisk: "medium",
+      releaseDeterministicRisk: "low",
+    });
     expect(benign.options.ruleFindings).toEqual([]);
     expect(malicious.options.ruleFindings.map((finding) => finding.ruleId)).toEqual(
       expect.arrayContaining(["diff.credential-file-added", "file.secret-content"]),
@@ -155,14 +161,20 @@ const maliciousCase = {
   kind: "regression",
   verdict: "malicious",
   threatClass: "t",
-  deterministicRisk: "critical",
+  expectMinRisk: "high",
+  deterministicRisk: "low",
+  releaseDeterministicRisk: "low",
+  options: { ruleFindings: [] },
 };
 const benignCase = {
   id: "b",
   kind: "benign",
   verdict: "benign",
   threatClass: "t",
+  expectMinRisk: "low",
   deterministicRisk: "low",
+  releaseDeterministicRisk: "low",
+  options: { ruleFindings: [] },
 };
 
 describe("scoreRun", () => {
@@ -180,6 +192,34 @@ describe("scoreRun", () => {
       requiresManualReview: false,
     });
     expect(scoreRun(maliciousCase, { review: cleared, usage: usage() }).passed).toBe(false);
+  });
+
+  test("uses the fixture risk floor and production deterministic roll-up", () => {
+    const mediumFinding = {
+      severity: "medium",
+      file: "package.json",
+      evidence: "bin added",
+      reason: "new command surface",
+      ruleId: "diff.bin-added",
+    };
+    const testCase = {
+      ...maliciousCase,
+      expectMinRisk: "medium",
+      deterministicRisk: "medium",
+      releaseDeterministicRisk: "medium",
+      options: { ruleFindings: [mediumFinding] },
+    };
+    const cleared = review({
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      requiresManualReview: false,
+    });
+
+    expect(scoreRun(testCase, { review: cleared, usage: usage() })).toMatchObject({
+      passed: true,
+      aiCaught: false,
+      productRisk: "medium",
+    });
   });
 
   test("does not call a low production risk caught from assessment copy alone", () => {
@@ -246,7 +286,7 @@ describe("summarizeModel", () => {
     const summary = summarizeModel(KIMI, runs);
     expect(summary.completionRate).toBeCloseTo(2 / 3, 6);
     expect(summary.invalidRate).toBeCloseTo(1 / 3, 6);
-    expect(summary.catchRate).toBeCloseTo(1 / 2, 6);
+    expect(summary.productCoverageRate).toBeCloseTo(1 / 2, 6);
     expect(summary.falsePositiveRate).toBe(0);
   });
 
@@ -265,7 +305,7 @@ describe("summarizeModel", () => {
   test("leaves rates null rather than inventing a denominator", () => {
     const summary = summarizeModel(KIMI, [runs[0]]);
     expect(summary.falsePositiveRate).toBeNull();
-    expect(summary.catchRate).toBe(1);
+    expect(summary.productCoverageRate).toBe(1);
   });
 });
 
@@ -285,7 +325,7 @@ describe("renderMarkdown", () => {
   test("renders a comparison row per model", () => {
     const markdown = renderMarkdown(base);
     expect(markdown).toContain(KIMI);
-    expect(markdown).toContain("Misses: none.");
+    expect(markdown).toContain("Expectation misses: none.");
     expect(markdown).toContain("skipped (no staged AI review): 1");
   });
 
@@ -306,6 +346,12 @@ describe("renderMarkdown", () => {
       }),
     ]);
     expect(renderMarkdown({ ...base, byModel: [missed] })).toContain("`m` (malicious/t)");
+  });
+});
+
+describe("writeAiReviewModelComparisonReport", () => {
+  test("rejects a report stem that could escape the eval directory", () => {
+    expect(() => writeAiReviewModelComparisonReport({}, "../outside")).toThrow(/simple filename/);
   });
 });
 
@@ -389,9 +435,9 @@ describe("runAiReviewModelComparison", () => {
     });
 
     const [kimi, glm] = result.byModel;
-    expect(kimi.catchRate).toBe(1);
+    expect(kimi.productCoverageRate).toBe(1);
     expect(kimi.falsePositiveRate).toBe(1);
-    expect(glm.catchRate).toBe(1);
+    expect(glm.productCoverageRate).toBe(1);
     expect(glm.totalCostUsd).toBeLessThan(kimi.totalCostUsd);
   });
 
@@ -411,6 +457,61 @@ describe("runAiReviewModelComparison", () => {
     expect(result.truncated).toBe(1);
     expect(calls).toEqual(["case-a"]);
     expect(renderMarkdown(result)).toContain("**truncated**: 1");
+  });
+
+  test("resumes after a stable fixture offset", async () => {
+    const calls = [];
+    const result = await runAiReviewModelComparison({
+      accountId: "acct",
+      apiKey: "key",
+      models: [GLM],
+      corpus: twoCaseCorpus,
+      offset: 1,
+      analyze: stubAnalyze((_model, options) => {
+        calls.push(options.scanId);
+        return {};
+      }),
+    });
+
+    expect(calls).toEqual(["ai-review-live-case-b"]);
+    expect(result.offset).toBe(1);
+    expect(result.truncated).toBe(0);
+    expect(renderMarkdown(result)).toContain("resumed after fixtures: 1");
+  });
+
+  test("runs an explicit fixture selection in the requested order", async () => {
+    const calls = [];
+    const result = await runAiReviewModelComparison({
+      accountId: "acct",
+      apiKey: "key",
+      models: [GLM],
+      corpus: twoCaseCorpus,
+      caseIds: ["case-b", "case-a"],
+      direct: true,
+      analyze: stubAnalyze((_model, options) => {
+        calls.push(options.scanId);
+        return {};
+      }),
+    });
+
+    expect(calls).toEqual(["ai-review-live-case-b", "ai-review-live-case-a"]);
+    expect(result.transport).toBe("direct");
+    expect(result.selectedCaseIds).toEqual(["case-b", "case-a"]);
+    expect(result.truncated).toBe(0);
+    expect(renderMarkdown(result)).toContain("selected fixtures: 2");
+  });
+
+  test("rejects unknown fixture selections before inference", async () => {
+    await expect(
+      runAiReviewModelComparison({
+        accountId: "acct",
+        apiKey: "key",
+        models: [GLM],
+        corpus: twoCaseCorpus,
+        caseIds: ["missing"],
+        analyze: stubAnalyze(() => ({})),
+      }),
+    ).rejects.toThrow(/unknown case ids: missing/);
   });
 
   test("records a thrown fixture run and continues the paid comparison", async () => {

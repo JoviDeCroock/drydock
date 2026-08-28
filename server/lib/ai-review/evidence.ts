@@ -16,7 +16,7 @@ import {
   listFilesInputSchema,
   type AiReviewSubmission,
 } from "./contract";
-import type { DiffEntry, FileRecord } from "../review";
+import { computeRisk, type DiffEntry, type FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import type { SelectiveAiReviewOptions } from "./types";
 
@@ -56,6 +56,7 @@ export function buildAiReviewPayload(
       maxToolResponseChars: MAX_TOOL_RESPONSE_CHARS,
       maxTotalToolResponseChars: MAX_TOTAL_TOOL_RESPONSE_CHARS,
     },
+    deterministicRisk: computeRisk(options.ruleFindings),
     deterministicFindings: options.ruleFindings,
     packageJsonDiff: options.packageJsonDiff,
     packageJson: packageJsonFile

@@ -83,13 +83,11 @@ occurred.
 
 ## Model routing and capacity
 
-Routing is fixed before a model runs; output from a cheaper model never decides
-whether Kimi should inspect the release.
-
-- Low or medium signal: GLM 5.3 Flash → Kimi K2.7 Code.
-- High signal (missing baseline, critical/high or obfuscated deterministic
-  finding, or an entrypoint, script, or dependency delta): Kimi K2.7 Code → GLM
-  5.3 Flash.
+Routing is fixed before a model runs: every release uses GLM 5.3 Flash first,
+with `reasoning_effort: "high"`. Kimi K2.7 Code remains the fallback when GLM
+is unavailable, times out, exhausts the step budget, or submits an invalid
+review. Kimi keeps its provider-default reasoning configuration. Model output
+never changes this order.
 
 The agent is capped at 20 steps. A capacity/5xx failure gets one jittered retry;
 a 429 or timeout moves directly to the next model because a sub-second retry
@@ -155,8 +153,13 @@ never runs in `pnpm test` or `pnpm run verify`. Reports land in
 `.context/eval/ai-review-model-compare.md`; a write failure fails the command.
 
 Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two
-routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating; the report
-states how many were dropped), `AI_REVIEW_LIVE_GATEWAY`.
+routed models), `AI_REVIEW_LIVE_LIMIT` (cap fixtures while iterating),
+`AI_REVIEW_LIVE_OFFSET` (resume after completed fixtures),
+`AI_REVIEW_LIVE_CASES` (comma-separated fixture ids),
+`AI_REVIEW_LIVE_GATEWAY`, `AI_REVIEW_LIVE_DIRECT=1` (bypass Gateway when a
+credential can call Workers AI directly), and `AI_REVIEW_LIVE_REPORT_STEM`
+(isolate reports from concurrent or checkpointed runs). Reports state bounded,
+selected, and resumed coverage explicitly.
 
 The harness rejects empty/duplicate model lists and invalid limits before any
 network call. A thrown fixture invocation becomes an explicit `harness_error`
@@ -172,9 +175,12 @@ It reports three things, in priority order:
    `invalid`, which floors the scan at medium and escalates the release to a
    human. A model that scores well on the cases it finishes but often fails to
    finish is worse for the product than a duller model that always submits.
-2. **Detection quality.** Catch rate on malicious fixtures and false-positive
-   rate on benign hard-negatives, scored with the same predicates the recorded
-   eval uses so the two reports mean the same thing.
+2. **Detection quality.** Product-policy coverage combines the AI result with
+   the fixture's full deterministic artifact-risk floor and compares it with
+   that fixture's explicit minimum risk. Frontier AI catch separately measures
+   model-only detection where deterministic coverage is deliberately weak.
+   Benign false-positive rate remains AI-only, so deterministic package context
+   cannot make a clean model response look noisy.
 3. **Cost.** Measured tokens priced per model, with cached input billed
    separately. The loop re-sends a prefix that grows to the evidence cap, up to
    `MAX_AGENT_STEPS` times, so cached-input share dominates the bill: a model

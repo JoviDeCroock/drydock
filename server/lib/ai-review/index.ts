@@ -27,9 +27,8 @@ export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types
 export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
-// Reviewer model order: use the inexpensive agentic model for most releases,
-// while preserving Kimi as the first reviewer for pre-classified high-signal
-// changes. Model selection never depends on a weaker model's output.
+// Reviewer model order: GLM handles every release with explicit high reasoning;
+// Kimi remains the operational fallback when GLM cannot complete a valid run.
 //
 // Every candidate must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
@@ -46,7 +45,12 @@ export { AI_REVIEWER_VERSION } from "./contract";
 export const AI_MODEL = "@cf/zai-org/glm-5.3-flash";
 export const AI_FALLBACK_MODEL = "@cf/moonshotai/kimi-k2.7-code";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
+export const AI_REASONING_EFFORT = "high" as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
+
+export function aiReviewReasoningEffort(model: string): typeof AI_REASONING_EFFORT | undefined {
+  return model === AI_MODEL ? AI_REASONING_EFFORT : undefined;
+}
 
 // The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
 // binding into its trace. Keep the provider's `run` capability while hiding
@@ -92,26 +96,8 @@ const AI_REVIEW_MAX_CAPACITY_ATTEMPTS = 2;
 const AI_REVIEW_RETRY_DELAY_MS = 500;
 const AI_REVIEW_RETRY_JITTER_MS = 500;
 
-export function selectModelCandidates(options: SelectiveAiReviewOptions): readonly string[] {
-  if (isHighSignalReview(options)) {
-    return [AI_FALLBACK_MODEL, AI_MODEL];
-  }
+export function selectModelCandidates(_options: SelectiveAiReviewOptions): readonly string[] {
   return AI_MODEL_CANDIDATES;
-}
-
-function isHighSignalReview(options: SelectiveAiReviewOptions): boolean {
-  return (
-    options.previousVersionAvailable === false ||
-    options.ruleFindings.some(
-      (finding) =>
-        finding.severity === "critical" ||
-        finding.severity === "high" ||
-        finding.obfuscated === true,
-    ) ||
-    options.packageJsonDiff.entrypointsChanged === true ||
-    options.packageJsonDiff.scripts.length > 0 ||
-    options.packageJsonDiff.dependencies.length > 0
-  );
 }
 
 type LanguageModelFactory = (model: string) => LanguageModel;
@@ -151,6 +137,7 @@ export async function analyzeWithAi(
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
       try {
+        const reasoningEffort = aiReviewReasoningEffort(candidateModel);
         const languageModel =
           resolveLanguageModelOverride(languageModelOverride, candidateModel) ??
           createWorkersAI({
@@ -158,6 +145,7 @@ export async function analyzeWithAi(
             gateway: { id: "drydock-gateway" },
           })(candidateModel, {
             extraHeaders: aiReviewRequestHeaders(env, options, candidateModel, attempt),
+            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           });
         const tools = createAiReviewTools(
           options,

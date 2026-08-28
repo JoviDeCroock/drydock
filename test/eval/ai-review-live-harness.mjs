@@ -6,8 +6,8 @@
 // through the real `analyzeWithAi` agent loop and reports, per model, the three
 // numbers that actually decide routing:
 //
-//   - detection quality  — catch rate on malicious fixtures, false-positive
-//                          rate on benign hard-negatives
+//   - detection quality  — product-policy coverage, frontier AI catch, and
+//                          false-positive rate on benign hard-negatives
 //   - completion rate    — how often the model lands a valid `submit_review`
 //                          before the step budget ends. A model that returns
 //                          `invalid` looks healthy in logs but floors the scan
@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { createWorkersAI } from "workers-ai-provider";
 import {
   annotateFindingsWithDiffStatus,
+  combineRisk,
   computeRisk,
   createPackageDiff,
   deterministicFindings,
@@ -37,6 +38,7 @@ import {
   redactFindings,
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
+import { computeScanRisk } from "../../server/lib/review/risk.ts";
 import {
   acquireStagedPyPi,
   baselineFromPreviousArtifacts,
@@ -55,6 +57,7 @@ import {
 import { AI_REVIEWER_VERSION } from "../../server/lib/ai-review/contract.ts";
 import {
   AI_MODEL_CANDIDATES,
+  aiReviewReasoningEffort,
   aiReviewRequestHeaders,
   analyzeWithAi,
 } from "../../server/lib/ai-review/index.ts";
@@ -82,6 +85,7 @@ export const MODEL_PRICING = {
 export const DEFAULT_COMPARISON_MODELS = [...AI_MODEL_CANDIDATES];
 
 const PER_MILLION = 1_000_000;
+const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
 
 // `usage.inputTokens` is the full billed input; `cachedInputTokens` is the
 // subset of it that was a cache read. Splitting them is the whole point of the
@@ -107,7 +111,9 @@ function liveCase(record, deterministicRisk, options) {
     kind: record.kind,
     verdict: record.verdict,
     threatClass: record.threatClass,
+    expectMinRisk: record.expectMinRisk,
     deterministicRisk,
+    releaseDeterministicRisk: computeRisk(options.ruleFindings),
     options: {
       scanId: `ai-review-live-${record.id}`,
       organizationId: "ai-review-live-eval",
@@ -256,22 +262,30 @@ export function scoreRun(testCase, result) {
   const usageAvailable =
     typeof usage?.inputTokens === "number" && typeof usage.outputTokens === "number";
   const completed = review.status === "complete";
+  const productRisk = combineRisk(testCase.deterministicRisk, computeScanRisk([], review));
+  const expectedRiskPassed =
+    completed && RISK_RANK[productRisk] >= RISK_RANK[testCase.expectMinRisk];
+  const aiCaught = testCase.verdict === "malicious" ? isMaliciousCaught(review) : null;
   const passed =
     testCase.verdict === "malicious"
-      ? isMaliciousCaught(review)
+      ? expectedRiskPassed
       : testCase.verdict === "benign"
         ? isBenignClean(review)
-        : isUncertaintyEscalated(review);
+        : expectedRiskPassed || isUncertaintyEscalated(review);
 
   return {
     id: testCase.id,
     kind: testCase.kind,
     verdict: testCase.verdict,
     threatClass: testCase.threatClass,
+    expectMinRisk: testCase.expectMinRisk,
     deterministicRisk: testCase.deterministicRisk,
+    releaseDeterministicRisk: testCase.releaseDeterministicRisk,
     status: review.status,
     completed,
     passed,
+    aiCaught,
+    productRisk,
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     findingCount: review.findings.length,
@@ -292,10 +306,14 @@ function scoreHarnessError(testCase, error, durationMs) {
     kind: testCase.kind,
     verdict: testCase.verdict,
     threatClass: testCase.threatClass,
+    expectMinRisk: testCase.expectMinRisk,
     deterministicRisk: testCase.deterministicRisk,
+    releaseDeterministicRisk: testCase.releaseDeterministicRisk,
     status: "harness_error",
     completed: false,
     passed: false,
+    aiCaught: false,
+    productRisk: "unknown",
     risk: "unknown",
     releaseAssessment: "not_assessed",
     findingCount: 0,
@@ -321,6 +339,7 @@ function rate(passed, total) {
 
 export function summarizeModel(model, runs) {
   const malicious = runs.filter((run) => run.verdict === "malicious");
+  const frontier = malicious.filter((run) => run.kind === "frontier");
   const benign = runs.filter((run) => run.verdict === "benign");
   const completed = runs.filter((run) => run.completed);
   const usageRuns = runs.filter((run) => run.usageAvailable);
@@ -342,7 +361,9 @@ export function summarizeModel(model, runs) {
       runs.length,
     ),
     costCoverage: rate(costs.length, runs.length),
-    catchRate: rate(malicious.filter((run) => run.passed).length, malicious.length),
+    productCoverageRate: rate(malicious.filter((run) => run.passed).length, malicious.length),
+    aiCatchRate: rate(malicious.filter((run) => run.aiCaught).length, malicious.length),
+    frontierCatchRate: rate(frontier.filter((run) => run.aiCaught).length, frontier.length),
     falsePositiveRate: rate(benign.filter((run) => !run.passed).length, benign.length),
     manualReviewRate: rate(runs.filter((run) => run.requiresManualReview).length, runs.length),
     avgSteps: mean(usageRuns.map((run) => run.steps)),
@@ -356,16 +377,23 @@ export function summarizeModel(model, runs) {
   };
 }
 
-function liveLanguageModelFactory({ accountId, apiKey, gatewayId }, options) {
-  const provider = createWorkersAI({ accountId, apiKey, gateway: { id: gatewayId } });
-  return (model) =>
-    provider(model, {
+function liveLanguageModelFactory({ accountId, apiKey, gatewayId, direct }, options) {
+  const provider = createWorkersAI({
+    accountId,
+    apiKey,
+    ...(direct ? {} : { gateway: { id: gatewayId } }),
+  });
+  return (model) => {
+    const reasoningEffort = aiReviewReasoningEffort(model);
+    return provider(model, {
       // Mirror production's headers exactly. Measuring cached-token share under
       // different affinity headers than the Worker sends would compare a
       // request shape that never ships. `attempt` is always 1 here: the
       // harness measures a first attempt, not retry behavior.
       extraHeaders: aiReviewRequestHeaders({ AI_CACHE_AFFINITY: "" }, options, model, 1),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     });
+  };
 }
 
 export async function runAiReviewModelComparison({
@@ -375,6 +403,9 @@ export async function runAiReviewModelComparison({
   models = DEFAULT_COMPARISON_MODELS,
   corpus,
   limit,
+  offset = 0,
+  caseIds,
+  direct = false,
   onProgress,
   // Test seam, mirroring `analyzeWithAi`'s own `languageModelOverride`: lets the
   // offline suite exercise per-model isolation, progress reporting, and
@@ -394,10 +425,30 @@ export async function runAiReviewModelComparison({
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     throw new Error("Live AI comparison limit must be a positive integer");
   }
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error("Live AI comparison offset must be a non-negative integer");
+  }
+  const caseIds_ = caseIds?.map((id) => String(id).trim());
+  if (caseIds_ && (caseIds_.some((id) => !id) || new Set(caseIds_).size !== caseIds_.length)) {
+    throw new Error("Live AI comparison case ids must be unique non-empty strings");
+  }
 
   const { cases: allCases, skipped } = buildLiveCases(corpus);
   if (allCases.length === 0) throw new Error("Live AI comparison has no supported fixtures");
-  const cases = typeof limit === "number" ? allCases.slice(0, limit) : allCases;
+  const availableIds = new Set(allCases.map((testCase) => testCase.id));
+  const unknownCaseIds = caseIds_?.filter((id) => !availableIds.has(id)) ?? [];
+  if (unknownCaseIds.length) {
+    throw new Error(`Live AI comparison received unknown case ids: ${unknownCaseIds.join(", ")}`);
+  }
+  const selectedCases = caseIds_
+    ? caseIds_.map((id) => allCases.find((testCase) => testCase.id === id))
+    : allCases;
+  if (selectedCases.length === 0) throw new Error("Live AI comparison selected no fixtures");
+  const remainingCases = selectedCases.slice(offset);
+  if (remainingCases.length === 0) {
+    throw new Error("Live AI comparison offset selected no fixtures");
+  }
+  const cases = typeof limit === "number" ? remainingCases.slice(0, limit) : remainingCases;
   const byModel = [];
 
   for (const model of models_) {
@@ -412,7 +463,7 @@ export async function runAiReviewModelComparison({
           {},
           [model],
           testCase.options,
-          liveLanguageModelFactory({ accountId, apiKey, gatewayId }, testCase.options),
+          liveLanguageModelFactory({ accountId, apiKey, gatewayId, direct }, testCase.options),
         );
         run = scoreRun(testCase, { ...result, durationMs: Date.now() - startedAt });
       } catch (error) {
@@ -428,10 +479,13 @@ export async function runAiReviewModelComparison({
     generatedAt: new Date().toISOString(),
     reviewerVersion: AI_REVIEWER_VERSION,
     models: models_,
+    transport: direct ? "direct" : "gateway",
+    selectedCaseIds: caseIds_ ?? null,
+    offset,
     caseCount: cases.length,
     // Never let a bounded run read as full coverage.
     skipped,
-    truncated: cases.length < allCases.length ? allCases.length - cases.length : 0,
+    truncated: remainingCases.length - cases.length,
     byModel,
   };
 }
@@ -450,8 +504,15 @@ export function renderMarkdown(result) {
     "",
     `- generated: ${result.generatedAt}`,
     `- reviewer version: ${result.reviewerVersion}`,
+    `- transport: ${result.transport ?? "gateway"}`,
     `- fixtures per model: ${result.caseCount}`,
   ];
+  if (result.offset) {
+    lines.push(`- resumed after fixtures: ${result.offset}`);
+  }
+  if (result.selectedCaseIds) {
+    lines.push(`- selected fixtures: ${result.selectedCaseIds.length}`);
+  }
   if (result.truncated) {
     lines.push(`- **truncated**: ${result.truncated} staged fixtures not run (\`--limit\`)`);
   }
@@ -460,13 +521,14 @@ export function renderMarkdown(result) {
   }
   lines.push(
     "",
-    "| model | completion | catch | false pos | cached in | avg steps | avg cost | total cost |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| model | completion | product coverage | frontier AI catch | false pos | cached in | avg steps | avg cost | total cost |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...result.byModel.map((entry) =>
       [
         entry.model,
         percent(entry.completionRate),
-        percent(entry.catchRate),
+        percent(entry.productCoverageRate),
+        percent(entry.frontierCatchRate),
         percent(entry.falsePositiveRate),
         percent(entry.cachedInputShare),
         entry.avgSteps.toFixed(1),
@@ -489,12 +551,13 @@ export function renderMarkdown(result) {
       `- cost coverage: ${percent(entry.costCoverage)} (unpriced or errored runs excluded)`,
       `- avg latency: ${(entry.avgDurationMs / 1000).toFixed(1)}s · avg tokens in/out: ${entry.avgInputTokens.toFixed(0)}/${entry.avgOutputTokens.toFixed(0)}`,
       "",
-      misses.length ? "Misses:" : "Misses: none.",
+      `- AI-only catch: ${percent(entry.aiCatchRate)} · product-policy coverage: ${percent(entry.productCoverageRate)}`,
+      misses.length ? "Expectation misses:" : "Expectation misses: none.",
       "",
     );
     for (const miss of misses) {
       lines.push(
-        `- \`${miss.id}\` (${miss.verdict}/${miss.threatClass}) → ${miss.status}/${miss.risk}`,
+        `- \`${miss.id}\` (${miss.verdict}/${miss.threatClass}) → ${miss.status}/AI ${miss.risk}/product ${miss.productRisk}`,
       );
     }
     lines.push("");
@@ -503,9 +566,12 @@ export function renderMarkdown(result) {
   return lines.join("\n");
 }
 
-export function writeAiReviewModelComparisonReport(result) {
+export function writeAiReviewModelComparisonReport(result, stem = "ai-review-model-compare") {
+  if (!/^[a-z0-9][a-z0-9.-]*$/i.test(stem)) {
+    throw new Error("AI reviewer report stem must be a simple filename");
+  }
   const outDir = join(__dirname, "..", "..", ".context", "eval");
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, "ai-review-model-compare.json"), JSON.stringify(result, null, 2));
-  writeFileSync(join(outDir, "ai-review-model-compare.md"), renderMarkdown(result));
+  writeFileSync(join(outDir, `${stem}.json`), JSON.stringify(result, null, 2));
+  writeFileSync(join(outDir, `${stem}.md`), renderMarkdown(result));
 }
