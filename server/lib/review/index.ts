@@ -90,6 +90,7 @@ export {
   selectAddedDependencyDeclarations,
   selectAddedRegistryDependencyDeclarations,
   selectAddedDependencies,
+  selectBundledAddedDependencyDeclarations,
   selectBundledAddedDependencies,
 } from "./dependency-evidence";
 export type {

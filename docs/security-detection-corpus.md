@@ -233,7 +233,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.56.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.57.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -789,6 +789,14 @@ names across manifest sections cannot overwrite or misroute evidence. Reports re
 individual rows and add one aggregate unavailable finding for omitted declarations. Metadata misses
 and valid packages with no satisfying version remain distinct operator outcomes. The
 `dependency-artifact-same-name-declarations` case pins the declaration identity boundary.
+
+`1.57.0` restores the full newly-installed declaration selector behind dependency-artifact review:
+different-spec runtime relocations and overrides, required peers beside a different installed spec,
+and optional peers becoming required all resolve through the same declaration-scoped artifact path as
+simple additions. It also preserves critical integrity and retained install-time signals when an
+artifact is incomplete, and applies one 64-record budget across bundled and registry evidence. The
+`dependency-artifact-optional-peer-required` case pins the gate-facing transition; focused npm and
+pipeline tests pin retained-risk, adapter-parity, and combined-budget behavior.
 
 ### Fixture format
 

@@ -21,7 +21,9 @@
 import {
   assessDependencyArtifact,
   dependencyDeclarationKey,
+  dependencyDeclarationKind,
   dependencyScanFindings,
+  dependencyEvidenceFindings,
   DEPENDENCY_ARTIFACT_MAX_FILES,
   DEPENDENCY_TEXT_SAMPLE_LIMIT,
   EMPTY_DEPENDENCY_REVIEW,
@@ -29,7 +31,7 @@ import {
   MAX_RECORDED_DEPENDENCIES,
   sanitizeDependencyArtifactOrigin,
   selectAddedRegistryDependencyDeclarations,
-  selectBundledAddedDependencies,
+  selectBundledAddedDependencyDeclarations,
   type AddedDependency,
   type DependencyDigest,
   type DependencyArtifactForReview,
@@ -38,6 +40,7 @@ import {
   type DependencyReview,
   type DependencyUninspectableReason,
   type FileRecord,
+  type Finding,
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../../review";
@@ -86,6 +89,7 @@ export function inspectAddedNpmDependenciesForAdapter(
     manifestDiff: args.manifestDiff,
     stagedManifest: args.stagedManifest,
     stagedFiles: args.stagedFiles,
+    maxRecordedDependencies: args.maxRecordedDependencies,
     // A thunk, not a value: the overwhelming majority of releases add no
     // dependency, and resolving the registry costs a D1 read. Nothing should
     // happen at all for those scans.
@@ -105,7 +109,15 @@ export function inspectBundledNpmDependenciesForAdapter(
     stagedManifest: args.stagedManifest,
     stagedFiles: args.stagedFiles,
   };
-  const selected = selectBundledAddedDependencies(args.manifestDiff, selectionOptions);
+  const selected = selectBundledAddedDependencyDeclarations(
+    args.manifestDiff,
+    selectionOptions,
+  ).map((dependency) => ({
+    name: dependency.name,
+    section: dependency.section,
+    spec: dependency.declaredSpec,
+    declarationKind: dependencyDeclarationKind(dependency.declaredSpec),
+  }));
   if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
 
   const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
@@ -166,6 +178,8 @@ export interface InspectDependenciesArgs {
   /** Registry the organization's connection points at; used origin-only, never with its token. */
   resolveRegistryUrl: () => Promise<string>;
   broker: NpmPublicDependencyClient;
+  /** Remaining slots in the release-wide persisted dependency evidence budget. */
+  maxRecordedDependencies?: number;
   scanId: string;
   organizationId: string;
   /** Injectable clock so the budget is testable without real time. */
@@ -196,7 +210,7 @@ export async function inspectAddedNpmDependencies(
     if (!selected.length) return EMPTY_DEPENDENCY_REVIEW;
     const now = args.now ?? Date.now;
     const startedAt = now();
-    const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
+    const recorded = selected.slice(0, recordedDependencyLimit(args));
     return completeReview(
       args,
       selected,
@@ -221,7 +235,7 @@ async function inspectAddedNpmDependenciesInternal(
   const startedAt = now();
   const dependencies: ReviewedDependencyEvidence[] = [];
   const artifacts: Record<string, DependencyArtifactForReview> = {};
-  const recorded = selected.slice(0, MAX_RECORDED_DEPENDENCIES);
+  const recorded = selected.slice(0, recordedDependencyLimit(args));
   const registry = await settleWithin(args.resolveRegistryUrl(), budgetMs);
   if (registry.timedOut) {
     for (const dependency of recorded) {
@@ -339,18 +353,31 @@ function completeReview(
       },
     ]),
   );
-  const findings = dependencyScanFindings(
+  const parent = {
+    name: args.stagedManifest?.name ?? null,
+    version: args.stagedManifest?.version ?? null,
+  };
+  const exactFindings = dependencyScanFindings(
     recorded.map((dependency) => ({
       name: dependency.name,
       section: dependency.section,
       declaredSpec: dependency.spec,
     })),
     composerArtifacts,
-    {
-      name: args.stagedManifest?.name ?? null,
-      version: args.stagedManifest?.version ?? null,
-    },
+    parent,
     omittedCount,
+  );
+  const durableReview: DependencyReview = {
+    status: skipped || uninspectableCount ? "partial" : "complete",
+    selectedCount: selected.length,
+    inspectedCount,
+    uninspectableCount,
+    omittedCount,
+    dependencies,
+  };
+  const findings = mergeRetainedDependencySignals(
+    exactFindings,
+    dependencyEvidenceFindings(durableReview, parent),
   );
   for (const entry of evidence) {
     entry.findingCount = findings.filter(
@@ -361,15 +388,48 @@ function completeReview(
     ).length;
   }
   return {
-    status: skipped || uninspectableCount ? "partial" : "complete",
-    selectedCount: selected.length,
-    inspectedCount,
-    uninspectableCount,
-    omittedCount,
-    dependencies,
+    ...durableReview,
     evidence,
     findings,
   };
+}
+
+function mergeRetainedDependencySignals(exact: Finding[], durable: Finding[]): Finding[] {
+  const findings = [...exact];
+  for (const retained of durable) {
+    if (findingSeverityRank(retained) < findingSeverityRank({ severity: "high" })) continue;
+    const key = dependencySignalKey(retained);
+    if (!key) continue;
+    const existingIndex = findings.findIndex((finding) => dependencySignalKey(finding) === key);
+    if (existingIndex === -1) {
+      findings.push(retained);
+      continue;
+    }
+    if (findingSeverityRank(retained) > findingSeverityRank(findings[existingIndex])) {
+      findings[existingIndex] = retained;
+    }
+  }
+  return findings;
+}
+
+function dependencySignalKey(finding: Finding): string | null {
+  const dependency = finding.dependency;
+  if (!finding.ruleId || !dependency?.section || dependency.declaredSpec === undefined) return null;
+  return `${finding.ruleId}:${dependencyDeclarationKey(
+    dependency.name,
+    dependency.section,
+    dependency.declaredSpec,
+  )}`;
+}
+
+function findingSeverityRank(finding: Pick<Finding, "severity">): number {
+  return { info: 0, low: 1, medium: 2, high: 3, critical: 4 }[finding.severity];
+}
+
+function recordedDependencyLimit(args: InspectDependenciesArgs): number {
+  const requested = args.maxRecordedDependencies ?? MAX_RECORDED_DEPENDENCIES;
+  if (!Number.isFinite(requested)) return MAX_RECORDED_DEPENDENCIES;
+  return Math.max(0, Math.min(MAX_RECORDED_DEPENDENCIES, Math.trunc(requested)));
 }
 
 function selectedAddedDependencies(args: InspectDependenciesArgs): AddedDependency[] {
@@ -529,11 +589,14 @@ async function inspectOne(
     reviewedDigest,
     reviewedSha1: download.archiveSha1,
   };
-  const evidence = inspectAcquiredDependency(dependency, acquired);
-  const integrityMismatch = evidence.digestVerified === false;
+  const assessedEvidence = inspectAcquiredDependency(dependency, acquired);
+  const integrityMismatch = assessedEvidence.digestVerified === false;
+  const evidence: ReviewedDependencyEvidence = integrityMismatch
+    ? { ...assessedEvidence, status: "uninspectable", reason: "artifact-unavailable" }
+    : assessedEvidence;
   return {
     evidence,
-    ...(evidence.status === "inspected"
+    ...(assessedEvidence.status === "inspected"
       ? {
           artifact: {
             ...toDependencyEvidence(evidence, args.stagedManifest),

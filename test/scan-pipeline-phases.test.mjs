@@ -595,6 +595,80 @@ describe("analyzeRelease", () => {
     expect(JSON.stringify(out.findings.ruleFindings)).not.toContain(NPM_TOKEN);
   });
 
+  test("passes only the remaining release-wide evidence budget to registry inspection", async () => {
+    const acquired = clonedResolved();
+    const embeddedDependencies = Array.from({ length: 64 }, (_, index) => ({
+      name: `embedded-${index}`,
+      section: "dependencies",
+      declaredSpec: "1.0.0",
+      declarationKind: "exact",
+      status: "inspected",
+      reason: null,
+      resolvedVersion: "1.0.0",
+      registryHost: null,
+      artifactOrigin: null,
+      declaredDigest: null,
+      reviewedDigest: null,
+      digestVerified: null,
+      fileCount: 1,
+      automaticExecution: [],
+      capabilities: [],
+      installReachableCapabilities: [],
+      observation: { execution: "not-observed", risk: "not-observed" },
+    }));
+    const inspectAddedDependencies = vi.fn(async (_ctx, args) => {
+      expect(args.maxRecordedDependencies).toBe(0);
+      return {
+        status: "partial",
+        selectedCount: 1,
+        inspectedCount: 0,
+        uninspectableCount: 1,
+        omittedCount: 1,
+        dependencies: [],
+        evidence: [],
+        findings: [
+          {
+            severity: "medium",
+            file: "package.json",
+            ruleId: "dependency.artifact-unavailable",
+            ruleVersion: "test",
+            evidence: "one registry dependency omitted",
+            reason: "report bound",
+          },
+        ],
+      };
+    });
+    const adapter = makeAdapter({
+      acquireStaged: vi.fn(async () => acquired.staged),
+      acquireBaseline: vi.fn(async () => acquired.baseline),
+      inspectEmbeddedAddedDependencies: vi.fn(() => ({
+        status: "complete",
+        selectedCount: 64,
+        inspectedCount: 64,
+        uninspectableCount: 0,
+        omittedCount: 0,
+        dependencies: embeddedDependencies,
+      })),
+      inspectAddedDependencies,
+    });
+    const ctx = { env: {}, executionCtx: {}, db: {}, session: { userId: "user-1" } };
+
+    const out = await analyzeRelease(
+      adapter,
+      ctx,
+      { stageId: "stage-1" },
+      { dispose() {} },
+      identity,
+    );
+
+    expect(out.findings.dependencyReview).toMatchObject({
+      selectedCount: 65,
+      omittedCount: 1,
+    });
+    expect(out.findings.dependencyReview.dependencies).toHaveLength(64);
+    expect(out.findings.dependencyEvidence).toEqual([]);
+  });
+
   test.each([
     ["dependencies", "dependency.added", "medium"],
     ["optionalDependencies", "dependency.optional-added", "high"],

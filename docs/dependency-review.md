@@ -8,9 +8,11 @@ The pass runs for npm staged-publish and workflow-gate reviews when a baseline `
 
 - newly added `dependencies`;
 - newly added `optionalDependencies`;
-- newly added required `peerDependencies`.
+- newly added required `peerDependencies`;
+- different-spec relocations or optional overrides that change the installed bytes;
+- optional peers becoming required when their spec was not already installed.
 
-It excludes development dependencies, optional peers, declarations already represented by the previous release's installed set, bundled children, and all dependencies of a release with no baseline. It reviews direct additions only; recursive transitive inspection is out of scope.
+It excludes development dependencies, optional peers, declarations already represented by the previous release's installed set, and all registry dependencies of a release with no baseline. Declared bundled children are inspected from their exact `node_modules/` subtree in the parent artifact rather than resolved from the registry. It reviews direct additions only; recursive transitive inspection is out of scope.
 
 The existing `dependency.added` manifest finding remains in the report. Artifact findings are separate evidence about the bytes selected by that declaration.
 
@@ -27,7 +29,7 @@ The pass is bounded per release:
 - the pass has a 30-second wall-clock budget;
 - each tarball is capped at 25 MiB and 800 files.
 
-Up to 64 selected declarations receive individual evidence rows. If more declarations are selected, one aggregate `dependency.artifact-unavailable` finding records the omitted count so the report stays bounded without presenting the remainder as reviewed. Results retain declaration order even though acquisition is concurrent.
+Up to 64 selected declarations receive individual evidence rows across bundled and registry-backed dependencies together. If more declarations are selected, one aggregate `dependency.artifact-unavailable` finding records the omitted count so the report stays bounded without presenting the remainder as reviewed. Results retain declaration order even though acquisition is concurrent.
 
 The sandbox parses bytes without lifecycle scripts, dependency installation, imports, builds, or active rendering. While raw dependency files are available, the ordinary deterministic scanner runs with npm entrypoint resolution. Raw files are then discarded.
 
@@ -42,7 +44,7 @@ Each persisted `DependencyEvidence` row records:
 - lifecycle, `gypfile`, and binary-entrypoint observations;
 - the number of findings joined to that dependency.
 
-A review-time range or tag resolution is a snapshot, not permanent provenance. Integrity disagreement is an inspection failure: untrusted bytes are not scanned as though the advertised artifact had been reviewed.
+A review-time range or tag resolution is a snapshot, not permanent provenance. Integrity disagreement is a critical inspection failure: untrusted bytes are not scanned as though the advertised artifact had been reviewed. A truncation or ambiguous archive still retains any higher-severity install-time behavior already proven by readable bytes while separately reporting the coverage gap.
 
 Persisted and exported evidence is shape-validated. Retained tarball URLs must be credential-free public npm URLs (or localhost URLs in e2e data), so registry-controlled signed URLs and alternate hosts cannot enter a public report.
 
@@ -58,10 +60,10 @@ That namespace is release-scoped but is never treated as a parent-package file i
 
 Two dependency-specific rules express the release-level conclusion:
 
-| Rule ID                              | Severity             | Meaning                                                                                                                                                                                    |
-| ------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `dependency.install-time-capability` | `high` or `critical` | An automatic install/build entrypoint combines with a non-test capability. Remote shell, credential plus network access, or obfuscated execution is critical; other combinations are high. |
-| `dependency.artifact-unavailable`    | `medium`             | The exact dependency artifact could not be resolved, fetched, verified, parsed, or inspected within a bound.                                                                               |
+| Rule ID                              | Severity               | Meaning                                                                                                                                                                                    |
+| ------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dependency.install-time-capability` | `high` or `critical`   | An automatic install/build entrypoint combines with a non-test capability. Remote shell, credential plus network access, or obfuscated execution is critical; other combinations are high. |
+| `dependency.artifact-unavailable`    | `medium` or `critical` | The exact dependency artifact could not be resolved, fetched, parsed, or inspected within a bound; a proven registry-integrity mismatch is critical.                                       |
 
 The composer is `dependencyScanFindings` in `server/lib/review/rules/dependency-artifact.ts`. It reuses the production deterministic matcher, drops rules that are meaningless for a dependency sub-artifact (`file.outside-files-list` and `package-json.entrypoint-missing`), and stamps the current deterministic rules version. AI review may explain these findings but cannot downgrade them.
 

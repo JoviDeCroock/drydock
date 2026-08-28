@@ -20,6 +20,8 @@ const {
   resolveDependencyVersion,
 } = await import("../server/lib/ecosystems/npm/dependency-artifacts");
 const { createNpmBroker } = await import("../server/lib/ecosystems/npm/broker");
+const { npmAdapter } = await import("../server/lib/ecosystems/npm");
+const { npmGateAdapter } = await import("../server/lib/ecosystems/npm/gate-review");
 const { summarizePackageJsonDiff } = await import("../server/lib/review");
 const { SandboxError } = await import("../server/lib/sandbox");
 
@@ -232,6 +234,35 @@ describe("NpmBroker registry snapshot", () => {
 });
 
 describe("inspectAddedNpmDependencies", () => {
+  test("honors a release-wide record budget exhausted by embedded dependencies", async () => {
+    const broker = brokerStub({ metadata: { added: packument("added", { "1.0.0": {} }) } });
+    const review = await inspect(
+      broker,
+      { name: "p", version: "1.0.0" },
+      { name: "p", version: "1.0.1", dependencies: { added: "1.0.0" } },
+      { maxRecordedDependencies: 0 },
+    );
+
+    expect(review).toMatchObject({
+      status: "partial",
+      selectedCount: 1,
+      inspectedCount: 0,
+      uninspectableCount: 1,
+      omittedCount: 1,
+      dependencies: [],
+      evidence: [],
+    });
+    expect(review.findings).toEqual([
+      expect.objectContaining({
+        ruleId: "dependency.artifact-unavailable",
+        severity: "medium",
+        evidence: expect.stringContaining("1 additional direct dependency"),
+      }),
+    ]);
+    expect(broker.calls.metadata).toEqual([]);
+    expect(broker.calls.downloads).toEqual([]);
+  });
+
   test("a release adding a dropper dependency records the whole path", async () => {
     const url = "https://registry.npmjs.org/proc-macro1/-/proc-macro1-0.1.0.tgz";
     const broker = brokerStub({
@@ -360,6 +391,11 @@ describe("inspectAddedNpmDependencies", () => {
       { name: "p", version: "1.0.1", dependencies: { "proc-macro1": "0.1.0" } },
     );
     expect(review.dependencies[0].digestVerified).toBe(false);
+    expect(review).toMatchObject({
+      status: "partial",
+      inspectedCount: 0,
+      uninspectableCount: 1,
+    });
     expect(review.evidence[0]).toMatchObject({
       outcome: "fetch-failed",
       outcomeDetail: "downloaded artifact did not match registry integrity metadata",
@@ -367,7 +403,10 @@ describe("inspectAddedNpmDependencies", () => {
     });
     expect(review.findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ruleId: "dependency.artifact-unavailable", severity: "medium" }),
+        expect.objectContaining({
+          ruleId: "dependency.artifact-unavailable",
+          severity: "critical",
+        }),
       ]),
     );
   });
@@ -944,6 +983,18 @@ describe("inspectAddedNpmDependencies", () => {
       observation: { execution: "observed", risk: "observed" },
     });
     expect(review.dependencies[0].installReachableCapabilities).toContain("code.remote-shell");
+    expect(review.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "dependency.install-time-capability",
+          severity: "critical",
+        }),
+        expect.objectContaining({
+          ruleId: "dependency.artifact-unavailable",
+          severity: "medium",
+        }),
+      ]),
+    );
   });
 
   test("an install-reachable minified file with skipped text is uninspectable", async () => {
@@ -1204,6 +1255,14 @@ describe("inspectAddedNpmDependencies", () => {
       observation: { execution: "observed", risk: "observed" },
     });
     expect(review.dependencies[0].installReachableCapabilities).toContain("code.remote-shell");
+    expect(review.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "dependency.install-time-capability",
+          severity: "critical",
+        }),
+      ]),
+    );
   });
 
   test("an explicit directory entry does not invalidate an otherwise complete archive", async () => {
@@ -1249,6 +1308,13 @@ describe("inspectAddedNpmDependencies", () => {
       automaticExecution: [],
     });
   });
+});
+
+test.each([
+  ["staged-publish", npmAdapter],
+  ["workflow-gate", npmGateAdapter],
+])("the %s npm adapter inspects embedded dependency bytes", (_surface, adapter) => {
+  expect(adapter.inspectEmbeddedAddedDependencies).toBeTypeOf("function");
 });
 
 describe("inspectBundledNpmDependenciesForAdapter", () => {
