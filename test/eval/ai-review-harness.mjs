@@ -37,7 +37,7 @@ function requireNonEmptyString(value, field) {
   }
 }
 
-export function validateAiReviewCorpus(corpus) {
+function validateAiReviewCorpus(corpus) {
   if (!corpus || typeof corpus !== "object" || Array.isArray(corpus)) {
     throw new Error("AI review eval corpus must be an object");
   }
