@@ -325,10 +325,9 @@ function interpolateNpmrcValue(value, env) {
   return complete ? resolved : null;
 }
 
-function publicRegistryPackagePolicy(cwd, env) {
+function publicRegistryPackagePolicy(npmrc, env) {
   const registries = new Map();
-  try {
-    const npmrc = readFileSync(path.join(cwd, ".npmrc"), "utf8");
+  if (typeof npmrc === "string") {
     for (const rawLine of npmrc.replaceAll("\r\n", "\n").split("\n")) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#") || line.startsWith(";")) continue;
@@ -338,8 +337,6 @@ function publicRegistryPackagePolicy(cwd, env) {
       if (key !== "registry" && !/^@[^:]+:registry$/.test(key)) continue;
       registries.set(key, interpolateNpmrcValue(line.slice(separatorAt + 1).trim(), env));
     }
-  } catch (error) {
-    if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
   }
 
   const environmentRegistry = env.npm_config_registry ?? env.NPM_CONFIG_REGISTRY;
@@ -370,13 +367,28 @@ function publicRegistryPackagePolicy(cwd, env) {
   };
 }
 
+function currentRepositoryFile(cwd, filePath) {
+  try {
+    return readFileSync(path.join(cwd, filePath), "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function repositoryFileAtRevision(cwd, revision, filePath) {
+  const listed = git(cwd, ["ls-tree", "--name-only", revision, "--", filePath]);
+  if (!listed.split("\n").includes(filePath)) return null;
+  return git(cwd, ["show", `${revision}:${filePath}`]);
+}
+
 function changedLockfiles(cwd, baseRevision) {
   const changed = git(cwd, [
     "diff",
     "--name-status",
     "-z",
     "--find-renames=1%",
-    "--diff-filter=AMR",
+    "--diff-filter=ADMR",
     baseRevision,
     "--",
     ":(glob)**/package-lock.json",
@@ -386,6 +398,8 @@ function changedLockfiles(cwd, baseRevision) {
 
   const fields = changed.split("\0");
   const lockfiles = [];
+  const additions = [];
+  const deletions = [];
   for (let index = 0; index < fields.length;) {
     const status = fields[index++];
     if (!status) break;
@@ -395,8 +409,21 @@ function changedLockfiles(cwd, baseRevision) {
       if (beforePath && afterPath) lockfiles.push({ beforePath, afterPath });
       continue;
     }
-    const afterPath = fields[index++];
-    if (afterPath) lockfiles.push({ beforePath: status === "A" ? null : afterPath, afterPath });
+    const filePath = fields[index++];
+    if (!filePath) continue;
+    if (status === "A") additions.push(filePath);
+    else if (status === "D") deletions.push(filePath);
+    else lockfiles.push({ beforePath: filePath, afterPath: filePath });
+  }
+
+  const unmatchedDeletions = new Set(deletions);
+  for (const afterPath of additions) {
+    const candidates = [...unmatchedDeletions].filter(
+      (beforePath) => path.dirname(beforePath) === path.dirname(afterPath),
+    );
+    const beforePath = candidates.length === 1 ? candidates[0] : null;
+    if (beforePath) unmatchedDeletions.delete(beforePath);
+    lockfiles.push({ beforePath, afterPath });
   }
   return lockfiles.filter(({ afterPath }) => SUPPORTED_LOCKFILES.has(path.basename(afterPath)));
 }
@@ -406,7 +433,17 @@ export function discoverDependencyPairs({ cwd = process.cwd(), base, env = proce
   const changed = changedLockfiles(cwd, baseRevision);
   if (changed.length === 0) return { baseRevision, lockfiles: [], pairs: [] };
 
-  const isPublicRegistryPackage = publicRegistryPackagePolicy(cwd, env);
+  // The baseline must use versioned repository evidence, not the target's
+  // current environment: otherwise a private-to-public registry migration can
+  // relabel historical private bytes as public npm bytes.
+  const beforeIsPublicRegistryPackage = publicRegistryPackagePolicy(
+    repositoryFileAtRevision(cwd, baseRevision, ".npmrc"),
+    {},
+  );
+  const afterIsPublicRegistryPackage = publicRegistryPackagePolicy(
+    currentRepositoryFile(cwd, ".npmrc"),
+    env,
+  );
   const pairsByIdentity = new Map();
   for (const { beforePath, afterPath } of changed) {
     if (!beforePath) {
@@ -416,15 +453,22 @@ export function discoverDependencyPairs({ cwd = process.cwd(), base, env = proce
     const before = parseLockfileIndex(
       beforePath,
       git(cwd, ["show", `${baseRevision}:${beforePath}`]),
-      isPublicRegistryPackage,
+      beforeIsPublicRegistryPackage,
     );
     const after = parseLockfileIndex(
       afterPath,
       currentLockfileText(cwd, afterPath),
-      isPublicRegistryPackage,
+      afterIsPublicRegistryPackage,
     );
     for (const pair of diffDependencyIndexes(before, after)) {
-      pairsByIdentity.set(`${pair.ecosystem}\0${pair.name}\0${pair.from}\0${pair.to}`, pair);
+      const identity = `${pair.ecosystem}\0${pair.name}\0${pair.from}\0${pair.to}`;
+      const existing = pairsByIdentity.get(identity);
+      pairsByIdentity.set(
+        identity,
+        existing?.unavailableReason || pair.unavailableReason
+          ? { ...pair, unavailableReason: UNSUPPORTED_SOURCE_REASON }
+          : pair,
+      );
     }
   }
   return {
