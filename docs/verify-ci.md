@@ -15,12 +15,15 @@ linking a confidently wrong diff. `yarn.lock` is not supported in v1.
 Public verdicts apply only to bytes resolved from the canonical public npm
 registry. For `package-lock.json`, the installed path and `resolved` URL exclude
 workspace records, private registries, Git dependencies, direct tarballs, and
-local sources. For pnpm, locator schemes plus the repository's `.npmrc`
-`registry` / `@scope:registry` settings establish the same boundary; registry
-credentials are ignored. A changed non-public pair is unavailable evidence and
-follows `onUnavailable`, never a lookup of a same-named public package. Lockfile
-renames retain their old path through Git rename detection, so moving a package
-inside a monorepo does not erase the comparison.
+local sources. For pnpm, locator schemes plus each compared revision's checked-in
+`.npmrc` `registry` / `@scope:registry` settings establish the same boundary;
+registry credentials are ignored. A changed non-public pair is unavailable
+evidence and follows `onUnavailable`, never a lookup of a same-named public
+package. Duplicate pairs across monorepo lockfiles retain the strictest source
+classification. Lockfile renames and same-directory `package-lock.json` /
+`pnpm-lock.yaml` format replacements retain their old side, so moving a package
+or changing its lockfile format does not erase the comparison without pairing
+unrelated monorepo paths.
 
 ## Policy
 

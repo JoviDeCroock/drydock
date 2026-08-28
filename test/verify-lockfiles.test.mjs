@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
@@ -13,17 +20,21 @@ import {
 const fixture = (name) =>
   readFileSync(new URL(`fixtures/verify-lockfiles/${name}`, import.meta.url), "utf8");
 
-function publicPackageLock(version) {
+function packageLock(version, registryOrigin = "https://registry.npmjs.org") {
   return JSON.stringify({
     lockfileVersion: 3,
     packages: {
       "": {},
       "node_modules/left-pad": {
         version,
-        resolved: `https://registry.npmjs.org/left-pad/-/left-pad-${version}.tgz`,
+        resolved: `${registryOrigin}/left-pad/-/left-pad-${version}.tgz`,
       },
     },
   });
+}
+
+function publicPnpmLock(version) {
+  return `lockfileVersion: 9.0\npackages:\n  left-pad@${version}:\n    resolution: { integrity: sha512-${version} }\n`;
 }
 
 function repositoryWith(filePath, contents) {
@@ -191,17 +202,105 @@ describe("drydock verify lockfile parsing", () => {
     });
   });
 
+  test("classifies each pnpm side with its checked-in registry scope", () => {
+    const cwd = repositoryWith(
+      "pnpm-lock.yaml",
+      "packages:\n  '@private/tool@1.0.0':\n    resolution: { integrity: sha512-old }\n",
+    );
+    writeFileSync(path.join(cwd, ".npmrc"), "@private:registry=https://npm.example.com/\n");
+    execFileSync("git", ["add", ".npmrc"], { cwd });
+    execFileSync("git", ["commit", "--amend", "--no-edit", "-q"], { cwd });
+
+    writeFileSync(path.join(cwd, ".npmrc"), "@private:registry=https://registry.npmjs.org/\n");
+    writeFileSync(
+      path.join(cwd, "pnpm-lock.yaml"),
+      "packages:\n  '@private/tool@2.0.0':\n    resolution: { integrity: sha512-new }\n",
+    );
+
+    expect(discoverDependencyPairs({ cwd, base: "HEAD", env: {} }).pairs[0]).toMatchObject({
+      name: "@private/tool",
+      from: "1.0.0",
+      to: "2.0.0",
+      unavailableReason: "dependency is not resolved from the public npm registry",
+    });
+  });
+
   test("compares a lockfile through a repository directory rename", () => {
-    const cwd = repositoryWith("old/package-lock.json", publicPackageLock("1.0.0"));
+    const cwd = repositoryWith("old/package-lock.json", packageLock("1.0.0"));
     mkdirSync(path.join(cwd, "new"));
     renameSync(path.join(cwd, "old/package-lock.json"), path.join(cwd, "new/package-lock.json"));
-    writeFileSync(path.join(cwd, "new/package-lock.json"), publicPackageLock("2.0.0"));
+    writeFileSync(path.join(cwd, "new/package-lock.json"), packageLock("2.0.0"));
     execFileSync("git", ["add", "-A"], { cwd });
 
     const discovery = discoverDependencyPairs({ cwd, base: "HEAD", env: {} });
     expect(discovery.lockfiles).toEqual(["new/package-lock.json"]);
     expect(discovery.pairs).toEqual([
       { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "2.0.0" },
+    ]);
+  });
+
+  test("compares both supported lockfile format migration directions", () => {
+    for (const migration of [
+      {
+        beforePath: "package-lock.json",
+        beforeText: packageLock("1.0.0"),
+        afterPath: "pnpm-lock.yaml",
+        afterText: publicPnpmLock("2.0.0"),
+      },
+      {
+        beforePath: "pnpm-lock.yaml",
+        beforeText: publicPnpmLock("1.0.0"),
+        afterPath: "package-lock.json",
+        afterText: packageLock("2.0.0"),
+      },
+    ]) {
+      const cwd = repositoryWith(migration.beforePath, migration.beforeText);
+      unlinkSync(path.join(cwd, migration.beforePath));
+      writeFileSync(path.join(cwd, migration.afterPath), migration.afterText);
+      execFileSync("git", ["add", "-A"], { cwd });
+
+      const discovery = discoverDependencyPairs({ cwd, base: "HEAD", env: {} });
+      expect(discovery.lockfiles).toEqual([migration.afterPath]);
+      expect(discovery.pairs).toEqual([
+        { ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "2.0.0" },
+      ]);
+    }
+  });
+
+  test("does not pair unrelated lockfile deletion and addition paths", () => {
+    const cwd = repositoryWith("removed/package-lock.json", packageLock("1.0.0"));
+    unlinkSync(path.join(cwd, "removed/package-lock.json"));
+    mkdirSync(path.join(cwd, "added"));
+    writeFileSync(path.join(cwd, "added/pnpm-lock.yaml"), publicPnpmLock("2.0.0"));
+    execFileSync("git", ["add", "-A"], { cwd });
+
+    expect(discoverDependencyPairs({ cwd, base: "HEAD", env: {} }).pairs).toEqual([]);
+  });
+
+  test("keeps unavailable provenance when duplicate pairs span public and private lockfiles", () => {
+    const cwd = repositoryWith(
+      "a-private/package-lock.json",
+      packageLock("1.0.0", "https://npm.example.com"),
+    );
+    mkdirSync(path.join(cwd, "z-public"));
+    writeFileSync(path.join(cwd, "z-public/package-lock.json"), packageLock("1.0.0"));
+    execFileSync("git", ["add", "."], { cwd });
+    execFileSync("git", ["commit", "--amend", "--no-edit", "-q"], { cwd });
+
+    writeFileSync(
+      path.join(cwd, "a-private/package-lock.json"),
+      packageLock("2.0.0", "https://npm.example.com"),
+    );
+    writeFileSync(path.join(cwd, "z-public/package-lock.json"), packageLock("2.0.0"));
+
+    expect(discoverDependencyPairs({ cwd, base: "HEAD", env: {} }).pairs).toEqual([
+      {
+        ecosystem: "npm",
+        name: "left-pad",
+        from: "1.0.0",
+        to: "2.0.0",
+        unavailableReason: "dependency is not resolved from the public npm registry",
+      },
     ]);
   });
 });
