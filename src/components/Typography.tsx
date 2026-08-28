@@ -66,13 +66,16 @@ export function MonoLabel({
   children,
   as: As = "span",
   class: className,
+  id,
 }: {
   children: ComponentChildren;
   as?: "span" | "p" | "div" | "dt";
   class?: string;
+  id?: string;
 }) {
   return (
     <As
+      id={id}
       class={cn("font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0", className)}
     >
       {children}

@@ -7,6 +7,7 @@ import { cn } from "./cn";
 import { BrandMark } from "./BrandMark";
 import { LinkButton } from "./Button";
 import { AikidoFootnote } from "./AikidoPartner";
+import { MonoLabel } from "./Typography";
 
 const FEEDBACK_MAILTO =
   "mailto:drydock@drydock.org?subject=Drydock%20feedback&body=Tell%20us%20what%27s%20broken%2C%20confusing%2C%20or%20missing%3A%0A%0A";
@@ -108,71 +109,135 @@ function HeaderBrandMark() {
   return <BrandMark href={href} size="sm" ariaLabel={ariaLabel} />;
 }
 
+const GITHUB_REPO_URL = "https://github.com/JoviDeCroock/drydock";
+
+const FOOTER_LINK_CLASS =
+  "text-ink-muted no-underline transition-colors hover:text-ink focus-visible:text-ink";
+
+// Grouped so the destinations read as intents rather than one undifferentiated
+// link run: what you can use, what you can verify, what you can read, who to
+// reach.
+const FOOTER_GROUPS = [
+  {
+    id: "footer-product",
+    title: "Product",
+    links: [
+      { label: "Package diff", href: "/diff" },
+      { label: "Docs", href: "/docs" },
+    ],
+  },
+  {
+    id: "footer-trust",
+    title: "Trust",
+    links: [
+      { label: "Security model", href: "/security" },
+      { label: "Privacy", href: "/privacy" },
+    ],
+  },
+  {
+    id: "footer-project",
+    title: "Project",
+    links: [
+      { label: "Open source", href: "/open-source" },
+      { label: "GitHub", href: GITHUB_REPO_URL, mark: "github" },
+    ],
+  },
+  {
+    id: "footer-contact",
+    title: "Contact",
+    links: [
+      { label: "Feedback", href: FEEDBACK_MAILTO },
+      { label: "Report security", href: SECURITY_MAILTO },
+    ],
+  },
+] as const;
+
 function SiteFooter({ maxWidth }: { maxWidth: string }) {
-  const linkClass =
-    "text-ink-muted no-underline transition-colors hover:text-ink focus-visible:text-ink";
   return (
     <footer class="border-t border-border">
       <div
         class={cn(
-          "mx-auto flex w-full flex-col gap-4 px-6 py-8 sm:flex-row sm:items-center sm:justify-between",
+          "mx-auto flex w-full flex-col gap-10 px-6 py-10 md:flex-row md:justify-between md:gap-12",
           maxWidth,
         )}
       >
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col items-start gap-3">
           <BrandMark href="/" size="sm" />
-          <p class="m-0 font-mono text-[11px] text-ink-subtle">
-            Pre-publish review for npm, PyPI, and VS Code · © 2026 Drydock
+          <p class="m-0 font-mono text-[11px] leading-[1.6] text-ink-subtle">
+            Pre-publish review for npm, PyPI, and VS Code
+            <br />© 2026 Drydock
           </p>
+          <AikidoFootnote class="text-[13px]" />
         </div>
-        <nav class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]" aria-label="Footer">
-          <a href="/diff" class={linkClass}>
-            Package diff
-          </a>
-          <a href="/docs" class={linkClass}>
-            Docs
-          </a>
-          <a
-            href="https://github.com/JoviDeCroock/drydock"
-            class="inline-flex size-5 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="View Drydock source code on GitHub"
-            title="View Drydock source code on GitHub"
-          >
-            <img
-              src={githubMarkBlack}
-              alt=""
-              class="h-4 w-auto dark:hidden"
-              width="294"
-              height="288"
-            />
-            <img
-              src={githubMarkWhite}
-              alt=""
-              class="hidden h-4 w-auto dark:inline-block"
-              width="294"
-              height="288"
-            />
-          </a>
-          <a href="/privacy" class={linkClass}>
-            Privacy
-          </a>
-          <a href="/security" class={linkClass}>
-            Security model
-          </a>
-          <a href="/open-source" class={linkClass}>
-            Open source
-          </a>
-          <a href={FEEDBACK_MAILTO} class={linkClass}>
-            Feedback
-          </a>
-          <a href={SECURITY_MAILTO} class={linkClass}>
-            Report security
-          </a>
-          <AikidoFootnote />
+        <nav class="flex flex-wrap gap-x-12 gap-y-8 text-[13px]" aria-label="Footer">
+          {FOOTER_GROUPS.map((group) => (
+            <FooterGroup key={group.id} id={group.id} title={group.title}>
+              {group.links.map((link) =>
+                "mark" in link ? (
+                  <li key={link.href}>
+                    <GithubRepoLink label={link.label} href={link.href} />
+                  </li>
+                ) : (
+                  <li key={link.href}>
+                    <a href={link.href} class={FOOTER_LINK_CLASS}>
+                      {link.label}
+                    </a>
+                  </li>
+                ),
+              )}
+            </FooterGroup>
+          ))}
         </nav>
       </div>
     </footer>
+  );
+}
+
+function FooterGroup({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <div class="flex min-w-[104px] flex-col gap-3">
+      <MonoLabel as="p" id={id}>
+        {title}
+      </MonoLabel>
+      <ul aria-labelledby={id} class="m-0 flex list-none flex-col gap-2 p-0">
+        {children}
+      </ul>
+    </div>
+  );
+}
+
+function GithubRepoLink({ label, href }: { label: string; href: string }) {
+  // alt="" on both marks so the accessible name is the visible label text.
+  return (
+    <a
+      href={href}
+      class={cn(FOOTER_LINK_CLASS, "group inline-flex items-center gap-2")}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <img
+        src={githubMarkBlack}
+        alt=""
+        class="h-4 w-auto opacity-70 transition-opacity group-hover:opacity-100 dark:hidden"
+        width="294"
+        height="288"
+      />
+      <img
+        src={githubMarkWhite}
+        alt=""
+        class="hidden h-4 w-auto opacity-70 transition-opacity group-hover:opacity-100 dark:inline-block"
+        width="294"
+        height="288"
+      />
+      {label}
+    </a>
   );
 }
