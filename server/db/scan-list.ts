@@ -5,8 +5,13 @@
  * reading its risk figures off the denormalized summary so a page of rows
  * never has to load findings.
  */
-import { and, desc, eq, isNull, lt, notInArray, or } from "drizzle-orm";
-import { SETTLED_NPM_VERSION_STATUSES } from "../lib/ecosystems/npm/version-status";
+import { and, desc, eq, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import {
+  npmReleaseOutcome,
+  NPM_RELEASE_OUTCOME_FAILURE_CODES,
+  SETTLED_NPM_VERSION_STATUSES,
+  type NpmReleaseOutcome,
+} from "../lib/ecosystems/npm/version-status";
 import type { AppDb } from "./client";
 import type { ScanDecisionFilter } from "./scan-decisions";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
@@ -42,6 +47,7 @@ export interface ListScansResult {
     reportDigest: string | null;
     registryVersionStatus: string | null;
     registryVersionStatusAt: Date | null;
+    registryReleaseOutcome: NpmReleaseOutcome | null;
     registryStatusSupersededAt: Date | null;
     startedAt: Date | null;
     completedAt: Date | null;
@@ -64,13 +70,21 @@ export async function listScans(
     Math.max(1, Math.floor(options.limit ?? LIST_SCANS_DEFAULT_LIMIT)),
   );
   const decisionFilter = options.decisionFilter ?? "undecided";
+  const registryFailureCode = sql<string | null>`json_extract(${scans.errorJson}, '$.code')`;
+  const settledFailureCodes = Object.values(NPM_RELEASE_OUTCOME_FAILURE_CODES);
+  const publishedStatuses = ["published", "deleted"] as const;
+  const publishedFailureCodes = [
+    NPM_RELEASE_OUTCOME_FAILURE_CODES.published,
+    NPM_RELEASE_OUTCOME_FAILURE_CODES.deleted,
+  ];
 
   const conditions = [eq(scans.organizationId, organizationId)];
   if (decisionFilter === "undecided") {
     // Superseded reviews are immutable history, not pending work: the decision
     // route refuses them, so leaving them in the default queue creates rows the
-    // reviewer can never resolve. Settled npm releases are no longer pending,
-    // but remain decidable history. Both stay visible under the `all` filter.
+    // reviewer can never resolve. Settled npm releases are no longer pending;
+    // completed reviews remain decidable while failed reviews are read-only.
+    // Both stay visible under the `all` filter.
     conditions.push(
       isNull(scans.decision),
       isNull(scans.registryStatusSupersededAt),
@@ -78,12 +92,16 @@ export async function listScans(
         isNull(scans.registryVersionStatus),
         notInArray(scans.registryVersionStatus, [...SETTLED_NPM_VERSION_STATUSES]),
       )!,
+      or(isNull(registryFailureCode), notInArray(registryFailureCode, settledFailureCodes))!,
     );
   } else if (decisionFilter === "published_without_decision") {
     conditions.push(
       isNull(scans.decision),
       isNull(scans.registryStatusSupersededAt),
-      eq(scans.registryVersionStatus, "published"),
+      or(
+        inArray(scans.registryVersionStatus, [...publishedStatuses]),
+        inArray(registryFailureCode, publishedFailureCodes),
+      )!,
     );
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
@@ -122,6 +140,7 @@ export async function listScans(
       reportDigest: scans.reportDigest,
       registryVersionStatus: scans.registryVersionStatus,
       registryVersionStatusAt: scans.registryVersionStatusAt,
+      registryFailureCode,
       registryStatusSupersededAt: scans.registryStatusSupersededAt,
       startedAt: scans.startedAt,
       completedAt: scans.completedAt,
@@ -165,6 +184,7 @@ export async function listScans(
       reportDigest: row.reportDigest,
       registryVersionStatus: row.registryVersionStatus,
       registryVersionStatusAt: row.registryVersionStatusAt,
+      registryReleaseOutcome: npmReleaseOutcome(row.registryVersionStatus, row.registryFailureCode),
       registryStatusSupersededAt: row.registryStatusSupersededAt,
       startedAt: row.startedAt,
       completedAt: row.completedAt,

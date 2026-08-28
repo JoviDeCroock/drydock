@@ -17,6 +17,14 @@ const NPM_VERSION_STATUSES = ["published", "validating", "staged", "blocked", "d
 // would cross the client/server boundary.
 export const SETTLED_NPM_VERSION_STATUSES = ["published", "blocked", "deleted"] as const;
 
+export type NpmReleaseOutcome = (typeof SETTLED_NPM_VERSION_STATUSES)[number];
+
+export const NPM_RELEASE_OUTCOME_FAILURE_CODES: Record<NpmReleaseOutcome, string> = {
+  published: "staged_release_published",
+  blocked: "staged_release_blocked",
+  deleted: "staged_release_deleted",
+};
+
 export type NpmVersionStatus = (typeof NPM_VERSION_STATUSES)[number];
 
 /**
@@ -32,6 +40,20 @@ function isNpmVersionStatus(value: unknown): value is NpmVersionStatus {
 
 export function isTerminalNpmVersionStatus(value: unknown): boolean {
   return isNpmVersionStatus(value) && !NON_TERMINAL_STATUSES.has(value);
+}
+
+export function npmReleaseOutcome(status: unknown, failureCode: unknown): NpmReleaseOutcome | null {
+  if (
+    typeof status === "string" &&
+    (SETTLED_NPM_VERSION_STATUSES as readonly string[]).includes(status)
+  ) {
+    return status as NpmReleaseOutcome;
+  }
+  if (typeof failureCode !== "string") return null;
+  for (const [outcome, code] of Object.entries(NPM_RELEASE_OUTCOME_FAILURE_CODES)) {
+    if (failureCode === code) return outcome as NpmReleaseOutcome;
+  }
+  return null;
 }
 
 /**

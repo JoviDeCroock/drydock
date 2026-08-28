@@ -11,7 +11,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
-import { isSettledRegistryStatus } from "../lib/npm-stage-follow-up";
+import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
 import { apiFetch, apiJson } from "./api";
 
 export interface ScanVersionsResponse {
@@ -86,6 +86,8 @@ export interface ScanListItem {
   /** npm's lifecycle status for this exact staged version, or null if unknown. */
   registryVersionStatus?: string | null;
   registryVersionStatusAt?: string | number | Date | null;
+  /** Settled npm outcome derived from lifecycle status or a terminal scan failure. */
+  registryReleaseOutcome?: SettledRegistryStatus | null;
   /** Set when a newer stage reused this registry package and version. */
   registryStatusSupersededAt?: string | number | Date | null;
   startedAt?: string | number | Date | null;
@@ -261,23 +263,24 @@ export type DecisionStatus = "idle" | "saving" | "error";
 export type DeleteStatus = "idle" | "deleting" | "error";
 
 export function scanMatchesDecisionFilter(
-  scan: Pick<ScanListItem, "decision" | "registryStatusSupersededAt" | "registryVersionStatus">,
+  scan: Pick<
+    ScanListItem,
+    "decision" | "registryReleaseOutcome" | "registryStatusSupersededAt" | "registryVersionStatus"
+  >,
   filter: ScanDecisionFilter,
 ): boolean {
   if (filter === "all") return true;
+  const releaseOutcome =
+    scan.registryReleaseOutcome ?? settledRegistryStatus(scan.registryVersionStatus);
   if (filter === "published_without_decision") {
     return (
       !scan.decision &&
       scan.registryStatusSupersededAt == null &&
-      scan.registryVersionStatus === "published"
+      (releaseOutcome === "published" || releaseOutcome === "deleted")
     );
   }
   if (filter === "undecided") {
-    return (
-      !scan.decision &&
-      scan.registryStatusSupersededAt == null &&
-      !isSettledRegistryStatus(scan.registryVersionStatus)
-    );
+    return !scan.decision && scan.registryStatusSupersededAt == null && releaseOutcome === null;
   }
   return scan.decision === filter;
 }

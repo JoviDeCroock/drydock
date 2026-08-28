@@ -239,10 +239,16 @@ describe("scanMatchesDecisionFilter", () => {
     },
   );
 
-  test("matches only live published scans without a decision in the bypass filter", () => {
+  test("matches published or subsequently deleted releases without a decision", () => {
     expect(
       scanMatchesDecisionFilter(
         { decision: null, registryVersionStatus: "published" },
+        "published_without_decision",
+      ),
+    ).toBe(true);
+    expect(
+      scanMatchesDecisionFilter(
+        { decision: null, registryVersionStatus: "deleted" },
         "published_without_decision",
       ),
     ).toBe(true);
@@ -268,6 +274,18 @@ describe("scanMatchesDecisionFilter", () => {
         "published_without_decision",
       ),
     ).toBe(false);
+  });
+
+  test.each([
+    ["published", true],
+    ["deleted", true],
+    ["blocked", false],
+  ] as const)("uses a derived %s failure outcome for list filtering", (outcome, wasPublished) => {
+    const scan = { decision: null, registryReleaseOutcome: outcome };
+
+    expect(scanMatchesDecisionFilter(scan, "undecided")).toBe(false);
+    expect(scanMatchesDecisionFilter(scan, "published_without_decision")).toBe(wasPublished);
+    expect(scanMatchesDecisionFilter(scan, "all")).toBe(true);
   });
 
   test("excludes superseded history from undecided", () => {

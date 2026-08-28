@@ -444,7 +444,7 @@ describe("registry version status resolution", () => {
         decisionFilter: "published_without_decision",
       });
       expect(publishedWithoutDecision.scans.map((scan) => scan.id)).toEqual(
-        status === "published" ? [scanId] : [],
+        status === "published" || status === "deleted" ? [scanId] : [],
       );
       await expect(
         recordScanDecision(db, {
@@ -1492,41 +1492,50 @@ describe("staged failure refinement", () => {
     expect(refined.registryStatus).toBe(status);
   });
 
-  test("keeps a failed blocked scan under all but out of undecided", async () => {
-    const org = await seedOrg();
-    const db = createDb(env.DB);
-    const scanId = crypto.randomUUID();
-    const stageId = `stage-${scanId.slice(0, 8)}`;
-    await createScanJob(db, {
-      id: scanId,
-      stageId,
-      organizationId: org.organizationId,
-      ownerUserId: org.userId,
-      packageName: PACKAGE,
-      stagedVersion: VERSION,
-      registryUrl: REGISTRY_URL,
-    });
-    stubRegistry(() => statusResponse("blocked"));
-
-    const refined = await refine(org, scanId, stageId);
-    await markScanFailed(db, scanId, org.organizationId, refined.error);
-    await recordRegistryVersionStatus(db, {
-      scanId,
-      organizationId: org.organizationId,
-      status: refined.registryStatus,
-    });
-
-    const undecided = await listScans(db, org.organizationId);
-    expect(undecided.scans.map((scan) => scan.id)).not.toContain(scanId);
-    const history = await listScans(db, org.organizationId, { decisionFilter: "all" });
-    expect(history.scans).toContainEqual(
-      expect.objectContaining({
+  test.each([
+    ["published", "published", true],
+    ["deleted", "deleted", true],
+    ["blocked", "blocked", false],
+  ])(
+    "uses a failed %s outcome when no registry status was persisted",
+    async (status, expectedOutcome, wasPublished) => {
+      const org = await seedOrg();
+      const db = createDb(env.DB);
+      const scanId = crypto.randomUUID();
+      const stageId = `stage-${scanId.slice(0, 8)}`;
+      await createScanJob(db, {
         id: scanId,
-        status: "failed",
-        registryVersionStatus: "blocked",
-      }),
-    );
-  });
+        stageId,
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        packageName: PACKAGE,
+        stagedVersion: VERSION,
+        registryUrl: REGISTRY_URL,
+      });
+      stubRegistry(() => statusResponse(status));
+
+      const refined = await refine(org, scanId, stageId);
+      await markScanFailed(db, scanId, org.organizationId, refined.error);
+
+      const undecided = await listScans(db, org.organizationId);
+      expect(undecided.scans.map((scan) => scan.id)).not.toContain(scanId);
+      const history = await listScans(db, org.organizationId, { decisionFilter: "all" });
+      expect(history.scans).toContainEqual(
+        expect.objectContaining({
+          id: scanId,
+          status: "failed",
+          registryVersionStatus: null,
+          registryReleaseOutcome: expectedOutcome,
+        }),
+      );
+      const publishedWithoutDecision = await listScans(db, org.organizationId, {
+        decisionFilter: "published_without_decision",
+      });
+      expect(publishedWithoutDecision.scans.map((scan) => scan.id)).toEqual(
+        wasPublished ? [scanId] : [],
+      );
+    },
+  );
 
   test.each(["staged", "validating"])(
     "a release npm still has (%s) really is a token problem",
