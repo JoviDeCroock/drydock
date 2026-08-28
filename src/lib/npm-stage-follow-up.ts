@@ -18,15 +18,11 @@ export function settledRegistryStatus(
     : null;
 }
 
-export function isSettledRegistryStatus(status: string | null | undefined): boolean {
-  return settledRegistryStatus(status) !== null;
-}
-
 /** Whether the UI may offer a web or CLI action against this scan's npm stage. */
 export function canOfferNpmStageFollowUp(scan: NpmStageFollowUpScan): boolean {
   return (
     scan.source !== "workflow_gate" &&
     scan.registryStatusSupersededAt == null &&
-    !isSettledRegistryStatus(scan.registryVersionStatus)
+    settledRegistryStatus(scan.registryVersionStatus) === null
   );
 }
