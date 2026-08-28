@@ -513,16 +513,21 @@ describe("public report sharing", () => {
 
   test("public reads are rate limited per IP", async () => {
     const app = buildTestApp(null);
-    const ip = `10.0.0.${Math.floor(Math.random() * 200) + 1}`;
-    const headers = { "cf-connecting-ip": ip };
     let limited = false;
-    for (let i = 0; i < 125; i += 1) {
-      const res = await request(app, `/public/reports/${"B".repeat(43)}`, { headers });
-      if (res.status === 429) {
-        limited = true;
-        break;
+    // Same fixed wall-clock bucketing as the retry-after test below: a loop
+    // that straddles the minute boundary spends its budget across two windows
+    // and never trips, so retry from a fresh address a bounded number of times.
+    for (let attempt = 0; attempt < 5 && !limited; attempt += 1) {
+      const ip = `10.0.${attempt}.${Math.floor(Math.random() * 200) + 1}`;
+      const headers = { "cf-connecting-ip": ip };
+      for (let i = 0; i <= 120; i += 1) {
+        const res = await request(app, `/public/reports/${"B".repeat(43)}`, { headers });
+        if (res.status === 429) {
+          limited = true;
+          break;
+        }
+        expect(res.status).toBe(404);
       }
-      expect(res.status).toBe(404);
     }
     expect(limited).toBe(true);
   });
