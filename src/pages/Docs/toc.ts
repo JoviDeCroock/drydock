@@ -34,14 +34,6 @@ export const TOC: Array<{
     ],
   },
   {
-    id: "atpm-publishing",
-    label: "atpm trusted publishing",
-    children: [
-      { id: "atpm-setup", label: "Set the publisher policy" },
-      { id: "atpm-review", label: "Review before publishing" },
-    ],
-  },
-  {
     id: "workflow-gating",
     label: "GitHub workflow gates",
     children: [

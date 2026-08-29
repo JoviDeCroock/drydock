@@ -104,7 +104,7 @@ export default function DocsPage() {
             gives a human the final decision.
           </p>
           <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-            About 5 minutes · No security background required · npm, PyPI, VS Code, and atpm
+            About 5 minutes · No security background required · npm, PyPI, and VS Code
           </p>
           <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
             <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
@@ -114,7 +114,7 @@ export default function DocsPage() {
               Learn what Drydock inspects and how a maintainer makes the call.
             </JourneyCard>
             <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-              Pick npm staging, atpm trusted publishing, or a GitHub workflow gate.
+              Pick npm staging or a GitHub workflow gate.
             </JourneyCard>
           </nav>
         </div>
@@ -217,7 +217,7 @@ export default function DocsPage() {
                 </div>
                 <ol class="m-0 p-0 list-none grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
                   <ReviewStep number="01" label="Hold">
-                    npm, atpm, or GitHub pauses a built release candidate.
+                    npm or GitHub pauses a built release candidate.
                   </ReviewStep>
                   <ReviewStep number="02" label="Review">
                     Drydock compares the artifact, explains findings, and records provenance.
@@ -320,7 +320,7 @@ export default function DocsPage() {
             </div>
 
             <Subsection id="path-comparison" title="Compare the paths">
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <PathCard
                   title="npm stage publish"
                   badge="npm only"
@@ -329,15 +329,6 @@ export default function DocsPage() {
                   bestFor="Maintainers already using npm stage publish."
                   heldBy="npm holds the unpublished package."
                   decision="You finish or decline the publish in npm with 2FA."
-                />
-                <PathCard
-                  title="atpm trusted publishing"
-                  badge="atpm"
-                  href="#atpm-publishing"
-                  command="npm stage publish --provenance"
-                  bestFor="atpm packages using OIDC trusted publishing."
-                  heldBy="The publisher's AT Protocol repository holds the candidate."
-                  decision="You approve in atpm; Drydock only shows you what changed."
                 />
                 <PathCard
                   title="GitHub workflow gate"
@@ -350,9 +341,8 @@ export default function DocsPage() {
                 />
               </div>
               <Callout label="Quick decision">
-                Use npm staging for npm's private candidate store. For atpm, open the
-                credential-free staged review from the link on your staged dashboard. For PyPI, the
-                VS Code Marketplace, or other CI-first releases, use a GitHub workflow gate.
+                Use npm staging for npm's private candidate store. For PyPI, the VS Code
+                Marketplace, or other CI-first releases, use a GitHub workflow gate.
               </Callout>
             </Subsection>
           </section>
@@ -441,83 +431,10 @@ export default function DocsPage() {
             </Subsection>
           </section>
 
-          <section id="atpm-publishing" class="flex flex-col gap-8 scroll-mt-6">
-            <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Path 2 · atpm trusted publishing</SectionLabel>
-              <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
-                The publisher holds a public, content-addressed candidate.
-              </h2>
-              <Prose>
-                atpm uses GitHub OIDC for trusted publishing, so CI needs no long-lived token. A
-                staged release is a public record in the publisher's AT Protocol repository, and
-                Drydock verifies its provenance and reviews its content-addressed blob directly.
-              </Prose>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Requirement label="Publisher policy">Stage allowed, publish denied</Requirement>
-              <Requirement label="Drydock account">Not required</Requirement>
-              <Requirement label="Final approval">Yours, in atpm</Requirement>
-            </div>
-
-            <Subsection id="atpm-setup" title="Set the publisher policy">
-              <Steps
-                items={[
-                  <>
-                    In the publisher's AT Protocol repository, configure the package's{" "}
-                    <InlineCode>dev.atpm.alpha.trustPublisher</InlineCode> record with the GitHub
-                    owner, repository, and workflow allowed to stage it.
-                  </>,
-                  <>
-                    Set <InlineCode>allowStage: true</InlineCode> and{" "}
-                    <InlineCode>allowPublish: false</InlineCode>. The workflow may upload a
-                    candidate, but it cannot make that candidate public — so the release is already
-                    paused before anyone reviews it.
-                  </>,
-                  <>
-                    Publish with <InlineCode>--provenance</InlineCode>. The Sigstore attestation is
-                    what lets a review say where the release was built, and whether that matches the
-                    record above.
-                  </>,
-                ]}
-              />
-            </Subsection>
-
-            <Subsection id="atpm-review" title="Review before publishing">
-              <Steps
-                items={[
-                  <>
-                    From the package directory, run{" "}
-                    <InlineCode>npm stage publish --provenance</InlineCode>. atpm stores the
-                    candidate without publishing it.
-                  </>,
-                  <>
-                    Open the Drydock link beside the candidate on your staged dashboard. No account
-                    and no sign-in: a staged record is public, so the review is too.
-                  </>,
-                  <>
-                    Read the diff against the release this candidate would replace, plus the
-                    verified build repository and workflow, package identity, and SHA-512 binding.
-                  </>,
-                  <>
-                    Approve or withdraw in atpm, with{" "}
-                    <InlineCode>npm stage approve &lt;id&gt;</InlineCode> or{" "}
-                    <InlineCode>npm stage reject &lt;id&gt;</InlineCode>. Drydock takes no part in
-                    that decision.
-                  </>,
-                ]}
-              />
-              <Callout label="Credential boundary">
-                Drydock reads public AT Protocol records and content-addressed blobs. It receives no
-                atpm credential and cannot stage, approve, reject, or publish a package.
-              </Callout>
-            </Subsection>
-          </section>
-
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">
-                Path 3 · GitHub workflow gates <Badge tone="info">Preview</Badge>
+                Path 2 · GitHub workflow gates <Badge tone="info">Preview</Badge>
               </SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 When the registry can't pause, the workflow can.
