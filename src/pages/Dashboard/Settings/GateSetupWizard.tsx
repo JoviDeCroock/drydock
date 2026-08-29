@@ -12,6 +12,7 @@ import type {
   InstallationRepository,
   GateSetupEcosystemOption,
   PublicGithubAppInstallation,
+  PublicReleaseTarget,
   RepositoryEnvironment,
 } from "../../../models/github-app";
 import { Alert } from "../../../components/Alert";
@@ -45,7 +46,8 @@ const ENVIRONMENT_DOCS =
  */
 export function GateSetupWizard({
   activeInstallations,
-  onReleaseTargetCreated,
+  releaseTargets,
+  onReleaseTargetsChanged,
   onInstall,
   gateSetupEcosystems,
   canManage,
@@ -53,7 +55,8 @@ export function GateSetupWizard({
   deepLinked = false,
 }: {
   activeInstallations: PublicGithubAppInstallation[];
-  onReleaseTargetCreated?: () => void;
+  releaseTargets: PublicReleaseTarget[];
+  onReleaseTargetsChanged?: () => void;
   onInstall?: () => void;
   gateSetupEcosystems: GateSetupEcosystemOption[];
   canManage: boolean;
@@ -68,8 +71,17 @@ export function GateSetupWizard({
 }) {
   const gateSetup = useModel(GateSetupModel);
   const installationRowId = gateSetup.installationRowId.value;
+  const repositoryFullName = gateSetup.repositoryFullName.value;
+  const environment = gateSetup.environment.value;
   const error = gateSetup.error.value;
-  const releaseTarget = gateSetup.releaseTarget.value;
+  const localReleaseTarget = gateSetup.releaseTarget.value;
+  const persistedReleaseTarget = releaseTargets.find(
+    (target) =>
+      target.installationRowId === installationRowId &&
+      target.repositoryFullName === repositoryFullName &&
+      target.environment === environment,
+  );
+  const releaseTarget = localReleaseTarget ?? persistedReleaseTarget ?? null;
 
   // Keep the wizard pinned to an installation the org still has, the same way
   // the release-target form does.
@@ -90,6 +102,12 @@ export function GateSetupWizard({
     if (typeof window === "undefined" || !deepLinked) return;
     document.getElementById("gate-setup")?.scrollIntoView({ block: "start" });
   }, [deepLinked]);
+
+  useEffect(() => {
+    const pinned = persistedReleaseTarget?.ecosystem;
+    if (!pinned || gateSetup.ecosystem.peek() === pinned) return;
+    gateSetup.selectEcosystem(pinned);
+  }, [persistedReleaseTarget?.id, persistedReleaseTarget?.ecosystem]);
 
   if (!canManage) {
     return <GateSetupPermissionPlaceholder deepLinked={deepLinked} />;
@@ -133,9 +151,17 @@ export function GateSetupWizard({
         <RepositoryStep gateSetup={gateSetup} activeInstallations={activeInstallations} />
         <EnvironmentStep gateSetup={gateSetup} />
         <ProtectionRuleStep gateSetup={gateSetup} />
-        <PackageStep gateSetup={gateSetup} ecosystems={gateSetupEcosystems} />
+        <PackageStep
+          gateSetup={gateSetup}
+          ecosystems={gateSetupEcosystems}
+          releaseTarget={releaseTarget}
+        />
         <WorkflowStep gateSetup={gateSetup} />
-        <ReleaseTargetStep gateSetup={gateSetup} onCreated={onReleaseTargetCreated} />
+        <ReleaseTargetStep
+          gateSetup={gateSetup}
+          releaseTarget={releaseTarget}
+          onChanged={onReleaseTargetsChanged}
+        />
       </CollapsibleCard>
     </div>
   );
@@ -424,15 +450,18 @@ function ProtectionRuleStep({ gateSetup }: { gateSetup: GateSetup }) {
 function PackageStep({
   gateSetup,
   ecosystems,
+  releaseTarget,
 }: {
   gateSetup: GateSetup;
   ecosystems: GateSetupEcosystemOption[];
+  releaseTarget: PublicReleaseTarget | null;
 }) {
   const ecosystem = gateSetup.ecosystem.value;
   const packageName = gateSetup.packageName.value;
   const packageNameIssue: string | null = gateSetup.packageNameIssue.value;
   const environmentPicked = gateSetup.environmentPicked.value;
   const busy = gateSetup.busy.value;
+  const ecosystemLocked = releaseTarget?.ecosystem != null;
 
   return (
     <div>
@@ -443,7 +472,7 @@ function PackageStep({
             <Select
               id="gateSetupEcosystem"
               value={ecosystem}
-              disabled={busy || !environmentPicked}
+              disabled={busy || !environmentPicked || ecosystemLocked}
               onChange={(value) => gateSetup.selectEcosystem(value)}
             >
               <option value="">Pick an ecosystem…</option>
@@ -453,6 +482,12 @@ function PackageStep({
                 </option>
               ))}
             </Select>
+            {ecosystemLocked ? (
+              <Muted class="text-[12px] mt-1.5">
+                The mapped release target pins this ecosystem. Remove the mapping below before
+                choosing another one.
+              </Muted>
+            ) : null}
           </Field>
           <Field label="Package name" for="gateSetupPackage">
             <Input
@@ -548,19 +583,26 @@ function WorkflowStep({ gateSetup }: { gateSetup: GateSetup }) {
 
 function ReleaseTargetStep({
   gateSetup,
-  onCreated,
+  releaseTarget,
+  onChanged,
 }: {
   gateSetup: GateSetup;
-  onCreated?: () => void;
+  releaseTarget: PublicReleaseTarget | null;
+  onChanged?: () => void;
 }) {
-  const releaseTarget = gateSetup.releaseTarget.value;
-  const environmentPicked = gateSetup.environmentPicked.value;
+  const releaseTargetReady = gateSetup.releaseTargetReady.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
 
   const create = async () => {
     const created = await gateSetup.createReleaseTarget();
-    if (created) onCreated?.();
+    if (created) onChanged?.();
+  };
+
+  const remove = async () => {
+    if (!releaseTarget) return;
+    const removed = await gateSetup.removeReleaseTarget(releaseTarget.id);
+    if (removed) onChanged?.();
   };
 
   return (
@@ -575,16 +617,21 @@ function ReleaseTargetStep({
           so a held deployment resolves to a review here.
         </Muted>
         {releaseTarget ? (
-          <MonoDetail
-            parts={[
-              <span key="repo">{releaseTarget.repositoryFullName}</span>,
-              <span key="env">env {releaseTarget.environment}</span>,
-              <span key="eco">{releaseTarget.ecosystem ?? "auto-detect"}</span>,
-            ]}
-          />
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <MonoDetail
+              parts={[
+                <span key="repo">{releaseTarget.repositoryFullName}</span>,
+                <span key="env">env {releaseTarget.environment}</span>,
+                <span key="eco">{releaseTarget.ecosystem ?? "auto-detect"}</span>,
+              ]}
+            />
+            <Button variant="danger" size="sm" onClick={() => void remove()} disabled={busy}>
+              {busyStep === "release_target_delete" ? "Removing…" : "Remove mapping"}
+            </Button>
+          </div>
         ) : (
           <div class="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void create()} disabled={busy || !environmentPicked}>
+            <Button onClick={() => void create()} disabled={busy || !releaseTargetReady}>
               {busyStep === "release_target" ? "Mapping…" : "Create release target"}
             </Button>
             <LinkButton href="/docs#workflow-gates" size="sm" variant="ghost">

@@ -1,4 +1,5 @@
 import { computed, createModel, signal } from "@preact/signals";
+import { activeOrganizationId } from "./active-organization";
 import { apiFetch, apiJson, errorMessage } from "./api";
 import type {
   InstallationRepository,
@@ -23,7 +24,8 @@ import {
  * wizard renders that step's manual fallback and carries on.
  */
 
-export type GateSetupStep = "environment" | "protection_rule" | "pull_request";
+type GateSetupStep = "environment" | "protection_rule" | "pull_request";
+type GateSetupAction = GateSetupStep | "release_target" | "release_target_delete" | "preview";
 type GateSetupStatus = "created" | "already_configured" | "failed";
 
 type GateSetupFailureCode =
@@ -81,12 +83,12 @@ export const GateSetupModel = createModel(() => {
   const releaseTarget = signal<PublicReleaseTarget | null>(null);
 
   const preview = signal<GateSetupPreview | null>(null);
-  const previewLoading = signal(false);
 
-  const busyStep = signal<GateSetupStep | "release_target" | "preview" | null>(null);
+  const busyStep = signal<GateSetupAction | null>(null);
   const error = signal<string | null>(null);
   let repositoriesRequestId = 0;
   let environmentsRequestId = 0;
+  let actionRequestId = 0;
 
   // GitHub lowercases environment names, and the server normalizes the same
   // way, so the client shows the maintainer the value that will actually exist.
@@ -120,6 +122,7 @@ export const GateSetupModel = createModel(() => {
   const environmentPicked = computed(
     () => repositoryPicked.value && environment.value !== "" && environmentIssue.value === null,
   );
+  const releaseTargetReady = computed(() => repositoryPicked.value && environment.value !== "");
   const templateReady = computed(
     () =>
       environmentPicked.value &&
@@ -128,6 +131,7 @@ export const GateSetupModel = createModel(() => {
       packageNameIssue.value === null,
   );
   const busy = computed(() => busyStep.value !== null);
+  const previewLoading = computed(() => busyStep.value === "preview");
 
   function draft() {
     return {
@@ -146,24 +150,48 @@ export const GateSetupModel = createModel(() => {
    * comes back as a 200 with `status: "failed"` and is stored in the step's own
    * signal, because that is the case the UI degrades rather than reports.
    */
-  async function post<T>(
-    step: GateSetupStep | "release_target" | "preview",
-    path: string,
-    body: unknown,
+  async function request<T>(
+    step: GateSetupAction,
+    perform: () => Promise<T>,
+    apply: (data: T) => void,
   ): Promise<T | null> {
+    const requestId = ++actionRequestId;
+    const organizationId = activeOrganizationId.peek();
     busyStep.value = step;
     error.value = null;
     try {
-      return await apiJson<T>(path, body);
+      const data = await perform();
+      if (requestId !== actionRequestId || activeOrganizationId.peek() !== organizationId) {
+        return null;
+      }
+      apply(data);
+      return data;
     } catch (err) {
-      error.value = errorMessage(err);
+      if (requestId === actionRequestId && activeOrganizationId.peek() === organizationId) {
+        error.value = errorMessage(err);
+      }
       return null;
     } finally {
-      busyStep.value = null;
+      if (requestId === actionRequestId) busyStep.value = null;
     }
   }
 
+  function post<T>(
+    step: GateSetupAction,
+    path: string,
+    body: unknown,
+    apply: (data: T) => void,
+  ): Promise<T | null> {
+    return request(step, () => apiJson<T>(path, body), apply);
+  }
+
+  function invalidatePendingActions() {
+    ++actionRequestId;
+    busyStep.value = null;
+  }
+
   function resetDownstream() {
+    invalidatePendingActions();
     environmentStep.value = null;
     protectionStep.value = null;
     pullRequestStep.value = null;
@@ -174,14 +202,15 @@ export const GateSetupModel = createModel(() => {
   }
 
   function resetAfterEcosystemChange() {
+    invalidatePendingActions();
     pullRequestStep.value = null;
     pullRequest.value = null;
-    releaseTarget.value = null;
     preview.value = null;
     error.value = null;
   }
 
   function resetAfterPackageNameChange() {
+    invalidatePendingActions();
     pullRequestStep.value = null;
     pullRequest.value = null;
     preview.value = null;
@@ -212,12 +241,14 @@ export const GateSetupModel = createModel(() => {
     environment,
     repositoryPicked,
     environmentPicked,
+    releaseTargetReady,
     environmentIssue,
     packageNameIssue,
     templateReady,
 
     async selectInstallation(nextId: string): Promise<void> {
       const requestId = ++repositoriesRequestId;
+      const organizationId = activeOrganizationId.peek();
       ++environmentsRequestId;
       installationRowId.value = nextId;
       repositoryFullName.value = "";
@@ -232,10 +263,20 @@ export const GateSetupModel = createModel(() => {
         const data = await apiFetch<{ repositories: InstallationRepository[] }>(
           `/api/v1/github-app/installations/${encodeURIComponent(nextId)}/repositories`,
         );
-        if (requestId !== repositoriesRequestId || installationRowId.peek() !== nextId) return;
+        if (
+          requestId !== repositoriesRequestId ||
+          activeOrganizationId.peek() !== organizationId ||
+          installationRowId.peek() !== nextId
+        ) {
+          return;
+        }
         repositories.value = data.repositories;
       } catch (err) {
-        if (requestId === repositoriesRequestId && installationRowId.peek() === nextId) {
+        if (
+          requestId === repositoriesRequestId &&
+          activeOrganizationId.peek() === organizationId &&
+          installationRowId.peek() === nextId
+        ) {
           error.value = errorMessage(err);
         }
       } finally {
@@ -245,6 +286,7 @@ export const GateSetupModel = createModel(() => {
 
     async selectRepository(fullName: string): Promise<void> {
       const requestId = ++environmentsRequestId;
+      const organizationId = activeOrganizationId.peek();
       repositoryFullName.value = fullName;
       environmentChoice.value = "";
       environments.value = [];
@@ -259,6 +301,7 @@ export const GateSetupModel = createModel(() => {
         );
         if (
           requestId !== environmentsRequestId ||
+          activeOrganizationId.peek() !== organizationId ||
           installationRowId.peek() !== rowId ||
           repositoryFullName.peek() !== fullName
         ) {
@@ -271,6 +314,7 @@ export const GateSetupModel = createModel(() => {
       } catch (err) {
         if (
           requestId === environmentsRequestId &&
+          activeOrganizationId.peek() === organizationId &&
           installationRowId.peek() === rowId &&
           repositoryFullName.peek() === fullName
         ) {
@@ -292,6 +336,7 @@ export const GateSetupModel = createModel(() => {
     },
 
     selectEcosystem(id: string) {
+      if (releaseTarget.peek()?.ecosystem != null) return;
       ecosystem.value = id;
       resetAfterEcosystemChange();
     },
@@ -303,58 +348,61 @@ export const GateSetupModel = createModel(() => {
 
     async loadPreview(): Promise<void> {
       if (!templateReady.peek()) return;
-      previewLoading.value = true;
-      const data = await post<GateSetupPreview>(
+      await post<GateSetupPreview>(
         "preview",
         "/api/v1/github-app/gate-setup/preview",
         draft(),
+        (data) => {
+          preview.value = data;
+        },
       );
-      previewLoading.value = false;
-      if (data) preview.value = data;
     },
 
     async createEnvironment(): Promise<void> {
-      const data = await post<{ step: GateSetupStepResult }>(
+      await post<{ step: GateSetupStepResult }>(
         "environment",
         "/api/v1/github-app/gate-setup/environment",
         draft(),
+        (data) => {
+          environmentStep.value = data.step;
+          // A freshly created environment is not in the picker's list yet; add it so
+          // the rest of the wizard (and a later reload) sees a consistent choice.
+          if (data.step.status !== "failed") {
+            const name = environment.peek();
+            const known = environments.peek();
+            if (!known.some((entry) => entry.name === name)) {
+              environments.value = [...known, { name }];
+            }
+          }
+        },
       );
-      if (!data) return;
-      environmentStep.value = data.step;
-      // A freshly created environment is not in the picker's list yet; add it so
-      // the rest of the wizard (and a later reload) sees a consistent choice.
-      if (data.step.status !== "failed") {
-        const name = environment.peek();
-        const known = environments.peek();
-        if (!known.some((entry) => entry.name === name)) {
-          environments.value = [...known, { name }];
-        }
-      }
     },
 
     async enableProtectionRule(): Promise<void> {
-      const data = await post<{ step: GateSetupStepResult }>(
+      await post<{ step: GateSetupStepResult }>(
         "protection_rule",
         "/api/v1/github-app/gate-setup/protection-rule",
         draft(),
+        (data) => {
+          protectionStep.value = data.step;
+        },
       );
-      if (data) protectionStep.value = data.step;
     },
 
     async openPullRequest(): Promise<void> {
-      const data = await post<{
+      await post<{
         step: GateSetupStepResult;
         pullRequest: GateSetupPullRequest | null;
         workflowPath: string;
         yaml: string;
         notes: string[];
-      }>("pull_request", "/api/v1/github-app/gate-setup/pull-request", draft());
-      if (!data) return;
-      pullRequestStep.value = data.step;
-      pullRequest.value = data.pullRequest;
-      // The response always carries the YAML so the failure path has the exact
-      // bytes to offer for a manual commit.
-      preview.value = { workflowPath: data.workflowPath, yaml: data.yaml, notes: data.notes };
+      }>("pull_request", "/api/v1/github-app/gate-setup/pull-request", draft(), (data) => {
+        pullRequestStep.value = data.step;
+        pullRequest.value = data.pullRequest;
+        // The response always carries the YAML so the failure path has the exact
+        // bytes to offer for a manual commit.
+        preview.value = { workflowPath: data.workflowPath, yaml: data.yaml, notes: data.notes };
+      });
     },
 
     async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
@@ -364,31 +412,39 @@ export const GateSetupModel = createModel(() => {
         environment: env,
         ecosystem: pinned,
       } = draft();
-      busyStep.value = "release_target";
-      error.value = null;
-      try {
-        // The wizard knows the ecosystem, so it pins it rather than leaving the
-        // target on auto-detect. Pinning is what enables the ecosystem's own
-        // artifact-name matching — notably PyPI's `pypi-release-candidate-*`
-        // shards, which auto-detect has no name to match. An empty value (the
-        // maintainer skipped the package step) still means auto-detect.
-        const data = await apiJson<{ releaseTarget: PublicReleaseTarget }>(
-          "/api/v1/github-app/release-targets",
-          {
-            installationRowId: rowId,
-            repositoryFullName: repo,
-            environment: env,
-            ...(pinned ? { ecosystem: pinned } : {}),
-          },
-        );
-        releaseTarget.value = data.releaseTarget;
-        return data.releaseTarget;
-      } catch (err) {
-        error.value = errorMessage(err);
-        return null;
-      } finally {
-        busyStep.value = null;
-      }
+      // The wizard knows the ecosystem, so it pins it rather than leaving the
+      // target on auto-detect. Pinning is what enables the ecosystem's own
+      // artifact-name matching — notably PyPI's `pypi-release-candidate-*`
+      // shards, which auto-detect has no name to match. An empty value (the
+      // maintainer skipped the package step) still means auto-detect.
+      const data = await post<{ releaseTarget: PublicReleaseTarget }>(
+        "release_target",
+        "/api/v1/github-app/release-targets",
+        {
+          installationRowId: rowId,
+          repositoryFullName: repo,
+          environment: env,
+          ...(pinned ? { ecosystem: pinned } : {}),
+        },
+        (response) => {
+          releaseTarget.value = response.releaseTarget;
+        },
+      );
+      return data?.releaseTarget ?? null;
+    },
+
+    async removeReleaseTarget(id: string): Promise<boolean> {
+      const data = await request(
+        "release_target_delete",
+        () =>
+          apiFetch<{ ok: true }>(`/api/v1/github-app/release-targets/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          }),
+        () => {
+          if (releaseTarget.peek()?.id === id) releaseTarget.value = null;
+        },
+      );
+      return data !== null;
     },
 
     reset() {

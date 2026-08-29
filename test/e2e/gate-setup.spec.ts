@@ -13,7 +13,7 @@ test("guided gate setup deep link keeps refused GitHub steps actionable", async 
   page,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await installGateSetupMocks(page);
+  const mocks = await installGateSetupMocks(page);
 
   await page.goto("/dashboard/settings#gate-setup");
 
@@ -58,9 +58,79 @@ test("guided gate setup deep link keeps refused GitHub steps actionable", async 
   await expect(wizard.getByText("gate configured", { exact: true })).toBeVisible();
   await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
   await expect(wizard.getByText("env production", { exact: true })).toBeVisible();
+  expect(mocks.releaseTargetRequests).toContainEqual({
+    installationRowId: "installation-acme",
+    repositoryFullName: "acme/toolkit",
+    environment: "production",
+    ecosystem: "npm",
+  });
 });
 
-async function installGateSetupMocks(page: Page) {
+test("an existing release target must be removed before changing its ecosystem", async ({
+  page,
+}) => {
+  const mocks = await installGateSetupMocks(page, { existingReleaseTarget: true });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
+
+  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
+  await expect(wizard.getByLabel("Ecosystem")).toHaveValue("npm");
+  await expect(wizard.getByLabel("Ecosystem")).toBeDisabled();
+  await wizard.getByRole("button", { name: "Remove mapping" }).click();
+
+  await expect(wizard.getByRole("button", { name: "Create release target" })).toBeVisible();
+  await expect(wizard.getByLabel("Ecosystem")).toBeEnabled();
+  await wizard.getByLabel("Ecosystem").selectOption("pypi");
+  await wizard.getByRole("button", { name: "Create release target" }).click();
+
+  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
+  expect(mocks.releaseTargetRequests.at(-1)).toEqual({
+    installationRowId: "installation-acme",
+    repositoryFullName: "acme/toolkit",
+    environment: "staging",
+    ecosystem: "pypi",
+  });
+});
+
+test("a broader existing GitHub environment can still be mapped manually", async ({ page }) => {
+  const mocks = await installGateSetupMocks(page, { environments: ["production/eu"] });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("production/eu");
+
+  await expect(wizard.getByText("outside that", { exact: false })).toBeVisible();
+  await expect(wizard.getByRole("button", { name: "Create release target" })).toBeEnabled();
+  await wizard.getByRole("button", { name: "Create release target" }).click();
+
+  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
+  expect(mocks.releaseTargetRequests.at(-1)).toEqual({
+    installationRowId: "installation-acme",
+    repositoryFullName: "acme/toolkit",
+    environment: "production/eu",
+  });
+});
+
+async function installGateSetupMocks(
+  page: Page,
+  {
+    existingReleaseTarget = false,
+    environments = ["staging"],
+  }: { existingReleaseTarget?: boolean; environments?: string[] } = {},
+) {
+  let storedReleaseTargets = existingReleaseTarget
+    ? [releaseTarget({ environment: "staging" })]
+    : [];
+  const releaseTargetRequests: Record<string, unknown>[] = [];
+
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -125,18 +195,28 @@ async function installGateSetupMocks(page: Page) {
 
     if (path === "/api/v1/github-app/release-targets") {
       if (request.method() === "POST") {
-        expect(JSON.parse(request.postData() || "{}"), "release-target handoff").toEqual({
-          installationRowId: "installation-acme",
-          repositoryFullName: "acme/toolkit",
-          environment: "production",
-          ecosystem: "npm",
+        const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>;
+        releaseTargetRequests.push(body);
+        const created = releaseTarget({
+          ecosystem: body.ecosystem === "npm" || body.ecosystem === "pypi" ? body.ecosystem : null,
+          environment: typeof body.environment === "string" ? body.environment : "production",
         });
+        storedReleaseTargets = [created];
         await fulfillJson(route, {
-          releaseTarget: releaseTarget(),
+          releaseTarget: created,
         });
       } else {
-        await fulfillJson(route, { releaseTargets: [] });
+        await fulfillJson(route, { releaseTargets: storedReleaseTargets });
       }
+      return;
+    }
+
+    if (
+      path === "/api/v1/github-app/release-targets/release-target-acme" &&
+      request.method() === "DELETE"
+    ) {
+      storedReleaseTargets = [];
+      await fulfillJson(route, { ok: true });
       return;
     }
 
@@ -156,7 +236,7 @@ async function installGateSetupMocks(page: Page) {
       path ===
       "/api/v1/github-app/installations/installation-acme/repositories/acme/toolkit/environments"
     ) {
-      await fulfillJson(route, { environments: [{ name: "staging" }] });
+      await fulfillJson(route, { environments: environments.map((name) => ({ name })) });
       return;
     }
 
@@ -235,6 +315,8 @@ async function installGateSetupMocks(page: Page) {
 
     await fulfillJson(route, { error: `unexpected request: ${request.method()} ${path}` }, 404);
   });
+
+  return { releaseTargetRequests };
 }
 
 function expectGateSetupDraft(
@@ -280,16 +362,22 @@ function workflowPreview() {
   };
 }
 
-function releaseTarget() {
+function releaseTarget({
+  ecosystem = "npm",
+  environment = "production",
+}: {
+  ecosystem?: "npm" | "pypi" | null;
+  environment?: string;
+} = {}) {
   return {
     id: "release-target-acme",
     organizationId: "org-gate-setup",
     installationRowId: "installation-acme",
-    ecosystem: "npm",
+    ecosystem,
     artifactName: null,
     repositoryId: 42,
     repositoryFullName: "acme/toolkit",
-    environment: "production",
+    environment,
     createdAt: "2026-08-29T00:00:00.000Z",
     updatedAt: "2026-08-29T00:00:00.000Z",
   };
