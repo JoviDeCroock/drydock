@@ -9,6 +9,12 @@ Environment, make Drydock that environment's deployment-protection rule, and
 disallow tokens. The only way to obtain publish credentials is then to pass the
 review.
 
+For npm specifically there is a second, smaller enforcement shape: pin the
+trusted publisher to `npm stage publish` and let npm hold the candidate instead
+of GitHub holding the job. See
+[`npm-staged-publishing.md`](./npm-staged-publishing.md) for that recipe and a
+comparison of the two.
+
 This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in
 [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes) — Drydock

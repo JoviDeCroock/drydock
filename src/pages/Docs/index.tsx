@@ -429,6 +429,53 @@ export default function DocsPage() {
                 the credential that completes the publish.
               </Callout>
             </Subsection>
+
+            <Subsection id="staged-enforcement" title="Make staging the only thing CI can do">
+              <Prose>
+                Everything above is a review you choose to run. Nothing yet stops the same workflow
+                &mdash; or anyone holding a token &mdash; from calling{" "}
+                <InlineCode>npm publish</InlineCode> and skipping the stage. npm closes that on the
+                registry side: a trusted publisher can grant{" "}
+                <InlineCode>npm stage publish</InlineCode> without granting{" "}
+                <InlineCode>npm publish</InlineCode>, so CI can prepare a candidate but can never
+                make one public.
+              </Prose>
+              <Steps
+                items={[
+                  <>
+                    Grant the package a stage-only trusted publisher. Omitting{" "}
+                    <InlineCode>--allow-publish</InlineCode> is the entire point: at least one
+                    permission flag is required, so passing only the staging one produces a
+                    publisher that cannot publish. Needs npm CLI 11.15.0 or newer, and the package
+                    must already exist.
+                  </>,
+                  <>
+                    In the package settings on npmjs.com, set publishing access to{" "}
+                    <InlineCode>Require two-factor authentication and disallow tokens</InlineCode>.
+                    That removes every token path, leaving the stage-only exchange as the only
+                    credential the package accepts.
+                  </>,
+                  <>
+                    Give the release job <InlineCode>id-token: write</InlineCode> and have it run{" "}
+                    <InlineCode>npm stage publish</InlineCode>. No npm token belongs anywhere in the
+                    workflow after this.
+                  </>,
+                ]}
+              />
+              <CodeBlock name="stage-only trusted publisher" lang="bash">
+                {`npm trust github <package> \\
+  --repo <owner>/<repo> \\
+  --file publish.yml \\
+  --allow-stage-publish`}
+              </CodeBlock>
+              <Callout label="What this changes">
+                The candidate npm holds is the artifact that goes public on approval, so the bytes
+                you read are the bytes consumers install. It does not make the build trustworthy: a
+                poisoned source tree still produces a valid, provenance-signed candidate. It makes
+                that candidate unable to reach anyone until a human has read it and approved with
+                2FA.
+              </Callout>
+            </Subsection>
           </section>
 
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
