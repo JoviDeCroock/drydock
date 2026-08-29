@@ -209,6 +209,21 @@ function wheelFiles(version: string, extra: FileRecord[] = []): FileRecord[] {
 }
 
 describe("buildPublicPyPiDiffSources", () => {
+  test("marks both capability sides incomplete when acquisition omitted an artifact kind", () => {
+    const sources = buildPublicPyPiDiffSources({
+      packageName: "demo-pkg",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      from: [{ path: "demo_pkg-1.0.0-py3-none-any.whl", files: wheelFiles("1.0.0") }],
+      to: [{ path: "demo_pkg-1.1.0-py3-none-any.whl", files: wheelFiles("1.1.0") }],
+      toRemoteArtifacts: [remoteWheel("demo_pkg-1.1.0-py3-none-any.whl")],
+      capabilityCoverageComplete: false,
+    });
+
+    expect(sources.from.capabilityCoverageComplete).toBe(false);
+    expect(sources.to.capabilityCoverageComplete).toBe(false);
+  });
+
   test("namespaces wheel files and pins release findings onto the diff tree", () => {
     const sources = buildPublicPyPiDiffSources({
       packageName: "Demo.Pkg",

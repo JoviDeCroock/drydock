@@ -5,6 +5,7 @@ import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import { writePublicDiffDisplayName } from "./display-metadata";
+import { projectPublicDiffCapabilities, projectPublicDiffSourceBinding } from "./projection";
 import type {
   PublicDiffAdapter,
   PublicDiffAttestation,
@@ -14,8 +15,6 @@ import type {
 import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
-  diffCapabilities,
-  projectCapabilities,
   redactFileRecords,
   redactFindings,
   redactJson,
@@ -28,7 +27,6 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../review";
-import { extractDeclaredRepository, normalizeRepositoryUrl } from "../intent-envelope";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
 
 export { PublicDiffError } from "./error";
@@ -182,14 +180,8 @@ export async function loadPublicPackageDiff(
   const toPackageJson = redactJson(sources.to.packageJson);
   // Projected before the cache-size sample reduction below, so a payload whose
   // samples were dropped still carries the capability sets computed over them.
-  const capabilities = diffCapabilities(
-    sources.from.comparable === false
-      ? null
-      : projectCapabilities(sources.from.files, sources.from.packageJson, sources.codePatternSet),
-    projectCapabilities(sources.to.files, sources.to.packageJson, sources.codePatternSet),
-  );
-  const fromRepository = declaredSideRepository(sources.from);
-  const toRepository = declaredSideRepository(sources.to);
+  const capabilities = projectPublicDiffCapabilities(sources);
+  const sourceBinding = projectPublicDiffSourceBinding(sources.from, sources.to);
 
   const cachedAtMs = Date.now();
   const cachedAt = new Date(cachedAtMs).toISOString();
@@ -210,11 +202,7 @@ export async function loadPublicPackageDiff(
     capabilities,
     ...(sources.from.publishedAt ? { fromPublishedAt: sources.from.publishedAt } : {}),
     ...(sources.to.publishedAt ? { toPublishedAt: sources.to.publishedAt } : {}),
-    sourceBinding: {
-      from: fromRepository,
-      to: toRepository,
-      changed: fromRepository !== null && toRepository !== null && fromRepository !== toRepository,
-    },
+    sourceBinding,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
     ...(sources.attestation ? { attestation: sources.attestation } : {}),
@@ -233,19 +221,6 @@ export async function loadPublicPackageDiff(
   );
   await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
   return payload;
-}
-
-// Declared-tier source binding for one side: the repository the package's own
-// manifest (or PyPI core metadata) claims, normalized to a bounded canonical
-// URL. Read off the raw acquired files — the sample-retention pass may later
-// drop the manifest's text from the cached payload, so this cannot be
-// projected on demand.
-function declaredSideRepository(side: {
-  files: FileRecord[];
-  packageJson: PackageJsonSummary | null;
-}): string | null {
-  const manifestText = side.files.find((file) => file.path === "package.json")?.textSample ?? null;
-  return normalizeRepositoryUrl(extractDeclaredRepository({ manifestText, files: side.files }));
 }
 
 /**

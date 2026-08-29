@@ -55,7 +55,7 @@ export interface CapabilitySet {
    * a lower bound; this counts the files where the bound has a hole.
    */
   uninspectedFiles: number;
-  /** True when no file body escaped inspection. */
+  /** True when no file body or acquired artifact escaped inspection. */
   complete: boolean;
 }
 
