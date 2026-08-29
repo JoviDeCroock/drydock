@@ -76,7 +76,8 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // v7: payloads carry the capability delta, per-side publication timestamps,
   // and declared source binding; v6 entries would serve none of them.
   // v8 aligns capability projection with deterministic code-matching semantics.
-  payloadVersion: "v8",
+  // v9 marks capability deltas incomplete when acquisition omits an artifact kind.
+  payloadVersion: "v9",
 
   isValidPackageName: isValidPyPiProjectName,
   // PyPI names are case/separator-insensitive (PEP 503); canonicalize once at
@@ -471,6 +472,7 @@ export function buildPublicPyPiDiffSources(input: {
   from: PyPiArtifactInput[];
   to: PyPiArtifactInput[];
   toRemoteArtifacts: PyPiRemoteArtifact[];
+  capabilityCoverageComplete?: boolean;
 }): PublicDiffAcquiredSources {
   const fromPrepared = input.from.map(preparePyPiArtifact);
   const toPrepared = input.to.map(preparePyPiArtifact);
@@ -493,14 +495,20 @@ export function buildPublicPyPiDiffSources(input: {
   };
 
   const toFiles = flattenPyPiArtifactFiles(toPrepared);
+  const capabilityCoverage =
+    input.capabilityCoverageComplete === false ? { capabilityCoverageComplete: false } : {};
   return {
-    from: pyPiDiffSide(fromPrepared, input.packageName, input.fromVersion),
+    from: {
+      ...pyPiDiffSide(fromPrepared, input.packageName, input.fromVersion),
+      ...capabilityCoverage,
+    },
     to: {
       files: toFiles,
       packageJson: packageJsonSummaryFor(
         { package: input.packageName, version: input.toVersion },
         toPrepared,
       ),
+      ...capabilityCoverage,
     },
     // Same recipe as pypiAdapter.runFindings (deterministic python rules +
     // release findings) — keep the two in lockstep; delegating would require
@@ -536,6 +544,7 @@ async function acquirePublicPyPiDiff(
     // diff actually contains, or the metadata-mismatch rules would flag the
     // omitted artifact as missing evidence.
     toRemoteArtifacts: selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
+    capabilityCoverageComplete: omittedKinds.size === 0,
   });
   const fromPublishedAt = releasePublishedAt(metadata, input.fromVersion);
   const toPublishedAt = releasePublishedAt(metadata, input.toVersion);
