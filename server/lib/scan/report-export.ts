@@ -7,7 +7,7 @@ import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
-import { stableJson } from "../platform/stable-json";
+import { canonicalJson } from "../platform/canonical-json";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -125,7 +125,7 @@ export function serializeReportExport(detail: ScanDetail): string {
 // a signed envelope (they did — `findingCount` counted AI findings the
 // document's `findings[]` deliberately excludes).
 export function serializeReportExportDocument(document: ReportExportDocument): string {
-  return stableJson(document);
+  return canonicalJson(document);
 }
 
 export function reportExportFilename(scan: ReportExportFilenameInput): string {

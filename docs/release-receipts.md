@@ -18,9 +18,10 @@ public capability boundary.
 
 ## Canonical document
 
-The schema tag is `drydock.release-receipt.v1`. Serialization uses the shared
-stable JSON primitive: object keys are sorted, undefined fields are omitted, and
-no presentation whitespace is added.
+The schema tag is `drydock.release-receipt.v1`. Serialization uses code-point
+key ordering: undefined fields are omitted and no presentation whitespace is
+added. This preserves the existing `drydock.report.v2` byte ordering across
+runtimes rather than depending on host locale.
 
 - `address` is SHA-256 hex of the exact canonical bytes of `content`. Consumers
   verify it by stable-serializing `content` and hashing those bytes.
@@ -48,9 +49,12 @@ risk, and a structured decision with decision time and the authenticated Drydock
 - `intentBinding` reuses the validated intent envelope. Missing or malformed
   persisted data is `unknown`; an explicit `absent` tier is complete evidence
   that no source binding was found.
+- `releaseDecision` is complete only when outcome, decision time, and reviewer
+  are all present. Partial or legacy decisions keep the aggregate status partial.
 - `workflowGate` records repository, run, environment, durable gate status,
   decision, and decision time when the organization-scoped gate row exists.
-  Staged reviews use `not_applicable`. Callback outcome is `unknown` in v1:
+  Pending or errored rows are partial rather than complete. Staged reviews use
+  `not_applicable`. Callback outcome is `unknown` in v1:
   callback success/failure is not durably persisted, and a stored gate decision
   is not proof GitHub received it.
 - `registryOutcome` records the registry status and observation time only when a

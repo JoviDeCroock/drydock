@@ -6,8 +6,8 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
+import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../server/lib/platform/stable-json";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -103,12 +103,13 @@ async function seedGate(owner: Owner) {
   const db = createDb(env.DB);
   const now = new Date("2026-08-02T00:00:00.000Z");
   const installationId = crypto.randomUUID();
+  const externalInstallationId = crypto.randomUUID();
   const releaseTargetId = crypto.randomUUID();
   const gateId = crypto.randomUUID();
   await db.insert(schema.githubAppInstallations).values({
     id: installationId,
     organizationId: owner.organizationId,
-    installationId: "12345",
+    installationId: externalInstallationId,
     accountLogin: "octo",
     accountType: "Organization",
     targetType: "Organization",
@@ -180,7 +181,7 @@ describe("canonical release receipt v1", () => {
 
     const document = JSON.parse(bytes) as any;
     expect(document.schema).toBe("drydock.release-receipt.v1");
-    expect(document.address.value).toBe(await sha256Hex(stableJson(document.content)));
+    expect(document.address.value).toBe(await sha256Hex(canonicalJson(document.content)));
     expect(first.headers.get("x-drydock-receipt-sha256")).toBe(await sha256Hex(bytes));
     expect(first.headers.get("etag")).toBe(`"sha256:${await sha256Hex(bytes)}"`);
 
@@ -266,6 +267,14 @@ describe("canonical release receipt v1", () => {
         stagedPublish: { provenance },
       },
     });
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: owner.userId,
+        decidedAt: new Date("2026-08-02T00:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, scanId));
     const receipt = (await (
       await request(appFor(owner), scanId, "release-receipt.json")
     ).json()) as any;
@@ -294,6 +303,60 @@ describe("canonical release receipt v1", () => {
       status: "unknown",
       observation: null,
     });
+  });
+
+  test("marks pending gates and malformed artifact digests as incomplete evidence", async () => {
+    const owner = await seedOwner();
+    const gateId = await seedGate(owner);
+    const db = createDb(env.DB);
+    await db
+      .update(schema.githubWorkflowGates)
+      .set({ status: "pending", decision: null, decidedAt: null })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    const scanId = await seedCompleted(owner, {
+      source: "workflow_gate",
+      gateId,
+      summary: {
+        intentEnvelope: {
+          tier: "attested",
+          repository: "https://github.com/octo/release",
+          signals: [],
+        },
+        stagedPublish: {
+          provenance: {
+            ecosystem: "pypi",
+            mode: "workflow_gate",
+            artifacts: [{ path: "dist/example.whl", kind: "wheel", sha256: "not-a-digest" }],
+          },
+        },
+      },
+    });
+
+    const receipt = (await (
+      await request(appFor(owner), scanId, "release-receipt.json")
+    ).json()) as any;
+    expect(receipt.content.evidence.status).toBe("conflicting");
+    expect(receipt.content.evidence.reviewedArtifacts.status).toBe("conflicting");
+    expect(receipt.content.evidence.workflowGate.status).toBe("partial");
+    expect(receipt.content.evidence.releaseDecision.status).toBe("unknown");
+  });
+
+  test("keeps incomplete and cross-organization scans outside the receipt boundary", async () => {
+    const owner = await seedOwner();
+    const outsider = await seedOwner();
+    const completeScanId = await seedCompleted(owner);
+    expect((await request(appFor(outsider), completeScanId, "release-receipt.json")).status).toBe(
+      404,
+    );
+
+    const pendingScanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(createDb(env.DB), {
+      id: pendingScanId,
+      stageId: `stage_${crypto.randomUUID()}`,
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+    });
+    expect((await request(appFor(owner), pendingScanId, "release-receipt.json")).status).toBe(409);
   });
 
   test("uses explicit unknowns and partial completeness for legacy missing evidence", async () => {

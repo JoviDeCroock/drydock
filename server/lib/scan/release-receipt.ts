@@ -1,7 +1,7 @@
 import type { getScan } from "../../db/scans";
 import type { WorkflowGateRecord } from "../github-app/webhook-gates";
+import { canonicalJson } from "../platform/canonical-json";
 import { sha256Hex } from "../platform/crypto-utils";
-import { stableJson } from "../platform/stable-json";
 import {
   buildReportExport,
   REPORT_EXPORT_SCHEMA,
@@ -26,7 +26,13 @@ export async function buildReleaseReceipt(
     envelope: report.intentEnvelope,
   };
   const gate = buildWorkflowGate(mode, workflowGate);
-  const requiredStatuses = [reviewedArtifacts.status, intentBinding.status, gate.status];
+  const releaseDecision = buildReleaseDecision(detail.scan);
+  const requiredStatuses = [
+    reviewedArtifacts.status,
+    intentBinding.status,
+    releaseDecision.status,
+    gate.status,
+  ];
   const evidenceStatus = aggregateEvidenceStatus(requiredStatuses);
   const content = {
     report: {
@@ -52,19 +58,14 @@ export async function buildReleaseReceipt(
         previousVersion: detail.scan.previousVersion ?? null,
       },
       risk: detail.scan.risk,
-      decision: {
-        outcome: detail.scan.decision ?? null,
-        decidedAt: toIso(detail.scan.decidedAt),
-        reviewer: detail.scan.decidedByUserId
-          ? { kind: "drydock_user" as const, id: detail.scan.decidedByUserId }
-          : null,
-      },
+      decision: releaseDecision.value,
     },
     evidence: {
       status: evidenceStatus,
       report: { status: "complete" as const },
       reviewedArtifacts,
       intentBinding,
+      releaseDecision: { status: releaseDecision.status },
       workflowGate: gate,
       registryOutcome: report.registryStatus
         ? { status: "complete" as const, observation: report.registryStatus }
@@ -73,7 +74,7 @@ export async function buildReleaseReceipt(
   };
   const address = {
     algorithm: "sha256" as const,
-    value: await sha256Hex(stableJson(content)),
+    value: await sha256Hex(canonicalJson(content)),
   };
   return { schema: RELEASE_RECEIPT_SCHEMA, address, content };
 }
@@ -81,7 +82,7 @@ export async function buildReleaseReceipt(
 export type ReleaseReceiptDocument = Awaited<ReturnType<typeof buildReleaseReceipt>>;
 
 export function serializeReleaseReceipt(document: ReleaseReceiptDocument): string {
-  return stableJson(document);
+  return canonicalJson(document);
 }
 
 export function releaseReceiptFilename(scanId: string, documentSha256: string): string {
@@ -94,13 +95,17 @@ function buildReviewedArtifacts(
   report: ReturnType<typeof buildReportExport>,
 ) {
   if (mode === "workflow_gate") {
-    return report.provenance
-      ? {
-          status: "complete" as const,
-          provenance: report.provenance,
-          stagedArtifactIntegrity: null,
-        }
-      : { status: "unknown" as const, provenance: null, stagedArtifactIntegrity: null };
+    if (!report.provenance) {
+      return { status: "unknown" as const, provenance: null, stagedArtifactIntegrity: null };
+    }
+    const digestsValid = report.provenance.artifacts.every((artifact) =>
+      /^[a-f0-9]{64}$/i.test(artifact.sha256),
+    );
+    return {
+      status: digestsValid ? ("complete" as const) : ("conflicting" as const),
+      provenance: report.provenance,
+      stagedArtifactIntegrity: null,
+    };
   }
   const integrity = report.artifactIntegrity;
   const status: EvidenceStatus =
@@ -134,8 +139,12 @@ function buildWorkflowGate(
       callback: { outcome: "unknown" as const, observedAt: null },
     };
   }
+  const complete =
+    (gate.status === "approved" || gate.status === "rejected") &&
+    gate.decision !== null &&
+    gate.decidedAt !== null;
   return {
-    status: "complete" as const,
+    status: complete ? ("complete" as const) : ("partial" as const),
     identity: {
       repository: gate.repositoryFullName,
       runId: gate.runId,
@@ -149,6 +158,27 @@ function buildWorkflowGate(
     // Callback delivery is currently observable only in ephemeral operational
     // logs. A durable gate decision is not proof GitHub received it.
     callback: { outcome: "unknown" as const, observedAt: null },
+  };
+}
+
+function buildReleaseDecision(scan: ScanDetail["scan"]) {
+  const decidedAt = toIso(scan.decidedAt);
+  const reviewer = scan.decidedByUserId
+    ? { kind: "drydock_user" as const, id: scan.decidedByUserId }
+    : null;
+  const value = {
+    outcome: scan.decision ?? null,
+    decidedAt,
+    reviewer,
+  };
+  return {
+    status:
+      value.outcome && value.decidedAt && value.reviewer
+        ? ("complete" as const)
+        : value.outcome || value.decidedAt || value.reviewer
+          ? ("partial" as const)
+          : ("unknown" as const),
+    value,
   };
 }
 
