@@ -11,7 +11,7 @@ import { Card } from "../../components/Card";
 import { Field } from "../../components/Field";
 import { Input } from "../../components/Input";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, Muted } from "../../components/Typography";
+import { Muted } from "../../components/Typography";
 import { SocialSignIn } from "./SocialSignIn";
 
 export default function RegisterPage() {
@@ -89,7 +89,6 @@ export default function RegisterPage() {
     return (
       <PageShell width="narrow">
         <Card class="flex flex-col gap-4">
-          <Eyebrow>Almost there</Eyebrow>
           <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Check your email</h1>
           <Alert tone="info">
             We sent a verification link to {verificationSentTo.value}. Open it to activate your
@@ -121,7 +120,6 @@ export default function RegisterPage() {
   return (
     <PageShell width="narrow">
       <Card class="flex flex-col gap-4">
-        <Eyebrow>Get started</Eyebrow>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">Create account</h1>
         <Muted class="text-[13px] m-0">
           Create a workspace, connect npm or a GitHub gate, and review held releases before they go

@@ -36,7 +36,7 @@ function FindingAnnotationBody({ finding }: { finding: DiffFinding }) {
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
         {label ? (
-          <span class="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-subtle">
+          <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
             {label}
           </span>
         ) : null}

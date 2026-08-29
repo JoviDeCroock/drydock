@@ -28,7 +28,6 @@ import { Select } from "../../components/Select";
 import { SeverityBar } from "../../components/SeverityBar";
 import {
   EmptyLine,
-  Eyebrow,
   LoadingLine,
   MonoDetail,
   Muted,
@@ -114,10 +113,10 @@ function AtpmDiffCanonicalizer({ spec }: { spec: DiffSpec }) {
         )}
       />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
-        <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {spec.packageName}
         </h1>
+        <MonoDetail parts={["public package diff"]} />
         <Show
           when={error}
           fallback={
@@ -155,10 +154,10 @@ function DiffPackageResolver({ packageName }: { packageName: string }) {
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
       <PageSeo metadata={packageDiffSeo()} />
       <section class="flex flex-col gap-4 border-t border-border pt-6">
-        <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {packageName}
         </h1>
+        <MonoDetail parts={["public package diff"]} />
         <Show
           when={error}
           fallback={
@@ -239,7 +238,6 @@ function DiffLanding() {
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />} feedbackPosition="end">
       <PageSeo metadata={packageDiffSeo()} />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Public package diff</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Diff any npm, PyPI, or atpm package.
         </h1>
@@ -393,14 +391,14 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
         metadata={packageDiffSeo(packageName, fromVersion, toVersion, ecosystem, shownName)}
       />
       <section class="flex flex-col gap-3 border-t border-border pt-6">
-        <Eyebrow tone="accent">
-          {isStagedReview ? "Staged release review" : "Public package diff"}
-        </Eyebrow>
         <h1 class="text-3xl md:text-4xl font-semibold tracking-[-0.02em] leading-[1.1] m-0 break-all">
           {shownName}
         </h1>
         <MonoDetail
           parts={[
+            <span key="review-kind">
+              {isStagedReview ? "staged release review" : "public package diff"}
+            </span>,
             <span key="ecosystem">{ecosystemLabel(ecosystem)}</span>,
             <span key="versions">
               {fromLabel} → {toLabel}

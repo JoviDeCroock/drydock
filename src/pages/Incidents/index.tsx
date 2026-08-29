@@ -17,7 +17,6 @@ interface IncidentCase {
   packageName: string;
   fromVersion: string;
   toVersion: string;
-  eyebrow: string;
   heading: string;
   lead: string;
   /**
@@ -35,7 +34,6 @@ const INCIDENT_CASES: Record<IncidentCasePath, IncidentCase> = {
     packageName: "node-ipc",
     fromVersion: "9.2.1",
     toVersion: "11.0.0",
-    eyebrow: "Historical npm artifact diff",
     heading: "node-ipc 11.0.0 added a new runtime dependency.",
     lead: "The published package metadata for node-ipc 11.0.0 adds peacenotwar, which is absent from 9.2.1. The surviving registry versions make the dependency change inspectable without installing either release.",
     signal: "dependency addition",
@@ -65,7 +63,6 @@ const INCIDENT_CASES: Record<IncidentCasePath, IncidentCase> = {
     packageName: "es5-ext",
     fromVersion: "0.10.53",
     toVersion: "0.10.54",
-    eyebrow: "Historical npm artifact diff",
     heading: "es5-ext 0.10.54 added a postinstall hook in a patch release.",
     lead: "The published package metadata adds a postinstall command that runs _postinstall.js. Comparing 0.10.53 with 0.10.54 shows the new install-time behavior directly, without executing it.",
     signal: "postinstall added",
@@ -130,7 +127,6 @@ export default function IncidentCasePage() {
     >
       <PageSeo metadata={metadata} />
       <ContentArticleHero
-        eyebrow={incident.eyebrow}
         heading={incident.heading}
         lead={incident.lead}
         actions={

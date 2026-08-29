@@ -23,7 +23,7 @@ import {
 import { LoadingState } from "../../../components/Loading";
 import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import { PageShell } from "../../../components/PageShell";
-import { Eyebrow, Muted } from "../../../components/Typography";
+import { Muted } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
@@ -259,8 +259,7 @@ function loadingDetail(npmLoaded: boolean, githubAppLoaded: boolean): string {
 function SettingsHeader() {
   return (
     <header class="flex flex-col gap-2 max-w-[640px]">
-      <Eyebrow>Organization settings</Eyebrow>
-      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Settings</h1>
+      <h1 class="text-3xl font-semibold tracking-[-0.02em] m-0">Organization settings</h1>
       <Muted class="text-[14px] leading-[1.55] m-0">
         Manage members, notifications, and the npm or GitHub connections Drydock uses to hold
         releases for review.

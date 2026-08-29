@@ -16,12 +16,12 @@ export const OG_CARD_HEIGHT = 630;
 // (light) surface: social clients composite previews on their own background
 // and a dark card reads as an unrelated screenshot next to the site.
 const COLOR = {
-  bg: "#fafaf9",
+  bg: "#fafafa",
   surface: "#ffffff",
-  border: "#e7e5e4",
+  border: "#e4e4e7",
   fg: "#18181b",
-  fgMuted: "#57534e",
-  fgSubtle: "#6b6660",
+  fgMuted: "#52525b",
+  fgSubtle: "#5d5d65",
   accent: "#c2410c",
   danger: "#dc2626",
   warn: "#b45309",

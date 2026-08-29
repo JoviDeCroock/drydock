@@ -66,7 +66,7 @@ export function AikidoPartnerStrip({ class: className }: { class?: string }) {
           size="lg"
           class="opacity-80 transition-opacity duration-150 ease-out group-hover:opacity-100"
         />
-        <span class="font-mono text-[10px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
+        <span class="font-mono text-[11px] tracking-[0.05em] text-ink-subtle transition-colors duration-150 ease-out group-hover:text-ink-muted">
           aikido.dev →
         </span>
       </a>

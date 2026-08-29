@@ -84,7 +84,7 @@ describe("og card rasterization", () => {
       }),
     );
     const blank = await renderPng(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}"><rect width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}" fill="#fafaf9"/></svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}"><rect width="${OG_CARD_WIDTH}" height="${OG_CARD_HEIGHT}" fill="#fafafa"/></svg>`,
     );
     expect(withText.asPng().byteLength).toBeGreaterThan(blank.asPng().byteLength * 2);
   });

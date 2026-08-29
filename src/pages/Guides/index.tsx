@@ -13,7 +13,7 @@ import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
 interface GuideContent {
-  eyebrow: string;
+  relatedTitle: string;
   heading: string;
   lead: string;
   details: string[];
@@ -35,7 +35,7 @@ interface GuideContent {
 
 const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   "/npm-staged-publishing": {
-    eyebrow: "npm staged publishing",
+    relatedTitle: "npm staged publishing",
     heading: "Review an npm package before it becomes public.",
     lead: "npm can hold a private staged tarball before publication. Drydock turns that hold into a review: the exact candidate is compared with the last published release while there is still time to reject it.",
     details: ["private candidate", "read-only npm access", "maintainer approves with 2FA"],
@@ -66,7 +66,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/diff", label: "Read a public diff" },
   },
   "/github-actions-package-gate": {
-    eyebrow: "GitHub Actions release gate",
+    relatedTitle: "GitHub Actions release gate",
     heading: "Pause package publication until the built artifacts are reviewed.",
     lead: "A GitHub Environment can hold a publish job after CI builds and uploads the release artifacts. Drydock reviews those exact files, then returns a human accept or reject decision to the waiting workflow.",
     details: ["GitHub Environment", "exact uploaded artifacts", "npm, PyPI, and VS Code"],
@@ -96,7 +96,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/docs#gate-workflow", label: "See workflow examples" },
   },
   "/npm-trusted-publishing": {
-    eyebrow: "npm trusted publishing",
+    relatedTitle: "npm trusted publishing",
     heading: "Make the reviewed workflow the only way to publish.",
     lead: "A workflow gate is a checkpoint on one path; a stolen token walks around it. Pinning npm trusted publishing to the gated GitHub Environment and disallowing tokens closes that: publish credentials only come into existence after the review passes.",
     details: ["OIDC, no npm tokens", "environment pinned to the gate", "configuration, not code"],
@@ -130,7 +130,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/github-actions-package-gate", label: "How the gate works" },
   },
   "/pypi-release-security": {
-    eyebrow: "PyPI release security",
+    relatedTitle: "PyPI release security",
     heading: "Review wheels and source distributions before uploading to PyPI.",
     lead: "PyPI does not hold a private staged release, so Drydock protects the publish job instead. CI uploads the wheels and source distributions for review before trusted publishing sends them to the registry.",
     details: ["wheel and sdist review", "GitHub workflow gate", "trusted publishing stays in CI"],
@@ -160,7 +160,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/diff", label: "Diff a PyPI project" },
   },
   "/vscode-extension-security": {
-    eyebrow: "VS Code extension security",
+    relatedTitle: "VS Code extension security",
     heading: "Inspect the VSIX that users will install before publication.",
     lead: "A VS Code extension can execute with broad access to the editor and developer workstation. Drydock reviews the packaged VSIX behind a GitHub Environment before the marketplace publish step runs.",
     details: ["VSIX artifact review", "activation and entrypoint checks", "human release gate"],
@@ -190,7 +190,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/docs#gate-workflow", label: "Read the VS Code example" },
   },
   "/package-tarball-diff": {
-    eyebrow: "Public package diff",
+    relatedTitle: "Public package diff",
     heading: "Compare the package bytes that registries actually serve.",
     lead: "Drydock can diff two public npm, PyPI, or atpm releases file by file, with deterministic supply-chain findings tied to the relevant artifact evidence. It requires no account and never installs the package.",
     details: ["no account", "no installation", "npm, PyPI, and atpm"],
@@ -220,7 +220,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/docs#dependency-updates", label: "Add diffs to dependency PRs" },
   },
   "/security": {
-    eyebrow: "Drydock security model",
+    relatedTitle: "Drydock security model",
     heading: "Package artifacts are hostile evidence, never executable input.",
     lead: "Drydock is built around a narrow trust boundary: it reads bounded package evidence in a non-executing sandbox, keeps publish credentials elsewhere, and leaves every release decision with a human maintainer.",
     details: ["package code never executes", "publish credentials stay outside", "human decision"],
@@ -253,7 +253,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     },
   },
   "/open-source": {
-    eyebrow: "Open-source package review",
+    relatedTitle: "Open-source package review",
     heading: "Inspect, verify, and self-host the release-review boundary.",
     lead: "Drydock is Apache-2.0 licensed and its detection rules, sandbox boundaries, report model, and deployment configuration are public. Maintainers can use the hosted service or deploy the same review system in their own Cloudflare account.",
     details: ["Apache-2.0", "public detection rules", "Cloudflare self-hosting"],
@@ -300,7 +300,7 @@ export default function DiscoveryGuidePage() {
     discoveryGuideSeoByPath[path] ?? discoveryGuideSeoByPath["/package-tarball-diff"];
   const relatedGuides = GUIDE_PATHS.filter((guidePath) => guidePath !== path).map((guidePath) => ({
     href: guidePath,
-    title: GUIDES[guidePath].eyebrow,
+    title: GUIDES[guidePath].relatedTitle,
     description: discoveryGuideSeoByPath[guidePath].description,
   }));
 
@@ -313,7 +313,6 @@ export default function DiscoveryGuidePage() {
     >
       <PageSeo metadata={metadata} />
       <ContentArticleHero
-        eyebrow={guide.eyebrow}
         heading={guide.heading}
         lead={guide.lead}
         details={guide.details}

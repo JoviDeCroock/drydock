@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { locationStub } from "preact-iso/prerender";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
 import {
   DISCOVERY_GUIDE_PATHS,
@@ -49,6 +50,16 @@ describe("isPrerenderedRoute", () => {
     const result = await prerender({ url: "/dashboard/settings" });
 
     expect(result).toEqual({ html: "", links: new Set() });
+  });
+
+  it.each([
+    ["package-only", "/diff/react"],
+    ["atpm handle", "/diff/atpm/@ebey.dev/counter/0.0.14/0.0.15"],
+  ])("keeps public diff context visible while resolving a %s route", async (_, url) => {
+    locationStub(url);
+    const result = await prerender({ url });
+
+    expect(result.html).toContain("public package diff");
   });
 });
 

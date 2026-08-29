@@ -4,7 +4,7 @@ import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { PageShell } from "../../components/PageShell";
-import { Eyebrow, InlineCode, Prose, SectionLabel } from "../../components/Typography";
+import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
@@ -85,7 +85,6 @@ export default function DocsPage() {
     >
       <PageSeo metadata={docsPageSeo} />
       <header class="py-8 md:py-14 border-t border-border flex flex-col gap-5">
-        <Eyebrow tone="accent">Learn Drydock</Eyebrow>
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
           Review what ships, not just what changed.
         </h1>
