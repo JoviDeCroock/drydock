@@ -78,6 +78,10 @@ describe("staged publishes route", () => {
         if (String(url) === "https://registry.npmjs.org/-/stage/stage-new-123/tarball") {
           return new Response("", { status: 206 });
         }
+        if (!String(url).includes("/-/stage")) {
+          // Detached out-of-band watch baseline fetch after the response.
+          return Response.json({ versions: {} });
+        }
         expect(String(url)).toBe("https://registry.npmjs.org/-/stage?perPage=50");
         return Response.json({
           items: [

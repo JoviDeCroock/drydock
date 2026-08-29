@@ -109,7 +109,9 @@ single package.
   an OTP can still run `npm publish`; npm has no trusted-publisher-only mode.
 - **npm account takeover.** Whoever controls the account can re-run `npm trust`
   with `--allow-publish`, revoke the trust configuration, or re-enable tokens.
-  Every registry-side control roots in account security.
+  Every registry-side control roots in account security. Not preventable, but
+  detected: a public version with no Drydock review trips the
+  [out-of-band publish alarm](./out-of-band-publishes.md) within one sweep.
 - **A poisoned source tree.** If the repository's own source is malicious, CI
   will build it faithfully, npm will attach valid provenance to it, and the
   stage will contain it. Provenance records where a package was built, not

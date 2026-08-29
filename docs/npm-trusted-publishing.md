@@ -115,6 +115,9 @@ and the reviewed bytes were downloaded from that exact run.
   from a laptop. npm has no "trusted publisher only" enforcement today; this is
   the residual gap only the registry can close. Such a publish is _detectable_
   — no provenance attestation, no gate review, no report — but not preventable.
+  Drydock performs that detection: the
+  [out-of-band publish alarm](./out-of-band-publishes.md) flags any public
+  version of a previously reviewed package that has no review.
 - **npm account takeover, including 2FA.** Whoever controls the account can
   edit or remove the trusted publisher configuration and re-enable tokens.
   Every registry-side control roots in account security.

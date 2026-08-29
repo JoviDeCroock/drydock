@@ -214,6 +214,11 @@ describe("recordProductEvent", () => {
         decision: "approved",
         packageCount: 3,
       },
+      {
+        name: "package_watch.out_of_band",
+        organizationId: "org_1",
+        ecosystem: "npm",
+      },
     ];
     for (const event of events) recordProductEvent(env, event);
 

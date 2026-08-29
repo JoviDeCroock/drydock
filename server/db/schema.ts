@@ -396,6 +396,74 @@ export const organizationSlackConnections = sqliteTable(
   }),
 );
 
+// Public-registry watch state for packages this organization has reviewed
+// before. `versions_json` is the accounted-for version set: everything present
+// when the watch began plus every version explained since (reviewed, alarmed,
+// or terminally blocked/deleted). Only a version outside this set can raise an
+// out-of-band alarm, so enrolling a package never alarms on its history.
+export const packageWatches = sqliteTable(
+  "package_watches",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    registryUrl: text("registry_url").notNull(),
+    packageName: text("package_name").notNull(),
+    versionsJson: text("versions_json", { mode: "json" }).notNull(),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    orgPackageUniqueIdx: uniqueIndex("package_watches_org_package_unique_idx").on(
+      table.organizationId,
+      table.registryUrl,
+      table.packageName,
+    ),
+    orgCheckedIdx: index("package_watches_org_checked_idx").on(
+      table.organizationId,
+      table.lastCheckedAt,
+    ),
+  }),
+);
+
+// One row per publicly published version that appeared with no Drydock review.
+// Rows are never pruned: the unique release index is what makes the alarm (and
+// its email/Slack delivery) send-once across sweeps.
+export const outOfBandPublishes = sqliteTable(
+  "out_of_band_publishes",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    registryUrl: text("registry_url").notNull(),
+    packageName: text("package_name").notNull(),
+    version: text("version").notNull(),
+    // Whether npm's own version-status endpoint confirmed "published", or the
+    // alarm rests on packument presence alone (status lookup unavailable).
+    statusConfirmed: integer("status_confirmed", { mode: "boolean" }).notNull().default(false),
+    detectedAt: integer("detected_at", { mode: "timestamp_ms" }).notNull(),
+    acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
+    acknowledgedByUserId: text("acknowledged_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => ({
+    releaseUniqueIdx: uniqueIndex("out_of_band_publishes_release_unique_idx").on(
+      table.organizationId,
+      table.registryUrl,
+      table.packageName,
+      table.version,
+    ),
+    orgAckIdx: index("out_of_band_publishes_org_ack_idx").on(
+      table.organizationId,
+      table.acknowledgedAt,
+    ),
+  }),
+);
+
 export const githubAppInstallations = sqliteTable(
   "github_app_installations",
   {
