@@ -96,7 +96,10 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
       if (!publishedArtifacts.length) return { status: "not_published" };
       const reviewedDigests = input.artifacts.map((artifact) => artifact.sha256).sort();
       const publishedDigests = publishedArtifacts
-        .map((artifact) => artifact.sha256?.toLowerCase() ?? "")
+        .map((artifact) => {
+          if (!artifact.sha256) throw new Error("published PyPI artifact digest unavailable");
+          return artifact.sha256.toLowerCase();
+        })
         .sort();
       return reviewedDigests.length === publishedDigests.length &&
         reviewedDigests.every((digest, index) => digest === publishedDigests[index])

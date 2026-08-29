@@ -330,6 +330,42 @@ describe("post-publish registry verification", () => {
     ).resolves.toEqual({ status: "verified" });
   });
 
+  test("PyPI leaves verification pending when registry SHA-256 evidence is absent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          releases: {
+            "1.2.3": [
+              {
+                filename: "demo-1.2.3.whl",
+                packagetype: "bdist_wheel",
+                url: "https://files.pythonhosted.org/packages/demo-1.2.3.whl",
+                digests: {},
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      getWorkflowGateAdapter("pypi").verifyPublishedRelease?.(
+        {
+          env,
+          executionCtx: createExecutionContext(),
+          db: createDb(env.DB),
+          organizationId: "unused-for-public-pypi",
+        },
+        {
+          packageName: "demo",
+          version: "1.2.3",
+          artifacts: [{ path: "dist/demo-1.2.3.whl", kind: "wheel", sha256: "a".repeat(64) }],
+        },
+      ),
+    ).rejects.toThrow("published PyPI artifact digest unavailable");
+  });
+
   test("approval scheduling uses a delayed queue message", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const bindings = { ...env, SCAN_QUEUE: { send } } as unknown as Cloudflare.Env;
