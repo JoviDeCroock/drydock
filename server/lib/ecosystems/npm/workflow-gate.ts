@@ -92,6 +92,7 @@ jobs:
       # No registry pin on setup-node: that writes an .npmrc expecting an auth
       # token, and a token is exactly what this workflow exists to avoid.
       - run: npm ci
+      - run: mkdir -p dist
       - run: npm pack --pack-destination dist
       # Record the digests Drydock reviews and the publish job re-checks.
       - run: cd dist && sha256sum *.tgz > SHA256SUMS
