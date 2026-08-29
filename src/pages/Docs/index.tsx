@@ -3,6 +3,7 @@ import { useSignal } from "@preact/signals";
 import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
@@ -25,6 +26,10 @@ import {
 } from "./primitives";
 import { scrollToDocsHash } from "./hash-navigation";
 import { TOC_IDS } from "./toc";
+
+// The rail track and the article track. Shared by the hero and the body so
+// every heading on the page starts on the same column.
+const DOCS_GRID = "lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-10";
 
 export default function DocsPage() {
   const authed = useAuthedSession();
@@ -84,29 +89,35 @@ export default function DocsPage() {
       feedbackPosition="end"
     >
       <PageSeo metadata={docsPageSeo} />
-      <header class="py-8 md:py-14 border-t border-border flex flex-col gap-5">
-        <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Review what ships, not just what changed.
-        </h1>
-        <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Drydock is a release checkpoint for package maintainers. It opens the package that is
-          about to be published, compares it with the last release, points to risky changes, and
-          gives a human the final decision.
-        </p>
-        <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
-          About 5 minutes · No security background required · npm, PyPI, VS Code, and atpm
-        </p>
-        <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
-          <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
-            See why reviewing source code alone can miss what reaches users.
-          </JourneyCard>
-          <JourneyCard number="02" href="#review-loop" title="Follow a review">
-            Learn what Drydock inspects and how a maintainer makes the call.
-          </JourneyCard>
-          <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-            Pick npm staging, atpm trusted publishing, or a GitHub workflow gate.
-          </JourneyCard>
-        </nav>
+      {/* The hero rides the same two-track grid as the body, on the article
+          track, so the h1 starts on the column every h2 below it starts on.
+          The rule stays full-bleed because it divides the site header, not the
+          article. */}
+      <header class={cn("border-t border-border", DOCS_GRID)}>
+        <div class="lg:col-start-2 py-8 md:py-14 flex flex-col gap-5">
+          <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
+            Review what ships, not just what changed.
+          </h1>
+          <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
+            Drydock is a release checkpoint for package maintainers. It opens the package that is
+            about to be published, compares it with the last release, points to risky changes, and
+            gives a human the final decision.
+          </p>
+          <p class="m-0 font-mono text-[11px] text-ink-subtle tracking-[0.02em]">
+            About 5 minutes · No security background required · npm, PyPI, VS Code, and atpm
+          </p>
+          <nav class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2" aria-label="Learning path">
+            <JourneyCard number="01" href="#artifact-gap" title="Understand the gap">
+              See why reviewing source code alone can miss what reaches users.
+            </JourneyCard>
+            <JourneyCard number="02" href="#review-loop" title="Follow a review">
+              Learn what Drydock inspects and how a maintainer makes the call.
+            </JourneyCard>
+            <JourneyCard number="03" href="#choose-path" title="Choose your setup">
+              Pick npm staging, atpm trusted publishing, or a GitHub workflow gate.
+            </JourneyCard>
+          </nav>
+        </div>
       </header>
 
       <details class="group lg:hidden rounded-md border border-border bg-surface">
@@ -124,7 +135,7 @@ export default function DocsPage() {
         </div>
       </details>
 
-      <div class="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-10">
+      <div class={DOCS_GRID}>
         <aside class="hidden lg:block">
           <nav
             aria-label="On this page"
@@ -879,7 +890,7 @@ jobs:
               padding="none"
               class="p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5"
             >
-              <div class="flex flex-col gap-2 max-w-[560px]">
+              <div class="flex flex-col gap-2 max-w-[680px]">
                 <SectionLabel as="p">Ready when your release is</SectionLabel>
                 <h2 class="m-0 text-xl font-semibold tracking-[-0.015em]">
                   Add the checkpoint before the next publish.

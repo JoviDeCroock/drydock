@@ -22,6 +22,11 @@ import {
 import { codeFold } from "./code-fold";
 import { TOC } from "./toc";
 
+// The reading measure. Containers span the article column; the running text
+// inside them stops here, at roughly 100 characters. Without it a step or a
+// callout inherits the full column and sets 130-character lines.
+const MEASURE = "max-w-[680px]";
+
 export function TocList({ activeId }: { activeId: Signal<string> }) {
   return (
     <ul class="m-0 flex list-none flex-col border-l border-border p-0">
@@ -110,11 +115,11 @@ export function JourneyCard({
 
 export function Callout({ label, children }: { label: string; children: ComponentChildren }) {
   return (
-    <div class="border-l-2 border-accent bg-accent-soft px-4 py-3 flex flex-col gap-1.5 max-w-[680px]">
+    <div class="border-l-2 border-accent bg-accent-soft px-4 py-3 flex flex-col gap-1.5">
       <span class="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-accent">
         {label}
       </span>
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{children}</p>
+      <p class={cn("m-0 text-[13px] leading-[1.6] text-ink-muted", MEASURE)}>{children}</p>
     </div>
   );
 }
@@ -293,9 +298,11 @@ export function Steps({ items }: { items: ComponentChildren[] }) {
             ) : null}
           </div>
           <div
-            class={`text-[13px] text-ink-muted leading-[1.6] min-w-0 ${
-              index < items.length - 1 ? "pb-5" : ""
-            }`}
+            class={cn(
+              "text-[13px] text-ink-muted leading-[1.6] min-w-0",
+              MEASURE,
+              index < items.length - 1 && "pb-5",
+            )}
           >
             {item}
           </div>
