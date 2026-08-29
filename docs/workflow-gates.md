@@ -55,7 +55,9 @@ The wizard renders a gate as armed only when GitHub reports `protectionRule: "pr
 
 `adminBypass` is `allowed`, `blocked`, or `unknown`, read from the environment's `can_admins_bypass` field (GitHub's "Allow administrators to bypass configured protection rules", on by default). It is reported beside the gate rather than folded into it: the rule still holds every run nobody overrides, but a repository admin can push a held release past Drydock, so the wizard warns and links to the environment settings to turn it off. The field is missing from GitHub's published OpenAPI description, so anything but an explicit boolean is `unknown`.
 
-Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable.
+Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable; only the generated workflow is unavailable for it.
+
+Existing mappings are detected in the wizard, and a pinned ecosystem stays locked until the maintainer explicitly removes that mapping, avoiding a duplicate create against the unique repository/environment pair.
 
 ### Generated workflows
 
