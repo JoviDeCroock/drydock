@@ -7,6 +7,7 @@ import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
+import { stableJson } from "../platform/stable-json";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
@@ -124,7 +125,7 @@ export function serializeReportExport(detail: ScanDetail): string {
 // a signed envelope (they did — `findingCount` counted AI findings the
 // document's `findings[]` deliberately excludes).
 export function serializeReportExportDocument(document: ReportExportDocument): string {
-  return stableStringify(document);
+  return stableJson(document);
 }
 
 export function reportExportFilename(scan: ReportExportFilenameInput): string {
@@ -144,15 +145,6 @@ function compareFindings(
     (a.line ?? 0) - (b.line ?? 0) ||
     cmp(a.severity, b.severity)
   );
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => cmp(a, b));
-  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
 }
 
 function cmp(a: string, b: string): number {
