@@ -10,7 +10,7 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     expect(result.failures).toEqual([]);
     expect(result.summary).toEqual({ total: 0, passed: 0, rate: 0 });
     expect(result.recordedReviewerVersions).toEqual(["1.2.0", "1.4.0"]);
-    expect(result.currentReviewerVersion).toBe("1.5.0");
+    expect(result.currentReviewerVersion).toBe("1.6.0");
     expect(result.currentContractRecorded).toBe(false);
     expect(result.historicalFailures).toEqual([]);
     expect(result.historicalSummary).toEqual({ total: 10, passed: 10, rate: 1 });
@@ -97,7 +97,7 @@ describe("AI reviewer eval (recorded-output gates)", () => {
     );
     const relabeled = structuredClone(corpus.historicalCases[0]);
     relabeled.id = "relabeled-historical-output";
-    relabeled.review.reviewerVersion = "1.5.0";
+    relabeled.review.reviewerVersion = "1.6.0";
     relabeled.review.untrustedNote = "ignored by the persisted schema";
     corpus.cases = [relabeled];
 
