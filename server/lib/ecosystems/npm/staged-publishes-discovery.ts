@@ -14,6 +14,7 @@ import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
+import { sweepOutOfBandPublishes } from "./out-of-band-watch";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -338,6 +339,26 @@ export async function discoverAndQueueStagedPublishes(
     });
   if (awaitReleaseOutcomes) await releaseOutcome;
   else executionCtx.waitUntil(releaseOutcome);
+
+  // The out-of-band watch rides the same sweep cadence: cron awaits it (so the
+  // organization concurrency cap also bounds its registry fetches), on-demand
+  // discovery detaches it to keep the button snappy. Its errors never fail a
+  // sweep — sweepOutOfBandPublishes already isolates per-package failures.
+  const outOfBandWatch = sweepOutOfBandPublishes({
+    db,
+    env,
+    organizationId,
+    actorUserId,
+    connection,
+    allowInsecureLocalhost,
+  }).catch((err) => {
+    emitOperationalEvent("warn", "package_watch.sweep_failed", {
+      organizationId,
+      error: describeOperationalError(err),
+    });
+  });
+  if (awaitReleaseOutcomes) await outOfBandWatch;
+  else executionCtx.waitUntil(outOfBandWatch);
 
   return {
     found: stageIds.length,

@@ -127,6 +127,11 @@ export type AnalyticsEvent =
       packageCount: number;
     }
   | {
+      name: "package_watch.out_of_band";
+      organizationId: string;
+      ecosystem: string;
+    }
+  | {
       name: "public_diff.viewed";
       ecosystem: string;
       packageName: string;
@@ -152,6 +157,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "workflow_gate.opened",
   "workflow_gate.reviewed",
   "workflow_gate.decided",
+  "package_watch.out_of_band",
 ] as const;
 
 type AssertExtends<A extends B, B> = A;
@@ -285,6 +291,8 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         [event.surface, event.decision],
         [0, event.packageCount],
       );
+    case "package_watch.out_of_band":
+      return base(event.organizationId, event.ecosystem, [], [0]);
     case "public_diff.viewed":
       return base(
         "",

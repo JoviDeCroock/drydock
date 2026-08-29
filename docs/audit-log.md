@@ -31,7 +31,8 @@ removal left scan volume and failure rate unanswerable rather than just
 un-audited.
 
 Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
-`npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
+`npm_connection.{upserted,validated,deleted,token_expired}`,
+`package_watch.out_of_band_{publish,acknowledged}`, `github_app_*`,
 `organization.*`, and notification-delivery events.
 
 ## Visible allowlist
