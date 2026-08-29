@@ -40,6 +40,7 @@ import {
   parseRepositoryFullName,
 } from "../../lib/github-app/validation";
 import { rateLimitResponse } from "../../lib/platform/http";
+import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
 import type { GateSetupTemplate } from "../../lib/workflow-gates/types";
 import type { Bindings, Variables } from "../../types";
@@ -191,6 +192,41 @@ async function prepare(
   } as const;
 }
 
+type GateSetupAuditEvent =
+  | "github_app_gate_setup.environment_created"
+  | "github_app_gate_setup.protection_rule_enabled"
+  | "github_app_gate_setup.pull_request_created";
+
+async function recordGateSetupEvent(
+  prepared: {
+    db: ReturnType<typeof createDb>;
+    organizationId: string;
+    actorUserId: string;
+    draft: GateSetupDraft;
+  },
+  type: GateSetupAuditEvent,
+): Promise<void> {
+  try {
+    await recordScanEvent(prepared.db, {
+      organizationId: prepared.organizationId,
+      actorUserId: prepared.actorUserId,
+      type,
+      metadata: {
+        repositoryFullName: prepared.draft.repositoryFullName,
+        environment: prepared.draft.environment,
+      },
+    });
+  } catch (err) {
+    // The GitHub mutation already succeeded. Returning 500 would invite a retry
+    // that cannot recreate the audit row and may leave another external branch.
+    emitOperationalEvent("error", "github_app.gate_setup_audit_failed", {
+      type,
+      organizationId: prepared.organizationId,
+      error: describeOperationalError(err),
+    });
+  }
+}
+
 gateSetupRoutes.post("/gate-setup/preview", async (c) => {
   try {
     const prepared = await prepare(c, {
@@ -225,7 +261,7 @@ gateSetupRoutes.post("/gate-setup/environment", async (c) => {
       scope: "environment",
     });
     if ("response" in prepared) return prepared.response;
-    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
+    const { config, draft, installation } = prepared;
     const step = await createRepositoryEnvironment(
       config,
       installation.installationId,
@@ -233,15 +269,7 @@ gateSetupRoutes.post("/gate-setup/environment", async (c) => {
       draft.environment,
     );
     if (step.status === "created") {
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId,
-        type: "github_app_gate_setup.environment_created",
-        metadata: {
-          repositoryFullName: draft.repositoryFullName,
-          environment: draft.environment,
-        },
-      });
+      await recordGateSetupEvent(prepared, "github_app_gate_setup.environment_created");
     }
     return c.json({ step });
   } catch (err) {
@@ -258,7 +286,7 @@ gateSetupRoutes.post("/gate-setup/protection-rule", async (c) => {
       scope: "protection-rule",
     });
     if ("response" in prepared) return prepared.response;
-    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
+    const { config, draft, installation } = prepared;
     const step = await enableDrydockProtectionRule(
       config,
       installation.installationId,
@@ -266,15 +294,7 @@ gateSetupRoutes.post("/gate-setup/protection-rule", async (c) => {
       draft.environment,
     );
     if (step.status === "created") {
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId,
-        type: "github_app_gate_setup.protection_rule_enabled",
-        metadata: {
-          repositoryFullName: draft.repositoryFullName,
-          environment: draft.environment,
-        },
-      });
+      await recordGateSetupEvent(prepared, "github_app_gate_setup.protection_rule_enabled");
     }
     return c.json({ step });
   } catch (err) {
@@ -291,7 +311,7 @@ gateSetupRoutes.post("/gate-setup/pull-request", async (c) => {
       scope: "pull-request",
     });
     if ("response" in prepared) return prepared.response;
-    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
+    const { config, draft, installation } = prepared;
     const template = resolveTemplate(draft);
     const result = await openGateSetupPullRequest(config, installation.installationId, {
       repositoryFullName: draft.repositoryFullName,
@@ -304,15 +324,7 @@ gateSetupRoutes.post("/gate-setup/pull-request", async (c) => {
     });
     const { pullRequest, ...step } = result;
     if (step.status === "created") {
-      await recordScanEvent(db, {
-        organizationId,
-        actorUserId,
-        type: "github_app_gate_setup.pull_request_created",
-        metadata: {
-          repositoryFullName: draft.repositoryFullName,
-          environment: draft.environment,
-        },
-      });
+      await recordGateSetupEvent(prepared, "github_app_gate_setup.pull_request_created");
     }
     // The YAML rides along with every response: when the PR step fails the
     // wizard needs exactly these bytes for the copy-it-yourself fallback.
