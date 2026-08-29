@@ -27,16 +27,16 @@ export const TOC: Array<{
   },
   {
     id: "staged-publishing",
-    label: "npm stage publish",
+    label: "Stage Watchtower — advisory",
     children: [
       { id: "staged-setup", label: "Connect npm" },
       { id: "staged-lifecycle", label: "Run a review" },
-      { id: "staged-enforcement", label: "Make staging mandatory" },
+      { id: "staged-enforcement", label: "Narrow CI to staging" },
     ],
   },
   {
     id: "workflow-gating",
-    label: "GitHub workflow gates",
+    label: "Workflow Gate — enforced",
     children: [
       { id: "gate-setup", label: "Connect GitHub" },
       { id: "gate-bundle", label: "Prepare the artifacts" },

@@ -2,7 +2,7 @@
 
 Drydock is pre-publish package security for maintainers. It reviews the exact npm, PyPI, or VS Code artifact before publication, compares it with a tag-aware published baseline, runs deterministic supply-chain checks, optionally sends changed-file evidence to Cloudflare Workers AI, and saves a review report.
 
-Approval stays outside Drydock: maintainers approve in npm, npmjs.com, or GitHub with their own required 2FA/review step. Drydock never publishes and never collects approval codes.
+It has two release modes with different authority. **Workflow Gate — enforced** can approve or reject the configured protected GitHub publish job. **Stage Watchtower — advisory** reviews and records npm staged artifacts, while npm maintainers independently approve or reject them and can still publish manually. Drydock never publishes and never collects npm approval codes.
 
 Drydock runs as a hosted service at [drydock.org](https://drydock.org); this repository is its source, and it can be self-hosted on your own Cloudflare account. To add it to a release, jump to [Add Drydock to your release](#add-drydock-to-your-release).
 
@@ -26,19 +26,24 @@ The dependency-PR integrations add plain links, so Drydock is contacted only whe
 
 [Aikido Security](https://www.aikido.dev) sponsors Drydock's development. Sponsorship funds the work; it does not influence detection rules, findings, or risk scoring.
 
-<img src="src/assets/release-flow.png" alt="Source code is built into a package, staged as a release, held in Drydock quarantine where a scan of @acme/cli 4.2.0 to 4.3.0 reports 1 critical and 2 medium findings, and blocked from becoming a published package" width="100%">
+<img src="src/assets/release-flow.png" alt="A configured Workflow Gate holds a built package at a protected GitHub publish job while Drydock reviews @acme/cli 4.2.0 to 4.3.0 and reports 1 critical and 2 medium findings" width="100%">
 
 ## Add Drydock to your release
 
 **If you publish from GitHub Actions, use a workflow gate.** It is the path for npm, PyPI, and VS Code
 alike, and it is what the example repositories below use. `npm stage publish` is a shortcut for npm
 maintainers who already publish that way from a terminal — if you don't, skip it. Both paths produce
-the same review report; they differ only in who holds the candidate while you read it.
+the same review report, but they differ in authority: the gate controls its protected job, while the
+watchtower only records advice about npm's stage.
 
-### Workflow gate — GitHub Actions publishes (npm, PyPI, VS Code)
+### Workflow Gate — enforced (npm, PyPI, VS Code)
 
 CI builds the release and uploads it. A GitHub Environment pauses the publish job until you accept
 the review in Drydock, then the same job publishes the exact reviewed bytes.
+
+Enforcement is scoped to this configured protected job. For npm, trusted-publisher and token settings
+can narrow automated publishing to that path, but npm still permits an account holder to publish
+interactively with password, 2FA, and an OTP.
 
 1. Sign in at [drydock.org](https://drydock.org) and create the organization that owns the release.
 2. In `Organization settings → GitHub App`, install the Drydock GitHub App on the account that hosts
@@ -87,10 +92,13 @@ Full workflows for each ecosystem: [PyPI CI example](https://github.com/JoviDeCr
 [npm monorepo CI example](https://github.com/JoviDeCroock/drydock-npm-monorepo-ci-example), and
 [`docs/workflow-gates.md`](docs/workflow-gates.md).
 
-### npm stage publish — npm only, no CI changes
+### Stage Watchtower — advisory (npm only)
 
 npm holds a private staged tarball; Drydock reviews it and you finish the publish in npm with your
 own 2FA.
+
+Drydock's decision is a review record, not an npm control: npm maintainers independently approve or
+reject the stage, and manual publication remains possible.
 
 1. Create a Drydock organization, then on npmjs.com generate a granular access token with
    `Packages and scopes: Read-only` and `Organizations: No access` covering the scopes you publish.
