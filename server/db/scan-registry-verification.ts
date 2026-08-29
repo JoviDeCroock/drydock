@@ -15,7 +15,6 @@ export interface RegistryVerificationScan {
   publicFeedListedAt: Date | null;
 }
 
-/** Approved package scans in a gate that still need a terminal registry check. */
 export async function listGateScansPendingRegistryVerification(
   db: AppDb,
   organizationId: string,
@@ -53,7 +52,6 @@ export async function listGateScansPendingRegistryVerification(
   );
 }
 
-/** Distinct approved gates the cron should re-enqueue as a delivery backstop. */
 export async function listGatesPendingRegistryVerification(
   db: AppDb,
   limit = 100,
@@ -96,7 +94,6 @@ export async function listGatesPendingRegistryVerification(
   );
 }
 
-/** Rotate a selected gate behind never-attempted and older retry candidates. */
 export async function markGateRegistryVerificationAttempted(
   db: AppDb,
   input: { organizationId: string; gateId: string; attemptedAt: Date },
@@ -115,7 +112,6 @@ export async function markGateRegistryVerificationAttempted(
   return updated.length > 0;
 }
 
-/** CAS the manifest-claimed → registry-verified trust transition. */
 export async function markScanRegistryVerified(
   db: AppDb,
   scanId: string,
@@ -161,7 +157,6 @@ export async function markScanRegistryVerified(
   return updated.length > 0;
 }
 
-/** First time the registry exposed a disagreeing artifact set for this scan. */
 export async function getOrRecordRegistryMismatchObservedAt(
   db: AppDb,
   input: { scanId: string; organizationId: string; now: Date },
@@ -189,7 +184,6 @@ export async function getOrRecordRegistryMismatchObservedAt(
   return existing.createdAt;
 }
 
-/** Persist exactly one durable mismatch alarm for a scan. */
 export async function recordRegistryDigestMismatch(
   db: AppDb,
   input: {

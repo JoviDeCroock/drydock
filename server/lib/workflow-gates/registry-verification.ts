@@ -29,7 +29,6 @@ export interface RegistryVerificationJobResult {
   mismatched: number;
 }
 
-/** Compare every approved package in one gate with its published registry row. */
 export async function executeRegistryVerificationJob(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
@@ -150,7 +149,6 @@ export async function executeRegistryVerificationJob(
   return result;
 }
 
-/** Best-effort delayed enqueue after GitHub accepts an approval callback. */
 export async function enqueueRegistryVerification(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
@@ -182,7 +180,6 @@ export async function enqueueRegistryVerification(
   await executeRegistryVerificationJob(env, executionCtx, message, registryDb, now);
 }
 
-/** Cron backstop for lost queue sends and releases that were not yet visible. */
 export async function runRegistryVerificationCron(
   env: Cloudflare.Env,
   executionCtx: ExecutionContext,
