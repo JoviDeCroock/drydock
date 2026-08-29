@@ -45,6 +45,7 @@ Endpoints, all under `/api/v1/github-app/`, all owner/admin-only (`roleCanManage
 
 Each step needs a different App permission, and an installation commonly has some but not all:
 
+- Reading existing environments and protection rules needs **Actions: read**. Drydock verifies that read access before treating a 404 as absence, because the create endpoint also updates existing environments.
 - Creating the environment and adding the protection rule need **repository administration: write**.
 - Writing a file under `.github/workflows/` needs **workflows: write**. GitHub refuses the contents write with a 403 without it, so an installation that lacks it can do every step _except_ open the pull request.
 

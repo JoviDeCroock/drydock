@@ -120,6 +120,17 @@ describe("gate setup templates", () => {
     expect(upgradeIndex).toBeLessThan(publishIndex);
   });
 
+  test.each([
+    ["npm", "@acme/toolkit", "npm pack --pack-destination dist"],
+    ["vscode", "acme.toolkit", "npx @vscode/vsce package --out dist/extension.vsix"],
+  ])("%s creates dist before writing the release artifact", (ecosystem, packageName, command) => {
+    const generated = template(ecosystem, packageName);
+    const createIndex = generated.yaml.indexOf("mkdir -p dist");
+    const packageIndex = generated.yaml.indexOf(command);
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(createIndex).toBeLessThan(packageIndex);
+  });
+
   test("pypi removes the checksum file before handing dist/ to the publisher", () => {
     const generated = template("pypi", "acme-toolkit");
     const removeIndex = generated.yaml.indexOf("rm dist/SHA256SUMS");
