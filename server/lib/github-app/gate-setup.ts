@@ -6,11 +6,12 @@
  * rule, and open a pull request carrying the gated publish workflow.
  *
  * The installed App may not hold the permissions any given step needs
- * (`administration: write` for environments, `workflows: write` for a file
- * under `.github/workflows/`). That is the normal case, not an exception, so
- * every function here resolves to a typed `GateSetupStepResult` instead of
- * throwing: the wizard degrades each step independently to a manual fallback.
- * Only a broken installation (no token) still throws, and the route maps it.
+ * (`actions: read` plus `administration: write` for environments,
+ * `workflows: write` for a file under `.github/workflows/`). That is the normal
+ * case, so every function here resolves to a typed `GateSetupStepResult`
+ * instead of throwing: the wizard degrades each step independently to a manual
+ * fallback. Only a broken installation (no token) still throws, and the route
+ * maps it.
  *
  * Nothing here logs a GitHub response body, header, or the installation token.
  */
@@ -106,6 +107,53 @@ function failed(step: GateSetupStep, failure: GateSetupFailure): GateSetupStepRe
   return { step, status: "failed", failure };
 }
 
+class GateSetupTransportError extends Error {
+  constructor(readonly failure: GateSetupFailure) {
+    super(failure.message);
+  }
+}
+
+function githubUnavailable(manualFallback: string): GateSetupFailure {
+  return {
+    code: "github_unavailable",
+    message: "Drydock could not reach GitHub for this step. Retry in a moment, or do it by hand.",
+    manualFallback,
+  };
+}
+
+async function gateSetupFetch(
+  input: RequestInfo | URL,
+  options: RequestInit,
+  manualFallback: string,
+  onTransportFailure?: () => Promise<void>,
+): Promise<Response> {
+  try {
+    return await reliableFetch(input, options);
+  } catch {
+    await onTransportFailure?.();
+    throw new GateSetupTransportError(githubUnavailable(manualFallback));
+  }
+}
+
+async function gateSetupHeaders(
+  config: GithubAppConfig,
+  installationId: string,
+  manualFallback: string,
+): Promise<Record<string, string>> {
+  try {
+    const token = await getInstallationAccessToken(config, installationId);
+    return githubInstallationHeaders(token);
+  } catch (err) {
+    if (err instanceof GithubAppValidationError) throw err;
+    throw new GateSetupTransportError(githubUnavailable(manualFallback));
+  }
+}
+
+function transportFailure(step: GateSetupStep, err: unknown): GateSetupStepResult {
+  if (err instanceof GateSetupTransportError) return failed(step, err.failure);
+  throw err;
+}
+
 /**
  * Map a GitHub status onto an actionable failure.
  *
@@ -151,6 +199,28 @@ const ENVIRONMENT_FALLBACK =
 const PROTECTION_RULE_FALLBACK =
   "Add it yourself under Settings → Environments → the environment → Deployment protection rules → enable the Drydock app.";
 
+async function actionsReadFailure(
+  path: string,
+  headers: Record<string, string>,
+  step: GateSetupStep,
+  manualFallback: string,
+): Promise<GateSetupStepResult | null> {
+  const probe = await gateSetupFetch(
+    `https://api.github.com/repos/${path}/environments?per_page=1`,
+    { headers },
+    manualFallback,
+  );
+  if (probe.ok) return null;
+  return failed(
+    step,
+    failureForStatus(
+      probe.status,
+      "Actions read access (needed to distinguish a missing environment from an unreadable one)",
+      manualFallback,
+    ),
+  );
+}
+
 /**
  * Create the release environment, idempotently.
  *
@@ -164,14 +234,32 @@ export async function createRepositoryEnvironment(
   fullName: string,
   environmentName: string,
 ): Promise<GateSetupStepResult> {
+  try {
+    return await createRepositoryEnvironmentWithGithub(
+      config,
+      installationId,
+      fullName,
+      environmentName,
+    );
+  } catch (err) {
+    return transportFailure("environment", err);
+  }
+}
+
+async function createRepositoryEnvironmentWithGithub(
+  config: GithubAppConfig,
+  installationId: string,
+  fullName: string,
+  environmentName: string,
+): Promise<GateSetupStepResult> {
   const path = repositoryPath(fullName);
   const environmentPath = encodeURIComponent(environmentName);
-  const token = await getInstallationAccessToken(config, installationId);
-  const headers = githubInstallationHeaders(token);
+  const headers = await gateSetupHeaders(config, installationId, ENVIRONMENT_FALLBACK);
 
-  const existing = await reliableFetch(
+  const existing = await gateSetupFetch(
     `https://api.github.com/repos/${path}/environments/${environmentPath}`,
     { headers },
+    ENVIRONMENT_FALLBACK,
   );
   if (existing.ok) return { step: "environment", status: "already_configured" };
   if (existing.status !== 404) {
@@ -181,9 +269,13 @@ export async function createRepositoryEnvironment(
     );
   }
 
-  const created = await reliableFetch(
+  const unreadable = await actionsReadFailure(path, headers, "environment", ENVIRONMENT_FALLBACK);
+  if (unreadable) return unreadable;
+
+  const created = await gateSetupFetch(
     `https://api.github.com/repos/${path}/environments/${environmentPath}`,
     { method: "PUT", headers: { ...headers, "content-type": "application/json" }, body: "{}" },
+    ENVIRONMENT_FALLBACK,
   );
   if (!created.ok) {
     return failed(
@@ -211,6 +303,24 @@ export async function enableDrydockProtectionRule(
   fullName: string,
   environmentName: string,
 ): Promise<GateSetupStepResult> {
+  try {
+    return await enableDrydockProtectionRuleWithGithub(
+      config,
+      installationId,
+      fullName,
+      environmentName,
+    );
+  } catch (err) {
+    return transportFailure("protection_rule", err);
+  }
+}
+
+async function enableDrydockProtectionRuleWithGithub(
+  config: GithubAppConfig,
+  installationId: string,
+  fullName: string,
+  environmentName: string,
+): Promise<GateSetupStepResult> {
   const appId = Number(config.appId);
   if (!Number.isInteger(appId) || appId <= 0) {
     throw new GithubAppValidationError(
@@ -221,10 +331,9 @@ export async function enableDrydockProtectionRule(
   const path = repositoryPath(fullName);
   const environmentPath = encodeURIComponent(environmentName);
   const rulesUrl = `https://api.github.com/repos/${path}/environments/${environmentPath}/deployment_protection_rules`;
-  const token = await getInstallationAccessToken(config, installationId);
-  const headers = githubInstallationHeaders(token);
+  const headers = await gateSetupHeaders(config, installationId, PROTECTION_RULE_FALLBACK);
 
-  const existing = await reliableFetch(rulesUrl, { headers });
+  const existing = await gateSetupFetch(rulesUrl, { headers }, PROTECTION_RULE_FALLBACK);
   if (existing.ok) {
     const data = (await existing.json().catch(() => ({}))) as {
       custom_deployment_protection_rules?: { app?: { id?: number } | null }[];
@@ -244,18 +353,32 @@ export async function enableDrydockProtectionRule(
     );
   }
 
-  const created = await reliableFetch(rulesUrl, {
-    method: "POST",
-    headers: { ...headers, "content-type": "application/json" },
-    // Deliberately not retried: these POSTs create state, and a retried 5xx that
-    // actually succeeded server-side would double-create.
-    body: JSON.stringify({ integration_id: appId }),
-  });
+  if (existing.status === 404) {
+    const unreadable = await actionsReadFailure(
+      path,
+      headers,
+      "protection_rule",
+      PROTECTION_RULE_FALLBACK,
+    );
+    if (unreadable) return unreadable;
+  }
+
+  const created = await gateSetupFetch(
+    rulesUrl,
+    {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      // Deliberately not retried: these POSTs create state, and a retried 5xx that
+      // actually succeeded server-side would double-create.
+      body: JSON.stringify({ integration_id: appId }),
+    },
+    PROTECTION_RULE_FALLBACK,
+  );
   if (created.ok) return { step: "protection_rule", status: "created" };
   // GitHub answers a duplicate rule with 422. Re-read rather than trust the
   // message text, so "already enabled" stays a success in every locale/wording.
   if (created.status === 422) {
-    const recheck = await reliableFetch(rulesUrl, { headers });
+    const recheck = await gateSetupFetch(rulesUrl, { headers }, PROTECTION_RULE_FALLBACK);
     if (recheck.ok) {
       const data = (await recheck.json().catch(() => ({}))) as {
         custom_deployment_protection_rules?: { app?: { id?: number } | null }[];
@@ -299,13 +422,28 @@ export async function openGateSetupPullRequest(
   installationId: string,
   input: GateSetupPullRequestInput,
 ): Promise<GateSetupPullRequestResult> {
-  const path = repositoryPath(input.repositoryFullName);
-  const token = await getInstallationAccessToken(config, installationId);
-  const headers = githubInstallationHeaders(token);
-  const jsonHeaders = { ...headers, "content-type": "application/json" };
-  const manualFallback = `Add ${input.workflowPath} to the repository yourself — copy the workflow below and commit it on a branch.`;
+  try {
+    return await openGateSetupPullRequestWithGithub(config, installationId, input);
+  } catch (err) {
+    return transportFailure("pull_request", err);
+  }
+}
 
-  const repoResponse = await reliableFetch(`https://api.github.com/repos/${path}`, { headers });
+async function openGateSetupPullRequestWithGithub(
+  config: GithubAppConfig,
+  installationId: string,
+  input: GateSetupPullRequestInput,
+): Promise<GateSetupPullRequestResult> {
+  const path = repositoryPath(input.repositoryFullName);
+  const manualFallback = `Add ${input.workflowPath} to the repository yourself — copy the workflow below and commit it on a branch.`;
+  const headers = await gateSetupHeaders(config, installationId, manualFallback);
+  const jsonHeaders = { ...headers, "content-type": "application/json" };
+
+  const repoResponse = await gateSetupFetch(
+    `https://api.github.com/repos/${path}`,
+    { headers },
+    manualFallback,
+  );
   if (!repoResponse.ok) {
     return failed(
       "pull_request",
@@ -322,9 +460,10 @@ export async function openGateSetupPullRequest(
     });
   }
 
-  const refResponse = await reliableFetch(
+  const refResponse = await gateSetupFetch(
     `https://api.github.com/repos/${path}/git/ref/heads/${encodeURIComponent(baseBranch)}`,
     { headers },
+    manualFallback,
   );
   if (!refResponse.ok) {
     return failed(
@@ -345,11 +484,17 @@ export async function openGateSetupPullRequest(
   // Random suffix so a retry after a partial failure never collides with the
   // branch the previous attempt left behind.
   const branch = `drydock/workflow-gate-${crypto.randomUUID().slice(0, 8)}`;
-  const branchResponse = await reliableFetch(`https://api.github.com/repos/${path}/git/refs`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
-  });
+  const uncertainBranchFallback = `${manualFallback} If GitHub may have received the branch request, also check for ${branch}.`;
+  const branchResponse = await gateSetupFetch(
+    `https://api.github.com/repos/${path}/git/refs`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+    },
+    uncertainBranchFallback,
+    () => deleteBranchQuietly(path, branch, headers),
+  );
   if (!branchResponse.ok) {
     return failed(
       "pull_request",
@@ -371,15 +516,20 @@ export async function openGateSetupPullRequest(
   };
 
   const contentsUrl = `https://api.github.com/repos/${path}/contents/${encodePathSegments(input.workflowPath)}`;
-  const contentsResponse = await reliableFetch(contentsUrl, {
-    method: "PUT",
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      message: `Add Drydock-gated ${input.ecosystemLabel} release workflow`,
-      content: base64Utf8(input.yaml),
-      branch,
-    }),
-  });
+  const contentsResponse = await gateSetupFetch(
+    contentsUrl,
+    {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        message: `Add Drydock-gated ${input.ecosystemLabel} release workflow`,
+        content: base64Utf8(input.yaml),
+        branch,
+      }),
+    },
+    manualFallback,
+    () => deleteBranchQuietly(path, branch, headers),
+  );
   if (!contentsResponse.ok) {
     // The `workflows` permission refusal is the expected failure here, and it is
     // the one worth naming precisely: 403/404 on a `.github/workflows/` write.
@@ -403,16 +553,21 @@ export async function openGateSetupPullRequest(
     );
   }
 
-  const prResponse = await reliableFetch(`https://api.github.com/repos/${path}/pulls`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      title: `Gate ${input.packageName} releases behind Drydock review`,
-      head: branch,
-      base: baseBranch,
-      body: pullRequestBody(input),
-    }),
-  });
+  const uncertainPullRequestFallback = `Check the repository's open pull requests for branch ${branch}, or add ${input.workflowPath} by hand from the workflow below.`;
+  const prResponse = await gateSetupFetch(
+    `https://api.github.com/repos/${path}/pulls`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        title: `Gate ${input.packageName} releases behind Drydock review`,
+        head: branch,
+        base: baseBranch,
+        body: pullRequestBody(input),
+      }),
+    },
+    uncertainPullRequestFallback,
+  );
   if (!prResponse.ok) {
     return abandon(
       failureForStatus(prResponse.status, "pull request write access", manualFallback),
@@ -428,7 +583,7 @@ export async function openGateSetupPullRequest(
     return failed("pull_request", {
       code: "invalid_request",
       message: "GitHub accepted the pull request but did not return its number or URL.",
-      manualFallback: `Check the repository's open pull requests for branch ${branch}, or add ${input.workflowPath} by hand from the workflow below.`,
+      manualFallback: uncertainPullRequestFallback,
     });
   }
   return {
@@ -484,7 +639,7 @@ async function deleteBranchQuietly(
       `https://api.github.com/repos/${path}/git/refs/heads/${encodePathSegments(branch)}`,
       { method: "DELETE", headers },
     );
-    if (!response.ok) {
+    if (!response.ok && response.status !== 404) {
       emitOperationalEvent("warn", "github_app.gate_setup_branch_orphaned", {
         status: response.status,
       });

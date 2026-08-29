@@ -82,6 +82,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: mkdir -p dist
       - run: npx @vscode/vsce package --out dist/extension.vsix
       # Record the digest Drydock reviews and the publish job re-checks.
       - run: cd dist && sha256sum *.vsix > SHA256SUMS
