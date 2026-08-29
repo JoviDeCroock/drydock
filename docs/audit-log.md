@@ -39,7 +39,9 @@ enablement, and workflow pull-request creation. These events contain only the
 validated repository/environment identity needed for a useful audit description.
 Preview-only reads, already-configured results, and failed mutations do not add
 audit rows; installation tokens, GitHub response bodies, and generated workflow
-bytes are never audit metadata.
+bytes are never audit metadata. If the audit write itself fails after GitHub has
+accepted a mutation, Drydock emits a redacted operational error and still returns
+the successful step instead of inviting a misleading external retry.
 
 ## Visible allowlist
 
