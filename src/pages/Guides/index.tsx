@@ -88,7 +88,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Decide",
-        heading: "One rejected package fails the release closed.",
+        heading: "One rejected package keeps the protected publish job blocked.",
         body: "A monorepo upload can contain several packages. The workflow continues only after every package review is accepted; a rejection or malformed artifact prevents the protected publish job from proceeding.",
       },
     ],
@@ -113,8 +113,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Close the side doors",
-        heading: "Every bypass runs into a specific pin.",
-        body: "Package settings disallow token-backed laptop publishes and CI secrets. Another repository or a fork fails the trusted-publisher claim match. Publishing past a rejection fails closed at the protection rule. Rebuilding after approval fails the digest re-check, and administrator bypass is switched off on the environment itself. Interactive account publication with 2FA remains possible.",
+        heading: "Every configured-workflow bypass runs into a specific pin.",
+        body: "Package settings disallow token-backed laptop publishes and CI secrets. Another repository or a fork fails the trusted-publisher claim match. The configured protected job cannot publish past a rejection. Rebuilding after approval fails the digest re-check, and administrator bypass is switched off on the environment itself. Interactive account publication with 2FA remains possible.",
       },
       {
         label: "The honest residue",
@@ -129,7 +129,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md",
         label: "Read the full recipe",
       },
-      detail: ["configuration only", "fails closed"],
+      detail: ["configuration only", "protected job fails closed"],
     },
     primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
     secondary: { href: "/github-actions-package-gate", label: "How the gate works" },

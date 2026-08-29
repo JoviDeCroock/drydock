@@ -80,7 +80,7 @@ interactively with password, 2FA, and an OTP.
    ```
 
 6. Push a release. The publish job pauses, Drydock reviews the uploaded artifacts, and accepting the
-   review releases the job. Rejecting it fails the release closed.
+   review releases the job. Rejecting it keeps that configured protected job blocked.
 
 There is no Drydock manifest to maintain: package name, version, and ecosystem are read from metadata
 inside the uploaded `.tgz`, `.whl`, `.tar.gz`, or `.vsix`. A monorepo upload becomes one report per
