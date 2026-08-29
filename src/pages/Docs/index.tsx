@@ -751,7 +751,7 @@ export default function DocsPage() {
                 the updated code. Grouped update PRs get one link per dependency in a single
                 comment, rewritten in place each time Dependabot revises the group.
               </Prose>
-              <WorkflowExample title="Dependabot diff comment" defaultOpen>
+              <WorkflowExample title="Dependabot diff comment">
                 {`name: drydock-diff-link
 
 on:
