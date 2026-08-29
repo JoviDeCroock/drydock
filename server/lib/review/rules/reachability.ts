@@ -107,7 +107,7 @@ function pythonModuleSeeds(files: FileRecord[]): string[] {
 function pythonSetupSeeds(files: FileRecord[]): string[] {
   return files
     .map((file) => stripPackagePrefix(file.path))
-    .filter((path) => path === "setup.py" || path.endsWith("/setup.py"));
+    .filter((path) => path === "setup.py" || path === "sdist/setup.py");
 }
 
 function pythonReachableFrom(files: FileRecord[], seedPaths: string[]): Set<string> {
@@ -274,8 +274,7 @@ export function scriptPathCandidates(path: string): Set<string> {
   const withoutPackage = normalized.startsWith("package/")
     ? normalized.slice("package/".length)
     : normalized;
-  const basename = withoutPackage.split("/").at(-1) ?? withoutPackage;
-  const baseValues = [normalized, withoutPackage, basename];
+  const baseValues = [normalized, withoutPackage];
   const values = [...baseValues];
   for (const value of baseValues) {
     values.push(value.replace(/\.[^/.]+$/, ""));

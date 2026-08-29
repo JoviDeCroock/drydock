@@ -163,12 +163,11 @@ const JS_REGISTRY_PUBLISH_PATTERNS = [
   /\b(?:npm|pnpm|yarn|bun)\b["'\s,[\]]{1,12}publish\b/,
   /\bnpm\b["'\s,[\]]{1,12}stage["'\s,[\]]{1,12}(?:publish|approve)\b/,
   /\bnpm\b["'\s,[\]]{1,12}dist-tag["'\s,[\]]{1,12}add\b/,
-  /\blibnpmpublish\b/,
+  /\blibnpmpublish(?:\.publish)?\s*\(/,
 ];
 const PYTHON_REGISTRY_PUBLISH_PATTERNS = [
   /\btwine\b["'\s,[\]]{1,12}upload\b/,
-  /\btwine\.commands\.upload\b/,
-  /\b(?:import|from)\s+twine\b/,
+  /\btwine\.commands\.upload(?:\.upload)?\s*\(/,
   /\bsetup\.py\b[^\n]*\bupload\b/,
 ];
 // The directory a package manager unpacks dependencies into. A path literal

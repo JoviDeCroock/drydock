@@ -1,0 +1,48 @@
+{
+  "id": "install-hook-direct-registry-publish",
+  "title": "Postinstall command directly publishes a new carrier version",
+  "category": "install-time-self-propagation",
+  "intent": "Model a propagation command embedded directly in package.json rather than delegated to a packaged script. No real credential and no reachable registry.",
+  "previousPackageJson": {
+    "name": "carrier-kit",
+    "version": "1.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "carrier-kit",
+    "version": "1.0.1",
+    "scripts": {
+      "postinstall": "npm version --no-git-tag-version patch && npm publish"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 40,
+      "sha256": "previous-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"carrier-kit\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 124,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"carrier-kit\",\"version\":\"1.0.1\",\"scripts\":{\"postinstall\":\"npm version --no-git-tag-version patch && npm publish\"}}"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.registry-publish",
+      "severity": "critical",
+      "file": "package.json"
+    }
+  ]
+}

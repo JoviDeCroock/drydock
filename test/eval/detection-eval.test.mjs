@@ -12,7 +12,7 @@ writeReport(result);
 describe("detection eval (gated thresholds)", () => {
   test("the gated corpus cannot silently shrink below its ecosystem coverage floor", () => {
     const regressionFloor = {
-      npm: 29,
+      npm: 30,
       pypi: 15,
       atpm: 6,
       vscode: 3,

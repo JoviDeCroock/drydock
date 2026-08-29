@@ -37,6 +37,22 @@ export function firstMatchingCodeLine(
   text: string | undefined | null,
   patterns: RegExp[],
 ): number | undefined {
+  return firstMatchingAllowedCodeLine(text, patterns);
+}
+
+export function hasMatchingCodeLine(
+  text: string | undefined | null,
+  patterns: RegExp[],
+  allowedLines: ReadonlySet<number>,
+): boolean {
+  return firstMatchingAllowedCodeLine(text, patterns, allowedLines) !== undefined;
+}
+
+function firstMatchingAllowedCodeLine(
+  text: string | undefined | null,
+  patterns: RegExp[],
+  allowedLines?: ReadonlySet<number>,
+): number | undefined {
   if (!text) return undefined;
   const lines = text.split("\n");
   let inBlockComment = false;
@@ -48,7 +64,13 @@ export function firstMatchingCodeLine(
     } else if (BLOCK_COMMENT_OPEN.test(line)) {
       inBlockComment = true;
     }
-    if (wasInBlockComment || LINE_COMMENT_START.test(line)) continue;
+    if (
+      wasInBlockComment ||
+      LINE_COMMENT_START.test(line) ||
+      (allowedLines && !allowedLines.has(index + 1))
+    ) {
+      continue;
+    }
     for (const pattern of patterns) {
       pattern.lastIndex = 0;
       if (pattern.test(line)) return index + 1;

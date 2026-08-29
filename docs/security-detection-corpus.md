@@ -522,7 +522,11 @@ reviewing it one level too deep.
 families do not — can this release put itself into the _next_ artifact — and both gate on
 `installReachablePaths` (`server/lib/review/rules/reachability.ts`), the subset of consumer-reachable
 files an install actually executes: npm lifecycle-hook targets and their transitive requires, or an
-sdist's `setup.py` and its imports. Pinned by `install-hook-registry-publish`,
+sdist's top-level `setup.py` and its imports. Direct npm lifecycle command bodies are scanned too,
+while comment-only command examples and import-only publishing-library references stay quiet. The
+release-delta projection reuses the same propagation pattern sets so a first match on an unchanged
+line cannot hide a newly added propagation action from release risk. Pinned by
+`install-hook-registry-publish`, `install-hook-direct-registry-publish`,
 `install-hook-node-modules-write`, the PyPI parity case `15-sdist-setup-twine-upload`, the frontier
 case `npm-install-hook-worm-propagation`, and the two hard negatives that hold the gate honest.
 

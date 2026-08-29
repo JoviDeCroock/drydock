@@ -1,9 +1,10 @@
-import { firstMatchingLine } from "../../platform/text-utils";
+import { firstMatchingCodeLine } from "../../platform/text-utils";
 import type { Finding } from "..";
-import { tag } from "./helpers";
+import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
+import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 import { normalizeReachabilityPath } from "./reachability";
 
 // Self-propagation: a payload that reaches the *next* artifact instead of only
@@ -18,9 +19,9 @@ import { normalizeReachabilityPath } from "./reachability";
 // payload that propagates when the package is later imported, rather than when
 // it is installed, is not modelled here.
 export function propagationFindings(ctx: RuleContext): Finding[] {
-  if (!ctx.installReachable.size) return [];
+  const findings = lifecycleCommandFindings(ctx);
+  if (!ctx.installReachable.size) return findings;
 
-  const findings: Finding[] = [];
   for (const file of ctx.files) {
     if (isDocumentationPath(file.path) || isTypeDeclarationPath(file.path)) continue;
     if (ctx.codePatternSet === "python" && isPythonMetadataPath(file.path)) continue;
@@ -29,38 +30,76 @@ export function propagationFindings(ctx: RuleContext): Finding[] {
     const sample = file.textSample || "";
     if (!sample) continue;
     const normalized = ctx.codePatternSet === "python" ? sample : normalizeCodeForScanning(sample);
-    const prefix = changedPrefix(ctx, file.path);
+    findings.push(
+      ...propagationSourceFindings(ctx, {
+        file: file.path,
+        sample,
+        normalized,
+        prefix: changedPrefix(ctx, file.path),
+      }),
+    );
+  }
+  return findings;
+}
 
-    const publish = matchLine(ctx.patterns.registryPublish, sample, normalized);
-    if (publish) {
-      findings.push(
-        tag("propagationRegistryPublish", {
-          severity: "critical",
-          file: file.path,
-          line: publish.line,
-          evidence: `${prefix}registry publish on the consumer install path`,
-          reason:
-            "code that runs during a consumer's install invokes a registry publish, so installing this package can publish packages under whatever credentials the machine holds: the self-propagation step that turns a single compromised release into a worm",
-          ...(publish.obfuscated ? { obfuscated: true } : {}),
-        }),
-      );
-    }
+interface PropagationSource {
+  file: string;
+  sample: string;
+  normalized: string;
+  prefix: string;
+  line?: number;
+}
 
-    const installRoot = matchLine(ctx.patterns.installRootPath, sample, normalized);
-    const write = matchLine(ctx.patterns.installWrite, sample, normalized);
-    if (installRoot && write) {
-      findings.push(
-        tag("propagationPackageMutation", {
-          severity: "high",
-          file: file.path,
-          line: installRoot.line,
-          evidence: `${prefix}install-time write into the dependency install root`,
-          reason:
-            "code that runs during a consumer's install writes into the directory the package manager unpacks dependencies into, so it can add hooks or payloads to packages the consumer already trusts",
-          ...(installRoot.obfuscated || write.obfuscated ? { obfuscated: true } : {}),
-        }),
-      );
-    }
+function lifecycleCommandFindings(ctx: RuleContext): Finding[] {
+  const findings: Finding[] = [];
+  const file = ctx.packageJsonFile?.path ?? "package.json";
+  for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
+    const command = ctx.scripts[script];
+    if (!command || ctx.implicitScripts[script] === command) continue;
+    findings.push(
+      ...propagationSourceFindings(ctx, {
+        file,
+        sample: command,
+        normalized: ctx.codePatternSet === "python" ? command : normalizeCodeForScanning(command),
+        prefix: changedPrefix(ctx, file),
+        line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, script, command),
+      }),
+    );
+  }
+  return findings;
+}
+
+function propagationSourceFindings(ctx: RuleContext, source: PropagationSource): Finding[] {
+  const findings: Finding[] = [];
+  const publish = matchLine(ctx.patterns.registryPublish, source.sample, source.normalized);
+  if (publish) {
+    findings.push(
+      tag("propagationRegistryPublish", {
+        severity: "critical",
+        file: source.file,
+        line: source.line ?? publish.line,
+        evidence: `${source.prefix}registry publish on the consumer install path`,
+        reason:
+          "code that runs during a consumer's install invokes a registry publish, so installing this package can publish packages under whatever credentials the machine holds: the self-propagation step that turns a single compromised release into a worm",
+        ...(publish.obfuscated ? { obfuscated: true } : {}),
+      }),
+    );
+  }
+
+  const installRoot = matchLine(ctx.patterns.installRootPath, source.sample, source.normalized);
+  const write = matchLine(ctx.patterns.installWrite, source.sample, source.normalized);
+  if (installRoot && write) {
+    findings.push(
+      tag("propagationPackageMutation", {
+        severity: "high",
+        file: source.file,
+        line: source.line ?? installRoot.line,
+        evidence: `${source.prefix}install-time write into the dependency install root`,
+        reason:
+          "code that runs during a consumer's install writes into the directory the package manager unpacks dependencies into, so it can add hooks or payloads to packages the consumer already trusts",
+        ...(installRoot.obfuscated || write.obfuscated ? { obfuscated: true } : {}),
+      }),
+    );
   }
   return findings;
 }
@@ -74,9 +113,9 @@ function matchLine(
   sample: string,
   normalized: string,
 ): { line: number | undefined; obfuscated: boolean } | null {
-  const line = firstMatchingLine(sample, patterns);
+  const line = firstMatchingCodeLine(sample, patterns);
   if (line !== undefined) return { line, obfuscated: false };
   if (normalized === sample) return null;
-  const normalizedLine = firstMatchingLine(normalized, patterns);
+  const normalizedLine = firstMatchingCodeLine(normalized, patterns);
   return normalizedLine === undefined ? null : { line: normalizedLine, obfuscated: true };
 }
