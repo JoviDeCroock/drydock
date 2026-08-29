@@ -77,7 +77,7 @@ describe("public diff cache", () => {
       toVersion: "1.0.1",
     });
 
-    expect(pypiKey).toContain("public-diff:v8:pypi:");
+    expect(pypiKey).toContain("public-diff:v9:pypi:");
     expect(pypiKey).toContain(":pypi:");
     expect(pypiKey).toContain(`rules=${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`);
     // PyPI names are case- and separator-insensitive; both spellings must hit

@@ -6,6 +6,8 @@ export interface PublicDiffAcquiredSide {
   packageJson: PackageJsonSummary | null;
   /** False only when this side represents an absent first-release baseline. */
   comparable?: boolean;
+  /** False when acquisition omitted artifact evidence capabilities could hide in. */
+  capabilityCoverageComplete?: boolean;
   /**
    * When the registry says this version was published, for the release-age
    * signal on the verdict projection. Omitted when the ecosystem has no
