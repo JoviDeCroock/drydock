@@ -34,6 +34,13 @@ Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
 `organization.*`, and notification-delivery events.
 
+Guided GitHub gate setup records successful environment creation, protection-rule
+enablement, and workflow pull-request creation. These events contain only the
+validated repository/environment identity needed for a useful audit description.
+Preview-only reads, already-configured results, and failed mutations do not add
+audit rows; installation tokens, GitHub response bodies, and generated workflow
+bytes are never audit metadata.
+
 ## Visible allowlist
 
 `server/lib/auth/audit-events.ts` is the single source of truth for the audit view. It

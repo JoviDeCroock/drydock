@@ -19,6 +19,7 @@
  */
 import { Hono } from "hono";
 import { createDb } from "../../db/client";
+import { recordScanEvent } from "../../db/events";
 import { requireActiveOrganizationContext } from "../../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { getEcosystem, supportedWorkflowGateEcosystems } from "../../lib/ecosystems";
@@ -180,7 +181,14 @@ async function prepare(
   }
 
   const installation = await ensureInstallationOwnedBy(db, organizationId, draft.installationRowId);
-  return { config, draft, installation } as const;
+  return {
+    config,
+    db,
+    draft,
+    installation,
+    organizationId,
+    actorUserId: c.get("authSession").userId,
+  } as const;
 }
 
 gateSetupRoutes.post("/gate-setup/preview", async (c) => {
@@ -217,13 +225,24 @@ gateSetupRoutes.post("/gate-setup/environment", async (c) => {
       scope: "environment",
     });
     if ("response" in prepared) return prepared.response;
-    const { config, draft, installation } = prepared;
+    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
     const step = await createRepositoryEnvironment(
       config,
       installation.installationId,
       draft.repositoryFullName,
       draft.environment,
     );
+    if (step.status === "created") {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId,
+        type: "github_app_gate_setup.environment_created",
+        metadata: {
+          repositoryFullName: draft.repositoryFullName,
+          environment: draft.environment,
+        },
+      });
+    }
     return c.json({ step });
   } catch (err) {
     return validationErrorResponse(c, err);
@@ -239,13 +258,24 @@ gateSetupRoutes.post("/gate-setup/protection-rule", async (c) => {
       scope: "protection-rule",
     });
     if ("response" in prepared) return prepared.response;
-    const { config, draft, installation } = prepared;
+    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
     const step = await enableDrydockProtectionRule(
       config,
       installation.installationId,
       draft.repositoryFullName,
       draft.environment,
     );
+    if (step.status === "created") {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId,
+        type: "github_app_gate_setup.protection_rule_enabled",
+        metadata: {
+          repositoryFullName: draft.repositoryFullName,
+          environment: draft.environment,
+        },
+      });
+    }
     return c.json({ step });
   } catch (err) {
     return validationErrorResponse(c, err);
@@ -261,7 +291,7 @@ gateSetupRoutes.post("/gate-setup/pull-request", async (c) => {
       scope: "pull-request",
     });
     if ("response" in prepared) return prepared.response;
-    const { config, draft, installation } = prepared;
+    const { actorUserId, config, db, draft, installation, organizationId } = prepared;
     const template = resolveTemplate(draft);
     const result = await openGateSetupPullRequest(config, installation.installationId, {
       repositoryFullName: draft.repositoryFullName,
@@ -273,6 +303,17 @@ gateSetupRoutes.post("/gate-setup/pull-request", async (c) => {
       notes: template.notes,
     });
     const { pullRequest, ...step } = result;
+    if (step.status === "created") {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId,
+        type: "github_app_gate_setup.pull_request_created",
+        metadata: {
+          repositoryFullName: draft.repositoryFullName,
+          environment: draft.environment,
+        },
+      });
+    }
     // The YAML rides along with every response: when the PR step fails the
     // wizard needs exactly these bytes for the copy-it-yourself fallback.
     return c.json({

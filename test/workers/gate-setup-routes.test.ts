@@ -1,9 +1,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
+import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -135,6 +137,13 @@ function draft(installationRowId: string, overrides: Record<string, unknown> = {
     packageName: "@acme/widgets",
     ...overrides,
   };
+}
+
+async function readGateSetupEvents(organizationId: string) {
+  return createDb(env.DB)
+    .select()
+    .from(schema.scanEvents)
+    .where(eq(schema.scanEvents.organizationId, organizationId));
 }
 
 afterEach(() => {
@@ -283,6 +292,7 @@ describe("gate-setup preview", () => {
     expect(body.notes.length).toBeGreaterThan(0);
     // Pure computation: the preview must not spend the installation's GitHub budget.
     expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
   test("400s an ecosystem with no gate setup template", async () => {
@@ -341,6 +351,24 @@ describe("gate-setup environment step", () => {
       "GET /repos/octo/widgets/environments/production",
       "PUT /repos/octo/widgets/environments/production",
     ]);
+    expect(await readGateSetupEvents(organizationId)).toMatchObject([
+      {
+        organizationId,
+        actorUserId: userId,
+        type: "github_app_gate_setup.environment_created",
+        metadataJson: {
+          repositoryFullName: "octo/widgets",
+          environment: "production",
+        },
+      },
+    ]);
+    const [event] = await readGateSetupEvents(organizationId);
+    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
+      category: "integration",
+      label: "GitHub environment created",
+      severity: "notice",
+      detail: "octo/widgets · production",
+    });
   });
 
   test("leaves an existing environment untouched", async () => {
@@ -363,6 +391,7 @@ describe("gate-setup environment step", () => {
     });
     // A PUT here would clear the maintainer's reviewers and wait timers.
     expect(methods).toEqual(["GET"]);
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
   test("degrades a 403 into an actionable manual fallback, not an error status", async () => {
@@ -387,6 +416,7 @@ describe("gate-setup environment step", () => {
     expect(body.step.status).toBe("failed");
     expect(body.step.failure.code).toBe("permission_denied");
     expect(body.step.failure.manualFallback).toContain("Environments");
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 });
 
@@ -412,6 +442,24 @@ describe("gate-setup protection rule step", () => {
       step: { step: "protection_rule", status: "created" },
     });
     expect(posted).toEqual({ integration_id: Number(APP_ID) });
+    expect(await readGateSetupEvents(organizationId)).toMatchObject([
+      {
+        organizationId,
+        actorUserId: userId,
+        type: "github_app_gate_setup.protection_rule_enabled",
+        metadataJson: {
+          repositoryFullName: "octo/widgets",
+          environment: "production",
+        },
+      },
+    ]);
+    const [event] = await readGateSetupEvents(organizationId);
+    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
+      category: "integration",
+      label: "Drydock protection rule enabled",
+      severity: "notice",
+      detail: "octo/widgets · production",
+    });
   });
 
   test("is idempotent when the rule is already enabled", async () => {
@@ -440,6 +488,7 @@ describe("gate-setup protection rule step", () => {
       step: { step: "protection_rule", status: "already_configured" },
     });
     expect(posts).toBe(0);
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
   test("treats a 422 duplicate that re-reads as enabled as success", async () => {
@@ -564,6 +613,24 @@ describe("gate-setup pull request step", () => {
     // The PR body carries the hardening checklist a reviewer needs.
     expect(prBody).toContain("trusted publisher");
     expect(prBody).toContain("Allow administrators to bypass configured protection rules");
+    expect(await readGateSetupEvents(organizationId)).toMatchObject([
+      {
+        organizationId,
+        actorUserId: userId,
+        type: "github_app_gate_setup.pull_request_created",
+        metadataJson: {
+          repositoryFullName: "octo/widgets",
+          environment: "production",
+        },
+      },
+    ]);
+    const [event] = await readGateSetupEvents(organizationId);
+    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
+      category: "integration",
+      label: "Workflow setup pull request created",
+      severity: "notice",
+      detail: "octo/widgets · production",
+    });
   });
 
   test("maps a refused .github/workflows write to workflow_scope_missing and still returns the YAML", async () => {
@@ -599,6 +666,7 @@ describe("gate-setup pull request step", () => {
     expect(refCalls).toHaveLength(2);
     expect(refCalls[0]).toMatch(/^create drydock\/workflow-gate-/);
     expect(refCalls[1]).toBe(refCalls[0].replace("create ", "delete "));
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
   test("reports an existing workflow file as already_exists instead of overwriting it", async () => {
