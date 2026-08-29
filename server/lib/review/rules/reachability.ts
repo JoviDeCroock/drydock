@@ -41,15 +41,40 @@ export function consumerReachablePaths(
   extraSeedPaths: string[] = [],
   codePatternSet: CodePatternSet | undefined = "javascript",
 ): Set<string> {
-  if (codePatternSet === "python") return pythonConsumerReachablePaths(files);
+  if (codePatternSet === "python") return pythonReachableFrom(files, pythonModuleSeeds(files));
+  return javascriptReachableFrom(files, [...entrypointCandidates(packageJson), ...extraSeedPaths]);
+}
 
+// Files a consumer's install can execute *while installing*, as opposed to when
+// the consumer later requires or runs the package. Deliberately narrower than
+// `consumerReachablePaths`: declared entrypoints and bin targets run when
+// somebody chooses to run them, whereas an install hook runs on everyone who
+// takes the dependency, so rules that only make sense at install time (the
+// propagation family) gate on this set instead.
+export function installReachablePaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+  codePatternSet: CodePatternSet | undefined = "javascript",
+): Set<string> {
+  if (codePatternSet === "python") {
+    // pip executes an sdist's setup.py to install it; there is no manifest-
+    // declared hook to read, so the file itself is the install entrypoint.
+    return pythonReachableFrom(files, pythonSetupSeeds(files));
+  }
+  const seeds = lifecycleScriptSeedPaths(files, scripts, implicitScripts);
+  if (!seeds.length) return new Set();
+  return javascriptReachableFrom(files, seeds);
+}
+
+function javascriptReachableFrom(files: FileRecord[], seedCandidates: string[]): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
   for (const file of files) {
     byNormalizedPath.set(stripPackagePrefix(file.path), file);
   }
 
   const queue: string[] = [];
-  for (const candidate of [...entrypointCandidates(packageJson), ...extraSeedPaths]) {
+  for (const candidate of seedCandidates) {
     const resolved = resolveModulePath(candidate, byNormalizedPath);
     if (resolved) queue.push(resolved);
   }
@@ -73,14 +98,24 @@ export function consumerReachablePaths(
 // every non-test Python module as consumer-reachable, then follow its static
 // imports into test trees. This is deliberately conservative: an import edge
 // can only keep a finding loud, never hide one.
-function pythonConsumerReachablePaths(files: FileRecord[]): Set<string> {
+function pythonModuleSeeds(files: FileRecord[]): string[] {
+  return files
+    .map((file) => stripPackagePrefix(file.path))
+    .filter((path) => /\.py$/i.test(path) && !isTestPath(path));
+}
+
+function pythonSetupSeeds(files: FileRecord[]): string[] {
+  return files
+    .map((file) => stripPackagePrefix(file.path))
+    .filter((path) => path === "setup.py" || path.endsWith("/setup.py"));
+}
+
+function pythonReachableFrom(files: FileRecord[], seedPaths: string[]): Set<string> {
   const byNormalizedPath = new Map<string, FileRecord>();
-  const queue: string[] = [];
   for (const file of files) {
-    const path = stripPackagePrefix(file.path);
-    byNormalizedPath.set(path, file);
-    if (/\.py$/i.test(path) && !isTestPath(path)) queue.push(path);
+    byNormalizedPath.set(stripPackagePrefix(file.path), file);
   }
+  const queue = seedPaths.filter((path) => byNormalizedPath.has(path));
 
   const reachable = new Set<string>();
   while (queue.length) {

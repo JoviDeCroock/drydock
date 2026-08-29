@@ -85,6 +85,19 @@ export const DETERMINISTIC_RULES = {
   atpmProvenancePublisherMismatch: { id: "atpm.provenance-publisher-mismatch", risk: "anchor" },
   atpmTrustedPublishingLost: { id: "atpm.trusted-publishing-lost", risk: "anchor" },
   tarSuspiciousEntry: { id: "tar.suspicious-entry", risk: "anchor", standingDanger: true },
+  // Anchors, not capabilities: the propagation rules are already gated on
+  // install-time reachability, so each one is standalone evidence rather than a
+  // signal that needs a second capability beside it to mean anything.
+  propagationRegistryPublish: {
+    id: "propagation.registry-publish",
+    risk: "anchor",
+    standingDanger: true,
+  },
+  propagationPackageMutation: {
+    id: "propagation.package-mutation",
+    risk: "anchor",
+    standingDanger: true,
+  },
   releaseSourceDrift: { id: "release.source-drift", risk: "anchor" },
 } as const satisfies Record<string, DeterministicRuleSpec>;
 

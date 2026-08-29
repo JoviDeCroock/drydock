@@ -1,0 +1,57 @@
+{
+  "id": "legit-release-cli-publish",
+  "title": "Release CLI shells out to npm publish from its bin entry (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-release-tooling",
+  "source": "benign-popular",
+  "intent": "Publishing to a registry is what release tooling is for. This case pins the install-time gate on the propagation family: the publish call is reachable from bin, not from a lifecycle hook, so propagation.registry-publish must stay quiet and only the weak process-execution capability remains.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "relkit",
+    "version": "3.0.0",
+    "bin": {
+      "relkit": "cli.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "relkit",
+    "version": "3.1.0",
+    "bin": {
+      "relkit": "cli.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 61,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"relkit\",\"version\":\"3.0.0\",\"bin\":{\"relkit\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 250,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('node:child_process');\n// Release helper. A maintainer runs `relkit` by hand; nothing here is on an\n// install path, so npm never executes it for a consumer.\nexecSync('npm publish --access public', { stdio: 'inherit' });\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 61,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"relkit\",\"version\":\"3.1.0\",\"bin\":{\"relkit\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 250,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "const { execSync } = require('node:child_process');\n// Release helper. A maintainer runs `relkit` by hand; nothing here is on an\n// install path, so npm never executes it for a consumer.\nexecSync('npm publish --access public', { stdio: 'inherit' });\n"
+    }
+  ]
+}

