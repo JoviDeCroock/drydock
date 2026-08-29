@@ -147,6 +147,7 @@ export default function DashboardPage() {
       {workspaceLoaded ? (
         <>
           <DashboardOnboarding scans={scans} npm={npm} />
+          <NpmTokenStaleCallout npm={npm} />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
       ) : (
@@ -293,16 +294,8 @@ function RecentReviewsSection({
   const showNoOpenMessage = Boolean(
     discovery && !discoveryError && !discovery.created && !discovery.found,
   );
-  // Why "Check npm" is disabled, as text. It used to be a `title` tooltip only,
-  // which is invisible on touch and to keyboard users — the two audiences most
-  // likely to be stuck on a button that does nothing when pressed.
-  const discoveryBlockedReason = ready ? null : npmConnectionBlockedReason(npm.connection.value);
   const showDiscoveryFeedback = Boolean(
-    discoveryError ||
-    discoveryBlockedReason ||
-    showFreshness ||
-    showStartedMessage ||
-    showNoOpenMessage,
+    discoveryError || showFreshness || showStartedMessage || showNoOpenMessage,
   );
 
   return (
@@ -344,15 +337,6 @@ function RecentReviewsSection({
       {showDiscoveryFeedback ? (
         <div class="px-5 pb-4 flex flex-col gap-2">
           {discoveryError ? <Alert tone="critical">{discoveryError}</Alert> : null}
-          {discoveryBlockedReason ? (
-            <Muted class="text-[13px] m-0">
-              {discoveryBlockedReason}{" "}
-              <a href="/dashboard/settings?tab=integrations" class="underline">
-                Open settings
-              </a>
-              .
-            </Muted>
-          ) : null}
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
           {showStartedMessage && discovery ? (
             <Muted class="text-[13px] m-0">
@@ -514,12 +498,43 @@ function emptyStateMessage(filter: ScanDecisionFilter, hasAnyScan: boolean | nul
   }
 }
 
-// Two different problems wear the same disabled button, and the fix differs:
-// there is no token at all, or there is one npm has not accepted.
-function npmConnectionBlockedReason(connection: { validationStatus: string } | null): string {
-  return connection
-    ? "Check npm is unavailable: the stored npm token has not validated. Revalidate it in Settings → Integrations."
-    : "Check npm is unavailable until an npm token is connected in Settings → Integrations.";
+// A non-valid stored token is a failure, not a setup step, so it gets a callout
+// above the reviews box. Invalid tokens stop all discovery; unvalidated tokens
+// keep their scheduled retry while the on-demand action remains unavailable.
+function NpmTokenStaleCallout({
+  npm,
+}: {
+  npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
+}) {
+  return (
+    <Show<string | null>
+      when={() => {
+        const status = npm.connection.value?.validationStatus;
+        return status && status !== "valid" ? status : null;
+      }}
+    >
+      {(status) => (
+        <Alert tone="warn">
+          {status === "unvalidated" ? (
+            <>
+              <strong>Check npm is paused.</strong> The stored npm token has not validated, so
+              on-demand discovery is unavailable. Scheduled discovery will retry validation
+              automatically, or revalidate it now in{" "}
+            </>
+          ) : (
+            <>
+              <strong>npm discovery is paused.</strong> The stored npm token is invalid, so
+              &ldquo;Check npm&rdquo; and scheduled discovery are unavailable. Revalidate it in{" "}
+            </>
+          )}
+          <a class="underline text-accent" href="/dashboard/settings?tab=integrations">
+            Settings &rarr; Integrations
+          </a>
+          .
+        </Alert>
+      )}
+    </Show>
+  );
 }
 
 function formatStartedScanLabel(scan: { packageName: string | null; version: string | null }) {
