@@ -331,10 +331,11 @@ export function CodeBlock({
 
   const shellClass = "overflow-hidden rounded-md border border-border bg-surface-2";
 
-  /* One toolbar for both shapes: the optional file name or example title on
-     the left, the copy affordance on the right. The block's own text stays
-     selectable — copying a workflow file by hand means dragging across a
-     scrolling <pre>, which is where docs readers give up. */
+  /* One toolbar for an inline block and for the summary of a foldable one:
+     the file name or example title on the left, the copy affordance on the
+     right. The block's own text stays selectable — copying a workflow file by
+     hand means dragging across a scrolling <pre>, which is where docs readers
+     give up. */
   const toolbar = (
     <div class="px-4 py-2 border-b border-border flex items-center justify-between gap-3">
       <span class="flex min-w-0 items-center gap-2.5">

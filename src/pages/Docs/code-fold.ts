@@ -25,7 +25,7 @@ export function codeFold(source: string): CodeFold {
     return {
       foldable: false,
       lineCount: lines.length,
-      peekText: source,
+      peekText: lines.join("\n"),
       peekLineCount: lines.length,
       hiddenCount: 0,
     };

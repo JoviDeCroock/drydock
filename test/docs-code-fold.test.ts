@@ -29,5 +29,18 @@ describe("docs code fold", () => {
 
     expect(fold.foldable).toBe(false);
     expect(fold.lineCount).toBe(FOLD_MIN_LINES);
+    expect(fold.peekText).toBe(lines(FOLD_MIN_LINES));
+  });
+
+  test("pins the peek a workflow-sized snippet collapses to", () => {
+    const fold = codeFold(lines(30));
+
+    expect(fold).toEqual({
+      foldable: true,
+      lineCount: 30,
+      peekText: lines(6),
+      peekLineCount: 6,
+      hiddenCount: 24,
+    });
   });
 });
