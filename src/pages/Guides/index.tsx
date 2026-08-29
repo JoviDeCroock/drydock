@@ -55,6 +55,11 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         heading: "Drydock never receives the publish approval.",
         body: "The maintainer records a review decision, then completes or discards the stage through npm with npm's own 2FA step. Drydock needs read-only evidence access, not a token that can publish packages.",
       },
+      {
+        label: "The enforcement",
+        heading: "A trusted publisher can stage without being able to publish.",
+        body: "Staging is a review you choose to run until the registry stops accepting anything else. npm can grant a CI identity permission to stage a release and withhold permission to publish one; with tokens disallowed on the package, no credential exists that can make a version public without a human approving the stage. The candidate npm holds is the artifact that ships, so the reviewed bytes and the installed bytes are the same bytes.",
+      },
     ],
     close: {
       heading: "Stage your next npm publish.",

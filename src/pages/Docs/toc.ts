@@ -31,6 +31,7 @@ export const TOC: Array<{
     children: [
       { id: "staged-setup", label: "Connect npm" },
       { id: "staged-lifecycle", label: "Run a review" },
+      { id: "staged-enforcement", label: "Make staging mandatory" },
     ],
   },
   {

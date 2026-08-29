@@ -16,6 +16,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — shared GitHub Environment gate flow for PyPI, npm, and VS Code releases.
+- [`npm-staged-publishing.md`](./npm-staged-publishing.md) — restricting an npm trusted publisher to `npm stage publish` so CI can stage a candidate but never make it public, making the staged review unskippable rather than optional; includes how it compares with the workflow gate.
 - [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) — pinning npm trusted publishing (OIDC) to the gate environment so the reviewed workflow is the only credentialed publish path, plus what that does and does not stop.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
 - [`atpm-public-diff.md`](./atpm-public-diff.md) — the atpm ecosystem on `/diff`: AT Protocol resolution (handle → DID → PDS → record → blob), why it does not go through atpm.dev, the host policy that bounds publisher-named egress, and the record-vs-tarball findings.
