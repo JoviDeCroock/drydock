@@ -332,8 +332,12 @@ describe("gate-setup environment step", () => {
     const installation = await seedInstallation(organizationId);
     const methods: string[] = [];
     globalThis.fetch = githubDouble((request) => {
-      methods.push(`${request.method} ${new URL(request.url).pathname}`);
-      if (request.method === "GET") return new Response(null, { status: 404 });
+      const path = new URL(request.url).pathname;
+      methods.push(`${request.method} ${path}`);
+      if (request.method === "GET" && path.endsWith("/production")) {
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
       return Response.json({ name: "production" });
     });
 
@@ -349,6 +353,7 @@ describe("gate-setup environment step", () => {
     });
     expect(methods).toEqual([
       "GET /repos/octo/widgets/environments/production",
+      "GET /repos/octo/widgets/environments",
       "PUT /repos/octo/widgets/environments/production",
     ]);
     expect(await readGateSetupEvents(organizationId)).toMatchObject([
@@ -386,7 +391,11 @@ describe("gate-setup environment step", () => {
     const methods: string[] = [];
     globalThis.fetch = githubDouble((request) => {
       methods.push(request.method);
-      if (request.method === "GET") return new Response(null, { status: 404 });
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/production")) {
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
       return Response.json({ name: "production" });
     });
 
@@ -400,7 +409,7 @@ describe("gate-setup environment step", () => {
       expect(await res.json()).toMatchObject({
         step: { step: "environment", status: "created" },
       });
-      expect(methods).toEqual(["GET", "PUT"]);
+      expect(methods).toEqual(["GET", "GET", "PUT"]);
       expect(await readGateSetupEvents(organizationId)).toEqual([]);
     } finally {
       await env.DB.prepare(`DROP TRIGGER IF EXISTS ${triggerName}`).run();
@@ -430,14 +439,43 @@ describe("gate-setup environment step", () => {
     expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
+  test("does not update an environment when Actions read access is missing", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    const methods: string[] = [];
+    globalThis.fetch = githubDouble((request) => {
+      methods.push(request.method);
+      return new Response(null, { status: 404 });
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/environment",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      step: {
+        status: "failed",
+        failure: { code: "repository_not_accessible", message: expect.stringContaining("Actions") },
+      },
+    });
+    expect(methods).toEqual(["GET", "GET"]);
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
+  });
+
   test("degrades a 403 into an actionable manual fallback, not an error status", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    globalThis.fetch = githubDouble((request) =>
-      request.method === "GET"
-        ? new Response(null, { status: 404 })
-        : new Response("no", { status: 403 }),
-    );
+    globalThis.fetch = githubDouble((request) => {
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/production")) {
+        return new Response(null, { status: 404 });
+      }
+      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
+      return new Response("no", { status: 403 });
+    });
 
     const res = await call(
       buildTestApp(userId),
@@ -453,6 +491,25 @@ describe("gate-setup environment step", () => {
     expect(body.step.failure.code).toBe("permission_denied");
     expect(body.step.failure.manualFallback).toContain("Environments");
     expect(await readGateSetupEvents(organizationId)).toEqual([]);
+  });
+
+  test("degrades a GitHub transport failure into the manual fallback", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble(() => {
+      throw new Error("connection reset");
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/environment",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      step: { status: "failed", failure: { code: "github_unavailable" } },
+    });
   });
 });
 
@@ -527,6 +584,32 @@ describe("gate-setup protection rule step", () => {
     expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
+  test("does not add a rule when Actions read access is missing", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    const methods: string[] = [];
+    globalThis.fetch = githubDouble((request) => {
+      methods.push(request.method);
+      return new Response(null, { status: 404 });
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/protection-rule",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      step: {
+        status: "failed",
+        failure: { code: "repository_not_accessible", message: expect.stringContaining("Actions") },
+      },
+    });
+    expect(methods).toEqual(["GET", "GET"]);
+    expect(await readGateSetupEvents(organizationId)).toEqual([]);
+  });
+
   test("treats a 422 duplicate that re-reads as enabled as success", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
@@ -551,6 +634,25 @@ describe("gate-setup protection rule step", () => {
 
     expect(await res.json()).toMatchObject({
       step: { step: "protection_rule", status: "already_configured" },
+    });
+  });
+
+  test("degrades a GitHub transport failure into the manual fallback", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble(() => {
+      throw new Error("connection reset");
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/protection-rule",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      step: { status: "failed", failure: { code: "github_unavailable" } },
     });
   });
 });
@@ -703,6 +805,57 @@ describe("gate-setup pull request step", () => {
     expect(refCalls[0]).toMatch(/^create drydock\/workflow-gate-/);
     expect(refCalls[1]).toBe(refCalls[0].replace("create ", "delete "));
     expect(await readGateSetupEvents(organizationId)).toEqual([]);
+  });
+
+  test("cleans up the branch when the workflow write loses its connection", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = repoResponses({
+      "PUT /repos/octo/widgets/contents/.github/workflows/drydock-npm-release.yml": () => {
+        throw new Error("connection reset");
+      },
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/pull-request",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      step: { status: string; failure: { code: string } };
+      yaml: string;
+    };
+    expect(body.step).toMatchObject({ status: "failed", failure: { code: "github_unavailable" } });
+    expect(body.yaml).toContain('environment: "production"');
+    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
+  });
+
+  test("keeps the branch when pull-request creation has an ambiguous transport failure", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = repoResponses({
+      "POST /repos/octo/widgets/pulls": () => {
+        throw new Error("connection reset");
+      },
+    });
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/pull-request",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      step: { status: string; failure: { code: string; manualFallback: string } };
+      yaml: string;
+    };
+    expect(body.step).toMatchObject({ status: "failed", failure: { code: "github_unavailable" } });
+    expect(body.step.failure.manualFallback).toContain("open pull requests");
+    expect(body.yaml).toContain('environment: "production"');
+    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(0);
   });
 
   test("reports an existing workflow file as already_exists instead of overwriting it", async () => {
