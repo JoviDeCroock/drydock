@@ -11,7 +11,7 @@ import {
 type ScanDetail = NonNullable<Awaited<ReturnType<typeof getScan>>>;
 type EvidenceStatus = "complete" | "partial" | "unknown" | "conflicting" | "not_applicable";
 
-export const RELEASE_RECEIPT_SCHEMA = "drydock.release-receipt.v1";
+const RELEASE_RECEIPT_SCHEMA = "drydock.release-receipt.v1";
 
 export async function buildReleaseReceipt(
   detail: ScanDetail,
