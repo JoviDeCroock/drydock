@@ -371,6 +371,42 @@ describe("gate-setup environment step", () => {
     });
   });
 
+  test("preserves a successful external mutation when the audit insert fails", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    const triggerName = `reject_gate_setup_audit_${crypto.randomUUID().replace(/-/g, "_")}`;
+    await env.DB.prepare(`
+      CREATE TRIGGER ${triggerName}
+      BEFORE INSERT ON scan_events
+      WHEN NEW.type = 'github_app_gate_setup.environment_created'
+      BEGIN
+        SELECT RAISE(FAIL, 'forced gate setup audit failure');
+      END
+    `).run();
+    const methods: string[] = [];
+    globalThis.fetch = githubDouble((request) => {
+      methods.push(request.method);
+      if (request.method === "GET") return new Response(null, { status: 404 });
+      return Response.json({ name: "production" });
+    });
+
+    try {
+      const res = await call(
+        buildTestApp(userId),
+        "/api/v1/github-app/gate-setup/environment",
+        draft(installation.id),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        step: { step: "environment", status: "created" },
+      });
+      expect(methods).toEqual(["GET", "PUT"]);
+      expect(await readGateSetupEvents(organizationId)).toEqual([]);
+    } finally {
+      await env.DB.prepare(`DROP TRIGGER IF EXISTS ${triggerName}`).run();
+    }
+  });
+
   test("leaves an existing environment untouched", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
