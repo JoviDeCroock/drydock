@@ -44,7 +44,7 @@ export {
   selectAddedDependencies,
   selectBundledAddedDependencies,
 } from "./dependency-selection";
-export type { AddedDependency, DependencyDeclarationKind } from "./dependency-selection";
+export type { AddedDependency } from "./dependency-selection";
 
 /**
  * Synthetic file-label prefix for a dependency finding. The cited path is
@@ -108,7 +108,7 @@ export interface DependencyInstallObservation {
   dynamicInstallTarget?: true;
 }
 
-export type DependencyInspectionOutcome =
+type DependencyInspectionOutcome =
   | "inspected"
   | "unresolved-spec"
   | "not-found"

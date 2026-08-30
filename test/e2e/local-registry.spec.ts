@@ -7,6 +7,11 @@ const appPort = Number(process.env.E2E_APP_PORT || process.env.CONDUCTOR_PORT ||
 const registryUrl = process.env.E2E_NPM_REGISTRY || `http://127.0.0.1:${appPort + 1}`;
 const artifactsDir = path.resolve(".context/e2e-artifacts");
 const authStatePath = path.join(artifactsDir, "auth-state.json");
+// Manual scan creation is rate limited per organization (ORGANIZATION_SCAN_LIMIT
+// per hour), and the scenario suite makes more manual scans than one fresh org
+// is allowed. Scenarios alternate between two registered orgs so the suite can
+// grow without silently sitting at the production cap.
+const scenarioAuthStatePath = path.join(artifactsDir, "auth-state-scenarios.json");
 const journalPath = path.resolve(".context/e2e-registry/requests.jsonl");
 const scenariosRoot = path.resolve("test/e2e-fixtures/scenarios");
 const uiStageId = "stage-implicit-node-gyp-000001";
@@ -56,11 +61,13 @@ test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser, baseURL }) => {
   await mkdir(artifactsDir, { recursive: true });
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
-  await registerAndConnect(page);
-  await context.storageState({ path: authStatePath });
-  await context.close();
+  for (const statePath of [authStatePath, scenarioAuthStatePath]) {
+    const context = await browser.newContext({ baseURL });
+    const page = await context.newPage();
+    await registerAndConnect(page);
+    await context.storageState({ path: statePath });
+    await context.close();
+  }
 });
 
 test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseURL }) => {
@@ -159,9 +166,11 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
   }
 });
 
-for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
+const scenarioEntries = scenarios.filter((item) => item.stageId !== uiStageId);
+for (const [index, scenario] of scenarioEntries.entries()) {
   test(`scenario: ${scenario.name}`, async ({ browser, baseURL }) => {
-    const { context, page } = await openAuthenticatedPage(browser, baseURL);
+    const statePath = index % 2 === 0 ? authStatePath : scenarioAuthStatePath;
+    const { context, page } = await openAuthenticatedPage(browser, baseURL, statePath);
     try {
       await page.goto("/dashboard");
       await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
@@ -314,8 +323,9 @@ async function registerAndConnect(page: Page) {
 async function openAuthenticatedPage(
   browser: Browser,
   baseURL: string | undefined,
+  storageState: string = authStatePath,
 ): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext({ baseURL, storageState: authStatePath });
+  const context = await browser.newContext({ baseURL, storageState });
   const page = await context.newPage();
   return { context, page };
 }

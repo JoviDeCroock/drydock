@@ -438,7 +438,7 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
     MAX_RECORDED_DEPENDENCIES - findings.dependencyReview.dependencies.length,
   );
   try {
-    const inspected = redactJson(
+    return redactJson(
       await adapter.inspectAddedDependencies(ctx, {
         manifestDiff: diff.manifestDiff,
         stagedManifest: selectionOptions.stagedManifest,
@@ -448,25 +448,6 @@ async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
         organizationId: identity.organizationId,
       }),
     );
-    if ("dependencies" in inspected) return inspected;
-    const inspectedCount = inspected.evidence.filter(
-      (entry) => entry.outcome === "inspected",
-    ).length;
-    return {
-      status:
-        inspected.evidence.length === 0
-          ? "not-applicable"
-          : inspectedCount === inspected.evidence.length
-            ? "complete"
-            : "partial",
-      selectedCount: inspected.evidence.length,
-      inspectedCount,
-      uninspectableCount: inspected.evidence.length - inspectedCount,
-      omittedCount: 0,
-      dependencies: [],
-      evidence: inspected.evidence,
-      findings: inspected.findings,
-    };
   } catch (err) {
     emitOperationalEvent("warn", "scan.dependency_review.failed", {
       scanId: identity.scanId,

@@ -76,7 +76,7 @@ export interface ScanArtifactFindingRow {
     name: string;
     version: string | null;
     path: string;
-    section?: import("../../review").DependencySection;
+    section?: import("../../review/serialize").DependencySection;
     declaredSpec?: string;
   };
 }

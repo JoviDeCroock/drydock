@@ -176,15 +176,6 @@ function artifactFindingId(scanId: string, index: number): string {
 // derived finding id so the annotation join matches the rows we hand back.
 // Returns null only when the findings array is structurally invalid — an empty
 // array (a clean scan) is valid and yields no findings.
-export function parseReportFindings(
-  text: string,
-  scanId: string,
-): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
-  const parsed = parseJsonObject(text);
-  if (!parsed) return null;
-  return parseReportFindingsObject(parsed, scanId);
-}
-
 function parseReportFindingsObject(
   parsed: Record<string, unknown>,
   scanId: string,
