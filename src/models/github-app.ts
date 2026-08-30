@@ -1,4 +1,9 @@
 import { computed, createModel, signal } from "@preact/signals";
+import type { ReleaseAuthorityDelta } from "../../server/lib/release-authority/delta";
+import type {
+  AuthorityWorkflowRef,
+  ReleaseAuthorityRun,
+} from "../../server/lib/release-authority/snapshot";
 import { ApiError, apiFetch, apiJson, errorMessage } from "./api";
 
 export type InstallationStatus = "active" | "suspended" | "uninstalled";
@@ -73,14 +78,43 @@ export interface PublicWorkflowGate {
   updatedAt: string;
 }
 
+// The gate's release-authority delta plus whether the org's policy holds a
+// release until an authority change is explicitly accepted.
+export interface GateReleaseAuthority {
+  capturedAt: string;
+  runId: number;
+  workflowPath: string | null;
+  headSha: string | null;
+  artifactBindingDigest: string | null;
+  approvedAt: string | null;
+  acknowledgementToken: string | null;
+  delta: ReleaseAuthorityDelta | null;
+  workflows: AuthorityWorkflowRef[];
+  run: ReleaseAuthorityRun | null;
+}
+
+export interface WorkflowGateWithAuthority {
+  gate: PublicWorkflowGate;
+  releaseAuthority: GateReleaseAuthority | null;
+  organizationRequiresAuthorityApproval: boolean;
+}
+
 // Returns null when no gate is mapped to the scan (404) so callers can treat a
 // plain manual/auto-discovery scan and a not-yet-loaded gate the same way.
-export async function getWorkflowGateByScan(scanId: string): Promise<PublicWorkflowGate | null> {
+export async function getWorkflowGateByScan(
+  scanId: string,
+): Promise<WorkflowGateWithAuthority | null> {
   try {
-    const data = await apiFetch<{ gate: PublicWorkflowGate }>(
-      `/api/v1/github-app/workflow-gates/by-scan/${encodeURIComponent(scanId)}`,
-    );
-    return data.gate;
+    const data = await apiFetch<{
+      gate: PublicWorkflowGate;
+      releaseAuthority?: GateReleaseAuthority | null;
+      organizationRequiresAuthorityApproval?: boolean;
+    }>(`/api/v1/github-app/workflow-gates/by-scan/${encodeURIComponent(scanId)}`);
+    return {
+      gate: data.gate,
+      releaseAuthority: data.releaseAuthority ?? null,
+      organizationRequiresAuthorityApproval: data.organizationRequiresAuthorityApproval === true,
+    };
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
@@ -96,15 +130,28 @@ export function decideWorkflowGate(
   decision: WorkflowGateDecision,
   comment: string | null,
   totpCode?: string | null,
+  acknowledgeAuthorityChange?: boolean,
+  authorityAcknowledgementToken?: string | null,
 ): Promise<{ gate: PublicWorkflowGate }> {
   const payload: {
     scanId: string;
     decision: WorkflowGateDecision;
     comment?: string;
     totpCode?: string;
+    acknowledgeAuthorityChange?: boolean;
+    authorityAcknowledgementToken?: string;
   } = { scanId, decision };
   if (comment) payload.comment = comment;
   if (totpCode) payload.totpCode = totpCode;
+  if (acknowledgeAuthorityChange) {
+    payload.acknowledgeAuthorityChange = true;
+  }
+  // Every approval carries the evidence revision shown by the gate lookup.
+  // Explicit acknowledgement remains policy-dependent, but an approval must
+  // never silently bind a delta that appeared only after the page loaded.
+  if (authorityAcknowledgementToken) {
+    payload.authorityAcknowledgementToken = authorityAcknowledgementToken;
+  }
   return apiJson<{ gate: PublicWorkflowGate }>(
     `/api/v1/github-app/workflow-gates/${encodeURIComponent(gateId)}/decision`,
     payload,
@@ -130,6 +177,42 @@ export function decideWorkflowGate(
       throw new ApiError(
         "Your organization requires two-factor authentication to decide releases. Enable it in Settings, then try again.",
         403,
+        err.detail,
+        err.code,
+      );
+    }
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.code === "authority_assessment_required"
+    ) {
+      throw new ApiError(
+        "Release-authority evidence is unavailable. Retry the review before approving, or reject the release.",
+        409,
+        err.detail,
+        err.code,
+      );
+    }
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.code === "authority_change_acknowledgement_required"
+    ) {
+      throw new ApiError(
+        "This release's publishing authority changed since the last approved release. Review the release-authority delta and confirm the change to approve.",
+        409,
+        err.detail,
+        err.code,
+      );
+    }
+    if (
+      err instanceof ApiError &&
+      err.status === 409 &&
+      err.code === "authority_baseline_changed"
+    ) {
+      throw new ApiError(
+        "The approved release-authority baseline changed while this decision was being submitted. Review the refreshed evidence and submit again.",
+        409,
         err.detail,
         err.code,
       );

@@ -10,6 +10,7 @@ export interface Organization {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  requireAuthorityChangeApproval: boolean;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -190,6 +191,27 @@ export const OrganizationModel = createModel(() => {
         return true;
       } catch (err) {
         this.error.value = releaseTwoFactorErrorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    // Org policy: hold a release gate whose publishing authority changed since
+    // the last approved baseline until a maintainer explicitly accepts it.
+    async setAuthorityChangeApproval(organizationId: string, enabled: boolean): Promise<boolean> {
+      this.status.value = "updating";
+      this.error.value = null;
+      try {
+        await apiJson<{ requireAuthorityChangeApproval: boolean }>(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/authority-change-approval`,
+          { enabled },
+          { method: "PUT" },
+        );
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = errorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

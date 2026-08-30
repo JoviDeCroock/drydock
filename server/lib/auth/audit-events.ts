@@ -73,6 +73,14 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release gate expired without a decision",
     severity: "security",
   },
+  "github_workflow_gate.authority_captured": {
+    category: "release_decision",
+    label: "Release authority captured",
+    // `changed` means the authority to publish differs from the last approved
+    // release, which is the state a maintainer has to actively accept.
+    severity: "notice",
+    summarize: (m) => str(m.status),
+  },
 
   // ── Members ──────────────────────────────────────────────────────────────
   "organization.member_invited": {
@@ -133,6 +141,12 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release two-factor policy changed",
     severity: "security",
     summarize: (m) => (m.enabled ? "required" : "not required"),
+  },
+  "organization.authority_change_approval_changed": {
+    category: "security",
+    label: "Release authority policy changed",
+    severity: "security",
+    summarize: (m) => (m.enabled ? "held on change" : "not held"),
   },
   "npm_connection.token_expired": {
     category: "security",

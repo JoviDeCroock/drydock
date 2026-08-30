@@ -37,10 +37,23 @@ export interface PreparedGatePackage {
   packageAdapter: PackageAdapter<unknown, AdapterBroker>;
 }
 
+/**
+ * A reviewed artifact reduced to what the release-authority record needs: the
+ * bundle path, its ecosystem kind, and the digest the control plane recomputed
+ * from the downloaded bytes. This is what an approval is bound to.
+ */
+export interface PreparedGateArtifactRef {
+  path: string;
+  kind: string;
+  sha256: string;
+}
+
 export interface PreparedGateRelease {
   gate: WorkflowGateRecord;
   /** One entry per distinct package the bundle publishes (≥ 1). */
   packages: PreparedGatePackage[];
+  /** Every reviewed artifact in the bundle, across packages and ecosystems. */
+  artifacts: PreparedGateArtifactRef[];
 }
 
 /**
@@ -151,8 +164,8 @@ export async function prepareReleaseCandidatesForGate(
         return adapter?.narrowParsedArtifact?.(resolved, retainedSamples) ?? resolved;
       },
     );
-    const packages = prepareBundlePackages(bundle.artifacts);
-    return { gate, packages };
+    const { packages, artifacts } = prepareBundlePackages(bundle.artifacts);
+    return { gate, packages, artifacts };
   } catch (err) {
     const reason =
       err instanceof WorkflowArtifactError
@@ -238,7 +251,10 @@ function resolveBundleClassifier(
  * ecosystem's adapter split its slice into one prepared candidate per distinct
  * package.
  */
-function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePackage[] {
+function prepareBundlePackages(resolved: ParsedGateArtifact[]): {
+  packages: PreparedGatePackage[];
+  artifacts: PreparedGateArtifactRef[];
+} {
   const byEcosystem = new Map<string, ParsedGateArtifact[]>();
   for (const artifact of resolved) {
     const slice = byEcosystem.get(artifact.ecosystem);
@@ -254,7 +270,14 @@ function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePack
       packages.push({ candidate, packageAdapter: adapter.packageAdapter });
     }
   }
-  return packages;
+  // The reviewed artifact set, flattened across ecosystems. The release-authority
+  // record binds an approval to exactly these digests.
+  const artifactRefs = resolved.map((artifact) => ({
+    path: artifact.path,
+    kind: artifact.kind,
+    sha256: artifact.sha256,
+  }));
+  return { packages, artifacts: artifactRefs };
 }
 
 async function markGateErroredSafe(db: AppDb, gateId: string, reason: string): Promise<void> {

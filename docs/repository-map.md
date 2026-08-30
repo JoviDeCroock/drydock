@@ -14,6 +14,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/public-diff/` owns anonymous `/diff` orchestration and `PublicDiffAdapter`. The atpm ecosystem resolves releases over AT Protocol; see `atpm-public-diff.md`.
 - `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.
+- `server/lib/release-authority/` owns bounded workflow-YAML parsing, release-authority snapshots and deltas, and gate capture; see `release-authority.md`.
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.

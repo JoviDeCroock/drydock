@@ -1,0 +1,528 @@
+import { and, desc, eq, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { type AppDb } from "./client";
+import { githubWorkflowGates, releaseAuthoritySnapshots } from "./schema";
+import {
+  type AuthorityBaselineRef,
+  computeReleaseAuthorityDelta,
+  type ReleaseAuthorityDelta,
+} from "../lib/release-authority/delta";
+import { normalizeReleaseAuthorityDelta } from "../lib/release-authority/normalize-delta";
+import { normalizeReleaseAuthoritySnapshot } from "../lib/release-authority/normalize";
+import type { ReleaseAuthoritySnapshot } from "../lib/release-authority/snapshot";
+import { sha256Hex } from "../lib/platform/crypto-utils";
+import { stableJson } from "../lib/platform/stable-json";
+
+export interface ReleaseAuthorityRecord {
+  id: string;
+  organizationId: string;
+  releaseTargetId: string;
+  gateId: string;
+  runId: number;
+  workflowPath: string;
+  headSha: string | null;
+  snapshot: ReleaseAuthoritySnapshot | null;
+  delta: ReleaseAuthorityDelta | null;
+  approvedAt: Date | null;
+  approvedByUserId: string | null;
+  artifactBindingDigest: string | null;
+  createdAt: Date;
+}
+
+export interface RecordAuthoritySnapshotInput {
+  organizationId: string;
+  releaseTargetId: string;
+  gateId: string;
+  runId: number;
+  workflowPath: string | null;
+  headSha: string | null;
+  snapshot: ReleaseAuthoritySnapshot;
+  delta: ReleaseAuthorityDelta;
+  artifactBindingDigest: string | null;
+}
+
+/**
+ * Persist (or replace) the authority record for one gate. A gate is reviewed at
+ * most once, but a retried review batch re-captures the snapshot, so this
+ * overwrites by gate rather than accumulating rows. The approval fields are
+ * deliberately reset on re-capture: an approval belongs to the exact snapshot
+ * that was shown to the maintainer.
+ */
+export async function recordReleaseAuthoritySnapshot(
+  db: AppDb,
+  input: RecordAuthoritySnapshotInput,
+): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(releaseAuthoritySnapshots)
+    .values({
+      id: crypto.randomUUID(),
+      organizationId: input.organizationId,
+      releaseTargetId: input.releaseTargetId,
+      gateId: input.gateId,
+      runId: input.runId,
+      workflowPath: input.workflowPath ?? "",
+      headSha: input.headSha,
+      snapshotJson: input.snapshot,
+      deltaJson: input.delta,
+      approvedAt: null,
+      approvedByUserId: null,
+      artifactBindingDigest: input.artifactBindingDigest,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: releaseAuthoritySnapshots.gateId,
+      set: {
+        runId: input.runId,
+        workflowPath: input.workflowPath ?? "",
+        headSha: input.headSha,
+        snapshotJson: input.snapshot,
+        deltaJson: input.delta,
+        approvedAt: null,
+        approvedByUserId: null,
+        artifactBindingDigest: input.artifactBindingDigest,
+        updatedAt: now,
+      },
+    });
+}
+
+/** Remove one gate's unapproved capture before a retry replaces its evidence. */
+export async function deleteReleaseAuthorityForGate(
+  db: AppDb,
+  input: { organizationId: string; gateId: string },
+): Promise<void> {
+  await db
+    .delete(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        isNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    );
+}
+
+export async function getReleaseAuthorityForGate(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<ReleaseAuthorityRecord | null> {
+  const [row] = await db
+    .select()
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.gateId, gateId),
+        eq(releaseAuthoritySnapshots.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row ? readRow(row) : null;
+}
+
+/**
+ * Recompute a pending gate's delta against the baseline that is approved now,
+ * not merely the one that existed when the review batch was captured. Pending
+ * releases can overlap; without this refresh an older `unchanged` delta could
+ * be approved after another gate moved the baseline.
+ */
+export async function refreshReleaseAuthorityDeltaForGate(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<ReleaseAuthorityRecord | null> {
+  // A revision can move between any two D1 reads. Retry a bounded number of
+  // times when the write fence loses; an approval caller also carries its own
+  // outer revision guard, so sustained churn still fails closed at finalization.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const record = await getReleaseAuthorityForGate(db, organizationId, gateId);
+    if (!record?.snapshot) return record;
+    const [gate] = await db
+      .select({ status: githubWorkflowGates.status })
+      .from(githubWorkflowGates)
+      .where(
+        and(
+          eq(githubWorkflowGates.id, gateId),
+          eq(githubWorkflowGates.organizationId, organizationId),
+        ),
+      )
+      .limit(1);
+    if (gate?.status !== "pending") return record;
+
+    const expectedLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      excludeGateId: gateId,
+    });
+    const baseline = await findApprovedAuthorityBaseline(db, {
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      workflowPath: record.snapshot.run.workflowPath,
+      excludeGateId: gateId,
+    });
+    const readableBaseline = baseline?.snapshot
+      ? { snapshot: baseline.snapshot, ref: baseline.ref }
+      : null;
+    const approvedReleasePaths = baseline
+      ? []
+      : await listApprovedReleasePaths(db, {
+          organizationId,
+          releaseTargetId: record.releaseTargetId,
+          excludeGateId: gateId,
+          excludeWorkflowPath: record.snapshot.run.workflowPath,
+        });
+    const delta = computeReleaseAuthorityDelta(record.snapshot, readableBaseline, {
+      approvedReleasePaths,
+      unreadableBaseline: baseline?.snapshot ? undefined : baseline?.ref,
+    });
+    const revisionCondition = latestApprovedAuthorityRevisionCondition({
+      organizationId,
+      releaseTargetId: record.releaseTargetId,
+      excludeGateId: gateId,
+      expectedLatestApprovedSnapshotId,
+    });
+
+    if (stableJson(delta) === stableJson(record.delta)) {
+      const currentLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
+        organizationId,
+        releaseTargetId: record.releaseTargetId,
+        excludeGateId: gateId,
+      });
+      if (currentLatestApprovedSnapshotId === expectedLatestApprovedSnapshotId) {
+        return { ...record, delta };
+      }
+      continue;
+    }
+
+    const updated = await db
+      .update(releaseAuthoritySnapshots)
+      .set({ deltaJson: delta, updatedAt: new Date() })
+      .where(
+        and(
+          eq(releaseAuthoritySnapshots.id, record.id),
+          eq(releaseAuthoritySnapshots.organizationId, organizationId),
+          eq(releaseAuthoritySnapshots.gateId, gateId),
+          revisionCondition,
+          sql`exists (
+            select 1
+            from ${githubWorkflowGates}
+            where ${githubWorkflowGates.id} = ${gateId}
+              and ${githubWorkflowGates.organizationId} = ${organizationId}
+              and ${githubWorkflowGates.status} = 'pending'
+          )`,
+        ),
+      )
+      .returning({ id: releaseAuthoritySnapshots.id });
+    if (updated.length > 0) return { ...record, delta };
+  }
+
+  // The gate finalized, the evidence row disappeared, or approvals kept moving
+  // through every retry. Return only what is durable; approval finalization's
+  // independent revision guard rejects the latter case conservatively.
+  return getReleaseAuthorityForGate(db, organizationId, gateId);
+}
+
+/**
+ * Prepare the authority evidence and revision guard for one approval attempt.
+ * The revision is read before refreshing the delta: if another gate is
+ * approved between those reads, the final CAS rejects conservatively rather
+ * than binding a fresh revision to a stale comparison.
+ *
+ * This guard is evidence integrity, not policy enforcement. It applies even
+ * when the organization does not require an explicit acknowledgement, because
+ * the durable report must still compare against the latest approved baseline.
+ */
+export async function prepareReleaseAuthorityApproval(
+  db: AppDb,
+  input: { organizationId: string; releaseTargetId: string; gateId: string },
+): Promise<{
+  record: ReleaseAuthorityRecord | null;
+  expectedLatestApprovedSnapshotId: string | null | undefined;
+}> {
+  const expectedLatestApprovedSnapshotId = await findLatestApprovedAuthoritySnapshotId(db, {
+    organizationId: input.organizationId,
+    releaseTargetId: input.releaseTargetId,
+    excludeGateId: input.gateId,
+  });
+  const record = await refreshReleaseAuthorityDeltaForGate(db, input.organizationId, input.gateId);
+  return {
+    record,
+    // A missing/unreadable delta cannot be revision-bound. The UI and report
+    // surface it as not assessed rather than pretending it was compared.
+    expectedLatestApprovedSnapshotId: record?.delta ? expectedLatestApprovedSnapshotId : undefined,
+  };
+}
+
+/** Opaque binding between a UI acknowledgement and the exact delta it showed. */
+export async function releaseAuthorityAcknowledgementToken(
+  record: ReleaseAuthorityRecord | null,
+): Promise<string | null> {
+  if (!record?.delta) return null;
+  return sha256Hex(stableJson({ snapshotId: record.id, delta: record.delta }));
+}
+
+export interface BaselineLookupInput {
+  organizationId: string;
+  releaseTargetId: string;
+  workflowPath: string | null;
+  /** The gate being reviewed, so a re-run never compares against itself. */
+  excludeGateId: string;
+}
+
+export interface ApprovedAuthorityBaseline {
+  /** Null means the approved row exists but its persisted snapshot is unreadable. */
+  snapshot: ReleaseAuthoritySnapshot | null;
+  ref: AuthorityBaselineRef;
+}
+
+interface LatestApprovedAuthorityRevisionConditionInput {
+  organizationId: string;
+  releaseTargetId: string;
+  excludeGateId: string;
+  expectedLatestApprovedSnapshotId: string | null;
+}
+
+/**
+ * SQL predicate that fences a write to the latest approved authority revision
+ * its caller already read. Both pending-delta refreshes and final gate approval
+ * use this exact ordering so neither can commit evidence computed against a
+ * baseline another overlapping release has since replaced.
+ */
+export function latestApprovedAuthorityRevisionCondition(
+  input: LatestApprovedAuthorityRevisionConditionInput,
+): SQL {
+  return input.expectedLatestApprovedSnapshotId === null
+    ? sql`not exists (
+        select 1
+        from ${releaseAuthoritySnapshots}
+        where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
+          and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.releaseTargetId}
+          and ${releaseAuthoritySnapshots.gateId} <> ${input.excludeGateId}
+          and ${releaseAuthoritySnapshots.approvedAt} is not null
+      )`
+    : sql`${input.expectedLatestApprovedSnapshotId} = (
+        select ${releaseAuthoritySnapshots.id}
+        from ${releaseAuthoritySnapshots}
+        where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
+          and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.releaseTargetId}
+          and ${releaseAuthoritySnapshots.gateId} <> ${input.excludeGateId}
+          and ${releaseAuthoritySnapshots.approvedAt} is not null
+        order by ${releaseAuthoritySnapshots.approvedAt} desc, ${releaseAuthoritySnapshots.id} desc
+        limit 1
+      )`;
+}
+
+/**
+ * Revision of the approved authority state for one release target. Read before
+ * refreshing a pending delta, then checked again by the atomic gate-finalize
+ * batch. Any overlapping approval changes this id and invalidates the stale
+ * decision, including an approval on another release path that can affect the
+ * no-baseline/new-path comparison.
+ */
+export async function findLatestApprovedAuthoritySnapshotId(
+  db: AppDb,
+  input: { organizationId: string; releaseTargetId: string; excludeGateId: string },
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: releaseAuthoritySnapshots.id })
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.releaseTargetId, input.releaseTargetId),
+        ne(releaseAuthoritySnapshots.gateId, input.excludeGateId),
+        isNotNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    )
+    .orderBy(desc(releaseAuthoritySnapshots.approvedAt), desc(releaseAuthoritySnapshots.id))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * The most recently approved row for the same release boundary, or null. The
+ * row's snapshot remains null when persisted data cannot be decoded so callers
+ * can hold the release instead of mistaking unreadable history for no history.
+ *
+ * Only approved snapshots are eligible. A release that was reviewed but never
+ * decided — or one that was rejected — must not become the thing the next
+ * release is measured against, or a rejected authority change would launder
+ * itself into the baseline.
+ */
+export async function findApprovedAuthorityBaseline(
+  db: AppDb,
+  input: BaselineLookupInput,
+): Promise<ApprovedAuthorityBaseline | null> {
+  const [row] = await db
+    .select()
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.releaseTargetId, input.releaseTargetId),
+        eq(releaseAuthoritySnapshots.workflowPath, input.workflowPath ?? ""),
+        ne(releaseAuthoritySnapshots.gateId, input.excludeGateId),
+        isNotNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    )
+    // Match the revision lookup's total ordering so an acknowledgement cannot
+    // name one latest snapshot while its delta was computed against another
+    // approval recorded in the same millisecond.
+    .orderBy(desc(releaseAuthoritySnapshots.approvedAt), desc(releaseAuthoritySnapshots.id))
+    .limit(1);
+  if (!row) return null;
+  const record = readRow(row);
+  return {
+    snapshot: record.snapshot,
+    ref: {
+      snapshotId: record.id,
+      gateId: record.gateId,
+      runId: record.runId,
+      headSha: record.headSha,
+      approvedAt: record.approvedAt ? record.approvedAt.toISOString() : null,
+    },
+  };
+}
+
+/**
+ * How many distinct approved release paths are worth carrying into a delta. A
+ * target with more publish workflows than this has already made the point.
+ */
+const MAX_APPROVED_RELEASE_PATHS = 16;
+
+/**
+ * The distinct entry-workflow paths this release target has already published
+ * through under an approved authority, excluding the gate being reviewed and
+ * the path it arrived on.
+ *
+ * Baselines are per release path, so a release arriving on a path with no
+ * history finds nothing to compare against. That is genuinely neutral on a
+ * target's first release and a real signal on a target with history — someone
+ * added a second way to publish. This is the lookup that tells the two apart;
+ * without it both collapse into `no_baseline`, which reads as "first release
+ * here" and asks for no acknowledgement.
+ */
+export async function listApprovedReleasePaths(
+  db: AppDb,
+  input: {
+    organizationId: string;
+    releaseTargetId: string;
+    excludeGateId: string;
+    excludeWorkflowPath: string | null;
+  },
+): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ workflowPath: releaseAuthoritySnapshots.workflowPath })
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+        eq(releaseAuthoritySnapshots.releaseTargetId, input.releaseTargetId),
+        ne(releaseAuthoritySnapshots.gateId, input.excludeGateId),
+        ne(releaseAuthoritySnapshots.workflowPath, input.excludeWorkflowPath ?? ""),
+        isNotNull(releaseAuthoritySnapshots.approvedAt),
+      ),
+    )
+    .limit(MAX_APPROVED_RELEASE_PATHS);
+  // The empty path is "the run reported no entry workflow", not a release path
+  // anyone approved travelling through.
+  return rows
+    .map((row) => row.workflowPath)
+    .filter((path) => path.length > 0)
+    .sort();
+}
+
+/**
+ * Record that a maintainer accepted this release's authority. Called when the
+ * gate as a whole is approved, which is the point the held deployment is
+ * released — so the accepted snapshot is exactly the authority that published.
+ */
+export async function markAuthoritySnapshotApproved(
+  db: AppDb,
+  input: { organizationId: string; gateId: string; approvedByUserId: string | null },
+): Promise<void> {
+  const now = new Date();
+  const [snapshot] = await db
+    .select({ releaseTargetId: releaseAuthoritySnapshots.releaseTargetId })
+    .from(releaseAuthoritySnapshots)
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!snapshot) return;
+  await db
+    .update(releaseAuthoritySnapshots)
+    .set({
+      approvedAt: nextReleaseAuthorityApprovalTimestamp({
+        organizationId: input.organizationId,
+        releaseTargetId: snapshot.releaseTargetId,
+        wallClock: now,
+      }),
+      approvedByUserId: input.approvedByUserId,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(releaseAuthoritySnapshots.gateId, input.gateId),
+        eq(releaseAuthoritySnapshots.organizationId, input.organizationId),
+      ),
+    );
+}
+
+/**
+ * Assign approvals a strict per-target order even when the wall clock only has
+ * millisecond precision. The expression runs inside the approving update, so
+ * D1 serialization makes every later approval advance the revision fence.
+ */
+export function nextReleaseAuthorityApprovalTimestamp(input: {
+  organizationId: string;
+  releaseTargetId: string;
+  wallClock: Date;
+}): SQL<Date> {
+  const wallClockMs = input.wallClock.getTime();
+  return sql<Date>`max(
+    ${wallClockMs},
+    coalesce((
+      select max(${releaseAuthoritySnapshots.approvedAt}) + 1
+      from ${releaseAuthoritySnapshots}
+      where ${releaseAuthoritySnapshots.organizationId} = ${input.organizationId}
+        and ${releaseAuthoritySnapshots.releaseTargetId} = ${input.releaseTargetId}
+        and ${releaseAuthoritySnapshots.approvedAt} is not null
+    ), ${wallClockMs})
+  )`;
+}
+
+function readRow(row: {
+  id: string;
+  organizationId: string;
+  releaseTargetId: string;
+  gateId: string;
+  runId: number;
+  workflowPath: string;
+  headSha: string | null;
+  snapshotJson: unknown;
+  deltaJson: unknown;
+  approvedAt: Date | string | number | null;
+  approvedByUserId: string | null;
+  artifactBindingDigest: string | null;
+  createdAt: Date | string | number;
+}): ReleaseAuthorityRecord {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    releaseTargetId: row.releaseTargetId,
+    gateId: row.gateId,
+    runId: row.runId,
+    workflowPath: row.workflowPath,
+    headSha: row.headSha,
+    snapshot: normalizeReleaseAuthoritySnapshot(row.snapshotJson),
+    delta: normalizeReleaseAuthorityDelta(row.deltaJson),
+    approvedAt: row.approvedAt ? new Date(row.approvedAt) : null,
+    approvedByUserId: row.approvedByUserId,
+    artifactBindingDigest: row.artifactBindingDigest,
+    createdAt: new Date(row.createdAt),
+  };
+}

@@ -27,6 +27,7 @@ import {
   emitOperationalEvent,
 } from "./platform/observability";
 import { recordProductEvent } from "./platform/analytics";
+import { captureReleaseAuthority } from "./release-authority/capture";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -251,6 +252,24 @@ export async function executeWorkflowGateJob(
     return;
   }
 
+  // Snapshot the release authority alongside the package review: which workflow
+  // definitions were allowed to publish this release, and how that compares to
+  // the last approved baseline. Best effort by construction — a capture failure
+  // records no row and never blocks the review (see `captureReleaseAuthority`).
+  const installationExternalId = await getInstallationExternalId(
+    db,
+    gate.installationRowId,
+    organizationId,
+  );
+  const authorityDelta = installationExternalId
+    ? await captureReleaseAuthority(db, {
+        config,
+        gate,
+        installationExternalId,
+        artifacts: prepared.artifacts,
+      })
+    : null;
+
   let reviewed: ReviewedPackage[];
   try {
     // A retried batch (a prior attempt released its claim mid-flight) discards
@@ -302,6 +321,10 @@ export async function executeWorkflowGateJob(
       recommendation,
       releaseRisk: aggregateReleaseRisk,
       packageCount: reviewed.length,
+      // Advisory context on the review event; the authority record itself is
+      // the authoritative copy and is never folded into the risk grade.
+      authorityStatus: authorityDelta?.status ?? "not_captured",
+      authorityChangeCount: authorityDelta?.changeCount ?? 0,
       packages: reviewed.map((pkg) => ({
         scanId: pkg.scanId,
         packageName: pkg.packageName,

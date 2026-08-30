@@ -12,6 +12,7 @@ export {
   scanMatchesDecisionFilter,
   type DecisionStatus,
   type DeleteStatus,
+  type PersistedReleaseAuthority,
   type PersistedScanDetail,
   type PublicShareInfo,
   type ScanCompareResponse,
