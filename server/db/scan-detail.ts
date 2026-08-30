@@ -14,7 +14,7 @@ import {
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
 import { scanEvents, scans } from "./schema";
 
-export type ScanDetailFileMode = "samples" | "list" | "omit";
+type ScanDetailFileMode = "samples" | "list" | "omit";
 
 interface GetScanOptions {
   files?: ScanDetailFileMode;
