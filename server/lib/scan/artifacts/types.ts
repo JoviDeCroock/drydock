@@ -10,6 +10,7 @@ import {
   type FileRecord,
   type FindingDiffAnnotation,
 } from "../../review";
+import type { DependencySection } from "../../review/serialize";
 import { SCAN_FILE_SAMPLE_LIMIT } from "../../sample-retention";
 
 export const SCAN_ARTIFACT_STORAGE_VERSION = 1;
@@ -76,7 +77,7 @@ export interface ScanArtifactFindingRow {
     name: string;
     version: string | null;
     path: string;
-    section?: import("../../review/serialize").DependencySection;
+    section?: DependencySection;
     declaredSpec?: string;
   };
 }
