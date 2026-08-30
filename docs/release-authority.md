@@ -197,6 +197,10 @@ authorized, and the delta never modifies risk levels or deterministic findings.
   repository identities are aliased, actor logins and the approver id export as
   null, and the baseline keeps only `{ present: true }`. See
   [`public-reports.md`](./public-reports.md).
+- **`drydock.release-receipt.v1`** — the authenticated release receipt carries
+  an `evidence.releaseAuthority` reference (record id, delta outcome, artifact
+  binding, approval time) when a record exists; the field is absent otherwise.
+  See [`release-receipts.md`](./release-receipts.md).
 - **Settings → Release security** — the owner-only policy toggle.
 - **Events** — `github_workflow_gate.authority_captured`, and a verified
   `authorityChangeAcknowledged` on the gate decision event (true only for an
