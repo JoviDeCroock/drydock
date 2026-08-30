@@ -148,27 +148,27 @@ async function seedCompletedScan(
       ...(publishedPair
         ? { stagedPublish: publishedPair }
         : !gateEcosystem
-        ? {
-            stagedPublish: {
-              ...(options.tag ? { tag: options.tag } : {}),
-              artifactIntegrity:
-                options.artifactIntegrityStatus === "unverified"
-                  ? {
-                      algorithm: "sha1",
-                      status: "unverified",
-                      declared: artifactSha1,
-                      computed: null,
-                      reason: "computed-digest-unavailable",
-                    }
-                  : {
-                      algorithm: "sha1",
-                      status: "verified",
-                      declared: artifactSha1,
-                      computed: artifactSha1,
-                    },
-            },
-          }
-        : {}),
+          ? {
+              stagedPublish: {
+                ...(options.tag ? { tag: options.tag } : {}),
+                artifactIntegrity:
+                  options.artifactIntegrityStatus === "unverified"
+                    ? {
+                        algorithm: "sha1",
+                        status: "unverified",
+                        declared: artifactSha1,
+                        computed: null,
+                        reason: "computed-digest-unavailable",
+                      }
+                    : {
+                        algorithm: "sha1",
+                        status: "verified",
+                        declared: artifactSha1,
+                        computed: artifactSha1,
+                      },
+              },
+            }
+          : {}),
       ...(gateEcosystem
         ? {
             stagedPublish: {
