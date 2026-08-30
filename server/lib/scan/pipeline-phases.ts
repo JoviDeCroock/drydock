@@ -331,7 +331,8 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   diff.stagedManifestText = null;
 
   // Deliberately AFTER the release. The dependency pass makes bounded network
-  // calls (up to a 20s budget), and it needs only the redacted manifest diff —
+  // calls (see DEPENDENCY_REVIEW_BUDGET_MS), and it needs only the redacted
+  // manifest diff —
   // holding both unredacted package sides alive for the length of those fetches
   // would raise peak memory for the whole scan, which is what caps reviewable
   // package size. Its findings are folded back in here so they still ride the
