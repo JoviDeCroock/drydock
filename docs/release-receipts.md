@@ -51,6 +51,9 @@ risk, and a structured decision with decision time and the authenticated Drydock
   that no source binding was found.
 - `releaseDecision` is complete only when outcome, decision time, and reviewer
   are all present. Partial or legacy decisions keep the aggregate status partial.
+  Under a multi-party approval policy the reviewer is the member whose vote made
+  the verdict, not the whole roster — the per-member votes live in the approval
+  state ([`release-approvals.md`](./release-approvals.md)), outside the receipt.
 - `workflowGate` records repository, run, environment, durable gate status,
   decision, and decision time when the organization-scoped gate row exists.
   Pending or errored rows are partial rather than complete. Staged reviews use
