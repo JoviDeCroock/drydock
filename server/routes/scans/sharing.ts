@@ -24,6 +24,13 @@ import {
   setThreatFeedListing,
 } from "../../db/scan-share";
 import { reportExportFilename, serializeReportExport } from "../../lib/scan/report-export";
+import {
+  buildReleaseReceipt,
+  releaseReceiptFilename,
+  serializeReleaseReceipt,
+} from "../../lib/scan/release-receipt";
+import { sha256Hex } from "../../lib/platform/crypto-utils";
+import { getGateByScanId } from "../../lib/github-app/webhook-gates";
 import { roleCanManagePublicShares } from "../../lib/auth/roles";
 import type { Bindings, Variables } from "../../types";
 
@@ -166,6 +173,41 @@ scanSharingRoutes.get("/:id/report.json", async (c) => {
     },
   });
 });
+
+scanSharingRoutes.get(
+  "/:id/release-receipt.json",
+  async (c: Context<{ Bindings: Bindings; Variables: Variables }>) => {
+    const db = createDb(c.env.DB);
+    const organizationId = await resolveReportExportOrganization(c, db);
+    if (!organizationId) return c.json({ error: "not found" }, 404);
+    const scanId = c.req.param("id");
+    if (!scanId) return c.json({ error: "not found" }, 404);
+    const detail = await getScan(db, scanId, organizationId, scanArtifactReadBucket(c.env), {
+      files: "omit",
+    });
+    if (!detail) return c.json({ error: "not found" }, 404);
+    if (detail.scan.status !== "complete") {
+      return c.json({ error: "release receipt is only available for completed scans" }, 409);
+    }
+    const gate =
+      detail.scan.source === "workflow_gate"
+        ? await getGateByScanId(db, organizationId, detail.scan.id)
+        : null;
+    const document = await buildReleaseReceipt(detail, gate);
+    const bytes = serializeReleaseReceipt(document);
+    const documentSha256 = await sha256Hex(bytes);
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="${releaseReceiptFilename(detail.scan.id, documentSha256)}"`,
+        "cache-control": "private, no-store",
+        etag: `"sha256:${documentSha256}"`,
+        "x-drydock-receipt-sha256": documentSha256,
+      },
+    });
+  },
+);
 
 async function resolveReportExportOrganization(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,

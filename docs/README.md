@@ -24,6 +24,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`intent-envelope.md`](./intent-envelope.md) — advisory source-binding tiers (attested / declared / absent) persisted with every scan.
 - [`artifact-storage.md`](./artifact-storage.md) — D1/R2 report and artifact persistence.
 - [`public-reports.md`](./public-reports.md) — public share links, signed report attestations, badges, and the threat feed.
+- [`release-receipts.md`](./release-receipts.md) — authenticated canonical Release Receipt v1, report digest binding, workflow/staged control evidence, and schema limitations.
 
 ## Operations and setup
 
