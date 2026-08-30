@@ -906,7 +906,7 @@ jobs:
   "displayName": null,
   "from": { "version": "1.2.0", "publishedAt": "2017-11-17T05:48:38.934Z" },
   "to": { "version": "1.3.0", "publishedAt": "2018-04-09T01:10:45.796Z" },
-  "rulesVersion": "1.28.0+risk-1+payload-v7",
+  "rulesVersion": "1.28.0+risk-1+payload-v8",
   "grade": "clear",
   "risk": { "artifactRisk": "low", "releaseRisk": "low" },
   "findingCounts": { "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0 },

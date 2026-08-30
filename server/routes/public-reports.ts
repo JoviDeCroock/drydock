@@ -52,7 +52,7 @@ const PUBLIC_BADGE_READ_RATE = { bucket: "public-badge", limit: 120, windowMs: 6
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
 const SHARE_INCLUDES_FILES_HEADER = "x-drydock-share-includes-files";
-export const REVIEW_LOOKUP_SCHEMA = "drydock.review-lookup.v1";
+const REVIEW_LOOKUP_SCHEMA = "drydock.review-lookup.v1";
 const REVIEW_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.!_+~-]{0,127}$/;
 const SHA1_RE = /^[a-f0-9]{40}$/i;
 
