@@ -18,6 +18,7 @@ import { NpmConnectionModel, npmConnectionScope } from "../../models/npm-connect
 import { OrganizationModel } from "../../models/organization";
 import {
   ScanListModel,
+  type ScanApprovalState,
   type ScanDecision,
   type ScanDecisionFilter,
   type ScanListItem,
@@ -275,13 +276,12 @@ function RecentReviewsSection({
   };
   const onQuickDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     const scan = quickDecisionScan.peek();
-    if (!scan) return false;
-    await scans.setDecision(scan.id, decision, reason);
-    const saved = scans.decisionStatus.peek() === "idle";
-    if (saved) {
+    if (!scan) return null;
+    const updated = await scans.setDecision(scan.id, decision, reason);
+    if (updated) {
       quickDecisionScan.value = null;
     }
-    return saved;
+    return updated;
   };
   const onDeleteConfirm = async () => {
     const scan = deleteScan.peek();
@@ -408,6 +408,7 @@ function RecentReviewsSection({
             status={scans.decisionStatus.value}
             error={scans.decisionError.value}
             npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
+            approvals={quickDecisionApprovals(scan, scans.requiredApprovals.value)}
             scan={scan}
             onSubmit={onQuickDecisionSubmit}
           />

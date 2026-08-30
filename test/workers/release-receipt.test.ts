@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember, removeOrganizationMember } from "../../server/db/invitations";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
@@ -99,7 +100,7 @@ async function seedCompleted(
   return scanId;
 }
 
-async function seedGate(owner: Owner) {
+async function seedGate(owner: Owner, options: { requiredReleaseApprovals?: number } = {}) {
   const db = createDb(env.DB);
   const now = new Date("2026-08-02T00:00:00.000Z");
   const installationId = crypto.randomUUID();
@@ -146,6 +147,7 @@ async function seedGate(owner: Owner) {
     status: "approved",
     decision: "approved",
     decidedAt: now,
+    requiredReleaseApprovals: options.requiredReleaseApprovals ?? null,
     requestedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -376,5 +378,186 @@ describe("canonical release receipt v1", () => {
       status: "unknown",
       observation: null,
     });
+  });
+});
+
+describe("release receipt multi-party approvals", () => {
+  async function recordVote(
+    scanId: string,
+    organizationId: string,
+    userId: string,
+    decision: "publish" | "no_publish",
+    votedAt: Date,
+  ) {
+    await createDb(env.DB).insert(schema.scanApprovals).values({
+      id: crypto.randomUUID(),
+      scanId,
+      organizationId,
+      userId,
+      decision,
+      reason: null,
+      createdAt: votedAt,
+      updatedAt: votedAt,
+    });
+  }
+
+  test("single-approver receipts omit the roster and keep pre-approval bytes", async () => {
+    const owner = await seedOwner();
+    const scanId = await seedCompleted(owner);
+    await recordVote(scanId, owner.organizationId, owner.userId, "publish", new Date());
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: owner.userId,
+        decidedAt: new Date("2026-08-05T00:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const app = appFor(owner);
+    const bytes = await (await request(app, scanId, "release-receipt.json")).text();
+    expect(await (await request(app, scanId, "release-receipt.json")).text()).toBe(bytes);
+    expect(bytes).not.toContain('"approvals"');
+    const receipt = JSON.parse(bytes) as any;
+    expect(receipt.content.release.decision).toEqual({
+      outcome: "publish",
+      decidedAt: "2026-08-05T00:00:00.000Z",
+      reviewer: { kind: "drydock_user", id: owner.userId },
+    });
+  });
+
+  test("embeds the bar and roster under a multi-party policy, keeping reviewer decisive", async () => {
+    const owner = await seedOwner();
+    const second = await seedOwner();
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId: owner.organizationId,
+      userId: second.userId,
+      role: "member",
+    });
+    await db
+      .update(schema.organizations)
+      .set({ requiredReleaseApprovals: 2 })
+      .where(eq(schema.organizations.id, owner.organizationId));
+
+    const scanId = await seedCompleted(owner);
+    await recordVote(
+      scanId,
+      owner.organizationId,
+      owner.userId,
+      "publish",
+      new Date("2026-08-05T00:00:00.000Z"),
+    );
+    await recordVote(
+      scanId,
+      owner.organizationId,
+      second.userId,
+      "publish",
+      new Date("2026-08-05T01:00:00.000Z"),
+    );
+    await db
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: second.userId,
+        decidedAt: new Date("2026-08-05T01:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const app = appFor(owner);
+    const bytes = await (await request(app, scanId, "release-receipt.json")).text();
+    const receipt = JSON.parse(bytes) as any;
+    expect(receipt.content.release.decision.reviewer).toEqual({
+      kind: "drydock_user",
+      id: second.userId,
+    });
+    expect(receipt.content.release.decision.approvals).toEqual({
+      required: 2,
+      votes: [
+        {
+          voter: { kind: "drydock_user", id: owner.userId },
+          decision: "publish",
+          votedAt: "2026-08-05T00:00:00.000Z",
+        },
+        {
+          voter: { kind: "drydock_user", id: second.userId },
+          decision: "publish",
+          votedAt: "2026-08-05T01:00:00.000Z",
+        },
+      ],
+    });
+    expect(bytes).not.toContain("Receipt tester");
+    expect(bytes).not.toContain("@example.com");
+    expect(receipt.address.value).toBe(await sha256Hex(canonicalJson(receipt.content)));
+
+    // The decided roster is historical: a voter leaving the organization later
+    // must not change what the release receipt asserts.
+    await removeOrganizationMember(db, owner.organizationId, second.userId);
+    expect(await (await request(app, scanId, "release-receipt.json")).text()).toBe(bytes);
+  });
+
+  test("completed gates use their policy snapshot, not the live organization bar", async () => {
+    const owner = await seedOwner();
+    const db = createDb(env.DB);
+    const snapshotGateId = await seedGate(owner, { requiredReleaseApprovals: 2 });
+    const snapshotScanId = await seedCompleted(owner, {
+      source: "workflow_gate",
+      gateId: snapshotGateId,
+    });
+    await recordVote(
+      snapshotScanId,
+      owner.organizationId,
+      owner.userId,
+      "publish",
+      new Date("2026-08-05T00:00:00.000Z"),
+    );
+
+    // The snapshot governs even though the live policy is the default of one.
+    const snapshotReceipt = (await (
+      await request(appFor(owner), snapshotScanId, "release-receipt.json")
+    ).json()) as any;
+    expect(snapshotReceipt.content.release.decision.approvals).toEqual({
+      required: 2,
+      votes: [
+        {
+          voter: { kind: "drydock_user", id: owner.userId },
+          decision: "publish",
+          votedAt: "2026-08-05T00:00:00.000Z",
+        },
+      ],
+    });
+
+    // A legacy completed gate has no snapshot and decided under a one-approval
+    // bar, so a later policy raise adds nothing to its receipt.
+    const legacyOwner = await seedOwner();
+    const legacyGateId = await seedGate(legacyOwner);
+    const legacyScanId = await seedCompleted(legacyOwner, {
+      source: "workflow_gate",
+      gateId: legacyGateId,
+    });
+    await db
+      .update(schema.organizations)
+      .set({ requiredReleaseApprovals: 3 })
+      .where(eq(schema.organizations.id, legacyOwner.organizationId));
+    const legacyBytes = await (
+      await request(appFor(legacyOwner), legacyScanId, "release-receipt.json")
+    ).text();
+    expect(legacyBytes).not.toContain('"approvals"');
+
+    // Same for a staged verdict without a vote roster: the raised bar never
+    // governed that pre-approval decision, so the receipt must not claim it did.
+    const legacyStagedScanId = await seedCompleted(legacyOwner);
+    await db
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: legacyOwner.userId,
+        decidedAt: new Date("2026-08-05T00:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, legacyStagedScanId));
+    const legacyStagedBytes = await (
+      await request(appFor(legacyOwner), legacyStagedScanId, "release-receipt.json")
+    ).text();
+    expect(legacyStagedBytes).not.toContain('"approvals"');
   });
 });
