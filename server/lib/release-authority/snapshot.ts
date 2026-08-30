@@ -1,23 +1,6 @@
 // Release-authority snapshot: the canonical, bounded projection of *what was
-// authorized to publish this release*, as opposed to what bytes it produced.
-//
-// Trusted publishing proves identity and run context — this repository, this
-// workflow, this environment, this run. It does not prove that the authority
-// graph behind that identity is still the one maintainers agreed to. The
-// snapshot captures that graph so a later release can be compared against the
-// last one a maintainer approved (see `delta.ts`).
-//
-// Two primary digests per workflow make the comparison honest in both directions:
-//   - `rawDigest` changes on any edit at all, including comments and reordering;
-//   - `authorityDigest` covers the complete parsed workflow document, excluding
-//     only explicitly display-only fields and redundant permission syntax, so a
-//     cosmetic edit leaves it untouched while unknown execution fields remain
-//     fail-closed.
-// A third, narrower `executionDigest` lets the delta attribute changes to
-// conditions, dependencies, environment mappings, commands, action ordering,
-// and execution controls without persisting their values.
-// A release where raw digests moved but authority digests did not is exactly
-// the "cosmetic change" case that must never raise a high-signal warning.
+// authorized to publish this release*. See `docs/release-authority.md` for the
+// model and the role of the raw/authority/execution digests.
 //
 // Workflow definitions are repository content and are treated as hostile
 // evidence: read and projected, never evaluated.
@@ -986,30 +969,8 @@ async function readExecutionContext(
   const env = asRecord(envValue);
   const envDigest = env && Object.keys(env).length > 0 ? await sha256Hex(stableJson(env)) : null;
   const controls: { [key: string]: YamlValue } = {};
-  if (controlValues.action != null) controls.action = controlValues.action;
-  if (controlValues.background != null) controls.background = controlValues.background;
-  if (controlValues.cancel != null) controls.cancel = controlValues.cancel;
-  if (controlValues.concurrency != null) controls.concurrency = controlValues.concurrency;
-  if (controlValues.id != null) controls.id = controlValues.id;
-  if (controlValues.parallel != null) controls.parallel = controlValues.parallel;
-  if (controlValues.strategy != null) controls.strategy = controlValues.strategy;
-  if (controlValues.continueOnError != null) {
-    controls.continueOnError = controlValues.continueOnError;
-  }
-  if (controlValues.runsOn != null) controls.runsOn = controlValues.runsOn;
-  if (controlValues.container != null) controls.container = controlValues.container;
-  if (controlValues.services != null) controls.services = controlValues.services;
-  if (controlValues.outputs != null) controls.outputs = controlValues.outputs;
-  if (controlValues.runDefaults != null) controls.runDefaults = controlValues.runDefaults;
-  if (controlValues.run != null) controls.run = controlValues.run;
-  if (controlValues.shell != null) controls.shell = controlValues.shell;
-  if (controlValues.timeoutMinutes != null) {
-    controls.timeoutMinutes = controlValues.timeoutMinutes;
-  }
-  if (controlValues.wait != null) controls.wait = controlValues.wait;
-  if (controlValues.waitAll != null) controls.waitAll = controlValues.waitAll;
-  if (controlValues.workingDirectory != null) {
-    controls.workingDirectory = controlValues.workingDirectory;
+  for (const [key, value] of Object.entries(controlValues)) {
+    if (value != null) controls[key] = value;
   }
   const controlsDigest =
     Object.keys(controls).length > 0 ? await sha256Hex(stableJson(controls)) : null;

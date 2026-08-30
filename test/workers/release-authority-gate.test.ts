@@ -162,13 +162,16 @@ interface SeededGate {
 }
 
 /** A pending gate with one complete package scan, so it is decidable. */
-async function seedGate(
-  organizationId: string,
-  ownerUserId: string,
-  releaseTargetId: string,
-  installationRowId: string,
-  repositoryId: number,
-): Promise<SeededGate> {
+async function seedGate({
+  organizationId,
+  userId: ownerUserId,
+  releaseTargetId,
+  installationRowId,
+  repositoryId,
+}: Pick<
+  Fixture,
+  "organizationId" | "userId" | "releaseTargetId" | "installationRowId" | "repositoryId"
+>): Promise<SeededGate> {
   const db = createDb(env.DB);
   const now = new Date();
   const gateId = crypto.randomUUID();
@@ -376,6 +379,25 @@ function mockGithub(options: {
   });
 }
 
+async function decide(fixture: Fixture, seeded: SeededGate, body: Record<string, unknown>) {
+  return call("POST", `/api/v1/github-app/workflow-gates/${seeded.gate.id}/decision`, {
+    body: { scanId: seeded.scanId, ...body },
+    jar: fixture.jar,
+    env: await githubEnv(),
+  });
+}
+
+async function acknowledgementTokenFor(fixture: Fixture, scanId: string): Promise<string> {
+  const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${scanId}`, {
+    jar: fixture.jar,
+    env: await githubEnv(),
+  });
+  const token = (lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined)
+    ?.acknowledgementToken;
+  expect(token).toMatch(/^[0-9a-f]{64}$/);
+  return token as string;
+}
+
 async function capture(fixture: Fixture, gate: WorkflowGateRecord) {
   const db = createDb(env.DB);
   const config = readGithubAppConfig(await githubEnv());
@@ -403,13 +425,7 @@ afterEach(() => {
 describe("release-authority capture", () => {
   test("captures a snapshot and reports no_baseline for the first release", async () => {
     const fixture = await seedFixture();
-    const { gate } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate } = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
 
     const delta = await capture(fixture, gate);
@@ -437,13 +453,7 @@ describe("release-authority capture", () => {
   test("records mutable repository permission defaults as incomplete coverage", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -456,13 +466,7 @@ describe("release-authority capture", () => {
       "permissions:\n  contents: read\n",
       "",
     ).replace("    permissions:\n      id-token: write\n", "");
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({ workflow: inheritedPermissions, headSha: "b".repeat(40) });
 
     const delta = await capture(fixture, second.gate);
@@ -485,13 +489,7 @@ describe("release-authority capture", () => {
 
   test("records unreadable definitions as incomplete coverage instead of failing", async () => {
     const fixture = await seedFixture();
-    const { gate } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate } = await seedGate(fixture);
     // A reusable workflow in a repository the installation cannot read.
     mockGithub({
       workflow: RELEASE_WORKFLOW,
@@ -519,13 +517,7 @@ describe("release-authority capture", () => {
 
   test("records not assessed when GitHub cannot be reached", async () => {
     const fixture = await seedFixture();
-    const { gate } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate } = await seedGate(fixture);
     globalThis.fetch = vi.fn(async () => {
       throw new Error("network down");
     });
@@ -543,13 +535,7 @@ describe("release-authority capture", () => {
   test("clears a previous attempt's authority before a retry can fail capture", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const { gate } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate } = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, gate);
     expect(await getReleaseAuthorityForGate(db, fixture.organizationId, gate.id)).not.toBeNull();
@@ -576,13 +562,7 @@ describe("release-authority baseline", () => {
   test("compares against the last approved release and flags a widened permission", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -591,13 +571,7 @@ describe("release-authority baseline", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "b".repeat(40),
@@ -613,13 +587,7 @@ describe("release-authority baseline", () => {
   test("reports unchanged for a re-run of the same authority", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -628,13 +596,7 @@ describe("release-authority baseline", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     const delta = await capture(fixture, second.gate);
     expect(delta?.status).toBe("unchanged");
@@ -644,13 +606,7 @@ describe("release-authority baseline", () => {
   test("requires approval when the newest approved baseline is unreadable", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -663,13 +619,7 @@ describe("release-authority baseline", () => {
       .set({ snapshotJson: { schema: "drydock.release-authority.future" } })
       .where(eq(schema.releaseAuthoritySnapshots.gateId, first.gate.id));
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     const delta = await capture(fixture, second.gate);
 
@@ -687,13 +637,7 @@ describe("release-authority baseline", () => {
   test("an unapproved snapshot never becomes the baseline", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     // Captured but never approved — a rejected or undecided authority change
@@ -711,13 +655,7 @@ describe("release-authority baseline", () => {
   test("keeps separate baselines per release path", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -738,13 +676,7 @@ describe("release-authority baseline", () => {
   test("orders approvals monotonically when the wall clock cannot advance", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "a".repeat(40) });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -761,13 +693,7 @@ describe("release-authority baseline", () => {
       .set({ approvedAt: pinnedApprovalTime })
       .where(eq(schema.releaseAuthoritySnapshots.gateId, first.gate.id));
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     await capture(fixture, second.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -831,23 +757,11 @@ describe("release-authority baseline", () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
 
-    const pending = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const pending = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "a".repeat(40) });
     expect((await capture(fixture, pending.gate))?.status).toBe("no_baseline");
 
-    const firstBaseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const firstBaseline = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "b".repeat(40),
@@ -863,13 +777,7 @@ describe("release-authority baseline", () => {
       .set({ approvedAt: new Date("2026-08-20T00:00:00.000Z") })
       .where(eq(schema.releaseAuthoritySnapshots.gateId, firstBaseline.gate.id));
 
-    const movedBaseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const movedBaseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "c".repeat(40) });
     await capture(fixture, movedBaseline.gate);
 
@@ -902,13 +810,7 @@ describe("release-authority baseline", () => {
   test("prepares a baseline revision guard even when acknowledgement policy is off", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -917,13 +819,7 @@ describe("release-authority baseline", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const pending = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const pending = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     await capture(fixture, pending.gate);
 
@@ -949,13 +845,7 @@ describe("release-authority baseline", () => {
   test("flags a release arriving on a workflow path with no approved history", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -964,13 +854,7 @@ describe("release-authority baseline", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW,
       workflowPath: ".github/workflows/publish-extra.yml",
@@ -993,13 +877,7 @@ describe("release-authority baseline", () => {
 
   test("a target's genuine first release still reports no_baseline", async () => {
     const fixture = await seedFixture();
-    const { gate } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate } = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, workflowPath: ".github/workflows/only-ever.yml" });
     const delta = await capture(fixture, gate);
     expect(delta?.status).toBe("no_baseline");
@@ -1011,13 +889,7 @@ describe("release-authority baseline", () => {
   test("does not call an unreadable entry path a new release path", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1026,13 +898,7 @@ describe("release-authority baseline", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, workflowPath: null, headSha: "b".repeat(40) });
     const delta = await capture(fixture, second.gate);
 
@@ -1049,26 +915,12 @@ describe("release-authority approval policy", () => {
   test("fails closed on approval when authority evidence was not assessed", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const pending = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const pending = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({ workflow: RELEASE_WORKFLOW, decisionCalls });
     await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
 
-    const blocked = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${pending.gate.id}/decision`,
-      {
-        body: { decision: "approved", scanId: pending.scanId },
-        jar: fixture.jar,
-        env: await githubEnv(),
-      },
-    );
+    const blocked = await decide(fixture, pending, { decision: "approved" });
 
     expect(blocked.res.status).toBe(409);
     expect(blocked.json?.code).toBe("authority_assessment_required");
@@ -1077,15 +929,7 @@ describe("release-authority approval policy", () => {
       (await getGateForOrganization(db, fixture.organizationId, pending.gate.id))?.status,
     ).toBe("pending");
 
-    const rejected = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${pending.gate.id}/decision`,
-      {
-        body: { decision: "rejected", scanId: pending.scanId },
-        jar: fixture.jar,
-        env: await githubEnv(),
-      },
-    );
+    const rejected = await decide(fixture, pending, { decision: "rejected" });
     expect(rejected.res.status).toBe(200);
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
   });
@@ -1093,13 +937,7 @@ describe("release-authority approval policy", () => {
   test("fails closed when the current snapshot is unreadable but its delta remains readable", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const pending = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const pending = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({ workflow: RELEASE_WORKFLOW, decisionCalls });
     await capture(fixture, pending.gate);
@@ -1109,15 +947,7 @@ describe("release-authority approval policy", () => {
       .where(eq(schema.releaseAuthoritySnapshots.gateId, pending.gate.id));
     await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
 
-    const blocked = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${pending.gate.id}/decision`,
-      {
-        body: { decision: "approved", scanId: pending.scanId },
-        jar: fixture.jar,
-        env: await githubEnv(),
-      },
-    );
+    const blocked = await decide(fixture, pending, { decision: "approved" });
 
     expect(blocked.res.status).toBe(409);
     expect(blocked.json?.code).toBe("authority_assessment_required");
@@ -1130,13 +960,7 @@ describe("release-authority approval policy", () => {
   test("does not baseline an unreadable current snapshot when the advisory policy approves", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const pending = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const pending = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({ workflow: RELEASE_WORKFLOW, decisionCalls });
     await capture(fixture, pending.gate);
@@ -1145,29 +969,12 @@ describe("release-authority approval policy", () => {
       .set({ snapshotJson: { schema: "drydock.release-authority.future" } })
       .where(eq(schema.releaseAuthoritySnapshots.gateId, pending.gate.id));
 
-    const lookup = await call(
-      "GET",
-      `/api/v1/github-app/workflow-gates/by-scan/${pending.scanId}`,
-      { jar: fixture.jar, env: await githubEnv() },
-    );
-    const acknowledgementToken = (
-      lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined
-    )?.acknowledgementToken;
-    expect(acknowledgementToken).toMatch(/^[0-9a-f]{64}$/);
+    const acknowledgementToken = await acknowledgementTokenFor(fixture, pending.scanId);
 
-    const approved = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${pending.gate.id}/decision`,
-      {
-        body: {
-          decision: "approved",
-          scanId: pending.scanId,
-          authorityAcknowledgementToken: acknowledgementToken,
-        },
-        jar: fixture.jar,
-        env: await githubEnv(),
-      },
-    );
+    const approved = await decide(fixture, pending, {
+      decision: "approved",
+      authorityAcknowledgementToken: acknowledgementToken,
+    });
 
     expect(approved.res.status).toBe(200);
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
@@ -1179,15 +986,8 @@ describe("release-authority approval policy", () => {
   test("holds approval on a changed authority until it is acknowledged", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const gitEnv = await githubEnv();
 
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1196,13 +996,7 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({
       // The bittensor-shaped change: the attestation step is gone and the
@@ -1216,15 +1010,7 @@ describe("release-authority approval policy", () => {
 
     await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
 
-    const blocked = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
-      {
-        body: { decision: "approved", scanId: second.scanId },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const blocked = await decide(fixture, second, { decision: "approved" });
     expect(blocked.res.status).toBe(409);
     expect(blocked.json?.code).toBe("authority_change_acknowledgement_required");
     expect(decisionCalls).toHaveLength(0);
@@ -1233,29 +1019,13 @@ describe("release-authority approval policy", () => {
     const stillPending = await getGateForOrganization(db, fixture.organizationId, second.gate.id);
     expect(stillPending?.status).toBe("pending");
 
-    const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${second.scanId}`, {
-      jar: fixture.jar,
-      env: gitEnv,
-    });
-    const acknowledgementToken = (
-      lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined
-    )?.acknowledgementToken;
-    expect(acknowledgementToken).toMatch(/^[0-9a-f]{64}$/);
+    const acknowledgementToken = await acknowledgementTokenFor(fixture, second.scanId);
 
-    const approved = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
-      {
-        body: {
-          decision: "approved",
-          scanId: second.scanId,
-          acknowledgeAuthorityChange: true,
-          authorityAcknowledgementToken: acknowledgementToken,
-        },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const approved = await decide(fixture, second, {
+      decision: "approved",
+      acknowledgeAuthorityChange: true,
+      authorityAcknowledgementToken: acknowledgementToken,
+    });
     expect(approved.res.status).toBe(200);
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
 
@@ -1281,13 +1051,7 @@ describe("release-authority approval policy", () => {
     const db = createDb(env.DB);
     const gitEnv = await githubEnv();
 
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1296,13 +1060,7 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const stale = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const stale = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
     const before = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${stale.scanId}`, {
@@ -1315,13 +1073,7 @@ describe("release-authority approval policy", () => {
     };
     expect(oldAuthority.delta.status).toBe("unchanged");
 
-    const moved = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const moved = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "c".repeat(40),
@@ -1334,20 +1086,11 @@ describe("release-authority approval policy", () => {
     });
     await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
 
-    const blocked = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${stale.gate.id}/decision`,
-      {
-        body: {
-          decision: "approved",
-          scanId: stale.scanId,
-          acknowledgeAuthorityChange: true,
-          authorityAcknowledgementToken: oldAuthority.acknowledgementToken,
-        },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const blocked = await decide(fixture, stale, {
+      decision: "approved",
+      acknowledgeAuthorityChange: true,
+      authorityAcknowledgementToken: oldAuthority.acknowledgementToken,
+    });
     expect(blocked.res.status).toBe(409);
     expect(blocked.json?.code).toBe("authority_change_acknowledgement_required");
 
@@ -1366,13 +1109,7 @@ describe("release-authority approval policy", () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
 
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1381,13 +1118,7 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const stale = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const stale = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
     const authorityRevision = await findLatestApprovedAuthoritySnapshotId(db, {
@@ -1408,13 +1139,7 @@ describe("release-authority approval policy", () => {
 
     // Another release becomes the approved baseline after this request read its
     // revision and delta but before it reaches the final gate CAS.
-    const moved = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const moved = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "c".repeat(40),
@@ -1460,15 +1185,8 @@ describe("release-authority approval policy", () => {
   test("rejects and refreshes a stale policy-off approval when its baseline moves", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const gitEnv = await githubEnv();
 
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1477,31 +1195,12 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const stale = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const stale = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
-    const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${stale.scanId}`, {
-      jar: fixture.jar,
-      env: gitEnv,
-    });
-    const acknowledgementToken = (
-      lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined
-    )?.acknowledgementToken;
-    expect(acknowledgementToken).toMatch(/^[0-9a-f]{64}$/);
+    const acknowledgementToken = await acknowledgementTokenFor(fixture, stale.scanId);
 
-    const moved = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const moved = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "c".repeat(40),
@@ -1515,19 +1214,10 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const blocked = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${stale.gate.id}/decision`,
-      {
-        body: {
-          decision: "approved",
-          scanId: stale.scanId,
-          authorityAcknowledgementToken: acknowledgementToken,
-        },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const blocked = await decide(fixture, stale, {
+      decision: "approved",
+      authorityAcknowledgementToken: acknowledgementToken,
+    });
 
     expect(blocked.res.status).toBe(409);
     expect(blocked.json?.code).toBe("authority_baseline_changed");
@@ -1547,13 +1237,7 @@ describe("release-authority approval policy", () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
 
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1562,23 +1246,11 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const stale = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const stale = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
 
-    const moved = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const moved = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "c".repeat(40),
@@ -1615,13 +1287,7 @@ describe("release-authority approval policy", () => {
   test("does not attribute authority approval when a same-millisecond gate CAS loses", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const seeded = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const seeded = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, seeded.gate);
 
@@ -1687,13 +1353,7 @@ describe("release-authority approval policy", () => {
   test("can read stored release authority without refreshing persisted export evidence", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const baseline = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const baseline = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, baseline.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1702,23 +1362,11 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const stale = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const stale = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW, headSha: "b".repeat(40) });
     expect((await capture(fixture, stale.gate))?.status).toBe("unchanged");
 
-    const moved = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const moved = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
       headSha: "c".repeat(40),
@@ -1748,15 +1396,8 @@ describe("release-authority approval policy", () => {
   test("never blocks a rejection on an unacknowledged authority change", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const gitEnv = await githubEnv();
 
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1765,13 +1406,7 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("    environment: pypi\n", ""),
@@ -1781,20 +1416,11 @@ describe("release-authority approval policy", () => {
     await capture(fixture, second.gate);
     await setRequireAuthorityChangeApproval(db, fixture.organizationId, true);
 
-    const rejected = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
-      {
-        body: {
-          decision: "rejected",
-          scanId: second.scanId,
-          acknowledgeAuthorityChange: true,
-          authorityAcknowledgementToken: "forged",
-        },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const rejected = await decide(fixture, second, {
+      decision: "rejected",
+      acknowledgeAuthorityChange: true,
+      authorityAcknowledgementToken: "forged",
+    });
     expect(rejected.res.status).toBe(200);
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "rejected" })]);
 
@@ -1811,15 +1437,8 @@ describe("release-authority approval policy", () => {
   test("approves without acknowledgement while the policy is off", async () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
-    const gitEnv = await githubEnv();
 
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, first.gate);
     await markAuthoritySnapshotApproved(db, {
@@ -1828,13 +1447,7 @@ describe("release-authority approval policy", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     const decisionCalls: { state: string }[] = [];
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace("  contents: read\n", "  contents: write\n"),
@@ -1843,28 +1456,12 @@ describe("release-authority approval policy", () => {
     });
     const delta = await capture(fixture, second.gate);
     expect(delta?.requiresApproval).toBe(true);
-    const lookup = await call("GET", `/api/v1/github-app/workflow-gates/by-scan/${second.scanId}`, {
-      jar: fixture.jar,
-      env: gitEnv,
-    });
-    const acknowledgementToken = (
-      lookup.json?.releaseAuthority as { acknowledgementToken?: string } | undefined
-    )?.acknowledgementToken;
-    expect(acknowledgementToken).toMatch(/^[0-9a-f]{64}$/);
+    const acknowledgementToken = await acknowledgementTokenFor(fixture, second.scanId);
 
-    const approved = await call(
-      "POST",
-      `/api/v1/github-app/workflow-gates/${second.gate.id}/decision`,
-      {
-        body: {
-          decision: "approved",
-          scanId: second.scanId,
-          authorityAcknowledgementToken: acknowledgementToken,
-        },
-        jar: fixture.jar,
-        env: gitEnv,
-      },
-    );
+    const approved = await decide(fixture, second, {
+      decision: "approved",
+      authorityAcknowledgementToken: acknowledgementToken,
+    });
     expect(approved.res.status).toBe(200);
     expect(decisionCalls).toEqual([expect.objectContaining({ state: "approved" })]);
   });
@@ -1876,13 +1473,7 @@ describe("release-authority surfaces", () => {
     const db = createDb(env.DB);
     const gitEnv = await githubEnv();
 
-    const first = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const first = await seedGate(fixture);
     const baselineOnlyAction = `octo/baseline-private-action/publish@${"c".repeat(40)}`;
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace(
@@ -1897,13 +1488,7 @@ describe("release-authority surfaces", () => {
       approvedByUserId: fixture.userId,
     });
 
-    const second = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const second = await seedGate(fixture);
     mockGithub({
       workflow: RELEASE_WORKFLOW.replace(
         "actions/download-artifact@v4",
@@ -1963,13 +1548,7 @@ describe("release-authority surfaces", () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
     const gitEnv = await githubEnv();
-    const { gate, scanId } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate, scanId } = await seedGate(fixture);
     const privateActionRepository = "octo/private-publisher";
     const privateImageRepository = "octo/private-image";
     const privateImage = `docker://ghcr.io/${privateImageRepository}@sha256:${"d".repeat(64)}`;
@@ -2060,13 +1639,7 @@ describe("release-authority surfaces", () => {
     const fixture = await seedFixture();
     const db = createDb(env.DB);
     const gitEnv = await githubEnv();
-    const { gate, scanId } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { gate, scanId } = await seedGate(fixture);
     mockGithub({ workflow: RELEASE_WORKFLOW });
     await capture(fixture, gate);
 
@@ -2137,13 +1710,7 @@ describe("release-authority surfaces", () => {
   test("exports null for a scan with no authority record", async () => {
     const fixture = await seedFixture();
     const gitEnv = await githubEnv();
-    const { scanId } = await seedGate(
-      fixture.organizationId,
-      fixture.userId,
-      fixture.releaseTargetId,
-      fixture.installationRowId,
-      fixture.repositoryId,
-    );
+    const { scanId } = await seedGate(fixture);
     const report = await call("GET", `/api/v1/scans/${scanId}/report.json`, {
       jar: fixture.jar,
       env: gitEnv,

@@ -4,399 +4,220 @@ Release authority is the workflow-carried control-plane evidence for _what was
 allowed to publish a release_, as opposed to what the release contains. Drydock
 captures it at the GitHub Environment gate, compares it to the last release a
 maintainer approved, and shows the delta as a first-class section of the review.
-It does not claim to reproduce arbitrary workflow execution or mutable GitHub
-settings that the capture does not record; unavailable evidence is explicit.
+Unavailable evidence is always explicit; nothing is inferred from mutable GitHub
+settings the capture does not record.
 
 ## The gap this fills
 
-Four different questions get conflated when people talk about supply-chain
-trust. Keeping them apart is the whole point of this feature:
+Four questions get conflated when people talk about supply-chain trust:
 
-| Question                                                         | Answered by                                  | What it proves                                                                                                                     |
-| ---------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Identity** — who published this?                               | Trusted Publishing / OIDC                    | This repository, this workflow, this environment, this run                                                                         |
-| **Provenance** — where did these bytes come from?                | Build attestations, SLSA, sigstore           | The artifact was produced by a specific build                                                                                      |
-| **Artifact integrity** — are these the bytes that were reviewed? | Digest continuity (`provenance.artifacts[]`) | The published file matches the reviewed file                                                                                       |
-| **Maintainer intent** — is this the authority you agreed to?     | **Release authority**                        | The workflow's triggers, permissions, environment, publish path, and reusable-workflow graph still match the last approved release |
+| Question                                                         | Answered by                                  | What it proves                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
+| **Identity** — who published this?                               | Trusted Publishing / OIDC                    | This repository, this workflow, this environment, this run             |
+| **Provenance** — where did these bytes come from?                | Build attestations, SLSA, sigstore           | The artifact was produced by a specific build                          |
+| **Artifact integrity** — are these the bytes that were reviewed? | Digest continuity (`provenance.artifacts[]`) | The published file matches the reviewed file                           |
+| **Maintainer intent** — is this the authority you agreed to?     | **Release authority**                        | The workflow's authority graph still matches the last approved release |
 
-Trusted publishing authenticates a workflow identity and run context. It does
-not establish that the workflow's current authority graph matches what
-maintainers previously intended to approve. An attacker who lands a workflow
-change keeps a perfectly valid trusted-publishing identity while silently
-widening what that identity can do: dropping the environment that holds the
-gate, deleting attestation steps, adding a manual trigger, repointing a
-reusable workflow at a branch they control.
+Trusted publishing authenticates a workflow identity; it does not establish that
+the workflow's current authority graph matches what maintainers approved. An
+attacker who lands a workflow change keeps a valid trusted-publishing identity
+while silently widening what it can do: dropping the gating environment,
+deleting attestation steps, adding a manual trigger, repointing a reusable
+workflow at a branch they control. Provenance answers a different question and
+stays part of the evidence packet.
 
-Provenance is not ineffective here — it answers a different question, and it
-stays part of the evidence packet. It simply cannot tell you that the build it
-attests to was authorized by the same graph as last time.
-
-### Why this lives in Drydock and not in the registry
-
-A concrete proposal to pin GitHub workflow content hashes in PyPI's Trusted
-Publisher configuration ([warehouse#19702](https://github.com/pypi/warehouse/issues/19702),
-[community#191125](https://github.com/orgs/community/discussions/191125)) surfaced the
-gap, and PyPI maintainer feedback also showed why registry-side hash pinning is
-the wrong layer: hashes are not available in OIDC claims, reusable workflows
-complicate the model, exact hashes are brittle, and registry-side fetching
-introduces quota and release-path failure modes.
-
-Drydock is already in the release path with repository context and a blocking
-gate, so it can run the comparison without asking any registry or OIDC provider
-to change anything.
+Registry-side workflow-hash pinning was proposed and rejected as the wrong layer
+([warehouse#19702](https://github.com/pypi/warehouse/issues/19702),
+[community#191125](https://github.com/orgs/community/discussions/191125)):
+hashes are not in OIDC claims, reusable workflows complicate the model, and
+exact hashes are brittle. Drydock is already in the release path with repository
+context and a blocking gate, so it can run the comparison without asking any
+registry or OIDC provider to change.
 
 ## Policy: review on authority change
 
-The policy is **review on authority change**, not permanent workflow-hash
-pinning. A pinned hash makes every edit a release-blocking event, which trains
-maintainers to disable the check. Comparing against the last approved baseline
-asks the question that actually matters — "is this still the authority you
-agreed to?" — and stays quiet when the answer is yes.
+Not permanent hash pinning — a pinned hash makes every edit release-blocking,
+which trains maintainers to disable the check. The comparison asks "is this
+still the authority you agreed to?" and stays quiet when the answer is yes.
 
-Two distinctions carry most of the signal quality.
+Two distinctions carry the signal quality:
 
-**Authority vs cosmetic.** Every workflow definition carries two primary
-digests: a `rawDigest` over its bytes, which moves on any edit at all, and an
-`authorityDigest` over its complete parsed semantics, which does not move for
-comments, mapping-key reordering, display-only labels, or formatting. Unknown
-parsed fields are included by default, so a new GitHub execution control cannot
-silently become cosmetic merely because the categorized projection does not yet
-know how to explain it. A narrower `executionDigest` attributes
-otherwise opaque condition, dependency, environment-mapping, command, action-order,
-runner, container, service, output, matrix, concurrency, timeout, and
-`continue-on-error` changes without persisting those values. It also fingerprints
-parsed semantics that are not already represented by a typed delta category, so
-a future execution control remains visible even when the same edit changes a
-known permission, trigger, environment, or action field. A release where raw
-digests moved but authority digests did not reports
-`cosmetic` and never raises a high-signal warning. Typed trigger, permission,
-action, and safeguard projections explain changes; they do not decide whether a
-semantic change exists. An otherwise unclassified semantic change remains a
-medium-significance, approval-requiring delta.
+- **Authority vs cosmetic.** Each workflow carries a `rawDigest` over its bytes
+  and an `authorityDigest` over its complete parsed semantics. Comments,
+  key reordering, and display-only labels move only the raw digest and report
+  `cosmetic`. Unknown parsed fields are included in the authority digest by
+  default, so a new GitHub execution control is fail-closed — an unclassified
+  semantic change is still a medium-significance, approval-requiring delta. A
+  narrower `executionDigest` attributes condition/dependency/env-mapping/
+  command/ordering/control changes without persisting their values.
+- **Changed vs standing.** A reference that has _always_ been mutable
+  (`actions/checkout@v4`) is a standing property of the release path, reported
+  under `standing`. A reference that _became_ mutable is a high-significance
+  change. Reporting standing weaknesses as changes would make every release
+  look like an incident; reporting them nowhere would hide something real.
 
-**Changed vs standing.** A reference that has _always_ been mutable
-(`actions/checkout@v4`) is a standing property of this release path, not a
-delta. A reference that _became_ mutable is a delta. The first is reported under
-`standing`; the second is a high-significance change. Reporting standing
-weaknesses as changes would make every release look like an incident; reporting
-them nowhere would hide something real.
-
-Incomplete coverage remains a standing limitation, but it also produces a
-medium-significance change on every affected release. Unlike a mutable external
-ref, unreadable source can hide a different authority on each run; an opted-in
-organization must never accept that as `unchanged`. Coverage that regressed
-from a complete baseline is labeled separately. A complete capture compared
-against an incomplete approved baseline also requires acknowledgement because
-the older evidence cannot establish equality. If the newest approved
-persisted snapshot itself cannot be decoded, Drydock preserves its identity and
-reports a high-significance change requiring approval instead of treating the
-release as though it had no history.
+Incomplete coverage also produces a medium-significance change on every
+affected release — unreadable source can hide a different authority each run,
+so an opted-in organization must never accept it as `unchanged`. A regression
+from a complete baseline, a complete capture against an incomplete baseline,
+and an undecodable newest approved snapshot (`baseline_unreadable`, high) are
+each labeled distinctly rather than treated as "no history".
 
 ## What is captured
 
 `server/lib/release-authority/` holds the pure half; nothing in it touches the
-network or the database.
+network or database:
 
 - `yaml.ts` — a bounded, non-executing reader for the GitHub Actions YAML
-  subset. Workflow definitions are repository content and are treated as
-  hostile evidence: read and projected, never evaluated. It has no anchors,
-  aliases, merge keys, tags, or custom types, and refuses anything past its
-  size/line/depth/node limits, including oversized inline values. It is
-  deliberately stricter than GitHub's parser, so it reports incomplete coverage
-  rather than silently comparing a truncated workflow or dropping a job it
-  could not read.
-- `snapshot.ts` — fingerprints the complete parsed workflow semantics, then
-  projects fetched definitions, run context, and reviewed artifact digests into
-  the canonical `drydock.release-authority.v1` snapshot.
+  subset: no anchors, aliases, merge keys, tags, or custom types, hard
+  size/line/depth/node limits. Deliberately stricter than GitHub's parser, so
+  it reports incomplete coverage rather than silently comparing a truncated
+  workflow.
+- `snapshot.ts` — projects fetched definitions, run context, and reviewed
+  artifact digests into the canonical `drydock.release-authority.v1` snapshot.
 - `delta.ts` — compares a snapshot against an approved baseline.
-- `normalize.ts` / `normalize-delta.ts` — tolerant readers for the persisted
-  blobs, following the `normalizeReleaseConsistency` pattern.
-- `capture.ts` — the orchestration: fetch, project, compare, persist.
+- `normalize.ts` / `normalize-delta.ts` — tolerant persisted-blob readers.
+- `capture.ts` — orchestration: fetch, project, compare, persist.
 
-A snapshot records:
+`server/lib/github-app/workflow-source.ts` fetches the graph: the entry
+workflow at the run's own commit plus every reusable workflow GitHub reports the
+run referenced, each at its GitHub-resolved sha. A moving branch/tag ref is left
+unresolved rather than letting today's tip rewrite historical evidence.
 
-- the run: repository, environment, run id and attempt, entry workflow path,
-  head commit, ref, event, actor and triggering actor;
-- every workflow definition in the graph — the entry workflow plus every
-  reusable workflow GitHub reports the run referenced, each with the sha GitHub
-  already resolved it to, bounded job identities, and the raw, authority, and
-  execution digests. A
-  repository-qualified entry workflow is read at its own resolved sha, never at
-  the caller repository's head commit. If GitHub supplies only a moving branch
-  or tag, the definition is left unresolved instead of letting today's ref tip
-  rewrite the historical evidence. A malformed entry in GitHub's referenced
-  workflow list also leaves explicit incomplete coverage instead of silently
-  shortening the graph;
-- triggers with their normalized branch/tag/path/type filters,
-  `workflow_run` workflow selectors, schedule expressions, and digests of
-  authority-sensitive `workflow_dispatch` / `workflow_call` input configuration
-  and `workflow_call` output mappings. Long normalized filter evidence remains
-  display-bounded but carries a SHA-256 suffix so changes beyond the visible
-  prefix cannot compare as equal;
-- authority-sensitive execution controls: job and step conditions, job
-  dependencies, workflow/job concurrency, job/step timeouts, runner selection,
-  containers and services, job output mappings, job strategy matrices,
-  `continue-on-error`, background execution and its `wait` / `wait-all` /
-  `cancel` synchronization, parallel step groups,
-  command-body digests, step identifiers, shells and working directories,
-  workflow/job run defaults, and digests of workflow/job/step environment
-  mappings (the values themselves are not persisted);
-- workflow- and job-level permissions, including the `read-all` / `write-all`
-  shorthands and the empty-block case. Within an explicit map, omitted scopes
-  and scopes written as `none` are the same deny, so redundant `none` entries
-  do not manufacture an authority change. An entry-workflow job that inherits
-  GitHub's mutable repository or organization default is recorded as unresolved
-  coverage: the workflow-run payload does not preserve the effective default
-  that applied at execution time, so two identical files must not hide a
-  read-to-write settings change. A workflow-level block or a block on every
-  entry job keeps this coverage complete; called workflows inherit the caller's
-  token ceiling;
-- GitHub Environment names per job. Environment protection rules, variables,
-  secrets, and other mutable repository/organization settings are not currently
-  captured and are not part of the workflow semantic fingerprint;
-- every `uses:` reference with its ref, whether it is pinned to a 40-hex commit,
-  and whether the call inherits secrets; every action call carries a digest of
-  its `with:` inputs and explicit `secrets:` map. GitHub's step-local `./path`
-  syntax resolves from `github.workspace`, which a checkout or earlier command
-  may populate from another repository, moving ref, or modified bytes. Static
-  capture therefore keeps those calls mutable and reports their source as
-  unresolved instead of falsely attesting workflow-repository bytes. That
-  incomplete coverage requires acknowledgement when policy is enabled. GitHub's
-  `$/path` self-repository syntax has different provenance: it resolves in the
-  workflow repository at the exact running commit, so Drydock hashes the full
-  repository Git-tree identity alongside the referenced action's bounded tree.
-  The repository identity binds sibling helpers and symlink targets that action
-  code may execute; Drydock also recursively validates the bounded dependency
-  closure of sibling `$/path` actions invoked by composite metadata. The
-  resulting digest is included in the action configuration evidence. An
-  unreadable or invalid path, external or workspace-relative nested action,
-  composition cycle, or exceeded closure bound remains explicit incomplete
-  coverage rather than disappearing from the graph.
-  Job-level `./.github/workflows/...` reusable-workflow calls keep GitHub's
-  separate semantics and resolve at the caller's commit;
-- detected publish steps (known publishing actions and publish commands); shell
-  commands are stored as a safe category plus a digest, never as raw text that
-  could contain a literal credential;
-- detected release safeguards (attestation, signing, provenance — including
-  explicitly enabled `attestations`/`provenance` inputs on recognized publisher
-  actions); input values remain represented only by the action configuration
-  digest;
-- artifact producer/consumer paths (`upload-artifact` / `download-artifact`);
-- the reviewed artifacts with the digests the control plane recomputed. A
-  persisted digest must be empty (explicitly unavailable) or a 64-hex SHA-256;
-  any other value makes the restored snapshot incomplete;
-- coverage: whether anything could not be read, and why.
+The snapshot records the run context; every workflow in the graph with raw,
+authority, and execution digests; triggers with normalized filters; workflow-
+and job-level permissions (an entry job inheriting GitHub's mutable repository
+default is recorded as unresolved coverage — the run payload does not preserve
+the effective default, so identical files must not hide a settings change);
+GitHub Environment names per job; every `uses:` reference with its ref, pin
+state, `secrets: inherit`, and a digest of its `with:`/`secrets:`
+configuration; detected publish steps and release safeguards (shell commands
+are stored as a safe category plus digest, never raw text that could hold a
+credential); artifact upload/download paths; the reviewed artifacts' digests;
+and coverage.
+
+`$/` self-repository action references resolve at the running commit, so
+Drydock digests the repository and action Git-tree identities plus the bounded
+closure of nested `$/` composite actions. Workspace-relative `./` step actions
+resolve from `github.workspace`, which an earlier step may have populated from
+elsewhere, so they stay mutable with unresolved source rather than being
+falsely attested.
 
 ### Coverage is best effort, and says so
 
-A gate review must never fail because a reusable workflow lives in a repository
-the installation cannot read. Anything unreadable is recorded as an unresolved
-coverage entry, and the review states that the authority graph is incomplete.
-An unreadable definition is exactly where a change would hide, so a partial
-snapshot is never presented as "no authority change".
-
-If the capture fails entirely, no record is written at all and the review shows
-**not assessed** — which is deliberately a different thing from **unchanged**.
-The same state applies when a persisted current snapshot can no longer be
-decoded even if its older derived delta is still readable; that delta cannot be
-revalidated and must not become a new baseline.
-An organization that enabled blocking authority review cannot approve that gate
-until capture succeeds; rejection remains available. Organizations using the
-default advisory policy can still decide based on the other review evidence.
-The winning review claim atomically removes an unapproved record from a prior
-attempt before recapture starts, so a failed retry cannot expose stale evidence.
-Per-category snapshot limits follow the same rule: excess entries are omitted
-only after a `limit_reached` coverage record is added, so a bounded snapshot can
-never claim that its authority graph is complete. A final 256 KiB UTF-8 budget
-applies after full-value authority digests are computed; if the persisted
-projection would exceed it, lower-priority list entries are omitted with the
-same `limit_reached` coverage marker. This leaves D1 headroom for the derived
-delta without letting database limits turn the capture into `not assessed`.
-Tolerant readers preserve valid evidence from a partially malformed persisted
-snapshot, but any entry they cannot decode forces coverage to incomplete.
+A gate review must never fail because a definition is unreadable; the
+unresolved entry makes the graph explicitly incomplete, and a partial snapshot
+is never presented as "no authority change". If capture fails entirely, no
+record is written and the review shows **not assessed** — deliberately distinct
+from **unchanged**. Per-category list caps and the final 256 KiB persisted-size
+budget follow the same rule: entries are omitted only alongside a
+`limit_reached` coverage record. Tolerant readers preserve valid evidence from
+a partially malformed persisted snapshot, but any undecodable entry forces
+coverage to incomplete.
 
 ## What counts as a change
 
-Detected deterministically, ordered here by significance:
+Detected deterministically:
 
-**High** — permission widened; permissions block removed when no workflow-level
-block remains to inherit while the job still exists (the job falls back to the
-repository default, which is usually broader than an explicit block);
-environment changed or removed; publish step added; release safeguard removed;
-an action reference that stopped being pinned; a reusable call that started
-inheriting secrets; a dangerous trigger added (`workflow_dispatch`,
-`pull_request_target`, `workflow_run`, `issue_comment`, `repository_dispatch`,
-`schedule`); a trigger that lost every filter; a release arriving on an entry
-workflow path this target has no approved history for.
+- **High** — permission widened; permissions block removed with no
+  workflow-level block left to inherit; environment changed/removed; publish
+  step added; safeguard removed; an action that stopped being pinned; a call
+  that started inheriting secrets; a dangerous trigger added
+  (`workflow_dispatch`, `pull_request_target`, `workflow_run`, `issue_comment`,
+  `repository_dispatch`, `schedule`); a trigger that lost every filter; a
+  release arriving on an entry workflow path with no approved history while
+  other paths have some.
+- **Medium** — ordinary trigger added; trigger filter changed; permission
+  added; workflow added/removed; action added; action ref changed; publish step
+  removed; artifact path or artifact-set shape changed; incomplete/regressed
+  coverage; a workflow whose authority digest moved without any category
+  explaining it (the deliberate safety net).
+- **Low** — permission narrowed/removed; permissions block added; trigger
+  removed; safeguard added; action became pinned; cosmetic edit.
 
-**Medium** — an ordinary trigger added; a trigger filter changed; a permission
-added inside an existing block; a workflow added to or removed from the graph; an
-action added; an action reference changed; a publish step removed; an artifact
-path changed; the artifact set's shape changed; current or baseline coverage is
-incomplete or regressed; a workflow
-whose authority digest moved without any category above explaining it (a
-deliberate safety net — a silent gap here is the exact failure this feature
-exists to prevent).
-
-**Low** — permission narrowed or removed; permissions block added; trigger
-removed; safeguard added; an action reference that became pinned; a cosmetic
-workflow edit.
-
-### Artifact continuity
-
-Artifact _digests_ are not diffed against the baseline: they change on every
-release by construction, so diffing them would flag every release. What is
-compared is the _shape_ of the artifact set — how many artifacts of each kind
-the release produces. The digests are instead bound to the approval, below.
+Artifact _digests_ are never diffed — they change every release by
+construction. Only the shape of the artifact set is compared; the digests are
+bound to the approval instead.
 
 ## The approval record
 
-Approving a gate writes a durable record: `approved_at`, `approved_by_user_id`,
-and an `artifact_binding_digest` — a digest over the sorted digests of the
-reviewed artifacts. That binds the accepted authority to one specific release
-rather than to a run id that could be re-run with different content. If any
-reviewed artifact lacks a digest the binding is absent rather than partial, and
-the review says so.
+Approving a gate writes `approved_at`, `approved_by_user_id`, and an
+`artifact_binding_digest` over the sorted reviewed-artifact digests, binding the
+accepted authority to one specific release rather than a re-runnable run id. If
+any reviewed artifact lacks a digest the binding is absent, not partial.
 
-Only an **approved** snapshot becomes eligible as the next release's baseline. A
-release that was reviewed but never decided, or one that was rejected, must not
-become the thing later releases are measured against — otherwise a rejected
-authority change would launder itself into the baseline.
+Only an **approved** snapshot becomes baseline-eligible — a rejected or
+undecided authority change must not launder itself into the thing later
+releases are measured against. Approval times advance strictly monotonically
+per release target; that order is the revision fence for overlapping reviews.
 
-Approval times advance monotonically within each release target, including when
-multiple approvals land in the same wall-clock millisecond. That strict order is
-the revision fence used by overlapping reviews, so a later approval always
-invalidates a decision computed against the earlier baseline.
-
-The baseline boundary is `(organization, release target, entry workflow path)`.
-A release target is already `(installation, repository, environment)`, so this is
-exactly the "same repository / environment / release path" comparison: two
-different release workflows publishing from one environment keep separate
-baselines instead of flapping against each other.
-
-Separate baselines per path must not become a quiet spot, so the absence of one
-is split in two. A target with no approved history at all reports `no_baseline`
-— a neutral state, not a warning, and what the first gate on a boundary and
-every scan predating this feature gets. A target that _does_ have approved
-history, on some other release path, instead reports `changed` with a single
-high-significance `release_path_changed` naming the paths that were approved
-before. Adding a second publish workflow leaves the package diff clean while
-changing who is allowed to publish; reporting that as "first release here" would
-hide the exact shape this feature exists to catch.
-
-Nothing is diffed in that case — there is no comparable baseline — so `baseline`
-stays null and the change carries the evidence. When the run reported no entry
-workflow path at all, Drydock does not claim the path moved; the incomplete
-coverage change still requires review without inventing a prior path.
+The baseline boundary is `(organization, release target, entry workflow path)`
+— i.e. same repository/environment/release path. A target with no approved
+history anywhere reports `no_baseline` (neutral). A target with approved
+history on _another_ path reports a high-significance `release_path_changed`
+naming the previously approved paths: a second publish workflow leaves the
+package diff clean while changing who may publish. When the run reported no
+entry path at all, only the incomplete-coverage change is raised — no prior
+path is invented.
 
 ## Policy: holding a release
 
-`organizations.require_authority_change_approval` is **off by default**. The
-delta is recorded and shown on every gated review either way; the policy only
-decides whether it blocks. When enabled, approval also requires an assessed
-authority record: a total capture failure returns
-`authority_assessment_required` instead of failing open. Rejection is never
-blocked.
+`organizations.require_authority_change_approval` is **off by default**; the
+delta is recorded and shown either way. When enabled, approval requires an
+assessed authority record (`authority_assessment_required` on total capture
+failure — never fail open) and, for a `changed` delta,
+`acknowledgeAuthorityChange: true`.
 
-Every approval carries the `authorityAcknowledgementToken` returned by the gate
-lookup, including when the blocking policy is off. The route rejects a missing
-or stale token, reloads the evidence, and leaves the gate untouched, so the
-durable approval can never bind a delta that was not displayed. With the policy
-off that rejection uses `authority_baseline_changed`. When the policy is on and
-the delta status is `changed`, the same token must also be accompanied by
-`acknowledgeAuthorityChange: true`; without either part the route answers `409`
-with code `authority_change_acknowledgement_required`. Both checks run before
-the per-package decision is recorded, so a refused approval leaves no partial
-state.
-
-The acknowledgement is bound to an opaque digest of the exact delta shown in
-the workbench. Before accepting an approval the route recomputes a pending
-gate's delta against the baseline that is approved at that moment. Every
-captured approval uses the same atomic baseline-revision guard, even when the
-blocking policy is off, so the evidence-first default cannot persist a stale
-comparison. If another overlapping release moves the baseline, the route
-returns `409`; the workbench reloads the delta and asks the maintainer to review
-the current comparison (and, when policy is on, confirm it again).
-
-Rejection is never gated on the acknowledgement. Blocking a release stays one
-click — a maintainer who is unsure should not have to tick a box to say no.
+Every approval carries the `authorityAcknowledgementToken` from the gate
+lookup, bound to a digest of the exact delta displayed. The route recomputes
+the delta against the currently approved baseline before accepting; a missing,
+stale, or baseline-outdated token answers `409`
+(`authority_baseline_changed` / `authority_change_acknowledgement_required`)
+and leaves the gate untouched, so a durable approval can never bind a delta
+that was not displayed. Rejection is never gated on any of this — blocking a
+release stays one click.
 
 Enforcement is deterministic and belongs to the GitHub Environment gate. The AI
-reviewer may describe a delta but can never decide whether publication is
+reviewer may describe a delta but never decides whether publication is
 authorized, and the delta never modifies risk levels or deterministic findings.
 
 ## Surfaces
 
-- **Scan detail** — a "Release authority" section above the diff, including on
-  failed workflow-gate reviews that remain approvable, showing the status, each
-  change with its significance and before/after, standing notes, the artifact
-  binding, and the authority graph.
-- **Gate decision dialog** — when the authority changed, a summary and the
-  acknowledgement checkbox.
-- **`GET /api/v1/github-app/workflow-gates/by-scan/:scanId`** — `releaseAuthority`
-  and `organizationRequiresAuthorityApproval`.
-- **`drydock.report.v2`** — a `releaseAuthority` block carrying the full
-  snapshot, the delta, the binding digest, and the approval time. The export
-  aliases release, referenced-workflow, action repository, and container-image
-  repository identities before serialization so a shared report cannot
-  disclose private owner/repository names. The delta
-  keeps a `baseline: { present: true }` marker when a comparison occurred, but
-  strips the prior private gate's snapshot id, gate id, run/commit coordinates,
-  approval time, and any legacy raw shell-command evidence. Null for
-  staged-publish scans and for gates with no record; null means _not assessed_.
-  Identity is scrubbed on the way out: the export has one serialization, shared
-  by the authenticated download, the `/public/reports/:token` body, and the
-  attestation subject digest, and that surface carries no org/user identifiers
-  (see [`security-model.md`](./security-model.md)). So the approver's user id is
-  omitted and the run's `actor`/`triggeringActor` export as null — the
-  authenticated gate lookup above is where a member sees who acted.
+- **Scan detail** — a "Release authority" section above the diff (also on
+  failed workflow-gate reviews that remain approvable).
+- **Gate decision dialog** — summary plus the acknowledgement checkbox when the
+  authority changed.
+- **`GET /api/v1/github-app/workflow-gates/by-scan/:scanId`** —
+  `releaseAuthority` and `organizationRequiresAuthorityApproval`.
+- **`drydock.report.v2`** — a `releaseAuthority` block with the full snapshot,
+  delta, binding digest, and approval time; null means _not assessed_. The
+  export has one serialization shared by the authenticated download, the public
+  report body, and the attestation subject digest, and that surface carries no
+  org/user identifiers (see [`security-model.md`](./security-model.md)):
+  repository identities are aliased, actor logins and the approver id export as
+  null, and the baseline keeps only `{ present: true }`. See
+  [`public-reports.md`](./public-reports.md).
 - **Settings → Release security** — the owner-only policy toggle.
 - **Events** — `github_workflow_gate.authority_captured`, and a verified
-  `authorityChangeAcknowledged` on the gate decision event. The latter is true
-  only for an approval carrying the token for the exact changed delta; an
-  unverified request flag and every rejection record false.
+  `authorityChangeAcknowledged` on the gate decision event (true only for an
+  approval carrying the token for the exact changed delta).
 
 ## Incident replay
 
-`test/release-authority-incident-replay.test.ts` replays the compromised-publish
-pattern the `bittensor-wallet` 4.0.2 incident made public: a release that keeps
-building and publishing normally while the workflow behind it loses its
-safeguards and gains authority.
-
-Read the provenance note in that file before citing it. The two workflows are a
-**reconstruction of the pattern**, written for the test — they are not copies of
-the real repository's files, and no claim is made that they match them line for
-line.
-
-Detection is also not prevention. The claim "this would have been blocked"
-requires the blocking path to run end to end, which is exercised separately
-against the real decision route in
-`test/workers/release-authority-gate.test.ts` ("holds approval on a changed
-authority until it is acknowledged"). Do not describe the replay as prevention
-on its own, and describe the underlying proposal discussions as independent
-problem corroboration — not as GitHub or PyPI endorsement.
+`test/release-authority-incident-replay.test.ts` replays the pattern the
+`bittensor-wallet` 4.0.2 incident made public: a release that keeps building
+and publishing normally while its workflow loses safeguards and gains
+authority. The workflows are a **reconstruction of the pattern** written for
+the test, not copies of the real repository's files. Detection is not
+prevention: the blocking path is exercised separately against the real decision
+route in `test/workers/release-authority-gate.test.ts`. Describe the proposal
+discussions as independent problem corroboration, not GitHub/PyPI endorsement.
 
 ## Non-goals
 
-- Asking PyPI, npm, or crates.io to store permanent workflow hashes.
+- Asking registries to store permanent workflow hashes.
 - Treating every byte-level YAML change as security-sensitive.
 - Claiming to statically reproduce arbitrary repository code execution or
-  mutable GitHub settings that are not present in the captured evidence.
+  mutable GitHub settings absent from the captured evidence.
 - Letting a model decide whether publication is authorized.
-- Claiming provenance is ineffective. It answers a different question and
-  remains part of the evidence packet.
-
-## Tests
-
-- `test/release-authority-yaml.test.ts` — the bounded parser, including its
-  limits and the completeness contract.
-- `test/release-authority-delta.test.ts` — every change class, cosmetic-only
-  edits, reusable workflows, mutable refs, artifact continuity, and coverage.
-- `test/release-authority-source.test.ts` — graph ingestion, path safety, and
-  that the installation token never leaves `api.github.com`.
-- `test/release-authority-snapshot.test.ts` — the final persisted UTF-8 budget
-  and its incomplete-coverage contract.
-- `test/release-authority-normalize.test.ts` — persisted-blob readers.
-- `test/release-authority-incident-replay.test.ts` — the incident-shaped replay.
-- `test/workers/release-authority-gate.test.ts` — capture, baseline eligibility,
-  the blocking policy, and the report/API surfaces.
+- Claiming provenance is ineffective — it answers a different question.
