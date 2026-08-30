@@ -67,6 +67,12 @@ export async function buildReleaseReceipt(
       intentBinding,
       releaseDecision: { status: releaseDecision.status },
       workflowGate: gate,
+      // Reported independently of the aggregate, like registryOutcome: authority
+      // capture is best effort and never blocks a review, so its absence or
+      // partial state must not mark the review evidence incomplete. Absent
+      // record ⇒ field absent (canonicalJson drops undefined), so receipts for
+      // scans without a record keep their existing bytes.
+      releaseAuthority: buildReleaseAuthorityEvidence(detail.releaseAuthority),
       registryOutcome: report.registryStatus
         ? { status: "complete" as const, observation: report.registryStatus }
         : { status: "unknown" as const, observation: null },
@@ -158,6 +164,39 @@ function buildWorkflowGate(
     // Callback delivery is currently observable only in ephemeral operational
     // logs. A durable gate decision is not proof GitHub received it.
     callback: { outcome: "unknown" as const, observedAt: null },
+  };
+}
+
+/**
+ * Reference to the persisted release-authority record for a gated release. The
+ * receipt names the outcome and the anchors (snapshot id, artifact binding,
+ * baseline); the full snapshot and delta travel in the referenced report.
+ */
+function buildReleaseAuthorityEvidence(record: ScanDetail["releaseAuthority"]) {
+  if (!record) return undefined;
+  // A delta whose snapshot can no longer be decoded cannot be revalidated, so
+  // the receipt must not carry its outcome — a stale "unchanged" would read as
+  // assurance. The partial record still proves a capture happened.
+  const delta = record.snapshot ? record.delta : null;
+  return {
+    status: delta ? ("complete" as const) : ("partial" as const),
+    snapshotId: record.id,
+    capturedAt: toIso(record.createdAt),
+    workflowPath: record.workflowPath || null,
+    artifactBindingDigest: record.artifactBindingDigest,
+    delta: delta
+      ? {
+          status: delta.status,
+          changeCount: delta.changeCount,
+          highestSignificance: delta.highestSignificance,
+          requiresApproval: delta.requiresApproval,
+          coverageComplete: delta.standing.coverageComplete,
+          baseline: delta.baseline
+            ? { snapshotId: delta.baseline.snapshotId, approvedAt: delta.baseline.approvedAt }
+            : null,
+        }
+      : null,
+    approval: record.approvedAt ? { approvedAt: toIso(record.approvedAt) } : null,
   };
 }
 
