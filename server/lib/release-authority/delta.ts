@@ -1,27 +1,10 @@
 // Release-authority delta: what changed in the authority to publish, measured
 // against the last release a maintainer approved for the same release boundary.
+// See `docs/release-authority.md` for the policy (review on authority change,
+// not hash pinning) and the changed/standing and authority/cosmetic splits.
 //
-// The policy is *review on authority change*, not permanent workflow-hash
-// pinning. A pinned hash makes every edit a release-blocking event and pushes
-// maintainers to disable the check; comparing against the last approved
-// baseline asks the question that actually matters — "is this still the
-// authority you agreed to?" — and stays quiet when the answer is yes.
-//
-// Two distinctions carry most of the signal quality:
-//
-//   changed vs standing — a reference that has *always* been mutable
-//     (`actions/foo@v4`) is a standing property of this release path, not a
-//     delta. A reference that *became* mutable is a delta. Reporting the first
-//     as a change would make every release look like an incident; reporting it
-//     nowhere would hide a real weakness. They go in different buckets.
-//
-//   authority vs cosmetic — comments, key order and formatting move a
-//     workflow's raw digest but not its authority digest. Those releases report
-//     `cosmetic` and never raise a high-signal warning.
-//
-// Nothing here is advisory-to-authoritative: the delta is deterministic
-// evidence. Enforcement belongs to the GitHub Environment gate and the policy
-// that reads `requiresApproval`, never to a model.
+// The delta is deterministic evidence. Enforcement belongs to the GitHub
+// Environment gate and the policy that reads `requiresApproval`, never to a model.
 
 import {
   actionReferenceIdentity as actionIdentity,
