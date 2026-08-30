@@ -7,6 +7,28 @@ interface AiFinding {
   evidence: string;
   reason: string;
   recommendation: string;
+  /**
+   * Staged line the finding pins to in the diff, resolved from the submitted
+   * anchor by `resolveAnchorLine` — never a number the model supplied. Null when
+   * the anchor was absent or did not match a single line, which is how the
+   * finding falls back to the unpinned banner above the hunks.
+   */
+  line?: number | null;
+}
+
+/**
+ * An advisory note the reviewer pinned to one line of the diff.
+ *
+ * Deliberately severity-free and deliberately outside the findings pipeline: a
+ * comment is context for the maintainer reading the hunk, not a signal. It never
+ * persists as a `scan_findings` row, never enters `computeScanRisk`, and never
+ * counts toward `finding_count`. Anything that should move the verdict has to be
+ * a finding or the summary.
+ */
+interface AiReviewComment {
+  file: string;
+  note: string;
+  line?: number | null;
 }
 
 export type AiReviewStatus = "complete" | "invalid" | "unavailable";
@@ -19,6 +41,7 @@ export interface AiReview {
   releaseAssessment: AiReleaseAssessment | "not_assessed";
   summary: string;
   findings: AiFinding[];
+  comments: AiReviewComment[];
   requiresManualReview: boolean;
   model: string | null;
   /** Version of the prompt, evidence tools, and routing contract used. */
@@ -62,6 +85,7 @@ export type DisplayedAiResult =
       risk: RiskLevel;
       releaseAssessment: AiReleaseAssessment;
       findings: AiFinding[];
+      comments: AiReviewComment[];
       requiresManualReview: boolean;
     }
   | {
@@ -86,6 +110,11 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
       risk: review.risk,
       releaseAssessment: review.releaseAssessment,
       findings: review.findings,
+      // Historical records (and hand-built fixtures) predate the field, while
+      // scan detail still receives ai_json as unknown persisted data. Project
+      // defensively so a malformed record cannot crash a UI consumer that
+      // iterates these notes.
+      comments: normalizeAiReviewComments(review.comments),
       requiresManualReview: review.requiresManualReview,
     };
   }
@@ -95,4 +124,28 @@ export function displayedAiResult(review: AiReview | null | undefined): Displaye
     summary: review.summary,
     status: review.status === "complete" ? "invalid" : review.status,
   };
+}
+
+function normalizeAiReviewComments(value: unknown): AiReviewComment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((comment): AiReviewComment[] => {
+    if (!comment || typeof comment !== "object" || Array.isArray(comment)) return [];
+    const record = comment as Record<string, unknown>;
+    if (typeof record.file !== "string" || typeof record.note !== "string") return [];
+    const line = record.line;
+    if (
+      line !== undefined &&
+      line !== null &&
+      (typeof line !== "number" || !Number.isInteger(line) || line <= 0)
+    ) {
+      return [];
+    }
+    return [
+      {
+        file: record.file,
+        note: record.note,
+        ...(line === null ? { line: null } : typeof line === "number" ? { line } : {}),
+      },
+    ];
+  });
 }

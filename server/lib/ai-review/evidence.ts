@@ -16,6 +16,7 @@ import {
   listFilesInputSchema,
   type AiReviewSubmission,
 } from "./contract";
+import { anchorCandidates, resolveAnchorLine } from "./anchors";
 import { computeRisk, type DiffEntry, type FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import type { SelectiveAiReviewOptions } from "./types";
@@ -31,6 +32,17 @@ interface EvidenceIndex {
   entrypointPaths: Set<string>;
   scriptReferencedPaths: Set<string>;
   ruleFindings: SelectiveAiReviewOptions["ruleFindings"];
+}
+
+/** Source text actually returned to one model attempt, keyed by canonical path. */
+export interface EvidenceAccessLog {
+  observedTextByPath: Map<string, string[]>;
+  /** Baseline-only diff text served beside a staged target, used to reject ambiguous anchors. */
+  observedNonTargetTextByPath: Map<string, string[]>;
+}
+
+export function createEvidenceAccessLog(): EvidenceAccessLog {
+  return { observedTextByPath: new Map(), observedNonTargetTextByPath: new Map() };
 }
 
 export function buildAiReviewPayload(
@@ -91,6 +103,7 @@ export function createAiReviewTools(
   options: SelectiveAiReviewOptions,
   submitReview: (review: AiReviewSubmission) => void,
   index: EvidenceIndex = buildEvidenceIndex(options),
+  evidenceAccess: EvidenceAccessLog = createEvidenceAccessLog(),
 ) {
   let remainingEvidenceChars = MAX_TOTAL_TOOL_RESPONSE_CHARS;
 
@@ -128,6 +141,13 @@ export function createAiReviewTools(
       const rendered = renderDiffText(previous, staged);
       if (rendered.text !== null) {
         const taken = takeText(rendered.text, maxChars, callBudget);
+        recordObservedDiffText(
+          evidenceAccess,
+          resolved.path,
+          taken.text,
+          Boolean(staged?.textSample),
+          Boolean(previous?.textSample),
+        );
         return {
           ok: true as const,
           path: resolved.path,
@@ -168,6 +188,7 @@ export function createAiReviewTools(
     }
 
     const taken = takeText(file.textSample, maxChars, callBudget);
+    recordObservedText(evidenceAccess, resolved.path, taken.text);
     return {
       ok: true as const,
       path: resolved.path,
@@ -215,6 +236,7 @@ export function createAiReviewTools(
           matchIndex + needle.length + SEARCH_SNIPPET_RADIUS,
         );
         const snippet = takeText(file.textSample.slice(start, end), end - start, callBudget);
+        recordObservedText(evidenceAccess, path, snippet.text);
         matches.push({ path, matchIndex, snippet: snippet.text });
         matchIndex = haystack.indexOf(needle, matchIndex + needle.length);
       }
@@ -296,6 +318,46 @@ export function createAiReviewTools(
   };
 }
 
+export interface ResolvedAnchor {
+  /** The package-relative path as the diff and the file tree spell it. */
+  file: string;
+  /** Whether this file is part of the release delta rather than package context. */
+  changed: boolean;
+  /** 1-based line in the staged text, or null when the anchor did not pin. */
+  line: number | null;
+}
+
+/**
+ * Resolve a submitted `(file, anchor)` pair against the exact evidence the model
+ * was served in this attempt, so a note can be pinned to a diff line.
+ *
+ * Returns null when the path is not in the reviewer's evidence allowlist — that
+ * is a fabricated citation, not a near miss. A readable path with an anchor
+ * absent from the text actually returned by `read`/`search_files` still
+ * resolves, with `line: null`, because the note itself is worth keeping while
+ * the unverified coordinate is not.
+ *
+ * Staged text wins over previous text: the workbench numbers lines on the staged
+ * side, so a line resolved against the baseline would pin to the wrong row on
+ * every modified file.
+ */
+export function createAnchorResolver(index: EvidenceIndex, evidenceAccess: EvidenceAccessLog) {
+  return (rawFile: string, anchor?: string | null): ResolvedAnchor | null => {
+    const resolvedPath = resolveToolPath(rawFile, index);
+    if (!resolvedPath.ok) return null;
+    const file = resolvedPath.path;
+    const record = index.stagedByPath.get(file) ?? index.previousByPath.get(file);
+    const observedAnchor = firstObservedAnchor(evidenceAccess, file, anchor);
+    return {
+      file,
+      changed: index.changedPaths.has(file),
+      line: observedAnchor ? resolveAnchorLine(record?.textSample, observedAnchor) : null,
+    };
+  };
+}
+
+export type AnchorResolver = ReturnType<typeof createAnchorResolver>;
+
 export function buildEvidenceIndex(options: SelectiveAiReviewOptions): EvidenceIndex {
   const stagedByPath = new Map(options.files.map((file) => [file.path, file]));
   const previousByPath = new Map((options.previousFiles ?? []).map((file) => [file.path, file]));
@@ -376,6 +438,66 @@ function resolveToolPath(
     error:
       "Path is not available to the AI reviewer. It can only inspect changed files, recognized manifest-referenced script/entrypoint files, deterministic-finding files, and package manifests.",
   };
+}
+
+function recordObservedText(access: EvidenceAccessLog, path: string, text: string): void {
+  recordObservedTextInMap(access.observedTextByPath, path, text);
+}
+
+// Unified-diff output contains baseline-only `-` lines that cannot map to a
+// staged coordinate. Record only the side the workbench will render: staged
+// additions/context for added or modified files, previous removals for a file
+// absent from the staged artifact. Elision markers are metadata, not source.
+function recordObservedDiffText(
+  access: EvidenceAccessLog,
+  path: string,
+  text: string,
+  hasStagedText: boolean,
+  hasPreviousText: boolean,
+): void {
+  const acceptedMarkers = hasStagedText ? new Set(["+", " "]) : new Set(["-"]);
+  // A modified file's removed lines are visible to the reviewer but cannot map
+  // to a staged coordinate. Retain them separately so marker stripping cannot
+  // authenticate a removed-line anchor merely because the same substring also
+  // appears on an unrelated staged line.
+  const nonTargetMarkers = hasStagedText && hasPreviousText ? new Set(["-"]) : new Set<string>();
+  if (!hasStagedText && !hasPreviousText) return;
+
+  for (const part of text.split(/(?<=\n)/)) {
+    const marker = part[0];
+    if (acceptedMarkers.has(marker)) {
+      recordObservedText(access, path, part.slice(1));
+    } else if (nonTargetMarkers.has(marker)) {
+      recordObservedTextInMap(access.observedNonTargetTextByPath, path, part.slice(1));
+    }
+  }
+}
+
+function firstObservedAnchor(
+  access: EvidenceAccessLog,
+  path: string,
+  anchor: string | null | undefined,
+): string | null {
+  const observed = access.observedTextByPath.get(path) ?? [];
+  const observedNonTarget = access.observedNonTargetTextByPath.get(path) ?? [];
+  for (const candidate of anchorCandidates(anchor)) {
+    const matchesTarget = observed.some((text) => text.includes(candidate));
+    const matchesNonTarget = observedNonTarget.some((text) => text.includes(candidate));
+    // Once a candidate also identifies served baseline-only text, do not fall
+    // through to a weaker marker-stripped interpretation. The model may have
+    // copied the removed line, and pinning it to staged code would be a false
+    // coordinate even when that code happens to contain the same substring.
+    if (matchesNonTarget) return null;
+    if (matchesTarget) return candidate;
+  }
+  return null;
+}
+
+function recordObservedTextInMap(map: Map<string, string[]>, path: string, text: string): void {
+  if (!text) return;
+  const observed = map.get(path);
+  if (observed) observed.push(text);
+  else map.set(path, [text]);
 }
 
 function resolveKnownPath(

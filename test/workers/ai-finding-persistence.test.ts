@@ -46,6 +46,9 @@ const aiFindingRecord: Finding = {
   file: "setup.js",
   evidence: "child_process.exec(atob(payload))",
   reason: "decodes and executes a staged payload during install",
+  // Resolved from the submitted anchor, so an AI finding pins to its hunk in
+  // the workbench exactly like a deterministic one.
+  line: 1,
 };
 
 const completeAiReview = {
@@ -60,8 +63,10 @@ const completeAiReview = {
       evidence: "child_process.exec(atob(payload))",
       reason: "decodes and executes a staged payload during install",
       recommendation: "block the release",
+      line: 1,
     },
   ],
+  comments: [{ file: "index.js", note: "Unrelated fetch, unchanged since 0.1.0.", line: 1 }],
   requiresManualReview: true,
   model: "test-model",
   reviewerVersion: "1.0.0",
@@ -179,6 +184,9 @@ describe("AI finding persistence (report artifact)", () => {
     expect(aiDetail).toMatchObject({
       severity: "critical",
       file: "setup.js",
+      // Same line the D1 path persists: both stores project the review through
+      // projectAiReviewFindings, so a pinned finding survives either store.
+      line: 1,
       diffStatus: "added",
       releaseDelta: true,
     });

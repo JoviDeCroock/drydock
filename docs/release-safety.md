@@ -45,6 +45,24 @@ for the lifecycle behavior behind it.
   escalates the scan to manual-review risk rather than reading as clean, and a
   near-miss submission is clamped to bounds instead of discarded. See
   [`docs/security-model.md`](security-model.md).
+- The reviewer never states a line number. It submits an `anchor` — a line copied
+  verbatim from the evidence it was served — and `server/lib/ai-review/anchors.ts`
+  resolves that string against the same text sample, requiring a unique match.
+  The evidence tools keep an attempt-local access log, so only a string present
+  in text actually returned by that attempt can earn a line; retries and fallback
+  models start with an empty log. An anchor that was not served, misses, matches
+  several lines, or is too generic to identify one resolves to no line and the
+  note falls back to the diff's unpinned banner. A resolved line is display only:
+  `annotateFindingsWithDiffStatus` scopes
+  `source: "ai"` findings by file, so a pinned line can never move an AI finding
+  out of the release bucket `releaseRisk` and the workflow gate read.
+- A review may also return up to `MAX_AI_COMMENTS` inline `comments`: severity-free
+  advisory notes pinned to a line, persisted in `scans.ai_json` and rendered in the
+  diff. They are context for the maintainer reading the hunk, never signals — they
+  are not `scan_findings` rows, do not count into `finding_count`, and cannot move
+  risk. A comment naming a file the review could not see, or an unchanged file
+  hidden from the default diff view, is dropped; unchanged context belongs in the
+  summary instead.
 
 ## Operational observability
 

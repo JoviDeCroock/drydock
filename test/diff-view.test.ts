@@ -3,6 +3,7 @@ import { diffHashLines, nativeBadge } from "../src/components/DiffView";
 import { buildRows } from "../src/components/diff-rows";
 import {
   initialScrollResetKey,
+  isAnnotationScrollTarget,
   isDiffScrollTarget,
   shouldSeekInitialDiffTarget,
 } from "../src/components/diff-scroll";
@@ -233,6 +234,13 @@ describe("initial diff scroll targeting", () => {
     expect(isDiffScrollTarget("modified", "removed")).toBe(true);
     expect(isDiffScrollTarget("modified", "added")).toBe(true);
     expect(isDiffScrollTarget("unchanged", "added")).toBe(false);
+  });
+
+  test("does not let advisory comments outrank the first changed row", () => {
+    expect(isAnnotationScrollTarget(true, { kind: "comment" })).toBe(false);
+    expect(isAnnotationScrollTarget(true, { kind: "finding" })).toBe(true);
+    expect(isAnnotationScrollTarget(true, {})).toBe(true);
+    expect(isAnnotationScrollTarget(false, { kind: "finding" })).toBe(false);
   });
 
   test("reset key changes with file identity and content, never with findings", () => {

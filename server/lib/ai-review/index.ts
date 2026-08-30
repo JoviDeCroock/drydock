@@ -7,11 +7,19 @@ import {
   buildReviewerSystemPrompt,
   clampAiReviewSubmission,
   MAX_AGENT_STEPS,
+  MAX_AI_COMMENTS,
   MAX_REVIEW_OUTPUT_TOKENS,
   selectReportedFindings,
   type AiReviewSubmission,
 } from "./contract";
-import { buildAiReviewPayload, buildEvidenceIndex, createAiReviewTools } from "./evidence";
+import {
+  buildAiReviewPayload,
+  buildEvidenceIndex,
+  createAiReviewTools,
+  createAnchorResolver,
+  createEvidenceAccessLog,
+  type AnchorResolver,
+} from "./evidence";
 import type {
   AiReview,
   AiReviewResult,
@@ -136,6 +144,11 @@ export async function analyzeWithAi(
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
+      // Evidence access is attempt-scoped for the same reason. A retry or
+      // fallback model must not earn a line pin from text only an earlier model
+      // saw before it failed.
+      const evidenceAccess = createEvidenceAccessLog();
+      const anchors = createAnchorResolver(index, evidenceAccess);
       try {
         const reasoningEffort = aiReviewReasoningEffort(candidateModel);
         const languageModel =
@@ -153,6 +166,7 @@ export async function analyzeWithAi(
             submittedReview = review;
           },
           index,
+          evidenceAccess,
         );
 
         const result = await tracedAi.generateText({
@@ -213,10 +227,10 @@ export async function analyzeWithAi(
             durationMs: durationMsSince(attemptStartedAtMs),
             usage,
           });
-          return { review: normalizeParsedReview(candidateModel, submittedReview), usage };
+          return { review: normalizeParsedReview(candidateModel, submittedReview, anchors), usage };
         }
 
-        const textReview = normalizeAiResponse(candidateModel, result.text);
+        const textReview = normalizeAiResponse(candidateModel, result.text, anchors);
         if (textReview.status === "complete") {
           recordAiReviewAttempt(env, options, {
             model: candidateModel,
@@ -515,9 +529,9 @@ function scanScopedCacheAffinity(env: Cloudflare.Env, scanId: string | undefined
   return `${base}:${suffix}`;
 }
 
-function normalizeAiResponse(model: string, text: string): AiReview {
+function normalizeAiResponse(model: string, text: string, anchors: AnchorResolver): AiReview {
   try {
-    return normalizeParsedReview(model, JSON.parse(text));
+    return normalizeParsedReview(model, JSON.parse(text), anchors);
   } catch {
     return fallbackReview(
       model,
@@ -527,7 +541,7 @@ function normalizeAiResponse(model: string, text: string): AiReview {
   }
 }
 
-function normalizeParsedReview(model: string, value: unknown): AiReview {
+function normalizeParsedReview(model: string, value: unknown, anchors: AnchorResolver): AiReview {
   const parsed = aiReviewSubmissionSchema.safeParse(value);
   if (!parsed.success) {
     return fallbackReview(
@@ -545,7 +559,27 @@ function normalizeParsedReview(model: string, value: unknown): AiReview {
     risk: review.risk,
     releaseAssessment: review.releaseAssessment,
     summary: review.summary,
-    findings: selectReportedFindings(review.findings),
+    findings: selectReportedFindings(review.findings).map((finding) => {
+      // `anchor` is a lookup key, not report content: it is consumed here and
+      // never persisted. A path the review could not have seen keeps the
+      // finding (its evidence still stands on its own) but wins no line.
+      const { anchor, ...rest } = finding;
+      const resolved = anchors(finding.file, anchor);
+      return { ...rest, file: resolved?.file ?? finding.file, line: resolved?.line ?? null };
+    }),
+    // A comment is only meaningful next to the release diff, so unlike a finding
+    // it is dropped outright when its file is unavailable or unchanged. Unchanged
+    // evidence can inform the summary, but the workbench hides package-context
+    // files by default and comments intentionally have no tree count to reveal
+    // them. An unpinned comment on a changed file is kept in that file's banner.
+    comments: (review.comments ?? [])
+      .flatMap((comment) => {
+        const resolved = anchors(comment.file, comment.anchor);
+        return resolved?.changed
+          ? [{ file: resolved.file, note: comment.note, line: resolved.line }]
+          : [];
+      })
+      .slice(0, MAX_AI_COMMENTS),
     requiresManualReview: review.requiresManualReview,
     model,
     reviewerVersion: AI_REVIEWER_VERSION,
@@ -563,6 +597,7 @@ function fallbackReview(
     releaseAssessment: "not_assessed",
     summary,
     findings: [],
+    comments: [],
     requiresManualReview: false,
     model,
     reviewerVersion: AI_REVIEWER_VERSION,

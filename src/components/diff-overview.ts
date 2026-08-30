@@ -48,7 +48,9 @@ interface Region {
 const MIN_CHANGE_HEIGHT_PERCENT = 1.4;
 const MIN_FINDING_HEIGHT_PERCENT = 1.8;
 
-export function diffOverviewMarkers<T extends { severity: string }>(
+export function diffOverviewMarkers<
+  T extends { severity?: string | null; kind?: "finding" | "comment" },
+>(
   rows: readonly DiffOverviewRow[],
   pinnedFindings: ReadonlyMap<number, readonly T[]>,
 ): DiffOverviewMarker[] {
@@ -80,7 +82,7 @@ function changeRegions(rows: readonly DiffOverviewRow[]): Region[] {
   return regions;
 }
 
-function findingRegions<T extends { severity: string }>(
+function findingRegions<T extends { severity?: string | null; kind?: "finding" | "comment" }>(
   rows: readonly DiffOverviewRow[],
   pinnedFindings: ReadonlyMap<number, readonly T[]>,
 ): Region[] {
@@ -104,12 +106,15 @@ function findingRegions<T extends { severity: string }>(
   return regions;
 }
 
-function maxSeverityInFindings<T extends { severity: string }>(
-  findings: readonly T[] | undefined,
-): string | null {
+function maxSeverityInFindings<
+  T extends { severity?: string | null; kind?: "finding" | "comment" },
+>(findings: readonly T[] | undefined): string | null {
   if (!findings) return null;
   let severity: string | null = null;
-  for (const finding of findings) severity = maxSeverity(severity, finding.severity);
+  for (const finding of findings) {
+    if (finding.kind === "comment" || typeof finding.severity !== "string") continue;
+    severity = maxSeverity(severity, finding.severity);
+  }
   return severity;
 }
 

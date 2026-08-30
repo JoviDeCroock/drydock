@@ -250,8 +250,10 @@ describe("scan report JSON export", () => {
           evidence: "postinstall runs node install.js",
           reason: "consumer installs execute arbitrary code",
           recommendation: "remove the install hook or gate it behind a manual step",
+          line: 12,
         },
       ],
+      comments: [{ file: "index.js", note: "The retry loop is unrelated to the hook.", line: 4 }],
       requiresManualReview: true,
       model: "ai-review-1",
     } as const;
@@ -271,10 +273,12 @@ describe("scan report JSON export", () => {
         findings: Array<{
           severity: string;
           file: string;
+          line: number | null;
           evidence: string;
           reason: string;
           recommendation: string;
         }>;
+        comments: Array<{ file: string; line: number | null; note: string }>;
       } | null;
     };
 
@@ -289,11 +293,13 @@ describe("scan report JSON export", () => {
         {
           severity: "critical",
           file: "package.json",
+          line: 12,
           evidence: "postinstall runs node install.js",
           reason: "consumer installs execute arbitrary code",
           recommendation: "remove the install hook or gate it behind a manual step",
         },
       ],
+      comments: [{ file: "index.js", line: 4, note: "The retry loop is unrelated to the hook." }],
     });
 
     // Stable serialization: a re-export of the same evidence is byte-identical.
@@ -324,6 +330,7 @@ describe("scan report JSON export", () => {
         releaseAssessment: string | null;
         requiresManualReview: boolean;
         findings: unknown[];
+        comments: unknown[];
       } | null;
     };
 
@@ -335,6 +342,7 @@ describe("scan report JSON export", () => {
       releaseAssessment: null,
       requiresManualReview: false,
       findings: [],
+      comments: [],
     });
   });
 

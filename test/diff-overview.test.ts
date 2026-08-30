@@ -49,6 +49,19 @@ describe("diffOverviewMarkers", () => {
     expect(markers[1].topPercent).toBeCloseTo(200 / 3);
   });
 
+  test("does not turn advisory comments into finding markers", () => {
+    const rows: DiffOverviewRow[] = [
+      { tone: "unchanged", line: 1 },
+      { tone: "unchanged", line: 2 },
+    ];
+    const pinned = new Map([
+      [1, [{ kind: "comment" as const }]],
+      [2, [{ severity: "high" }, { kind: "comment" as const }]],
+    ]);
+
+    expect(diffOverviewMarkers(rows, pinned)).toMatchObject([{ kind: "finding", tone: "danger" }]);
+  });
+
   test("keeps single-line regions visible on large files", () => {
     const rows = Array.from({ length: 500 }, (_, index) => ({
       tone: index === 250 ? "added" : "unchanged",

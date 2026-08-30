@@ -319,11 +319,11 @@ function sameJsTokenStream(
  * numbers, keeping the original line in `sourceLine` so the annotation caption
  * keeps naming the line that exists in the artifact.
  *
- * A finding lands on the *first* output line carved out of its source line, and
- * never on a row belonging to any other line. Findings carry no column, so a rule
- * that matched halfway through a minified bundle cannot be pinned tighter than
- * the top of its source line — but that is exactly as tight as the unformatted
- * view, which pins it to the top of the file.
+ * A deterministic finding lands on the *first* output line carved out of its
+ * source line, and never on a row belonging to any other line. Assistant
+ * annotations are unpinned when one source line becomes several display rows:
+ * their discarded exact-text anchor made a stronger claim than a rule's source
+ * line, so guessing the first row would be a misleading downgrade.
  *
  * A line that does not exist on this side — the rules ran on the scan's 128 KiB
  * sample while this surface cached a shorter one — is unpinned outright rather
@@ -331,18 +331,29 @@ function sameJsTokenStream(
  * so a stale line that correctly fell off the end of the unformatted view would
  * otherwise start landing on an unrelated row.
  */
-export function remapFindingLines<T extends { line?: number | null; sourceLine?: number | null }>(
-  findings: T[],
-  formatted: FormattedSource | null,
-): T[] {
+export function remapFindingLines<
+  T extends { line?: number | null; sourceLine?: number | null; source?: string | null },
+>(findings: T[], formatted: FormattedSource | null): T[] {
   if (!formatted) return findings;
   const firstOutputLine = new Map<number, number>();
+  const outputLineCount = new Map<number, number>();
   const { sourceLines } = formatted;
   for (let index = sourceLines.length - 1; index >= 0; index -= 1) {
-    firstOutputLine.set(sourceLines[index], index + 1);
+    const sourceLine = sourceLines[index];
+    firstOutputLine.set(sourceLine, index + 1);
+    outputLineCount.set(sourceLine, (outputLineCount.get(sourceLine) ?? 0) + 1);
   }
   return findings.map((finding) => {
     if (typeof finding.line !== "number") return finding;
+    // Deterministic rules identify only a source line, so the first display row
+    // from that line remains their best available pin. Assistant annotations
+    // are stronger claims: their submitted anchor identified exact text, but
+    // normalization deliberately discarded it after resolving the source line.
+    // If reformatting split that line into several rows, choosing the first one
+    // can point at unrelated code. Fall back to the banner instead.
+    if (finding.source === "ai" && (outputLineCount.get(finding.line) ?? 0) > 1) {
+      return { ...finding, line: null, sourceLine: finding.line };
+    }
     const mapped = firstOutputLine.get(finding.line);
     if (mapped === undefined) return { ...finding, line: null, sourceLine: finding.line };
     if (mapped === finding.line) return finding;

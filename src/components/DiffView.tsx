@@ -49,9 +49,10 @@ export interface DiffViewProps {
   after: DiffSide | null;
   beforeLabel: string;
   afterLabel: string;
-  // Deterministic findings for this file, pinned to the staged line they
-  // reference. Findings without a matching line surface in a banner above the
-  // diff so a truncated sample can't hide a signal.
+  // Annotations for this file — deterministic findings, assistant findings, and
+  // assistant comments alike — pinned to the staged line they reference.
+  // Anything without a matching line surfaces in a banner above the diff so a
+  // truncated sample can't hide a signal.
   findings?: DiffFinding[];
 }
 

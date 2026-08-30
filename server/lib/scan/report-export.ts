@@ -222,9 +222,15 @@ function extractAiReview(aiJson: unknown) {
       findings: displayed.findings.map((finding) => ({
         severity: finding.severity,
         file: finding.file,
+        line: finding.line ?? null,
         evidence: finding.evidence,
         reason: finding.reason,
         recommendation: finding.recommendation,
+      })),
+      comments: displayed.comments.map((comment) => ({
+        file: comment.file,
+        line: comment.line ?? null,
+        note: comment.note,
       })),
     };
   }
@@ -236,6 +242,7 @@ function extractAiReview(aiJson: unknown) {
     releaseAssessment: null,
     requiresManualReview: false,
     findings: [],
+    comments: [],
   };
 }
 
