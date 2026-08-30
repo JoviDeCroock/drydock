@@ -50,12 +50,10 @@ export interface FindingAnnotationOptions {
 }
 
 export { createPackageDiff } from "./diff";
-export { highestSatisfying, parseVersionSpec } from "./dependency-specs";
-export type { ParsedVersionSpec } from "./dependency-specs";
+export { parseVersionSpec } from "./dependency-specs";
 export type { DiffEntry } from "./diff";
 export { summarizePackageJsonDiff } from "./serialize";
 export type { PackageJsonDiff, PackageJsonDiffEntry, PackageJsonSummary } from "./serialize";
-export type { DependencySection } from "./serialize";
 export {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
@@ -95,10 +93,8 @@ export {
 } from "./dependency-evidence";
 export type {
   AddedDependency,
-  AddedDependencyDeclaration,
   DependencyDigest,
   DependencyEvidence,
-  DependencyInspectionOutcome,
   ReviewedDependencyEvidence,
   DependencyReview,
   DependencyUninspectableReason,

@@ -68,9 +68,9 @@ import type {
  * is spent, remaining dependencies record as `budget-exhausted` (a visible gap)
  * instead of holding the release's own review hostage to a slow registry.
  */
-export const DEPENDENCY_REVIEW_BUDGET_MS = 30_000;
-export const DEPENDENCY_ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
-export const DEPENDENCY_INSPECTION_CONCURRENCY = 2;
+const DEPENDENCY_REVIEW_BUDGET_MS = 30_000;
+const DEPENDENCY_ARTIFACT_MAX_BYTES = 25 * 1024 * 1024;
+const DEPENDENCY_INSPECTION_CONCURRENCY = 2;
 
 /**
  * `PackageAdapter.inspectAddedDependencies` for both npm adapters.

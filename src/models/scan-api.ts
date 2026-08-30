@@ -137,7 +137,7 @@ export interface PersistedScanDetail {
       name: string;
       version: string | null;
       path: string;
-      section?: import("../../server/lib/review").DependencySection;
+      section?: import("../../server/lib/review/serialize").DependencySection;
       declaredSpec?: string;
     };
     diffStatus?: FindingDiffStatus;

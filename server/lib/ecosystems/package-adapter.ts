@@ -1,7 +1,6 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
 import type {
   CodePatternSet,
-  DependencyEvidence,
   DependencyReview,
   DiffEntry,
   FileRecord,
@@ -146,12 +145,7 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   inspectAddedDependencies?(
     ctx: AdapterContext,
     args: DependencyInspectionArgs,
-  ): Promise<DependencyReview | DependencyInspectionResult>;
-}
-
-export interface DependencyInspectionResult {
-  evidence: DependencyEvidence[];
-  findings: Finding[];
+  ): Promise<DependencyReview>;
 }
 
 export interface DependencyInspectionArgs {
