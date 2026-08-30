@@ -15,6 +15,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
+import { scanEcosystem } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import type { AppDb } from "./client";
 import {
@@ -80,6 +81,8 @@ interface DecisionTargetRow {
   risk: string;
   riskSummaryJson: unknown;
   aiJson: unknown;
+  source: string;
+  summaryJson: unknown;
   decision: string | null;
   decisionReason: string | null;
   decidedByUserId: string | null;
@@ -105,7 +108,7 @@ export async function recordScanDecision(
         // the per-vote TOTP step-up and owns the irreversible GitHub callback.
         // Sharing the vote roster is safe only when the staged route cannot add
         // an un-stepped-up approval to it.
-        inArray(scans.source, ["manual", "auto_discovery"]),
+        inArray(scans.source, ["manual", "auto_discovery", "published"]),
       ),
     )
     .limit(1);
@@ -118,10 +121,7 @@ export async function recordScanDecision(
     // reviewer may revise their own vote here as freely as they could revise
     // the whole decision before quorum existed.
     hardenOnly: false,
-    // Always npm here: this is the staged-publish decision route. Gated
-    // releases decide through `recordGatePackageDecision` below and report
-    // `gate`.
-    ecosystem: "npm",
+    ecosystem: scanEcosystem(current.source, current.summaryJson) ?? "npm",
     artifactBucket,
     env,
     // Re-prove staged eligibility at write time so a concurrent restage cannot
@@ -132,7 +132,7 @@ export async function recordScanDecision(
         eq(scans.organizationId, input.organizationId),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
-        inArray(scans.source, ["manual", "auto_discovery"]),
+        inArray(scans.source, ["manual", "auto_discovery", "published"]),
       )!,
   });
 }
@@ -142,6 +142,8 @@ const DECISION_TARGET_COLUMNS = {
   risk: scans.risk,
   riskSummaryJson: scans.riskSummaryJson,
   aiJson: scans.aiJson,
+  source: scans.source,
+  summaryJson: scans.summaryJson,
   decision: scans.decision,
   decisionReason: scans.decisionReason,
   decidedByUserId: scans.decidedByUserId,
