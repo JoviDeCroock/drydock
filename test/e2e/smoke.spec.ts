@@ -3,6 +3,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const scanId = "gate-smoke-scan-000001";
 const gateId = "gate-smoke-000001";
 const now = "2026-06-15T12:00:00.000Z";
+const longFindingEvidence = `4278592 byte binary; sha256 ${"c".repeat(64)}`;
 
 test("renders and decides a workflow-gate review", async ({ page }) => {
   await installWorkflowGateMocks(page);
@@ -21,6 +22,24 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("drydock/example").first()).toBeVisible();
   await expect(page.getByText("Release packages")).toBeVisible();
   await expect(page.getByText("@drydock/sidecar@0.4.0")).toBeVisible();
+
+  const evidence = page.getByText(longFindingEvidence, { exact: true });
+  await expect(evidence).toHaveCSS("overflow-wrap", "break-word");
+  const evidenceSize = await evidence.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    clientWidth: element.clientWidth,
+    lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(evidenceSize.clientHeight).toBeGreaterThan(evidenceSize.lineHeight);
+  expect(evidenceSize.scrollWidth).toBeLessThanOrEqual(evidenceSize.clientWidth);
+
+  const findingCard = evidence.locator("xpath=ancestor::li[1]");
+  const cardWidth = await findingCard.evaluate(({ clientWidth, scrollWidth }) => ({
+    clientWidth,
+    scrollWidth,
+  }));
+  expect(cardWidth.scrollWidth).toBeLessThanOrEqual(cardWidth.clientWidth);
 
   await page.getByRole("button", { name: "Decide", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Package decision" })).toBeVisible();
@@ -107,8 +126,8 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
       decisionReason: null,
       decidedByUserId: packageDecision ? "user-smoke" : null,
       decidedAt: packageDecision ? now : null,
-      changedFileCount: 1,
-      findingCount: 1,
+      changedFileCount: 2,
+      findingCount: 2,
       riskSummary: riskSummary(),
       summaryJson: {
         report: {
@@ -125,6 +144,13 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
             stagedSize: 102,
             stagedSha256: "b".repeat(64),
             flags: [],
+          },
+          {
+            path: "dist/qrb.it.darwin-arm64.node",
+            status: "modified",
+            stagedSize: 4_278_592,
+            stagedSha256: "c".repeat(64),
+            flags: ["binary"],
           },
         ],
       },
@@ -156,6 +182,14 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
         textSample:
           "import os\nimport urllib.request\nurllib.request.urlopen(os.environ['TOKEN'])\n",
       },
+      {
+        path: "dist/qrb.it.darwin-arm64.node",
+        status: "modified",
+        size: 4_278_592,
+        sha256: "c".repeat(64),
+        flagsJson: ["binary"],
+        textSample: null,
+      },
     ],
     findings: [
       {
@@ -172,6 +206,20 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
         diffStatus: "added",
         releaseDelta: true,
       },
+      {
+        id: "finding-smoke-2",
+        scanId,
+        severity: "info",
+        file: "dist/qrb.it.darwin-arm64.node",
+        evidence: longFindingEvidence,
+        reason: "large binary should be reviewed manually",
+        line: null,
+        source: "deterministic",
+        ruleId: "file.large-binary",
+        ruleVersion: "smoke",
+        diffStatus: "modified",
+        releaseDelta: true,
+      },
     ],
     events: [],
   };
@@ -182,7 +230,7 @@ function riskSummary() {
     artifactRisk: "high",
     releaseRisk: "high",
     contextRisk: "low",
-    releaseFindingCount: 1,
+    releaseFindingCount: 2,
     contextFindingCount: 0,
     unknownFindingCount: 0,
   };

@@ -176,7 +176,7 @@ export function FindingRow({ label, value }: { label: string; value: ComponentCh
   return (
     <div class="grid grid-cols-[108px_minmax(0,1fr)] gap-2.5 items-baseline">
       <span class="text-ink-subtle font-mono text-[11px] uppercase tracking-[0.1em]">{label}</span>
-      <span class="min-w-0">{value}</span>
+      <span class="min-w-0 break-words">{value}</span>
     </div>
   );
 }
