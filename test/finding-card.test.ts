@@ -5,6 +5,8 @@ import { FindingRow } from "../src/components/FindingCard";
 interface FindingValueProps {
   children: ComponentChildren;
   class: string;
+  tabIndex?: number;
+  title?: string;
 }
 
 function valueProps(row: VNode): FindingValueProps {
@@ -19,13 +21,18 @@ describe("FindingRow", () => {
 
     expect(value.class).toContain("break-words");
     expect(value.class).not.toContain("truncate");
+    expect(value.class).not.toContain("hover:");
+    expect(value.class).not.toContain("focus:");
+    expect(value.tabIndex).toBeUndefined();
+    expect(value.title).toBeUndefined();
     expect(value.children).toBe(evidence);
   });
 
-  test("keeps explanatory rows non-interactive", () => {
+  test("wraps explanatory rows without truncating them", () => {
     const reason = "large binary should be reviewed manually";
     const value = valueProps(FindingRow({ label: "reason", value: reason }));
 
+    expect(value.class).toContain("break-words");
     expect(value.class).not.toContain("truncate");
     expect(value.children).toBe(reason);
   });
