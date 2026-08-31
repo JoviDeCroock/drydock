@@ -114,7 +114,7 @@ export default function DocsPage() {
               Learn what Drydock inspects and how a maintainer makes the call.
             </JourneyCard>
             <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-              Pick npm staging or a GitHub workflow gate.
+              Pick advisory Stage Watchtower or an enforced Workflow Gate.
             </JourneyCard>
           </nav>
         </div>
@@ -322,7 +322,7 @@ export default function DocsPage() {
             <Subsection id="path-comparison" title="Compare the paths">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <PathCard
-                  title="npm stage publish"
+                  title="Stage Watchtower — advisory"
                   badge="npm only"
                   href="#staged-publishing"
                   command="npm stage publish"
@@ -331,7 +331,7 @@ export default function DocsPage() {
                   decision="You finish or decline the publish in npm with 2FA."
                 />
                 <PathCard
-                  title="GitHub workflow gate"
+                  title="Workflow Gate — enforced"
                   badge="Preview"
                   href="#workflow-gating"
                   command="environment: production"
@@ -349,13 +349,15 @@ export default function DocsPage() {
 
           <section id="staged-publishing" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
-              <SectionLabel as="p">Path 1 · npm stage publish</SectionLabel>
+              <SectionLabel as="p">Path 1 · Stage Watchtower — advisory</SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 npm holds the candidate; you keep the approval.
               </h2>
               <Prose>
                 This is the shortest route for npm. Stage the package, let Drydock review the
-                private tarball, then return to npm to publish or discard it.
+                private tarball, then return to npm to publish or discard it. The Drydock decision
+                is a record only: npm maintainers decide independently, and manual publication
+                remains possible.
               </Prose>
             </div>
 
@@ -430,15 +432,16 @@ export default function DocsPage() {
               </Callout>
             </Subsection>
 
-            <Subsection id="staged-enforcement" title="Make staging the only thing CI can do">
+            <Subsection id="staged-enforcement" title="Narrow CI to staging">
               <Prose>
                 Everything above is a review you choose to run. Nothing yet stops the same workflow
                 &mdash; or anyone holding a token &mdash; from calling{" "}
-                <InlineCode>npm publish</InlineCode> and skipping the stage. npm closes that on the
-                registry side: a trusted publisher can grant{" "}
-                <InlineCode>npm stage publish</InlineCode> without granting{" "}
-                <InlineCode>npm publish</InlineCode>, so CI can prepare a candidate but can never
-                make one public.
+                <InlineCode>npm publish</InlineCode> and skipping the stage. npm can narrow the CI
+                identity: a trusted publisher can grant <InlineCode>npm stage publish</InlineCode>{" "}
+                without granting <InlineCode>npm publish</InlineCode>, so CI can prepare a candidate
+                but can never make one public. This does not change Stage Watchtower's advisory
+                role, and npm still permits an account holder to publish interactively with
+                password, 2FA, and an OTP.
               </Prose>
               <Steps
                 items={[
@@ -452,8 +455,8 @@ export default function DocsPage() {
                   <>
                     In the package settings on npmjs.com, set publishing access to{" "}
                     <InlineCode>Require two-factor authentication and disallow tokens</InlineCode>.
-                    That removes every token path, leaving the stage-only exchange as the only
-                    credential the package accepts.
+                    That removes token publish paths, leaving the stage-only exchange as CI's
+                    credentialed route. It does not disable npm's interactive 2FA publish path.
                   </>,
                   <>
                     Give the release job <InlineCode>id-token: write</InlineCode> and have it run{" "}
@@ -472,8 +475,8 @@ export default function DocsPage() {
                 The candidate npm holds is the artifact that goes public on approval, so the bytes
                 you read are the bytes consumers install. It does not make the build trustworthy: a
                 poisoned source tree still produces a valid, provenance-signed candidate. It makes
-                that candidate unable to reach anyone until a human has read it and approved with
-                2FA.
+                CI unable to publish that candidate directly. The npm account still controls final
+                approval and can publish interactively outside this staged path.
               </Callout>
             </Subsection>
           </section>
@@ -481,14 +484,15 @@ export default function DocsPage() {
           <section id="workflow-gating" class="flex flex-col gap-8 scroll-mt-6">
             <div class="flex flex-col gap-3">
               <SectionLabel as="p">
-                Path 2 · GitHub workflow gates <Badge tone="info">Preview</Badge>
+                Path 2 · Workflow Gate — enforced <Badge tone="info">Preview</Badge>
               </SectionLabel>
               <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0 max-w-[680px]">
                 When the registry can't pause, the workflow can.
               </h2>
               <Prose>
                 CI uploads built files and reaches a protected publish job. GitHub asks Drydock for
-                a decision before the held job continues.
+                a decision before that configured job continues. The enforcement boundary is the
+                protected GitHub path, not every registry publication route.
               </Prose>
             </div>
 
@@ -673,7 +677,7 @@ export default function DocsPage() {
                   <>
                     After every package is approved, Drydock releases the GitHub job, which verifies{" "}
                     <InlineCode>SHA256SUMS</InlineCode> and publishes the downloaded files. Any
-                    rejection stops the whole release.
+                    rejection keeps the configured protected publish job blocked.
                   </>,
                 ]}
               />

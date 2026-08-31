@@ -33,14 +33,14 @@ export default function LandingPage() {
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
           Between your last code review and the public registry sit build scripts, bundler output,
-          and CI credentials. Drydock Package Review holds the release while it is still private,
-          diffs the exact artifact against the last published version, and pins every supply-chain
-          finding to a changed line. You make the final call.
+          and CI credentials. Drydock diffs the exact artifact against the last published version
+          and pins every supply-chain finding to a changed line. Workflow Gate enforces the decision
+          on a configured protected job; Stage Watchtower records an advisory npm review.
         </p>
         <MonoDetail
           parts={[
-            "npm stage publish",
-            "pypi / npm / vs code workflow gates",
+            "Stage Watchtower — advisory",
+            "Workflow Gate — enforced",
             "no publish credential",
           ]}
         />
@@ -103,12 +103,12 @@ export default function LandingPage() {
         <HowSteps
           items={[
             {
-              title: "Hold the release candidate",
+              title: "Pause or watch the release candidate",
               body: (
                 <>
-                  A maintainer stages an npm publish, or a GitHub Environment gate pauses the
-                  publish job after CI uploads built artifacts. The candidate stays private while
-                  Drydock can inspect it.
+                  Stage Watchtower observes a private npm staged artifact without controlling it.
+                  Workflow Gate uses a GitHub Environment to pause the configured protected publish
+                  job after CI uploads built artifacts.
                 </>
               ),
             },
@@ -140,12 +140,13 @@ export default function LandingPage() {
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel as="h2">How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="npm stage publish">
+          <RegistryCard title="Stage Watchtower — advisory">
             A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
             and the registry parks a private candidate. Drydock reviews that tarball and pins risk
-            signals to the diff before the maintainer completes npm's 2FA confirmation.
+            signals to the diff. The maintainer independently approves or rejects in npm with 2FA;
+            Drydock cannot stop a separate manual publish.
           </RegistryCard>
-          <RegistryCard title="Workflow gating: PyPI, npm & VS Code" badge="Preview">
+          <RegistryCard title="Workflow Gate — enforced: PyPI, npm & VS Code" badge="Preview">
             For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
             pauses the publish job after CI uploads the release artifact. Drydock reviews the
             upload, the maintainer approves or rejects, and, if approved, the job continues with its
@@ -180,8 +181,9 @@ export default function LandingPage() {
           Put your next release in the dock.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[620px]">
-          Stage an npm publish or add a workflow gate to your release job. Setup takes minutes, and
-          from then on every version gets a second pair of eyes before it can ship.
+          Watch an npm stage or add an enforced workflow gate to a protected release job. Setup
+          takes minutes, and each configured release path gets a second pair of eyes before
+          publication.
         </p>
         <div class="flex gap-3 mt-1">
           <Show

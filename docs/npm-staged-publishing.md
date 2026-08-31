@@ -1,16 +1,19 @@
-# npm stage-only trusted publishing: making the review unskippable
+# Stage Watchtower — advisory npm staged review
 
 [npm staged publishing](https://docs.npmjs.com/staged-publishing/) holds a
 candidate tarball privately so Drydock can review the exact bytes before anyone
-can install them. On its own that is a review a maintainer _chooses_ to run:
-nothing stops the same CI job — or anyone holding a token — from calling
-`npm publish` and skipping the stage entirely.
+can install them. Drydock's **Stage Watchtower — advisory** discovers that
+candidate, records a review, and leaves npm's approve/reject decision entirely
+with the maintainer. Drydock neither approves the stage nor blocks a separate
+manual publication.
 
-npm's trusted publishing closes that. A trusted publisher can be configured to
+Stage-only trusted publishing can narrow the automated path. A trusted publisher can be configured to
 allow `npm stage publish` and **not** `npm publish`. The CI identity can then
 put a release candidate into npm's staging area but cannot make it public, and
-with tokens disallowed there is no other credential that can. The only route to
-a public version is a human approving a stage with 2FA — after reading the diff.
+disallowing tokens removes token-based publication. This does **not** make the
+Drydock review mandatory: npm still permits an account holder to publish
+interactively with password, 2FA, and an OTP, and npm approval does not require
+the maintainer to open or accept the Drydock report.
 
 This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working staged-publish review — a Drydock organization with a
@@ -39,8 +42,8 @@ in-app guide at `/docs#staged-publishing` covers that setup.
 2. **Set publishing access to "Require two-factor authentication and disallow
    tokens"** in the package settings on npmjs.com. This removes every token
    path — legacy, automation, and granular access tokens all stop working for
-   publish — leaving the OIDC exchange as the only credentialed route, and that
-   route is stage-only.
+   publish — leaving the OIDC exchange as CI's credentialed route, and that
+   route is stage-only. npm's interactive 2FA publication path remains available.
 
 3. **Stage from CI over OIDC, not a token.** The job requests an id-token and
    runs `npm stage publish`; no `NODE_AUTH_TOKEN` appears anywhere.
@@ -65,13 +68,14 @@ in-app guide at `/docs#staged-publishing` covers that setup.
 
 ## Why each pin matters
 
-| Publish attempt                                                     | Stopped by                                                                                |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `npm publish` with any token — laptop, CI secret, stolen token      | Publishing access disallows tokens                                                        |
-| `npm publish` over OIDC from the pinned workflow                    | The trusted publisher grants `stage` only; npm refuses the publish exchange               |
-| `npm stage publish` from another repository, workflow file, or fork | Trusted publisher claim mismatch; npm refuses the exchange                                |
-| Editing the workflow to publish directly instead of staging         | Same claim, same refusal — the grant is on the publisher, not on the command CI runs      |
-| Staging a malicious candidate                                       | Nothing, and deliberately so: a stage is inert until approved, which is where review sits |
+| Publish attempt                                                     | Stopped by                                                                           |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `npm publish` with any token — laptop, CI secret, stolen token      | Publishing access disallows tokens                                                   |
+| `npm publish` over OIDC from the pinned workflow                    | The trusted publisher grants `stage` only; npm refuses the publish exchange          |
+| `npm stage publish` from another repository, workflow file, or fork | Trusted publisher claim mismatch; npm refuses the exchange                           |
+| Editing the workflow to publish directly instead of staging         | Same claim, same refusal — the grant is on the publisher, not on the command CI runs |
+| Interactive `npm publish` with account password, 2FA, and OTP       | Not stopped; npm permits this path independently of trusted publishing               |
+| Staging or approving a malicious candidate                          | Not stopped; Drydock records advice and npm owns the decision                        |
 
 One property compounds on top of the table. The artifact npm holds while it is
 staged is the artifact that becomes public on approval — there is no rebuild
@@ -81,7 +85,7 @@ separately with a digest re-check.
 
 ## Compared with the workflow gate
 
-Both make a review unskippable; they put the hold in different places.
+They put the candidate in different places and give Drydock different authority.
 
 |                       | Stage-only trusted publishing           | [Workflow gate](./npm-trusted-publishing.md)                     |
 | --------------------- | --------------------------------------- | ---------------------------------------------------------------- |
@@ -90,7 +94,8 @@ Both make a review unskippable; they put the hold in different places.
 | Setup surface         | One `npm trust` call, one token setting | GitHub App, Environment, protection rule, trusted publisher pins |
 | CI credential         | Can stage; can never publish            | Exists only after the review passes                              |
 | Reviewed vs shipped   | Same artifact by construction           | Proven by `sha256sum --check` against the reviewed digests       |
-| Final approval        | A human on npm, with 2FA                | A human in Drydock; the workflow resumes                         |
+| Drydock mode          | Stage Watchtower — advisory             | Workflow Gate — enforced                                         |
+| Final approval        | Independently in npm, with 2FA          | In Drydock for the configured protected job                      |
 
 Stage-only is the shorter setup for a maintainer already running
 `npm stage publish`. The gate is the one that generalizes past npm and past a
@@ -98,9 +103,10 @@ single package.
 
 ## What this does not stop
 
-- **An approval nobody read.** Enforcement makes the review unskippable, not
-  thorough. npm will happily take a 2FA approval on a stage the maintainer never
-  opened.
+- **A skipped Drydock review.** npm will take a 2FA approval on a stage the
+  maintainer never opened in Drydock. The recorded review is advisory.
+- **An interactive direct publish.** An account holder with password, 2FA, and
+  an OTP can still run `npm publish`; npm has no trusted-publisher-only mode.
 - **npm account takeover.** Whoever controls the account can re-run `npm trust`
   with `--allow-publish`, revoke the trust configuration, or re-enable tokens.
   Every registry-side control roots in account security.
@@ -113,5 +119,5 @@ single package.
 - **A package's first version.** npm cannot stage a package that does not exist
   yet, so the initial publish needs a direct path. Configure the stage-only
   publisher immediately afterwards.
-- **Drydock unavailability.** The stage simply waits; npm holds it either way.
-  The failure mode is a delayed release, never an unreviewed one.
+- **Drydock unavailability.** npm still owns the stage and its decision. A
+  maintainer can approve, reject, or publish manually without a Drydock review.

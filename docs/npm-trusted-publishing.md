@@ -1,19 +1,21 @@
-# npm trusted publishing: making the gate the only publish path
+# npm trusted publishing: enforcing the configured workflow path
 
 The [npm workflow gate](./workflow-gates.md#npm-workflow-gate-notes) pauses a
 publish while Drydock reviews the exact bytes. On its own it is a checkpoint on
 one path: nothing stops a maintainer — or an attacker holding a token — from
-publishing around it. npm's **trusted publishing** (OIDC) closes that. Pin the
+publishing around it. npm's **trusted publishing** (OIDC) narrows automated publishing. Pin the
 package's publish path to one repository, one workflow file, and one GitHub
 Environment, make Drydock that environment's deployment-protection rule, and
-disallow tokens. The only way to obtain publish credentials is then to pass the
-review.
+disallow tokens. The configured workflow obtains its OIDC publish credential only
+after the review passes. npm still permits an account holder to publish
+interactively with password, 2FA, and an OTP; there is no trusted-publisher-only
+mode.
 
-For npm specifically there is a second, smaller enforcement shape: pin the
+For npm specifically there is a second, advisory review shape: pin the
 trusted publisher to `npm stage publish` and let npm hold the candidate instead
 of GitHub holding the job. See
 [`npm-staged-publishing.md`](./npm-staged-publishing.md) for that recipe and a
-comparison of the two.
+comparison of **Workflow Gate — enforced** with **Stage Watchtower — advisory**.
 
 This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in
@@ -120,5 +122,5 @@ and the reviewed bytes were downloaded from that exact run.
   rules and org admins can uninstall the App. Keep the admin set small; both
   actions land in GitHub's audit log.
 - **Drydock unavailability.** The gate stays blocked and GitHub eventually
-  fails the waiting run at its own timeout. The failure mode is a delayed
-  release, never an unreviewed one.
+  fails the waiting run at its own timeout. That configured workflow cannot
+  continue unreviewed; npm's separate interactive 2FA publish path still exists.

@@ -35,9 +35,9 @@ interface GuideContent {
 
 const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   "/npm-staged-publishing": {
-    relatedTitle: "npm staged publishing",
+    relatedTitle: "Stage Watchtower — advisory",
     heading: "Review an npm package before it becomes public.",
-    lead: "npm can hold a private staged tarball before publication. Drydock turns that hold into a review: the exact candidate is compared with the last published release while there is still time to reject it.",
+    lead: "npm can hold a private staged tarball before publication. Stage Watchtower reviews and records that exact candidate, while the maintainer independently approves or rejects it in npm and can still publish manually.",
     details: ["private candidate", "read-only npm access", "maintainer approves with 2FA"],
     sections: [
       {
@@ -56,9 +56,9 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         body: "The maintainer records a review decision, then completes or discards the stage through npm with npm's own 2FA step. Drydock needs read-only evidence access, not a token that can publish packages.",
       },
       {
-        label: "The enforcement",
+        label: "Narrow the CI path",
         heading: "A trusted publisher can stage without being able to publish.",
-        body: "Staging is a review you choose to run until the registry stops accepting anything else. npm can grant a CI identity permission to stage a release and withhold permission to publish one; with tokens disallowed on the package, no credential exists that can make a version public without a human approving the stage. The candidate npm holds is the artifact that ships, so the reviewed bytes and the installed bytes are the same bytes.",
+        body: "npm can grant a CI identity permission to stage and withhold permission to publish; disallowing tokens also closes token-based publication. Stage Watchtower remains advisory, however: an account holder can still publish interactively with password, 2FA, and an OTP, and npm does not require a Drydock decision before approving a stage.",
       },
     ],
     close: {
@@ -71,7 +71,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
     secondary: { href: "/diff", label: "Read a public diff" },
   },
   "/github-actions-package-gate": {
-    relatedTitle: "GitHub Actions release gate",
+    relatedTitle: "Workflow Gate — enforced",
     heading: "Pause package publication until the built artifacts are reviewed.",
     lead: "A GitHub Environment can hold a publish job after CI builds and uploads the release artifacts. Drydock reviews those exact files, then returns a human accept or reject decision to the waiting workflow.",
     details: ["GitHub Environment", "exact uploaded artifacts", "npm, PyPI, and VS Code"],
@@ -88,7 +88,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Decide",
-        heading: "One rejected package fails the release closed.",
+        heading: "One rejected package keeps the protected publish job blocked.",
         body: "A monorepo upload can contain several packages. The workflow continues only after every package review is accepted; a rejection or malformed artifact prevents the protected publish job from proceeding.",
       },
     ],
@@ -102,8 +102,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/npm-trusted-publishing": {
     relatedTitle: "npm trusted publishing",
-    heading: "Make the reviewed workflow the only way to publish.",
-    lead: "A workflow gate is a checkpoint on one path; a stolen token walks around it. Pinning npm trusted publishing to the gated GitHub Environment and disallowing tokens closes that: publish credentials only come into existence after the review passes.",
+    heading: "Enforce review on the configured npm workflow.",
+    lead: "Workflow Gate can approve or reject the configured protected GitHub job. Pinning npm trusted publishing to that environment and disallowing tokens means the workflow's OIDC credential only exists after review; npm's separate interactive 2FA publish path remains possible.",
     details: ["OIDC, no npm tokens", "environment pinned to the gate", "configuration, not code"],
     sections: [
       {
@@ -113,8 +113,8 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       },
       {
         label: "Close the side doors",
-        heading: "Every bypass runs into a specific pin.",
-        body: "Package settings disallow tokens, so laptop publishes and CI secrets stop working. Another repository or a fork fails the trusted-publisher claim match. Publishing past a rejection fails closed at the protection rule. Rebuilding after approval fails the digest re-check, and administrator bypass is switched off on the environment itself.",
+        heading: "Every configured-workflow bypass runs into a specific pin.",
+        body: "Package settings disallow token-backed laptop publishes and CI secrets. Another repository or a fork fails the trusted-publisher claim match. The configured protected job cannot publish past a rejection. Rebuilding after approval fails the digest re-check, and administrator bypass is switched off on the environment itself. Interactive account publication with 2FA remains possible.",
       },
       {
         label: "The honest residue",
@@ -129,7 +129,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
         href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/npm-trusted-publishing.md",
         label: "Read the full recipe",
       },
-      detail: ["configuration only", "fails closed"],
+      detail: ["configuration only", "protected job fails closed"],
     },
     primary: { href: "/docs#workflow-gating", label: "Add a workflow gate" },
     secondary: { href: "/github-actions-package-gate", label: "How the gate works" },
