@@ -111,11 +111,13 @@ export function GateSetupWizard({
   const repositoryFullName = gateSetup.repositoryFullName.value;
   const environment = gateSetup.environment.value;
   const localReleaseTarget = gateSetup.releaseTarget.value;
+  // Stored release targets are normalized; the draft carries GitHub's casing.
+  // Comparing them directly would miss an existing mapping for `Production`.
   const persistedReleaseTarget = releaseTargets.find(
     (target) =>
       target.installationRowId === installationRowId &&
       target.repositoryFullName === repositoryFullName &&
-      target.environment === environment,
+      target.environment.toLowerCase() === environment.toLowerCase(),
   );
   const releaseTarget = localReleaseTarget ?? persistedReleaseTarget ?? null;
 
@@ -451,8 +453,8 @@ function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current
                 }
               />
               <Muted class="text-[12px] mt-1.5">
-                GitHub lowercases environment names, so create it as{" "}
-                <code class="font-mono text-[12px]">{environment || "…"}</code>.
+                Create it on GitHub under exactly this name — the generated workflow and the
+                registry's trusted publisher are both pinned to it.
               </Muted>
             </Field>
           ) : null}
