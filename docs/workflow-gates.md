@@ -23,8 +23,8 @@ The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and byp
 
 - `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
 - `server/routes/github-app/installations.ts` handles App install/callback setup.
-- `server/routes/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
-- `server/routes/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
+- `server/routes/github-app/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
+- `server/routes/github-app/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
 - `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
 

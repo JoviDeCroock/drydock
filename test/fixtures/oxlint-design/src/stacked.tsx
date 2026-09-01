@@ -1,0 +1,168 @@
+// Every SectionLabel here sits on a boundary that already has a second rule.
+// Line numbers are asserted in test/oxlint-stacked-section-rule.test.mjs.
+import { SectionLabel } from "./components";
+import { cn } from "./cn";
+
+export function OnLabel() {
+  return (
+    <SectionLabel as="h2" class="border-b border-border">
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function OnLabelViaCn({ extra }: { extra?: string }) {
+  return (
+    <SectionLabel as="h2" class={cn("mt-4", extra, "border-t border-border")}>
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function OnLabelViaBorderY() {
+  return (
+    <SectionLabel as="h2" class="border-y border-border">
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function OnLabelViaArbitraryWidth() {
+  return (
+    <SectionLabel as="h2" class="hover:border-t-[3px] md:border-b-(length:--rule-width)">
+      Findings
+    </SectionLabel>
+  );
+}
+
+export function OnWrapper() {
+  return (
+    <div class="border-b border-border pb-2">
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </div>
+  );
+}
+
+export function OnSiblingHr() {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      <hr />
+    </section>
+  );
+}
+
+export function OnSiblingBorder() {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      <div class="border-t border-border pt-3">body</div>
+    </section>
+  );
+}
+
+export function OnPrecedingSibling() {
+  return (
+    <section>
+      <div class="border-b border-border pb-3">intro</div>
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}
+
+export function OnSiblingHrAcrossComment() {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {/* This comment renders no node, so the rule remains visually adjacent. */}
+      <hr />
+    </section>
+  );
+}
+
+export function OnLeadingWrapperEdge() {
+  return (
+    <section class="border-t border-border">
+      <SectionLabel as="h2">Findings</SectionLabel>
+      <p>body</p>
+    </section>
+  );
+}
+
+export function OnTrailingWrapperEdge() {
+  return (
+    <section class="border-b border-border">
+      <p>body</p>
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}
+
+export function OnSiblingOutsideTrailingWrapper() {
+  return (
+    <details>
+      <summary>
+        <SectionLabel as="h2">Findings</SectionLabel>
+      </summary>
+      <div class="border-t border-border">body</div>
+    </details>
+  );
+}
+
+export function OnSiblingOutsideLeadingWrapper() {
+  return (
+    <section>
+      <div class="border-b border-border">intro</div>
+      <header>
+        <SectionLabel as="h2">Findings</SectionLabel>
+      </header>
+    </section>
+  );
+}
+
+export function OnConditionalFollowingSibling({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show && <div class="border-t border-border">body</div>}
+    </section>
+  );
+}
+
+export function OnConditionalPrecedingSibling({ show }: { show: boolean }) {
+  return (
+    <section>
+      {show ? <hr /> : <div class="border-b border-border">intro</div>}
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}
+
+export function OnRuleAfterOptionalContent({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show && <p>optional content</p>}
+      <hr />
+    </section>
+  );
+}
+
+export function OnRuleAfterNullableContent({ show }: { show: boolean }) {
+  return (
+    <section>
+      <SectionLabel as="h2">Findings</SectionLabel>
+      {show ? <p>optional content</p> : null}
+      <div class="border-t border-border">body</div>
+    </section>
+  );
+}
+
+export function OnOptionalContentBeforeLeadingLabel({ show }: { show: boolean }) {
+  return (
+    <section class="border-t border-border">
+      {show && <p>optional content</p>}
+      <SectionLabel as="h2">Findings</SectionLabel>
+    </section>
+  );
+}

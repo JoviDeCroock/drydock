@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "off" },
+  "jsPlugins": [
+    {
+      "name": "design-local",
+      "specifier": "../../../tooling/oxlint/design-local/index.mjs"
+    }
+  ],
+  "rules": {
+    "design-local/no-stacked-section-rule": "error"
+  }
+}

@@ -8,21 +8,21 @@
 
 ## Scripts
 
-| Command                 | What it does                                                                                                                                                                                                                                                                                                                                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                                                                                                                                                                                                                                                                                                       |
-| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                                                                                                                                                                                                                                                                                                  |
-| `pnpm run format`       | Rewrite files with oxfmt.                                                                                                                                                                                                                                                                                                                                                                |
-| `pnpm run format:check` | Report files that would change without writing.                                                                                                                                                                                                                                                                                                                                          |
-| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node and workers projects run as two parallel Vitest processes. Extra args go straight to Vitest: `pnpm test -- <file>` runs one file, `pnpm test -- --project workers <file>` pins the suite.                                                                                  |
-| `pnpm run test:node`    | Just the node logic suite (`vitest run --project node`).                                                                                                                                                                                                                                                                                                                                 |
-| `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `test/config/wrangler.jsonc` + `drizzle/`).                                                                                                                                                                                                                                                                     |
-| `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                                                                                                                                                                                                      |
-| `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                                                                                                                                                                                                 |
-| `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                                                                                                                                                                                                                                                                                                  |
-| `pnpm run agent:tour`   | Run the portable local product walkthrough and write `agent-tour-output/report.md`, screenshots, traces, video, and an exported report JSON.                                                                                                                                                                                                                                             |
-| `pnpm run verify`       | Run lint + format check + typecheck + tests **in parallel** (`scripts/verify.mjs`); the cheap checks finish while the worker pool runs. All four always run to completion and every failure is reported together.                                                                                                                                                                        |
-| `pnpm run verify:quick` | The iteration loop (`scripts/verify.mjs --quick`): oxlint and oxfmt scoped to files changed vs the `origin/main` merge base (committed + staged + unstaged + untracked), the full typecheck (tsc cannot be scoped), and `vitest run --changed <merge-base>` for both projects. Skipped checks say so explicitly. Not the commit gate — run the full `pnpm run verify` before committing. |
+| Command                 | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm run lint`         | Run oxlint over the repo. Exit non-zero on errors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `pnpm run lint:fix`     | Apply oxlint autofixes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `pnpm run format`       | Rewrite files with oxfmt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `pnpm run format:check` | Report files that would change without writing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `pnpm run test`         | Node logic tests (`test/**`) plus D1-backed worker tests (`test/workers/**`) via `scripts/test.mjs`; the node and workers projects run as two parallel Vitest processes. Extra args go straight to Vitest: `pnpm test -- <file>` runs one file, `pnpm test -- --project workers <file>` pins the suite.                                                                                                                                                                                                                         |
+| `pnpm run test:node`    | Just the node logic suite (`vitest run --project node`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `pnpm run test:workers` | Just the worker suite (`vitest run --project workers`; Miniflare D1 from `test/config/wrangler.jsonc` + `drizzle/`).                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `pnpm run e2e:fixtures` | Pack local E2E fixture packages and generate `.context/e2e-registry/registry.json`.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `pnpm run e2e:dev`      | Start the fake npm staging registry plus the Vite/Worker dev server for browser testing.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `pnpm run test:e2e`     | Run Playwright against the local fake-registry harness.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `pnpm run agent:tour`   | Run the portable local product walkthrough and write `agent-tour-output/report.md`, screenshots, traces, video, and an exported report JSON.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `pnpm run verify`       | Run lint + format check + typecheck + knip + tests **in parallel** (`scripts/verify.mjs`); the cheap checks finish while the worker pool runs. All five always run to completion and every failure is reported together.                                                                                                                                                                                                                                                                                                        |
+| `pnpm run verify:quick` | The iteration loop (`scripts/verify.mjs --quick`): oxlint and oxfmt scoped to files changed vs the `origin/main` merge base (committed + staged + unstaged + untracked), the full typecheck (tsc cannot be scoped), knip (whole-graph; an unused export is created by _removing_ the last import, so a changed-file scope would miss the file that broke), and `vitest run --changed <merge-base>` for both projects. Skipped checks say so explicitly. Not the commit gate — run the full `pnpm run verify` before committing. |
 
 `pnpm lint` (the shorthand without `run`) can collide with workspace forwarding or shell wrappers — always use `pnpm run lint`.
 
@@ -72,7 +72,7 @@ them out of the worker boot graph.
 
 ## Pre-commit verification
 
-Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
+Run `pnpm run verify` before every commit, so each commit passes lint + format + typecheck + knip + tests. There is no git hook enforcing this — it is run explicitly. CI (`.github/workflows/ci.yml`) runs the same core checks and then installs Chromium and runs `pnpm run test:e2e`.
 
 ## Agent hooks
 
@@ -163,11 +163,32 @@ executing code, so it is not checked. Fixture and test:
 
 The rule ships as `error` with no existing violations, so every infraction fails lint.
 
+### Local rule: `design-local/no-stacked-section-rule`
+
+A third local oxlint plugin, `tooling/oxlint/design-local/`, pins the one `docs/design.md`
+rule that keeps regressing by eye: `SectionLabel` draws its own trailing hairline, so a
+`border-t`, `border-b`, `border-y`, or `<hr>` on the same boundary stacks a second 1px line and
+reads as a double border. The rule reports the label's own class, the class of the
+element that directly wraps it (a top border for a leading label or a bottom border
+for a trailing label), and an immediately adjacent JSX sibling that draws a rule on
+the touching edge. When a label touches its wrapper edge, that wrapper's touching
+sibling is checked too, covering summary/header wrappers around the label. Logical and
+conditional JSX siblings are inspected branch-by-branch, and JSX comments do not interrupt
+visual adjacency. Only non-zero
+border-width utilities count — directional color utilities do not create a line, an
+all-sides `border` is a box outline, and zero-width utilities remove rather than draw a rule — and class names are read
+from static strings, including the string arguments of a `cn(...)` call. A rule two
+elements away is a spacing question and is not reported. Fixture and test:
+`test/fixtures/oxlint-design/` and
+`test/oxlint-stacked-section-rule.test.mjs`.
+
+The rule ships as `error` with no existing violations, so every infraction fails lint.
+
 ### Prose invariants with static checks
 
-Two AGENTS.md boundaries that lint rules cannot express are pinned by node-project
-invariant tests that statically scan source text (comments, strings, and detection
-regexes are blanked via the non-executing JS lexer first — see
+Boundaries that lint rules cannot express are pinned by node-project invariant tests
+that statically scan source text. The first two blank comments, strings, and detection
+regexes via the non-executing JS lexer before scanning (see
 `test/helpers/sanitized-source.mjs`):
 
 - `test/ecosystem-branching-invariants.test.mjs` — routes and orchestrators
@@ -178,6 +199,23 @@ regexes are blanked via the non-executing JS lexer first — see
 - `test/sandbox-boundary-invariants.test.mjs` — the rendered sandbox worker reads
   only allowlisted config env keys and contains no credential lexemes, and the
   archive-parsing/deterministic-review layers contain no execution primitives.
+- `test/api-auth-boundary-invariants.test.mjs` — Hono runs handlers and middleware in registration
+  order, so an `app.route("/api/…")` placed above the `app.use("/api/*")` session guard
+  in `server/index.ts` ships anonymous with nothing in the route file to show it; an
+  `app.use()` handler can do the same by returning without `next()`. This pins the
+  real `getAuthSession` guard and the exact registrations allowed above it, including
+  catch-alls and non-API bootstrap routes because they can still answer an API request.
+  Commented-out registrations and guards are blanked before the structural scan.
+- `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
+  markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
+  file that exists. Prose here navigates by path, and a rename silently breaks the
+  reference, sending the next reader to a file that is gone. A path may be written
+  from any root that resolves to exactly one tracked file (`routes/scans/index.ts` and
+  `server/routes/scans/index.ts` both resolve today); relative paths in Markdown and source
+  comments are resolved from the containing file. JavaScript and TypeScript comments are identified by
+  the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
+  package under review, inside a dependency, or in a gitignored output directory —
+  are listed in the test's explicit non-repository exceptions.
 
 ## Client API helpers
 

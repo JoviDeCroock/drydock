@@ -4,7 +4,8 @@
   "jsPlugins": [
     "@preact/eslint-plugin-signals",
     { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" },
-    { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" }
+    { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" },
+    { "name": "design-local", "specifier": "./tooling/oxlint/design-local/index.mjs" }
   ],
   "categories": {
     "correctness": "error"
@@ -48,6 +49,7 @@
     "@preact/signals/no-conditional-value-read": "error",
     "signals-local/no-signal-conditional-jsx": "error",
     "boundaries-local/no-cross-page-import": "error",
+    "design-local/no-stacked-section-rule": "error",
     "react-hooks/exhaustive-deps": "off"
   },
   "ignorePatterns": [
@@ -58,6 +60,7 @@
     "worker-configuration.d.ts",
     "**/*.d.ts",
     "test/fixtures/oxlint-signals/**",
-    "test/fixtures/oxlint-boundaries/**"
+    "test/fixtures/oxlint-boundaries/**",
+    "test/fixtures/oxlint-design/**"
   ]
 }
