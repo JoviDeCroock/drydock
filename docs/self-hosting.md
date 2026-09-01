@@ -14,7 +14,11 @@ integrations.
   Workers AI, Analytics Engine, Email Routing, and Flagship
 - An npm access token for each organization that will review staged npm
   publishes
-- Optional: a GitHub App for workflow gates
+- Optional: a GitHub App for workflow gates — read-only on your repositories;
+  see [GitHub workflow gates](#github-workflow-gates) for the exact permission set
+- Optional: a **separate** GitHub OAuth app for "Continue with GitHub" sign-in.
+  This is not the workflow-gate GitHub App, and the two are not
+  interchangeable — see [Secrets and vars](#secrets-and-vars)
 - Optional: a Slack app for notifications
 
 ## Local development
@@ -225,6 +229,51 @@ Settings. The target publish workflow must build artifacts before the gate and
 publish the reviewed artifact bundle after approval. See
 [`workflow-gates.md`](workflow-gates.md) and
 [`npm-workflow-gate.md`](npm-workflow-gate.md).
+
+### Registering the App
+
+Register it at **Settings → Developer settings → GitHub Apps → New GitHub App**
+on the account that will own it (the App may be installed on other accounts).
+
+| Setting                            | Value                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Callback URL                       | `${BETTER_AUTH_URL}/dashboard/settings/github-app/callback`                                                |
+| Request user authorization (OAuth) | enabled — the install flow reads the installing user's installations to bind one to a Drydock organization |
+| Webhook URL                        | `${BETTER_AUTH_URL}/webhooks/github`                                                                       |
+| Webhook secret                     | `GITHUB_APP_WEBHOOK_SECRET`                                                                                |
+| Deployment protection rules        | **Enable** — this is what lets a maintainer tick Drydock on an environment                                 |
+
+Subscribe to exactly two webhook events:
+
+- **Deployment protection rule** — the gate itself. A dropped delivery leaves a
+  workflow waiting on a review nobody will see.
+- **Installation** — keeps installation records in step with GitHub.
+
+### Repository permissions
+
+Two, both **read-only**:
+
+| Permission              | Why                                                                                                                                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Metadata: Read-only** | Mandatory for every App. Backs `GET /repos/{owner}/{repo}` and `GET /installation/repositories` — the repository picker.                                                                                 |
+| **Actions: Read-only**  | Downloads the artifacts under review (`GET .../actions/runs/{id}/artifacts` and the artifact zip), and backs the environment and deployment-protection-rule reads the guided setup wizard verifies with. |
+
+**Grant nothing else, and no write access at all.** Drydock never writes to a
+gated repository. Approving or rejecting a release is a `POST` to the
+`deployment_callback_url` GitHub puts in the webhook, and GitHub's only
+requirement there is that an App may review its own custom deployment protection
+rules — no repository permission is involved.
+
+That is also why guided setup links you to GitHub instead of doing the setup for
+you: creating the environment and registering the protection rule would need
+**Administration: write**, and committing the publish workflow would need
+**Contents: write** plus **Workflows: write** — a standing grant to rewrite the
+very workflow the gate protects. See
+[Why Drydock does not do the GitHub steps for you](workflow-gates.md#why-drydock-does-not-do-the-github-steps-for-you).
+
+If you are adding these permissions to an App that already exists, GitHub holds
+the new scope until an account owner accepts it on each installation. Existing
+gates keep working throughout: the review callback does not depend on any of it.
 
 ## Slack notifications
 
