@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { setActiveOrganizationId } from "../src/models/active-organization";
-import { GateSetupModel } from "../src/models/gate-setup";
+import { GateSetupModel, type GateSetupVerification } from "../src/models/gate-setup";
 import type { PublicReleaseTarget } from "../src/models/github-app";
 
 type GateSetup = InstanceType<typeof GateSetupModel>;
@@ -11,6 +11,10 @@ function deferredResponse() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function verified(): GateSetupVerification {
+  return { environment: "present", protectionRule: "present", defaultBranch: "main" };
 }
 
 function releaseTarget(ecosystem: "npm" | "pypi" = "npm"): PublicReleaseTarget {
@@ -130,41 +134,51 @@ describe("GateSetupModel", () => {
     expect(model.error.value).toBe(null);
   });
 
-  test("invalidates completed setup state when the environment name changes", () => {
+  test("invalidates verified state when the environment name changes", () => {
     const model = new GateSetupModel();
-    model.environmentStep.value = { step: "environment", status: "created" };
-    model.protectionStep.value = { step: "protection_rule", status: "created" };
-    model.pullRequestStep.value = { step: "pull_request", status: "created" };
-    model.pullRequest.value = { number: 1, url: "https://example.test/pr/1", branch: "drydock/1" };
+    model.verification.value = verified();
     model.releaseTarget.value = releaseTarget();
     model.preview.value = { workflowPath: "workflow.yml", yaml: "name: old", notes: [] };
 
     model.setNewEnvironmentName("next-production");
 
-    expect(model.environmentStep.value).toBe(null);
-    expect(model.protectionStep.value).toBe(null);
-    expect(model.pullRequestStep.value).toBe(null);
-    expect(model.pullRequest.value).toBe(null);
+    // A verification proves something about one environment only; carrying it
+    // to a renamed one is how the wizard would claim a gate it never checked.
+    expect(model.verification.value).toBe(null);
     expect(model.releaseTarget.value).toBe(null);
     expect(model.preview.value).toBe(null);
+    expect(model.gateArmed.value).toBe(false);
+  });
+
+  test("reports the gate armed only when GitHub confirms the protection rule", () => {
+    const model = readyModel();
+    model.releaseTarget.value = releaseTarget();
+
+    // A mapped release target alone is where the old summary badge stopped, and
+    // it says nothing about whether GitHub will hold a deployment.
+    model.verification.value = { ...verified(), protectionRule: "absent" };
+    expect(model.gateArmed.value).toBe(false);
+
+    model.verification.value = { ...verified(), protectionRule: "unknown" };
+    expect(model.gateArmed.value).toBe(false);
+
+    model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(true);
+
+    model.releaseTarget.value = null;
+    expect(model.gateArmed.value).toBe(false);
   });
 
   test("keeps a mapped ecosystem pinned until the release target is removed", () => {
     const model = new GateSetupModel();
     model.ecosystem.value = "npm";
-    model.environmentStep.value = { step: "environment", status: "created" };
-    model.protectionStep.value = { step: "protection_rule", status: "created" };
-    model.pullRequestStep.value = { step: "pull_request", status: "created" };
-    model.pullRequest.value = { number: 1, url: "https://example.test/pr/1", branch: "drydock/1" };
+    model.verification.value = verified();
     model.releaseTarget.value = releaseTarget("npm");
 
     model.selectEcosystem("pypi");
 
     expect(model.ecosystem.value).toBe("npm");
-    expect(model.environmentStep.value?.status).toBe("created");
-    expect(model.protectionStep.value?.status).toBe("created");
-    expect(model.pullRequestStep.value?.status).toBe("created");
-    expect(model.pullRequest.value?.number).toBe(1);
+    expect(model.verification.value?.protectionRule).toBe("present");
     expect(model.releaseTarget.value?.id).toBe("target-1");
   });
 
@@ -181,24 +195,28 @@ describe("GateSetupModel", () => {
   test("invalidates only the generated workflow when the package name changes", () => {
     const model = new GateSetupModel();
     const target = releaseTarget();
-    model.pullRequestStep.value = { step: "pull_request", status: "created" };
-    model.pullRequest.value = { number: 1, url: "https://example.test/pr/1", branch: "drydock/1" };
+    model.preview.value = { workflowPath: "workflow.yml", yaml: "name: old", notes: [] };
+    model.verification.value = verified();
     model.releaseTarget.value = target;
 
     model.setPackageName("@acme/next");
 
-    expect(model.pullRequestStep.value).toBe(null);
-    expect(model.pullRequest.value).toBe(null);
+    // The package name only reaches the YAML, so nothing GitHub was checked for
+    // becomes stale.
+    expect(model.preview.value).toBe(null);
+    expect(model.verification.value?.protectionRule).toBe("present");
     expect(model.releaseTarget.value).toBe(target);
   });
 
-  test("allows a release target manual path for an environment outside the template allowlist", () => {
+  test("blocks only the generated workflow for an environment outside the template allowlist", () => {
     const model = readyModel();
     model.environmentChoice.value = "production/eu";
 
+    // The allowlist exists because the name is interpolated into YAML. Verifying
+    // and mapping a hand-made environment must stay available.
     expect(model.environmentIssue.value).not.toBe(null);
-    expect(model.environmentPicked.value).toBe(false);
-    expect(model.releaseTargetReady.value).toBe(true);
+    expect(model.templateReady.value).toBe(false);
+    expect(model.environmentPicked.value).toBe(true);
   });
 
   test("drops every action response after the active organization changes", async () => {
@@ -213,25 +231,9 @@ describe("GateSetupModel", () => {
         read: (model) => model.preview.value,
       },
       {
-        start: (model) => model.createEnvironment(),
-        response: { step: { step: "environment", status: "created" } },
-        read: (model) => model.environmentStep.value,
-      },
-      {
-        start: (model) => model.enableProtectionRule(),
-        response: { step: { step: "protection_rule", status: "created" } },
-        read: (model) => model.protectionStep.value,
-      },
-      {
-        start: (model) => model.openPullRequest(),
-        response: {
-          step: { step: "pull_request", status: "created" },
-          pullRequest: { number: 1, url: "https://example.test/pr/1", branch: "old" },
-          workflowPath: "old.yml",
-          yaml: "name: old",
-          notes: [],
-        },
-        read: (model) => model.pullRequestStep.value,
+        start: (model) => model.verify(),
+        response: { state: { environment: "present", protectionRule: "present" } },
+        read: (model) => model.verification.value,
       },
       {
         start: (model) => model.createReleaseTarget(),

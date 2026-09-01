@@ -4,9 +4,8 @@ import { useModel } from "@preact/signals";
 import {
   GateSetupModel,
   NEW_ENVIRONMENT_CHOICE,
-  type GateSetupPreview,
-  type GateSetupStepResult,
-  gateSetupStatusLabel,
+  environmentSettingsUrl,
+  newWorkflowFileUrl,
 } from "../../../models/gate-setup";
 import type {
   InstallationRepository,
@@ -16,33 +15,71 @@ import type {
   RepositoryEnvironment,
 } from "../../../models/github-app";
 import { Alert } from "../../../components/Alert";
-import { Badge, type BadgeTone } from "../../../components/Badge";
+import { Badge } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
+import { CodeBlock } from "../../../components/CodeBlock";
 import { CollapsibleCard, SettingsCardBody, SettingsCardHeader } from "../../../components/Card";
-import { CopyButton } from "../../../components/CopyButton";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { Select } from "../../../components/Select";
-import { MonoDetail, Muted } from "../../../components/Typography";
+import { InlineCode, MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 
 type GateSetup = ReturnType<typeof useModel<typeof GateSetupModel.prototype>>;
 
-const ENVIRONMENT_DOCS =
-  "https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment";
+/**
+ * The running-copy measure. Body text in a step stops here; the controls and
+ * the code block span the card. `docs/design.md` lists this as the canonical
+ * prose measure, and mixing capped and uncapped copy in one column is what made
+ * an earlier pass read as unconsidered.
+ */
+const MEASURE = "max-w-[680px]";
+
+/**
+ * Hardening that is true of any gated environment, whatever the registry.
+ *
+ * The ecosystem adapters supply the registry-side notes; these three are
+ * GitHub-side and would otherwise be lost — they are what stops the gate from
+ * being a checkpoint someone can walk around.
+ */
+const ENVIRONMENT_HARDENING = [
+  "Uncheck **Allow administrators to bypass configured protection rules** on the environment — it is on by default.",
+  "Restrict the environment's deployment branches and tags to your release branch or tag pattern.",
+  "Require `CODEOWNERS` review on `.github/workflows/` — a trusted publisher pins the workflow path, not its contents.",
+];
+
+/**
+ * Render a lockdown note's inline markup.
+ *
+ * The notes are authored in the ecosystem adapters, where backticks around a
+ * package name or a workflow filename are the natural way to write them, and
+ * they were previously printed raw — every npm note rendered its own backticks.
+ * Only the two marks the notes actually use are supported; this is a formatter
+ * for known strings, not a markdown parser for arbitrary input.
+ */
+function renderNote(note: string): ComponentChildren {
+  return note.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return <InlineCode key={index}>{part.slice(1, -1)}</InlineCode>;
+    }
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
 
 /**
  * The guided workflow-gate setup wizard.
  *
- * Gate onboarding used to be ten steps spread across Drydock, GitHub settings,
- * and the docs. Here it is one column: pick a repo, name the environment, let
- * Drydock create it and register itself as its protection rule, generate the
- * publish workflow for the package, and open the pull request.
+ * Drydock does not touch the maintainer's repository. Creating the environment,
+ * registering the protection rule, and committing the workflow would each need
+ * a standing write permission on a repository whose publish path Drydock exists
+ * to protect, so the wizard generates the workflow, links to the GitHub screen
+ * for each step, and then *verifies* the result by reading GitHub back.
  *
- * The installed App often lacks the permission a given step needs — repository
- * administration for the environment, `workflows: write` for the pull request —
- * so every automated step renders its own manual fallback inline instead of
- * dead-ending. The generated YAML is always shown and always copyable, which is
- * the fallback the pull-request step degrades to.
+ * That verification is what the summary badge rests on: a mapped release target
+ * only means Drydock knows where a held deployment goes, so the wizard reports
+ * a gate as armed only when GitHub confirms Drydock is the protection rule.
  */
 export function GateSetupWizard({
   activeInstallations,
@@ -73,7 +110,6 @@ export function GateSetupWizard({
   const installationRowId = gateSetup.installationRowId.value;
   const repositoryFullName = gateSetup.repositoryFullName.value;
   const environment = gateSetup.environment.value;
-  const error = gateSetup.error.value;
   const localReleaseTarget = gateSetup.releaseTarget.value;
   const persistedReleaseTarget = releaseTargets.find(
     (target) =>
@@ -83,14 +119,19 @@ export function GateSetupWizard({
   );
   const releaseTarget = localReleaseTarget ?? persistedReleaseTarget ?? null;
 
-  // Keep the wizard pinned to an installation the org still has, the same way
-  // the release-target form does.
+  // Only pin the wizard to an installation when there is no choice to make.
+  // Auto-selecting the first of several opened the wizard on whichever
+  // installation sorted first — often one with no accessible repositories, so
+  // the first thing a maintainer saw was an error they had not caused.
   const installationIds = activeInstallations.map((row) => row.id).join(",");
   useEffect(() => {
     if (!canManage) return;
     const stillValid = activeInstallations.some((row) => row.id === installationRowId);
-    if (!stillValid && activeInstallations.length) {
+    if (stillValid) return;
+    if (activeInstallations.length === 1) {
       void gateSetup.selectInstallation(activeInstallations[0].id);
+    } else if (installationRowId) {
+      void gateSetup.selectInstallation("");
     }
   }, [canManage, installationIds, installationRowId]);
 
@@ -123,45 +164,76 @@ export function GateSetupWizard({
     );
   }
 
+  const verification = gateSetup.verification.value;
+  const preview = gateSetup.preview.value;
+  const gateArmed = verification?.protectionRule === "present" && releaseTarget !== null;
+  // The first unfinished step. Exactly one step owns the primary button, so the
+  // card has a single next action instead of six competing ones.
+  const current = !gateSetup.repositoryPicked.value
+    ? 1
+    : verification?.environment !== "present"
+      ? 2
+      : verification.protectionRule !== "present"
+        ? 3
+        : !gateSetup.templateReady.value
+          ? 4
+          : !preview
+            ? 5
+            : !releaseTarget
+              ? 6
+              : 7;
+
   return (
     <div id="gate-setup" class="scroll-mt-6">
       <CollapsibleCard
         title="Guided gate setup"
         defaultOpen={deepLinked}
-        aside={releaseTarget ? <Badge tone="ok">gate configured</Badge> : null}
+        aside={
+          gateArmed ? (
+            <Badge tone="ok">gate armed</Badge>
+          ) : current > 1 ? (
+            <Badge tone="neutral">step {Math.min(current, 6)} of 6</Badge>
+          ) : null
+        }
       >
         <SettingsCardBody>
-          <div class="flex flex-col gap-1.5 max-w-[600px]">
+          <div class={`flex flex-col gap-1.5 ${MEASURE}`}>
             <Muted class="text-[13px] m-0">
-              Set a repository up for workflow-gated releases without leaving Drydock. Drydock
-              creates the GitHub Environment, registers itself as its deployment-protection rule,
-              generates the publish workflow for your package, and opens a pull request with it.
+              Set a repository up for workflow-gated releases. Drydock generates the publish
+              workflow, points you at each GitHub screen, and reads GitHub back to confirm the gate
+              is real. It never writes to your repository — holding the permission to rewrite your
+              publish workflow is exactly what a gate is supposed to prevent.
             </Muted>
             <MonoDetail
               parts={[
-                <span key="a">creates the environment</span>,
-                <span key="b">enables the protection rule</span>,
-                <span key="c">opens a workflow pr</span>,
+                <span key="a">you make the changes on github</span>,
+                <span key="b">drydock verifies them</span>,
               ]}
             />
           </div>
-          {error ? <Alert tone="critical">{error}</Alert> : null}
         </SettingsCardBody>
 
-        <RepositoryStep gateSetup={gateSetup} activeInstallations={activeInstallations} />
-        <EnvironmentStep gateSetup={gateSetup} />
-        <ProtectionRuleStep gateSetup={gateSetup} />
+        <RepositoryStep
+          gateSetup={gateSetup}
+          activeInstallations={activeInstallations}
+          current={current}
+        />
+        <EnvironmentStep gateSetup={gateSetup} current={current} />
+        <ProtectionRuleStep gateSetup={gateSetup} current={current} />
         <PackageStep
           gateSetup={gateSetup}
           ecosystems={gateSetupEcosystems}
           releaseTarget={releaseTarget}
+          current={current}
         />
-        <WorkflowStep gateSetup={gateSetup} />
+        <WorkflowStep gateSetup={gateSetup} current={current} />
         <ReleaseTargetStep
           gateSetup={gateSetup}
           releaseTarget={releaseTarget}
           onChanged={onReleaseTargetsChanged}
+          current={current}
         />
+        {current === 7 ? <GateArmedSummary gateSetup={gateSetup} /> : null}
       </CollapsibleCard>
     </div>
   );
@@ -176,10 +248,9 @@ function GateSetupPermissionPlaceholder({ deepLinked }: { deepLinked: boolean })
         aside={<Badge tone="info">owner or admin required</Badge>}
       >
         <SettingsCardBody>
-          <Muted class="text-[13px] m-0 max-w-[600px]">
-            Organization owners and admins can create GitHub environments, enable Drydock as a
-            deployment-protection rule, open the workflow pull request, and map its release target.
-            Ask one of them to run this setup for the organization.
+          <Muted class={`text-[13px] m-0 ${MEASURE}`}>
+            Organization owners and admins can run this setup and map its release target. Ask one of
+            them to configure the gate for the organization.
           </Muted>
         </SettingsCardBody>
       </CollapsibleCard>
@@ -211,12 +282,11 @@ function GateSetupPlaceholder({
         aside={<Badge tone="info">needs the GitHub App</Badge>}
       >
         <SettingsCardBody>
-          <Muted class="text-[13px] m-0 max-w-[600px]">
-            This wizard creates the GitHub Environment, registers Drydock as its
-            deployment-protection rule, and opens a pull request with your publish workflow. It
-            works through the Drydock GitHub App, so install that first — on the account that hosts
-            the repository you want to gate. The wizard appears here once the installation is
-            linked.
+          <Muted class={`text-[13px] m-0 ${MEASURE}`}>
+            This wizard generates your publish workflow and verifies that GitHub is holding releases
+            for review. It reads your repository through the Drydock GitHub App, so install that
+            first — on the account that hosts the repository you want to gate. The wizard appears
+            here once the installation is linked.
           </Muted>
           {onInstall ? (
             <div class="flex flex-wrap items-center gap-3">
@@ -226,7 +296,7 @@ function GateSetupPlaceholder({
               <Muted class="text-[12px] m-0">
                 {installDisabled
                   ? "Ask the operator to configure the GitHub App on this Drydock instance."
-                  : "Takes you to GitHub and back."}
+                  : "Takes you to GitHub and back. Read-only on your repositories."}
               </Muted>
             </div>
           ) : null}
@@ -239,9 +309,11 @@ function GateSetupPlaceholder({
 function RepositoryStep({
   gateSetup,
   activeInstallations,
+  current,
 }: {
   gateSetup: GateSetup;
   activeInstallations: PublicGithubAppInstallation[];
+  current: number;
 }) {
   const installationRowId = gateSetup.installationRowId.value;
   const repositoryFullName = gateSetup.repositoryFullName.value;
@@ -251,7 +323,10 @@ function RepositoryStep({
 
   return (
     <div>
-      <SettingsCardHeader title="1 · Repository" />
+      <SettingsCardHeader
+        title="1 · Repository"
+        aside={<StepBadge done={current > 1} current={current === 1} />}
+      />
       <SettingsCardBody inset="belowHeader" gap="compact">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           {activeInstallations.length > 1 ? (
@@ -279,11 +354,13 @@ function RepositoryStep({
               onChange={(value) => void gateSetup.selectRepository(value)}
             >
               <option value="">
-                {loading
-                  ? "Loading repositories…"
-                  : repositories.length
-                    ? "Pick a repository…"
-                    : "No repositories visible"}
+                {!installationRowId
+                  ? "Pick an installation first…"
+                  : loading
+                    ? "Loading repositories…"
+                    : repositories.length
+                      ? "Pick a repository…"
+                      : "No repositories visible"}
               </option>
               {repositories.map((repo) => (
                 <option key={repo.id} value={repo.fullName}>
@@ -308,29 +385,34 @@ function RepositoryStep({
             ) : null}
           </Field>
         </div>
+        <StepError gateSetup={gateSetup} step={null} />
       </SettingsCardBody>
     </div>
   );
 }
 
-function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
+function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current: number }) {
   const choice = gateSetup.environmentChoice.value;
   const newName = gateSetup.newEnvironmentName.value;
   const environments: RepositoryEnvironment[] = gateSetup.environments.value;
   const loading = gateSetup.environmentsLoading.value;
   const repositoryPicked = gateSetup.repositoryPicked.value;
+  const repositoryFullName = gateSetup.repositoryFullName.value;
   const environment = gateSetup.environment.value;
-  const environmentIssue: string | null = gateSetup.environmentIssue.value;
-  const step = gateSetup.environmentStep.value;
+  const verification = gateSetup.verification.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
   const creatingNew = choice === NEW_ENVIRONMENT_CHOICE;
+  const found = verification?.environment === "present";
 
   return (
     <div>
-      <SettingsCardHeader title="2 · GitHub environment" aside={<StepBadge result={step} />} />
+      <SettingsCardHeader
+        title="2 · GitHub environment"
+        aside={<StepBadge done={found} current={current === 2} />}
+      />
       <SettingsCardBody inset="belowHeader" gap="compact">
-        <Muted class="text-[13px] m-0">
+        <Muted class={`text-[13px] m-0 ${MEASURE}`}>
           The publish job runs in this environment. Drydock holds it there while it reviews the
           uploaded release artifacts.
         </Muted>
@@ -340,7 +422,7 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
               id="gateSetupEnv"
               value={choice}
               disabled={busy || !repositoryPicked || loading}
-              onChange={(value) => gateSetup.selectEnvironmentChoice(value)}
+              onChange={(value) => void gateSetup.selectEnvironmentChoice(value)}
             >
               <option value="">
                 {!repositoryPicked
@@ -354,14 +436,11 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
                   {env.name}
                 </option>
               ))}
-              <option value={NEW_ENVIRONMENT_CHOICE}>Create a new environment…</option>
+              <option value={NEW_ENVIRONMENT_CHOICE}>Create a new one on GitHub…</option>
             </Select>
-            {environmentIssue ? (
-              <Muted class="text-[12px] mt-1.5 text-warn-text">{environmentIssue}</Muted>
-            ) : null}
           </Field>
           {creatingNew ? (
-            <Field label="New environment name" for="gateSetupNewEnv">
+            <Field label="Name it" for="gateSetupNewEnv">
               <Input
                 id="gateSetupNewEnv"
                 value={newName}
@@ -372,76 +451,95 @@ function EnvironmentStep({ gateSetup }: { gateSetup: GateSetup }) {
                 }
               />
               <Muted class="text-[12px] mt-1.5">
-                GitHub lowercases environment names, so this will be created as{" "}
+                GitHub lowercases environment names, so create it as{" "}
                 <code class="font-mono text-[12px]">{environment || "…"}</code>.
               </Muted>
             </Field>
           ) : null}
         </div>
-        {creatingNew ? (
+        {creatingNew && repositoryPicked ? (
           <div class="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void gateSetup.createEnvironment()}
-              disabled={busy || !environment || environmentIssue !== null}
+            <LinkButton
+              href={environmentSettingsUrl(repositoryFullName)}
+              target="_blank"
+              rel="noreferrer"
+              variant={current === 2 ? "primary" : "secondary"}
             >
-              {busyStep === "environment" ? "Creating…" : "Create it in GitHub"}
+              Create it on GitHub ↗
+            </LinkButton>
+            <Button
+              variant="secondary"
+              onClick={() => void gateSetup.verify()}
+              disabled={busy || !environment}
+            >
+              {busyStep === "verify" ? "Checking…" : "Check it"}
             </Button>
-            <Muted class="text-[12px] m-0">
-              Needs the App's repository administration permission.
-            </Muted>
           </div>
         ) : null}
-        <StepFallback
-          result={step}
-          extra={
-            <Muted class="text-[12px] m-0">
-              <a class="underline" href={ENVIRONMENT_DOCS} target="_blank" rel="noreferrer">
-                Managing environments for deployment
-              </a>{" "}
-              walks through it. Come back and pick it from the list once it exists.
-            </Muted>
-          }
+        <VerificationNotice
+          gateSetup={gateSetup}
+          check={verification?.environment}
+          absent={`Drydock cannot see an environment called "${environment}" on ${repositoryFullName}. Create it on GitHub, then check again.`}
         />
+        <StepError gateSetup={gateSetup} step="verify" />
       </SettingsCardBody>
     </div>
   );
 }
 
-function ProtectionRuleStep({ gateSetup }: { gateSetup: GateSetup }) {
-  const step = gateSetup.protectionStep.value;
+function ProtectionRuleStep({ gateSetup, current }: { gateSetup: GateSetup; current: number }) {
+  const verification = gateSetup.verification.value;
   const environmentPicked = gateSetup.environmentPicked.value;
+  const environmentFound = verification?.environment === "present";
   const environment = gateSetup.environment.value;
+  const repositoryFullName = gateSetup.repositoryFullName.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
-  const enabled = step !== null && step.status !== "failed";
+  const enabled = verification?.protectionRule === "present";
 
   return (
     <div>
-      <SettingsCardHeader title="3 · Drydock protection rule" aside={<StepBadge result={step} />} />
+      <SettingsCardHeader
+        title="3 · Drydock protection rule"
+        aside={<StepBadge done={enabled} current={current === 3} />}
+      />
       <SettingsCardBody inset="belowHeader" gap="compact">
-        <Muted class="text-[13px] m-0">
-          Registers Drydock as a custom deployment-protection rule on{" "}
-          <code class="font-mono text-[12px]">{environment || "the environment"}</code>. This is
-          what pauses the publish job and sends Drydock the release to review.
+        <Muted class={`text-[13px] m-0 ${MEASURE}`}>
+          This is the step that actually pauses your release. In the environment's settings, enable
+          Drydock under <strong>Deployment protection rules</strong>. Without it nothing holds the
+          publish job, whatever else is configured here.
         </Muted>
         <div class="flex flex-wrap items-center gap-3">
-          <Button
-            onClick={() => void gateSetup.enableProtectionRule()}
-            disabled={busy || !environmentPicked}
-          >
-            {busyStep === "protection_rule"
-              ? "Enabling…"
-              : enabled
-                ? "Re-check the rule"
-                : "Enable Drydock protection rule"}
-          </Button>
-          {enabled ? (
-            <Muted class="text-[12px] m-0">
-              Drydock now gates deployments to this environment.
-            </Muted>
-          ) : null}
+          {environmentPicked ? (
+            <>
+              <LinkButton
+                href={environmentSettingsUrl(repositoryFullName)}
+                target="_blank"
+                rel="noreferrer"
+                variant={current === 3 ? "primary" : "secondary"}
+              >
+                Open environment settings ↗
+              </LinkButton>
+              <Button variant="secondary" onClick={() => void gateSetup.verify()} disabled={busy}>
+                {busyStep === "verify" ? "Checking…" : enabled ? "Re-check" : "Check the rule"}
+              </Button>
+            </>
+          ) : (
+            <Blocked>Pick an environment in step 2 first.</Blocked>
+          )}
         </div>
-        <StepFallback result={step} />
+        {enabled ? (
+          <Alert tone="ok">
+            GitHub confirms Drydock is a deployment-protection rule on{" "}
+            <code class="font-mono text-[12px]">{environment}</code>. Deployments to it now wait for
+            a Drydock review.
+          </Alert>
+        ) : null}
+        <VerificationNotice
+          gateSetup={gateSetup}
+          check={environmentFound ? verification?.protectionRule : undefined}
+          absent={`Drydock is not yet a protection rule on "${environment}", so nothing is holding this environment's deployments. Enable it on GitHub, then check again.`}
+        />
       </SettingsCardBody>
     </div>
   );
@@ -451,28 +549,33 @@ function PackageStep({
   gateSetup,
   ecosystems,
   releaseTarget,
+  current,
 }: {
   gateSetup: GateSetup;
   ecosystems: GateSetupEcosystemOption[];
   releaseTarget: PublicReleaseTarget | null;
+  current: number;
 }) {
   const ecosystem = gateSetup.ecosystem.value;
   const packageName = gateSetup.packageName.value;
   const packageNameIssue: string | null = gateSetup.packageNameIssue.value;
-  const environmentPicked = gateSetup.environmentPicked.value;
+  const environmentIssue: string | null = gateSetup.environmentIssue.value;
   const busy = gateSetup.busy.value;
   const ecosystemLocked = releaseTarget?.ecosystem != null;
 
   return (
     <div>
-      <SettingsCardHeader title="4 · What you publish" />
+      <SettingsCardHeader
+        title="4 · What you publish"
+        aside={<StepBadge done={gateSetup.templateReady.value} current={current === 4} />}
+      />
       <SettingsCardBody inset="belowHeader" gap="compact">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Ecosystem" for="gateSetupEcosystem">
             <Select
               id="gateSetupEcosystem"
               value={ecosystem}
-              disabled={busy || !environmentPicked || ecosystemLocked}
+              disabled={busy || ecosystemLocked}
               onChange={(value) => gateSetup.selectEcosystem(value)}
             >
               <option value="">Pick an ecosystem…</option>
@@ -484,7 +587,7 @@ function PackageStep({
             </Select>
             {ecosystemLocked ? (
               <Muted class="text-[12px] mt-1.5">
-                The mapped release target pins this ecosystem. Remove the mapping below before
+                The mapped release target pins this ecosystem. Remove the mapping in step 6 before
                 choosing another one.
               </Muted>
             ) : null}
@@ -493,7 +596,7 @@ function PackageStep({
             <Input
               id="gateSetupPackage"
               value={packageName}
-              disabled={busy || !environmentPicked}
+              disabled={busy}
               placeholder="@acme/toolkit"
               onInput={(event) =>
                 gateSetup.setPackageName((event.currentTarget as HTMLInputElement).value)
@@ -503,74 +606,83 @@ function PackageStep({
               <Muted class="text-[12px] mt-1.5 text-warn-text">{packageNameIssue}</Muted>
             ) : (
               <Muted class="text-[12px] mt-1.5">
-                Used to name the generated workflow and its registry pins. Drydock still derives the
+                Names the generated workflow and its registry pins. Drydock still derives the
                 reviewed identity from the uploaded artifacts, never from this field.
               </Muted>
             )}
           </Field>
         </div>
+        {environmentIssue ? <Alert tone="warn">{environmentIssue}</Alert> : null}
       </SettingsCardBody>
     </div>
   );
 }
 
-function WorkflowStep({ gateSetup }: { gateSetup: GateSetup }) {
-  const preview: GateSetupPreview | null = gateSetup.preview.value;
-  const previewLoading = gateSetup.previewLoading.value;
+function WorkflowStep({ gateSetup, current }: { gateSetup: GateSetup; current: number }) {
+  const preview = gateSetup.preview.value;
   const templateReady = gateSetup.templateReady.value;
-  const step = gateSetup.pullRequestStep.value;
-  const pullRequest = gateSetup.pullRequest.value;
+  const verification = gateSetup.verification.value;
+  const repositoryFullName = gateSetup.repositoryFullName.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
 
   return (
     <div>
-      <SettingsCardHeader title="5 · Publish workflow" aside={<StepBadge result={step} />} />
+      <SettingsCardHeader
+        title="5 · Publish workflow"
+        aside={<StepBadge done={preview !== null} current={current === 5} />}
+      />
       <SettingsCardBody inset="belowHeader" gap="compact">
-        <Muted class="text-[13px] m-0">
+        <Muted class={`text-[13px] m-0 ${MEASURE}`}>
           Build once, record <code class="font-mono text-[12px]">SHA256SUMS</code>, upload, pause at
-          the environment, verify the digests on download, publish the reviewed bytes. Drydock
-          generated this file but has not reviewed it — read it before merging.
+          the environment, verify the digests on download, publish the reviewed bytes. Drydock wrote
+          this file but has not reviewed it — read it before you commit it.
         </Muted>
         <div class="flex flex-wrap items-center gap-3">
           <Button
-            variant="secondary"
+            variant={current === 5 ? "primary" : "secondary"}
             onClick={() => void gateSetup.loadPreview()}
             disabled={busy || !templateReady}
           >
-            {previewLoading ? "Generating…" : preview ? "Regenerate workflow" : "Generate workflow"}
+            {busyStep === "preview"
+              ? "Generating…"
+              : preview
+                ? "Regenerate workflow"
+                : "Generate workflow"}
           </Button>
-          <Button
-            onClick={() => void gateSetup.openPullRequest()}
-            disabled={busy || !templateReady}
-          >
-            {busyStep === "pull_request" ? "Opening…" : "Open a PR with this workflow"}
-          </Button>
+          {preview ? (
+            <LinkButton
+              href={newWorkflowFileUrl(
+                repositoryFullName,
+                verification?.defaultBranch ?? null,
+                preview.workflowPath,
+                preview.yaml,
+              )}
+              target="_blank"
+              rel="noreferrer"
+              variant="secondary"
+            >
+              Commit it on GitHub ↗
+            </LinkButton>
+          ) : null}
+          {!templateReady ? (
+            <Blocked>Choose an ecosystem and package name in step 4 first.</Blocked>
+          ) : null}
         </div>
+        <StepError gateSetup={gateSetup} step="preview" />
 
-        {pullRequest ? (
-          <Alert tone="ok">
-            Opened{" "}
-            <a class="underline" href={pullRequest.url} target="_blank" rel="noreferrer">
-              pull request #{pullRequest.number}
-            </a>{" "}
-            on branch <code class="font-mono text-[12px]">{pullRequest.branch}</code>. Review and
-            merge it to arm the gate.
-          </Alert>
+        {preview ? (
+          <CodeBlock title={preview.workflowPath} lang="yaml" copyLabel="Copy workflow" defaultOpen>
+            {preview.yaml}
+          </CodeBlock>
         ) : null}
-
-        <StepFallback result={step} />
-
-        {preview ? <WorkflowPreview path={preview.workflowPath} yaml={preview.yaml} /> : null}
-        {preview && preview.notes.length ? (
+        {preview ? (
           <div class="flex flex-col gap-1.5">
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              Finish the lockdown
-            </span>
-            <ul class="m-0 pl-4 flex flex-col gap-1">
-              {preview.notes.map((note) => (
+            <MonoLabel>Finish the lockdown</MonoLabel>
+            <ul class={`m-0 pl-5 list-disc flex flex-col gap-1 ${MEASURE}`}>
+              {[...preview.notes, ...ENVIRONMENT_HARDENING].map((note) => (
                 <li key={note} class="text-[13px] leading-[1.55] text-ink-muted">
-                  {note}
+                  {renderNote(note)}
                 </li>
               ))}
             </ul>
@@ -585,12 +697,14 @@ function ReleaseTargetStep({
   gateSetup,
   releaseTarget,
   onChanged,
+  current,
 }: {
   gateSetup: GateSetup;
   releaseTarget: PublicReleaseTarget | null;
   onChanged?: () => void;
+  current: number;
 }) {
-  const releaseTargetReady = gateSetup.releaseTargetReady.value;
+  const environmentPicked = gateSetup.environmentPicked.value;
   const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
 
@@ -609,10 +723,10 @@ function ReleaseTargetStep({
     <div>
       <SettingsCardHeader
         title="6 · Release target"
-        aside={releaseTarget ? <Badge tone="ok">mapped</Badge> : null}
+        aside={<StepBadge done={releaseTarget !== null} current={current === 6} />}
       />
       <SettingsCardBody inset="belowHeader" gap="compact">
-        <Muted class="text-[13px] m-0">
+        <Muted class={`text-[13px] m-0 ${MEASURE}`}>
           The last piece: tell Drydock this repository and environment belong to your organization,
           so a held deployment resolves to a review here.
         </Muted>
@@ -625,74 +739,103 @@ function ReleaseTargetStep({
                 <span key="eco">{releaseTarget.ecosystem ?? "auto-detect"}</span>,
               ]}
             />
-            <Button variant="danger" size="sm" onClick={() => void remove()} disabled={busy}>
+            <Button variant="ghost" size="sm" onClick={() => void remove()} disabled={busy}>
               {busyStep === "release_target_delete" ? "Removing…" : "Remove mapping"}
             </Button>
           </div>
         ) : (
           <div class="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void create()} disabled={busy || !releaseTargetReady}>
+            <Button
+              variant={current === 6 ? "primary" : "secondary"}
+              onClick={() => void create()}
+              disabled={busy || !environmentPicked}
+            >
               {busyStep === "release_target" ? "Mapping…" : "Create release target"}
             </Button>
-            <LinkButton href="/docs#workflow-gates" size="sm" variant="ghost">
-              Read the gate docs
-            </LinkButton>
+            {!environmentPicked ? <Blocked>Pick an environment in step 2 first.</Blocked> : null}
           </div>
         )}
+        <StepError gateSetup={gateSetup} step="release_target" />
       </SettingsCardBody>
     </div>
   );
 }
 
-/** Selectable, copyable YAML. The text stays real text so manual copy works. */
-function WorkflowPreview({ path, yaml }: { path: string; yaml: string }) {
+/** Where the flow ends: what the maintainer should do next, not whitespace. */
+function GateArmedSummary({ gateSetup }: { gateSetup: GateSetup }) {
+  const environment = gateSetup.environment.value;
   return (
-    <div class="overflow-hidden rounded-md border border-border bg-surface-2">
-      <div class="px-4 py-2 border-b border-border flex items-center justify-between gap-3">
-        <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle min-w-0 truncate">
-          {path}
-        </span>
-        <CopyButton text={yaml} label="Copy workflow" />
-      </div>
-      <pre class="m-0 p-4 overflow-x-auto font-mono text-[12px] leading-[1.55] text-ink max-h-[420px]">
-        <code class="whitespace-pre">{yaml}</code>
-      </pre>
+    <div>
+      <SettingsCardHeader title="Gate armed" aside={<Badge tone="ok">verified</Badge>} />
+      <SettingsCardBody inset="belowHeader" gap="compact">
+        <Muted class={`text-[13px] m-0 ${MEASURE}`}>
+          GitHub confirms Drydock gates <code class="font-mono text-[12px]">{environment}</code>,
+          and this organization owns the release target. Merge the publish workflow, then push a
+          release tag: the publish job will queue, its artifacts will arrive here for review, and
+          nothing reaches the registry until you approve.
+        </Muted>
+        <div class="flex flex-wrap items-center gap-3">
+          <LinkButton href="/dashboard" size="sm" variant="secondary">
+            Back to the dashboard
+          </LinkButton>
+          <LinkButton href="/docs#workflow-gates" size="sm" variant="ghost">
+            Read the gate docs
+          </LinkButton>
+        </div>
+      </SettingsCardBody>
     </div>
   );
 }
 
-function StepBadge({ result }: { result: GateSetupStepResult | null }) {
-  const label = gateSetupStatusLabel(result);
-  if (!label || !result) return null;
-  return <Badge tone={stepTone(result)}>{label}</Badge>;
+function StepBadge({ done, current }: { done: boolean; current: boolean }) {
+  if (done) return <Badge tone="ok">done</Badge>;
+  if (current) return <Badge tone="info">now</Badge>;
+  return null;
 }
 
-function stepTone(result: GateSetupStepResult): BadgeTone {
-  return result.status === "failed" ? "medium" : "ok";
+/** Why a control is disabled, said next to the control rather than nowhere. */
+function Blocked({ children }: { children: ComponentChildren }) {
+  return <Muted class="text-[12px] m-0">{children}</Muted>;
 }
 
 /**
- * The manual path for a step GitHub refused.
+ * What a verification read found.
  *
- * Rendered inline under the step's own controls, so a maintainer whose
- * installation lacks a permission finishes the same flow by hand instead of
- * hitting a wall.
+ * `unknown` never renders as a problem with the maintainer's setup — it is
+ * Drydock reporting that it could not check, which is a different claim and
+ * must not be dressed up as either success or failure.
  */
-function StepFallback({
-  result,
-  extra,
+function VerificationNotice({
+  gateSetup,
+  check,
+  absent,
 }: {
-  result: GateSetupStepResult | null;
-  extra?: ComponentChildren;
+  gateSetup: GateSetup;
+  check: "present" | "absent" | "unknown" | undefined;
+  absent: string;
 }) {
-  if (!result?.failure) return null;
-  return (
-    <Alert tone="warn">
-      <div class="flex flex-col gap-1.5">
-        <span>{result.failure.message}</span>
-        <span>{result.failure.manualFallback}</span>
-        {extra}
-      </div>
-    </Alert>
-  );
+  const reason = gateSetup.verification.value?.unavailableReason;
+  if (check === "unknown") {
+    return (
+      <Alert tone="info">
+        {reason ?? "Drydock could not read this from GitHub, so it cannot confirm the gate."} Check
+        again in a moment.
+      </Alert>
+    );
+  }
+  if (check === "absent") return <Alert tone="warn">{absent}</Alert>;
+  return null;
+}
+
+/** An error rendered against the step that raised it. */
+function StepError({
+  gateSetup,
+  step,
+}: {
+  gateSetup: GateSetup;
+  step: "verify" | "preview" | "release_target" | null;
+}) {
+  const error = gateSetup.error.value;
+  if (!error || gateSetup.errorStep.value !== step) return null;
+  return <Alert tone="critical">{error}</Alert>;
 }
