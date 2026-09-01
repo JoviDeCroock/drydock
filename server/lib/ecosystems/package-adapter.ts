@@ -31,7 +31,7 @@ export interface AcquiredArtifact {
 
 export type StagedDetails = unknown;
 
-export type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix";
+type ReleaseProvenanceArtifactKind = "tarball" | "wheel" | "sdist" | "vsix";
 
 export interface ReleaseProvenanceArtifact {
   path: string;

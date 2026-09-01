@@ -341,6 +341,21 @@ describe("canonical release receipt v1", () => {
     expect(receipt.content.evidence.releaseDecision.status).toBe("unknown");
   });
 
+  test("marks a gate scan with no persisted provenance as unknown, not conflicting", async () => {
+    const owner = await seedOwner();
+    const gateId = await seedGate(owner);
+    const scanId = await seedCompleted(owner, { source: "workflow_gate", gateId });
+    const receipt = (await (
+      await request(appFor(owner), scanId, "release-receipt.json")
+    ).json()) as any;
+    expect(receipt.content.evidence.reviewedArtifacts).toEqual({
+      status: "unknown",
+      provenance: null,
+      stagedArtifactIntegrity: null,
+    });
+    expect(receipt.content.evidence.status).toBe("partial");
+  });
+
   test("keeps incomplete and cross-organization scans outside the receipt boundary", async () => {
     const owner = await seedOwner();
     const outsider = await seedOwner();

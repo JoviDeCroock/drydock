@@ -30,20 +30,20 @@ export interface PreparedReleaseCandidate {
   package: { name: string; version: string };
 }
 
-export interface RegistryVerificationContext {
+interface RegistryVerificationContext {
   env: Cloudflare.Env;
   executionCtx: ExecutionContext;
   db: AppDb;
   organizationId: string;
 }
 
-export interface RegistryVerificationInput {
+interface RegistryVerificationInput {
   packageName: string;
   version: string;
   artifacts: ReleaseProvenanceArtifact[];
 }
 
-export type RegistryVerificationResult =
+type RegistryVerificationResult =
   | { status: "not_published" }
   | { status: "verified" }
   | {
