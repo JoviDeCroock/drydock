@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { tokenizeJs } from "../server/lib/platform/js-lexer";
@@ -163,6 +163,39 @@ function apiRegistrations(source) {
   }
   return registrationsFound.sort((a, b) => a.line - b.line);
 }
+
+// The boundary above is a property of one file, so the check is only as wide as
+// the claim that `server/index.ts` is where `/api` mounting happens. Sub-routers
+// register paths relative to their mount point and are safe; a sub-module that
+// registers an absolute `/api` path would sit outside this file and outside the
+// ordering argument entirely.
+function serverSources(dir = "server") {
+  return readdirSync(new URL(`../${dir}/`, import.meta.url), { withFileTypes: true }).flatMap(
+    (entry) => {
+      const file = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) return serverSources(file);
+      return entry.name.endsWith(".ts") ? [file] : [];
+    },
+  );
+}
+
+describe("/api mounting stays in server/index.ts", () => {
+  test("no other server module registers an absolute /api path", () => {
+    const offenders = serverSources()
+      .filter((file) => file !== "server/index.ts")
+      .filter((file) =>
+        /\.(?:all|delete|get|head|on|options|patch|post|put|route|use)\(\s*["'`]\/api\b/.test(
+          sanitizeApiSource(readFileSync(new URL(`../${file}`, import.meta.url), "utf8")),
+        ),
+      );
+    expect(
+      offenders,
+      "Mount it from server/index.ts, below the session guard. A route registered on an " +
+        "absolute /api path elsewhere is outside the registration-order argument this file " +
+        "checks, so nothing would notice it shipping anonymous.",
+    ).toEqual([]);
+  });
+});
 
 describe("/api/* auth boundary", () => {
   const guardLine = sessionGuardLine(structuralIndexSource);

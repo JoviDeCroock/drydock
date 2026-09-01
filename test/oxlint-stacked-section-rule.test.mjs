@@ -30,6 +30,7 @@ function runRule() {
     .map((d) => ({
       filename: d.filename?.replaceAll("\\", "/"),
       line: d.labels?.[0]?.span?.line,
+      message: d.help ?? d.message ?? "",
     }));
 }
 
@@ -56,6 +57,19 @@ describe("design-local/no-stacked-section-rule", () => {
       [8, 16, 24, 32, 40, 50, 59, 67, 78, 85, 94, 107, 115, 127, 135, 146, 156, 163],
       `expected the eighteen stacked rules to be flagged, got:\n${JSON.stringify(flagged, null, 2)}`,
     );
+  });
+
+  it("separates a border-b stacked on the label's own rule from a border-t boxing it", () => {
+    const messageAt = (line) => flagged.find((d) => d.line === line)?.message ?? "";
+
+    // Line 8 is `border-b` — the same edge the label's trailing rule draws on.
+    assert.match(messageAt(8), /stacks a second hairline/);
+    // Line 16 is `border-t` only, which lands on the leading edge instead. The
+    // rule still forbids it, but must not claim the hairlines are stacked.
+    assert.match(messageAt(16), /leading edge and boxes it/);
+    assert.doesNotMatch(messageAt(16), /stacks a second hairline/);
+    // Line 24 is `border-y`, so the stacked edge wins.
+    assert.match(messageAt(24), /stacks a second hairline/);
   });
 
   it("leaves boxes, spacing, distant rules, and mid-stack labels alone", () => {
