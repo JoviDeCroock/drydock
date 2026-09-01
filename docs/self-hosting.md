@@ -59,6 +59,7 @@ blocks from your self-host config:
 ```sh
 pnpm exec wrangler queues create staged-publish-review-scans
 pnpm exec wrangler queues create staged-publish-review-scans-dlq
+pnpm exec wrangler queues create staged-publish-review-discovery
 pnpm exec wrangler kv namespace create COMPARE_CACHE
 pnpm exec wrangler kv namespace create AUTH_SESSIONS
 pnpm exec wrangler r2 bucket create staged-publish-review-artifacts
@@ -99,8 +100,27 @@ account-owned value with a `REPLACE_*` placeholder. Replace at least:
   `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, and
   `SLACK_CLIENT_ID`.
 
-Keep the queue consumer `max_retries` and `dead_letter_queue` settings aligned
-with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
+Keep the scan queue consumer's `max_retries` and `dead_letter_queue` settings
+aligned with `MAX_SCAN_JOB_ATTEMPTS` in `server/lib/scan/job.ts`.
+
+`staged-publish-review-discovery` carries one staged-publish discovery sweep per
+organization, produced by the 15-minute cron tick (see "Scheduled discovery" in
+[`architecture.md`](./architecture.md)). It is separate from the scan queue so a
+discovery burst cannot starve scan execution, and it needs no dead-letter queue:
+sweeps are idempotent and every tick re-enqueues them. Dropping the
+`DISCOVERY_QUEUE` producer/consumer pair is supported — the cron then sweeps
+inline inside its own invocation, which is fine for a handful of organizations
+but is what the queue exists to replace at scale.
+With the queue configured, large per-organization staged listings are listed
+once and fanned into independent 50-candidate messages so scan-row preparation
+cannot exhaust one Worker's subrequest budget or form a recursive queue chain.
+The producer stays below Cloudflare's default queue-throughput ceiling and
+retries an explicit throughput rejection with a bounded delay so a large tick
+continues from its current connection cursor; other send failures remain
+fail-fast because their delivery outcome is ambiguous. Candidate messages are
+bound to the npm connection generation that listed them, and their scan messages
+carry that generation through every credential resolution, so replacing a token
+or registry safely invalidates queued work from the prior connection.
 
 Apply migrations after the D1 database ID is configured, always passing the
 self-host config explicitly:

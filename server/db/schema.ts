@@ -6,6 +6,7 @@ import {
   uniqueIndex,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -362,6 +363,12 @@ export const npmConnections = sqliteTable(
   (table) => ({
     orgUniqueIdx: uniqueIndex("npm_connections_org_unique_idx").on(table.organizationId),
     fingerprintIdx: index("npm_connections_fingerprint_idx").on(table.tokenFingerprint),
+    // Discovery pages by immutable organization id over only sweep-eligible rows. The
+    // literal predicate is mirrored by listAutoDiscoveryNpmConnectionRefs so
+    // SQLite can select this partial covering index for the keyset walk.
+    discoveryCursorIdx: index("npm_connections_discovery_cursor_idx")
+      .on(table.organizationId, table.id)
+      .where(sql`${table.validationStatus} in ('valid', 'unvalidated')`),
   }),
 );
 

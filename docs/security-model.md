@@ -44,6 +44,11 @@ Implementation requirements:
 - show only label/fingerprint/last-used metadata after storage;
 - validate registry auth and staged access before use;
 - re-check validation immediately before queued workers decrypt/use a token;
+- bind deferred staged candidates and their scan messages to the npm connection
+  generation that listed them, re-check it whenever the broker resolves
+  credentials, and discard stale work if the token or registry was replaced;
+- claim token expiry atomically for that generation so at-least-once queue
+  delivery produces one audit event and one maintainer notification;
 - record add/validate/use/rotate/remove audit events;
 - redact credentials from lifecycle events, UI responses, logs, errors, AI inputs, and persisted reports.
 

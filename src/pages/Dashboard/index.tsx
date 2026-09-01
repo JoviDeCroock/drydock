@@ -293,7 +293,9 @@ function RecentReviewsSection({
 
   const discoveredAt = stagedPublishes.lastDiscoveryAt.value;
   const showFreshness = discoveredAt !== null && !discoveryError && !discoveryRefreshing;
-  const showStartedMessage = Boolean(discovery && !discoveryError && discovery.created);
+  const showStartedMessage = Boolean(
+    discovery && !discoveryError && (discovery.created || discovery.deferred),
+  );
   const showNoOpenMessage = Boolean(
     discovery && !discoveryError && !discovery.created && !discovery.found,
   );
@@ -352,9 +354,15 @@ function RecentReviewsSection({
           {showFreshness ? <ScanFreshnessIndicator at={discoveredAt} /> : null}
           {showStartedMessage && discovery ? (
             <Muted class="text-[13px] m-0">
-              {`Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
-                startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
-              }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`}
+              {discovery.created
+                ? `Started ${discovery.created} new review${discovery.created === 1 ? "" : "s"} from npm${
+                    startedLabels.length ? `: ${startedLabels.slice(0, 3).join(", ")}` : ""
+                  }${startedLabels.length > 3 ? `, +${startedLabels.length - 3} more` : ""}.`
+                : null}
+              {discovery.created && discovery.deferred ? " " : null}
+              {discovery.deferred
+                ? `Queued ${discovery.deferred}${discovery.created ? " additional" : ""} staged publish candidate${discovery.deferred === 1 ? "" : "s"} for background access checks; refresh to see any reviews as they start.`
+                : null}
             </Muted>
           ) : null}
           {showNoOpenMessage ? (

@@ -21,6 +21,8 @@ export interface AdapterConnectionRef {
   organizationId: string;
   // Prevent connection edits from retargeting an already queued release.
   registryUrl?: string | null;
+  /** Optional immutable credential generation selected by the caller. */
+  connectionId?: string;
 }
 
 export interface AcquiredArtifact {

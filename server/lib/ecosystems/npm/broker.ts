@@ -29,6 +29,7 @@ export interface NpmBrokerDownloadOptions {
 interface NpmBrokerProps {
   organizationId: string;
   registryUrl?: string | null;
+  connectionId?: string;
 }
 
 interface ResolvedCredentials {
@@ -36,9 +37,16 @@ interface ResolvedCredentials {
   registry: string;
 }
 
+class NpmConnectionReplacedError extends Error {
+  constructor() {
+    super("The npm connection was replaced before the staged review completed.");
+    this.name = "NpmConnectionReplacedError";
+  }
+}
+
 // Same-script WorkerEntrypoint. The pipeline asks for a broker through the
 // npm adapter; in the deployed Worker the call is routed via
-// `ctx.exports.NpmAdapterBroker({ props: { organizationId } })`, which means
+// `ctx.exports.NpmAdapterBroker({ props: { organizationId, connectionId } })`, which means
 // the decrypted npm token only exists inside this class's method-local scope.
 // The orchestrator never sees it.
 export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBrokerProps> {
@@ -98,6 +106,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
       createDb(this.env.DB),
       this.ctx.props.organizationId,
       this.ctx.props.registryUrl,
+      this.ctx.props.connectionId,
     );
   }
 }
@@ -107,10 +116,14 @@ async function resolveNpmCredentials(
   db: AppDb,
   organizationId: string,
   expectedRegistryUrl?: string | null,
+  connectionId?: string,
 ): Promise<ResolvedCredentials> {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
     throw new Error("Connect an organization npm token before scanning staged publishes.");
+  }
+  if (connectionId && connection.id !== connectionId) {
+    throw new NpmConnectionReplacedError();
   }
   if (connection.validationStatus !== "valid") {
     throw new Error("Validate the organization npm token before scanning staged publishes.");
@@ -198,6 +211,7 @@ class LocalNpmBroker implements NpmBroker {
       this.ctx.db,
       this.props.organizationId,
       this.props.registryUrl,
+      this.props.connectionId,
     );
   }
 }
@@ -211,13 +225,13 @@ interface CtxWithExports {
 export function createNpmBroker(ctx: AdapterContext, ref: AdapterConnectionRef): NpmBroker {
   const ctxExports = (ctx.executionCtx as unknown as CtxWithExports).exports;
   const factory = ctxExports?.NpmAdapterBroker;
-  if (factory) {
-    return factory({
-      props: { organizationId: ref.organizationId, registryUrl: ref.registryUrl },
-    });
-  }
-  return new LocalNpmBroker(ctx, {
+  const props: NpmBrokerProps = {
     organizationId: ref.organizationId,
     registryUrl: ref.registryUrl,
-  });
+    connectionId: ref.connectionId,
+  };
+  if (factory) {
+    return factory({ props });
+  }
+  return new LocalNpmBroker(ctx, props);
 }

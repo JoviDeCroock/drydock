@@ -67,6 +67,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
   const connectionRef: AdapterConnectionRef = {
     organizationId: input.organizationId,
     registryUrl,
+    connectionId: typeof input.connectionId === "string" ? input.connectionId : undefined,
   };
   const broker = adapter.createBroker(adapterCtx, connectionRef);
   const pipelineStartedAtMs = Date.now();

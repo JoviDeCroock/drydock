@@ -21,6 +21,7 @@
 
 ## Architecture invariants
 
+- Scheduled staged-publish discovery keeps the cron tick as a producer: enumerate eligible organizations and enqueue one `DISCOVERY_QUEUE` sweep per organization. The consumer owns each organization sweep; never add per-organization work back to the tick.
 - `server/lib/ecosystems/index.ts` is the sole `staged`/`gate`/`publicDiff` registry. Add ecosystem directories and registry entries; put gate behavior in `<id>/workflow-gate.ts` and extend `WorkflowGateAdapter` for optional shared hooks.
 - Reuse `server/lib/platform/{guards,path-safety,concurrency}.ts`; read `.claude/skills/shared-primitives` before adding generic helpers and `.claude/skills/split-large-module` before splitting large modules.
 - Preserve responsibility-focused barrels in `server/db/scans.ts`, `server/lib/scan/artifacts/index.ts`, and `src/models/scan.ts`.
