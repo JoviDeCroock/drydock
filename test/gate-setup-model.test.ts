@@ -150,6 +150,18 @@ describe("GateSetupModel", () => {
     expect(model.gateArmed.value).toBe(false);
   });
 
+  test("keeps GitHub's own casing on the environment it verifies", () => {
+    const model = new GateSetupModel();
+    model.installationRowId.value = "installation-1";
+    model.repositoryFullName.value = "octo/widgets";
+    model.environmentChoice.value = "Production";
+
+    // Verification looks the environment up by path. Folding case here would
+    // 404 an environment that exists and report the gate as missing; Drydock's
+    // own storage normalizes separately, on write and on webhook resolve.
+    expect(model.environment.value).toBe("Production");
+  });
+
   test("reports the gate armed only when GitHub confirms the protection rule", () => {
     const model = readyModel();
     model.releaseTarget.value = releaseTarget();
