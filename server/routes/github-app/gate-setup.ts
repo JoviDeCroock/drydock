@@ -66,9 +66,12 @@ function readDraft(body: Record<string, unknown>): GateSetupDraft {
   return {
     installationRowId: str(body.installationRowId),
     repositoryFullName: str(body.repositoryFullName),
-    // GitHub lowercases environment names; normalizing here keeps the verify
-    // read pointed at the name that actually exists.
-    environment: str(body.environment).toLowerCase(),
+    // Kept exactly as GitHub reports it. `GET .../environments/{name}` is a
+    // path lookup, so folding case here would 404 an environment named
+    // `Production` and the wizard would report a gate that exists as missing.
+    // Drydock's own storage normalizes separately, on both the release-target
+    // write and the webhook resolve, so the two stay consistent regardless.
+    environment: str(body.environment),
     ecosystem: str(body.ecosystem),
     packageName: str(body.packageName),
   };
