@@ -10,7 +10,8 @@
  * about it; the landing hero and the settings cards each shipped it once), so
  * it is checked rather than remembered. Separate with spacing instead.
  *
- *   <SectionLabel as="h2" class="border-b border-border">…</SectionLabel>  // flagged
+ *   <SectionLabel as="h2" class="border-b border-border">…</SectionLabel>  // flagged (stacked)
+ *   <SectionLabel as="h2" class="border-t border-border">…</SectionLabel>  // flagged (boxes the label)
  *   <div class="border-b border-border"><SectionLabel as="h2">…</SectionLabel></div>  // flagged
  *   <SectionLabel as="h2">…</SectionLabel><hr />                          // flagged
  *   <SectionLabel as="h2">…</SectionLabel><div class="border-t …">…</div> // flagged
@@ -175,7 +176,9 @@ const rule = {
     },
     messages: {
       onLabel:
-        "`SectionLabel` already draws the section divider (`after:h-px after:bg-border`); a `border-t`/`border-b` on it stacks a second hairline. Use spacing instead — see docs/design.md, “Section labels”.",
+        "`SectionLabel` already draws the section divider (`after:h-px after:bg-border`); a `border-b` on it stacks a second hairline on that same edge. Use spacing instead — see docs/design.md, “Section labels”.",
+      onLabelLeading:
+        "`SectionLabel` draws its divider *after* the label, so a `border-t` on it adds a rule on the label's leading edge and boxes it between two hairlines. docs/design.md keeps the trailing rule as the section's only divider — use spacing instead.",
       onWrapper:
         "This element wraps a `SectionLabel`, which already draws the section divider, so its `border-t`/`border-b` stacks a second hairline on the same boundary. Use spacing instead — see docs/design.md, “Section labels”.",
       onSibling:
@@ -278,12 +281,14 @@ const rule = {
       if (elementName(node) !== SECTION_LABEL) return;
 
       // The label's own class.
+      // A `border-b` lands on the same edge as the label's own trailing rule; a
+      // `border-t` lands on the leading edge instead, which is a different
+      // defect and gets its own message rather than a claim about stacking.
       const attribute = classAttribute(node);
-      if (
-        attribute &&
-        (drawsDirectionalRule(node, "top") || drawsDirectionalRule(node, "bottom"))
-      ) {
+      if (attribute && drawsDirectionalRule(node, "bottom")) {
         context.report({ node: attribute, messageId: "onLabel" });
+      } else if (attribute && drawsDirectionalRule(node, "top")) {
+        context.report({ node: attribute, messageId: "onLabelLeading" });
       }
 
       const parent = node.parent;

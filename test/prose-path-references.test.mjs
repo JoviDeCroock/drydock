@@ -32,17 +32,22 @@ const NON_REPO_PREFIXES = [
   ".wrangler/", // gitignored local Wrangler state
 ];
 
-function trackedFiles() {
-  return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
-    .split("\0")
-    .filter(Boolean);
+// Tracked files plus untracked ones git would not ignore. A doc an agent just
+// wrote is untracked at the moment `pnpm run verify` runs, and that is exactly
+// when its stale path should fail rather than at commit or in CI.
+function repoFiles() {
+  const list = (args) =>
+    execFileSync("git", ["ls-files", "-z", ...args], { cwd: repoRoot, encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+  return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])].sort();
 }
 
 /**
  * Prose cites paths at whatever root reads best in context — AGENTS.md's
  * `server/` section writes `routes/scans/index.ts`, docs/ usually writes the full
  * `server/routes/scans/index.ts`. Both are unambiguous, so a reference resolves if it
- * is a real path *or* a trailing path segment of exactly one tracked file.
+ * is a real path *or* a trailing path segment of exactly one repository file.
  */
 function buildResolver(files, fileExists = (file) => existsSync(path.join(repoRoot, file))) {
   const suffixCounts = new Map();
@@ -118,7 +123,7 @@ async function staleReferences(files, resolve, { commentsOnly }) {
 }
 
 describe("prose path references", () => {
-  const files = trackedFiles();
+  const files = repoFiles();
   const resolve = buildResolver(files);
 
   test("every path named in markdown points at a file that exists", async () => {
@@ -150,14 +155,14 @@ describe("prose path references", () => {
     expect(references.every(isCheckable)).toBe(true);
   });
 
-  test("requires shorthand paths to identify exactly one tracked file", () => {
+  test("requires shorthand paths to identify exactly one repository file", () => {
     const files = ["server/routes/scans/index.ts", "test/routes/scans/index.ts"];
     const resolve = buildResolver(files, (file) => files.includes(file));
     expect(resolve("server/routes/scans/index.ts")).toBe(true);
     expect(resolve("routes/scans/index.ts")).toBe(false);
   });
 
-  test("does not resolve tracked paths that have been deleted from the worktree", () => {
+  test("does not resolve indexed paths that have been deleted from the worktree", () => {
     const files = ["docs/deleted.md"];
     const resolve = buildResolver(files, () => false);
 

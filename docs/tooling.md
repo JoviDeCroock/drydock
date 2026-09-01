@@ -232,6 +232,8 @@ regexes via the non-executing JS lexer before scanning (see
   real `getAuthSession` guard and the exact registrations allowed above it, including
   catch-alls and non-API bootstrap routes because they can still answer an API request.
   Commented-out registrations and guards are blanked before the structural scan.
+  The same file pins that no other `server/` module registers an absolute `/api` path,
+  since the ordering argument only holds for the file it reads.
 - `test/agent-context-budget.test.mjs` — AGENTS.md and CLAUDE.md load on every session
   and each skill `description` sits in the always-present skill listing, so both carry a
   per-session cost no other file has. Character ceilings (4,000 combined for
@@ -251,11 +253,12 @@ regexes via the non-executing JS lexer before scanning (see
   Pins unique file indexes, a dense ordered journal whose tags carry their own index,
   journal and `.sql` files describing the same set, and a snapshot per entry. A
   migration missing from the journal never runs, surfacing in prod as a missing column.
-- `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
+- `test/prose-path-references.test.mjs` — every backtick-quoted repo path in
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
-  file that exists. Prose here navigates by path, and a rename silently breaks the
+  file that exists. The scan covers tracked files plus untracked ones git would not
+  ignore, so a doc an agent just wrote fails `verify` rather than CI. Prose here navigates by path, and a rename silently breaks the
   reference, sending the next reader to a file that is gone. A path may be written
-  from any root that resolves to exactly one tracked file (`routes/scans/index.ts` and
+  from any root that resolves to exactly one repository file (`routes/scans/index.ts` and
   `server/routes/scans/index.ts` both resolve today); relative paths in Markdown and source
   comments are resolved from the containing file. JavaScript and TypeScript comments are identified by
   the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
