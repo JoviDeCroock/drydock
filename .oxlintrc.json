@@ -39,6 +39,12 @@
             "importNames": ["useState", "useReducer"],
             "message": "useState/useReducer are banned. Migrate to @preact/signals (useSignal, useComputed) or createModel/useModel — see the preact-signals-models-utils skill."
           }
+        ],
+        "patterns": [
+          {
+            "group": ["preact/compat", "preact/compat/**"],
+            "message": "preact/compat is banned — it re-exports the React hook surface this repo replaced with signals, and pulls a second component model into the bundle. Use preact, preact-iso, and @preact/signals directly."
+          }
         ]
       }
     ],
@@ -52,6 +58,15 @@
     "design-local/no-stacked-section-rule": "error",
     "react-hooks/exhaustive-deps": "off"
   },
+  "overrides": [
+    {
+      "files": ["server/**"],
+      "excludeFiles": ["server/lib/platform/observability.ts"],
+      "rules": {
+        "no-console": "error"
+      }
+    }
+  ],
   "ignorePatterns": [
     "dist/**",
     ".wrangler/**",

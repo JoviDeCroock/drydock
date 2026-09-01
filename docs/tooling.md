@@ -85,7 +85,7 @@ Wired for Claude Code in `.claude/settings.json` (PreToolUse/PostToolUse on `Edi
 
 ## Banned hooks
 
-`useState` and `useReducer` are forbidden via oxlint's `no-restricted-imports` from `preact/hooks` (and `react`, defensively). The codebase is migrating component-local state to:
+`useState` and `useReducer` are forbidden via oxlint's `no-restricted-imports` from `preact/hooks` (and `react`, defensively). The same rule bans `preact/compat` and its subpaths by pattern: it re-exports the React hook surface signals replaced, and pulls a second component model into the bundle. The codebase is migrating component-local state to:
 
 - `@preact/signals` — `useSignal`, `useComputed`, `useSignalEffect`. See the [`preact-signals-preact-integration`](../.claude/skills/preact-signals-preact-integration/SKILL.md) skill.
 - `createModel` / `useModel` for cohesive state-plus-actions objects. See the [`preact-signals-models-utils`](../.claude/skills/preact-signals-models-utils/SKILL.md) skill.
@@ -163,6 +163,14 @@ executing code, so it is not checked. Fixture and test:
 
 The rule ships as `error` with no existing violations, so every infraction fails lint.
 
+### Logging boundary
+
+`no-console` is scoped to `server/**` through an oxlint `overrides` entry, with
+`server/lib/platform/observability.ts` excluded. That module's `emitOperationalEvent` is
+where operational fields are redacted, so it is the only place allowed to reach the
+console; a direct `console.log` in a route bypasses redaction and can put a token in the
+logs. Frontend and script logging is unaffected.
+
 ### Local rule: `design-local/no-stacked-section-rule`
 
 A third local oxlint plugin, `tooling/oxlint/design-local/`, pins the one `docs/design.md`
@@ -206,6 +214,17 @@ regexes via the non-executing JS lexer before scanning (see
   real `getAuthSession` guard and the exact registrations allowed above it, including
   catch-alls and non-API bootstrap routes because they can still answer an API request.
   Commented-out registrations and guards are blanked before the structural scan.
+- `test/rate-limit-boundary-invariants.test.mjs` — `server/lib/platform/rate-limit.ts` is
+  the only rate limiter: no other module names a `RATE_LIMIT_*` binding or queries the
+  `rate_limits` table, and its `NATIVE_TIERS` table matches the `ratelimits` declarations
+  in `wrangler.jsonc` and the optional bindings in `server/env.d.ts`. A tier declared in
+  one place and not the other degrades silently to the D1 counter. It walks the
+  filesystem rather than `git ls-files`, so a still-untracked new limiter fails `verify`.
+- `test/migration-integrity.test.mjs` — migrations are the one artifact concurrent
+  branches generate at the same index, and git merges the collision without complaint.
+  Pins unique file indexes, a dense ordered journal whose tags carry their own index,
+  journal and `.sql` files describing the same set, and a snapshot per entry. A
+  migration missing from the journal never runs, surfacing in prod as a missing column.
 - `test/prose-path-references.test.mjs` — every backtick-quoted repo path in tracked
   markdown (AGENTS.md, `docs/`, `.claude/skills/`) and in source comments must name a
   file that exists. Prose here navigates by path, and a rename silently breaks the
