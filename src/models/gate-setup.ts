@@ -78,12 +78,14 @@ export const GateSetupModel = createModel(() => {
   let environmentsRequestId = 0;
   let actionRequestId = 0;
 
-  // GitHub lowercases environment names, and the server normalizes the same
-  // way, so the client shows the maintainer the value that will actually exist.
+  // Kept in GitHub's own casing. Verification looks the environment up by path,
+  // so folding case would 404 an environment named `Production` and report a
+  // gate that exists as missing. Drydock's storage normalizes on its own, on
+  // both the release-target write and the webhook resolve.
   const environment = computed(() =>
     environmentChoice.value === NEW_ENVIRONMENT_CHOICE
-      ? newEnvironmentName.value.trim().toLowerCase()
-      : environmentChoice.value.trim().toLowerCase(),
+      ? newEnvironmentName.value.trim()
+      : environmentChoice.value.trim(),
   );
 
   // The generated workflow interpolates these into YAML, so the server refuses
