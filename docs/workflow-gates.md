@@ -36,7 +36,7 @@ A maintainer who has not installed the GitHub App yet still lands on this sectio
 
 Creating the environment and registering the protection rule need **Administration: write**; committing a file under `.github/workflows/` needs **Contents: write** plus **Workflows: write**, and opening the pull request needs **Pull requests: write**. Those are standing grants on every gated repository, and `workflows: write` is specifically the power to rewrite the workflow the gate exists to protect — the same power the generated workflow's own checklist tells you to lock down with `CODEOWNERS`. A security tool should not hold it to save a dozen one-time clicks.
 
-Acting _as_ the gate needs none of that. GitHub's only requirement for the review callback is that an App may review its own custom deployment-protection rules, so Drydock's runtime permissions are unchanged by guided setup.
+Acting _as_ the gate needs none of that. GitHub's only requirement for the review callback is that an App may review its own custom deployment-protection rules, so Drydock's runtime permissions are unchanged by guided setup. The App's full registration — two read-only repository permissions and two webhook events — is in [`self-hosting.md`](./self-hosting.md#repository-permissions).
 
 Everything the wizard reads is repository-read tier and already used by the release-target form:
 
