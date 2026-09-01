@@ -38,15 +38,6 @@ A batch approval writes one `scan.decided` per approved review, in the same
 transaction as the decisions, with `batch: true` in its metadata; the audit view
 reads it as "approved publish in a batch".
 
-Guided GitHub gate setup records successful environment creation, protection-rule
-enablement, and workflow pull-request creation. These events contain only the
-validated repository/environment identity needed for a useful audit description.
-Preview-only reads, already-configured results, and failed mutations do not add
-audit rows; installation tokens, GitHub response bodies, and generated workflow
-bytes are never audit metadata. If the audit write itself fails after GitHub has
-accepted a mutation, Drydock emits a redacted operational error and still returns
-the successful step instead of inviting a misleading external retry.
-
 ## Visible allowlist
 
 `server/lib/auth/audit-events.ts` is the single source of truth for the audit view. It
