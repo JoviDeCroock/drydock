@@ -1,11 +1,9 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
@@ -14,10 +12,11 @@ import type { Bindings, Variables } from "../../server/types";
 /**
  * Routes for the guided gate-setup wizard.
  *
- * The interesting surface is not the happy path — it is what happens when the
- * installation lacks a permission. Those responses must stay 200s carrying a
- * `failed` step, because the wizard renders a manual fallback from them; turning
- * them into HTTP errors would dead-end the flow.
+ * Both endpoints are read-only: Drydock holds no write permission on a gated
+ * repository, so the wizard sends the maintainer to GitHub and verifies the
+ * result. The interesting surface is what `verify` reports when a read is
+ * refused or ambiguous — it must degrade to `unknown`, never to a confident
+ * answer the wizard would render as a green gate.
  */
 
 const APP_ID = "12345";
@@ -139,13 +138,6 @@ function draft(installationRowId: string, overrides: Record<string, unknown> = {
   };
 }
 
-async function readGateSetupEvents(organizationId: string) {
-  return createDb(env.DB)
-    .select()
-    .from(schema.scanEvents)
-    .where(eq(schema.scanEvents.organizationId, organizationId));
-}
-
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
@@ -158,7 +150,7 @@ describe("gate-setup validation and ownership", () => {
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { repositoryFullName: "" }),
     );
 
@@ -174,7 +166,7 @@ describe("gate-setup validation and ownership", () => {
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { repositoryFullName: "octo/widgets/extra" }),
     );
 
@@ -182,35 +174,38 @@ describe("gate-setup validation and ownership", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("rejects a disallowed environment name before mutating GitHub", async () => {
+  test("verifies an environment name the workflow template would refuse", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    globalThis.fetch = vi.fn();
+    // A slash is outside the template allowlist but perfectly legal on GitHub,
+    // and an environment created by hand has to stay checkable.
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? Response.json({ custom_deployment_protection_rules: [{ app: { id: 12345 } }] })
+        : Response.json({ name: "production/eu", default_branch: "main" }),
+    );
 
-    // 129 characters: accepted by GitHub, refused by the template step. Without
-    // up-front validation this created an environment and a protection rule and
-    // only failed once the workflow had to be generated.
-    for (const path of ["environment", "protection-rule"]) {
-      const res = await call(
-        buildTestApp(userId),
-        `/api/v1/github-app/gate-setup/${path}`,
-        draft(installation.id, { environment: "e".repeat(129) }),
-      );
-      expect(res.status).toBe(400);
-      expect(await res.json()).toMatchObject({ code: "invalid_input" });
-    }
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id, { environment: "production/eu" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      state: { environment: "present", protectionRule: "present" },
+    });
   });
 
-  test("rejects a disallowed package name even on the steps that ignore the template", async () => {
+  test("400s that same environment name on the preview, which interpolates it", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
     globalThis.fetch = vi.fn();
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
-      draft(installation.id, { packageName: "pkg${{ secrets.NPM_TOKEN }}" }),
+      "/api/v1/github-app/gate-setup/preview",
+      draft(installation.id, { environment: "e".repeat(129) }),
     );
 
     expect(res.status).toBe(400);
@@ -226,7 +221,7 @@ describe("gate-setup validation and ownership", () => {
 
     const res = await call(
       buildTestApp(caller.userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
@@ -242,7 +237,7 @@ describe("gate-setup validation and ownership", () => {
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
       { GITHUB_APP_ID: undefined },
     );
@@ -260,7 +255,7 @@ describe("gate-setup validation and ownership", () => {
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
       overrides as Partial<Bindings>,
     );
@@ -292,7 +287,6 @@ describe("gate-setup preview", () => {
     expect(body.notes.length).toBeGreaterThan(0);
     // Pure computation: the preview must not spend the installation's GitHub budget.
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
   test("400s an ecosystem with no gate setup template", async () => {
@@ -326,634 +320,154 @@ describe("gate-setup preview", () => {
   });
 });
 
-describe("gate-setup environment step", () => {
-  test("creates the environment when GitHub does not have it yet", async () => {
+describe("gate-setup verify", () => {
+  test("reports the gate armed when Drydock is the environment's protection rule", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    const methods: string[] = [];
+    const seen: string[] = [];
     globalThis.fetch = githubDouble((request) => {
-      const path = new URL(request.url).pathname;
-      methods.push(`${request.method} ${path}`);
-      if (request.method === "GET" && path.endsWith("/production")) {
-        return new Response(null, { status: 404 });
+      seen.push(new URL(request.url).pathname);
+      if (request.url.includes("/deployment_protection_rules")) {
+        return Response.json({
+          custom_deployment_protection_rules: [{ app: { id: 999 } }, { app: { id: 12345 } }],
+        });
       }
-      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
-      return Response.json({ name: "production" });
+      if (request.url.includes("/environments/")) return Response.json({ name: "production" });
+      return Response.json({ default_branch: "trunk" });
     });
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      step: { step: "environment", status: "created" },
+    expect(await res.json()).toEqual({
+      state: { environment: "present", protectionRule: "present", defaultBranch: "trunk" },
     });
-    expect(methods).toEqual([
-      "GET /repos/octo/widgets/environments/production",
-      "GET /repos/octo/widgets/environments",
-      "PUT /repos/octo/widgets/environments/production",
-    ]);
-    expect(await readGateSetupEvents(organizationId)).toMatchObject([
-      {
-        organizationId,
-        actorUserId: userId,
-        type: "github_app_gate_setup.environment_created",
-        metadataJson: {
-          repositoryFullName: "octo/widgets",
-          environment: "production",
-        },
-      },
-    ]);
-    const [event] = await readGateSetupEvents(organizationId);
-    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
-      category: "integration",
-      label: "GitHub environment created",
-      severity: "notice",
-      detail: "octo/widgets · production",
-    });
+    // Every request is a read; a write would mean the App needs a permission
+    // guided setup deliberately does not ask for.
+    expect(seen.every((path) => path.startsWith("/repos/octo/widgets"))).toBe(true);
   });
 
-  test("preserves a successful external mutation when the audit insert fails", async () => {
+  test("reports the rule absent when some other app gates the environment", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    const triggerName = `reject_gate_setup_audit_${crypto.randomUUID().replace(/-/g, "_")}`;
-    await env.DB.prepare(`
-      CREATE TRIGGER ${triggerName}
-      BEFORE INSERT ON scan_events
-      WHEN NEW.type = 'github_app_gate_setup.environment_created'
-      BEGIN
-        SELECT RAISE(FAIL, 'forced gate setup audit failure');
-      END
-    `).run();
-    const methods: string[] = [];
-    globalThis.fetch = githubDouble((request) => {
-      methods.push(request.method);
-      const path = new URL(request.url).pathname;
-      if (request.method === "GET" && path.endsWith("/production")) {
-        return new Response(null, { status: 404 });
-      }
-      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
-      return Response.json({ name: "production" });
-    });
-
-    try {
-      const res = await call(
-        buildTestApp(userId),
-        "/api/v1/github-app/gate-setup/environment",
-        draft(installation.id),
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        step: { step: "environment", status: "created" },
-      });
-      expect(methods).toEqual(["GET", "GET", "PUT"]);
-      expect(await readGateSetupEvents(organizationId)).toEqual([]);
-    } finally {
-      await env.DB.prepare(`DROP TRIGGER IF EXISTS ${triggerName}`).run();
-    }
-  });
-
-  test("leaves an existing environment untouched", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    const methods: string[] = [];
-    globalThis.fetch = githubDouble((request) => {
-      methods.push(request.method);
-      return Response.json({ name: "production" });
-    });
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? Response.json({ custom_deployment_protection_rules: [{ app: { id: 999 } }] })
+        : Response.json({ name: "production", default_branch: "main" }),
+    );
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
     expect(await res.json()).toMatchObject({
-      step: { step: "environment", status: "already_configured" },
+      state: { environment: "present", protectionRule: "absent" },
     });
-    // A PUT here would clear the maintainer's reviewers and wait timers.
-    expect(methods).toEqual(["GET"]);
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
   });
 
-  test("does not update an environment when Actions read access is missing", async () => {
+  test("a missing environment settles both checks without reading its rules", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    const methods: string[] = [];
+    const seen: string[] = [];
     globalThis.fetch = githubDouble((request) => {
-      methods.push(request.method);
-      return new Response(null, { status: 404 });
+      seen.push(request.url);
+      if (request.url.includes("/environments/")) return new Response("", { status: 404 });
+      return Response.json({ default_branch: "main" });
     });
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
-    expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      step: {
-        status: "failed",
-        failure: { code: "repository_not_accessible", message: expect.stringContaining("Actions") },
-      },
+      state: { environment: "absent", protectionRule: "absent" },
     });
-    expect(methods).toEqual(["GET", "GET"]);
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
+    expect(seen.some((url) => url.includes("/deployment_protection_rules"))).toBe(false);
   });
 
-  test("degrades a 403 into an actionable manual fallback, not an error status", async () => {
+  test("a refused rules read is unknown, never a confident answer", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    globalThis.fetch = githubDouble((request) => {
-      const path = new URL(request.url).pathname;
-      if (request.method === "GET" && path.endsWith("/production")) {
-        return new Response(null, { status: 404 });
-      }
-      if (request.method === "GET") return Response.json({ total_count: 0, environments: [] });
-      return new Response("no", { status: 403 });
-    });
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? new Response("", { status: 403 })
+        : Response.json({ name: "production", default_branch: "main" }),
+    );
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      step: { status: string; failure: { code: string; manualFallback: string } };
-    };
-    expect(body.step.status).toBe("failed");
-    expect(body.step.failure.code).toBe("permission_denied");
-    expect(body.step.failure.manualFallback).toContain("Environments");
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
+    const body = (await res.json()) as { state: { protectionRule: string; environment: string } };
+    expect(body.state.environment).toBe("present");
+    expect(body.state.protectionRule).toBe("unknown");
   });
 
-  test("degrades a GitHub transport failure into the manual fallback", async () => {
+  test("a transport failure is unknown and leaks no GitHub detail", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
     globalThis.fetch = githubDouble(() => {
-      throw new Error("connection reset");
+      throw new Error("connect ECONNREFUSED 140.82.121.5:443");
     });
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/environment",
+      "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      step: { status: "failed", failure: { code: "github_unavailable" } },
-    });
+    const body = (await res.json()) as { state: { unavailableReason?: string } };
+    expect(body).toMatchObject({ state: { environment: "unknown", protectionRule: "unknown" } });
+    expect(body.state.unavailableReason).not.toContain("ECONNREFUSED");
   });
-});
 
-describe("gate-setup protection rule step", () => {
-  test("enables Drydock as the environment's custom protection rule", async () => {
+  test("the environment is lowercased before the lookup, as GitHub stores it", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    let posted: { integration_id?: number } | null = null;
-    globalThis.fetch = githubDouble(async (request) => {
-      if (request.method === "GET")
+    const seen: string[] = [];
+    globalThis.fetch = githubDouble((request) => {
+      seen.push(request.url);
+      if (request.url.includes("/deployment_protection_rules")) {
         return Response.json({ custom_deployment_protection_rules: [] });
-      posted = (await request.json()) as { integration_id?: number };
-      return Response.json({ id: 7 }, { status: 201 });
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/protection-rule",
-      draft(installation.id),
-    );
-
-    expect(await res.json()).toMatchObject({
-      step: { step: "protection_rule", status: "created" },
-    });
-    expect(posted).toEqual({ integration_id: Number(APP_ID) });
-    expect(await readGateSetupEvents(organizationId)).toMatchObject([
-      {
-        organizationId,
-        actorUserId: userId,
-        type: "github_app_gate_setup.protection_rule_enabled",
-        metadataJson: {
-          repositoryFullName: "octo/widgets",
-          environment: "production",
-        },
-      },
-    ]);
-    const [event] = await readGateSetupEvents(organizationId);
-    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
-      category: "integration",
-      label: "Drydock protection rule enabled",
-      severity: "notice",
-      detail: "octo/widgets · production",
-    });
-  });
-
-  test("is idempotent when the rule is already enabled", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    let posts = 0;
-    globalThis.fetch = githubDouble((request) => {
-      if (request.method === "GET") {
-        return Response.json({
-          custom_deployment_protection_rules: [
-            { id: 3, app: { id: Number(APP_ID), slug: "drydock" } },
-          ],
-        });
       }
-      posts += 1;
-      return new Response(null, { status: 422 });
+      return Response.json({ name: "production", default_branch: "main" });
     });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/protection-rule",
-      draft(installation.id),
-    );
-
-    expect(await res.json()).toMatchObject({
-      step: { step: "protection_rule", status: "already_configured" },
-    });
-    expect(posts).toBe(0);
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
-  });
-
-  test("does not add a rule when Actions read access is missing", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    const methods: string[] = [];
-    globalThis.fetch = githubDouble((request) => {
-      methods.push(request.method);
-      return new Response(null, { status: 404 });
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/protection-rule",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      step: {
-        status: "failed",
-        failure: { code: "repository_not_accessible", message: expect.stringContaining("Actions") },
-      },
-    });
-    expect(methods).toEqual(["GET", "GET"]);
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
-  });
-
-  test("treats a 422 duplicate that re-reads as enabled as success", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    let gets = 0;
-    globalThis.fetch = githubDouble((request) => {
-      if (request.method === "GET") {
-        gets += 1;
-        // First read shows nothing (a race); the recheck sees the rule.
-        return Response.json({
-          custom_deployment_protection_rules:
-            gets === 1 ? [] : [{ id: 3, app: { id: Number(APP_ID) } }],
-        });
-      }
-      return new Response(null, { status: 422 });
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/protection-rule",
-      draft(installation.id),
-    );
-
-    expect(await res.json()).toMatchObject({
-      step: { step: "protection_rule", status: "already_configured" },
-    });
-  });
-
-  test("degrades a GitHub transport failure into the manual fallback", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = githubDouble(() => {
-      throw new Error("connection reset");
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/protection-rule",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      step: { status: "failed", failure: { code: "github_unavailable" } },
-    });
-  });
-});
-
-describe("gate-setup pull request step", () => {
-  /** Branch refs the double saw created and deleted, in call order. */
-  let refCalls: string[] = [];
-
-  const repoResponses = (overrides: Record<string, () => Response> = {}) =>
-    githubDouble(async (request) => {
-      const url = new URL(request.url);
-      const key = `${request.method} ${url.pathname}`;
-      if (overrides[key]) return overrides[key]();
-      if (request.method === "DELETE" && url.pathname.includes("/git/refs/heads/")) {
-        refCalls.push(`delete ${url.pathname.split("/git/refs/heads/")[1]}`);
-        return new Response(null, { status: 204 });
-      }
-      if (key === "POST /repos/octo/widgets/git/refs") {
-        const payload = (await request.json()) as { ref: string };
-        refCalls.push(`create ${payload.ref.replace("refs/heads/", "")}`);
-        return Response.json({}, { status: 201 });
-      }
-      if (key === "GET /repos/octo/widgets") return Response.json({ default_branch: "main" });
-      if (key === "GET /repos/octo/widgets/git/ref/heads/main") {
-        return Response.json({ object: { sha: "a".repeat(40) } });
-      }
-      if (key === "POST /repos/octo/widgets/git/refs") return Response.json({}, { status: 201 });
-      if (url.pathname.startsWith("/repos/octo/widgets/contents/")) {
-        return Response.json({ content: {} }, { status: 201 });
-      }
-      if (key === "POST /repos/octo/widgets/pulls") {
-        return Response.json(
-          { number: 42, html_url: "https://github.com/octo/widgets/pull/42" },
-          { status: 201 },
-        );
-      }
-      throw new Error(`unexpected GitHub call: ${key}`);
-    });
-
-  beforeEach(() => {
-    refCalls = [];
-  });
-
-  test("commits the workflow on a new branch and opens the PR", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    let committedPath = "";
-    let committedYaml = "";
-    let prBody = "";
-    globalThis.fetch = githubDouble(async (request) => {
-      const url = new URL(request.url);
-      const key = `${request.method} ${url.pathname}`;
-      if (key === "GET /repos/octo/widgets") return Response.json({ default_branch: "main" });
-      if (key === "GET /repos/octo/widgets/git/ref/heads/main") {
-        return Response.json({ object: { sha: "a".repeat(40) } });
-      }
-      if (key === "POST /repos/octo/widgets/git/refs") return Response.json({}, { status: 201 });
-      if (url.pathname.startsWith("/repos/octo/widgets/contents/")) {
-        committedPath = decodeURIComponent(
-          url.pathname.replace("/repos/octo/widgets/contents/", ""),
-        );
-        const payload = (await request.json()) as { content: string };
-        committedYaml = new TextDecoder().decode(
-          Uint8Array.from(atob(payload.content), (char) => char.charCodeAt(0)),
-        );
-        return Response.json({ content: {} }, { status: 201 });
-      }
-      if (key === "POST /repos/octo/widgets/pulls") {
-        prBody = ((await request.json()) as { body: string }).body;
-        return Response.json(
-          { number: 42, html_url: "https://github.com/octo/widgets/pull/42" },
-          { status: 201 },
-        );
-      }
-      throw new Error(`unexpected GitHub call: ${key}`);
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      step: { status: string };
-      pullRequest: { number: number; url: string; branch: string };
-      yaml: string;
-    };
-    expect(body.step.status).toBe("created");
-    expect(body.pullRequest.number).toBe(42);
-    expect(body.pullRequest.branch).toMatch(/^drydock\/workflow-gate-/);
-    expect(committedPath).toBe(".github/workflows/drydock-npm-release.yml");
-    expect(committedYaml).toBe(body.yaml);
-    expect(committedYaml).toContain('environment: "production"');
-    // The PR body carries the hardening checklist a reviewer needs.
-    expect(prBody).toContain("trusted publisher");
-    expect(prBody).toContain("Allow administrators to bypass configured protection rules");
-    expect(await readGateSetupEvents(organizationId)).toMatchObject([
-      {
-        organizationId,
-        actorUserId: userId,
-        type: "github_app_gate_setup.pull_request_created",
-        metadataJson: {
-          repositoryFullName: "octo/widgets",
-          environment: "production",
-        },
-      },
-    ]);
-    const [event] = await readGateSetupEvents(organizationId);
-    expect(describeAuditEvent(event.type, event.metadataJson)).toEqual({
-      category: "integration",
-      label: "Workflow setup pull request created",
-      severity: "notice",
-      detail: "octo/widgets · production",
-    });
-  });
-
-  test("maps a refused .github/workflows write to workflow_scope_missing and still returns the YAML", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "PUT /repos/octo/widgets/contents/.github/workflows/drydock-npm-release.yml": () =>
-        new Response("refusing to allow a GitHub App to create or update workflow", {
-          status: 403,
-        }),
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      step: { status: string; failure: { code: string; manualFallback: string } };
-      pullRequest: null;
-      yaml: string;
-    };
-    expect(body.step.status).toBe("failed");
-    expect(body.step.failure.code).toBe("workflow_scope_missing");
-    expect(body.pullRequest).toBeNull();
-    // The manual fallback is only usable if the exact bytes come back with it.
-    expect(body.yaml).toContain('environment: "production"');
-    expect(body.step.failure.manualFallback).toContain(".github/workflows/drydock-npm-release.yml");
-    // This refusal is the expected outcome for most installations, so the branch
-    // it created must not survive it.
-    expect(refCalls).toHaveLength(2);
-    expect(refCalls[0]).toMatch(/^create drydock\/workflow-gate-/);
-    expect(refCalls[1]).toBe(refCalls[0].replace("create ", "delete "));
-    expect(await readGateSetupEvents(organizationId)).toEqual([]);
-  });
-
-  test("cleans up the branch when the workflow write loses its connection", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "PUT /repos/octo/widgets/contents/.github/workflows/drydock-npm-release.yml": () => {
-        throw new Error("connection reset");
-      },
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      step: { status: string; failure: { code: string } };
-      yaml: string;
-    };
-    expect(body.step).toMatchObject({ status: "failed", failure: { code: "github_unavailable" } });
-    expect(body.yaml).toContain('environment: "production"');
-    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
-  });
-
-  test("keeps the branch when pull-request creation has an ambiguous transport failure", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "POST /repos/octo/widgets/pulls": () => {
-        throw new Error("connection reset");
-      },
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      step: { status: string; failure: { code: string; manualFallback: string } };
-      yaml: string;
-    };
-    expect(body.step).toMatchObject({ status: "failed", failure: { code: "github_unavailable" } });
-    expect(body.step.failure.manualFallback).toContain("open pull requests");
-    expect(body.yaml).toContain('environment: "production"');
-    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(0);
-  });
-
-  test("reports an existing workflow file as already_exists instead of overwriting it", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "PUT /repos/octo/widgets/contents/.github/workflows/drydock-npm-release.yml": () =>
-        new Response(null, { status: 422 }),
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    const body = (await res.json()) as { step: { failure: { code: string } } };
-    expect(body.step.failure.code).toBe("already_exists");
-    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
-  });
-
-  test("cleans up the branch when the pull request itself is refused", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "POST /repos/octo/widgets/pulls": () => new Response(null, { status: 403 }),
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    const body = (await res.json()) as { step: { failure: { code: string } } };
-    expect(body.step.failure.code).toBe("permission_denied");
-    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(1);
-  });
-
-  test("keeps the branch when cleanup itself fails, and still reports the original failure", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = githubDouble(async (request) => {
-      const url = new URL(request.url);
-      const key = `${request.method} ${url.pathname}`;
-      if (key === "GET /repos/octo/widgets") return Response.json({ default_branch: "main" });
-      if (key === "GET /repos/octo/widgets/git/ref/heads/main") {
-        return Response.json({ object: { sha: "a".repeat(40) } });
-      }
-      if (key === "POST /repos/octo/widgets/git/refs") return Response.json({}, { status: 201 });
-      if (request.method === "DELETE") return new Response(null, { status: 403 });
-      if (url.pathname.startsWith("/repos/octo/widgets/contents/")) {
-        return new Response(null, { status: 403 });
-      }
-      throw new Error(`unexpected GitHub call: ${key}`);
-    });
-
-    const res = await call(
-      buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { step: { failure: { code: string } } };
-    expect(body.step.failure.code).toBe("workflow_scope_missing");
-  });
-
-  test("does not delete the branch on the happy path", async () => {
-    const { userId, organizationId } = await seedUser();
-    const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses();
 
     await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id, { environment: "Production" }),
     );
 
-    expect(refCalls.filter((entry) => entry.startsWith("delete "))).toHaveLength(0);
+    expect(seen.some((url) => url.endsWith("/environments/production"))).toBe(true);
   });
 
-  test("fails cleanly on an empty repository with no default-branch head", async () => {
+  test("a verify draft needs no ecosystem or package name", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
-    globalThis.fetch = repoResponses({
-      "GET /repos/octo/widgets/git/ref/heads/main": () => new Response(null, { status: 404 }),
-    });
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? Response.json({ custom_deployment_protection_rules: [] })
+        : Response.json({ name: "production", default_branch: "main" }),
+    );
 
     const res = await call(
       buildTestApp(userId),
-      "/api/v1/github-app/gate-setup/pull-request",
-      draft(installation.id),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id, { ecosystem: "", packageName: "" }),
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { step: { status: string; failure: { code: string } } };
-    expect(body.step.status).toBe("failed");
-    expect(body.step.failure.code).toBe("repository_not_accessible");
   });
 });

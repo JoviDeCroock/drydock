@@ -21,54 +21,49 @@ The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and byp
 
 ## Guided setup
 
-Step 1 of the contract used to be a manual walk through GitHub settings. **Settings → Integrations → Guided gate setup** (`/dashboard/settings#gate-setup`) now does the GitHub-side work with the installation token:
+Step 1 of the contract used to be a manual walk through GitHub settings. **Settings → Integrations → Guided gate setup** (`/dashboard/settings#gate-setup`) now walks it with Drydock generating the workflow and checking the result:
 
 1. Pick the installation and repository the App can already see.
-2. Pick an existing GitHub Environment, or name a new one and let Drydock create it.
-3. One click registers Drydock as that environment's custom deployment-protection rule.
+2. Create the GitHub Environment (Drydock links straight to the repository's environment settings), then **Check it** — Drydock reads the environment list back.
+3. Enable Drydock as that environment's custom deployment-protection rule in GitHub, then **Check it** — Drydock reads the environment's protection rules and confirms its own App id is among them.
 4. Pick the ecosystem and package name; Drydock generates the publish workflow for it.
-5. "Open a PR with this workflow" commits the file on a new `drydock/workflow-gate-*` branch and opens a pull request whose body carries the trusted-publishing hardening checklist.
+5. Copy the workflow, or follow the link to GitHub's new-file editor with the path prefilled, and commit it yourself.
 6. Create the matching release target, which is the same `POST /release-targets` the manual form uses — pinned to the chosen ecosystem rather than left on auto-detect, because pinning is what enables the ecosystem's own artifact-name matching (notably PyPI's `pypi-release-candidate-*` shards).
 
 A maintainer who has not installed the GitHub App yet still lands on this section: it renders an install prompt in place of the wizard rather than nothing, so the `#gate-setup` deep link never dead-ends. Organization members see the same anchored section with an owner/admin-required explanation instead of controls that can only return `403`.
 
-Endpoints, all under `/api/v1/github-app/`, all owner/admin-only (`roleCanManageIntegrations`) and scoped through `ensureInstallationOwnedBy`, with the same session and step-up posture as `POST /release-targets`:
+### Why Drydock does not do the GitHub steps for you
 
-| Endpoint                           | Does                                                                                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `POST /gate-setup/preview`         | Renders the ecosystem's workflow YAML for a draft. No GitHub calls.                               |
-| `POST /gate-setup/environment`     | `PUT /repos/{o}/{r}/environments/{name}`, after a GET so it never resets an existing environment. |
-| `POST /gate-setup/protection-rule` | Adds the App's `integration_id` as a custom deployment-protection rule.                           |
-| `POST /gate-setup/pull-request`    | Branches from the default branch, writes the workflow, opens the PR.                              |
+Creating the environment and registering the protection rule need **Administration: write**; committing a file under `.github/workflows/` needs **Contents: write** plus **Workflows: write**, and opening the pull request needs **Pull requests: write**. Those are standing grants on every gated repository, and `workflows: write` is specifically the power to rewrite the workflow the gate exists to protect — the same power the generated workflow's own checklist tells you to lock down with `CODEOWNERS`. A security tool should not hold it to save a dozen one-time clicks.
 
-### Permissions and degradation
+Acting _as_ the gate needs none of that. GitHub's only requirement for the review callback is that an App may review its own custom deployment-protection rules, so Drydock's runtime permissions are unchanged by guided setup.
 
-Each step needs a different App permission, and an installation commonly has some but not all:
+Everything the wizard reads is repository-read tier and already used by the release-target form:
 
-- Reading existing environments and protection rules needs **Actions: read**. Drydock verifies that read access before treating a 404 as absence, because the create endpoint also updates existing environments.
-- Creating the environment and adding the protection rule need **repository administration: write**.
-- Writing a file under `.github/workflows/` needs **workflows: write**. GitHub refuses the contents write with a 403 without it, so an installation that lacks it can do every step _except_ open the pull request.
+| Endpoint                   | Does                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST /gate-setup/preview` | Renders the ecosystem's workflow YAML for a draft. No GitHub calls.                                  |
+| `POST /gate-setup/verify`  | Reads `GET /repos/{o}/{r}`, `GET .../environments/{name}` and `GET .../deployment_protection_rules`. |
 
-No step throws on a refusal. Each returns HTTP 200 with a `GateSetupStepResult` — `{ step, status: "created" | "already_configured" | "failed", failure? }` — and a failed step carries a `code`, a message naming the missing permission, and a `manualFallback` string. The wizard renders that fallback inline next to the step's own controls, and the pull-request response always includes the generated YAML so the copy-it-yourself path has the exact bytes. Nothing logs a GitHub response body, header, or the installation token.
+Both are owner/admin-only (`roleCanManageIntegrations`), scoped through `ensureInstallationOwnedBy`, and organization-rate-limited, with the same session posture as `POST /release-targets`. Guided setup writes no audit rows, because it makes no change to audit.
 
-Steps are idempotent: an existing environment reports `already_configured` without a `PUT` (a `PUT` would clear the maintainer's reviewers and wait timers), and an already-registered protection rule is detected by reading the rules first, with a 422 re-read as the tiebreak.
+### Verification, not bookkeeping
 
-Two properties keep a refusal from leaving debris:
+`verify` returns `{ environment, protectionRule, defaultBranch }` where each check is `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and the wizard renders a gate as armed only on `protectionRule: "present"`. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup. Nothing logs a GitHub response body, header, or the installation token.
 
-- **Identity is allowlisted up front, on every endpoint.** The environment and protection-rule steps do not need a workflow template, but they mutate GitHub irreversibly, so `assertGateSetupEnvironment` / `assertGateSetupPackageName` (`GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) run before any of them — a name only the template step would reject can no longer create an environment and a rule and then 400. The wizard checks the same shapes client-side, because an environment that already exists on GitHub can be outside the allowlist; it says so next to the picker instead of offering a button that cannot work.
-- **Abandoned branches are cleaned up.** The pull-request step creates the branch before it can discover that `workflows: write` is missing, so every failure after the ref exists best-effort `DELETE`s it. Cleanup failures are logged (`github_app.gate_setup_branch_orphaned`) and never change the failure the maintainer sees. The one exception is a pull request GitHub accepted but did not describe: the branch stays, because deleting it would close a PR the maintainer can still find.
+Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable.
 
 ### Generated workflows
 
 The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). The `/github-app/config` response derives the wizard's ecosystem choices from that same registry, so adding a template also makes the option visible without a second client-side list. Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
 
-Drydock generates these files but does not review them. Read the pull request before merging it.
+Drydock generates these files but does not review them. Read the workflow before you commit it.
 
 ## Shared implementation
 
 - `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
 - `server/routes/github-app/installations.ts` handles App install/callback setup.
-- `server/routes/github-app/gate-setup.ts` and `server/lib/github-app/gate-setup.ts` back the guided setup wizard (environment, protection rule, workflow pull request).
+- `server/routes/github-app/gate-setup.ts` and `server/lib/github-app/gate-setup.ts` back the guided setup wizard (workflow preview and read-only verification of GitHub's gate configuration).
 - `server/routes/github-app/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/github-app/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
