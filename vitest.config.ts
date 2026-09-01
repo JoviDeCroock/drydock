@@ -49,6 +49,10 @@ export default defineConfig(async () => {
             // Reusing pool workers across files pays the workerd/module import cost
             // once per worker instead of once per file.
             isolate: false,
+            // Three pool workers share one machine, so a seed-heavy D1 test can
+            // sit behind others on a loaded CI runner; 5s times these out even
+            // though they take well under a second unloaded.
+            testTimeout: 20_000,
             maxWorkers: 3,
             minWorkers: 1,
             sequence: { groupOrder: 2 },
