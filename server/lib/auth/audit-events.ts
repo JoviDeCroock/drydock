@@ -32,12 +32,6 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
   return pkg ?? version;
 }
 
-function summarizeRepositoryEnvironment(m: Record<string, unknown>): string | null {
-  const repository = str(m.repositoryFullName);
-  const environment = str(m.environment);
-  return repository && environment ? `${repository} · ${environment}` : (repository ?? environment);
-}
-
 const REGISTRY: Record<string, AuditEventDef> = {
   // ── Release decisions ────────────────────────────────────────────────────
   "scan.decided": {
@@ -182,24 +176,6 @@ const REGISTRY: Record<string, AuditEventDef> = {
     category: "integration",
     label: "Release target removed",
     severity: "notice",
-  },
-  "github_app_gate_setup.environment_created": {
-    category: "integration",
-    label: "GitHub environment created",
-    severity: "notice",
-    summarize: summarizeRepositoryEnvironment,
-  },
-  "github_app_gate_setup.protection_rule_enabled": {
-    category: "integration",
-    label: "Drydock protection rule enabled",
-    severity: "notice",
-    summarize: summarizeRepositoryEnvironment,
-  },
-  "github_app_gate_setup.pull_request_created": {
-    category: "integration",
-    label: "Workflow setup pull request created",
-    severity: "notice",
-    summarize: summarizeRepositoryEnvironment,
   },
   "organization.slack_connected": {
     category: "integration",
