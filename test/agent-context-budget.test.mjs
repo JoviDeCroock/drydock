@@ -46,8 +46,8 @@ function frontmatterDescription(file) {
 
 describe("agent context budget", () => {
   // Loaded on every session, before the task is known.
-  test("AGENTS.md and CLAUDE.md together stay under 5,000 characters", () => {
-    expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(5_000);
+  test("AGENTS.md and CLAUDE.md together stay under 4,000 characters", () => {
+    expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(4_000);
   });
 
   test("every skill directory has a SKILL.md", () => {

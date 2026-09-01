@@ -86,6 +86,12 @@ describe("ecosystem branching invariants", () => {
   });
 
   test("routes and orchestrators do not branch on ecosystem names", () => {
-    expect(branchViolations(ecosystemIds())).toEqual([...ALLOWED_BRANCHES].sort());
+    expect(
+      branchViolations(ecosystemIds()),
+      "An ecosystem is one directory under server/lib/ecosystems/ plus one registry " +
+        "entry in its index.ts — shared code must not test the ecosystem name. If a " +
+        "route or orchestrator needs per-ecosystem behavior, make it an optional method " +
+        "on the adapter contract and let the registry supply it. See the add-ecosystem skill.",
+    ).toEqual([...ALLOWED_BRANCHES].sort());
   });
 });

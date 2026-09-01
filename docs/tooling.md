@@ -192,6 +192,24 @@ elements away is a spacing question and is not reported. Fixture and test:
 
 The rule ships as `error` with no existing violations, so every infraction fails lint.
 
+### What belongs in an agent file
+
+The ceilings above are about cost, not adherence. A factorial study of coding-agent
+configuration files ([arXiv 2605.10039](https://arxiv.org/abs/2605.10039), 1,650 Claude
+Code sessions) found no detectable effect of file size, instruction position, file
+architecture, or contradictions between adjacent config files, with affirmative-null
+Bayes factors for size and conflict; [IFScale](https://arxiv.org/pdf/2507.11538) puts
+the instruction-count knee around 150–200, and AGENTS.md holds roughly 25 rules. So a
+long agent file is not measurably ignored — it is just paid for on every session.
+
+That makes the useful test a maintenance one, not a psychological one. A rule that a
+lint rule or an invariant test enforces does not belong in AGENTS.md or a skill at all:
+the build fails on its own, so the prose is pure tax and can go stale besides. When
+deleting such a rule, make sure the check's failure message explains the fix, because
+that message is now the only place the rule is stated. Knowledge that matters only for
+one kind of task belongs in the skill for that task, which loads on demand — the
+ecosystem-name branching rule lives in `.claude/skills/add-ecosystem/` for that reason.
+
 ### Prose invariants with static checks
 
 Boundaries that lint rules cannot express are pinned by node-project invariant tests
@@ -216,7 +234,7 @@ regexes via the non-executing JS lexer before scanning (see
   Commented-out registrations and guards are blanked before the structural scan.
 - `test/agent-context-budget.test.mjs` — AGENTS.md and CLAUDE.md load on every session
   and each skill `description` sits in the always-present skill listing, so both carry a
-  per-session cost no other file has. Character ceilings (5,000 combined for
+  per-session cost no other file has. Character ceilings (4,000 combined for
   AGENTS.md + CLAUDE.md, 8,000 per SKILL.md, 200 per description) make growth a
   deliberate trade rather than an accumulation. The same file checks that every
   `docs/` Markdown file is reachable by following links from `docs/README.md`, which is
