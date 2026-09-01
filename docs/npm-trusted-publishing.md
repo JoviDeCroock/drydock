@@ -22,8 +22,9 @@ does not stop. Prerequisite: a working npm workflow gate as described in
 [`workflow-gates.md`](./workflow-gates.md#npm-workflow-gate-notes) — Drydock
 GitHub App installed, release target configured, publish workflow uploading the
 packed tarballs plus `SHA256SUMS`. The
-[guided setup wizard](./workflow-gates.md#guided-setup) builds that prerequisite
-for you and condenses the checklist below into the pull request it opens; the
+[guided setup wizard](./workflow-gates.md#guided-setup) walks that prerequisite
+with you — it generates the workflow, links to each GitHub screen, and verifies
+the result — and surfaces the checklist below beside the generated workflow. The
 registry-side steps (1 and 2) stay manual, because only the npm account holder
 can take them.
 
