@@ -48,5 +48,4 @@ export {
   markGateRegistryVerificationAttempted,
   markScanRegistryVerified,
   recordRegistryDigestMismatch,
-  type RegistryVerificationScan,
 } from "./scan-registry-verification";
