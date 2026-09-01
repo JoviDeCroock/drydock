@@ -4,7 +4,8 @@
   "jsPlugins": [
     "@preact/eslint-plugin-signals",
     { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" },
-    { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" }
+    { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" },
+    { "name": "design-local", "specifier": "./tooling/oxlint/design-local/index.mjs" }
   ],
   "categories": {
     "correctness": "error"
@@ -38,6 +39,12 @@
             "importNames": ["useState", "useReducer"],
             "message": "useState/useReducer are banned. Migrate to @preact/signals (useSignal, useComputed) or createModel/useModel — see the preact-signals-models-utils skill."
           }
+        ],
+        "patterns": [
+          {
+            "group": ["preact/compat", "preact/compat/**"],
+            "message": "preact/compat is banned — it re-exports the React hook surface this repo replaced with signals, and pulls a second component model into the bundle. Use preact, preact-iso, and @preact/signals directly."
+          }
         ]
       }
     ],
@@ -48,8 +55,18 @@
     "@preact/signals/no-conditional-value-read": "error",
     "signals-local/no-signal-conditional-jsx": "error",
     "boundaries-local/no-cross-page-import": "error",
+    "design-local/no-stacked-section-rule": "error",
     "react-hooks/exhaustive-deps": "off"
   },
+  "overrides": [
+    {
+      "files": ["server/**"],
+      "excludeFiles": ["server/lib/platform/observability.ts"],
+      "rules": {
+        "no-console": "error"
+      }
+    }
+  ],
   "ignorePatterns": [
     "dist/**",
     ".wrangler/**",
@@ -58,6 +75,7 @@
     "worker-configuration.d.ts",
     "**/*.d.ts",
     "test/fixtures/oxlint-signals/**",
-    "test/fixtures/oxlint-boundaries/**"
+    "test/fixtures/oxlint-boundaries/**",
+    "test/fixtures/oxlint-design/**"
   ]
 }

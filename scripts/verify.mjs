@@ -1,4 +1,4 @@
-// Runs the verify gate (lint + format check + typecheck + tests) with the
+// Runs the verify gate (lint + format check + typecheck + knip + tests) with the
 // checks in parallel instead of in series. The Cloudflare-worker test pool
 // dominates wall time, so the cheap checks finish while it is still running.
 // All checks always run to completion so a single pass surfaces every failure;
@@ -6,7 +6,9 @@
 //
 // `--quick` (pnpm run verify:quick) is the iteration loop: it scopes lint and
 // format check to changed files, keeps the full typecheck (tsc cannot be
-// usefully scoped), and runs only Vitest tests affected by the change set
+// usefully scoped), keeps knip (whole-graph, ~10s, and an unused export is
+// created by *removing* the last import, so a changed-file scope would miss the
+// file that actually broke), and runs only Vitest tests affected by the change set
 // (`--changed <merge-base>`; verified on Vitest 4 to cover committed, staged,
 // unstaged, and untracked files for both the node and workers projects). Quick
 // mode is not the pre-commit gate — full `pnpm run verify` is.
@@ -28,6 +30,10 @@ function buildFullChecks() {
     { name: "lint", args: ["run", "lint"] },
     { name: "format:check", args: ["run", "format:check"] },
     { name: "typecheck", args: ["run", "typecheck"] },
+    // Unused exports were landing on main and failing CI's knip step after the
+    // fact (a dozen "Fix unused … exports" commits). It costs ~10s, so it runs
+    // in the local gate too rather than only in CI.
+    { name: "knip", args: ["run", "knip"] },
     { name: "test", args: ["run", "test"] },
   ];
 }
@@ -78,6 +84,7 @@ function buildQuickChecks() {
         ]
       : []),
     { name: "typecheck", args: ["run", "typecheck"] },
+    { name: "knip", args: ["run", "knip"] },
     // Deletions also count as changes for Vitest's related-test resolution, so
     // these always run even when the existing-file change set above is empty.
     {

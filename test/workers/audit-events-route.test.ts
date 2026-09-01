@@ -148,7 +148,11 @@ describe("audit-events route", () => {
       metadata: {
         label: "prod",
         registryUrl: "https://registry.example.com",
-        tokenLast4: "9999",
+        // Deliberately not four digits: the response carries random hex ids, and
+        // every 4-digit sentinel is also 4 hex digits, so `9999` matched an id
+        // often enough to flake. npm token suffixes are base62, so this is a
+        // realistic last4 that cannot collide.
+        tokenLast4: "9z99",
         tokenCiphertext: "SECRET_CIPHERTEXT",
       },
       createdAt: new Date(),
@@ -157,7 +161,7 @@ describe("audit-events route", () => {
     const res = await fetchAudit(buildTestApp(owner), "/api/v1/audit-events");
     const raw = await res.text();
     expect(raw).not.toContain("SECRET_CIPHERTEXT");
-    expect(raw).not.toContain("9999");
+    expect(raw).not.toContain("9z99");
     const body = JSON.parse(raw) as { events: Array<Record<string, unknown>> };
     expect(body.events[0]).not.toHaveProperty("metadataJson");
     expect(body.events[0].detail).toBe("prod");

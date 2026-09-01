@@ -16,6 +16,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 
 - [`architecture.md`](./architecture.md) — Worker, sandbox, adapters, storage, org model, and API shape.
 - [`workflow-gates.md`](./workflow-gates.md) — **Workflow Gate — enforced**: the shared GitHub Environment gate flow for PyPI, npm, and VS Code releases, scoped to the configured protected job.
+- [`pypi-workflow-gate.md`](./pypi-workflow-gate.md) — the PyPI specifics of that gate: PyPI has no registry-staged artifact, so the workflow gate is its only review-before-publish path.
 - [`npm-staged-publishing.md`](./npm-staged-publishing.md) — **Stage Watchtower — advisory**: reviewing npm staged artifacts and narrowing CI to `npm stage publish` without claiming control over npm's independent approval or interactive publish paths.
 - [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) — pinning npm trusted publishing (OIDC) to the gate environment so automated publishing uses the reviewed workflow, plus the interactive 2FA path npm still permits.
 - [`diff-baseline.md`](./diff-baseline.md) — default previous-version comparison strategy.
@@ -35,7 +36,6 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`agent-tour.md`](./agent-tour.md) — portable product walkthrough artifacts.
 - [`incident-content-playbook.md`](./incident-content-playbook.md) — what to publish when a public supply-chain compromise breaks, the hard rules, and the post templates.
 - [`ops-snapshot.md`](./ops-snapshot.md) — operator-only aggregate prod D1 snapshot (`pnpm run ops:snapshot`) and its unattributability rules.
-- [`test-package.md`](./test-package.md) — package fixture used for manual staged-publish checks.
 
 ## Domain docs
 

@@ -113,7 +113,7 @@ export interface AtpmProvenance {
   sourceRef: string | null;
   /** Commit the build ran from. */
   sourceCommit: string | null;
-  /** Workflow file the certificate was issued for, e.g. `.github/workflows/publish.yml`. */
+  /** Workflow file in the source repository, e.g. .github/workflows/publish.yml. */
   workflowPath: string | null;
   /** GitHub Actions run the certificate was issued to. */
   runInvocation: string | null;
