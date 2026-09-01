@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -22,20 +22,36 @@ function size(file) {
   return readFileSync(path.join(repoRoot, file), "utf8").length;
 }
 
-const skills = readdirSync(skillsDir)
-  .filter((name) => !name.startsWith("."))
-  .map((name) => `.claude/skills/${name}/SKILL.md`);
+const skillDirs = readdirSync(skillsDir).filter((name) => !name.startsWith("."));
+const skills = skillDirs.map((name) => `.claude/skills/${name}/SKILL.md`);
 
+// Line-wise rather than one regex: YAML continues a scalar onto indented lines,
+// and a regex that stops at the first newline would let a wrapped description
+// pass the budget while still costing the full amount in context.
 function frontmatterDescription(file) {
   const frontmatter = /^---\n([\s\S]*?)\n---/.exec(readFileSync(path.join(repoRoot, file), "utf8"));
-  const description = /^description:\s*([\s\S]*?)(?=\n\S+:|$)/m.exec(frontmatter?.[1] ?? "");
-  return description?.[1].trim() ?? null;
+  if (!frontmatter) return null;
+  const lines = frontmatter[1].split("\n");
+  const start = lines.findIndex((line) => line.startsWith("description:"));
+  if (start === -1) return null;
+  const continuation = lines.slice(start + 1);
+  const end = continuation.findIndex((line) => /^\S/.test(line));
+  return [
+    lines[start].slice("description:".length),
+    ...(end === -1 ? continuation : continuation.slice(0, end)),
+  ]
+    .join(" ")
+    .trim();
 }
 
 describe("agent context budget", () => {
   // Loaded on every session, before the task is known.
   test("AGENTS.md and CLAUDE.md together stay under 5,000 characters", () => {
     expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(5_000);
+  });
+
+  test("every skill directory has a SKILL.md", () => {
+    expect(skills.filter((skill) => !existsSync(path.join(repoRoot, skill)))).toEqual([]);
   });
 
   // Loaded when the skill is invoked, so the ceiling is per file, not summed.
