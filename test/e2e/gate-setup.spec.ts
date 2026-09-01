@@ -8,12 +8,20 @@ jobs:
     environment: production
 `;
 
-test("guided gate setup deep link keeps refused GitHub steps actionable", async ({
+test("guided gate setup verifies GitHub rather than reporting its own bookkeeping", async ({
   context,
   page,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const mocks = await installGateSetupMocks(page);
+  const mocks = await installGateSetupMocks(page, {
+    environments: ["production"],
+    verifyStates: [
+      // The environment exists but Drydock is not yet its protection rule, so
+      // nothing holds a deployment — the state that must never read as armed.
+      { environment: "present", protectionRule: "absent", defaultBranch: "main" },
+      { environment: "present", protectionRule: "present", defaultBranch: "main" },
+    ],
+  });
 
   await page.goto("/dashboard/settings#gate-setup");
 
@@ -26,15 +34,20 @@ test("guided gate setup deep link keeps refused GitHub steps actionable", async 
 
   await wizard.getByLabel("Installation").selectOption("installation-acme");
   await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
-  await wizard.getByLabel("Environment", { exact: true }).selectOption("__new__");
-  await wizard.getByLabel("New environment name").fill("Production");
-  await wizard.getByRole("button", { name: "Create it in GitHub" }).click();
-  await expect(wizard.getByText("done", { exact: true })).toBeVisible();
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("production");
 
-  await wizard.getByRole("button", { name: "Enable Drydock protection rule" }).click();
-  await expect(wizard.getByText("needs you", { exact: true })).toBeVisible();
+  // Selecting an environment verifies it without a click; the rule is missing.
+  await expect(wizard.getByText("is not yet a protection rule", { exact: false })).toBeVisible();
+  await expect(wizard.getByText("gate armed", { exact: true })).toHaveCount(0);
+
+  await expect(wizard.getByRole("link", { name: "Open environment settings ↗" })).toHaveAttribute(
+    "href",
+    "https://github.com/acme/toolkit/settings/environments",
+  );
+
+  await wizard.getByRole("button", { name: "Check the rule" }).click();
   await expect(
-    wizard.getByText("Enable Drydock manually in the production environment settings."),
+    wizard.getByText("GitHub confirms Drydock is a deployment-protection rule", { exact: false }),
   ).toBeVisible();
 
   await wizard.getByLabel("Ecosystem").selectOption("npm");
@@ -42,28 +55,69 @@ test("guided gate setup deep link keeps refused GitHub steps actionable", async 
   await wizard.getByRole("button", { name: "Generate workflow" }).click();
   await expect(wizard.getByText(".github/workflows/publish-acme-toolkit.yml")).toBeVisible();
   await expect(wizard.locator("pre")).toContainText("environment: production");
+  // The path is a real path, not a label. `getByText` folds case, so assert the
+  // rendered casing through the computed style instead.
+  await expect(wizard.getByText(".github/workflows/publish-acme-toolkit.yml")).toHaveCSS(
+    "text-transform",
+    "none",
+  );
+
+  // The lockdown list carries the GitHub-side hardening the removed pull-request
+  // body used to be the only place to read.
+  await expect(wizard.getByText("Allow administrators to bypass", { exact: false })).toBeVisible();
 
   await wizard.getByRole("button", { name: "Copy workflow" }).click();
   await expect(wizard.getByText("Copied.")).toBeVisible();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(workflowYaml);
 
-  await wizard.getByRole("button", { name: "Open a PR with this workflow" }).click();
-  await expect(
-    wizard.getByText("Commit the generated workflow manually on a new branch."),
-  ).toBeVisible();
-  await expect(wizard.getByText("pull request #", { exact: false })).toHaveCount(0);
-  await expect(wizard.locator("pre")).toContainText("name: Publish @acme/toolkit");
+  const commitLink = wizard.getByRole("link", { name: "Commit it on GitHub ↗" });
+  await expect(commitLink).toHaveAttribute(
+    "href",
+    /github\.com\/acme\/toolkit\/new\/main\?filename=/,
+  );
 
   await wizard.getByRole("button", { name: "Create release target" }).click();
-  await expect(wizard.getByText("gate configured", { exact: true })).toBeVisible();
-  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
-  await expect(wizard.getByText("env production", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("Gate armed", { exact: true })).toBeVisible();
   expect(mocks.releaseTargetRequests).toContainEqual({
     installationRowId: "installation-acme",
     repositoryFullName: "acme/toolkit",
     environment: "production",
     ecosystem: "npm",
   });
+  // Every gate-setup call was a read; the wizard never asked Drydock to change
+  // anything on the repository.
+  expect(mocks.verifyRequests.length).toBeGreaterThan(0);
+});
+
+test("a verification Drydock could not complete never reads as a configured gate", async ({
+  page,
+}) => {
+  await installGateSetupMocks(page, {
+    environments: ["production"],
+    verifyStates: [
+      {
+        environment: "unknown",
+        protectionRule: "unknown",
+        defaultBranch: null,
+        unavailableReason: "Drydock could not reach GitHub. Retry in a moment.",
+      },
+    ],
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("production");
+
+  await expect(wizard.getByText("could not reach GitHub", { exact: false })).toBeVisible();
+  await wizard.getByRole("button", { name: "Create release target" }).click();
+
+  // Mapped, but unverified: the summary must not claim a gate.
+  await expect(wizard.getByText("done", { exact: true }).first()).toBeVisible();
+  await expect(wizard.getByText("gate armed", { exact: true })).toHaveCount(0);
 });
 
 test("an existing release target must be removed before changing its ecosystem", async ({
@@ -78,7 +132,6 @@ test("an existing release target must be removed before changing its ecosystem",
   await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
   await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
 
-  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
   await expect(wizard.getByLabel("Ecosystem")).toHaveValue("npm");
   await expect(wizard.getByLabel("Ecosystem")).toBeDisabled();
   await wizard.getByRole("button", { name: "Remove mapping" }).click();
@@ -88,7 +141,7 @@ test("an existing release target must be removed before changing its ecosystem",
   await wizard.getByLabel("Ecosystem").selectOption("pypi");
   await wizard.getByRole("button", { name: "Create release target" }).click();
 
-  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("env staging", { exact: true })).toBeVisible();
   expect(mocks.releaseTargetRequests.at(-1)).toEqual({
     installationRowId: "installation-acme",
     repositoryFullName: "acme/toolkit",
@@ -97,7 +150,9 @@ test("an existing release target must be removed before changing its ecosystem",
   });
 });
 
-test("a broader existing GitHub environment can still be mapped manually", async ({ page }) => {
+test("a broader existing GitHub environment blocks only the generated workflow", async ({
+  page,
+}) => {
   const mocks = await installGateSetupMocks(page, { environments: ["production/eu"] });
 
   await page.goto("/dashboard/settings#gate-setup");
@@ -107,15 +162,20 @@ test("a broader existing GitHub environment can still be mapped manually", async
   await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
   await wizard.getByLabel("Environment", { exact: true }).selectOption("production/eu");
 
-  await expect(wizard.getByText("outside that", { exact: false })).toBeVisible();
+  await wizard.getByLabel("Ecosystem").selectOption("npm");
+  await wizard.getByLabel("Package name").fill("@acme/toolkit");
+  await expect(wizard.getByText("cannot generate a workflow", { exact: false })).toBeVisible();
+  await expect(wizard.getByRole("button", { name: "Generate workflow" })).toBeDisabled();
+
+  // Verifying and mapping the hand-made environment still has to work.
   await expect(wizard.getByRole("button", { name: "Create release target" })).toBeEnabled();
   await wizard.getByRole("button", { name: "Create release target" }).click();
-
-  await expect(wizard.getByText("mapped", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("env production/eu", { exact: true })).toBeVisible();
   expect(mocks.releaseTargetRequests.at(-1)).toEqual({
     installationRowId: "installation-acme",
     repositoryFullName: "acme/toolkit",
     environment: "production/eu",
+    ecosystem: "npm",
   });
 });
 
@@ -124,12 +184,25 @@ async function installGateSetupMocks(
   {
     existingReleaseTarget = false,
     environments = ["staging"],
-  }: { existingReleaseTarget?: boolean; environments?: string[] } = {},
+    verifyStates = [{ environment: "present", protectionRule: "present", defaultBranch: "main" }],
+  }: {
+    existingReleaseTarget?: boolean;
+    environments?: string[];
+    /** Consumed one per `verify` call; the last entry repeats. */
+    verifyStates?: {
+      environment: string;
+      protectionRule: string;
+      defaultBranch?: string | null;
+      unavailableReason?: string;
+    }[];
+  } = {},
 ) {
   let storedReleaseTargets = existingReleaseTarget
     ? [releaseTarget({ environment: "staging" })]
     : [];
   const releaseTargetRequests: Record<string, unknown>[] = [];
+  const verifyRequests: Record<string, unknown>[] = [];
+  let verifyCalls = 0;
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -240,50 +313,17 @@ async function installGateSetupMocks(
       return;
     }
 
-    if (path === "/api/v1/github-app/gate-setup/environment") {
-      expectGateSetupDraft(request, "npm", "@acme/toolkit", false);
-      await fulfillJson(route, {
-        step: { step: "environment", status: "created" },
-      });
-      return;
-    }
-
-    if (path === "/api/v1/github-app/gate-setup/protection-rule") {
-      expectGateSetupDraft(request, "npm", "@acme/toolkit", false);
-      await fulfillJson(route, {
-        step: {
-          step: "protection_rule",
-          status: "failed",
-          failure: {
-            code: "permission_denied",
-            message: "GitHub refused the protection-rule mutation.",
-            manualFallback: "Enable Drydock manually in the production environment settings.",
-          },
-        },
-      });
-      return;
-    }
-
     if (path === "/api/v1/github-app/gate-setup/preview") {
       expectGateSetupDraft(request);
       await fulfillJson(route, workflowPreview());
       return;
     }
 
-    if (path === "/api/v1/github-app/gate-setup/pull-request") {
-      expectGateSetupDraft(request);
+    if (path === "/api/v1/github-app/gate-setup/verify") {
+      const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>;
+      verifyRequests.push(body);
       await fulfillJson(route, {
-        step: {
-          step: "pull_request",
-          status: "failed",
-          failure: {
-            code: "workflow_scope_missing",
-            message: "The installation cannot write workflow files.",
-            manualFallback: "Commit the generated workflow manually on a new branch.",
-          },
-        },
-        pullRequest: null,
-        ...workflowPreview(),
+        state: verifyStates[Math.min(verifyCalls++, verifyStates.length - 1)],
       });
       return;
     }
@@ -316,27 +356,21 @@ async function installGateSetupMocks(
     await fulfillJson(route, { error: `unexpected request: ${request.method()} ${path}` }, 404);
   });
 
-  return { releaseTargetRequests };
+  return { releaseTargetRequests, verifyRequests };
 }
 
 function expectGateSetupDraft(
   request: { postData(): string | null },
   ecosystem = "npm",
   packageName = "@acme/toolkit",
-  requirePackage = true,
 ) {
-  const expected: Record<string, string> = {
+  expect(JSON.parse(request.postData() || "{}"), "gate-setup draft").toEqual({
     installationRowId: "installation-acme",
     repositoryFullName: "acme/toolkit",
     environment: "production",
-  };
-  if (requirePackage) {
-    expected.ecosystem = ecosystem;
-    expected.packageName = packageName;
-  }
-  expect(JSON.parse(request.postData() || "{}"), "gate-setup draft").toEqual(
-    requirePackage ? expected : { ...expected, ecosystem: "", packageName: "" },
-  );
+    ecosystem,
+    packageName,
+  });
 }
 
 function installation(id: string, accountLogin: string) {

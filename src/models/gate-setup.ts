@@ -19,39 +19,27 @@ import {
  * repository/environment pickers with its own, longer-lived draft. Sharing the
  * signals would make one form reset the other mid-flow.
  *
- * Every GitHub-side step is independent, so each keeps its own result signal.
- * A step that fails with a permission problem does not block the next one — the
- * wizard renders that step's manual fallback and carries on.
+ * Drydock makes no change to the maintainer's repository — it generates the
+ * workflow, points at the GitHub screen for each step, and reads the result
+ * back. So the wizard has no per-step mutation results to track; it has one
+ * verification of what GitHub actually has, which is also what the "gate armed"
+ * claim is allowed to rest on.
  */
 
-type GateSetupStep = "environment" | "protection_rule" | "pull_request";
-type GateSetupAction = GateSetupStep | "release_target" | "release_target_delete" | "preview";
-type GateSetupStatus = "created" | "already_configured" | "failed";
+type GateSetupAction = "verify" | "preview" | "release_target" | "release_target_delete";
 
-type GateSetupFailureCode =
-  | "permission_denied"
-  | "workflow_scope_missing"
-  | "repository_not_accessible"
-  | "already_exists"
-  | "invalid_request"
-  | "github_unavailable";
+/**
+ * `unknown` is the answer when Drydock could not read GitHub, and it is why
+ * these are three values rather than a boolean: the wizard must be able to say
+ * "I could not check" without that reading as "not configured".
+ */
+type GateSetupCheck = "present" | "absent" | "unknown";
 
-interface GateSetupFailure {
-  code: GateSetupFailureCode;
-  message: string;
-  manualFallback: string;
-}
-
-export interface GateSetupStepResult {
-  step: GateSetupStep;
-  status: GateSetupStatus;
-  failure?: GateSetupFailure;
-}
-
-export interface GateSetupPullRequest {
-  number: number;
-  url: string;
-  branch: string;
+export interface GateSetupVerification {
+  environment: GateSetupCheck;
+  protectionRule: GateSetupCheck;
+  defaultBranch: string | null;
+  unavailableReason?: string;
 }
 
 export interface GateSetupPreview {
@@ -76,16 +64,16 @@ export const GateSetupModel = createModel(() => {
   const environments = signal<RepositoryEnvironment[]>([]);
   const environmentsLoading = signal(false);
 
-  const environmentStep = signal<GateSetupStepResult | null>(null);
-  const protectionStep = signal<GateSetupStepResult | null>(null);
-  const pullRequestStep = signal<GateSetupStepResult | null>(null);
-  const pullRequest = signal<GateSetupPullRequest | null>(null);
+  const verification = signal<GateSetupVerification | null>(null);
   const releaseTarget = signal<PublicReleaseTarget | null>(null);
-
   const preview = signal<GateSetupPreview | null>(null);
 
   const busyStep = signal<GateSetupAction | null>(null);
   const error = signal<string | null>(null);
+  // Which action raised `error`, so the wizard can render it against the step
+  // the maintainer just acted on rather than in a banner at the top of a card
+  // they have already scrolled past.
+  const errorStep = signal<GateSetupAction | null>(null);
   let repositoriesRequestId = 0;
   let environmentsRequestId = 0;
   let actionRequestId = 0;
@@ -98,40 +86,45 @@ export const GateSetupModel = createModel(() => {
       : environmentChoice.value.trim().toLowerCase(),
   );
 
-  // The server refuses identities it would have to interpolate into generated
-  // YAML, and an environment that already exists on GitHub can be outside that
-  // allowlist. Check the same shapes here so the wizard says so next to the
-  // picker instead of letting the maintainer discover it as a bare error after
-  // two irreversible GitHub mutations.
+  // The generated workflow interpolates these into YAML, so the server refuses
+  // shapes it will not quote. Only the workflow step is affected: an existing
+  // GitHub environment outside the allowlist can still be verified and mapped,
+  // so this must not block steps 2, 3 or 6.
   const environmentIssue = computed<string | null>(() => {
     const value = environment.value;
-    if (!value) return null;
-    if (GATE_SETUP_ENVIRONMENT_NAME_RE.test(value)) return null;
-    return `Drydock can only automate environment names of 1-128 letters, digits, spaces, or . _ - — "${value}" is outside that. Set this environment up by hand and map it as a release target.`;
+    if (!value || GATE_SETUP_ENVIRONMENT_NAME_RE.test(value)) return null;
+    return `Drydock cannot generate a workflow for an environment named "${value}" — the name goes into the YAML, and only 1-128 letters, digits, spaces, or . _ - are quoted safely. Every other step still works; write the publish workflow by hand.`;
   });
   const packageNameIssue = computed<string | null>(() => {
     const value = packageName.value.trim();
-    if (!value) return null;
-    if (GATE_SETUP_PACKAGE_NAME_RE.test(value)) return null;
+    if (!value || GATE_SETUP_PACKAGE_NAME_RE.test(value)) return null;
     return "Use 1-214 characters of letters, digits, or @ . _ / - — this name goes into the generated workflow.";
   });
 
   const repositoryPicked = computed(
     () => installationRowId.value !== "" && repositoryFullName.value !== "",
   );
-  const environmentPicked = computed(
-    () => repositoryPicked.value && environment.value !== "" && environmentIssue.value === null,
-  );
-  const releaseTargetReady = computed(() => repositoryPicked.value && environment.value !== "");
+  const environmentPicked = computed(() => repositoryPicked.value && environment.value !== "");
   const templateReady = computed(
     () =>
       environmentPicked.value &&
+      environmentIssue.value === null &&
       ecosystem.value !== "" &&
       packageName.value.trim() !== "" &&
       packageNameIssue.value === null,
   );
   const busy = computed(() => busyStep.value !== null);
-  const previewLoading = computed(() => busyStep.value === "preview");
+
+  /**
+   * The only claim the wizard is allowed to make about the gate.
+   *
+   * A mapped release target means Drydock knows where to send a held
+   * deployment; it says nothing about whether GitHub will ever hold one. Only a
+   * verified protection rule does, so a green summary requires both.
+   */
+  const gateArmed = computed(
+    () => verification.value?.protectionRule === "present" && releaseTarget.value !== null,
+  );
 
   function draft() {
     return {
@@ -143,13 +136,6 @@ export const GateSetupModel = createModel(() => {
     };
   }
 
-  /**
-   * Run one wizard step.
-   *
-   * A transport/auth failure surfaces in `error`; a step that GitHub refused
-   * comes back as a 200 with `status: "failed"` and is stored in the step's own
-   * signal, because that is the case the UI degrades rather than reports.
-   */
   async function request<T>(
     step: GateSetupAction,
     perform: () => Promise<T>,
@@ -158,7 +144,10 @@ export const GateSetupModel = createModel(() => {
     const requestId = ++actionRequestId;
     const organizationId = activeOrganizationId.peek();
     busyStep.value = step;
-    error.value = null;
+    if (errorStep.peek() === step) {
+      error.value = null;
+      errorStep.value = null;
+    }
     try {
       const data = await perform();
       if (requestId !== actionRequestId || activeOrganizationId.peek() !== organizationId) {
@@ -169,6 +158,7 @@ export const GateSetupModel = createModel(() => {
     } catch (err) {
       if (requestId === actionRequestId && activeOrganizationId.peek() === organizationId) {
         error.value = errorMessage(err);
+        errorStep.value = step;
       }
       return null;
     } finally {
@@ -190,31 +180,45 @@ export const GateSetupModel = createModel(() => {
     busyStep.value = null;
   }
 
+  function clearError() {
+    error.value = null;
+    errorStep.value = null;
+  }
+
   function resetDownstream() {
     invalidatePendingActions();
-    environmentStep.value = null;
-    protectionStep.value = null;
-    pullRequestStep.value = null;
-    pullRequest.value = null;
+    verification.value = null;
     releaseTarget.value = null;
     preview.value = null;
-    error.value = null;
+    clearError();
   }
 
-  function resetAfterEcosystemChange() {
+  function resetAfterTemplateChange() {
     invalidatePendingActions();
-    pullRequestStep.value = null;
-    pullRequest.value = null;
     preview.value = null;
-    error.value = null;
+    clearError();
   }
 
-  function resetAfterPackageNameChange() {
-    invalidatePendingActions();
-    pullRequestStep.value = null;
-    pullRequest.value = null;
-    preview.value = null;
-    error.value = null;
+  async function runVerify(): Promise<void> {
+    if (!environmentPicked.peek()) return;
+    await post<{ state: GateSetupVerification }>(
+      "verify",
+      "/api/v1/github-app/gate-setup/verify",
+      draft(),
+      (data) => {
+        verification.value = data.state;
+        // A verified environment may not be in the picker's list yet — the
+        // maintainer just created it on GitHub. Add it so a later reload and
+        // the release-target step see a consistent choice.
+        if (data.state.environment === "present") {
+          const name = environment.peek();
+          const known = environments.peek();
+          if (!known.some((entry) => entry.name === name)) {
+            environments.value = [...known, { name }];
+          }
+        }
+      },
+    );
   }
 
   return {
@@ -228,23 +232,20 @@ export const GateSetupModel = createModel(() => {
     repositoriesLoading,
     environments,
     environmentsLoading,
-    environmentStep,
-    protectionStep,
-    pullRequestStep,
-    pullRequest,
+    verification,
     releaseTarget,
     preview,
-    previewLoading,
     busyStep,
     busy,
     error,
+    errorStep,
     environment,
     repositoryPicked,
     environmentPicked,
-    releaseTargetReady,
     environmentIssue,
     packageNameIssue,
     templateReady,
+    gateArmed,
 
     async selectInstallation(nextId: string): Promise<void> {
       const requestId = ++repositoriesRequestId;
@@ -278,6 +279,7 @@ export const GateSetupModel = createModel(() => {
           installationRowId.peek() === nextId
         ) {
           error.value = errorMessage(err);
+          errorStep.value = null;
         }
       } finally {
         if (requestId === repositoriesRequestId) repositoriesLoading.value = false;
@@ -308,8 +310,8 @@ export const GateSetupModel = createModel(() => {
           return;
         }
         environments.value = data.environments;
-        // Nothing to pick from means the wizard's own "create it" path is the
-        // only way forward; open it instead of showing an empty select.
+        // Nothing to pick from means the maintainer has to create one on
+        // GitHub; open that path instead of showing an empty select.
         if (!data.environments.length) environmentChoice.value = NEW_ENVIRONMENT_CHOICE;
       } catch (err) {
         if (
@@ -319,15 +321,20 @@ export const GateSetupModel = createModel(() => {
           repositoryFullName.peek() === fullName
         ) {
           error.value = errorMessage(err);
+          errorStep.value = null;
         }
       } finally {
         if (requestId === environmentsRequestId) environmentsLoading.value = false;
       }
     },
 
-    selectEnvironmentChoice(choice: string) {
+    async selectEnvironmentChoice(choice: string): Promise<void> {
       environmentChoice.value = choice;
       resetDownstream();
+      // Verify an environment the maintainer picked from GitHub's own list
+      // straight away: it is the check they would click next, and its result is
+      // what steps 2 and 3 report.
+      if (choice !== NEW_ENVIRONMENT_CHOICE) await runVerify();
     },
 
     setNewEnvironmentName(name: string) {
@@ -335,15 +342,17 @@ export const GateSetupModel = createModel(() => {
       resetDownstream();
     },
 
+    verify: runVerify,
+
     selectEcosystem(id: string) {
       if (releaseTarget.peek()?.ecosystem != null) return;
       ecosystem.value = id;
-      resetAfterEcosystemChange();
+      resetAfterTemplateChange();
     },
 
     setPackageName(name: string) {
       packageName.value = name;
-      resetAfterPackageNameChange();
+      resetAfterTemplateChange();
     },
 
     async loadPreview(): Promise<void> {
@@ -356,53 +365,6 @@ export const GateSetupModel = createModel(() => {
           preview.value = data;
         },
       );
-    },
-
-    async createEnvironment(): Promise<void> {
-      await post<{ step: GateSetupStepResult }>(
-        "environment",
-        "/api/v1/github-app/gate-setup/environment",
-        draft(),
-        (data) => {
-          environmentStep.value = data.step;
-          // A freshly created environment is not in the picker's list yet; add it so
-          // the rest of the wizard (and a later reload) sees a consistent choice.
-          if (data.step.status !== "failed") {
-            const name = environment.peek();
-            const known = environments.peek();
-            if (!known.some((entry) => entry.name === name)) {
-              environments.value = [...known, { name }];
-            }
-          }
-        },
-      );
-    },
-
-    async enableProtectionRule(): Promise<void> {
-      await post<{ step: GateSetupStepResult }>(
-        "protection_rule",
-        "/api/v1/github-app/gate-setup/protection-rule",
-        draft(),
-        (data) => {
-          protectionStep.value = data.step;
-        },
-      );
-    },
-
-    async openPullRequest(): Promise<void> {
-      await post<{
-        step: GateSetupStepResult;
-        pullRequest: GateSetupPullRequest | null;
-        workflowPath: string;
-        yaml: string;
-        notes: string[];
-      }>("pull_request", "/api/v1/github-app/gate-setup/pull-request", draft(), (data) => {
-        pullRequestStep.value = data.step;
-        pullRequest.value = data.pullRequest;
-        // The response always carries the YAML so the failure path has the exact
-        // bytes to offer for a manual commit.
-        preview.value = { workflowPath: data.workflowPath, yaml: data.yaml, notes: data.notes };
-      });
     },
 
     async createReleaseTarget(): Promise<PublicReleaseTarget | null> {
@@ -465,10 +427,29 @@ export const GateSetupModel = createModel(() => {
   };
 });
 
-/** Copy for a step's badge; `null` means the step has not run yet. */
-export function gateSetupStatusLabel(result: GateSetupStepResult | null): string | null {
-  if (!result) return null;
-  if (result.status === "created") return "done";
-  if (result.status === "already_configured") return "already set";
-  return "needs you";
+/** GitHub's own screen for each step the maintainer takes there. */
+export function environmentSettingsUrl(repositoryFullName: string): string {
+  return `https://github.com/${repositoryFullName}/settings/environments`;
+}
+
+/**
+ * GitHub's new-file editor, with the workflow path and body prefilled.
+ *
+ * The `filename`/`value` query parameters are long-standing but undocumented,
+ * so the link is built to stay useful without them: it lands on the editor for
+ * the right branch either way, and the copy button beside it is the affordance
+ * the flow actually depends on. Oversized bodies drop `value` rather than risk
+ * a truncated URL.
+ */
+export function newWorkflowFileUrl(
+  repositoryFullName: string,
+  defaultBranch: string | null,
+  workflowPath: string,
+  yaml: string,
+): string {
+  const base = `https://github.com/${repositoryFullName}/new/${encodeURIComponent(defaultBranch ?? "main")}`;
+  const withValue = `${base}?filename=${encodeURIComponent(workflowPath)}&value=${encodeURIComponent(yaml)}`;
+  return withValue.length <= 6000
+    ? withValue
+    : `${base}?filename=${encodeURIComponent(workflowPath)}`;
 }
