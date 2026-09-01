@@ -214,6 +214,14 @@ regexes via the non-executing JS lexer before scanning (see
   real `getAuthSession` guard and the exact registrations allowed above it, including
   catch-alls and non-API bootstrap routes because they can still answer an API request.
   Commented-out registrations and guards are blanked before the structural scan.
+- `test/agent-context-budget.test.mjs` — AGENTS.md and CLAUDE.md load on every session
+  and each skill `description` sits in the always-present skill listing, so both carry a
+  per-session cost no other file has. Character ceilings (5,000 combined for
+  AGENTS.md + CLAUDE.md, 8,000 per SKILL.md, 200 per description) make growth a
+  deliberate trade rather than an accumulation. The same file checks that every
+  `docs/` Markdown file is reachable by following links from `docs/README.md`, which is
+  where AGENTS.md sends agents to load context progressively — an unlinked doc goes
+  stale unread while the next agent re-derives what it already answers.
 - `test/rate-limit-boundary-invariants.test.mjs` — `server/lib/platform/rate-limit.ts` is
   the only rate limiter: no other module names a `RATE_LIMIT_*` binding or queries the
   `rate_limits` table, and its `NATIVE_TIERS` table matches the `ratelimits` declarations
