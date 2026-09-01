@@ -1,11 +1,15 @@
 import { type AppDb } from "../../../db/client";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { recordScanEvent } from "../../../db/events";
-import { markNpmConnectionUsed, updateNpmConnectionValidation } from "../../../db/npm-connections";
+import {
+  invalidateNpmConnectionIfCurrent,
+  markNpmConnectionUsed,
+  updateNpmConnectionValidationIfCurrent,
+} from "../../../db/npm-connections";
 import {
   type ScanSource,
   createScanJob,
-  deletePendingScanJob,
+  deletePendingScanJobs,
   listExistingScanStageIds,
 } from "../../../db/scans";
 import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
@@ -31,8 +35,9 @@ export interface DiscoverStagedPublishesInput {
   source: ScanSource;
   eventSource: string;
   allowInsecureLocalhost?: boolean;
-  stageStartCoordinator?: StageStartCoordinator;
-  /** Cron awaits this work so organization concurrency also bounds outcome lookups. */
+  /** Fan remaining candidates into independent bounded queue messages. */
+  scheduleCandidateBatches?: (candidates: readonly StagedPublishItem[]) => void;
+  /** Background discovery awaits outcome lookups before acknowledging its work item. */
   awaitReleaseOutcomes?: boolean;
 }
 
@@ -42,14 +47,26 @@ export interface DiscoverStagedPublishesResult {
   skipped: number;
   queued: boolean;
   scans: StartedStagedPublishScan[];
+  deferred: number;
 }
 
 const STAGED_PUBLISH_SCAN_START_CONCURRENCY = 5;
+
+// Preparing a scan costs an access probe plus the D1 insert/detail reads. Keep
+// each discovery-queue invocation comfortably below Workers' 1000-subrequest
+// ceiling even when the staged listing itself spans its full 100-page guard.
+const STAGED_PUBLISH_SCAN_PREPARE_BATCH_SIZE = 50;
+
+// Cloudflare Queues caps sendBatch at 100 messages. A sweep that discovers more
+// new stages than that sends several batches rather than one send per scan.
+const SCAN_QUEUE_SEND_BATCH_SIZE = 100;
 
 export class InvalidNpmConnectionError extends Error {
   constructor(
     public organizationId: string,
     public validation?: NpmCredentialValidation,
+    /** This attempt atomically changed the current connection to invalid. */
+    public expirationClaimed = false,
   ) {
     super(`npm connection is not valid for org ${organizationId}`);
     this.name = "InvalidNpmConnectionError";
@@ -59,10 +76,18 @@ export class InvalidNpmConnectionError extends Error {
 export interface TokenForDiscovery {
   token: string;
   registryUrl: string;
+  connectionId: string;
 }
 
-export interface StageStartCoordinator {
-  run<T>(stageId: string, worker: () => Promise<T>): Promise<T>;
+/**
+ * A scan row that exists in D1 but has not been handed to the scan queue yet.
+ * Discovery creates the rows first (so `listExistingScanStageIds` suppresses
+ * duplicates on the next sweep) and dispatches them in batches afterwards.
+ */
+interface PreparedScanStart {
+  scanId: string;
+  message: ScanQueueMessage;
+  startedScan: StartedStagedPublishScan;
 }
 
 /**
@@ -127,24 +152,27 @@ function credentialValidationAuthStatus(validation: NpmCredentialValidation): nu
  * Record that an org's npm token stopped working during a cron sweep: mark the
  * connection `invalid` (which removes it from future sweeps and raises the
  * Settings banner), write the `npm_connection.token_expired` audit event, and
- * email the maintainer. Marking invalid first is what keeps this to one email
- * per expiry — the next sweep no longer sees the connection.
+ * email the maintainer. The generation-and-status update is an atomic claim, so
+ * concurrent at-least-once deliveries still produce one event and one email.
  */
 export async function recordExpiredNpmConnection(input: {
   db: AppDb;
   env: Cloudflare.Env;
-  connection: { organizationId: string; registryUrl: string };
+  connection: { id: string; organizationId: string; registryUrl: string };
   actorUserId: string;
   notificationOwnerUserId: string;
   error: unknown;
 }): Promise<void> {
   const { db, env, connection, actorUserId, notificationOwnerUserId, error } = input;
   const reason = describeNpmAuthFailure(error);
-  await updateNpmConnectionValidation(db, {
-    organizationId: connection.organizationId,
-    validationStatus: "invalid",
-    validatedAt: null,
-  });
+  const expirationClaimed =
+    error instanceof InvalidNpmConnectionError && error.expirationClaimed
+      ? true
+      : await invalidateNpmConnectionIfCurrent(db, {
+          organizationId: connection.organizationId,
+          connectionId: connection.id,
+        });
+  if (!expirationClaimed) return;
   await recordScanEvent(db, {
     organizationId: connection.organizationId,
     actorUserId,
@@ -164,6 +192,7 @@ export async function ensureUsableNpmConnection(input: {
   db: AppDb;
   env: Cloudflare.Env;
   connection: {
+    id: string;
     organizationId: string;
     registryUrl: string;
     validationStatus: string;
@@ -177,7 +206,7 @@ export async function ensureUsableNpmConnection(input: {
   const token = await decryptNpmToken(env, connection);
 
   if (connection.validationStatus === "valid") {
-    return { token, registryUrl: connection.registryUrl };
+    return { token, registryUrl: connection.registryUrl, connectionId: connection.id };
   }
   if (connection.validationStatus === "invalid") {
     throw new InvalidNpmConnectionError(connection.organizationId);
@@ -186,19 +215,23 @@ export async function ensureUsableNpmConnection(input: {
   const validation = await validateNpmCredential(connection.registryUrl, token, {
     allowInsecureLocalhost,
   });
-  const validationStatus = validation.ok
-    ? "valid"
-    : credentialValidationAuthFailed(validation)
-      ? "invalid"
-      : "unvalidated";
-  await Promise.all([
-    updateNpmConnectionValidation(db, {
-      organizationId: connection.organizationId,
-      validationStatus,
-      capabilities: validation.capabilities,
-      validatedAt: validation.ok ? new Date() : null,
-    }),
-    recordScanEvent(db, {
+  const authFailed = credentialValidationAuthFailed(validation);
+  const connectionUpdateClaimed = authFailed
+    ? await invalidateNpmConnectionIfCurrent(db, {
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        capabilities: validation.capabilities,
+      })
+    : await updateNpmConnectionValidationIfCurrent(db, {
+        organizationId: connection.organizationId,
+        connectionId: connection.id,
+        expectedValidationStatus: connection.validationStatus,
+        validationStatus: validation.ok ? "valid" : "unvalidated",
+        capabilities: validation.capabilities,
+        validatedAt: validation.ok ? new Date() : null,
+      });
+  if (connectionUpdateClaimed) {
+    await recordScanEvent(db, {
       organizationId: connection.organizationId,
       actorUserId,
       type: "npm_connection.validated",
@@ -208,15 +241,43 @@ export async function ensureUsableNpmConnection(input: {
         capabilities: validation.capabilities,
         source: "auto_discovery",
       },
-    }),
-  ]);
-  if (!validation.ok) throw new InvalidNpmConnectionError(connection.organizationId, validation);
-  return { token, registryUrl: connection.registryUrl };
+    });
+  }
+  if (!validation.ok) {
+    throw new InvalidNpmConnectionError(
+      connection.organizationId,
+      validation,
+      authFailed && connectionUpdateClaimed,
+    );
+  }
+  if (!connectionUpdateClaimed) {
+    // A successful validation that lost the generation race must not let the
+    // caller use the old decrypted token after the replacement was saved.
+    throw new InvalidNpmConnectionError(connection.organizationId);
+  }
+  return { token, registryUrl: connection.registryUrl, connectionId: connection.id };
 }
 
 export async function discoverAndQueueStagedPublishes(
   input: DiscoverStagedPublishesInput,
   connection: TokenForDiscovery,
+): Promise<DiscoverStagedPublishesResult> {
+  const stagedItems = await listAllStagedPublishes(connection, {
+    perPage: 50,
+    allowInsecureLocalhost: input.allowInsecureLocalhost,
+  });
+  return queueStagedPublishCandidates(input, connection, stagedItems);
+}
+
+/**
+ * Prepare scans for a bounded set of candidates already discovered by an
+ * initial sweep. Candidate-batch queue consumers call this directly: they do
+ * not re-list the registry and they cannot enqueue descendants.
+ */
+export async function queueStagedPublishCandidates(
+  input: DiscoverStagedPublishesInput,
+  connection: TokenForDiscovery,
+  stagedItems: readonly StagedPublishItem[],
 ): Promise<DiscoverStagedPublishesResult> {
   const {
     db,
@@ -226,101 +287,125 @@ export async function discoverAndQueueStagedPublishes(
     actorUserId,
     source,
     allowInsecureLocalhost,
-    stageStartCoordinator = createStageStartCoordinator(),
+    scheduleCandidateBatches,
     awaitReleaseOutcomes = false,
   } = input;
 
-  const stagedItems = await listAllStagedPublishes(connection, {
-    perPage: 50,
-    allowInsecureLocalhost,
-  });
   await markNpmConnectionUsed(db, organizationId);
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
-  const scanStarts = await mapWithConcurrency(
-    scanCandidates,
-    STAGED_PUBLISH_SCAN_START_CONCURRENCY,
-    (item) =>
-      stageStartCoordinator.run(item.id, async () => {
-        const stageId = item.id;
-        const access = await checkStagedPublishAccess(
-          connection.registryUrl,
-          connection.token,
-          stageId,
-          {
-            allowInsecureLocalhost,
-          },
-        );
-        if (!access.allowed) return null;
-        const scanId = crypto.randomUUID();
-        const detail = await createScanJob(db, {
-          id: scanId,
-          stageId,
-          organizationId,
-          ownerUserId: actorUserId,
-          source,
-          packageName: item.packageName,
-          stagedVersion: item.version,
-          registryUrl: connection.registryUrl,
-        });
-        if (!detail) return null;
-        recordProductEvent(env, {
-          name: "scan.queued",
-          organizationId,
-          ecosystem: "npm",
-          source,
-        });
-        const startedScan: StartedStagedPublishScan = {
-          id: scanId,
-          stageId,
-          packageName: item.packageName,
-          version: item.version,
-          tag: item.tag,
-          access: item.access,
-          actor: item.actor,
-          createdAt: item.createdAt,
-        };
+  // Each org sweep runs in its own invocation (one discovery-queue message), so
+  // there is no cross-org start coordination here — and none is needed.
+  // `listExistingScanStageIds` above suppresses duplicates within the org, and
+  // the same staged publish being reviewed by two organizations that can both
+  // see it is intended: each gets its own scan row, and the AI gateway cache
+  // absorbs the repeated analysis.
+  // Scan rows are created before their bounded slice is dispatched, so every
+  // row in that slice is tracked as it happens: if a later candidate throws (a D1
+  // error, a registry probe failure), the rows already written would otherwise
+  // stay `pending` forever with no queue message behind them — invisible work
+  // that also suppresses itself from the next sweep's dedup.
+  const invocationCandidates = scheduleCandidateBatches
+    ? scanCandidates.slice(0, STAGED_PUBLISH_SCAN_PREPARE_BATCH_SIZE)
+    : scanCandidates;
+  // A dedicated discovery queue resets the subrequest budget between slices.
+  // Without it, preserve the old safe fallback: hand off each completed row
+  // before preparing another, so termination cannot strand a whole slice.
+  const preparationBatchSize = env.DISCOVERY_QUEUE ? STAGED_PUBLISH_SCAN_PREPARE_BATCH_SIZE : 1;
+  const startedScans: StartedStagedPublishScan[] = [];
+  for (let offset = 0; offset < invocationCandidates.length; offset += preparationBatchSize) {
+    const candidates = invocationCandidates.slice(offset, offset + preparationBatchSize);
+    const created: PreparedScanStart[] = [];
+    let prepared: (PreparedScanStart | null)[];
+    try {
+      prepared = await mapWithConcurrency<StagedPublishItem, PreparedScanStart | null>(
+        candidates,
+        STAGED_PUBLISH_SCAN_START_CONCURRENCY,
+        async (item) => {
+          const stageId = item.id;
+          const access = await checkStagedPublishAccess(
+            connection.registryUrl,
+            connection.token,
+            stageId,
+            { allowInsecureLocalhost },
+          );
+          if (!access.allowed) return null;
+          const scanId = crypto.randomUUID();
+          const detail = await createScanJob(db, {
+            id: scanId,
+            stageId,
+            organizationId,
+            ownerUserId: actorUserId,
+            source,
+            packageName: item.packageName,
+            stagedVersion: item.version,
+            registryUrl: connection.registryUrl,
+          });
+          if (!detail) return null;
+          const start: PreparedScanStart = {
+            scanId,
+            message: {
+              stageId,
+              scanId,
+              organizationId,
+              actorUserId,
+              connectionId: connection.connectionId,
+              source,
+            },
+            startedScan: {
+              id: scanId,
+              stageId,
+              packageName: item.packageName,
+              version: item.version,
+              tag: item.tag,
+              access: item.access,
+              actor: item.actor,
+              createdAt: item.createdAt,
+            },
+          };
+          created.push(start);
+          return start;
+        },
+      );
+    } catch (err) {
+      await deletePendingScans(db, organizationId, created);
+      throw err;
+    }
+    const preparedStarts = prepared.filter(isPreparedScanStart);
+    await dispatchPreparedScans({
+      db,
+      env,
+      executionCtx,
+      organizationId,
+      source,
+      prepared: preparedStarts,
+    });
+    startedScans.push(...preparedStarts.map((start) => start.startedScan));
+  }
 
-        const message: ScanQueueMessage = {
-          stageId,
-          scanId,
-          organizationId,
-          actorUserId,
-          source,
-        };
-        if (env.SCAN_QUEUE) {
-          try {
-            await env.SCAN_QUEUE.send(message);
-          } catch (err) {
-            await deletePendingScanJob(db, scanId, organizationId);
-            throw err;
-          }
-        } else {
-          executionCtx.waitUntil(runScanInline(env, executionCtx, message, db));
-        }
-        return startedScan;
-      }),
+  const deferred = scanCandidates.length - invocationCandidates.length;
+  if (deferred > 0) {
+    scheduleCandidateBatches?.(scanCandidates.slice(invocationCandidates.length));
+  }
+
+  const preparedStageIds = new Set(invocationCandidates.map((item) => item.id));
+  const outcomeItems = stagedItems.filter(
+    (item) => existingStageIds.has(item.id) || preparedStageIds.has(item.id),
   );
-  const startedScans = scanStarts.filter(isStartedStagedPublishScan);
-
-  // Resolving npm's own state for already-reviewed releases is advisory
-  // annotation. Start it only after newly discovered scan rows exist, so a
-  // restaged version's new incarnation can supersede its historical review
-  // before any status is written. HTTP discovery detaches it; cron awaits it
-  // so the outer organization cap also bounds these lookups.
+  // Registry status is advisory. Resolve it for this bounded candidate slice
+  // plus every already-reviewed staged release. Defer only new candidates whose
+  // scan rows belong to later queue batches, so a restaged version supersedes
+  // its historical review before any status is written. HTTP discovery detaches
+  // this work; queued background discovery awaits it before acknowledging.
   const releaseOutcome = resolveNpmReleaseOutcomes({
     db,
     env,
     organizationId,
     ownerUserId: actorUserId,
     connection,
-    stagedItems,
+    stagedItems: outcomeItems,
     allowInsecureLocalhost,
-    // Five cron organization workers share one Worker invocation. Serial
-    // lookups within each organization keep that invocation at five status
-    // requests, while eight candidates still drain a 100-org worst-case
-    // timeout sweep inside the 15-minute cron wall-time ceiling.
     ...(awaitReleaseOutcomes ? { lookupLimit: 8, lookupConcurrency: 1 } : {}),
   })
     .then((outcome) => {
@@ -342,9 +427,10 @@ export async function discoverAndQueueStagedPublishes(
   return {
     found: stageIds.length,
     created: startedScans.length,
-    skipped: stageIds.length - startedScans.length,
+    skipped: stageIds.length - startedScans.length - deferred,
     queued: Boolean(env.SCAN_QUEUE),
     scans: startedScans,
+    deferred,
   };
 }
 
@@ -376,26 +462,78 @@ async function listAllStagedPublishes(
 
 export { StagedPublishesFetchError };
 
-export function createStageStartCoordinator(): StageStartCoordinator {
-  const tails = new Map<string, Promise<void>>();
-  return {
-    async run(stageId, worker) {
-      const previous = tails.get(stageId) ?? Promise.resolve();
-      let release: () => void;
-      const current = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const tail = previous.catch(() => undefined).then(() => current);
-      tails.set(stageId, tail);
-      await previous.catch(() => undefined);
-      try {
-        return await worker();
-      } finally {
-        release!();
-        if (tails.get(stageId) === tail) tails.delete(stageId);
-      }
-    },
-  };
+/**
+ * Hand one prepared slice to the scan queue in batches of at most
+ * `SCAN_QUEUE_SEND_BATCH_SIZE`. Production slices are capped at 50, so they cost
+ * one queue round trip instead of 50; the no-discovery-queue fallback passes one
+ * row at a time so every completed row is handed off immediately.
+ *
+ * The invariant is the same as the per-message version — never leave a scan row
+ * pending with no queue message behind it, because that row is invisible work
+ * that also suppresses itself from the next sweep's dedup — but batching changes
+ * the semantics in two ways worth stating:
+ *
+ * 1. Failure is coarser within a production slice. A failure while preparing
+ *    discards that unqueued slice; earlier slices are already on the queue.
+ * 2. A rejected `sendBatch` does not prove nothing was delivered — the failure
+ *    may be on the response path. Rolling the row back after the message was in
+ *    fact delivered leaves a message pointing at a deleted scan, which the
+ *    consumer reports as a `scan_row_missing` skip (see `executeScanJob`)
+ *    rather than the misleading `already_terminal`. Benign, but it is a real
+ *    at-least-once artifact, not an impossibility.
+ */
+async function dispatchPreparedScans(input: {
+  db: AppDb;
+  env: Cloudflare.Env;
+  executionCtx: ExecutionContext;
+  organizationId: string;
+  source: ScanSource;
+  prepared: readonly PreparedScanStart[];
+}): Promise<void> {
+  const { db, env, executionCtx, organizationId, source, prepared } = input;
+  if (!prepared.length) return;
+
+  const queue = env.SCAN_QUEUE;
+  if (!queue) {
+    // Local/dev fallback: no queue binding, so run each scan on the invocation.
+    for (const start of prepared) {
+      recordScanQueuedEvent(env, organizationId, source);
+      executionCtx.waitUntil(runScanInline(env, executionCtx, start.message, db));
+    }
+    return;
+  }
+
+  for (let offset = 0; offset < prepared.length; offset += SCAN_QUEUE_SEND_BATCH_SIZE) {
+    const batch = prepared.slice(offset, offset + SCAN_QUEUE_SEND_BATCH_SIZE);
+    try {
+      await queue.sendBatch(batch.map((start) => ({ body: start.message })));
+    } catch (err) {
+      await deletePendingScans(db, organizationId, prepared.slice(offset));
+      throw err;
+    }
+    batch.forEach(() => recordScanQueuedEvent(env, organizationId, source));
+  }
+}
+
+/** Drop scan rows that were created but never handed to the scan queue. */
+async function deletePendingScans(
+  db: AppDb,
+  organizationId: string,
+  starts: readonly PreparedScanStart[],
+): Promise<void> {
+  await deletePendingScanJobs(
+    db,
+    starts.map((start) => start.scanId),
+    organizationId,
+  );
+}
+
+function recordScanQueuedEvent(
+  env: Cloudflare.Env,
+  organizationId: string,
+  source: ScanSource,
+): void {
+  recordProductEvent(env, { name: "scan.queued", organizationId, ecosystem: "npm", source });
 }
 
 function filterNewStagedPublishesByStageId(
@@ -410,10 +548,8 @@ function filterNewStagedPublishesByStageId(
   });
 }
 
-function isStartedStagedPublishScan(
-  scan: StartedStagedPublishScan | null,
-): scan is StartedStagedPublishScan {
-  return scan !== null;
+function isPreparedScanStart(start: PreparedScanStart | null): start is PreparedScanStart {
+  return start !== null;
 }
 
 /**

@@ -97,7 +97,7 @@ describe("staged publishes route", () => {
         });
       }),
     );
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { sendBatch: vi.fn(async () => undefined) };
     const app = buildTestApp(owner);
     const ctx = createExecutionContext();
     const res = await app.fetch(
@@ -125,8 +125,11 @@ describe("staged publishes route", () => {
       skipped: 1,
       scans: [{ stageId: "stage-new-123", packageName: "@org/new", version: "1.1.0" }],
     });
-    expect(queue.send).toHaveBeenCalledTimes(1);
-    expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
+    // Discovery hands the new scans to the queue in one batched send.
+    expect(queue.sendBatch).toHaveBeenCalledTimes(1);
+    expect(queue.sendBatch.mock.calls[0]?.[0]).toMatchObject([
+      { body: { stageId: "stage-new-123" } },
+    ]);
     const { scans } = await listScans(db, owner.organizationId);
     expect(scans.map((scan) => scan.stageId)).toContain("stage-new-123");
     expect(scans.find((scan) => scan.stageId === "stage-new-123")).toMatchObject({
