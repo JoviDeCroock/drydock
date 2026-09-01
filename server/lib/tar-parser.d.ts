@@ -30,7 +30,8 @@ export type TarSuspiciousEntryKind =
   | "duplicate"
   | "unicode-confusable"
   | "content-skipped"
-  | "retention-tier";
+  | "retention-tier"
+  | "parser-differential";
 
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;

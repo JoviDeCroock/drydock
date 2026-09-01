@@ -1,7 +1,13 @@
 // @ts-nocheck
 import { describe, expect, test } from "vitest";
 import * as tarParser from "../server/lib/tar-parser.js";
-import { buildTar, encoder } from "./helpers/archive-fixtures.mjs";
+import {
+  TAR_BLOCK,
+  buildTar,
+  concatBytes,
+  encoder,
+  tarEntriesOnly,
+} from "./helpers/archive-fixtures.mjs";
 
 const {
   canonicalizePath,
@@ -801,6 +807,68 @@ describe("readTar limits and malformed archives", () => {
     extended.fill(0x66, tar.length); // 'f'
     const files = await parse(extended);
     expect(files.map((f) => f.path)).toEqual(["a.js"]);
+  });
+
+  test("reads entries hidden behind a lone all-zero block", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      new Uint8Array(TAR_BLOCK),
+      buildTar([{ name: "package/test.txt", body: "123\n" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "test.txt"]);
+    expect(suspicious).toContainEqual({
+      kind: "parser-differential",
+      path: "<archive>",
+      detail:
+        "1 entry follows an all-zero block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first all-zero block never sees them",
+    });
+  });
+
+  test("counts every entry a first-block reader would miss", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      new Uint8Array(TAR_BLOCK),
+      buildTar([
+        { name: "package/test.txt", body: "123\n" },
+        { name: "package/lib/extra.js", body: "// b\n" },
+      ]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "test.txt", "lib/extra.js"]);
+    expect(suspicious.find((entry) => entry.kind === "parser-differential").detail).toContain(
+      "2 entries follow",
+    );
+  });
+
+  test("keeps reading past repeated single zero blocks separated by entries", async () => {
+    const tar = concatBytes([
+      new Uint8Array(TAR_BLOCK),
+      tarEntriesOnly(buildTar([{ name: "package/a.js", body: "// a\n" }])),
+      new Uint8Array(TAR_BLOCK),
+      buildTar([{ name: "package/b.js", body: "// b\n" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["a.js", "b.js"]);
+    expect(suspicious.filter((entry) => entry.kind === "parser-differential")).toHaveLength(1);
+  });
+
+  test("does not flag a well-formed archive", async () => {
+    const { files, suspicious } = await parseFull(
+      buildTar([{ name: "package/a.js", body: "// a\n" }]),
+    );
+    expect(files.map((f) => f.path)).toEqual(["a.js"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("tolerates an archive that ends after a single zero block", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/a.js", body: "// a\n" }])),
+      new Uint8Array(TAR_BLOCK),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["a.js"]);
+    expect(suspicious).toEqual([]);
   });
 
   test.each([

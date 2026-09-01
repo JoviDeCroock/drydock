@@ -14,7 +14,7 @@
 //     cross-function calls resolve by the lexical names below.
 
 /** @typedef {{ path: string, size: number, sha256: string, flags: string[], textSample?: string }} ParsedFile */
-/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier", path: string, detail: string }} TarSuspiciousEntry */
+/** @typedef {{ kind: "non-regular"|"duplicate"|"unicode-confusable"|"content-skipped"|"retention-tier"|"parser-differential", path: string, detail: string }} TarSuspiciousEntry */
 
 export function readString(bytes, start, len) {
   let end = start;
@@ -789,6 +789,11 @@ export async function readTarStream(
   let demotedByTier = 0;
   let budgetNotice = null;
   let tierNotice = null;
+  // An all-zero block only ends the archive when the block after it is all-zero
+  // too, so the first one is held pending rather than acted on.
+  let pendingNullBlock = false;
+  let entriesAfterNullBlock = 0;
+  let nullBlockNotice = null;
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -808,7 +813,29 @@ export async function readTarStream(
   try {
     while (await fill(512)) {
       const header = take(512);
-      if (header.every((b) => b === 0)) break;
+      if (header.every((b) => b === 0)) {
+        // The tar end-of-archive marker is TWO consecutive all-zero blocks, and
+        // node-tar — the reader `npm install` extracts with — ends the archive
+        // only on the second one; a lone zero block is skipped and parsing
+        // resumes at the next header. Ending here on the first block would let
+        // an archive hide every following entry behind one zero block: the
+        // reviewer sees a short archive while the consumer's extractor reads on
+        // and writes the rest.
+        if (pendingNullBlock) break;
+        pendingNullBlock = true;
+        continue;
+      }
+      if (pendingNullBlock) {
+        pendingNullBlock = false;
+        if (!nullBlockNotice) {
+          // Pushed directly rather than through addSuspicious: entries that only
+          // a two-block-aware reader reaches are exactly what a reviewer must
+          // see, so this disclosure must survive a suspicious list already at
+          // its cap.
+          nullBlockNotice = { kind: "parser-differential", path: "<archive>", detail: "" };
+          suspicious.push(nullBlockNotice);
+        }
+      }
       entryCount += 1;
       if (entryCount > entryLimit) throw tarError("archive contains too many files");
 
@@ -820,6 +847,12 @@ export async function readTarStream(
       if (!Number.isFinite(size) || size < 0) throw tarError("invalid tar entry size");
       const type = String.fromCharCode(header[156] || 48);
       const isRegular = type === "0" || type === nul;
+      // PAX and long-name blocks describe the entry after them rather than an
+      // entry of their own, so they must not inflate the count of entries a
+      // first-block reader misses.
+      if (nullBlockNotice && type !== "x" && type !== "g" && type !== "L") {
+        entriesAfterNullBlock += 1;
+      }
       const padding = Math.ceil(size / 512) * 512 - size;
 
       // Only regular files stream-skip oversized bodies (the prepackaged-binary
@@ -1014,6 +1047,9 @@ export async function readTarStream(
     }
     if (tierNotice) {
       tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+    }
+    if (nullBlockNotice) {
+      nullBlockNotice.detail = `${entriesAfterNullBlock} ${entriesAfterNullBlock === 1 ? "entry follows" : "entries follow"} an all-zero block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first all-zero block never sees them`;
     }
     return { files, suspicious };
   } finally {

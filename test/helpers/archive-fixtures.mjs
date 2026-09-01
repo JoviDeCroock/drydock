@@ -17,7 +17,7 @@ export const encoder = new TextEncoder();
 
 // Each header is exactly 512 bytes; entry bodies are zero-padded to a multiple
 // of 512. The archive is terminated with two zero blocks.
-const TAR_BLOCK = 512;
+export const TAR_BLOCK = 512;
 
 function pad(bytes, length) {
   if (bytes.length > length) throw new Error("field overflow: " + bytes.length + " > " + length);
@@ -73,6 +73,24 @@ export function buildTar(entries) {
   for (const p of parts) {
     out.set(p, offset);
     offset += p.length;
+  }
+  return out;
+}
+
+// Strip the two-block end-of-archive marker `buildTar` appends, so a fixture can
+// splice extra blocks (a lone zero block, a second archive) after real entries.
+export function tarEntriesOnly(tar) {
+  return tar.subarray(0, tar.length - TAR_BLOCK * 2);
+}
+
+export function concatBytes(parts) {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
   }
   return out;
 }

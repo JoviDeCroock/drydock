@@ -168,7 +168,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.28.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -414,6 +414,17 @@ conditions any revived burst rule would have to meet.
 `test/fixtures/security-corpus/cases-atpm/` pin each rule's severity and risk, plus a matching verified
 build that must stay quiet; the detection eval consumes the same cases through the production
 `atpmRecordFindings` path.
+
+`1.29.0` adds the `parser-differential` evidence kind to `tar.suspicious-entry` (high). The tar
+end-of-archive marker is two consecutive all-zero blocks; the reader stopped at the first one, so an
+archive that placed a single zero block after its innocent entries looked truncated to review while
+node-tar — the reader `npm install` extracts with — read straight past it and installed the rest. The
+reader now ends only on the second consecutive zero block, so review sees every entry npm does, and
+entries following a lone zero block are reported as their own finding. Readers genuinely disagree at
+that byte (pip's CPython `tarfile` and GNU tar both stop at the first zero block; node-tar does not),
+so the reader takes the widest view for every ecosystem: on the PyPI side the finding reports a
+hand-crafted archive whose trailing entries pip may not extract, rather than content hidden from
+review. No publisher toolchain emits the shape in either ecosystem.
 
 ### Fixture format
 

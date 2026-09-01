@@ -2194,6 +2194,30 @@ describe("review", () => {
     );
   });
 
+  test("raises entries hidden behind a lone end-of-archive block as high", () => {
+    const entries = [
+      {
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: "1 entry follows an all-zero block",
+      },
+    ];
+    const npm = tarSuspiciousEntryFindings(entries);
+    const pypi = tarSuspiciousEntryFindings(entries, { dialect: "pypi" });
+
+    expect(npm[0]).toEqual(
+      expect.objectContaining({
+        severity: "high",
+        file: "<archive>",
+        evidence: "parser-differential: 1 entry follows an all-zero block",
+        ruleId: "tar.suspicious-entry",
+      }),
+    );
+    expect(npm[0].reason).toContain("npm extracts with node-tar");
+    expect(pypi[0].reason).toContain("pip's CPython `tarfile`");
+    expect(computeRisk(npm)).toBe("high");
+  });
+
   test("escalates retention-tier findings when hash-only content changed", () => {
     const entries = [
       {
