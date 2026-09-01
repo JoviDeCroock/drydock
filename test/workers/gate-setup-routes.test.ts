@@ -280,9 +280,9 @@ describe("gate-setup preview", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { workflowPath: string; yaml: string; notes: string[] };
     expect(body.workflowPath).toBe(".github/workflows/drydock-npm-release.yml");
-    // The environment is normalized before it reaches the adapter, so the YAML
-    // names the environment GitHub will actually create.
-    expect(body.yaml).toContain('environment: "production"');
+    // The workflow names the environment exactly as GitHub has it: a trusted
+    // publisher is configured against that same string.
+    expect(body.yaml).toContain('environment: "Production"');
     expect(body.yaml).toContain('name: "Publish @acme/widgets"');
     expect(body.notes.length).toBeGreaterThan(0);
     // Pure computation: the preview must not spend the installation's GitHub budget.
@@ -432,7 +432,7 @@ describe("gate-setup verify", () => {
     expect(body.state.unavailableReason).not.toContain("ECONNREFUSED");
   });
 
-  test("the environment is lowercased before the lookup, as GitHub stores it", async () => {
+  test("verifies the environment under the exact name GitHub reports", async () => {
     const { userId, organizationId } = await seedUser();
     const installation = await seedInstallation(organizationId);
     const seen: string[] = [];
@@ -450,7 +450,9 @@ describe("gate-setup verify", () => {
       draft(installation.id, { environment: "Production" }),
     );
 
-    expect(seen.some((url) => url.endsWith("/environments/production"))).toBe(true);
+    // Folding case here would 404 an environment that exists and report the
+    // gate as missing.
+    expect(seen.some((url) => url.endsWith("/environments/Production"))).toBe(true);
   });
 
   test("a verify draft needs no ecosystem or package name", async () => {
