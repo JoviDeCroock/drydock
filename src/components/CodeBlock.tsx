@@ -9,12 +9,14 @@ export function CodeBlock({
   name,
   title,
   lang,
+  copyLabel,
   defaultOpen = false,
   children,
 }: {
   name?: string;
   title?: string;
   lang?: string;
+  copyLabel?: string;
   defaultOpen?: boolean;
   children: string;
 }) {
@@ -57,7 +59,7 @@ export function CodeBlock({
           event.stopPropagation();
         }}
       >
-        <CopyButton text={children} />
+        <CopyButton text={children} label={copyLabel} />
       </span>
     </div>
   );

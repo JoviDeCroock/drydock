@@ -503,21 +503,23 @@ export default function DocsPage() {
                   </>,
                   <>
                     Open <InlineCode>Guided gate setup</InlineCode> in the same settings tab and
-                    pick the repository. Drydock creates the GitHub Environment, registers itself as
-                    that environment's deployment protection rule, generates the publish workflow
-                    for your package, and opens a pull request with it.
+                    pick the repository. The wizard walks you through creating the GitHub
+                    Environment and enabling Drydock as its deployment protection rule, and confirms
+                    each one by reading GitHub back.
                   </>,
                   <>
-                    Create the release target in the last step of the wizard, then review and merge
-                    the workflow pull request.
+                    Generate the publish workflow for your package, commit it, and create the
+                    release target in the last step of the wizard.
                   </>,
                 ]}
               />
-              <Callout label="Every step has a manual path">
-                The wizard works through your App installation, which may not grant repository
-                administration or workflow write access. When GitHub refuses a step, Drydock says
-                which permission is missing and shows what to do by hand — including the generated
-                workflow, ready to copy. The examples below are the same files the wizard writes.
+              <Callout label="You make the changes, Drydock verifies them">
+                Drydock holds no write permission on your repository — creating environments and
+                committing workflow files would mean holding the power to rewrite the very publish
+                workflow the gate protects. So the wizard generates the workflow, links to each
+                GitHub screen, and then reads GitHub back: it reports the gate as armed only when
+                GitHub confirms Drydock is the environment's protection rule. The examples below are
+                the same files the wizard writes.
               </Callout>
               <div class="flex flex-wrap gap-2 pt-1">
                 <LinkButton href="/dashboard/settings?tab=integrations#gate-setup" size="sm">
