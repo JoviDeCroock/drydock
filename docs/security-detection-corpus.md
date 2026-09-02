@@ -168,7 +168,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.30.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -441,22 +441,76 @@ review one set of files and hand npm another; the evidence names which one was f
   the first component. A regular entry whose path is still not representable — traversal, drive letter,
   backslash separator, over-long — is now reported instead of silently dropped.
 
+`1.30.0` closes the disagreements found by checking `1.29.0` against node-tar 7.5.15 (and the
+adversarial re-check of that fix). Most still hid content the same way: a header one reader skips
+without consuming its body and the other reads as an entry, so the declared body holds the entries
+only npm installs.
+
+- **Base-256 numeric fields.** node-tar decodes a numeric header field whose first byte has the high
+  bit set as base-256, and a prefix other than `0x80`/`0xff` or a value outside the safe-integer range
+  throws out of the header decode, so the block is skipped like a checksum failure. That covers mode,
+  uid, gid, and mtime; devmaj and devmin under the ustar magic; and atime and ctime when byte 475 is
+  NUL. A field is not decoded when a PAX record (local or global) overrides it — but only for the keys
+  node-tar's `Pax` record carries (uid, gid, mtime, atime, ctime); a `mode=` or `devmaj=` record
+  changes nothing. Such a header is now rejected the same way and reported.
+- **PAX records without `=`.** node-tar keeps a bare `size` as an empty value, which reads as a
+  zero-length body; the record was dropped here and the header's own size trusted, so the declared
+  body could hold the entries npm went on to install. A bare `path` likewise makes node-tar reject
+  every following header. Both now match.
+- **String fields are cut the way node-tar cuts them**: `/\0.*/` without the `s` flag, so text after
+  a newline that follows the NUL survives. Stopping at the first NUL saw an empty name where node-tar
+  saw `\nx` (rejecting a header npm accepts) and an empty linkname where node-tar saw one (accepting a
+  header npm rejects) — each a block-boundary split.
+- **Numeric PAX `path`** rejects a header only for typeflag `0`/NUL, where node-tar's decode calls
+  `.slice` on the Number; a metadata or non-regular header under a pending numeric path is read
+  normally, so a later `x` record can replace the path and name the file npm installs. `path=0` is the
+  falsy Number 0 to node-tar and rejects every header until a prefix turns it into a string. Only a
+  PAX record's value is coerced: a GNU `L`/`N` long name of the same digits stays the string node-tar
+  keeps, and a zero-length `L` never enters node-tar's meta state, so it changes nothing.
+- **A leading UTF-8 BOM is kept**, as node-tar's `Buffer` decode keeps it and `TextDecoder` by
+  default does not: a BOM-only name is a truthy path (accepted, body consumed), a BOM-only linkname
+  on a regular file rejects the header, and a BOM in front of a PAX body makes node-tar drop the
+  first record rather than apply it.
+- **Null blocks.** node-tar's null block is zero everywhere outside the checksum field with a
+  checksum that does not parse, not only an all-zero block; two blocks with spaces in that field end
+  the archive for npm but were rejected here as bad headers, reporting the entries after them as
+  files npm never writes.
+- **Ustar prefix with byte 475 set** is prepended unconditionally by node-tar, so an empty prefix
+  still yields `/` + name: an empty name is the truthy path `/` (accepted, body consumed) and
+  `/package/x` sits one level down for npm's `strip: 1`, which is where it is reported now. An empty
+  PAX `path=` under a prefix is likewise an entry node-tar reads and drops in unpack rather than a
+  rejected header, so its body is consumed as npm does.
+
+- **Root stripping follows the consumer, not the archive.** The caller names the strip depth its
+  ecosystem's consumer extracts with, because the recorded path has to be the path that consumer
+  installs. npm and atpm ask for `strip1` — node-tar's `strip: 1`, which drops the first path
+  component whatever it is called — so a tarball rooted at `dist/` reports the files npm writes at
+  the package root, two roots that collapse onto one installed path raise a `duplicate` finding
+  instead of reading as two distinct files, and a first component of `..` or `C:` is consumed by the
+  strip exactly as node-tar consumes it (node-tar applies `strip` before its own `..` and
+  absolute-path checks, so `../x` is written and `package/../x` is refused). The strip is
+  unconditional: an entry with no directory component leaves no path and npm installs no file for
+  it, so it is disclosed as a `parser-differential` entry rather than recorded under its own name —
+  recording it would let a top-level decoy collide with, and last-write-wins over, the stripped
+  entry whose bytes npm installs at that path. PyPI asks for `keep`: an sdist's `<name>-<version>/`
+  root is real to pip, and `preparePyPiArtifact` strips the common root afterwards while treating
+  entries outside it as evidence.
+
 Readers still genuinely disagree about a lone zero block (pip's CPython `tarfile` and GNU tar stop at
 the first one; node-tar does not), so on the PyPI side these findings report a hand-crafted archive
-whose entries pip may not extract rather than content hidden from review. Four divergences from npm
-remain, three of them by design and none of which lets an archive hide content: a backslash path is
+whose entries pip may not extract rather than content hidden from review. Two divergences from npm
+remain, both by design and neither of which lets an archive hide content: a backslash path is
 reported as a finding rather than recorded as a file (it is a separator on Windows and an ordinary
-character on POSIX, so no one path is right for both); an entry with no directory component is
-recorded where npm's `strip: 1` drops it; and `.gitignore` is reported under its archive name rather
-than the `.npmignore` pacote renames it to on extract, which is a fetcher behavior rather than an
-archive one.
+character on POSIX, so no one path is right for both); and `.gitignore` is reported under its
+archive name rather than the `.npmignore` pacote renames it to on extract, which is a fetcher
+behavior rather than an archive one.
 
-The fourth is a known gap: npm's `strip: 1` drops whatever the first path component is, while this
-reader strips a literal `package`, because it also serves ecosystems that keep their root directory
-(a PyPI sdist's `<name>-<version>/`). A hand-built npm tarball rooted at some other name therefore
-reports one level deeper than npm extracts, so the root-anchored rules — the manifest lookup and
-`binding.gyp` — do not see files npm places at the package root. Closing it means telling the reader
-which strip depth its caller extracts with.
+One parse still cannot name a consumer: a workflow-gate bundle's `.tgz`/`.tar.gz` is claimed by both
+npm and PyPI on filename alone, so the ecosystem is decided from the parsed contents. That parse
+strips a literal `package/` only — the one behavior that can answer for both, since it surfaces an
+npm root manifest while leaving a PyPI sdist root intact. An npm tarball rooted at any other name
+therefore carries no root manifest there and the gate rejects it as unrecognizable rather than
+reviewing it one level too deep.
 
 ### Fixture format
 

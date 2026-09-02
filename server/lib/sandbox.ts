@@ -2,7 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { FileRecord, PackageJsonSummary } from "./review";
 import { STAGE_ID_PATTERN } from "./ecosystems/npm/stage-id";
 import * as tarParser from "./tar-parser.js";
-import type { TarSuspiciousEntry } from "./tar-parser.js";
+import type { TarRootStrip, TarSuspiciousEntry } from "./tar-parser.js";
 
 export const SANDBOX_MAX_FILES = 2_500;
 // Hard cap on archive entries walked at all. SANDBOX_MAX_FILES bounds the
@@ -58,6 +58,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.isRootManifestPath,
   tarParser.tarError,
   tarParser.tarHeaderChecksum,
+  tarParser.isRejectedTarNumber,
   tarParser.readTarStream,
   tarParser.readUint16Le,
   tarParser.readUint32Le,
@@ -241,6 +242,13 @@ export interface DownloadOptions {
   npmRegistry?: string;
   /** Defaults to SHA-1; content-addressed adapters opt into stronger digests. */
   archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
+  /**
+   * Strip depth the archive's consumer extracts with, so recorded paths are the
+   * paths it installs — `"strip1"` for npm's `tar.x({ strip: 1 })`, `"keep"` for
+   * PyPI sdists. Defaults to the ecosystem-unknown `"package-prefix"` parse; see
+   * `normalizeTarPath` in `tar-parser.js`.
+   */
+  tarRootStrip?: TarRootStrip;
 }
 
 export class SandboxError extends Error {
@@ -302,6 +310,8 @@ export interface InlineDownloadOptions {
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars`. */
   maxTextSampleChars?: number;
+  /** See `DownloadOptions.tarRootStrip`. */
+  tarRootStrip?: TarRootStrip;
 }
 
 export interface StreamDownloadOptions {
@@ -310,6 +320,8 @@ export interface StreamDownloadOptions {
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars`. */
   maxTextSampleChars?: number;
+  /** See `DownloadOptions.tarRootStrip`. */
+  tarRootStrip?: TarRootStrip;
 }
 
 /**
@@ -341,6 +353,7 @@ export async function downloadInSandboxInline(
   new Uint8Array(body).set(options.bytes);
   return parseInCredentialsFreeSandbox(env, ctx, body, options.format, options.maxFiles, {
     maxTextSampleChars: options.maxTextSampleChars,
+    tarRootStrip: options.tarRootStrip,
   });
 }
 
@@ -359,6 +372,7 @@ export async function downloadInSandboxStream(
 ): Promise<DownloadResult> {
   return parseInCredentialsFreeSandbox(env, ctx, options.body, options.format, options.maxFiles, {
     maxTextSampleChars: options.maxTextSampleChars,
+    tarRootStrip: options.tarRootStrip,
   });
 }
 
@@ -368,7 +382,7 @@ async function parseInCredentialsFreeSandbox(
   body: ArrayBuffer | ReadableStream<Uint8Array>,
   format: "tgz" | "zip" | "vsix",
   maxFiles?: number,
-  retention: { maxTextSampleChars?: number } = {},
+  parse: { maxTextSampleChars?: number; tarRootStrip?: TarRootStrip } = {},
 ): Promise<DownloadResult> {
   const sandbox = env.LOADER.load({
     compatibilityDate: "2026-05-20",
@@ -382,7 +396,8 @@ async function parseInCredentialsFreeSandbox(
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
       ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(),
-      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(retention.maxTextSampleChars),
+      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(parse.maxTextSampleChars),
+      TAR_ROOT_STRIP: normalizeTarRootStrip(parse.tarRootStrip),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -450,6 +465,7 @@ export async function downloadInSandbox(
       MAX_STREAM_TAR_BYTES,
       ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(options.archiveDigestAlgorithms),
       MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(options.maxTextSampleChars),
+      TAR_ROOT_STRIP: normalizeTarRootStrip(options.tarRootStrip),
     },
     globalOutbound: (
       ctx as unknown as {
@@ -486,6 +502,12 @@ function normalizeTextSampleCap(value: number | undefined): number {
   return Math.floor(value);
 }
 
+// The sandbox `env` crosses an isolate boundary as plain data, so an unknown
+// value must resolve to a known mode here rather than reaching the parser.
+function normalizeTarRootStrip(value: TarRootStrip | undefined): TarRootStrip {
+  return value === "strip1" || value === "keep" ? value : "package-prefix";
+}
+
 /**
  * Source of the dynamic Worker module the sandbox runs. Exported so tests can
  * execute the rendered module itself — the parser exports are unit-tested
@@ -503,6 +525,7 @@ export default {
     const maxTarBytes = env.MAX_TAR_BYTES || 26214400;
     // Per-file text-sample cap; 0 = unbounded (every staged/reviewed parse).
     const maxTextSampleChars = env.MAX_TEXT_SAMPLE_CHARS || 0;
+    const tarRootStrip = env.TAR_ROOT_STRIP || "package-prefix";
     const archiveFormat = inlineFormat || env.ARCHIVE_FORMAT || "tgz";
     let res;
     if (inlineFormat) {
@@ -601,7 +624,7 @@ export default {
       // almost nothing, so the decompressed budget inside readTarStream does
       // not bound download size or inflater CPU on its own.
       const tarStream = boundedByteStream(archive.body, maxStreamTarBytes).pipeThrough(new DecompressionStream("gzip"));
-      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500, maxTextSampleChars);
+      const parsed = await readTarStream(tarStream, env.MAX_FILES || 2_500, maxTarBytes, maxStreamTarBytes, env.MAX_ENTRIES || env.MAX_FILES || 2_500, maxTextSampleChars, tarRootStrip);
       files = parsed.files;
       suspiciousEntries = parsed.suspicious;
     } catch (err) {

@@ -207,10 +207,43 @@ describe("path normalizer invariants", () => {
     );
   });
 
+  test("normalizeTarPath output is structurally safe in every strip mode", () => {
+    // The strip runs before the `..`, leading-slash, and drive-letter checks, so
+    // it changes what those checks see. Structural safety must hold regardless —
+    // this is the invariant the drive-letter escape (#311) violated.
+    fc.assert(
+      fc.property(
+        trickyPathArb,
+        fc.constantFrom("strip1", "keep", "package-prefix"),
+        (raw, mode) => {
+          const out = normalizeTarPath(raw, mode);
+          if (out === null) return;
+          expect(isStructurallySafePath(out)).toBe(true);
+        },
+      ),
+      {
+        seed: SEED,
+        numRuns: runs(1000),
+        examples: [
+          ["package//C:", "strip1"],
+          ["/C:/x", "strip1"],
+        ],
+      },
+    );
+  });
+
   test("normalizeTarPath strips exactly one package/ wrapper", () => {
     // Pin the single-strip semantics that make the normalizer non-idempotent.
     expect(normalizeTarPath("package/package/x")).toBe("package/x");
     expect(normalizeTarPath("package/lib/index.js")).toBe("lib/index.js");
+  });
+
+  test("only `strip1` drops a first component that is not `package`", () => {
+    expect(normalizeTarPath("dist/lib/index.js", "strip1")).toBe("lib/index.js");
+    expect(normalizeTarPath("index.js", "strip1")).toBeNull();
+    expect(normalizeTarPath("dist/lib/index.js", "keep")).toBe("dist/lib/index.js");
+    expect(normalizeTarPath("dist/lib/index.js", "package-prefix")).toBe("dist/lib/index.js");
+    expect(normalizeTarPath("package/lib/index.js", "keep")).toBe("package/lib/index.js");
   });
 
   test("normalizeZipPath output is always safe and idempotent", () => {

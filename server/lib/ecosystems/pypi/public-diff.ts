@@ -416,6 +416,7 @@ async function downloadPublicPyPiArtifact(
       tarballUrl: artifact.url,
       archiveFormat: artifact.kind === "wheel" ? "zip" : "tgz",
       publicArtifactUrls: [artifact.url],
+      tarRootStrip: "keep",
     });
     return {
       artifact,

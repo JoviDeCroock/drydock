@@ -25,7 +25,19 @@ const SANDBOX_ENV_KEYS = [
   "MAX_TAR_BYTES",
   "MAX_TEXT_SAMPLE_CHARS",
   "NPM_REGISTRY",
+  "TAR_ROOT_STRIP",
 ];
+
+// Sandbox entrypoints that hand the archive to the tar reader. Each call site
+// has to name the strip depth its ecosystem's consumer extracts with, because
+// the recorded path is the path that consumer installs.
+const SANDBOX_DOWNLOAD_CALLS = /\bdownloadInSandbox(?:Inline|Stream)?\(/g;
+
+// The one call site that cannot name a strip depth: a workflow-gate bundle's
+// `.tgz`/`.tar.gz` is claimed by both npm and PyPI on filename alone, so the
+// ecosystem is only decided from the parsed contents. Its default parse and the
+// reason are documented at the call site.
+const ECOSYSTEM_UNKNOWN_PARSE = "lib/workflow-gates/resolve.ts";
 
 const CREDENTIAL_LEXEMES = /token|authorization|bearer|secret|password|cookie|credential|api.?key/i;
 
@@ -113,3 +125,45 @@ describe("hostile-bytes execution invariants", () => {
     expect(violations).toEqual([]);
   });
 });
+
+describe("sandbox archive-parse parity", () => {
+  // AGENTS.md: fix the whole parity class. A new ecosystem that parses a tar
+  // without naming its consumer's strip depth silently inherits the
+  // ecosystem-unknown parse and reports paths its consumer never installs.
+  test("every tar-capable sandbox call names the consumer's strip depth", () => {
+    const offenders = [];
+    for (const file of walkServerSources()) {
+      const source = readFileSync(path.join(SERVER_DIR, file), "utf8");
+      if (file === ECOSYSTEM_UNKNOWN_PARSE || file === "lib/sandbox.ts") continue;
+      for (const match of source.matchAll(SANDBOX_DOWNLOAD_CALLS)) {
+        const call = sliceCallArguments(source, match.index + match[0].length - 1);
+        // A pinned zip/vsix format never reaches the tar reader.
+        if (/archiveFormat:\s*"(?:zip|vsix)"/.test(call) || /format:\s*"(?:zip|vsix)"/.test(call)) {
+          continue;
+        }
+        if (!/\btarRootStrip\b/.test(call)) offenders.push(`${file}:${match[0]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+function walkServerSources(dir = "") {
+  return readdirSync(path.join(SERVER_DIR, dir), { withFileTypes: true }).flatMap((entry) => {
+    const rel = dir ? `${dir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return walkServerSources(rel);
+    return entry.name.endsWith(".ts") ? [rel] : [];
+  });
+}
+
+function sliceCallArguments(source, openParenIndex) {
+  let depth = 0;
+  for (let i = openParenIndex; i < source.length; i += 1) {
+    if (source[i] === "(") depth += 1;
+    else if (source[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openParenIndex, i + 1);
+    }
+  }
+  return source.slice(openParenIndex);
+}

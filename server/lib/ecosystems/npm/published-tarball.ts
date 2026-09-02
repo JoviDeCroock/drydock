@@ -277,6 +277,7 @@ export async function downloadPkgPrNewTarball(
     body,
     format: "tgz",
     maxFiles: options.maxFiles,
+    tarRootStrip: "strip1",
   });
 }
 
@@ -306,5 +307,6 @@ export async function downloadPublishedTarball(
     format: "tgz",
     maxFiles: options.maxFiles,
     maxTextSampleChars: options.maxTextSampleChars,
+    tarRootStrip: "strip1",
   });
 }

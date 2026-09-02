@@ -27,6 +27,13 @@ export async function resolveBundleArtifact(
 ): Promise<ParsedGateArtifact> {
   const lowerPath = file.path.toLowerCase();
   const format = lowerPath.endsWith(".vsix") ? "vsix" : lowerPath.endsWith(".whl") ? "zip" : "tgz";
+  // No `tarRootStrip`: a bundle's `.tgz`/`.tar.gz` is claimed by both npm and
+  // PyPI on filename alone, so the ecosystem is only known once `detectArchiveEcosystems`
+  // reads the parsed contents below. The default `package-prefix` parse is the
+  // one that can answer for both — it surfaces an npm `package/` root manifest
+  // while leaving a PyPI sdist root intact. An npm tarball rooted at any other
+  // name therefore carries no root manifest here and fails closed as
+  // unrecognizable rather than being reviewed one level too deep.
   const parsed = await downloadInSandboxInline(env, ctx, { bytes: file.bytes, format });
   const contents = { files: parsed.files, packageJson: parsed.packageJson ?? null };
 
