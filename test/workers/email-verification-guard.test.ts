@@ -6,6 +6,7 @@ import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { EMAIL_VERIFICATION_REQUIRED_CODE } from "../../server/lib/auth/email-verification";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
+import { githubAppRoutes } from "../../server/routes/github-app";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -46,6 +47,7 @@ function buildApp(userId: string, emailVerified: boolean) {
   });
   app.route("/api/v1/npm-connection", npmConnectionRoutes);
   app.route("/api/v1/scans", scansRoutes);
+  app.route("/api/v1/github-app", githubAppRoutes);
   return app;
 }
 
@@ -112,5 +114,21 @@ describe("email verification guard", () => {
     );
 
     expect(res.status).toBe(202);
+  });
+
+  test("guards both halves of GitHub installation and every release-decision route", async () => {
+    const userId = await seedUser();
+    const app = buildApp(userId, false);
+
+    for (const path of [
+      "/api/v1/github-app/install",
+      "/api/v1/github-app/install/callback",
+      "/api/v1/scans/scan-1/decision",
+      "/api/v1/github-app/workflow-gates/gate-1/decision",
+    ]) {
+      const res = await post(app, path, {});
+      expect(res.status, path).toBe(403);
+      expect(await res.json(), path).toMatchObject({ code: EMAIL_VERIFICATION_REQUIRED_CODE });
+    }
   });
 });

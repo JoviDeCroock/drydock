@@ -7,7 +7,6 @@ import { Button } from "../../components/Button";
 import { Muted } from "../../components/Typography";
 import { OrganizationModel } from "../../models/organization";
 import { PublishedReviewModel } from "../../models/published-review";
-import { supportsPublishedReview } from "../../lib/published-review-ecosystems";
 import type { DiffSpec } from "../../lib/package-diff-path";
 
 /**
@@ -44,8 +43,6 @@ export function SaveReviewAction({ spec }: { spec: DiffSpec }) {
     });
     if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
   };
-
-  if (!supportsPublishedReview(spec.ecosystem)) return null;
 
   return (
     <div class="flex flex-col gap-2 items-start">

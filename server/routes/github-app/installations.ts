@@ -98,6 +98,8 @@ installationRoutes.post("/install", async (c) => {
 });
 
 installationRoutes.post("/install/callback", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   let config: GithubAppConfig;
   try {
     config = readGithubAppConfig(c.env);

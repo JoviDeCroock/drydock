@@ -15,6 +15,7 @@ import { getScan, recordGatePackageDecision } from "../../db/scans";
 import { badgeLookupKey } from "../../db/scan-share";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../../lib/auth";
+import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { canonicalOrigin, rateLimitResponse } from "../../lib/platform/http";
 import {
   optionalWorkerExecutionContext,
@@ -77,6 +78,8 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
 // now-decided gate and delivers its stored decision — either over the queue or
 // inline when no queue is bound.
 workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = (await c.req.json().catch(() => ({}))) as Partial<{
     decision: string;
     comment: string;

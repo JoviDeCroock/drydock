@@ -55,11 +55,10 @@ function parsePublishedScanInput(body: Partial<PublishedScanRequest>): ScanInput
   if (!packageName) return { ok: false, error: "packageName is required", status: 400 };
   const version = typeof body.version === "string" ? body.version.trim() : "";
   if (!version) return { ok: false, error: "version is required", status: 400 };
-  const baselineVersion =
-    typeof body.baselineVersion === "string" ? body.baselineVersion.trim() || null : null;
   if (body.baselineVersion !== undefined && typeof body.baselineVersion !== "string") {
     return { ok: false, error: "invalid baselineVersion", status: 400 };
   }
+  const baselineVersion = body.baselineVersion?.trim() || null;
 
   return {
     ok: true,

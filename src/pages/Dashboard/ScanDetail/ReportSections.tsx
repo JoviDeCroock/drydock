@@ -17,9 +17,13 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
             diff={summary.packageJsonDiff}
             // PyPI dependencies are not npm packages, so the public npm diff
             // view cannot show them; npm and VS Code manifests both resolve
-            // their dependencies from the npm registry. Scans persisted before
-            // provenance carried an ecosystem are npm.
-            linkDependencyDiffs={summary.stagedPublish?.provenance?.ecosystem !== "pypi"}
+            // their dependencies from the npm registry. A gated scan names its
+            // ecosystem under `provenance`, a published-pair review names it
+            // directly, and scans persisted before either are npm.
+            linkDependencyDiffs={
+              (summary.stagedPublish?.provenance?.ecosystem ?? summary.stagedPublish?.ecosystem) !==
+              "pypi"
+            }
           />
         ) : (
           <EmptyLine>No manifest changes were saved for this review.</EmptyLine>

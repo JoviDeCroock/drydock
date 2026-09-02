@@ -77,6 +77,7 @@ interface PublishedPairDetails extends PublishedPairRef {
   // and the builder closes over the acquired artifacts. `summarizeDetails`
   // deliberately does not return it — only its own fields are persisted.
   buildFindings: PublicDiffAcquiredSources["buildFindings"];
+  releaseSources: () => void;
 }
 
 export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdapter {
@@ -162,6 +163,9 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
         registryUrl: diff.registryUrl,
         notices: sources.notices ?? [],
         buildFindings: sources.buildFindings,
+        releaseSources: () => {
+          broker.sources = null;
+        },
       };
       return {
         artifact: { files: sources.to.files, manifest: sources.to.packageJson },
@@ -191,7 +195,17 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
 
     runFindings(args): Finding[] {
       const details = args.details as PublishedPairDetails;
-      return details.buildFindings(args.fileDiff, args.manifestDiff);
+      try {
+        return details.buildFindings(args.fileDiff, args.manifestDiff);
+      } finally {
+        // The broker cached both raw package sides so `acquireBaseline` could
+        // read the half `acquireStaged` fetched. Findings are their last
+        // reader, and the pipeline's own release only clears the arrays it was
+        // handed — a broker still holding the originals would keep unredacted
+        // file text alive through AI review, scoring, and persistence, which is
+        // exactly what that release exists to prevent.
+        details.releaseSources();
+      }
     },
 
     describe({ details }) {
