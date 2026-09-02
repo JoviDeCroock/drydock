@@ -1,6 +1,7 @@
 import type { AdapterBroker, PackageAdapter } from "./package-adapter";
 import type { WorkflowGateAdapter } from "../workflow-gates/types";
 import type { PublicDiffAdapter } from "../public-diff/types";
+import type { PublishedPairAdapter } from "./published-pair";
 import type { EcosystemId } from "./labels";
 
 /** Every ecosystem Drydock knows about. Matches persisted `ecosystem` columns. */
@@ -25,6 +26,12 @@ export type { EcosystemId } from "./labels";
  *    deployment-protection rule while Drydock reviews the built artifacts.
  *  - `publicDiff` — two published versions can be diffed anonymously on `/diff`
  *    with no credentials and nothing persisted.
+ *  - `published` — the authenticated pipeline reviews two published versions
+ *    and persists the result, so an organization reaches a first review with no
+ *    registry credential and nothing to wait for. Built on `publicDiff`, and
+ *    declared separately because reviewing an ecosystem's public releases
+ *    under an organization is a deliberate product decision, not a free
+ *    consequence of `/diff` supporting it.
  */
 export interface EcosystemModule {
   readonly id: EcosystemId;
@@ -33,4 +40,5 @@ export interface EcosystemModule {
   readonly staged?: PackageAdapter<never, AdapterBroker>;
   readonly gate?: WorkflowGateAdapter;
   readonly publicDiff?: PublicDiffAdapter;
+  readonly published?: PublishedPairAdapter;
 }

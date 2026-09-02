@@ -65,6 +65,7 @@ export type { PublicDiffAcquiredSources } from "../../public-diff/types";
 export const pypiPublicDiff: PublicDiffAdapter = {
   ecosystem: "pypi",
   registryUrl: PYPI_PUBLIC_REGISTRY,
+  codePatternSet: "python",
   rulesVersionSegment: `${DETERMINISTIC_RULES_VERSION}+pypi-${PYPI_RULES_VERSION}`,
   // v5: pairs now have a request-wide selected-byte budget, which can omit one
   // artifact kind with a notice instead of exhausting the Worker.
@@ -498,7 +499,6 @@ export function buildPublicPyPiDiffSources(input: {
         toPrepared,
       ),
     },
-    codePatternSet: "python",
     // Same recipe as pypiAdapter.runFindings (deterministic python rules +
     // release findings) — keep the two in lockstep; delegating would require
     // fabricating a full AdapterRunFindingsArgs this path doesn't have.

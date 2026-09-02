@@ -45,7 +45,6 @@ export interface PublicDiffAcquiredSources {
   from: PublicDiffAcquiredSide;
   to: PublicDiffAcquiredSide;
   buildFindings(fileDiff: DiffEntry[], manifestDiff: PackageJsonDiff): Finding[];
-  codePatternSet?: CodePatternSet;
   notices?: string[];
   provenance?: PublicDiffProvenanceEntry[];
   attestation?: PublicDiffAttestation;
@@ -80,6 +79,12 @@ export interface PublicDiffVersionListing {
 export interface PublicDiffAdapter {
   readonly ecosystem: string;
   readonly registryUrl: string;
+  /**
+   * Language family the deterministic rules read this ecosystem's files as.
+   * Declared on the adapter rather than per acquisition because the
+   * published-pair scan capability reuses it before anything is acquired.
+   */
+  readonly codePatternSet?: CodePatternSet;
 
   // Bump these when deterministic output or cached payload shape changes.
   readonly rulesVersionSegment: string;

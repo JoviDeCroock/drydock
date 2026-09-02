@@ -3,10 +3,12 @@ import {
   ECOSYSTEMS,
   getEcosystem,
   getPublicDiffAdapter,
+  getPublishedAdapter,
   getStagedAdapter,
   getWorkflowGateAdapter,
   isEcosystemId,
   supportedPublicDiffEcosystems,
+  supportedPublishedEcosystems,
   supportedStagedEcosystems,
   supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
@@ -27,20 +29,23 @@ describe("ecosystem capability registry", () => {
           staged: Boolean(eco.staged),
           gate: Boolean(eco.gate),
           publicDiff: Boolean(eco.publicDiff),
+          published: Boolean(eco.published),
         },
       ]),
     );
     expect(matrix).toEqual({
-      npm: { staged: true, gate: true, publicDiff: true },
+      npm: { staged: true, gate: true, publicDiff: true, published: true },
       // PyPI cannot stage a candidate in the registry; releases arrive by gate.
-      pypi: { staged: false, gate: true, publicDiff: true },
+      pypi: { staged: false, gate: true, publicDiff: true, published: true },
       // VS Code is gate-only: no Marketplace staging, not on /diff.
-      vscode: { staged: false, gate: true, publicDiff: false },
+      vscode: { staged: false, gate: true, publicDiff: false, published: false },
       // atpm is public-diff only, and that one surface covers both published
       // releases and staged candidates: both are public records in the
       // publisher's own repository. Drydock neither stages nor approves an
-      // atpm release.
-      atpm: { staged: false, gate: false, publicDiff: true },
+      // atpm release. Its versions are mutable AT Protocol record refs rather
+      // than immutable registry versions, so it is deliberately not offered as
+      // a persisted published-pair review either.
+      atpm: { staged: false, gate: false, publicDiff: true, published: false },
     });
   });
 
@@ -51,6 +56,12 @@ describe("ecosystem capability registry", () => {
       if (eco.gate) expect(eco.gate.ecosystem).toBe(eco.id);
       if (eco.publicDiff) expect(eco.publicDiff.ecosystem).toBe(eco.id);
       if (eco.staged) expect(eco.staged.id).toBe(eco.id);
+      if (eco.published) {
+        expect(eco.published.id).toBe(eco.id);
+        // Published-pair review acquires through the public-diff capability,
+        // so declaring one without the other would have nothing to fetch with.
+        expect(eco.publicDiff).toBeDefined();
+      }
     }
   });
 
@@ -58,12 +69,15 @@ describe("ecosystem capability registry", () => {
     expect(supportedWorkflowGateEcosystems().sort()).toEqual(["npm", "pypi", "vscode"]);
     expect(supportedPublicDiffEcosystems().sort()).toEqual(["atpm", "npm", "pypi"]);
     expect(supportedStagedEcosystems()).toEqual(["npm"]);
+    expect(supportedPublishedEcosystems().sort()).toEqual(["npm", "pypi"]);
   });
 
   test("resolvers return the adapter a module declares", () => {
     expect(getWorkflowGateAdapter("vscode")).toBe(getEcosystem("vscode")?.gate);
     expect(getPublicDiffAdapter("pypi")).toBe(getEcosystem("pypi")?.publicDiff);
     expect(getStagedAdapter("npm")).toBe(getEcosystem("npm")?.staged);
+    expect(getPublishedAdapter("pypi")).toBe(getEcosystem("pypi")?.published);
+    expect(getPublishedAdapter("vscode")).toBeUndefined();
   });
 
   test("bounds atpm computed pairs to its mutable resolution lifetime", () => {
