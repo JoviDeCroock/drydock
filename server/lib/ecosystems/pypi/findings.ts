@@ -210,7 +210,7 @@ export function pyPiReleaseFindings(
 function isOrdinaryPyPiDirectoryEntry(entry: TarSuspiciousEntry): boolean {
   if (entry.kind !== "non-regular" || entry.detail !== "typeflag 5 (directory)") return false;
   if (entry.path.startsWith("/") || canonicalizePath(entry.path) !== entry.path) return false;
-  return normalizeTarPath(entry.path) !== null;
+  return normalizeTarPath(entry.path, "keep") !== null;
 }
 
 export function summarizePyPiArtifact(

@@ -71,6 +71,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
         maxFiles: opts.maxFiles,
         npmToken: creds.token,
         npmRegistry: creds.registry,
+        tarRootStrip: "strip1",
       }),
     );
   }
@@ -173,6 +174,7 @@ class LocalNpmBroker implements NpmBroker {
       maxFiles: opts.maxFiles,
       npmToken: creds.token,
       npmRegistry: creds.registry,
+      tarRootStrip: "strip1",
     });
   }
 

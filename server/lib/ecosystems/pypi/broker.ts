@@ -67,6 +67,10 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
         publicArtifactUrls: [artifact.url],
         maxFiles: opts?.maxFiles,
         maxTextSampleChars: opts?.maxTextSampleChars,
+        // pip keeps the sdist's `<name>-<version>/` root; `preparePyPiArtifact`
+        // strips the common root afterwards and treats entries outside it as
+        // evidence, so the parse must not strip anything itself.
+        tarRootStrip: "keep",
       });
     },
 

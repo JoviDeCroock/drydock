@@ -38,6 +38,8 @@ export function tarHeaderChecksum(header: Uint8Array): {
   declared: number | null;
 };
 
+export function isRejectedTarNumber(header: Uint8Array, offset: number, length: number): boolean;
+
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
   path: string;
@@ -62,7 +64,12 @@ export function hasImplicitNodeGypInstall(
   packageJson: { scripts?: unknown; gypfile?: unknown } | null | undefined,
 ): boolean;
 export function isSafePaxPath(value: unknown): boolean;
-export function normalizeTarPath(rawPath: string | null | undefined): string | null;
+/** Strip depth the archive's consumer extracts with. See `normalizeTarPath`. */
+export type TarRootStrip = "strip1" | "keep" | "package-prefix";
+export function normalizeTarPath(
+  rawPath: string | null | undefined,
+  rootStrip?: TarRootStrip,
+): string | null;
 export function normalizeZipPath(rawPath: string | null | undefined): string | null;
 export function parsePax(body: Uint8Array): Record<string, string>;
 export function describeNonRegularType(type: string): string;
@@ -138,6 +145,7 @@ export function readTar(
   maxFiles: number,
   maxTarBytes: number,
   maxTextSampleChars?: number,
+  rootStrip?: TarRootStrip,
 ): Promise<ReadTarResult>;
 export function readTarStream(
   body: ReadableStream<Uint8Array> | null,
@@ -146,6 +154,7 @@ export function readTarStream(
   maxStreamBytes: number,
   maxEntries?: number,
   maxTextSampleChars?: number,
+  rootStrip?: TarRootStrip,
 ): Promise<ReadTarResult>;
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;

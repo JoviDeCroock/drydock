@@ -93,6 +93,55 @@ describe("normalizeTarPath", () => {
   });
 });
 
+// Every expectation below was taken from npm's bundled node-tar 7.5.15:
+// `tar.x({ strip: 1 })` into a scratch directory, then the file list on disk.
+describe("normalizeTarPath strip modes", () => {
+  test("`strip1` drops the first component whatever it is called", () => {
+    expect(normalizeTarPath("dist/index.js", "strip1")).toBe("index.js");
+    expect(normalizeTarPath("package/index.js", "strip1")).toBe("index.js");
+    expect(normalizeTarPath("a/b/c.js", "strip1")).toBe("b/c.js");
+    expect(normalizeTarPath("package/package/x.js", "strip1")).toBe("package/x.js");
+  });
+
+  test("`strip1` runs before the leading-slash, `.` and `..` checks, as node-tar's does", () => {
+    expect(normalizeTarPath("/dist/x.js", "strip1")).toBe("dist/x.js");
+    expect(normalizeTarPath("./dist/x.js", "strip1")).toBe("dist/x.js");
+    expect(normalizeTarPath("//x.js", "strip1")).toBe("x.js");
+    // node-tar checks for `..` after stripping, so the first one is consumed by
+    // the strip and npm writes `evil.js`, while the second survives and npm
+    // refuses the entry.
+    expect(normalizeTarPath("../evil.js", "strip1")).toBe("evil.js");
+    expect(normalizeTarPath("package/../evil.js", "strip1")).toBeNull();
+    // Same for a drive letter: it is the stripped component, so nothing about
+    // the extracted path is drive-relative.
+    expect(normalizeTarPath("C:/x.js", "strip1")).toBe("x.js");
+    expect(normalizeTarPath("C:x.js", "strip1")).toBeNull();
+  });
+
+  test("`strip1` leaves no path for an entry with no directory component", () => {
+    // npm installs no file for these. Returning the entry's own name instead
+    // would let a top-level decoy collide with, and last-write-wins over, the
+    // stripped entry whose bytes npm does install; the reader discloses them
+    // as evidence instead.
+    expect(normalizeTarPath("index.js", "strip1")).toBeNull();
+    expect(normalizeTarPath("dist/", "strip1")).toBeNull();
+  });
+
+  test("`keep` leaves a PyPI sdist root intact", () => {
+    expect(normalizeTarPath("proj-1.0/PKG-INFO", "keep")).toBe("proj-1.0/PKG-INFO");
+    // A sdist rooted at `package/` is not npm's root prefix to pip.
+    expect(normalizeTarPath("package/setup.py", "keep")).toBe("package/setup.py");
+    expect(normalizeTarPath("../escape", "keep")).toBeNull();
+  });
+
+  test("the default mode is the ecosystem-unknown `package-prefix` parse", () => {
+    expect(normalizeTarPath("package/index.js")).toBe(
+      normalizeTarPath("package/index.js", "package-prefix"),
+    );
+    expect(normalizeTarPath("dist/index.js")).toBe("dist/index.js");
+  });
+});
+
 describe("isSafePaxPath", () => {
   test("rejects null bytes, backslashes, and non-strings", () => {
     expect(isSafePaxPath("clean/path.js")).toBe(true);
@@ -127,6 +176,16 @@ describe("parsePax", () => {
   test("returns empty object when the body is malformed", () => {
     expect(parsePax(encoder.encode("nope"))).toEqual({});
     expect(parsePax(encoder.encode(""))).toEqual({});
+  });
+
+  test("keeps a record with no `=` as an empty value, like node-tar", () => {
+    // node-tar splits on `=` and keeps whatever is left of it as the key, so a
+    // bare `size` is a zero-length body to npm and a bare `path` an empty path.
+    expect(parsePax(encoder.encode("7 size\n7 path\n"))).toEqual({ size: "", path: "" });
+  });
+
+  test("keeps a leading BOM, so the first record's length no longer parses, like node-tar", () => {
+    expect(parsePax(encoder.encode("\uFEFF16 path=foo/bar\n9 size=5\n"))).toEqual({ size: "5" });
   });
 });
 
@@ -363,6 +422,81 @@ describe("readTar path safety", () => {
     ]);
     expect(suspicious[0].detail).toMatch(/typeflag 2/);
     expect(suspicious[1].detail).toMatch(/typeflag 1/);
+  });
+});
+
+describe("readTar under npm's strip: 1", () => {
+  const parseStripped = (tar) =>
+    readTar(tar.buffer, PARSE_LIMITS.maxFiles, PARSE_LIMITS.maxTarBytes, 0, "strip1");
+
+  test("anchors root-only rules on a tarball rooted at any other name", async () => {
+    // The root manifest and `binding.gyp` are what npm installs at the package
+    // root, so a tarball rooted at `dist/` must reach the root-anchored rules —
+    // under the ecosystem-unknown parse it reported one level deeper and they
+    // saw an empty root.
+    const tar = buildTar([
+      { name: "dist/package.json", body: '{"name":"x","version":"1.0.0"}' },
+      { name: "dist/binding.gyp", body: "{}" },
+      { name: "dist/lib/index.js", body: "ok\n" },
+    ]);
+    const { files } = await parseStripped(tar);
+    expect(files.map((f) => f.path).sort()).toEqual([
+      "binding.gyp",
+      "lib/index.js",
+      "package.json",
+    ]);
+    expect(parsePackageJson(files)?.name).toBe("x");
+  });
+
+  test("collapses two roots onto one installed path and reports the collision", async () => {
+    // npm's strip writes both to `x.js`, last one wins. Recording them as
+    // distinct files hid that a second entry overwrites the first.
+    const tar = buildTar([
+      { name: "a/x.js", body: "benign\n" },
+      { name: "b/x.js", body: "evil\n" },
+    ]);
+    const { files, suspicious } = await parseStripped(tar);
+    expect(files.map((f) => f.path)).toEqual(["x.js"]);
+    expect(files[0].textSample).toBe("evil\n");
+    expect(suspicious.map((entry) => ({ kind: entry.kind, path: entry.path }))).toEqual([
+      { kind: "duplicate", path: "x.js" },
+    ]);
+  });
+
+  test("records a traversal or drive-letter first component npm installs", async () => {
+    const tar = buildTar([
+      { name: "../evil.js", body: "evil\n" },
+      { name: "C:/drive.js", body: "drive\n" },
+      { name: "package/../escape.js", body: "escape\n" },
+    ]);
+    const { files, suspicious } = await parseStripped(tar);
+    // The first two strip down to ordinary root files npm writes; the third
+    // still carries `..` after the strip and npm refuses it, so it stays a
+    // disclosure rather than a recorded file.
+    expect(files.map((f) => f.path).sort()).toEqual(["drive.js", "evil.js"]);
+    expect(suspicious.map((entry) => ({ kind: entry.kind, path: entry.path }))).toEqual([
+      { kind: "parser-differential", path: "package/../escape.js" },
+    ]);
+  });
+
+  test("a top-level decoy cannot mask the entry npm installs at that path", async () => {
+    // npm's strip drops the top-level `index.js` outright and writes the bytes
+    // of the one under `a/` to `index.js`. Recording the decoy as a file made it
+    // win the collision and show the reviewer content npm never installs.
+    const tar = buildTar([
+      { name: "a/index.js", body: "payload\n" },
+      { name: "index.js", body: "decoy\n" },
+    ]);
+    const { files, suspicious } = await parseStripped(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(files[0].textSample).toBe("payload\n");
+    expect(suspicious).toEqual([
+      {
+        kind: "parser-differential",
+        path: "index.js",
+        detail: expect.stringContaining("installs no file for it"),
+      },
+    ]);
   });
 });
 
@@ -603,7 +737,7 @@ describe("readTar suspicious entries", () => {
 describe("canonicalizePath and isRootGypPath Unicode hardening", () => {
   test("canonicalizePath strips zero-width and bidi format characters", () => {
     expect(canonicalizePath("binding​.gyp")).toBe("binding.gyp");
-    expect(canonicalizePath("binding﻿.gyp")).toBe("binding.gyp");
+    expect(canonicalizePath("binding\uFEFF.gyp")).toBe("binding.gyp");
     expect(canonicalizePath("‮binding.gyp")).toBe("binding.gyp");
     expect(canonicalizePath("binding‍.gyp")).toBe("binding.gyp");
   });
@@ -956,6 +1090,359 @@ describe("readTar limits and malformed archives", () => {
         detail: expect.stringContaining("1 header block is one npm's reader rejects"),
       }),
     );
+  });
+
+  test.each([
+    ["mode", 100],
+    ["uid", 108],
+    ["gid", 116],
+    ["mtime", 136],
+    ["devmaj", 329],
+    ["devmin", 337],
+    ["atime", 476],
+    ["ctime", 488],
+  ])(
+    "skips a header whose %s field has a base-256 prefix npm's reader cannot decode, without consuming its body",
+    async (_field, offset) => {
+      // node-tar's header decode throws on a base-256 prefix other than
+      // 0x80/0xff, and a header whose decode throws is skipped like a checksum
+      // failure — so the declared body is really the entry that follows.
+      const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+      decoy[offset] = 0x81;
+      sealTarHeader(decoy);
+      const tar = concatBytes([
+        tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+        decoy,
+        buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+      ]);
+      const { files, suspicious } = await parseFull(tar);
+      expect(files.map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+      expect(suspicious).toContainEqual(
+        expect.objectContaining({
+          kind: "parser-differential",
+          path: "<archive>",
+          detail: expect.stringContaining("1 header block is one npm's reader rejects"),
+        }),
+      );
+    },
+  );
+
+  test("skips a header whose base-256 mtime is outside the safe-integer range", async () => {
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy[136] = 0x80;
+    decoy[137] = 0xff;
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+  });
+
+  test.each([
+    ["a positive", 0x80, 0],
+    ["a two's-complement", 0xff, 0xff],
+  ])(
+    "reads a header whose uid is %s base-256 value npm's reader decodes",
+    async (_l, prefix, fill) => {
+      const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+      decoy.fill(fill, 108, 116);
+      decoy[108] = prefix;
+      sealTarHeader(decoy);
+      const tar = concatBytes([
+        tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+        decoy,
+        buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+      ]);
+      const { files, suspicious } = await parseFull(tar);
+      expect(files.map((f) => f.path)).toEqual(["index.js", "decoy.txt"]);
+      expect(suspicious).toEqual([]);
+    },
+  );
+
+  test.each(["x", "g"])(
+    "does not decode a numeric field a PAX `%s` record overrides, like npm's reader",
+    async (type) => {
+      const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+      decoy[108] = 0x81;
+      sealTarHeader(decoy);
+      const tar = concatBytes([
+        tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+        tarEntriesOnly(buildTar([{ name: "PaxHeader", type, body: "12 uid=1000\n" }])),
+        decoy,
+        buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+      ]);
+      expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "decoy.txt"]);
+    },
+  );
+
+  test.each([
+    ["mode", 100, "9 mode=1\n"],
+    ["devmaj", 329, "12 devmaj=1\n"],
+    ["devmin", 337, "12 devmin=1\n"],
+  ])(
+    "still decodes %s under a PAX record naming it, because node-tar's PAX record never carries it",
+    async (_field, offset, record) => {
+      const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+      decoy[offset] = 0x81;
+      sealTarHeader(decoy);
+      const tar = concatBytes([
+        tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+        tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: record }])),
+        decoy,
+        buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+      ]);
+      expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+    },
+  );
+
+  test("reads a name past a NUL followed by a newline, as node-tar's decString does", async () => {
+    // node-tar cuts a field with `/\0.*/` and no `s` flag, so text after a
+    // newline survives the cut; stopping at the NUL instead sees an empty name
+    // and rejects a header npm accepts, reading its body as headers.
+    // The name fills its field exactly so no NUL padding follows (node-tar keeps
+    // that padding in the path too, which makes it unrepresentable here).
+    const tail = "k".repeat(90);
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy.set(encoder.encode(`package/\0\n${tail}`), 0);
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", `\n${tail}`]);
+  });
+
+  test("rejects a regular file whose linkname survives node-tar's NUL cut, without consuming its body", async () => {
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy.set(encoder.encode("\0\nx"), 157);
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+  });
+
+  test("rejects a header for a numeric PAX path only for typeflag 0, so a later `x` can still replace it", async () => {
+    // node-tar's throw is `.slice` on the Number path inside its typeflag-0
+    // branch; an `x` header carrying a pending numeric path is read normally.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "12 path=123\n" }])),
+      tarEntriesOnly(
+        buildTar([{ name: "PaxHeader", type: "x", body: "24 path=package/evil.js\n" }]),
+      ),
+      buildTar([{ name: "package/decoy.txt", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "evil.js"]);
+  });
+
+  test("rejects every header after a PAX `path=0`, which is a falsy path to node-tar", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "10 path=0\n" }])),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        detail: expect.stringContaining("npm's reader rejects"),
+      }),
+    );
+  });
+
+  test("prepends the ustar prefix, even an empty one, when byte 475 is set, like node-tar", async () => {
+    // node-tar's path is then `/` for an empty name — truthy, so the header is
+    // accepted and its body consumed rather than read as headers.
+    const decoy = buildTarHeaderOnly({ name: "", size: 1024 });
+    decoy[475] = 0x41;
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({ kind: "parser-differential", path: "/" }),
+    );
+  });
+
+  test("reports `/package/x` one level down when byte 475 is set, where npm's `strip: 1` writes it", async () => {
+    const entry = buildTarHeaderOnly({ name: "package/x.txt" });
+    entry[475] = 0x41;
+    sealTarHeader(entry);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      entry,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual([
+      "index.js",
+      "package/x.txt",
+      "binding.gyp",
+    ]);
+  });
+
+  test("decodes the device and time fields only under the ustar magic", async () => {
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy[329] = 0x81;
+    decoy.fill(0, 257, 265);
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "decoy.txt"]);
+  });
+
+  test("reads a PAX `size` record with no `=` as the zero-length body npm reads", async () => {
+    // node-tar keeps the record as `size=''`, and an empty remaining size reads
+    // as nothing left, so the 1024 bytes the header declares are the next entry.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "7 size\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "decoy.txt", "binding.gyp"]);
+  });
+
+  test("rejects every header after a PAX `path` record with no `=`, like npm's reader", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "7 path\n" }])),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        detail: expect.stringContaining("npm's reader rejects"),
+      }),
+    );
+  });
+
+  test("ends the archive on two blocks npm's reader treats as null, not only all-zero ones", async () => {
+    // node-tar's null block is zero everywhere outside the checksum field with a
+    // checksum that does not parse; ending only on all-zero blocks would report
+    // the entries after these as files npm never writes.
+    const blank = new Uint8Array(TAR_BLOCK);
+    blank.set(encoder.encode("        "), 148);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      blank,
+      blank,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("counts a lone such block as the lone null block it is to npm's reader", async () => {
+    const blank = new Uint8Array(TAR_BLOCK);
+    blank.set(encoder.encode("        "), 148);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      blank,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringContaining("1 entry follows"),
+      }),
+    );
+  });
+
+  test("consumes the body of an entry whose PAX path is empty under a ustar prefix, like npm's reader", async () => {
+    // node-tar accepts the header (its own path is `prefix/`), reads the body,
+    // and only drops the entry in unpack; rejecting it here would read that body
+    // as headers and report entries npm never sees.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "8 path=\n" }])),
+      buildTarHeaderOnly({ name: "", prefix: "package", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({ kind: "parser-differential", path: "<unnamed>" }),
+    );
+  });
+
+  test("reads a GNU long name made of digits as the string node-tar keeps, not a numeric PAX path", async () => {
+    // Only a PAX record's all-digit value is coerced to a Number by node-tar;
+    // an `L` body of the same digits stays a string and the file is extracted.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "././@LongLink", type: "L", body: "123" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "123"]);
+  });
+
+  test("ignores a zero-length long-name header, as node-tar does", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      buildTarHeaderOnly({ name: "././@LongLink", type: "L", size: 0 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+  });
+
+  test("keeps a leading BOM in a name, as node-tar's Buffer decode does", async () => {
+    // TextDecoder drops U+FEFF by default; node-tar keeps it, so a BOM-only
+    // name is a truthy path whose body is consumed rather than read as headers.
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy.fill(0, 0, 100);
+    decoy.set(encoder.encode("\uFEFF"), 0);
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).not.toContain("binding.gyp");
+    expect(suspicious).not.toContainEqual(expect.objectContaining({ path: "<archive>" }));
+  });
+
+  test("rejects a regular file whose linkname is only a BOM, as node-tar does", async () => {
+    const decoy = buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 });
+    decoy.set(encoder.encode("\uFEFF"), 157);
+    sealTarHeader(decoy);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      decoy,
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+  });
+
+  test("drops a PAX record behind a BOM, as node-tar's parseInt does", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "\uFEFF13 size=1024\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 0 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "decoy.txt", "binding.gyp"]);
   });
 
   test("ignores the size a directory record declares", async () => {
@@ -2028,6 +2515,8 @@ describe("rendered sandbox parser source", () => {
     "isRetainedManifestPath",
     "isRootManifestPath",
     "tarError",
+    "tarHeaderChecksum",
+    "isRejectedTarNumber",
     "readTarStream",
     "readUint16Le",
     "readUint32Le",
@@ -2065,9 +2554,17 @@ describe("rendered sandbox parser source", () => {
 return {
   safe: isSafePaxPath("clean/path.js"),
   unsafe: isSafePaxPath("nope" + String.fromCharCode(0) + "path"),
-  normalized: normalizeTarPath("package/index.js")
+  normalized: normalizeTarPath("package/index.js"),
+  stripped: normalizeTarPath("dist/index.js", "strip1")
 };`,
     );
-    expect(run()).toEqual({ safe: true, unsafe: false, normalized: "index.js" });
+    // `stripped` also pins that the strip modes stay inline literals: a shared
+    // constant would be a module-level dependency this rendered source lacks.
+    expect(run()).toEqual({
+      safe: true,
+      unsafe: false,
+      normalized: "index.js",
+      stripped: "index.js",
+    });
   });
 });

@@ -549,6 +549,9 @@ async function downloadAtpmBlob(
       archiveFormat: "tgz",
       publicArtifactUrls: [url],
       archiveDigestAlgorithms: ["SHA-1", "SHA-256", "SHA-512"],
+      // atpm blobs are ordinary npm tarballs installed by npm itself against an
+      // npm-compatible registry, so they are extracted with npm's `strip: 1`.
+      tarRootStrip: "strip1",
     });
   } catch (err) {
     throw publicDiffDownloadError(err);
