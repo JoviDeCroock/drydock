@@ -23,6 +23,7 @@ import {
 import { LoadingState } from "../../../components/Loading";
 import { OrgSwitcher } from "../../../components/OrgSwitcher";
 import { PageShell } from "../../../components/PageShell";
+import { EmailVerificationBanner } from "../../../features/account/EmailVerificationBanner";
 import { Muted } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection } from "./GeneralSection";
@@ -159,6 +160,8 @@ export default function SettingsPage() {
       }
     >
       <SettingsHeader />
+
+      <EmailVerificationBanner />
 
       {workspaceLoaded ? (
         <div class="grid grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)] gap-6 md:gap-8">

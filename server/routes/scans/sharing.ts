@@ -31,6 +31,7 @@ import {
 } from "../../lib/scan/release-receipt";
 import { sha256Hex } from "../../lib/platform/crypto-utils";
 import { getGateByScanId } from "../../lib/github-app/webhook-gates";
+import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { roleCanManagePublicShares } from "../../lib/auth/roles";
 import type { Bindings, Variables } from "../../types";
 
@@ -38,6 +39,8 @@ export const scanSharingRoutes = new Hono<{ Bindings: Bindings; Variables: Varia
 
 // opt-in, so it takes owner/admin, not plain membership.
 scanSharingRoutes.post("/:id/share", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   // `?? {}` also covers a literal `null` body, which json() parses successfully.
   const body = ((await c.req.json().catch(() => ({}))) ?? {}) as Partial<{ threatFeed: boolean }>;
   const db = createDb(c.env.DB);

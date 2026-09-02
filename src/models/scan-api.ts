@@ -162,6 +162,20 @@ export function listScans(
   return apiFetch<ListScansResponse>(`/api/v1/scans${qs ? `?${qs}` : ""}`);
 }
 
+/** Coordinates of a published release to review. See `published-review.ts`. */
+export interface PublishedScanRequest {
+  ecosystem: string;
+  packageName: string;
+  version: string;
+  baselineVersion?: string;
+}
+
+export function createPublishedScan(
+  request: PublishedScanRequest,
+): Promise<{ scan: { id: string } }> {
+  return apiJson<{ scan: { id: string } }>("/api/v1/scans", request);
+}
+
 export function setScanDecision(
   id: string,
   decision: ScanDecision,

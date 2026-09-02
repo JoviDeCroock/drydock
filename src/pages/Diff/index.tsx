@@ -3,6 +3,7 @@ import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import type { DiffEntry } from "../../../server/lib/review";
+import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
 import { compareSeverity, countSeverities } from "../../lib/findings";
 import { packageDiffSeo, PageSeo } from "../../lib/seo";
@@ -41,6 +42,7 @@ import {
   type DiffSpec,
 } from "../../lib/package-diff-path";
 import { diffRefLabel, parsePkgPrNewUrl } from "../../lib/pkg-pr-new";
+import { supportsPublishedReview } from "../../lib/published-review-ecosystems";
 import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-ref";
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
@@ -431,6 +433,15 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
+        {/* A preview ref is mutable, so there is nothing stable to save it as.
+            The ecosystem check gates the mount, not the render: the action
+            loads the reader's organizations, which an ecosystem that cannot be
+            saved must not spend a request on. */}
+        {hasPreview || !supportsPublishedReview(ecosystem) ? null : (
+          <Show when={authed}>
+            <SaveReviewAction spec={spec} />
+          </Show>
+        )}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}

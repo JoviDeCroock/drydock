@@ -9,6 +9,7 @@ import {
   buildPublicPyPiDiffSources,
   limitPublicPyPiDiffArtifacts,
   listPublicPyPiVersions,
+  pypiPublicDiff,
   resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
   type PublicPyPiArtifactDownload,
@@ -328,7 +329,9 @@ describe("buildPublicPyPiDiffSources", () => {
       requests: ">=2",
       "evil-dep": "(>=1.0)",
     });
-    expect(sources.codePatternSet).toBe("python");
+    // The pattern set is declared once on the adapter, so the published-pair
+    // scan capability can read it before anything is acquired.
+    expect(pypiPublicDiff.codePatternSet).toBe("python");
   });
 });
 

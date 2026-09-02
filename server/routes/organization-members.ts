@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import {
@@ -77,6 +78,8 @@ organizationMembersRoutes.get("/invitations", async (c) => {
 });
 
 organizationMembersRoutes.post("/invitations", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = (await c.req.json().catch(() => ({}))) as { email?: unknown; role?: unknown };
   const email = sanitizeAddress(body.email);
   if (!email) return c.json({ error: "a valid email is required" }, 400);

@@ -16,6 +16,13 @@ export interface AuthSession {
   userId: string;
   email?: string;
   name?: string;
+  /**
+   * Better Auth's own flag for this session's user. Undefined only when the
+   * session payload predates it or omits the user; `requireVerifiedEmail`
+   * treats that as verified so a shape change can never lock an account out of
+   * actions it already had.
+   */
+  emailVerified?: boolean;
 }
 
 const VERIFICATION_TOKEN_TTL_SECONDS = 60 * 60 * 24; // 24 hours
@@ -287,6 +294,18 @@ function createSessionDeletionPreflightPlugin(
   };
 }
 
+/**
+ * Whether this deployment can verify an email address at all.
+ *
+ * Without a mail transport — or on a local dev URL, where the link would point
+ * somewhere the recipient cannot reach — no account could ever become verified,
+ * so nothing may be gated on verification. Every verification guard reads this
+ * first; see `email-verification.ts`.
+ */
+export function emailVerificationAvailable(env: Cloudflare.Env): boolean {
+  return Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
+}
+
 function isLocalAuthUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
@@ -314,7 +333,7 @@ export function createAuth(env: Cloudflare.Env) {
   const db = createDb(env.DB);
   const sessionCache = createSessionSecondaryStorage(db, env.AUTH_SESSIONS);
   const trustedOrigins = env.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL] : [];
-  const emailVerificationEnabled = Boolean(env.SEND_EMAIL) && !isLocalAuthUrl(env.BETTER_AUTH_URL);
+  const emailVerificationEnabled = emailVerificationAvailable(env);
   const githubSignIn = isGithubSignInEnabled(env);
   return betterAuth({
     appName: "Drydock",
@@ -340,7 +359,12 @@ export function createAuth(env: Cloudflare.Env) {
     rateLimit: { storage: "memory" as const },
     emailVerification: {
       autoSignInAfterVerification: true,
-      sendOnSignIn: true,
+      // Better Auth only defaults this on when sign-in requires verification,
+      // which it no longer does — set it explicitly or sign-up would stop
+      // sending a link at all. There is no `sendOnSignIn` counterpart: that
+      // option only fires inside the sign-in block this deployment no longer
+      // enters, so the resend path is the dashboard banner's own action.
+      sendOnSignUp: emailVerificationEnabled,
       expiresIn: VERIFICATION_TOKEN_TTL_SECONDS,
       sendVerificationEmail: async ({ user, url }) => {
         const result = await sendAccountVerificationEmail(env, { email: user.email, url });
@@ -351,7 +375,12 @@ export function createAuth(env: Cloudflare.Env) {
     },
     emailAndPassword: {
       enabled: true,
-      requireEmailVerification: emailVerificationEnabled,
+      // Deliberately not gated on verification. Blocking sign-in put an email
+      // round-trip in front of a product an account cannot evaluate without
+      // signing in; `requireVerifiedEmail` (email-verification.ts) instead
+      // guards the individual actions that spend trust — credentials,
+      // decisions, public links, invitations, GitHub installs.
+      requireEmailVerification: false,
       minPasswordLength: 12,
       maxPasswordLength: 256,
       ...(nativeScryptAvailable ? { password: nativeScryptPassword } : {}),
@@ -486,7 +515,7 @@ function normalizeSession(data: unknown): AuthSession | null {
   const root = data as {
     userId?: unknown;
     session?: { userId?: unknown };
-    user?: { id?: unknown; email?: unknown; name?: unknown };
+    user?: { id?: unknown; email?: unknown; name?: unknown; emailVerified?: unknown };
   };
   const userId = root.user?.id ?? root.session?.userId ?? root.userId;
   if (typeof userId !== "string" || !userId) return null;
@@ -494,5 +523,7 @@ function normalizeSession(data: unknown): AuthSession | null {
     userId,
     email: typeof root.user?.email === "string" ? root.user.email : undefined,
     name: typeof root.user?.name === "string" ? root.user.name : undefined,
+    emailVerified:
+      typeof root.user?.emailVerified === "boolean" ? root.user.emailVerified : undefined,
   };
 }

@@ -21,6 +21,8 @@ export interface PersistedSummary {
   stagedPublish?: {
     provenance?: ReleaseProvenance;
     artifactIntegrity?: unknown;
+    /** Named directly by a published-pair review, which has no gate provenance. */
+    ecosystem?: string;
   };
   // Advisory release-memory blob. Old scans lack it and its shape is only
   // trusted after normalizeReleaseConsistency, so it stays unknown here.

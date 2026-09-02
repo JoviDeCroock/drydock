@@ -315,7 +315,10 @@ export default function DocsPage() {
               </h2>
               <Prose>
                 Every path creates the same kind of Drydock report. The difference is who holds the
-                candidate while you review it and where the final decision happens.
+                candidate while you review it and where the final decision happens. Before setting
+                either up, you can review a package you already publish: name it on the dashboard
+                and Drydock reviews its latest release against the one before it — the same report,
+                kept in your organization, with no token and nothing to wait for.
               </Prose>
             </div>
 
@@ -864,8 +867,8 @@ jobs:
                   Add the checkpoint before the next publish.
                 </h2>
                 <p class="m-0 text-[13px] text-ink-muted leading-[1.6]">
-                  Connect npm for the shortest path, or install the GitHub App to protect a CI
-                  release. Your first report will make the model concrete.
+                  Start by reviewing a package you already publish — no token, no setup — then
+                  connect npm or install the GitHub App to move the checkpoint before the publish.
                 </p>
               </div>
               <div class="flex flex-wrap gap-3 shrink-0">

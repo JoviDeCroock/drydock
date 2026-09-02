@@ -49,6 +49,11 @@ GitHub-only account cannot enrol in Drydock two-factor at all — see
 [Management](#management) for why, and for what that costs an organization that
 mandates it.
 
+Email verification is a separate axis and never part of this challenge: it gates
+individual actions rather than sign-in (see
+[`security-model.md`](./security-model.md#email-verification)), so an enrolled
+user with an unverified address still completes the TOTP step normally.
+
 Only after the second factor succeeds is a full session cookie set. The client model logic lives
 in `src/models/auth.ts` (`signIn` returns `{ twoFactorRequired }`; `completeTwoFactorSignIn`)
 and `src/models/two-factor.ts`.

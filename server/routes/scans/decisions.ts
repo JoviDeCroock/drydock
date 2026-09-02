@@ -2,6 +2,7 @@
  * The publish / no-publish verdict on a scanned release.
  */
 import { Hono } from "hono";
+import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { createDb } from "../../db/client";
 import { SCAN_DECISIONS, type ScanDecision, getScan, recordScanDecision } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
@@ -18,6 +19,8 @@ const DECISION_REASON_MAX = 500;
 const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
 
 scanDecisionRoutes.post("/:id/decision", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = (await c.req.json().catch(() => ({}))) as Partial<{
     decision: string;
     reason: string;

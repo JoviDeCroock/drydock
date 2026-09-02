@@ -6,6 +6,7 @@ import { pypiPublicDiff } from "./pypi/public-diff";
 import { pypiWorkflowGateAdapter } from "./pypi/workflow-gate";
 import { vscodeWorkflowGateAdapter } from "./vscode/workflow-gate";
 import type { AdapterBroker, PackageAdapter } from "./package-adapter";
+import { publishedPairAdapter, type PublishedPairAdapter } from "./published-pair";
 import { ECOSYSTEM_LABELS } from "./labels";
 import type { EcosystemId, EcosystemModule } from "./types";
 import type { ArchiveContents, WorkflowGateAdapter } from "../workflow-gates/types";
@@ -18,12 +19,14 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
     staged: npmAdapter as unknown as PackageAdapter<never, AdapterBroker>,
     gate: npmWorkflowGateAdapter,
     publicDiff: npmPublicDiff,
+    published: publishedPairAdapter(npmPublicDiff),
   },
   pypi: {
     id: "pypi",
     label: ECOSYSTEM_LABELS.pypi,
     gate: pypiWorkflowGateAdapter,
     publicDiff: pypiPublicDiff,
+    published: publishedPairAdapter(pypiPublicDiff),
   },
   vscode: {
     id: "vscode",
@@ -62,6 +65,10 @@ export function getPublicDiffAdapter(ecosystem: string): PublicDiffAdapter | und
   return getEcosystem(ecosystem)?.publicDiff;
 }
 
+export function getPublishedAdapter(ecosystem: string): PublishedPairAdapter | undefined {
+  return getEcosystem(ecosystem)?.published;
+}
+
 export function getStagedAdapter(ecosystem: string): PackageAdapter<never, AdapterBroker> {
   const adapter = getEcosystem(ecosystem)?.staged;
   if (!adapter) throw new UnsupportedEcosystemError(ecosystem);
@@ -78,6 +85,10 @@ export function supportedWorkflowGateEcosystems(): string[] {
 
 export function supportedPublicDiffEcosystems(): string[] {
   return ECOSYSTEMS.filter((eco) => eco.publicDiff).map((eco) => eco.id);
+}
+
+export function supportedPublishedEcosystems(): string[] {
+  return ECOSYSTEMS.filter((eco) => eco.published).map((eco) => eco.id);
 }
 
 function gateAdapters(): WorkflowGateAdapter[] {

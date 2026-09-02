@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { requireVerifiedEmail } from "../lib/auth/email-verification";
 import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import {
@@ -37,6 +38,8 @@ npmConnectionRoutes.get("/", async (c) => {
 });
 
 npmConnectionRoutes.post("/", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = (await c.req.json().catch(() => ({}))) as {
     token?: unknown;
     label?: unknown;
@@ -107,6 +110,8 @@ npmConnectionRoutes.post("/", async (c) => {
 });
 
 npmConnectionRoutes.post("/validate", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   const body = (await c.req.json().catch(() => ({}))) as { stageId?: unknown };
   const stageId =
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;

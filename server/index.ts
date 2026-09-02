@@ -9,7 +9,12 @@ import {
   enforceRateLimit,
   pruneExpiredRateLimitBuckets,
 } from "./lib/platform/rate-limit";
-import { createAuth, getAuthSession, isGithubSignInEnabled } from "./lib/auth";
+import {
+  createAuth,
+  emailVerificationAvailable,
+  getAuthSession,
+  isGithubSignInEnabled,
+} from "./lib/auth";
 import { UnauthorizedError } from "./lib/platform/errors";
 import { rateLimitResponse } from "./lib/platform/http";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
@@ -275,7 +280,15 @@ app.use("/api/auth/*", async (c, next) => {
 // Which optional sign-in methods this deployment offers. Anonymous as part of
 // the auth surface: the login and register pages need it before any session
 // exists. Deployment configuration only — no user data, no secrets.
-app.get("/api/auth/config", (c) => c.json({ githubSignIn: isGithubSignInEnabled(c.env) }));
+app.get("/api/auth/config", (c) =>
+  c.json({
+    githubSignIn: isGithubSignInEnabled(c.env),
+    // Whether this deployment can verify an address at all. Without it the
+    // dashboard would show every account a pending-verification banner it
+    // could never clear.
+    emailVerification: emailVerificationAvailable(c.env),
+  }),
+);
 
 app.all("/api/auth/*", (c) => {
   const auth = c.get("auth");
@@ -339,7 +352,8 @@ app.get("/api", (c) =>
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package[?tag=] (shields.io endpoint badge; tag defaults to latest)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
-      authConfig: "GET /api/auth/config (anonymous; which optional sign-in methods are offered)",
+      authConfig:
+        "GET /api/auth/config (anonymous; which optional sign-in methods are offered, and whether email verification can be enforced)",
       health: "GET /api/health",
     },
     auth: "Better Auth is required for every non-auth API endpoint except the anonymous /api/public/* package-diff endpoints (public release data only) and /public/reports/* (a share token is the capability; the owning organization opted in per scan).",

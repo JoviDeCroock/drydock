@@ -155,7 +155,7 @@ export async function loadPublicPackageDiff(
     // Baseline fingerprints re-run the deterministic rules over the previous
     // files; they must use the ecosystem's pattern set (python for PyPI) or
     // unchanged capabilities read as release deltas.
-    codePatternSet: sources.codePatternSet,
+    codePatternSet: adapter.codePatternSet,
   });
   const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
 

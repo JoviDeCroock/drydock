@@ -20,6 +20,7 @@ import {
   LIST_SCANS_MAX_LIMIT,
   SCAN_DECISION_FILTERS,
   type ScanDecisionFilter,
+  type ScanSource,
   createScanJob,
   deleteFailedScan,
   getScan,
@@ -36,9 +37,13 @@ import {
   checkStagedPublishAccess,
   fetchStagedPublishDetails,
 } from "../../lib/ecosystems/npm/staged-publishes";
-import { parseScanInput } from "../../lib/scan/input";
+import { getPublishedAdapter } from "../../lib/ecosystems";
+import { publishedPairStageId } from "../../lib/ecosystems/published-pair";
+import { PublicDiffError } from "../../lib/public-diff/error";
+import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
 import { recordProductEvent } from "../../lib/platform/analytics";
+import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
 
 export const scanLifecycleRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -47,7 +52,6 @@ scanLifecycleRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
   const parsed = parseScanInput(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
-  const { input } = parsed;
 
   try {
     const db = createDb(c.env.DB);
@@ -59,58 +63,30 @@ scanLifecycleRoutes.post("/", async (c) => {
       windowMs: ORGANIZATION_SCAN_WINDOW_MS,
     });
 
-    const npmConnection = await getNpmConnection(db, organizationId);
-    if (!npmConnection) {
-      return c.json(
-        { error: "Connect an organization npm token before scanning staged publishes." },
-        400,
-      );
-    }
-    if (npmConnection.validationStatus !== "valid") {
-      return c.json(
-        { error: "Validate the organization npm token before scanning staged publishes." },
-        400,
-      );
-    }
-    const token = await decryptNpmToken(c.env, npmConnection);
-    const access = await checkStagedPublishAccess(npmConnection.registryUrl, token, input.stageId, {
-      allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
-    });
-    if (!access.allowed) {
-      return c.json(
-        {
-          error: "This organization's npm token cannot access that staged publish.",
-          status: access.status,
-        },
-        403,
-      );
-    }
-
-    // Best-effort: staged metadata gives the scan a package label up front, so
-    // a scan whose tarball never parses still shows which package it was for.
-    const staged = await fetchStagedPublishDetails(
-      npmConnection.registryUrl,
-      token,
-      input.stageId,
-      { allowInsecureLocalhost: allowInsecureLocalRegistry(c.env) },
-    ).catch(() => null);
+    const prepared =
+      parsed.kind === "published"
+        ? await preparePublishedScan(c, parsed.request)
+        : await prepareStagedScan(c, db, organizationId, parsed.input);
+    if ("error" in prepared) return prepared.error;
 
     const scanId = crypto.randomUUID();
     const detail = await createScanJob(db, {
       id: scanId,
-      stageId: input.stageId,
+      stageId: prepared.input.stageId,
       organizationId,
       ownerUserId: session.userId,
-      packageName: staged?.packageName ?? null,
-      stagedVersion: staged?.version ?? null,
-      registryUrl: npmConnection.registryUrl,
+      source: prepared.source,
+      packageName: prepared.packageName,
+      stagedVersion: prepared.version,
+      registryUrl: prepared.registryUrl,
     });
     if (!detail) return c.json({ error: "failed to create scan" }, 500);
     const message: ScanQueueMessage = {
-      ...input,
+      ...prepared.input,
       scanId,
       organizationId,
       actorUserId: session.userId,
+      source: prepared.source,
     };
 
     // Counted at creation, not completion, so the queued → completed drop-off
@@ -119,7 +95,7 @@ scanLifecycleRoutes.post("/", async (c) => {
     recordProductEvent(c.env, {
       name: "scan.queued",
       organizationId,
-      ecosystem: "npm",
+      ecosystem: prepared.ecosystem,
       source: message.source ?? "manual",
     });
 
@@ -141,6 +117,121 @@ scanLifecycleRoutes.post("/", async (c) => {
     throw err;
   }
 });
+
+type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
+
+interface PreparedScan {
+  input: ScanInput;
+  source: ScanSource;
+  ecosystem: string;
+  packageName: string | null;
+  version: string | null;
+  /**
+   * Only a staged npm scan captures one. A published-pair review must leave it
+   * null: `createScanJob` uses it to claim the registry coordinates a staged
+   * release owns, and a review of an already-public version has no claim on them.
+   */
+  registryUrl: string | null;
+}
+
+async function prepareStagedScan(
+  c: ScanRouteContext,
+  db: ReturnType<typeof createDb>,
+  organizationId: string,
+  input: ScanInput,
+): Promise<PreparedScan | { error: Response }> {
+  const npmConnection = await getNpmConnection(db, organizationId);
+  if (!npmConnection) {
+    return {
+      error: c.json(
+        { error: "Connect an organization npm token before scanning staged publishes." },
+        400,
+      ),
+    };
+  }
+  if (npmConnection.validationStatus !== "valid") {
+    return {
+      error: c.json(
+        { error: "Validate the organization npm token before scanning staged publishes." },
+        400,
+      ),
+    };
+  }
+  const token = await decryptNpmToken(c.env, npmConnection);
+  const access = await checkStagedPublishAccess(npmConnection.registryUrl, token, input.stageId, {
+    allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+  });
+  if (!access.allowed) {
+    return {
+      error: c.json(
+        {
+          error: "This organization's npm token cannot access that staged publish.",
+          status: access.status,
+        },
+        403,
+      ),
+    };
+  }
+
+  // Best-effort: staged metadata gives the scan a package label up front, so
+  // a scan whose tarball never parses still shows which package it was for.
+  const staged = await fetchStagedPublishDetails(npmConnection.registryUrl, token, input.stageId, {
+    allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
+  }).catch(() => null);
+
+  return {
+    input,
+    source: "manual",
+    ecosystem: "npm",
+    packageName: staged?.packageName ?? null,
+    version: staged?.version ?? null,
+    registryUrl: npmConnection.registryUrl,
+  };
+}
+
+/**
+ * Resolve a published `package@version` against its public registry before any
+ * scan row exists, so an unpublished version is a request error rather than a
+ * scan that fails minutes later, and the queued message names an exact pair.
+ *
+ * No npm credential is read, decrypted, or attached here: acquisition reuses
+ * the same public brokers the anonymous `/diff` surface uses.
+ */
+async function preparePublishedScan(
+  c: ScanRouteContext,
+  request: PublishedScanRequest,
+): Promise<PreparedScan | { error: Response }> {
+  const adapter = getPublishedAdapter(request.ecosystem);
+  if (!adapter) return { error: c.json({ error: "unsupported ecosystem" }, 400) };
+
+  let resolved: Awaited<ReturnType<typeof adapter.resolvePair>>;
+  try {
+    resolved = await adapter.resolvePair(c.env, workerExecutionContext(c.executionCtx), request);
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.published_pair.resolve_failed", {
+      ecosystem: request.ecosystem,
+      error: describeOperationalError(err),
+    });
+    // The public-diff loaders already classify their own failures (unknown
+    // package, oversized archive, registry unreachable) with a public-safe
+    // message and status; anything else is ours and stays opaque.
+    if (err instanceof PublicDiffError) {
+      return { error: c.json({ error: err.message }, err.status) };
+    }
+    return { error: c.json({ error: "could not reach the registry for that package" }, 502) };
+  }
+  if (!resolved.ok) return { error: c.json({ error: resolved.error }, resolved.status) };
+
+  const pair = resolved.pair;
+  return {
+    input: { stageId: publishedPairStageId(pair), published: pair },
+    source: "published",
+    ecosystem: pair.ecosystem,
+    packageName: pair.packageName,
+    version: pair.version,
+    registryUrl: null,
+  };
+}
 
 const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
 

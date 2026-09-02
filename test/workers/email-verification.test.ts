@@ -77,7 +77,7 @@ describe("email verification gating", () => {
   );
 
   test(
-    "with email configured, sign-up sends a verification email and withholds the session",
+    "with email configured, sign-up sends a verification email and still signs the user in",
     async () => {
       const { send } = withEmailBinding();
       const email = uniqueEmail();
@@ -91,10 +91,11 @@ describe("email verification gating", () => {
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as { token: string | null; user: { email: string } };
-      // requireEmailVerification withholds auto sign-in: no session token is issued.
-      expect(body.token).toBeNull();
-      expect(res.headers.get("set-cookie") ?? "").not.toContain("session_token");
-      // The verification email was dispatched through the configured binding.
+      // Verification is no longer a sign-in gate, so the session is issued now
+      // and the address is proved later, per action.
+      expect(typeof body.token).toBe("string");
+      expect(res.headers.get("set-cookie") ?? "").toContain("session_token");
+      // `sendOnSignUp` keeps dispatching the link even though nothing waits on it.
       expect(send).toHaveBeenCalledTimes(1);
 
       const db = createDb(env.DB);
@@ -108,9 +109,9 @@ describe("email verification gating", () => {
   );
 
   test(
-    "unverified sign-in is blocked and re-sends the verification link",
+    "unverified sign-in succeeds and issues a session",
     async () => {
-      const { send } = withEmailBinding();
+      withEmailBinding();
       const email = uniqueEmail();
 
       await authPost("/api/auth/sign-up/email", {
@@ -119,15 +120,12 @@ describe("email verification gating", () => {
         password: PASSWORD,
         callbackURL: "/verify-email",
       });
-      send.mockClear();
 
       const res = await authPost("/api/auth/sign-in/email", { email, password: PASSWORD });
 
-      expect(res.status).toBe(403);
-      const body = (await res.json()) as { code?: string };
-      expect(body.code).toBe("EMAIL_NOT_VERIFIED");
-      // sendOnSignIn re-dispatches a fresh link so the user can recover from here.
-      expect(send).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { token?: string };
+      expect(typeof body.token).toBe("string");
     },
     WORKER_AUTH_TIMEOUT_MS,
   );

@@ -13,7 +13,9 @@ import {
   isTerminalNpmVersionStatus,
   type NpmVersionStatus,
 } from "../ecosystems/npm/version-status";
-import { getStagedAdapter } from "../ecosystems";
+import { getPublishedAdapter, getStagedAdapter, UnsupportedEcosystemError } from "../ecosystems";
+import type { PublishedPairRef } from "../ecosystems/published-pair";
+import { PublicDiffError } from "../public-diff/error";
 import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
 import {
@@ -89,41 +91,9 @@ export async function executeScanJob(
   }
 
   try {
-    const npmConnection = await getNpmConnection(db, message.organizationId);
-    if (!npmConnection) {
-      throw new Error("Connect an organization npm token before scanning staged publishes.");
-    }
-    if (npmConnection.validationStatus !== "valid") {
-      throw new Error("Validate the organization npm token before scanning staged publishes.");
-    }
-    const releaseIdentity = await getScanReleaseIdentity(
-      db,
-      message.scanId,
-      message.organizationId,
-    );
-    if (!releaseIdentity?.registryUrl) {
-      throw new Error("The queued scan is missing its captured npm registry.");
-    }
-    if (npmConnection.registryUrl !== releaseIdentity.registryUrl) {
-      throw new Error("The organization npm registry changed after this scan was queued.");
-    }
-
-    await markNpmConnectionUsed(db, message.organizationId);
-
-    // Staged-publish scans are npm-only; resolving through the registry keeps
-    // the capability declaration authoritative rather than decorative.
-    const result = await runScanPipeline(
-      { env, executionCtx, db, session },
-      getStagedAdapter("npm"),
-      {
-        scanId: message.scanId,
-        stageId: message.stageId,
-        maxFiles: message.maxFiles,
-        organizationId: message.organizationId,
-        source: message.source ?? "manual",
-        registryUrl: releaseIdentity.registryUrl,
-      },
-    );
+    const result = message.published
+      ? await runPublishedPairScan(env, executionCtx, db, session, message, message.published)
+      : await runStagedScan(env, executionCtx, db, session, message);
     emitOperationalEvent("info", "scan.job.completed", {
       scanId: message.scanId,
       organizationId: message.organizationId,
@@ -176,7 +146,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
-          ecosystem: "npm",
+          ecosystem: scanEcosystem(message),
           source: message.source ?? "auto_discovery",
           reason: safe.code,
           durationMs: durationMsSince(startedAtMs),
@@ -199,7 +169,7 @@ export async function executeScanJob(
         recordProductEvent(env, {
           name: "scan.failed",
           organizationId: message.organizationId,
-          ecosystem: "npm",
+          ecosystem: scanEcosystem(message),
           source: message.source ?? "manual",
           code: safe.code,
           durationMs: durationMsSince(startedAtMs),
@@ -244,6 +214,77 @@ export async function executeScanJob(
   }
 }
 
+// Staged scans are npm-only; a published-pair review names its own ecosystem.
+function scanEcosystem(message: ScanQueueMessage): string {
+  return message.published?.ecosystem ?? "npm";
+}
+
+/**
+ * A registry-staged npm release. Every guard here is about the organization's
+ * own credential: the release is private, so the connection must exist, be
+ * valid, and still point at the registry the scan was queued against.
+ */
+async function runStagedScan(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  session: WorkspaceSession,
+  message: ScanQueueMessage,
+) {
+  const npmConnection = await getNpmConnection(db, message.organizationId);
+  if (!npmConnection) {
+    throw new Error("Connect an organization npm token before scanning staged publishes.");
+  }
+  if (npmConnection.validationStatus !== "valid") {
+    throw new Error("Validate the organization npm token before scanning staged publishes.");
+  }
+  const releaseIdentity = await getScanReleaseIdentity(db, message.scanId, message.organizationId);
+  if (!releaseIdentity?.registryUrl) {
+    throw new Error("The queued scan is missing its captured npm registry.");
+  }
+  if (npmConnection.registryUrl !== releaseIdentity.registryUrl) {
+    throw new Error("The organization npm registry changed after this scan was queued.");
+  }
+
+  await markNpmConnectionUsed(db, message.organizationId);
+
+  // Staged-publish scans are npm-only; resolving through the registry keeps
+  // the capability declaration authoritative rather than decorative.
+  return runScanPipeline({ env, executionCtx, db, session }, getStagedAdapter("npm"), {
+    scanId: message.scanId,
+    stageId: message.stageId,
+    maxFiles: message.maxFiles,
+    organizationId: message.organizationId,
+    source: message.source ?? "manual",
+    registryUrl: releaseIdentity.registryUrl,
+  });
+}
+
+/**
+ * Two already-public releases. Nothing about the organization's npm connection
+ * is consulted: the adapter acquires both sides through the same
+ * credential-free public brokers `/diff` uses, so this path runs for an
+ * organization that has never connected a token.
+ */
+async function runPublishedPairScan(
+  env: Cloudflare.Env,
+  executionCtx: ExecutionContext,
+  db: AppDb,
+  session: WorkspaceSession,
+  message: ScanQueueMessage,
+  pair: PublishedPairRef,
+) {
+  const adapter = getPublishedAdapter(pair.ecosystem);
+  if (!adapter) throw new UnsupportedEcosystemError(pair.ecosystem);
+  return runScanPipeline({ env, executionCtx, db, session }, adapter, {
+    ...pair,
+    scanId: message.scanId,
+    stageId: message.stageId,
+    organizationId: message.organizationId,
+    source: message.source ?? "published",
+  });
+}
+
 /**
  * Terminal classifications that mean the staged release itself went away, as
  * opposed to the review failing. Auto-discovered candidates in this family are
@@ -266,10 +307,11 @@ export interface RefinedScanFailure {
  * Narrow a staged-tarball failure using what npm says became of the release.
  *
  * The mapping from lifecycle status to failure lives in the npm adapter; this
- * only decides when it is safe to ask. Workflow-gate reviews are excluded
- * because they are not staged publishes and span three ecosystems — npm's stage
- * lifecycle has nothing to say about a PyPI or VS Code release. Strictly
- * advisory: an unanswerable lookup leaves the classification untouched.
+ * only decides when it is safe to ask. Workflow-gate reviews and published-pair
+ * reviews are excluded because neither is a staged publish — npm's stage
+ * lifecycle has nothing to say about a PyPI release, a VS Code release, or a
+ * version that is already public. Strictly advisory: an unanswerable lookup
+ * leaves the classification untouched.
  */
 export async function refineStagedFailure(
   env: Cloudflare.Env,
@@ -277,7 +319,11 @@ export async function refineStagedFailure(
   message: ScanQueueMessage,
   error: SafeScanError,
 ): Promise<RefinedScanFailure> {
-  if (error.code !== "staged_tarball_unavailable" || message.source === "workflow_gate") {
+  if (
+    error.code !== "staged_tarball_unavailable" ||
+    message.source === "workflow_gate" ||
+    message.published
+  ) {
     return { error, registryStatus: null };
   }
   const fate = await lookupStagedReleaseFate(env, db, message.scanId, message.organizationId);
@@ -291,6 +337,16 @@ export async function refineStagedFailure(
 }
 
 export function classifyScanError(err: unknown): SafeScanError {
+  // Published-pair acquisition already classified its own failure (unknown
+  // version, oversized archive, registry unreachable) with a public-safe
+  // message, so keep it instead of re-deriving one from the sandbox detail.
+  if (err instanceof PublicDiffError) {
+    return {
+      code: err.status === 502 ? "published_registry_unavailable" : "published_release_unreadable",
+      message: err.message,
+      retryable: err.status === 502,
+    };
+  }
   const detail = sandboxErrorDetail(err);
   if (detail !== null) {
     const sandbox = parseSandboxDetail(detail);

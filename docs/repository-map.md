@@ -12,7 +12,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/ai-review/` owns the Workers AI reviewer, wired through `server/lib/scan/pipeline.ts`.
 - `server/lib/scan/` owns pipeline phases, queue jobs, input parsing, artifact persistence, report export, and release memory.
 - `server/lib/public-diff/` owns anonymous `/diff` orchestration and `PublicDiffAdapter`. The atpm ecosystem resolves releases over AT Protocol; see `atpm-public-diff.md`.
-- `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`.
+- `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.

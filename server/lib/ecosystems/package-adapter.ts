@@ -51,6 +51,9 @@ type BaselineSelectionSource =
   | "highest-published"
   | "latest-published"
   | "upload-time"
+  // Two already-public releases reviewed as a pair; the baseline is the
+  // requested version, or the release immediately before the reviewed one.
+  | "published-pair"
   | "none";
 
 export type BaselineComparisonSkip = "baseline-too-large";

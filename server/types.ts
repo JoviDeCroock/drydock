@@ -1,5 +1,6 @@
 import type { Auth, AuthSession } from "./lib/auth";
 import type { BaselineInfo } from "./lib/ecosystems/package-adapter";
+import type { PublishedPairRef } from "./lib/ecosystems/published-pair";
 
 export type { ReleaseProvenance } from "./lib/ecosystems/package-adapter";
 export type { StagedArtifactIntegrity } from "./lib/ecosystems/artifact-integrity";
@@ -28,6 +29,12 @@ export type Variables = {
 export interface ScanInput {
   stageId: string;
   maxFiles?: number;
+  /**
+   * Set only for published-pair reviews. Its presence selects the
+   * credential-free acquisition path; `stageId` is then a synthetic identifier
+   * for the pair rather than an npm stage record.
+   */
+  published?: PublishedPairRef;
 }
 
 export interface ScanResult {

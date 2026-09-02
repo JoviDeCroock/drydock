@@ -1,12 +1,21 @@
 import type { ScanInput } from "../../types";
 import { isValidStageId } from "../ecosystems/npm/stage-id";
 
+/** A published `package@version` a caller asked to review, before the registry confirms it. */
+export interface PublishedScanRequest {
+  ecosystem: string;
+  packageName: string;
+  version: string;
+  baselineVersion: string | null;
+}
+
 export type ScanInputParseResult =
-  | { ok: true; input: ScanInput }
+  | { ok: true; kind: "staged"; input: ScanInput }
+  | { ok: true; kind: "published"; request: PublishedScanRequest }
   | { ok: false; error: string; status: 400 };
 
 export function parseScanInput(
-  body: Partial<ScanInput> & { maxBytesPerFile?: unknown },
+  body: Partial<ScanInput> & Partial<PublishedScanRequest> & { maxBytesPerFile?: unknown },
 ): ScanInputParseResult {
   // Scan limits are server-controlled. `maxBytesPerFile` no longer exists as a
   // scan knob (the sandbox always scans whole files; see issue #191) but a client
@@ -16,8 +25,44 @@ export function parseScanInput(
     return { ok: false, error: "scan limits are controlled by the server", status: 400 };
   }
 
+  // The two input shapes are disjoint: a staged publish is named by the
+  // registry's stage id, a published pair by its own coordinates. The presence
+  // of either coordinate selects the published path, so a request that means to
+  // review a release is never silently read as a malformed stage id.
+  if (
+    body.ecosystem !== undefined ||
+    body.packageName !== undefined ||
+    body.version !== undefined
+  ) {
+    return parsePublishedScanInput(body);
+  }
+
   const stageId = String(body.stageId || "");
   if (!isValidStageId(stageId)) return { ok: false, error: "invalid stageId", status: 400 };
 
-  return { ok: true, input: { stageId } };
+  return { ok: true, kind: "staged", input: { stageId } };
+}
+
+function parsePublishedScanInput(body: Partial<PublishedScanRequest>): ScanInputParseResult {
+  // Shape only. Which ecosystems can be reviewed this way is the registry's
+  // answer, and the route asks it — this module stays free of the registry
+  // import, which drags in every adapter and the sandbox client. There is
+  // deliberately no default ecosystem: an absent one fails rather than
+  // resolving against whichever this deployment happens to prefer.
+  const ecosystem = typeof body.ecosystem === "string" ? body.ecosystem.trim() : "";
+  if (!ecosystem) return { ok: false, error: "ecosystem is required", status: 400 };
+  const packageName = typeof body.packageName === "string" ? body.packageName.trim() : "";
+  if (!packageName) return { ok: false, error: "packageName is required", status: 400 };
+  const version = typeof body.version === "string" ? body.version.trim() : "";
+  if (!version) return { ok: false, error: "version is required", status: 400 };
+  if (body.baselineVersion !== undefined && typeof body.baselineVersion !== "string") {
+    return { ok: false, error: "invalid baselineVersion", status: 400 };
+  }
+  const baselineVersion = body.baselineVersion?.trim() || null;
+
+  return {
+    ok: true,
+    kind: "published",
+    request: { ecosystem, packageName, version, baselineVersion },
+  };
 }

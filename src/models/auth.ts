@@ -6,6 +6,10 @@ interface SessionUser {
   name?: string;
   email?: string;
   twoFactorEnabled?: boolean;
+  // Signing in does not require this. Actions that spend trust — npm token,
+  // decision, share link, invitation, GitHub install — do; the server enforces
+  // it and the dashboard banner explains it.
+  emailVerified?: boolean;
 }
 
 interface AuthSession {
@@ -158,10 +162,12 @@ export const sessionModel = new SessionModel();
 // needs no configuration — is never blocked on this lookup.
 const AuthConfigModel = createModel(() => {
   const githubSignIn = signal(false);
+  const emailVerification = signal(false);
   const loaded = signal(false);
 
   return {
     githubSignIn,
+    emailVerification,
     loaded,
 
     async load(): Promise<void> {
@@ -172,8 +178,12 @@ const AuthConfigModel = createModel(() => {
           headers: { accept: "application/json" },
         });
         if (!res.ok) return;
-        const data = (await res.json()) as { githubSignIn?: boolean } | null;
+        const data = (await res.json()) as {
+          githubSignIn?: boolean;
+          emailVerification?: boolean;
+        } | null;
         this.githubSignIn.value = Boolean(data?.githubSignIn);
+        this.emailVerification.value = Boolean(data?.emailVerification);
         this.loaded.value = true;
       } catch {
         // Offline or misconfigured — leave every optional method hidden and
