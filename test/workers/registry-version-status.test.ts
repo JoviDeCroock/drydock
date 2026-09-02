@@ -806,20 +806,21 @@ describe("registry version status resolution", () => {
   });
 
   test("retires live replacements before the lookup limit so they cannot starve the backlog", async () => {
+    // The two oldest reviews are re-staged; the newest one is not. Oldest-first
+    // ordering means the replaced pair would fill a limit of two and starve the
+    // live review unless they are retired before the lookup query runs.
     const org = await seedOrg();
-    const scans = [];
-    for (let index = 0; index < 17; index++) {
-      scans.push(await seedCompletedScan(org, { version: `2.0.${index}` }));
-    }
+    const now = new Date();
+    const minuteAgo = (minutes: number) => new Date(now.getTime() - minutes * 60 * 1000);
+    const replaced = [
+      await seedCompletedScan(org, { version: "2.0.0", createdAt: minuteAgo(3) }),
+      await seedCompletedScan(org, { version: "2.0.1", createdAt: minuteAgo(2) }),
+    ];
+    const live = await seedCompletedScan(org, { version: "2.0.2", createdAt: minuteAgo(1) });
     const fetchMock = stubRegistry((url) => {
       const version = decodeURIComponent(new URL(url).pathname.split("/").at(-2)!);
       return statusResponse("published", PACKAGE, version);
     });
-    const stagedItems = scans.slice(1).map(({ stageId }, index) => ({
-      id: `${stageId}-replacement`,
-      packageName: PACKAGE,
-      version: `2.0.${index + 1}`,
-    }));
 
     const result = await resolveNpmReleaseOutcomes({
       db: createDb(env.DB),
@@ -827,13 +828,20 @@ describe("registry version status resolution", () => {
       organizationId: org.organizationId,
       ownerUserId: org.userId,
       connection: { token: TOKEN, registryUrl: REGISTRY_URL },
-      stagedItems,
+      stagedItems: replaced.map(({ stageId }, index) => ({
+        id: `${stageId}-replacement`,
+        packageName: PACKAGE,
+        version: `2.0.${index}`,
+      })),
+      now,
+      lookupLimit: 2,
     });
 
     expect(result).toMatchObject({ checked: 1, resolved: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((await readScan(scans[0]!.scanId)).registryVersionStatus).toBe("published");
-    for (const scan of scans.slice(1)) {
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/2.0.2/status");
+    expect((await readScan(live.scanId)).registryVersionStatus).toBe("published");
+    for (const scan of replaced) {
       expect((await readScan(scan.scanId)).registryStatusSupersededAt).toBeTruthy();
     }
   });
