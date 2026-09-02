@@ -17,7 +17,7 @@ export const encoder = new TextEncoder();
 
 // Each header is exactly 512 bytes; entry bodies are zero-padded to a multiple
 // of 512. The archive is terminated with two zero blocks.
-const TAR_BLOCK = 512;
+export const TAR_BLOCK = 512;
 
 function pad(bytes, length) {
   if (bytes.length > length) throw new Error("field overflow: " + bytes.length + " > " + length);
@@ -31,7 +31,7 @@ function octal(value, length) {
   return pad(encoder.encode(text + "\0"), length);
 }
 
-function tarHeader({ name = "", size = 0, type = "0", prefix = "" }) {
+function tarHeader({ name = "", size = 0, type = "0", prefix = "", linkname = "" }) {
   const buf = new Uint8Array(TAR_BLOCK);
   buf.set(pad(encoder.encode(name), 100), 0);
   buf.set(pad(encoder.encode("0000644"), 8), 100); // mode
@@ -39,14 +39,31 @@ function tarHeader({ name = "", size = 0, type = "0", prefix = "" }) {
   buf.set(pad(encoder.encode("0000000"), 8), 116); // gid
   buf.set(octal(size, 12), 124);
   buf.set(pad(encoder.encode("00000000000"), 12), 136); // mtime
-  // checksum placeholder (8 spaces) — readTar doesn't validate it
-  buf.set(pad(encoder.encode("        "), 8), 148);
+  buf.set(pad(encoder.encode("        "), 8), 148); // checksum placeholder
   buf[156] = type.charCodeAt(0);
-  buf.set(pad(encoder.encode(""), 100), 157); // linkname
+  // A link entry needs a target: node-tar rejects a `1`/`2` header with an empty
+  // linkname outright, so a fixture that omits one is not a link npm extracts.
+  buf.set(
+    pad(encoder.encode(linkname || (type === "1" || type === "2" ? "target" : "")), 100),
+    157,
+  );
   buf.set(pad(encoder.encode("ustar"), 6), 257);
   buf.set(pad(encoder.encode("00"), 2), 263);
   buf.set(pad(encoder.encode(prefix), 155), 345);
+  sealTarHeader(buf, 0);
   return buf;
+}
+
+// Write the header checksum over the 512-byte block at `offset`, the way every
+// tar writer does: the sum of the block with the checksum field itself counted
+// as eight spaces. Exported so a fixture that corrupts a header field on purpose
+// can re-seal it and test the field rather than the checksum.
+export function sealTarHeader(bytes, offset = 0) {
+  let sum = 8 * 0x20;
+  for (let i = offset; i < offset + 148; i++) sum += bytes[i];
+  for (let i = offset + 156; i < offset + TAR_BLOCK; i++) sum += bytes[i];
+  bytes.set(pad(encoder.encode(sum.toString(8).padStart(6, "0") + "\0 "), 8), offset + 148);
+  return bytes;
 }
 
 function tarBody(content) {
@@ -73,6 +90,33 @@ export function buildTar(entries) {
   for (const p of parts) {
     out.set(p, offset);
     offset += p.length;
+  }
+  return out;
+}
+
+// A bare 512-byte header with no body, for fixtures that need the declared size
+// to disagree with the bytes that follow. `seal: false` leaves the checksum
+// placeholder in place, producing the block npm's reader skips.
+export function buildTarHeaderOnly({ seal = true, ...entry }) {
+  const header = tarHeader({ ...entry, size: entry.size ?? 0 });
+  if (!seal) header.set(encoder.encode("        "), 148);
+  return header;
+}
+
+// Strip the two-block end-of-archive marker `buildTar` appends, so a fixture can
+// splice extra blocks (a lone zero block, a second archive) after real entries.
+export function tarEntriesOnly(tar) {
+  return tar.subarray(0, tar.length - TAR_BLOCK * 2);
+}
+
+export function concatBytes(parts) {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
   }
   return out;
 }

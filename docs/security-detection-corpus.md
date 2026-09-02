@@ -168,7 +168,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.28.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.29.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -414,6 +414,49 @@ conditions any revived burst rule would have to meet.
 `test/fixtures/security-corpus/cases-atpm/` pin each rule's severity and risk, plus a matching verified
 build that must stay quiet; the detection eval consumes the same cases through the production
 `atpmRecordFindings` path.
+
+`1.29.0` adds the `parser-differential` evidence kind to `tar.suspicious-entry` (high) and aligns the
+tar reader with node-tar, the reader `npm install` extracts with. Each shape below let an archive show
+review one set of files and hand npm another; the evidence names which one was found.
+
+- **End-of-archive marker.** The marker is two consecutive all-zero blocks; the reader stopped at the
+  first, so entries placed after a lone zero block were invisible while npm read past it and installed
+  them. The reader now ends only on the second consecutive zero block.
+- **Header checksums** are validated with node-tar's formula. node-tar skips a block whose checksum
+  fails _without consuming its declared body_, then reads that body as further headers, so trusting
+  one put the two readers on different block boundaries for the rest of the archive. Such a block is
+  now skipped the same way and reported.
+- **PAX `size`** (local and global) overrides the ustar header's size for node-tar, and now here, so
+  an archive can no longer declare one body length to review and another to npm.
+- **Extended-header handling** matches node-tar: `X` is read like `x`, `N` like `L`, `K` is metadata
+  rather than an entry, a global header no longer clears a pending local one (only its `path` and
+  `linkpath` are ignored), records are parsed line-by-line with a mis-declared length costing only
+  that line, and a metadata entry over node-tar's 1 MiB limit is ignored rather than applied.
+- **Typeflag `7`** (contiguous file) is read as the regular file node-tar extracts, and a `0`/NUL entry
+  whose name ends in `/` as the directory node-tar coerces it to.
+- **Paths**: `.` segments are collapsed rather than rejected; the ustar prefix is read only when the
+  ustar magic is present, with node-tar's 130/155-byte split, and is not prepended to an extended-header
+  path (node-tar replaces the prefixed path with that one, so prepending it reported a nested path for
+  a file npm writes at the package root); and the `package/` root prefix is stripped only when it is
+  the first component. A regular entry whose path is still not representable — traversal, drive letter,
+  backslash separator, over-long — is now reported instead of silently dropped.
+
+Readers still genuinely disagree about a lone zero block (pip's CPython `tarfile` and GNU tar stop at
+the first one; node-tar does not), so on the PyPI side these findings report a hand-crafted archive
+whose entries pip may not extract rather than content hidden from review. Four divergences from npm
+remain, three of them by design and none of which lets an archive hide content: a backslash path is
+reported as a finding rather than recorded as a file (it is a separator on Windows and an ordinary
+character on POSIX, so no one path is right for both); an entry with no directory component is
+recorded where npm's `strip: 1` drops it; and `.gitignore` is reported under its archive name rather
+than the `.npmignore` pacote renames it to on extract, which is a fetcher behavior rather than an
+archive one.
+
+The fourth is a known gap: npm's `strip: 1` drops whatever the first path component is, while this
+reader strips a literal `package`, because it also serves ecosystems that keep their root directory
+(a PyPI sdist's `<name>-<version>/`). A hand-built npm tarball rooted at some other name therefore
+reports one level deeper than npm extracts, so the root-anchored rules — the manifest lookup and
+`binding.gyp` — do not see files npm places at the package root. Closing it means telling the reader
+which strip depth its caller extracts with.
 
 ### Fixture format
 

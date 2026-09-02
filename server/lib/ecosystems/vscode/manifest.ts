@@ -198,6 +198,7 @@ const SUSPICIOUS_ENTRY_KINDS = new Set([
   "unicode-confusable",
   "content-skipped",
   "retention-tier",
+  "parser-differential",
 ]);
 
 function parseSuspiciousEntries(

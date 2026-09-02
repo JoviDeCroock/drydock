@@ -111,6 +111,9 @@ function tarSuspiciousSeverity(
   if (entry.kind === "retention-tier") {
     return hasChangedSkippedContent ? "medium" : "info";
   }
+  // A structure that makes tar readers disagree is review evasion by
+  // construction: no publisher toolchain emits one.
+  if (entry.kind === "parser-differential") return "high";
   return "medium";
 }
 
@@ -133,6 +136,10 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi")
       return "file body exceeded the scanner's retention limit, so only its path, size, and content hash were recorded; the content was never inspected — the diff's baseline hash comparison shows whether it changed, and its contents must be verified through provenance or out-of-band review";
     case "retention-tier":
       return "the archive is larger than the scanner's full-inspection tier, so some file bodies were recorded hash-only and never content-inspected; the diff's baseline hash comparison still shows whether each one changed, and changed-but-uninspected files must be verified through provenance or out-of-band review";
+    case "parser-differential":
+      return dialect === "pypi"
+        ? "the archive uses a structure that tar readers resolve differently, named in the evidence. Drydock resolves it the way node-tar does, which is not always how pip's CPython `tarfile` reads it, so an entry recorded here may not be one pip extracts — but no Python build backend emits these shapes, and the disagreement is itself the evidence"
+        : "the archive uses a structure that tar readers resolve differently, named in the evidence. Drydock resolves it the way node-tar does, because that is the reader `npm install` extracts with, so a reviewer reading the archive any other way sees a different set of files than npm installs. npm pack never emits these shapes — they are how files are hidden from review";
   }
 }
 

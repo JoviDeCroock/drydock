@@ -30,7 +30,13 @@ export type TarSuspiciousEntryKind =
   | "duplicate"
   | "unicode-confusable"
   | "content-skipped"
-  | "retention-tier";
+  | "retention-tier"
+  | "parser-differential";
+
+export function tarHeaderChecksum(header: Uint8Array): {
+  computed: number;
+  declared: number | null;
+};
 
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
