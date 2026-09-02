@@ -15,6 +15,12 @@ export function releaseConsistencyVariant(
   return consistency.currentFindingCount === 0 ? "empty" : consistency.status;
 }
 
+/** Whether `ReleaseConsistencyNotice` would render anything for this value. */
+export function hasReleaseConsistencyNote(value: unknown): boolean {
+  const consistency = normalizeReleaseConsistency(value);
+  return Boolean(consistency && releaseConsistencyVariant(consistency));
+}
+
 export function ReleaseConsistencyNotice({
   value,
   approvedContextCount = 0,

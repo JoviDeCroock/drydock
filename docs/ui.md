@@ -28,9 +28,10 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 
 ## Shared review surface
 
-Two surfaces render the same review: the authenticated scan workbench
-(`src/pages/Dashboard/ScanDetail/`) and the anonymous public diff
-(`src/pages/Diff/`). What both use lives in `src/features/review/`:
+Three surfaces render the same review: the authenticated scan workbench
+(`src/pages/Dashboard/ScanDetail/`), the anonymous public diff
+(`src/pages/Diff/`), and the shared public report (`src/pages/PublicReport/`).
+What they use lives in `src/features/review/`:
 
 - `types.ts` — `ReviewFinding` (only the fields the review UI renders) and
   `FindingWithDiffStatus`. Deliberately narrower than a persisted scan finding
@@ -38,12 +39,36 @@ Two surfaces render the same review: the authenticated scan workbench
   `scanId`/`ruleVersion` values to satisfy a shared component.
 - `diff-entries.ts` — `filterDiffEntries` and `findingCountsByPath`.
 - `RiskSignalsSection.tsx` — the changed-file/package-context findings split.
+- `ReviewWorkbench.tsx` — the release tree + file diff pair. Filter state
+  arrives as signals and is read inside the component, so a keystroke in the
+  filter box re-renders the tree and not the page body (which on the scan
+  detail also renders the per-finding risk index). The diff panel itself is the
+  caller's `children`, because what a "previous side" is differs per surface.
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,
 `annotatePersistedFindings`, the `DiffWorkbench` state machine). Pages must not
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
+
+## Review page order
+
+Both review pages lead with the diff:
+
+- **Scan detail** — a one-row verdict strip (recommendation, qualifying risk
+  badges, the version picker, and the decision button), then the workbench,
+  then a `CollapsibleCard` of review notes (why the verdict reads that way, the
+  AI reviewer's summary, release memory, source binding), then the risk index
+  and the manifest sections. The notes open themselves when any of those has
+  something to say and stay shut when the release is clean. The decision button
+  lives in the strip on a completed review and in the page header otherwise,
+  since a failed gate review renders no strip.
+- **Public report** — verdict card, then the same workbench, then the risk
+  index. Its diff is single-sided: a share token buys the staged artifact's
+  redacted samples (`GET /public/reports/:token/file`) and never a baseline,
+  which would cost the organization's npm credentials. `singleSidedTone` in
+  `DiffView` keeps a `modified` file rendered from one side neutral instead of
+  tinting every row as an insertion.
 
 ## Dashboard onboarding funnel
 
