@@ -38,6 +38,35 @@ describe("dashboard onboarding contracts", () => {
     expect(gettingStartedSource).toContain("has reached Drydock for review");
   });
 
+  test("leads with the step that needs no token and no staged release", () => {
+    const firstStep = gettingStartedSource.indexOf("Review one of your published packages");
+    const tokenStep = gettingStartedSource.indexOf("Connect npm to watch staged releases");
+    expect(firstStep).toBeGreaterThan(-1);
+    expect(tokenStep).toBeGreaterThan(firstStep);
+    // The token step is an option, not a gate on reaching a first review.
+    expect(gettingStartedSource).toContain("Optional, and only for reviewing a release");
+  });
+
+  test("starts a persisted review rather than an anonymous diff", () => {
+    expect(gettingStartedSource).toContain("PublishedReviewModel");
+    expect(gettingStartedSource).toContain("/dashboard/scans/");
+    expect(gettingStartedSource).not.toContain("resolveSuggestedDiffPath");
+  });
+
+  test("says what is missing instead of only disabling Check npm", () => {
+    expect(dashboardSource).toContain(
+      "Checking npm for staged releases needs a validated npm token.",
+    );
+    expect(dashboardSource).not.toContain(
+      "Connect a validated npm token in Settings → Integrations first",
+    );
+  });
+
+  test("offers the signed-in save action on /diff without touching the anonymous view", () => {
+    expect(diffSource).toContain("<SaveReviewAction spec={spec} />");
+    expect(diffSource).toContain("<Show when={authed}>");
+  });
+
   test("does not personalize onboarding around an npm public diff", () => {
     expect(gettingStartedSource).not.toContain("onboarding-intent");
     expect(gettingStartedSource).not.toContain("You were reading the diff for");

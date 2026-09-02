@@ -15,7 +15,7 @@ import {
   markGettingStartedDone,
   openGettingStartedPanel,
 } from "../../models/getting-started";
-import { NpmConnectionModel } from "../../models/npm-connection";
+import { NpmConnectionModel, npmConnectionScope } from "../../models/npm-connection";
 import { OrganizationModel } from "../../models/organization";
 import {
   ScanListModel,
@@ -224,6 +224,7 @@ function DashboardOnboarding({
     return (
       <GettingStarted
         npmConnected={Boolean(npm.connection.value)}
+        npmScope={npmConnectionScope(npm.connection.value)}
         hasAnyScan={scans.hasAnyScan.value === true}
         hasAnyDecision={scans.hasAnyDecision.value === true}
         onDismiss={dismiss}
@@ -313,19 +314,28 @@ function RecentReviewsSection({
             disabled={scans.refreshing.value}
             onChange={(filter) => (scans.filter.value = filter)}
           />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void onDiscover()}
-            disabled={discoveryRefreshing || !ready}
-            title={
-              ready
-                ? "Find staged npm publishes and start reviews"
-                : "Connect a validated npm token in Settings → Integrations first"
-            }
-          >
-            {discoveryRefreshing ? "Checking npm…" : "Check npm"}
-          </Button>
+          {/* A disabled control with the reason only in a tooltip is a dead
+              end on touch and for screen readers, so the unmet requirement is
+              rendered as text with the link that resolves it. */}
+          {ready ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void onDiscover()}
+              disabled={discoveryRefreshing}
+              title="Find staged npm publishes and start reviews"
+            >
+              {discoveryRefreshing ? "Checking npm…" : "Check npm"}
+            </Button>
+          ) : (
+            <Muted class="text-[13px] m-0">
+              Checking npm for staged releases needs a validated npm token.{" "}
+              <a href="/dashboard/settings?tab=integrations" class="underline">
+                Connect one
+              </a>
+              .
+            </Muted>
+          )}
           <Button
             variant="ghost"
             size="sm"

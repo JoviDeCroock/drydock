@@ -15,6 +15,7 @@ import {
 } from "../../server/lib/ecosystems";
 import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
 import { ATPM_RECORD_CACHE_SCOPE } from "../../server/lib/ecosystems/atpm/public-diff";
+import { PUBLISHED_REVIEW_ECOSYSTEMS } from "../../src/lib/published-review-ecosystems";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a
@@ -70,6 +71,10 @@ describe("ecosystem capability registry", () => {
     expect(supportedPublicDiffEcosystems().sort()).toEqual(["atpm", "npm", "pypi"]);
     expect(supportedStagedEcosystems()).toEqual(["npm"]);
     expect(supportedPublishedEcosystems().sort()).toEqual(["npm", "pypi"]);
+    // The browser cannot import the registry (it drags in every adapter and the
+    // sandbox client), so it keeps its own copy of this answer. Pin them here
+    // rather than letting the UI offer a review the server would refuse.
+    expect([...PUBLISHED_REVIEW_ECOSYSTEMS].sort()).toEqual(supportedPublishedEcosystems().sort());
   });
 
   test("resolvers return the adapter a module declares", () => {

@@ -32,7 +32,7 @@ export interface PublishedPairRef {
   baselineVersion: string;
 }
 
-export type PublishedPairResolution =
+type PublishedPairResolution =
   | { ok: true; pair: PublishedPairRef }
   | { ok: false; error: string; status: 400 | 404 };
 

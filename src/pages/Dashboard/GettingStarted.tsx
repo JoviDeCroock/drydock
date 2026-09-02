@@ -1,7 +1,7 @@
-import { useSignal } from "@preact/signals";
+import { useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
-import { resolveSuggestedDiffPath } from "../../models/package-diff";
+import { parsePackageSpec, PublishedReviewModel } from "../../models/published-review";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button, LinkButton } from "../../components/Button";
@@ -35,11 +35,14 @@ const STAGE_COMMAND = "npm stage publish";
  */
 export function GettingStarted({
   npmConnected,
+  npmScope,
   hasAnyScan,
   hasAnyDecision,
   onDismiss,
 }: {
   npmConnected: boolean;
+  /** The connection's own npm scope, when there is one, to prefill step 1. */
+  npmScope: string | null;
   hasAnyScan: boolean;
   hasAnyDecision: boolean;
   onDismiss: () => void;
@@ -70,35 +73,36 @@ export function GettingStarted({
             </>
           ) : (
             <>
-              Drydock reviews a release while it is still private, so the first review starts when
-              you stage one.
+              Start with a package you already publish: the first review needs no token and nothing
+              to wait for. Staged and gated releases land here the same way afterwards.
             </>
           )}
         </Muted>
       </div>
 
       <ol class="list-none p-0 m-0 flex flex-col gap-3">
-        <Step index={1} title="Connect npm" done={npmConnected}>
-          {npmConnected ? (
-            <>A read-only token is stored for this organization.</>
+        <Step
+          index={1}
+          title="Review one of your published packages"
+          done={hasAnyScan}
+          action={hasAnyScan ? null : <PublishedReviewForm npmScope={npmScope} />}
+        >
+          {hasAnyScan ? (
+            <>A release has reached Drydock for review in this organization.</>
           ) : (
             <>
-              Store an npm token so Drydock can fetch staged tarballs — a granular token with{" "}
-              <strong class="font-medium text-ink">Packages and scopes: Read-only</strong> and{" "}
-              <strong class="font-medium text-ink">Organizations: No access</strong>.{" "}
-              <a href="/dashboard/settings?tab=integrations" class="underline">
-                Open settings
-              </a>
-              .
+              Name a package you publish. Drydock reviews its latest release against the one before
+              it — the full report, kept in this organization, with nothing to install and no token
+              to create.
             </>
           )}
         </Step>
         <Step
           index={2}
-          title="Stage a release"
-          done={hasAnyScan}
+          title="Connect npm to watch staged releases"
+          done={npmConnected}
           action={
-            hasAnyScan ? null : (
+            npmConnected ? null : (
               <div class="flex flex-wrap items-center gap-2">
                 {/* Selectable next to the copy control: clipboard access is
                     denied outside secure contexts, and the fallback is to
@@ -111,13 +115,23 @@ export function GettingStarted({
             )
           }
         >
-          {hasAnyScan ? (
-            <>A release has reached Drydock for review in this organization.</>
+          {npmConnected ? (
+            <>
+              A read-only token is stored for this organization. Run{" "}
+              <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory and Drydock finds
+              the candidate, or use <strong class="font-medium text-ink">Check npm</strong> below.
+            </>
           ) : (
             <>
-              Run <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory. npm holds
-              the candidate privately until you approve it. Drydock finds it automatically, or use{" "}
-              <strong class="font-medium text-ink">Check npm</strong> below.
+              Optional, and only for reviewing a release <em>before</em> it is public. Store an npm
+              token — a granular one with{" "}
+              <strong class="font-medium text-ink">Packages and scopes: Read-only</strong> and{" "}
+              <strong class="font-medium text-ink">Organizations: No access</strong> — then run{" "}
+              <InlineCode>{STAGE_COMMAND}</InlineCode> from your package directory.{" "}
+              <a href="/dashboard/settings?tab=integrations" class="underline">
+                Open settings
+              </a>
+              .
             </>
           )}
         </Step>
@@ -135,8 +149,6 @@ export function GettingStarted({
           )}
         </Step>
       </ol>
-
-      {hasAnyScan ? null : <FirstDiff />}
 
       <CiPublisherTrack />
     </Card>
@@ -164,68 +176,53 @@ function CiPublisherTrack() {
   );
 }
 
-// First value before any token: the same deterministic rules, run over a
-// package that is already published. Nothing here is organization state, so it
-// needs no npm connection and no staged release to wait for.
-function FirstDiff() {
+// First value before any credential: the full authenticated review — the same
+// rules, AI review, report, and decision — over a release that is already
+// public. Nothing here needs an npm connection or a staged candidate, which is
+// the whole point of putting it first.
+function PublishedReviewForm({ npmScope }: { npmScope: string | null }) {
   const location = useLocation();
-  const packageName = useSignal("");
-  const busy = useSignal(false);
-  const error = useSignal<string | null>(null);
+  // A connected organization's own npm scope is the likeliest prefix of the
+  // package it wants to review; without one the placeholder does the teaching.
+  const spec = useSignal(npmScope ? `${npmScope}/` : "");
+  const review = useModel(PublishedReviewModel);
 
-  const open = async () => {
-    const input = packageName.peek().trim();
-    if (!input || busy.peek()) return;
-    busy.value = true;
-    error.value = null;
-    try {
-      // The same resolution the /diff landing form uses, so both entry points
-      // agree on which version pair "latest release" means and on the error
-      // copy when a package has only ever published once.
-      const resolved = await resolveSuggestedDiffPath("npm", input);
-      if ("error" in resolved) error.value = resolved.error;
-      else location.route(resolved.path);
-    } finally {
-      busy.value = false;
-    }
+  const start = async () => {
+    const parsed = parsePackageSpec(spec.peek());
+    if (!parsed) return;
+    const scanId = await review.start("npm", parsed);
+    if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
   };
 
   return (
     <div class="flex flex-col gap-2">
-      <h3 class="text-[14px] font-medium tracking-[-0.005em] m-0">
-        See the public diff of your latest release
-      </h3>
-      <Muted class="text-[13px] m-0 leading-[1.6]">
-        No token, no staged release, no wait — the same deterministic rules over the last two
-        published versions of an npm package.
-      </Muted>
       <form
         class="flex flex-wrap gap-2 items-center"
         onSubmit={(event) => {
           event.preventDefault();
-          void open();
+          void start();
         }}
       >
         <Input
           type="text"
-          value={packageName}
-          placeholder="package name, e.g. react"
-          aria-label="npm package name"
+          value={spec}
+          placeholder="package, e.g. react — or react@19.0.0"
+          aria-label="npm package name, optionally with a version"
           autoComplete="off"
           spellcheck={false}
           class="flex-1 min-w-[200px] max-w-[380px]"
-          onInput={(event) => (packageName.value = (event.target as HTMLInputElement).value)}
+          onInput={(event) => (spec.value = (event.target as HTMLInputElement).value)}
         />
-        <Button type="submit" size="sm" disabled={busy}>
-          <Show when={busy} fallback="See the diff">
-            Loading versions…
+        <Button type="submit" size="sm" disabled={review.busy}>
+          <Show when={review.busy} fallback="Review it">
+            Starting…
           </Show>
         </Button>
         <LinkButton variant="ghost" size="sm" href="/docs">
           Read the docs
         </LinkButton>
       </form>
-      <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+      <Show when={review.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
     </div>
   );
 }

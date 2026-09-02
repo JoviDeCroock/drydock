@@ -3,6 +3,7 @@ import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import type { DiffEntry } from "../../../server/lib/review";
+import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
 import { compareSeverity, countSeverities } from "../../lib/findings";
 import { packageDiffSeo, PageSeo } from "../../lib/seo";
@@ -431,6 +432,12 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           Deterministic findings only: package code is never executed and AI review does not run on
           this public surface, so the same version pair always produces the same report.
         </Muted>
+        {/* A preview ref is mutable, so there is nothing stable to save it as. */}
+        {hasPreview ? null : (
+          <Show when={authed}>
+            <SaveReviewAction spec={spec} />
+          </Show>
+        )}
         {pickerVersions ? (
           <VersionPairPicker
             versions={pickerVersions}

@@ -17,6 +17,20 @@ export interface PublicNpmConnection {
   updatedAt: string | number | Date;
 }
 
+/**
+ * The npm scope this organization's token authenticates as (`@username`), read
+ * off the stored `whoami` capability. Only a validated connection answers: an
+ * unvalidated one's capabilities are a stale record of a token that may no
+ * longer exist, and prefilling a field from it would be a confident guess.
+ */
+export function npmConnectionScope(connection: PublicNpmConnection | null): string | null {
+  if (!connection || connection.validationStatus !== "valid") return null;
+  const capabilities = connection.capabilitiesJson;
+  if (!capabilities || typeof capabilities !== "object") return null;
+  const whoami = (capabilities as { whoami?: unknown }).whoami;
+  return typeof whoami === "string" && whoami ? `@${whoami}` : null;
+}
+
 export interface NpmCredentialValidation {
   ok: boolean;
   status: "valid" | "invalid";
