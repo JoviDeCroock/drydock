@@ -30,7 +30,26 @@ describe("auth config", () => {
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ githubSignIn: false });
+    expect(await res.json()).toMatchObject({ githubSignIn: false });
+  });
+
+  test("reports whether email verification can be enforced at all", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/api/auth/config`),
+      { ...env, SEND_EMAIL: { send: async () => undefined } } as Cloudflare.Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(await res.json()).toMatchObject({ emailVerification: true });
+
+    // Without a transport nothing can be verified, so the dashboard must not be
+    // told to show a banner no account could ever clear.
+    const withoutEmail = createExecutionContext();
+    const offRes = await worker.fetch(new Request(`${ORIGIN}/api/auth/config`), env, withoutEmail);
+    await waitOnExecutionContext(withoutEmail);
+    expect(await offRes.json()).toMatchObject({ emailVerification: false });
   });
 
   test("GET /api/auth/config reports github sign-in when the credential pair is set", async () => {
@@ -39,7 +58,7 @@ describe("auth config", () => {
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ githubSignIn: true });
+    expect(await res.json()).toMatchObject({ githubSignIn: true });
   });
 
   test("does not offer sign-in through a repository-capable GitHub App", async () => {
@@ -48,7 +67,7 @@ describe("auth config", () => {
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ githubSignIn: false });
+    expect(await res.json()).toMatchObject({ githubSignIn: false });
   });
 
   test("also rejects legacy GitHub App client IDs", async () => {
@@ -61,7 +80,7 @@ describe("auth config", () => {
     await waitOnExecutionContext(ctx);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ githubSignIn: false });
+    expect(await res.json()).toMatchObject({ githubSignIn: false });
   });
 
   test("does not leave the old non-auth API path anonymous", async () => {

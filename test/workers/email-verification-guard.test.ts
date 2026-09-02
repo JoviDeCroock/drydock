@@ -10,10 +10,11 @@ import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 
 // The guard is inert on deployments that cannot send mail, so these tests must
-// supply both halves of `emailVerificationAvailable`.
+// supply both halves of `emailVerificationAvailable`. The pool reuses one env
+// across test files, so the transport is removed again afterwards — the shared
+// `BETTER_AUTH_URL` is already non-local and is left alone.
 beforeEach(() => {
   (env as { SEND_EMAIL?: unknown }).SEND_EMAIL = { send: vi.fn(async () => undefined) };
-  (env as { BETTER_AUTH_URL?: string }).BETTER_AUTH_URL = "https://example.com";
 });
 
 afterEach(() => {

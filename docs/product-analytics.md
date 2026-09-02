@@ -81,6 +81,14 @@ milliseconds, but on a scale of hours or days. A dataset-wide
 staged-publish route reports `npm`; every gated decision reports `gate`,
 because the gate decision route resolves a package scan rather than an adapter.
 
+**`blob4` on the scan-lifecycle events is only as specific as the path knows.**
+`scan.queued`, `scan.failed`, and `scan.discarded` reported a literal `npm`
+until published-pair reviews shipped, because the staged path is npm-only.
+They now report the reviewed ecosystem, which is still `npm` for every staged
+and auto-discovered scan and is `npm`/`pypi` for a published-pair review. Rows
+written before that change are indistinguishable from staged npm rows, which is
+correct — they were.
+
 ## Schema
 
 Analytics Engine columns are **positional** (`blob1`, `double1`, …), not named,
@@ -105,7 +113,7 @@ low-volume one out of the dataset.
 
 | event                      | emitted from                  | answers                                              |
 | -------------------------- | ----------------------------- | ---------------------------------------------------- |
-| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off                          |
+| `scan.queued`              | `POST /api/v1/scans`          | queued → completed drop-off; funnel by scan source   |
 | `scan.completed`           | `recordCompletion`            | volume, latency, risk mix, finding counts            |
 | `scan.failed`              | `executeScanJob`, gate runner | failure rate by error code                           |
 | `scan.discarded`           | `executeScanJob`              | queued scans retired before they ever ran            |
@@ -121,6 +129,15 @@ low-volume one out of the dataset.
 | `workflow_gate.opened`     | `deployment_protection_rule`  | gate volume                                          |
 | `workflow_gate.reviewed`   | gate runner                   | recommendation mix; review latency                   |
 | `workflow_gate.decided`    | human route + auto-block path | approval rate, human vs automatic                    |
+
+The scan-lifecycle events carry `source` — `manual` (a staged publish someone
+started by hand), `auto_discovery` (the discovery cron), `workflow_gate`, or
+`published` (a review of two already-public releases, started from onboarding
+or from `/diff`). That field is what makes the activation question answerable:
+`published` scans need no npm token and no staged release, so their share of
+`scan.queued` per organization, and whether an organization's first `published`
+scan is followed by a `manual` or `workflow_gate` one, is the funnel this was
+added to measure.
 
 `scan.failed` fires only on a terminal failure, so a scan that succeeds on retry
 is not filed as a failure. Both the npm queue path and the workflow-gate runner

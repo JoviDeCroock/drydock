@@ -49,7 +49,30 @@ describe("isValidStageId", () => {
 describe("parseScanInput", () => {
   test("returns ok with valid stageId", () => {
     const result = parseScanInput({ stageId: "valid-stage-id-123" });
-    expect(result).toEqual({ ok: true, input: { stageId: "valid-stage-id-123" } });
+    expect(result).toEqual({
+      ok: true,
+      kind: "staged",
+      input: { stageId: "valid-stage-id-123" },
+    });
+  });
+
+  test("reads published-pair coordinates as the other input shape", () => {
+    expect(parseScanInput({ ecosystem: "npm", packageName: "react", version: "19.0.0" })).toEqual({
+      ok: true,
+      kind: "published",
+      request: {
+        ecosystem: "npm",
+        packageName: "react",
+        version: "19.0.0",
+        baselineVersion: null,
+      },
+    });
+  });
+
+  test("a published-pair request is never re-read as a malformed stage id", () => {
+    const result = parseScanInput({ ecosystem: "npm", packageName: "react" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("version is required");
   });
 
   test("rejects missing stageId", () => {

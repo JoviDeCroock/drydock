@@ -1,5 +1,4 @@
 import type { ScanInput } from "../../types";
-import { getPublishedAdapter } from "../ecosystems";
 import { isValidStageId } from "../ecosystems/npm/stage-id";
 
 /** A published `package@version` a caller asked to review, before the registry confirms it. */
@@ -45,13 +44,13 @@ export function parseScanInput(
 }
 
 function parsePublishedScanInput(body: Partial<PublishedScanRequest>): ScanInputParseResult {
+  // Shape only. Which ecosystems can be reviewed this way is the registry's
+  // answer, and the route asks it — this module stays free of the registry
+  // import, which drags in every adapter and the sandbox client. There is
+  // deliberately no default ecosystem: an absent one fails rather than
+  // resolving against whichever this deployment happens to prefer.
   const ecosystem = typeof body.ecosystem === "string" ? body.ecosystem.trim() : "";
-  // The registry decides which ecosystems can be reviewed this way; there is no
-  // default, so an unsupported or absent ecosystem fails rather than resolving
-  // against one this deployment happens to prefer.
-  if (!getPublishedAdapter(ecosystem)) {
-    return { ok: false, error: "unsupported ecosystem", status: 400 };
-  }
+  if (!ecosystem) return { ok: false, error: "ecosystem is required", status: 400 };
   const packageName = typeof body.packageName === "string" ? body.packageName.trim() : "";
   if (!packageName) return { ok: false, error: "packageName is required", status: 400 };
   const version = typeof body.version === "string" ? body.version.trim() : "";
