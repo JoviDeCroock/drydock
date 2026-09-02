@@ -213,7 +213,7 @@ export async function fetchReleaseAuthoritySourcesWithToken(
   };
   for (const request of requests) {
     // Referenced workflows are keyed repo-qualified so two repositories that
-    // both ship `.github/workflows/publish.yml` stay distinct in the snapshot.
+    // both ship the same publish-workflow path stay distinct in the snapshot.
     const qualifiedPath =
       request.role === "entry" && request.repositoryFullName === input.repositoryFullName
         ? request.path
@@ -311,7 +311,7 @@ function collectLocalActionUses(document: WorkflowSource["document"]): string[] 
 // ── GitHub API ───────────────────────────────────────────────────────────────
 
 interface ReferencedWorkflowRef {
-  /** Path inside its own repository, e.g. `.github/workflows/publish.yml`. */
+  /** Path inside its own repository, such as a workflow under .github/workflows. */
   filePath: string;
   repositoryFullName: string;
   sha: string | null;
@@ -368,8 +368,8 @@ async function fetchWorkflowRun(
   const referencedWorkflows = readReferencedWorkflows(data.referenced_workflows);
   return {
     headSha: str(data.head_sha),
-    // GitHub reports `path` as `.github/workflows/x.yml` for a run in this
-    // repository, and as `owner/repo/.github/workflows/x.yml@ref` when the run
+    // GitHub reports `path` relative to .github/workflows for a run in this
+    // repository, and repo-qualified with an @ref suffix when the run
     // entered through a workflow owned elsewhere.
     workflowPath: entryWorkflow?.qualifiedPath ?? null,
     entryWorkflow,
