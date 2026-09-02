@@ -473,7 +473,7 @@ describe("public package-diff routes", () => {
       schema: "drydock.verdict.v1",
       ecosystem: "npm",
       package: packageName,
-      rulesVersion: "1.28.0+risk-1+payload-v7",
+      rulesVersion: "1.31.0+risk-1+payload-v7",
       grade: "needs-review",
       findingCounts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
       diffUrl: `http://example.com/diff/${packageName}/1.0.0/1.0.1`,
