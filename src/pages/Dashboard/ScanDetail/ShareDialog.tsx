@@ -80,13 +80,22 @@ export function ShareDialog({
       open={open}
       onClose={onClose}
       title="Share report"
-      description="A public link serves this review to anyone who has it: risk, findings, manifest changes, and the file diff itself — the same redacted staged samples you are reading here, with findings pinned to their lines. The previous version is never fetched for a public reader, so shared files show the staged side only. Revoking the link takes all of it back immediately."
+      description={
+        share && !share.includesFiles
+          ? "This existing link shares findings and the changed-file list only. Include the diff to let readers open the same redacted staged samples you are reading here."
+          : "A public link serves this review to anyone who has it: risk, findings, manifest changes, and the file diff itself — the same redacted staged samples you are reading here, with findings pinned to their lines. The previous version is never fetched for a public reader, so shared files show the staged side only. Revoking the link takes all of it back immediately."
+      }
       footer={
         share ? (
           <>
             <Button variant="danger" size="sm" onClick={onRevoke} disabled={saving}>
               {saving ? "Revoking…" : "Revoke link"}
             </Button>
+            {!share.includesFiles ? (
+              <Button size="sm" onClick={onEnable} disabled={saving}>
+                {saving ? "Updating…" : "Include diff"}
+              </Button>
+            ) : null}
             <Button variant="secondary" size="sm" onClick={onClose}>
               Close
             </Button>

@@ -50,12 +50,16 @@ const PUBLIC_READ_RATE = { bucket: "public-report", limit: 120, windowMs: 60 * 1
 const PUBLIC_BADGE_READ_RATE = { bucket: "public-badge", limit: 120, windowMs: 60 * 1000 };
 
 const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{40,64}$/;
+const SHARE_INCLUDES_FILES_HEADER = "x-drydock-share-includes-files";
 
 publicReportsRoutes.use("*", async (c, next) => {
   await next();
   const headers = new Headers(c.res.headers);
   headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-expose-headers", "content-disposition, retry-after");
+  headers.set(
+    "access-control-expose-headers",
+    `content-disposition, retry-after, ${SHARE_INCLUDES_FILES_HEADER}`,
+  );
   c.res = new Response(c.res.body, {
     status: c.res.status,
     statusText: c.res.statusText,
@@ -199,6 +203,7 @@ publicReportsRoutes.get("/reports/:token", async (c) => {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      [SHARE_INCLUDES_FILES_HEADER]: loaded.includesFiles ? "1" : "0",
     },
   });
 });
@@ -272,6 +277,7 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
 publicReportsRoutes.get("/reports/:token/file", async (c) => {
   const resolved = await resolveSharedScan(c);
   if ("error" in resolved) return resolved.error;
+  if (!resolved.includesFiles) return sharedScanNotFound(c);
   const path = c.req.query("path") ?? "";
   const file = path
     ? await getScanFile(
@@ -314,5 +320,5 @@ async function loadSharedScanDetail(c: Context<{ Bindings: Bindings; Variables: 
   if (!detail || detail.scan.status !== "complete") {
     return { error: sharedScanNotFound(c) } as const;
   }
-  return { detail } as const;
+  return { detail, includesFiles: resolved.includesFiles } as const;
 }

@@ -75,6 +75,7 @@ export interface PublicReportFile {
 }
 
 export type PublicReportErrorState = "none" | "not_found" | "failed";
+const SHARE_INCLUDES_FILES_HEADER = "x-drydock-share-includes-files";
 
 const DIFF_STATUSES = new Set<DiffEntry["status"]>(["added", "removed", "modified", "unchanged"]);
 
@@ -147,6 +148,7 @@ export const PublicReportModel = createModel(() => {
   // links reuses the model instead of stranding it on the first token.
   const token = signal("");
   const report = signal<PublicReport | null>(null);
+  const includesFiles = signal(false);
   const attestationAvailable = signal(false);
   const errorState = signal<PublicReportErrorState>("none");
   const selectedPath = signal<string | null>(null);
@@ -188,6 +190,7 @@ export const PublicReportModel = createModel(() => {
     batch(() => {
       token.value = nextToken;
       report.value = null;
+      includesFiles.value = false;
       errorState.value = "none";
       // selectedPath is deliberately left alone: it is bound to the `path`
       // query parameter, and clearing it here would discard the file a
@@ -212,10 +215,12 @@ export const PublicReportModel = createModel(() => {
         return;
       }
       const data = (await res.json()) as PublicReport;
+      const nextIncludesFiles = res.headers.get(SHARE_INCLUDES_FILES_HEADER) === "1";
       const keyResponse = await keyRequest;
       if (token.peek() !== nextToken) return;
       batch(() => {
         report.value = data;
+        includesFiles.value = nextIncludesFiles;
         attestationAvailable.value = keyResponse?.ok ?? false;
       });
     } catch {
@@ -224,6 +229,7 @@ export const PublicReportModel = createModel(() => {
   }
 
   async function loadFile(path: string) {
+    if (!includesFiles.peek()) return;
     if (fileCache.peek()[path] || fileMisses.peek()[path]) return;
     loadingPath.value = path;
     try {
@@ -246,6 +252,7 @@ export const PublicReportModel = createModel(() => {
 
   return {
     report,
+    includesFiles,
     attestationAvailable,
     errorState,
     selectedPath,

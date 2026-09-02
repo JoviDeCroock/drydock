@@ -57,7 +57,7 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
 // harness because a share token is the whole fixture.
 test("a shared public report opens on the diff", async ({ page }) => {
   const fileRequests: string[] = [];
-  await installPublicReportMocks(page, fileRequests);
+  await installPublicReportMocks(page, fileRequests, true);
 
   await page.goto(`/reports/${shareToken}`);
 
@@ -83,7 +83,28 @@ test("a shared public report opens on the diff", async ({ page }) => {
   expect(fileRequests).toEqual(["src/gate_demo/__init__.py"]);
 });
 
-async function installPublicReportMocks(page: Page, fileRequests: string[]) {
+test("a legacy public report stays evidence-only", async ({ page }) => {
+  const fileRequests: string[] = [];
+  await installPublicReportMocks(page, fileRequests, false);
+
+  await page.goto(`/reports/${shareToken}`);
+
+  await expect(
+    page.getByText("This link was created before shared file diffs were available.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Risk signals" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Release changes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Release tree" })).toHaveCount(0);
+  expect(fileRequests).toEqual([]);
+});
+
+async function installPublicReportMocks(
+  page: Page,
+  fileRequests: string[],
+  includesFiles: boolean,
+) {
   await page.route("**/api/**", async (route) => {
     await fulfillJson(route, {});
   });
@@ -95,7 +116,9 @@ async function installPublicReportMocks(page: Page, fileRequests: string[]) {
       return;
     }
     if (path === `/public/reports/${shareToken}`) {
-      await fulfillJson(route, publicReportExport());
+      await fulfillJson(route, publicReportExport(), 200, {
+        "x-drydock-share-includes-files": includesFiles ? "1" : "0",
+      });
       return;
     }
     if (path === `/public/reports/${shareToken}/file`) {
@@ -373,10 +396,16 @@ function workflowGate(
   };
 }
 
-async function fulfillJson(route: Route, json: unknown, status = 200) {
+async function fulfillJson(
+  route: Route,
+  json: unknown,
+  status = 200,
+  headers?: Record<string, string>,
+) {
   await route.fulfill({
     status,
     contentType: "application/json",
+    headers,
     body: JSON.stringify(json),
   });
 }

@@ -217,6 +217,7 @@ describe("public report sharing", () => {
 
     const pub = await request(app, `/public/reports/${share.token}`);
     expect(pub.status).toBe(200);
+    expect(pub.headers.get("x-drydock-share-includes-files")).toBe("1");
     const text = await pub.text();
     const body = JSON.parse(text) as Record<string, unknown>;
     expect(body.schema).toBe("drydock.report.v2");
@@ -380,6 +381,9 @@ describe("public report sharing", () => {
     const report = await request(app, `/public/reports/${share.token}`);
     expect(report.headers.get("cache-control")).toBe("no-store");
     expect(report.headers.get("access-control-allow-origin")).toBe("*");
+    expect(report.headers.get("access-control-expose-headers")).toContain(
+      "x-drydock-share-includes-files",
+    );
 
     const attestation = await request(
       app,
@@ -537,6 +541,41 @@ describe("public report sharing", () => {
 // each of these pins a property the report route already had: the same redacted
 // artifact, the same uniform 404, and the same per-IP budget.
 describe("public report file samples", () => {
+  test("legacy shares stay evidence-only until an owner deliberately re-shares", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const first = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string; includesFiles: boolean };
+    };
+    expect(first.share.includesFiles).toBe(true);
+
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ publicShareIncludesFiles: false })
+      .where(eq(schema.scans.id, scanId));
+
+    const legacyReport = await request(app, `/public/reports/${first.share.token}`);
+    expect(legacyReport.status).toBe(200);
+    expect(legacyReport.headers.get("x-drydock-share-includes-files")).toBe("0");
+    expect(
+      (await request(app, `/public/reports/${first.share.token}/file?path=package.json`)).status,
+    ).toBe(404);
+
+    const upgraded = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string; includesFiles: boolean };
+    };
+    expect(upgraded.share).toMatchObject({ token: first.share.token, includesFiles: true });
+    expect(
+      (await request(app, `/public/reports/${first.share.token}/file?path=package.json`)).status,
+    ).toBe(200);
+    const detail = (await (await request(app, `/api/v1/scans/${scanId}`)).json()) as {
+      events: Array<{ type: string }>;
+    };
+    expect(detail.events.filter((event) => event.type === "scan.share_enabled")).toHaveLength(2);
+  });
+
   test("a live token serves the same redacted sample as the authenticated route", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);

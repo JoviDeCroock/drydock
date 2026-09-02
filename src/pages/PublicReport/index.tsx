@@ -3,11 +3,17 @@ import { useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useRoute } from "preact-iso";
 import { formatDateTime } from "../../lib/format";
+import { sortFindingsBySeverity } from "../../lib/findings";
 import { useQuerySignal } from "../../lib/query-state";
-import { hasNoLoadableBody, PublicReportModel } from "../../models/public-report";
+import {
+  hasNoLoadableBody,
+  PublicReportModel,
+  type PublicReport,
+} from "../../models/public-report";
 import { Alert } from "../../components/Alert";
-import { Badge, severityTone } from "../../components/Badge";
+import { Badge, severityTone, statusTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
+import { FindingCard } from "../../components/FindingCard";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
@@ -18,6 +24,9 @@ import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import { ReportDiffPanel } from "./ReportDiffPanel";
+
+const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
+const MAX_LISTED_CHANGES = 200;
 
 /**
  * The share token *is* the capability, so `/reports` with no token is not a
@@ -75,8 +84,9 @@ export default function PublicReportPage() {
   // Open on the release delta. A shared report exists to be read, and landing
   // on "select a file" makes the reader do the work of finding the change.
   useSignalEffect(() => {
+    const includesFiles = model.includesFiles.value;
     const entries = model.diffEntries.value;
-    if (!entries.length || model.selectedPath.peek()) return;
+    if (!includesFiles || !entries.length || model.selectedPath.peek()) return;
     // Prefer a file with a staged body: a `removed` entry is a legitimate first
     // change but its contents belong to the previous version, so landing there
     // opens the report on an explanation instead of on the diff.
@@ -88,8 +98,9 @@ export default function PublicReportPage() {
   });
 
   useSignalEffect(() => {
+    const includesFiles = model.includesFiles.value;
     const entry = model.selectedEntry.value;
-    if (!entry || entry.status === "removed") return;
+    if (!includesFiles || !entry || entry.status === "removed") return;
     if (hasNoLoadableBody(entry.flags)) return;
     void model.loadFile(entry.path);
   });
@@ -240,34 +251,40 @@ export default function PublicReportPage() {
         </EmptyLine>
       </Card>
 
-      <ReviewWorkbench
-        entries={model.diffEntries}
-        fileFilter={fileFilter}
-        changedFilesOnly={changedFilesOnly}
-        selectedPath={model.selectedPath}
-        findingCounts={model.findingCounts}
-        onSelect={(path) => model.selectPath(path)}
-      >
-        <ReportDiffPanel
-          entry={model.selectedEntry.value}
-          file={model.selectedFile.value}
-          loading={model.loadingPath.value === model.selectedPath.value}
-          missing={Boolean(
-            model.selectedPath.value && model.fileMisses.value[model.selectedPath.value],
-          )}
-          stagedVersion={data.package.stagedVersion}
-          findings={model.selectedFindings.value}
-        />
-      </ReviewWorkbench>
+      <Show when={model.includesFiles} fallback={<EvidenceOnlyReport data={data} />}>
+        {() => (
+          <>
+            <ReviewWorkbench
+              entries={model.diffEntries}
+              fileFilter={fileFilter}
+              changedFilesOnly={changedFilesOnly}
+              selectedPath={model.selectedPath}
+              findingCounts={model.findingCounts}
+              onSelect={(path) => model.selectPath(path)}
+            >
+              <ReportDiffPanel
+                entry={model.selectedEntry.value}
+                file={model.selectedFile.value}
+                loading={model.loadingPath.value === model.selectedPath.value}
+                missing={Boolean(
+                  model.selectedPath.value && model.fileMisses.value[model.selectedPath.value],
+                )}
+                stagedVersion={data.package.stagedVersion}
+                findings={model.selectedFindings.value}
+              />
+            </ReviewWorkbench>
 
-      <RiskSignalsSection
-        findings={model.findingItems.value}
-        onSelect={(file) => model.selectPath(file)}
-        description={
-          "Deterministic rules scanned the full staged artifact. Changed-file signals are pinned " +
-          "to their line in the diff above; unchanged signals stay here as package context."
-        }
-      />
+            <RiskSignalsSection
+              findings={model.findingItems.value}
+              onSelect={(file) => model.selectPath(file)}
+              description={
+                "Deterministic rules scanned the full staged artifact. Changed-file signals are pinned " +
+                "to their line in the diff above; unchanged signals stay here as package context."
+              }
+            />
+          </>
+        )}
+      </Show>
 
       <section class="flex flex-col gap-3">
         <SectionLabel as="h2">Verify this report</SectionLabel>
@@ -338,5 +355,72 @@ export default function PublicReportPage() {
         </div>
       </section>
     </PageShell>
+  );
+}
+
+function EvidenceOnlyReport({ data }: { data: PublicReport }) {
+  const findings = sortFindingsBySeverity(data.findings);
+  const changes = data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [];
+
+  return (
+    <>
+      <Muted class="m-0 text-[13px] leading-[1.6] max-w-[760px]">
+        This link was created before shared file diffs were available. The maintainer can open this
+        review in Drydock and re-share it to include the diff.
+      </Muted>
+
+      {findings.length ? (
+        <section class="flex flex-col gap-3">
+          <SectionLabel as="h2">Risk signals</SectionLabel>
+          <ul class="list-none p-0 m-0 flex flex-col gap-3">
+            {findings.map((finding, index) => (
+              <FindingCard
+                key={`${finding.file}:${finding.ruleId ?? index}:${finding.line ?? ""}`}
+                severity={finding.severity}
+                file={finding.file}
+                line={finding.line}
+                ruleId={finding.ruleId}
+                diffStatus={finding.diffStatus}
+              >
+                <p class="m-0">{finding.reason}</p>
+                {finding.evidence ? (
+                  <code class="font-mono text-[12px] text-ink-muted break-all">
+                    {finding.evidence}
+                  </code>
+                ) : null}
+              </FindingCard>
+            ))}
+          </ul>
+        </section>
+      ) : (
+        <section class="flex flex-col gap-3">
+          <SectionLabel as="h2">Risk signals</SectionLabel>
+          <EmptyLine>No deterministic findings in this release.</EmptyLine>
+        </section>
+      )}
+
+      {changes.length ? (
+        <section class="flex flex-col gap-3">
+          <SectionLabel as="h2">Release changes</SectionLabel>
+          <ul class="list-none p-0 m-0 flex flex-col gap-1.5">
+            {changes.slice(0, MAX_LISTED_CHANGES).map((entry) => (
+              <li key={entry.path} class="flex items-center gap-2 min-w-0">
+                <Badge tone={statusTone(entry.status)} class="flex-shrink-0">
+                  {entry.status}
+                </Badge>
+                <code class="font-mono text-[13px] text-ink-muted truncate" title={entry.path}>
+                  {entry.path}
+                </code>
+              </li>
+            ))}
+          </ul>
+          {changes.length > MAX_LISTED_CHANGES ? (
+            <EmptyLine>
+              And {changes.length - MAX_LISTED_CHANGES} more changed files in the full report.
+            </EmptyLine>
+          ) : null}
+        </section>
+      ) : null}
+    </>
   );
 }

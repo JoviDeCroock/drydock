@@ -1,0 +1,1 @@
+ALTER TABLE `scans` ADD `public_share_includes_files` integer DEFAULT false NOT NULL;

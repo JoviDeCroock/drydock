@@ -9,7 +9,10 @@ a shields.io badge per package and an opt-in public threat feed.
 
 - `POST /api/v1/scans/:id/share` (owner/admin only) creates — or returns the
   existing — public share link for a completed scan. Sharing is idempotent so a
-  link that is already distributed never rotates silently.
+  link that is already distributed never rotates silently. New links include
+  the redacted staged file samples used by the diff. Links created before that
+  disclosure was introduced remain evidence-only until an owner/admin
+  deliberately re-shares them from the dialog; the token stays unchanged.
 - `DELETE /api/v1/scans/:id/share` revokes the link immediately — report and
   attestation responses are served `no-store` so no shared cache can outlive a
   revoke.
@@ -50,6 +53,8 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
   `/api/v1/scans/:id/report.json`). Carries the file **diff** (paths, statuses,
   sizes, hashes) but no file _bodies_, no scan events, and no
   organization/user identifiers.
+  `x-drydock-share-includes-files: 1|0` says whether this share opted into file
+  samples without changing the canonical, attested report bytes.
 - `GET /public/reports/:token/file?path=` — one redacted staged file sample, so
   the public page can render the diff rather than a list of file names. See
   "Shared file samples" below.
@@ -61,11 +66,15 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 ## Shared file samples
 
 A report that lists which files changed but cannot show what changed in them is
-not a review anyone can check. `GET /public/reports/:token/file?path=` serves
-the same redacted sample the authenticated `GET /api/v1/scans/:id/file` serves,
-read from the same persisted `files.json` artifact — redaction and the
-sandbox's retention caps both happen at persist time, so the two routes cannot
-diverge in what they disclose.
+not a review anyone can check. For shares created or deliberately re-shared
+after file diffs became available, `GET /public/reports/:token/file?path=`
+serves the same redacted sample the authenticated
+`GET /api/v1/scans/:id/file` serves, read from the same persisted `files.json`
+artifact — redaction and the sandbox's retention caps both happen at persist
+time, so the two routes cannot diverge in what they disclose. Older shares have
+`public_share_includes_files = false`, get the same uniform `404` from the file
+route, and keep the earlier findings-plus-file-list page until an owner/admin
+re-shares them.
 
 - **Staged side only.** There is no baseline: reaching a published previous
   version means fetching a tarball with the organization's npm credentials, and
@@ -82,8 +91,10 @@ diverge in what they disclose.
   reader paging through a large release spends the same budget an automated
   scraper would.
 - Sharing a report has always disclosed the redacted evidence a finding quotes;
-  this widens that to the reviewed sample of any file in the release. The
-  share dialog says so before the link is created, and revoke is immediate.
+  new or deliberately re-shared links widen that to the reviewed sample of any
+  file in the release. The database flag defaults false so deploying the route
+  cannot widen an already-issued capability. The share dialog states the
+  disclosure before creation or upgrade, and revoke is immediate.
 
 ## Attestation format
 
