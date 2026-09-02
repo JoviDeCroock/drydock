@@ -402,9 +402,7 @@ async function parseInCredentialsFreeSandbox(
       MAX_ENTRIES,
       MAX_TAR_BYTES,
       MAX_STREAM_TAR_BYTES,
-      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(
-        parse.archiveDigestAlgorithms,
-      ),
+      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(parse.archiveDigestAlgorithms),
       MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(parse.maxTextSampleChars),
       TAR_ROOT_STRIP: normalizeTarRootStrip(parse.tarRootStrip),
     },
