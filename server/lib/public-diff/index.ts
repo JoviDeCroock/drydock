@@ -180,7 +180,7 @@ export async function loadPublicPackageDiff(
   const toPackageJson = redactJson(sources.to.packageJson);
   // Projected before the cache-size sample reduction below, so a payload whose
   // samples were dropped still carries the capability sets computed over them.
-  const capabilities = projectPublicDiffCapabilities(sources);
+  const capabilities = projectPublicDiffCapabilities(sources, adapter.codePatternSet);
   const sourceBinding = projectPublicDiffSourceBinding(sources.from, sources.to);
 
   const cachedAtMs = Date.now();

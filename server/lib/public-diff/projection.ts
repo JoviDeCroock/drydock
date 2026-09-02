@@ -1,12 +1,18 @@
 import { extractDeclaredRepository, normalizeRepositoryUrl } from "../intent-envelope";
-import { diffCapabilities, projectCapabilities, type CapabilityDelta } from "../review";
+import {
+  diffCapabilities,
+  projectCapabilities,
+  type CapabilityDelta,
+  type CodePatternSet,
+} from "../review";
 import type { PublicDiffAcquiredSide, PublicDiffAcquiredSources } from "./types";
 
 export function projectPublicDiffCapabilities(
-  sources: Pick<PublicDiffAcquiredSources, "from" | "to" | "codePatternSet">,
+  sources: Pick<PublicDiffAcquiredSources, "from" | "to">,
+  codePatternSet?: CodePatternSet,
 ): CapabilityDelta {
   const projectSide = (side: PublicDiffAcquiredSide) => {
-    const projected = projectCapabilities(side.files, side.packageJson, sources.codePatternSet);
+    const projected = projectCapabilities(side.files, side.packageJson, codePatternSet);
     return side.capabilityCoverageComplete === false
       ? { ...projected, complete: false }
       : projected;
