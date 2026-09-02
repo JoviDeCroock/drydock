@@ -16,7 +16,10 @@ a shields.io badge per package and an opt-in public threat feed.
 - Both actions are recorded as scan events (`scan.share_enabled`,
   `scan.share_revoked`) and surface in the organization audit log.
 - The UI entry point is the **Share** button on the scan detail header; the
-  public page renders at `/reports/:token`.
+  public page renders at `/reports/:token`. It leads with the same release tree
+  and file diff the authenticated workbench does — findings pinned to their
+  lines — and its `?path=`, `?file=`, and `?changedOnly=` parameters make a
+  share link openable on one specific file.
 - `/reports` with no token is not an error state: there is no public index to
   land on, so the page skips the lookup entirely and explains what a public
   report is, why reports are unlisted, and points at `/diff` and the docs. Only
@@ -44,12 +47,43 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
 
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
-  `/api/v1/scans/:id/report.json`). Never includes file samples, scan events,
-  or organization/user identifiers.
+  `/api/v1/scans/:id/report.json`). Carries the file **diff** (paths, statuses,
+  sizes, hashes) but no file _bodies_, no scan events, and no
+  organization/user identifiers.
+- `GET /public/reports/:token/file?path=` — one redacted staged file sample, so
+  the public page can render the diff rather than a list of file names. See
+  "Shared file samples" below.
 - `GET /public/reports/:token/attestation` — DSSE envelope over an in-toto v1
   Statement about the report (see below).
 - `GET /public/attestation-key` — the Ed25519 public key (JWK) and its RFC 7638
   thumbprint key id.
+
+## Shared file samples
+
+A report that lists which files changed but cannot show what changed in them is
+not a review anyone can check. `GET /public/reports/:token/file?path=` serves
+the same redacted sample the authenticated `GET /api/v1/scans/:id/file` serves,
+read from the same persisted `files.json` artifact — redaction and the
+sandbox's retention caps both happen at persist time, so the two routes cannot
+diverge in what they disclose.
+
+- **Staged side only.** There is no baseline: reaching a published previous
+  version means fetching a tarball with the organization's npm credentials, and
+  a public route never holds one. A `modified` file therefore renders
+  single-sided on the public page, labelled as such, with findings still pinned
+  to their staged lines. A `removed` file has no staged body at all.
+- **Uniform 404.** An unknown token, a revoked token, a superseded scan, and a
+  path the shared review does not contain are one indistinguishable
+  `{"error":"not found"}`. Anything else would make the route an oracle for
+  either the token space or a package's file list.
+- **No caching.** `no-store`, like the report itself, so a revoke takes effect
+  on the next request rather than after a TTL.
+- Reads charge the same per-IP `public-report` bucket as the report route: a
+  reader paging through a large release spends the same budget an automated
+  scraper would.
+- Sharing a report has always disclosed the redacted evidence a finding quotes;
+  this widens that to the reviewed sample of any file in the release. The
+  share dialog says so before the link is created, and revoke is immediate.
 
 ## Attestation format
 
@@ -320,6 +354,9 @@ issued with.
   artifact (`getScan`'s `files: "omit"` mode). The authenticated `report.json`
   export takes the same path, so the two cannot diverge: byte-identity is by
   construction rather than by both happening to succeed at the same R2 reads.
+  File samples stay out of that document and are served one path at a time by
+  the `file` route above, which reads through the same `getScanFile` the
+  authenticated workbench uses.
 - Tests: `test/workers/public-reports.test.ts` (routes, roles, revocation,
   redaction, rate limit, CORS on failures, concurrent enables, signature
   verification, degraded/malformed key handling).

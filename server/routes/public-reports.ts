@@ -9,7 +9,7 @@ import {
   threatFeedNextCursor,
   THREAT_FEED_MAX_ENTRIES,
 } from "../db/scan-share";
-import { getScan } from "../db/scans";
+import { getScan, getScanFile } from "../db/scans";
 import {
   buildBadgePayload,
   buildThreatFeedEntry,
@@ -255,22 +255,64 @@ publicReportsRoutes.get("/reports/:token/attestation", async (c) => {
   }
 });
 
-async function loadSharedScanDetail(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
+/**
+ * One redacted staged file sample from a shared review, so the public report can
+ * render the same diff the maintainer read instead of a list of file names.
+ *
+ * Reads exactly what the authenticated `GET /api/v1/scans/:id/file` reads — the
+ * persisted `files.json` artifact, already redacted and already truncated to the
+ * sandbox's retention caps at persist time — so the two cannot diverge in what
+ * they disclose. There is no baseline side here: the previous version is fetched
+ * through the organization's npm credentials, which never touch a public route.
+ *
+ * Every failure is the same 404 body as the report route: an unknown token, a
+ * revoked one, and a path the shared review does not contain must not be
+ * distinguishable, or the endpoint becomes an oracle for either.
+ */
+publicReportsRoutes.get("/reports/:token/file", async (c) => {
+  const resolved = await resolveSharedScan(c);
+  if ("error" in resolved) return resolved.error;
+  const path = c.req.query("path") ?? "";
+  const file = path
+    ? await getScanFile(
+        resolved.db,
+        resolved.scanId,
+        resolved.organizationId,
+        path,
+        scanArtifactReadBucket(c.env),
+      )
+    : null;
+  if (!file) return sharedScanNotFound(c);
+  return c.json({ file }, 200, { "cache-control": "no-store" });
+});
+
+function sharedScanNotFound(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
+  return c.json({ error: "not found" }, 404);
+}
+
+async function resolveSharedScan(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
   const token = c.req.param("token") ?? "";
-  if (!SHARE_TOKEN_RE.test(token)) return { error: c.json({ error: "not found" }, 404) } as const;
+  if (!SHARE_TOKEN_RE.test(token)) return { error: sharedScanNotFound(c) } as const;
   const db = createDb(c.env.DB);
+  // Already refuses anything that is not a live, complete, non-superseded scan.
   const resolved = await resolvePublicShareToken(db, token);
-  if (!resolved) return { error: c.json({ error: "not found" }, 404) } as const;
+  if (!resolved) return { error: sharedScanNotFound(c) } as const;
+  return { db, ...resolved } as const;
+}
+
+async function loadSharedScanDetail(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
+  const resolved = await resolveSharedScan(c);
+  if ("error" in resolved) return { error: resolved.error } as const;
   // Preserve report and diff bytes used by the attestation; omit only file samples.
   const detail = await getScan(
-    db,
+    resolved.db,
     resolved.scanId,
     resolved.organizationId,
     scanArtifactReadBucket(c.env),
     { files: "omit" },
   );
   if (!detail || detail.scan.status !== "complete") {
-    return { error: c.json({ error: "not found" }, 404) } as const;
+    return { error: sharedScanNotFound(c) } as const;
   }
   return { detail } as const;
 }
