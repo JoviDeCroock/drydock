@@ -65,8 +65,8 @@ export function ReportDiffPanel({
     <div class="flex flex-col gap-3 min-h-0">
       {entry.status === "modified" ? (
         <p class="m-0 font-mono text-[11px] text-ink-subtle">
-          Shared reports carry the reviewed release only, so this modified file shows its staged
-          contents with the findings pinned — not a side-by-side against the previous version.
+          Shared reports carry the reviewed release only: modified files show the staged side with
+          findings pinned, not a side-by-side against the previous version.
         </p>
       ) : null}
       <DiffView

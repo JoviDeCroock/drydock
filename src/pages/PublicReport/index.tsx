@@ -77,7 +77,13 @@ export default function PublicReportPage() {
   useSignalEffect(() => {
     const entries = model.diffEntries.value;
     if (!entries.length || model.selectedPath.peek()) return;
-    const first = entries.find((entry) => entry.status !== "unchanged") ?? entries[0];
+    // Prefer a file with a staged body: a `removed` entry is a legitimate first
+    // change but its contents belong to the previous version, so landing there
+    // opens the report on an explanation instead of on the diff.
+    const first =
+      entries.find((entry) => entry.status === "modified" || entry.status === "added") ??
+      entries.find((entry) => entry.status !== "unchanged") ??
+      entries[0];
     if (first) model.selectPath(first.path);
   });
 

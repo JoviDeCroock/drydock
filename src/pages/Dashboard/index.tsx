@@ -618,10 +618,6 @@ function ScanRows({
                 <ScanDiffSummary scan={scan} />
                 <DecisionBadge decision={scan.decision} />
                 <RegistryStatusBadge scan={scan} />
-                {/* A completed review already says so through its risk chip and
-                    change summary; only the states a reader has to wait on or
-                    act on earn a badge. */}
-                {scan.status === "complete" ? null : <ScanStatusBadge status={scan.status} />}
               </div>
               <p class="m-0 font-mono text-[11px] text-ink-subtle">{scanMetaLine(scan)}</p>
             </div>
@@ -697,10 +693,11 @@ function canQuickDecide(scan: ScanListItem): boolean {
   );
 }
 
-// The row leads with release risk, so an unfinished review shows a placeholder
-// chip rather than collapsing the line and shifting everything after it left.
+// The row leads with release risk once there is one. A queued, running, or
+// failed review has none, so its lifecycle status takes the leading slot rather
+// than a placeholder that would claim a grade the review never reached.
 function ScanRiskChip({ scan }: { scan: ScanListItem }) {
-  if (scan.status !== "complete") return <Badge tone="neutral">pending</Badge>;
+  if (scan.status !== "complete") return <ScanStatusBadge status={scan.status} />;
   const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
   return <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>;
 }

@@ -338,7 +338,7 @@ export default function ScanDetailPage() {
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
 
-      {/* Above the recommendation on purpose: npm blocking a version, or still
+      {/* Above the verdict on purpose: npm blocking a version, or still
           holding one this organization already approved, outranks anything the
           report has to say about it. Rendered for failed scans too — a review
           that could not read the tarball because the release was published or

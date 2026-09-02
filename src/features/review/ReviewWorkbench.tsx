@@ -40,9 +40,14 @@ export function ReviewWorkbench({
     filterDiffEntries(entries.value, fileFilter.value, changedFilesOnly.value),
   );
 
+  // The tree caps at 720px rather than fixing that height, and the diff panel
+  // is unconstrained (`DiffView` caps its own scroll region at 560px). The grid
+  // stretches both to the taller of the two, so a two-line diff now sits in a
+  // two-line card instead of 720px of empty space — which matters more now that
+  // the workbench is the first thing on the page.
   return (
     <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
-      <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
+      <Card as="aside" class="p-5 flex flex-col gap-3 lg:max-h-[720px] overflow-hidden">
         <SectionLabel as="h2">Release tree</SectionLabel>
         <Input
           type="search"
@@ -75,7 +80,7 @@ export function ReviewWorkbench({
         </div>
       </Card>
 
-      <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
+      <Card class="p-5 flex flex-col gap-3 min-w-0">
         <SectionLabel as="h2">File diff</SectionLabel>
         {children}
       </Card>
