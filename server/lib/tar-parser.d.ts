@@ -33,6 +33,11 @@ export type TarSuspiciousEntryKind =
   | "retention-tier"
   | "parser-differential";
 
+export function tarHeaderChecksum(header: Uint8Array): {
+  computed: number;
+  declared: number | null;
+};
+
 export interface TarSuspiciousEntry {
   kind: TarSuspiciousEntryKind;
   path: string;

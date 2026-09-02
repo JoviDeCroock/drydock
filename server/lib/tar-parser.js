@@ -113,11 +113,25 @@ export function isSafePaxPath(value) {
 export function normalizeTarPath(rawPath) {
   const nul = String.fromCharCode(0);
   if (!rawPath || rawPath.includes(nul) || rawPath.includes("\\")) return null;
-  let path = rawPath.replace(/^\/+/, "").replace(/^package\//, "");
+  // npm extracts with `strip: 1`, which drops the archive's *first* path
+  // component. A `package` that is not first — `./package/x`, `/package/x` — is
+  // a real directory to npm, so it is one here too.
+  const leadsWithPackage = rawPath.split("/")[0] === "package";
+  let path = rawPath.replace(/^\/+/, "");
   if (!path || path.startsWith("../") || path.includes("/../") || /^[A-Za-z]:/.test(path))
     return null;
-  const parts = path.split("/").filter(Boolean);
-  if (!parts.length || parts.some((part) => part === "." || part === "..")) return null;
+  const trailingSlash = path.endsWith("/");
+  // `.` segments are no-ops that every extractor collapses, so they are dropped
+  // rather than rejected: rejecting them meant `package/./binding.gyp` produced
+  // no record at all while npm wrote `binding.gyp`. `..` stays fatal.
+  const parts = path.split("/").filter((part) => part && part !== ".");
+  if (!parts.length || parts.some((part) => part === "..")) return null;
+  // Stripped after normalization so a doubled separator inside it is collapsed
+  // first (`package//x` is `x`, the same file npm writes).
+  if (leadsWithPackage && parts[0] === "package" && (parts.length > 1 || trailingSlash)) {
+    parts.shift();
+  }
+  if (!parts.length) return null;
   path = parts.join("/");
   // Re-check the drive-letter guard on the canonical form. Stripping the
   // `package/` prefix can re-expose one the early check missed: `package//C:`
@@ -143,25 +157,67 @@ export function normalizeZipPath(rawPath) {
 }
 
 export function parsePax(body) {
-  const text = decodeText(body.subarray(0, Math.min(body.length, 8192)));
+  // Mirrors node-tar's `parseKV`, because the reader that resolves these records
+  // for `npm install` is the one whose answer matters. Three properties have to
+  // match or an archive can hand npm one path and the reviewer another: it is
+  // line-based rather than a walk over the declared lengths, a malformed line
+  // costs only that line instead of the rest of the body, and the body is read
+  // as raw UTF-8 — a NUL byte or a run of control characters does not blank it.
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(body);
+  const encoder = new TextEncoder();
   const out = {};
-  let index = 0;
-  while (index < text.length) {
-    const space = text.indexOf(" ", index);
-    if (space === -1) break;
-    const length = Number(text.slice(index, space));
-    if (!Number.isFinite(length) || length <= 0) break;
-    const record = text.slice(space + 1, index + length).replace(/\n$/, "");
+  for (const line of text.replace(/\n$/, "").split("\n")) {
+    // The declared length counts the record's own bytes plus the newline the
+    // split consumed.
+    if (parseInt(line, 10) !== encoder.encode(line).length + 1) continue;
+    const record = line.slice(String(parseInt(line, 10)).length + 1);
     const equals = record.indexOf("=");
-    if (equals > 0) out[record.slice(0, equals)] = record.slice(equals + 1);
-    index += length;
+    if (equals <= 0) continue;
+    const key = record.slice(0, equals).replace(/^SCHILY\.(dev|ino|nlink)/, "$1");
+    const value = record.slice(equals + 1);
+    // node-tar coerces an all-digit value to a number. Values stay strings here,
+    // but through the same coercion, so `size=0123` is 123 and a numeric `path`
+    // is recognizable at the point where node-tar's decode would throw on it.
+    out[key] = /^[0-9]+$/.test(value) ? String(Number(value)) : value;
   }
   return out;
 }
 
+// node-tar validates every header's checksum with the checksum field itself
+// counted as eight spaces, and both readers have to agree on the result: a
+// header node-tar rejects is skipped without consuming its body, so it re-reads
+// the declared body as further headers. Caller fails the parse on a mismatch
+// rather than trying to follow that, which would mean walking a different
+// archive than npm from that block on.
+export function tarHeaderChecksum(header) {
+  let computed = 8 * 0x20;
+  for (let i = 0; i < 148; i++) computed += header[i];
+  for (let i = 156; i < 512; i++) computed += header[i];
+  // Read the declared value exactly as node-tar does: twelve bytes from offset
+  // 148 (it deliberately overruns the eight-byte field), cut at the first NUL,
+  // trimmed, parsed as octal. Being any stricter would fail archives npm reads
+  // fine; being any looser would accept headers npm skips.
+  const declared =
+    header[148] & 0x80
+      ? // A base-256 encoded checksum is not something any writer emits, and
+        // matching node-tar's large-number decode for it would be one more
+        // place to diverge silently.
+        null
+      : parseInt(
+          new TextDecoder("utf-8", { fatal: false })
+            .decode(header.subarray(148, 160))
+            .replace(/\0.*/, "")
+            .trim(),
+          8,
+        );
+  return { computed, declared: Number.isNaN(declared) ? null : declared };
+}
+
 // Map typeflag bytes to a short label used in tar.suspicious-entry findings.
 // The standard ustar/POSIX values: 0 regular, 1 hardlink, 2 symlink,
-// 3 char device, 4 block device, 5 directory, 6 fifo, 7 contiguous/reserved.
+// 3 char device, 4 block device, 5 directory, 6 fifo. Typeflag 7 (contiguous
+// file) is absent because node-tar extracts it as an ordinary file, so this
+// reader reads it as one too rather than reporting it.
 export function describeNonRegularType(type) {
   switch (type) {
     case "1":
@@ -176,8 +232,6 @@ export function describeNonRegularType(type) {
       return "directory";
     case "6":
       return "fifo";
-    case "7":
-      return "reserved";
     default:
       return "non-regular";
   }
@@ -776,8 +830,11 @@ export async function readTarStream(
   // duplicate that replaces an entry releases the earlier body's budget instead
   // of double-counting it (which would prematurely exhaust the retention limit).
   const retainedByPath = new Map();
-  let nextLongName = null;
+  // Pending extended-header state: `pax` is the local record (PAX `x`/`X` plus
+  // GNU `L`/`N`/`K` long names, merged), cleared by the next non-metadata entry;
+  // `paxGlobal` is the archive-wide record, which is not.
   let pax = null;
+  let paxGlobal = null;
   let retainedBytes = 0;
   let entryCount = 0;
   let retainedTextCount = 0;
@@ -794,6 +851,19 @@ export async function readTarStream(
   let pendingNullBlock = false;
   let entriesAfterNullBlock = 0;
   let nullBlockNotice = null;
+  let rejectedBlocks = 0;
+  let rejectedNotice = null;
+
+  // A header npm's reader rejects. Recorded once, with a count: each one is a
+  // block this reader also skips without consuming a body, so the two stay on
+  // the same boundaries, but no publisher toolchain emits any of them.
+  function rejectHeader() {
+    rejectedBlocks += 1;
+    if (!rejectedNotice) {
+      rejectedNotice = { kind: "parser-differential", path: "<archive>", detail: "" };
+      suspicious.push(rejectedNotice);
+    }
+  }
 
   function addSuspicious(entry) {
     if (suspicious.length < suspiciousLimit) {
@@ -839,56 +909,184 @@ export async function readTarStream(
       entryCount += 1;
       if (entryCount > entryLimit) throw tarError("archive contains too many files");
 
+      // A block npm's reader rejects is skipped *without consuming its declared
+      // body*, and the next 512 bytes are read as another header. Treating one
+      // as an entry would consume that body and put the two readers on different
+      // block boundaries for everything after it — one rejected header would
+      // hide the whole tail of the archive. node-tar rejects a header on a
+      // checksum mismatch, on an empty path, and on a linkname where the type
+      // does not allow one (or a link with none); each is mirrored below.
+      const checksum = tarHeaderChecksum(header);
+      if (checksum.declared === null || checksum.declared !== checksum.computed) {
+        if (header[148] & 0x80) {
+          // A base-256 encoded checksum: node-tar decodes it, and no writer
+          // emits it. Rather than reimplement that decode and risk skipping a
+          // block npm reads as an entry, fail closed on the one shape where
+          // this reader cannot be sure which way node-tar will go.
+          throw tarError("invalid tar header checksum");
+        }
+        rejectHeader();
+        continue;
+      }
+
       const rawName = readString(header, 0, 100);
-      const prefix = readString(header, 345, 155);
-      const sizeText = readString(header, 124, 12).trim() || "0";
-      if (!/^[0-7]+$/.test(sizeText)) throw tarError("invalid tar entry size");
-      const size = parseInt(sizeText, 8);
-      if (!Number.isFinite(size) || size < 0) throw tarError("invalid tar entry size");
       const type = String.fromCharCode(header[156] || 48);
-      const isRegular = type === "0" || type === nul;
+      // Metadata headers: `x`/`X` extended, `g` global, `L`/`N` long path, `K`
+      // long linkpath. node-tar merges all of them into one pending record that
+      // survives until the next non-metadata entry, so a `K` sitting between an
+      // `L` and its file must not drop the long path.
+      const isMeta =
+        type === "x" ||
+        type === "X" ||
+        type === "g" ||
+        type === "L" ||
+        type === "N" ||
+        type === "K";
+
+      // The ustar prefix field is only a prefix when the ustar magic says so —
+      // node-tar reads bytes 345+ as a path component only then, and reads 130
+      // rather than 155 of them when byte 475 is NUL (old GNU tars put atime
+      // there). Reading it unconditionally would report a nested path for an
+      // entry npm writes at the package root, which is exactly where the root
+      // manifest and `binding.gyp` rules look.
+      const ustar =
+        readString(header, 257, 6) === "ustar" && header[263] === 48 && header[264] === 48;
+      const prefix = ustar ? readString(header, 345, header[475] !== 0 ? 155 : 130) : "";
+      // node-tar coerces an all-digit PAX value to a number, so `path=123` makes
+      // its header decode throw and the block is skipped without consuming a
+      // body — and the record stays pending, so every header after it is skipped
+      // the same way.
+      if (pax && typeof pax.path === "string" && /^[0-9]+$/.test(pax.path)) {
+        rejectHeader();
+        continue;
+      }
+      // A PAX/long name replaces the header's own name. node-tar prepends the
+      // ustar prefix to the header's path but then overwrites the whole thing
+      // with the extended-header path when there is one, so the prefix survives
+      // only for an entry named by its own header. Prepending it to a PAX path
+      // would report `lib/package/binding.gyp` for a file npm writes at the root.
+      const paxPath = pax && typeof pax.path === "string" ? pax.path : null;
+      const namePath = paxPath === null ? rawName : paxPath;
+      const headerPath = prefix ? prefix + "/" + namePath : namePath;
+      const rawCandidate = paxPath === null ? headerPath : paxPath;
+      // An empty path — including an empty `path=` record, which counts as
+      // present — is a header npm's reader rejects without consuming its body.
+      if (!headerPath || !rawCandidate) {
+        rejectHeader();
+        continue;
+      }
+
+      // node-tar reads the linkname field itself here, never the `K`/PAX
+      // override, and rejects the header when it disagrees with the type.
+      const linkname = readString(header, 157, 100);
+      const isLink = type === "1" || type === "2";
+      if (isLink ? !linkname : linkname && type !== "x" && type !== "g") {
+        rejectHeader();
+        continue;
+      }
+
       // PAX and long-name blocks describe the entry after them rather than an
       // entry of their own, so they must not inflate the count of entries a
       // first-block reader misses.
-      if (nullBlockNotice && type !== "x" && type !== "g" && type !== "L") {
-        entriesAfterNullBlock += 1;
+      if (nullBlockNotice && !isMeta) entriesAfterNullBlock += 1;
+
+      const sizeText = readString(header, 124, 12).trim() || "0";
+      if (!/^[0-7]+$/.test(sizeText)) throw tarError("invalid tar entry size");
+      let size = parseInt(sizeText, 8);
+      if (!Number.isFinite(size) || size < 0) throw tarError("invalid tar entry size");
+      // node-tar takes a PAX `size` over the header's own — local first, then
+      // global, and it applies to metadata blocks too. Without this an archive
+      // can declare one body length to this reader and another to npm and put
+      // every following entry on a different block boundary. `size=0` counts:
+      // node-tar falls through only on a missing record, not a zero one.
+      const paxSize =
+        pax && typeof pax.size === "string"
+          ? pax.size
+          : paxGlobal && typeof paxGlobal.size === "string"
+            ? paxGlobal.size
+            : null;
+      if (paxSize !== null) {
+        if (!/^[0-9]+$/.test(paxSize)) throw tarError("invalid tar entry size");
+        size = Number(paxSize);
+        if (!Number.isSafeInteger(size) || size < 0) throw tarError("invalid tar entry size");
       }
+
+      // node-tar reads a `0`/NUL entry whose name ends in `/` as a directory,
+      // and npm does not write it. Typeflag `7` (contiguous file) it extracts as
+      // an ordinary file, so it is read as one here.
+      const namedDirectory = (type === "0" || type === nul) && namePath.endsWith("/");
+      const isRegular = !namedDirectory && (type === "0" || type === nul || type === "7");
+      // A directory record carries no body whatever it declares: node-tar zeroes
+      // the size, so a directory claiming one would swallow the entries npm goes
+      // on to extract.
+      if (type === "5" || namedDirectory) size = 0;
       const padding = Math.ceil(size / 512) * 512 - size;
 
       // Only regular files stream-skip oversized bodies (the prepackaged-binary
-      // case). Metadata (x/g/L) and non-regular entries must be materialized or
-      // are never legitimately huge, so an oversized body is malformed/hostile —
-      // fail closed rather than burn the sandbox's CPU budget discarding it.
-      if (!isRegular && size > maxTarBytes) throw tarError("invalid tar entry size");
+      // case). Non-regular entries are never legitimately huge, so an oversized
+      // body is malformed/hostile — fail closed rather than burn the sandbox's
+      // CPU budget discarding it. Metadata carries its own limit below.
+      if (!isRegular && !isMeta && size > maxTarBytes) throw tarError("invalid tar entry size");
 
-      if (type === "x" || type === "g" || type === "L") {
-        if (!(await fill(size))) throw tarError("truncated tar entry");
-        const body = take(size);
-        if (type === "x") {
-          // Local PAX header. Its path attribute applies only to the next entry.
-          pax = parsePax(body);
-          if (pax && typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
-            throw tarError("invalid pax path");
-          }
-        } else if (type === "g") {
-          // Global PAX metadata does not override the path of following entries.
-          // Ignoring path here keeps scanner paths aligned with tar extraction.
-          parsePax(body);
-          nextLongName = null;
-          pax = null;
+      if (isMeta) {
+        // node-tar ignores a metadata entry larger than 1 MiB outright: the body
+        // is skipped and the pending record left untouched. Honoring a larger
+        // one would apply a path npm never sees.
+        if (size > 1024 * 1024) {
+          if (!(await discard(size))) throw tarError("truncated tar entry");
         } else {
-          // readString already stops at the first NUL terminator, so the long-name
-          // payload is implicitly trimmed at the NUL boundary.
-          const candidate = readString(body, 0, body.length);
-          if (!isSafePaxPath(candidate)) throw tarError("invalid long-name path");
-          nextLongName = candidate;
+          if (!(await fill(size))) throw tarError("truncated tar entry");
+          const body = take(size);
+          if (type === "g") {
+            // A global header's `path` and `linkpath` do not carry to later
+            // entries (node-tar drops both when merging it in) but its other
+            // attributes, `size` among them, do. It does not clear the pending
+            // local record either.
+            paxGlobal = { ...paxGlobal, ...parsePax(body) };
+          } else if (type === "x" || type === "X") {
+            pax = { ...pax, ...parsePax(body) };
+            if (typeof pax.path === "string" && !isSafePaxPath(pax.path)) {
+              throw tarError("invalid pax path");
+            }
+          } else {
+            // readString already stops at the first NUL terminator, so the
+            // long-name payload is implicitly trimmed at the NUL boundary.
+            const candidate = readString(body, 0, body.length);
+            if (type === "K") {
+              // Long link target. Parsed only so it cannot be mistaken for an
+              // entry of its own; link targets are not reviewed here.
+              pax = { ...pax, linkpath: candidate };
+            } else {
+              if (!isSafePaxPath(candidate)) throw tarError("invalid long-name path");
+              pax = { ...pax, path: candidate };
+            }
+          }
         }
-      } else if (isRegular) {
-        const rawCandidate =
-          (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
+        if (padding > 0) await discard(padding);
+        continue;
+      }
+
+      if (isRegular) {
         const canonicalCandidate = canonicalizePath(rawCandidate);
         const path = normalizeTarPath(rawCandidate);
         const canonicalPath = normalizeTarPath(canonicalCandidate);
+        // A regular file whose path this reader cannot represent used to be
+        // dropped outright, which deleted the only evidence that it exists. npm
+        // still extracts several of these — a backslash is an ordinary filename
+        // character on POSIX, so is a leading `C:`, and node-tar has no length
+        // cap — so the entry is disclosed instead: the reviewer sees that the
+        // archive carries a file this reader could not name, and its body is
+        // skipped rather than silently attributed to nothing.
+        if (!path) {
+          addSuspicious({
+            kind: "parser-differential",
+            path: clipTextSample(rawCandidate, 256) || "<unnamed>",
+            detail:
+              rawCandidate.length > 512
+                ? "entry path exceeds the 512-character limit this reader records; the entry was not inspected"
+                : "entry path is not representable as a safe relative path (traversal sequence, drive letter, or backslash separator); npm's reader may still extract it, so its content was not inspected here",
+          });
+        }
         if (rawCandidate !== canonicalCandidate) {
           addSuspicious({
             kind: "unicode-confusable",
@@ -1018,21 +1216,21 @@ export async function readTarStream(
           retainedByPath.set(path, contributed);
           retainedBytes += contributed;
         }
-        nextLongName = null;
         pax = null;
       } else {
         // Non-regular entry (hardlink, symlink, device, directory, fifo,
         // reserved). npm publish never emits these; a hand-crafted tar can.
-        const rawCandidate =
-          (pax && pax.path) || nextLongName || (prefix ? prefix + "/" : "") + rawName;
         const reportedPath = normalizeTarPath(canonicalizePath(rawCandidate)) || rawCandidate || "";
+        // A `0`/NUL entry whose name ends in `/` is a directory to node-tar, so
+        // it is reported as the directory record it is rather than as its
+        // typeflag byte.
+        const reportedType = namedDirectory ? "5" : type;
         addSuspicious({
           kind: "non-regular",
           path: reportedPath,
-          detail: `typeflag ${type} (${describeNonRegularType(type)})`,
+          detail: `typeflag ${reportedType} (${describeNonRegularType(reportedType)})`,
         });
         if (!(await discard(size))) throw tarError("truncated tar entry");
-        nextLongName = null;
         pax = null;
       }
 
@@ -1047,6 +1245,9 @@ export async function readTarStream(
     }
     if (tierNotice) {
       tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
+    }
+    if (rejectedNotice) {
+      rejectedNotice.detail = `${rejectedBlocks} header ${rejectedBlocks === 1 ? "block is one npm's reader rejects" : "blocks are ones npm's reader rejects"} (checksum mismatch, missing path, or a linkname the entry type does not allow); each was skipped without consuming the body it declared, as npm's reader does, so the entries after it are the ones npm extracts`;
     }
     if (nullBlockNotice) {
       nullBlockNotice.detail = `${entriesAfterNullBlock} ${entriesAfterNullBlock === 1 ? "entry follows" : "entries follow"} an all-zero block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first all-zero block never sees them`;

@@ -111,8 +111,8 @@ function tarSuspiciousSeverity(
   if (entry.kind === "retention-tier") {
     return hasChangedSkippedContent ? "medium" : "info";
   }
-  // Entries reachable only past a lone end-of-archive block are review evasion
-  // by construction: no publisher toolchain emits one.
+  // A structure that makes tar readers disagree is review evasion by
+  // construction: no publisher toolchain emits one.
   if (entry.kind === "parser-differential") return "high";
   return "medium";
 }
@@ -138,8 +138,8 @@ function tarSuspiciousReason(entry: TarSuspiciousEntry, dialect: "npm" | "pypi")
       return "the archive is larger than the scanner's full-inspection tier, so some file bodies were recorded hash-only and never content-inspected; the diff's baseline hash comparison still shows whether each one changed, and changed-but-uninspected files must be verified through provenance or out-of-band review";
     case "parser-differential":
       return dialect === "pypi"
-        ? "the archive places entries after an all-zero block, where tar readers genuinely disagree about the end of the archive: pip's CPython `tarfile` and GNU tar stop at the first all-zero block, while node-tar reads on to the two-block end-of-archive marker. No Python build backend emits this shape, so the entries recorded past that block may not be the ones pip extracts, and the disagreement is itself the evidence"
-        : "the archive places entries after an all-zero block; npm extracts with node-tar, which ends the archive only on the two-block end-of-archive marker and installs them, while a reader that stops at the first all-zero block never sees them. npm pack never emits this shape — it is how files are hidden from review";
+        ? "the archive uses a structure that tar readers resolve differently, named in the evidence. Drydock resolves it the way node-tar does, which is not always how pip's CPython `tarfile` reads it, so an entry recorded here may not be one pip extracts — but no Python build backend emits these shapes, and the disagreement is itself the evidence"
+        : "the archive uses a structure that tar readers resolve differently, named in the evidence. Drydock resolves it the way node-tar does, because that is the reader `npm install` extracts with, so a reviewer reading the archive any other way sees a different set of files than npm installs. npm pack never emits these shapes — they are how files are hidden from review";
   }
 }
 

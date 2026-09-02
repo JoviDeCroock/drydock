@@ -4,8 +4,10 @@ import * as tarParser from "../server/lib/tar-parser.js";
 import {
   TAR_BLOCK,
   buildTar,
+  buildTarHeaderOnly,
   concatBytes,
   encoder,
+  sealTarHeader,
   tarEntriesOnly,
 } from "./helpers/archive-fixtures.mjs";
 
@@ -38,15 +40,26 @@ async function parseFull(tar, limits = PARSE_LIMITS) {
 describe("normalizeTarPath", () => {
   test("strips leading slashes and `package/` prefix", () => {
     expect(normalizeTarPath("package/index.js")).toBe("index.js");
-    expect(normalizeTarPath("/package/lib/foo.js")).toBe("lib/foo.js");
     expect(normalizeTarPath("//etc/passwd")).toBe("etc/passwd");
+    // npm extracts with `strip: 1`, which drops the first path component —
+    // here the empty one before the leading slash — so `package/` survives as
+    // an ordinary directory rather than being taken for the root prefix.
+    expect(normalizeTarPath("/package/lib/foo.js")).toBe("package/lib/foo.js");
+    expect(normalizeTarPath("./package/lib/foo.js")).toBe("package/lib/foo.js");
   });
 
   test("rejects path traversal sequences", () => {
     expect(normalizeTarPath("package/../../../etc/passwd")).toBeNull();
     expect(normalizeTarPath("../escape")).toBeNull();
     expect(normalizeTarPath("a/../b")).toBeNull();
-    expect(normalizeTarPath("./hidden")).toBeNull();
+  });
+
+  test("collapses `.` segments the way every extractor does", () => {
+    // Rejecting these produced no record at all for `package/./binding.gyp`
+    // while npm wrote `binding.gyp`.
+    expect(normalizeTarPath("./hidden")).toBe("hidden");
+    expect(normalizeTarPath("package/./binding.gyp")).toBe("binding.gyp");
+    expect(normalizeTarPath("package/lib/./deep/./x.js")).toBe("lib/deep/x.js");
   });
 
   test("rejects null bytes and backslashes", () => {
@@ -92,8 +105,22 @@ describe("isSafePaxPath", () => {
 
 describe("parsePax", () => {
   test("parses length-prefixed key=value records", () => {
-    const record = "15 path=foo/bar\n";
-    const parsed = parsePax(encoder.encode(record));
+    // The declared length counts the record's own bytes plus its newline.
+    const parsed = parsePax(encoder.encode("16 path=foo/bar\n"));
+    expect(parsed.path).toBe("foo/bar");
+  });
+
+  test("ignores a record whose declared length is wrong, and keeps the rest", () => {
+    // node-tar drops the malformed line only; a parser that walks the declared
+    // lengths instead would resolve a path npm never applies.
+    const parsed = parsePax(encoder.encode("15 path=foo/bar\n16 size=1234567\n"));
+    expect(parsed.path).toBeUndefined();
+    expect(parsed.size).toBe("1234567");
+  });
+
+  test("reads records past a NUL byte and past 8 KiB of padding", () => {
+    const padding = "20 comment=xxxxxxxx\n".repeat(500);
+    const parsed = parsePax(encoder.encode(`\0\0\n${padding}16 path=foo/bar\n`));
     expect(parsed.path).toBe("foo/bar");
   });
 
@@ -412,12 +439,22 @@ describe("readTar PAX and GNU long-name handling", () => {
     expect(isRootGypPath(files[0].path)).toBe(true);
   });
 
-  test("global PAX metadata clears pending local path overrides", async () => {
-    const localPaxRecord = "26 path=package/decoy.txt\n";
-    const globalPaxRecord = "22 comment=global-pax\n";
+  test("keeps a pending local path override across a global PAX header", async () => {
+    // node-tar merges a global header into its own record without clearing the
+    // pending local one, so npm writes `decoy.txt` here. Clearing it meant a
+    // `g` block could hide a path override from review.
     const tar = buildTar([
-      { name: "PaxHeader", type: "x", body: localPaxRecord },
-      { name: "GlobalPaxHeader", type: "g", body: globalPaxRecord },
+      { name: "PaxHeader", type: "x", body: "26 path=package/decoy.txt\n" },
+      { name: "GlobalPaxHeader", type: "g", body: "22 comment=global-pax\n" },
+      { name: "package/binding.gyp", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["decoy.txt"]);
+  });
+
+  test("does not apply a global PAX path to later entries", async () => {
+    const tar = buildTar([
+      { name: "GlobalPaxHeader", type: "g", body: "26 path=package/decoy.txt\n" },
       { name: "package/binding.gyp", body: "{}" },
     ]);
     const { files } = await parseFull(tar);
@@ -433,7 +470,6 @@ describe("readTar suspicious entries", () => {
     ["4", "block-device"],
     ["5", "directory"],
     ["6", "fifo"],
-    ["7", "reserved"],
   ]) {
     test(`surfaces a non-regular entry for typeflag ${type} (${label})`, async () => {
       const tar = buildTar([
@@ -606,12 +642,14 @@ describe("readTar limits and malformed archives", () => {
     // of payload follows; the parser should detect the overflow.
     const sizeField = encoder.encode("00000010000\0");
     tar.set(sizeField, 124);
+    sealTarHeader(tar, 0);
     await expect(parse(tar)).rejects.toThrow(/truncated tar entry/);
   });
 
   test("throws when the size field is not valid octal", async () => {
     const tar = buildTar([{ name: "package/x.js", body: "abc" }]);
     tar.set(encoder.encode("XYZZZZZZZZZ\0"), 124);
+    sealTarHeader(tar, 0);
     await expect(parse(tar)).rejects.toThrow(/invalid tar entry size/);
   });
 
@@ -794,6 +832,7 @@ describe("readTar limits and malformed archives", () => {
     // Claim a body far beyond both the retention limit and the archive length:
     // the skip path must still detect the overrun instead of succeeding.
     tar.set(encoder.encode("00000010000\0"), 124);
+    sealTarHeader(tar, 0);
     await expect(parse(tar, { maxFiles: 100, maxTarBytes: 1024 })).rejects.toThrow(
       /truncated tar entry/,
     );
@@ -807,6 +846,246 @@ describe("readTar limits and malformed archives", () => {
     extended.fill(0x66, tar.length); // 'f'
     const files = await parse(extended);
     expect(files.map((f) => f.path)).toEqual(["a.js"]);
+  });
+
+  test("reads a typeflag 7 entry as the regular file npm extracts", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "// a\n" },
+      { name: "package/binding.gyp", type: "7", body: "{}" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("reads a `0` entry whose name ends in `/` as the directory npm skips", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "// a\n" },
+      { name: "package/weird/", body: "" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({ kind: "non-regular", detail: "typeflag 5 (directory)" }),
+    );
+  });
+
+  test("applies a GNU `N` long path like `L`", async () => {
+    const tar = buildTar([
+      { name: "@LongLink", type: "N", body: "package/binding.gyp\0" },
+      { name: "package/harmless.txt", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test("keeps a pending long path across a `K` long-linkpath header", async () => {
+    const tar = buildTar([
+      { name: "@LongLink", type: "L", body: "package/binding.gyp\0" },
+      { name: "@LongLink", type: "K", body: "target\0" },
+      { name: "package/harmless.txt", body: "{}" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect(suspicious).toEqual([]);
+  });
+
+  test("applies an `X` old extended header like `x`", async () => {
+    const tar = buildTar([
+      { name: "PaxHeader", type: "X", body: "28 path=package/binding.gyp\n" },
+      { name: "package/harmless.txt", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test("ignores an extended header larger than node-tar's 1 MiB metadata limit", async () => {
+    // Over that limit node-tar skips the body and leaves its pending record
+    // untouched, so the entry keeps its own name.
+    const body = new Uint8Array(1024 * 1024 + 512);
+    body.set(encoder.encode("28 path=package/binding.gyp\n"));
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body },
+      { name: "package/harmless.txt", body: "{}" },
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["harmless.txt"]);
+  });
+
+  test("takes a PAX size over the header's own so later entries stay aligned", async () => {
+    // The header claims 1024 bytes and the PAX record claims 5: npm reads 5 and
+    // finds a header in the second block, so a reader that trusts the header
+    // walks a different archive from here on.
+    const hidden = buildTar([{ name: "package/binding.gyp", body: "{}" }]);
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "9 size=5\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
+      new Uint8Array(TAR_BLOCK),
+      hidden,
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "decoy.txt", "binding.gyp"]);
+  });
+
+  test("takes a global PAX size the same way", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "GlobalPaxHeader", type: "g", body: "9 size=5\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
+      new Uint8Array(TAR_BLOCK),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["decoy.txt", "binding.gyp"]);
+  });
+
+  test("skips a bad-checksum block without consuming its body, like npm's reader", async () => {
+    // node-tar skips the block and reads the next 512 bytes as a header, so the
+    // "body" declared here is really the entry that follows.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "package/index.js", body: "// a\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024, seal: false }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        path: "<archive>",
+        detail: expect.stringContaining("1 header block is one npm's reader rejects"),
+      }),
+    );
+  });
+
+  test("ignores the size a directory record declares", async () => {
+    // node-tar zeroes a directory's size, so a directory claiming a body would
+    // swallow the entries npm goes on to extract.
+    const tar = concatBytes([
+      buildTarHeaderOnly({ name: "package/dir/", type: "5", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test("ignores the size a `0` entry named like a directory declares", async () => {
+    const tar = concatBytes([
+      buildTarHeaderOnly({ name: "package/dir/", type: "0", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test.each([
+    ["an empty name", { name: "", size: 1024 }],
+    ["a linkname on a regular file", { name: "package/decoy.txt", size: 1024, linkname: "t" }],
+    ["a link with no linkname", { name: "package/decoy", type: "2", size: 1024, linkname: " " }],
+  ])(
+    "skips a header npm's reader rejects for %s, without consuming its body",
+    async (_l, entry) => {
+      // Each of these makes node-tar skip the block and read the next 512 bytes as
+      // a header, so the declared body is really the entry that follows it.
+      const header = buildTarHeaderOnly(entry);
+      if (entry.linkname === " ") {
+        header.fill(0, 157, 257);
+        sealTarHeader(header, 0);
+      }
+      const tar = concatBytes([header, buildTar([{ name: "package/binding.gyp", body: "{}" }])]);
+      const { files, suspicious } = await parseFull(tar);
+      expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+      expect(suspicious).toContainEqual(
+        expect.objectContaining({
+          kind: "parser-differential",
+          detail: expect.stringContaining("npm's reader rejects"),
+        }),
+      );
+    },
+  );
+
+  test("does not prepend the ustar prefix to a PAX path", async () => {
+    // node-tar builds the prefixed path but then replaces it wholesale with the
+    // extended-header path, so the prefix survives only for an entry named by
+    // its own header. Prepending it reported a nested path for a file npm writes
+    // at the package root, where the gyp and manifest rules look.
+    const tar = buildTar([
+      { name: "PaxHeader", type: "x", body: "28 path=package/binding.gyp\n" },
+      { name: "harmless.txt", prefix: "package/lib", body: "{}" },
+    ]);
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test.each([
+    ["an all-digit PAX path", "12 path=123\n"],
+    ["an empty PAX path", "8 path=\n"],
+  ])("skips a header npm's reader rejects for %s", async (_label, record) => {
+    // node-tar coerces an all-digit value to a number and its header decode
+    // throws; an empty `path=` counts as present and fails its path check. Both
+    // skip the block without consuming the body, and both leave the record
+    // pending so the headers after it are skipped too.
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: record }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files).toEqual([]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        detail: expect.stringContaining("npm's reader rejects"),
+      }),
+    );
+  });
+
+  test("honors a PAX size of zero rather than falling back to the header", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "9 size=0\n" }])),
+      buildTar([{ name: "package/decoy.txt", body: "0123456789" }]),
+    ]);
+    const [decoy] = await parse(tar);
+    expect(decoy.path).toBe("decoy.txt");
+    expect(decoy.size).toBe(0);
+  });
+
+  test("prefers a local PAX size over a global one, and applies both to metadata", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(buildTar([{ name: "GlobalPaxHeader", type: "g", body: "12 size=1024\n" }])),
+      tarEntriesOnly(buildTar([{ name: "PaxHeader", type: "x", body: "9 size=5\n" }])),
+      buildTarHeaderOnly({ name: "package/decoy.txt", size: 99 }),
+      new Uint8Array(TAR_BLOCK),
+      buildTar([{ name: "package/binding.gyp", body: "{}" }]),
+    ]);
+    // The global size governs the `x` block that follows it, and the local size
+    // then governs the entry — the same boundaries npm's reader walks.
+    expect((await parse(tar)).map((f) => f.path)).toEqual(["decoy.txt", "binding.gyp"]);
+  });
+
+  test("discloses a regular entry whose path is not representable", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: "// a\n" },
+      { name: "package/lib\\evil.js", body: "1\n" },
+    ]);
+    const { files, suspicious } = await parseFull(tar);
+    expect(files.map((f) => f.path)).toEqual(["index.js"]);
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        path: "package/lib\\evil.js",
+        detail: expect.stringContaining("not representable as a safe relative path"),
+      }),
+    );
+  });
+
+  test("reads the ustar prefix only when the ustar magic is present", async () => {
+    const withMagic = buildTar([{ name: "binding.gyp", prefix: "package/lib", body: "{}" }]);
+    expect((await parse(withMagic)).map((f) => f.path)).toEqual(["lib/binding.gyp"]);
+
+    // Without the magic node-tar ignores bytes 345+, so the entry npm sees is
+    // the bare name — the package root, where the gyp rules look.
+    const withoutMagic = buildTar([{ name: "binding.gyp", prefix: "package/lib", body: "{}" }]);
+    withoutMagic.fill(0, 257, 265);
+    sealTarHeader(withoutMagic, 0);
+    expect((await parse(withoutMagic)).map((f) => f.path)).toEqual(["binding.gyp"]);
   });
 
   test("reads entries hidden behind a lone all-zero block", async () => {
@@ -1549,7 +1828,14 @@ describe("digestArchiveStream", () => {
             return;
           }
           const chunk = new Uint8Array(Math.min(chunkSize, totalBytes - emitted));
-          if (emitted === 0) chunk.fill(0xff, 124, 136);
+          // A sealed header whose size field is not octal: the checksum has to
+          // be valid for the reader to reach the size at all (a bad checksum is
+          // a block npm's reader skips, so this one skips it too).
+          if (emitted === 0) {
+            chunk.set(buildTar([{ name: "package/x.js", body: "abc" }]).subarray(0, 512), 0);
+            chunk.set(encoder.encode("XYZZZZZZZZZ\0"), 124);
+            sealTarHeader(chunk, 0);
+          }
           emitted += chunk.byteLength;
           controller.enqueue(chunk);
         },

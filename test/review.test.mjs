@@ -2213,7 +2213,7 @@ describe("review", () => {
         ruleId: "tar.suspicious-entry",
       }),
     );
-    expect(npm[0].reason).toContain("npm extracts with node-tar");
+    expect(npm[0].reason).toContain("the reader `npm install` extracts with");
     expect(pypi[0].reason).toContain("pip's CPython `tarfile`");
     expect(computeRisk(npm)).toBe("high");
   });
