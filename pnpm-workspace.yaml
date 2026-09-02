@@ -17,6 +17,10 @@ overrides:
   # host-confusion and SSRF advisories fixed in 3.1.6 (GHSA-5jgf-p345-68v8,
   # GHSA-fph4-wmhf-6fwf, GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp).
   fast-uri: ^3.1.6
+  # Express permits qs releases affected by bracket-key array-limit bypass and
+  # attacker-controlled isBuffer denial of service (GHSA-x5fp-wj9c-mxmx,
+  # GHSA-4mjr-xmp4-gh2g); keep the transitive parser on the patched line.
+  qs: ^6.16.0
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
   # retry, cookie, and header handling until its dependency floor catches up.
   undici: ^7.29.0
