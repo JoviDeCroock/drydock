@@ -82,8 +82,11 @@ The raw token exists only in the invite email and the accept request; it is
 
 ### Create → email → accept
 
-1. **Create** (`POST /invitations`, owner/admin): validates the email
-   (`sanitizeAddress`) and role (`isInvitableRole`, default `member`),
+1. **Create** (`POST /invitations`, owner/admin): requires the inviter's own
+   address to be verified (`403 { code: "email_verification_required" }`, see
+   [`security-model.md`](./security-model.md#email-verification)) — an invite
+   sends mail to a third party in the organization's name — then validates the
+   email (`sanitizeAddress`) and role (`isInvitableRole`, default `member`),
    rate-limits at 30/hour per org, rejects an address that is already a member
    (409), then `upsertInvitation` + `notifyOrganizationInvite`. Returns the
    public invitation (no token).

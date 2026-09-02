@@ -26,6 +26,7 @@ import {
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
+import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
 import { registryStatusBadge } from "../../features/registry-status";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -143,6 +144,8 @@ export default function DashboardPage() {
       }
     >
       <DashboardHeader />
+
+      <EmailVerificationBanner />
 
       {workspaceLoaded ? (
         <>

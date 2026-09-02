@@ -159,9 +159,10 @@ Optional integrations:
   Request-level OAuth scope overrides are rejected server-side so callers cannot
   widen the grant beyond `read:user` and `user:email`.
 
-  Social sign-ins are never asked for email verification (the wall applies to
-  the email sign-in route only), and a provider-verified email also satisfies
-  the verified-email checks elsewhere (e.g. accepting an invitation). Implicit
+  No sign-in route asks for email verification; a GitHub sign-in simply arrives
+  already verified, which satisfies the per-action verified-email checks (npm
+  token, decision, share link, invitation, GitHub install) described in
+  [`security-model.md`](./security-model.md#email-verification). Implicit
   account linking is disabled, including Better Auth's explicit link endpoint:
   a GitHub sign-in whose email already belongs to a password account fails back
   to the login page instead of attaching to that account, because the Drydock

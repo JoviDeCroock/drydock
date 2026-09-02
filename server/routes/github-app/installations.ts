@@ -14,6 +14,7 @@ import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
 } from "../../lib/auth/active-organization";
+import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { rateLimitResponse } from "../../lib/platform/http";
 import { recordProductEvent } from "../../lib/platform/analytics";
@@ -56,6 +57,8 @@ installationRoutes.get("/config", (c) => {
 });
 
 installationRoutes.post("/install", async (c) => {
+  const unverified = requireVerifiedEmail(c);
+  if (unverified) return unverified;
   let config: GithubAppConfig;
   try {
     config = readGithubAppConfig(c.env);
