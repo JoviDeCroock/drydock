@@ -73,6 +73,25 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
   );
 }
 
+/**
+ * Tone for a file rendered from one side only.
+ *
+ * `added` and `removed` files genuinely are one side, so they keep the tone
+ * that says so. Anything else reaching a single-sided render is a `modified`
+ * file whose opposite side is unavailable — a public report shares the staged
+ * artifact and never a baseline — and tinting every row as inserted would be a
+ * claim about the release that is wrong on every line the file did not change.
+ * The status badge above the body keeps carrying the real verdict.
+ */
+export function singleSidedTone(
+  status: string,
+  side: "before" | "after",
+): "added" | "removed" | "unchanged" {
+  if (status === "added" && side === "after") return "added";
+  if (status === "removed" && side === "before") return "removed";
+  return "unchanged";
+}
+
 function DiffScrollViewport({
   resetKey,
   scrollState,
@@ -528,7 +547,7 @@ function DiffBody({
       <SingleSidedView
         path={path}
         label={afterLabel}
-        tone="added"
+        tone={singleSidedTone(status, "after")}
         text={afterText}
         tokens={afterTokens}
         findings={afterFindings}
@@ -547,7 +566,7 @@ function DiffBody({
       <SingleSidedView
         path={path}
         label={beforeLabel}
-        tone="removed"
+        tone={singleSidedTone(status, "before")}
         text={beforeText}
         tokens={beforeTokens}
         findings={beforeFindings}
@@ -581,7 +600,7 @@ function DiffBody({
       <SingleSidedView
         path={path}
         label={afterLabel}
-        tone="added"
+        tone={singleSidedTone(status, "after")}
         text={afterText}
         tokens={afterTokens}
         findings={afterFindings}
@@ -595,7 +614,7 @@ function DiffBody({
       <SingleSidedView
         path={path}
         label={beforeLabel}
-        tone="removed"
+        tone={singleSidedTone(status, "before")}
         text={beforeText}
         tokens={beforeTokens}
         findings={beforeFindings}
