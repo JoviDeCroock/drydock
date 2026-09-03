@@ -9,6 +9,7 @@ export {
   discardScanAttempt,
   listExistingScanStageIds,
   markScanFailed,
+  SCAN_SOURCES,
   type ScanSource,
 } from "./scan-jobs";
 

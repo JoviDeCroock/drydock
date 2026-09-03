@@ -37,7 +37,7 @@ export interface CreateScanJobInput {
 // `published` is a manual review of an already-public release: no registry
 // credential, no staged candidate, and deliberately outside the registry
 // status/supersession machinery below, which only tracks staged npm releases.
-const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate", "published"] as const;
+export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate", "published"] as const;
 export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {

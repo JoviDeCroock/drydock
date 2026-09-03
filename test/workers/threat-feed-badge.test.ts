@@ -73,7 +73,7 @@ async function seedCompletedScan(
     risk?: string;
     releaseRisk?: string;
     ecosystem?: "npm" | "pypi" | "vscode";
-    source?: "manual" | "workflow_gate";
+    source?: "manual" | "workflow_gate" | "published";
     registryUrl?: string;
     // The dist-tag the release was staged under. Only npm staged-publish scans
     // carry one; omitted means a review that was never staged under a tag.
@@ -90,23 +90,47 @@ async function seedCompletedScan(
   const version = options.version ?? "1.1.0";
   const risk = options.risk ?? "low";
   // Gate scans persist a provenance snapshot; staged-publish scans do not.
-  const gateEcosystem = options.withoutProvenance
-    ? null
-    : options.ecosystem && options.ecosystem !== "npm"
-      ? options.ecosystem
-      : options.source === "workflow_gate"
-        ? "npm"
-        : null;
+  const gateEcosystem =
+    options.source === "published" || options.withoutProvenance
+      ? null
+      : options.ecosystem && options.ecosystem !== "npm"
+        ? options.ecosystem
+        : options.source === "workflow_gate"
+          ? "npm"
+          : null;
   const source = options.source ?? (gateEcosystem ? "workflow_gate" : "manual");
+  // A published-pair review names its own registry in the summary and holds no
+  // provenance snapshot: nothing about it was staged.
+  const publishedPair =
+    source === "published"
+      ? {
+          mode: "published_pair",
+          ecosystem: options.ecosystem ?? "npm",
+          packageName,
+          version,
+          baselineVersion: "1.0.0",
+          registryUrl: "https://registry.npmjs.org",
+          notices: [],
+        }
+      : null;
   await createScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
     ownerUserId: owner.userId,
     source,
-    packageName: source !== "workflow_gate" && options.registryUrl ? packageName : null,
-    stagedVersion: source !== "workflow_gate" && options.registryUrl ? version : null,
-    registryUrl: source !== "workflow_gate" ? (options.registryUrl ?? null) : null,
+    packageName:
+      source === "published" || (source !== "workflow_gate" && options.registryUrl)
+        ? packageName
+        : null,
+    stagedVersion:
+      source === "published" || (source !== "workflow_gate" && options.registryUrl)
+        ? version
+        : null,
+    // A published-pair review claims no registry coordinates: the release it
+    // reviews is already public and belongs to whoever published it.
+    registryUrl:
+      source === "manual" || source === "auto_discovery" ? (options.registryUrl ?? null) : null,
   });
   await persistScanWithArtifacts(db, {
     id: scanId,
@@ -118,7 +142,10 @@ async function seedCompletedScan(
     status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
-      ...(!gateEcosystem && options.tag ? { stagedPublish: { tag: options.tag } } : {}),
+      ...(publishedPair ? { stagedPublish: publishedPair } : {}),
+      ...(!gateEcosystem && !publishedPair && options.tag
+        ? { stagedPublish: { tag: options.tag } }
+        : {}),
       ...(gateEcosystem
         ? {
             stagedPublish: {
@@ -637,6 +664,90 @@ describe("shields badge endpoint", () => {
     });
   });
 
+  test("a published-pair review never answers the package's badge", async () => {
+    // Nothing about this org relates to the package: a published-pair scan
+    // needs no npm credential and runs against any already-public release.
+    const stranger = await seedUser();
+    const app = buildTestApp(stranger);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(stranger, {
+      packageName,
+      version: "3.0.0",
+      source: "published",
+    });
+    await share(app, scanId, { threatFeed: true });
+    const decide = await request(app, `/api/v1/scans/${scanId}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "publish", reason: "vetted for internal use" }),
+    });
+    expect(decide.status).toBe(200);
+
+    // No approval badge is mintable for a name the reviewer has no claim on.
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      label: "drydock",
+      message: "not reviewed",
+      color: "lightgrey",
+    });
+    // Listing gave it no badge key at all, so no cached entry can exist either.
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select({
+        publicPackageKey: schema.scans.publicPackageKey,
+        publicFeedListedAt: schema.scans.publicFeedListedAt,
+      })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    expect(row).toMatchObject({
+      publicPackageKey: null,
+      publicFeedListedAt: expect.any(Date),
+    });
+  });
+
+  test("a published-pair review cannot displace a registry-verified badge", async () => {
+    const maintainer = await seedUser();
+    const app = buildTestApp(maintainer);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const staged = await seedCompletedScan(maintainer, {
+      packageName,
+      version: "1.0.0",
+      risk: "low",
+    });
+    await share(app, staged, { threatFeed: true });
+
+    const attacker = await seedUser();
+    const attackerApp = buildTestApp(attacker);
+    const forged = await seedCompletedScan(attacker, {
+      packageName,
+      version: "9.9.9",
+      source: "published",
+    });
+    await share(attackerApp, forged, { threatFeed: true });
+    await env.DB.prepare("UPDATE scans SET decision = 'publish' WHERE id = ?").bind(forged).run();
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
+      "1.0.0 reviewed · low risk",
+    );
+  });
+
+  test("a badge-ineligible source is excluded even if it already holds a badge key", async () => {
+    // Second lock: a row that acquired a key before its source was classified
+    // ineligible must still never be picked.
+    const stranger = await seedUser();
+    const app = buildTestApp(stranger);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(stranger, {
+      packageName,
+      version: "3.0.0",
+      source: "published",
+    });
+    await share(app, scanId, { threatFeed: true });
+    await env.DB.prepare("UPDATE scans SET public_package_key = ? WHERE id = ?")
+      .bind(`npm:${packageName}`, scanId)
+      .run();
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
   test("the badge is ecosystem-scoped", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -1106,6 +1217,38 @@ describe("public threat feed", () => {
     expect(feed.entries[stagedIndex]?.packageIdentity).toBe("registry-verified");
     // Listed later → appears first.
     expect(stagedIndex).toBeLessThan(gateIndex);
+  });
+
+  test("published-pair reviews are listed as public-review under their own ecosystem", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const npmName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const pypiName = `feed-${crypto.randomUUID().slice(0, 8)}`;
+    const npmScan = await seedCompletedScan(owner, { packageName: npmName, source: "published" });
+    await share(app, npmScan, { threatFeed: true });
+    const pypiScan = await seedCompletedScan(owner, {
+      packageName: pypiName,
+      source: "published",
+      ecosystem: "pypi",
+    });
+    await share(app, pypiScan, { threatFeed: true });
+
+    const feed = await fetchFeed(app);
+    // Still listed: a review of an already-public release is the point of the
+    // feed. The entry names the identity so a consumer can weigh it.
+    expect(feed.entries.find((entry) => entry.package === npmName)).toMatchObject({
+      packageIdentity: "public-review",
+      ecosystem: "npm",
+    });
+    // A published PyPI review carries no provenance snapshot, and the npm
+    // fallback that covers pre-provenance staged rows must not reach it — that
+    // would file it under the npm badge key for the same name.
+    expect(feed.entries.find((entry) => entry.package === pypiName)).toMatchObject({
+      packageIdentity: "public-review",
+      ecosystem: "pypi",
+    });
+    expect((await fetchBadge(app, "pypi", pypiName)).body.message).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", pypiName)).body.message).toBe("not reviewed");
   });
 
   test("feed entries carry the dist-tag, null when the release was never staged under one", async () => {

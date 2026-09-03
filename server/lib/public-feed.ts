@@ -117,21 +117,101 @@ function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
   return null;
 }
 
-// Never guess an ecosystem for a gate scan with missing provenance.
+// A published-pair summary carries no provenance block; the mode names the
+// registry the pair was resolved against. Read it only under that mode so a
+// staged or gate summary can never have a stray field speak for its ecosystem.
+function publishedPairEcosystem(summaryJson: unknown): PublicEcosystem | null {
+  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
+    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
+      const details = stagedPublish as { mode?: unknown; ecosystem?: unknown };
+      if (details.mode === "published_pair") {
+        const ecosystem = details.ecosystem;
+        if (ecosystem === "pypi" || ecosystem === "vscode" || ecosystem === "npm") {
+          return ecosystem;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Scan sources whose artifact was reached with the organization's own npm
+ * token, which the registry accepted for that exact name. That acceptance is
+ * the only proof in the system that the reviewing organization can publish
+ * under the name, so every trust decision keyed on identity starts here.
+ */
+const REGISTRY_VERIFIED_SOURCES: ReadonlySet<string> = new Set(["manual", "auto_discovery"]);
+
+/**
+ * Never guess an ecosystem for a gate scan with missing provenance, and never
+ * for a published-pair review either: only the staged sources may fall back to
+ * npm, because npm is the sole staged ecosystem and rows predating the
+ * provenance snapshot carry no other clue. Defaulting a published PyPI review
+ * to npm would file it under the npm badge key for the same name.
+ */
 export function scanEcosystem(source: string, summaryJson: unknown): PublicEcosystem | null {
-  return provenanceEcosystem(summaryJson) ?? (source === "workflow_gate" ? null : "npm");
+  const declared = provenanceEcosystem(summaryJson) ?? publishedPairEcosystem(summaryJson);
+  if (declared) return declared;
+  return REGISTRY_VERIFIED_SOURCES.has(source) ? "npm" : null;
 }
 
-type PackageIdentity = "registry-verified" | "manifest-claimed";
+type PackageIdentity = "registry-verified" | "manifest-claimed" | "public-review";
 
+/**
+ * How much the scan's source proves about the reviewer's relationship to the
+ * package name. Fails closed: only the credential-backed staged sources are
+ * registry-verified, so a source added later inherits the weakest identity
+ * until it is classified here deliberately.
+ */
 function scanPackageIdentity(source: string): PackageIdentity {
-  return source === "workflow_gate" ? "manifest-claimed" : "registry-verified";
+  if (REGISTRY_VERIFIED_SOURCES.has(source)) return "registry-verified";
+  return source === "workflow_gate" ? "manifest-claimed" : "public-review";
 }
 
-// A manifest claim must not displace a registry-verified npm review.
+/**
+ * Whether a scan may answer the global `/public/badge/:ecosystem/:package`
+ * index, which is keyed by package name alone and reads as the maintainer's own
+ * verdict on the release.
+ *
+ * A public-review scan reviews a release that is already published, needs no
+ * credential to start, and establishes nothing about the reviewing
+ * organization — any account can run one against any public package. Letting
+ * one occupy the badge would let an attacker mint an authoritative-looking
+ * approval for a package they have no relationship with, and displace the real
+ * maintainer's credential-backed review. Such reviews stay shareable and
+ * feed-listable, where the entry names its own identity.
+ */
+export function isBadgeEligibleSource(source: string): boolean {
+  return scanPackageIdentity(source) !== "public-review";
+}
+
+/**
+ * The `scans.source` values `isBadgeEligibleSource` rejects, for the SQL that
+ * pages badge candidates. Kept beside the classifier it mirrors; a test asserts
+ * the two agree across every declared scan source.
+ */
+export const BADGE_INELIGIBLE_SOURCES = ["published"] as const;
+
+/**
+ * The ecosystem whose badge index a scan may occupy, or null when it can never
+ * occupy one. The one rule for "would the badge answer with this review?", so
+ * the listing write, the cache purge, and the dashboard's embed snippet cannot
+ * drift from each other or from the badge route.
+ */
+export function badgeEcosystem(source: string, summaryJson: unknown): PublicEcosystem | null {
+  return isBadgeEligibleSource(source) ? scanEcosystem(source, summaryJson) : null;
+}
+
+// A manifest claim must not displace a registry-verified npm review, and an
+// unaffiliated public review must not occupy the badge at all.
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
+  const eligible = rows.filter((row) => isBadgeEligibleSource(row.source));
   return (
-    rows.find((row) => scanPackageIdentity(row.source) === "registry-verified") ?? rows[0] ?? null
+    eligible.find((row) => scanPackageIdentity(row.source) === "registry-verified") ??
+    eligible[0] ??
+    null
   );
 }
 
@@ -216,7 +296,9 @@ const RISK_BADGE_COLOR: Record<string, string> = {
 function badgeLabel(row: SharedScanRow | null, tag: string): string {
   const qualifiers = [
     ...(tag === DEFAULT_BADGE_TAG ? [] : [tag]),
-    ...(row && scanPackageIdentity(row.source) === "manifest-claimed" ? ["unverified"] : []),
+    // Anything short of registry-verified says so, so a row that ever reaches
+    // here without the registry's proof cannot read as the maintainer's own.
+    ...(row && scanPackageIdentity(row.source) !== "registry-verified" ? ["unverified"] : []),
   ];
   return qualifiers.length > 0 ? `${BADGE_LABEL} (${qualifiers.join(", ")})` : BADGE_LABEL;
 }
