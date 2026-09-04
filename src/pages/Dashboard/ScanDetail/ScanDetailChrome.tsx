@@ -81,7 +81,7 @@ export function ScanDetailHeader({
                   {registryBadge.label}
                 </Badge>
               ) : null,
-              packageHref && packageHref !== dashboardHref ? (
+              packageHref && !sameLocation(packageHref, dashboardHref) ? (
                 <a key="package" href={packageHref} class="text-ink-muted hover:text-ink">
                   all releases →
                 </a>
@@ -133,6 +133,21 @@ export function ScanDetailHeader({
       ) : null}
     </header>
   );
+}
+
+// The asset layer canonicalizes `@` to `%40` on a hard load, so the remembered
+// return URL and a freshly built package link can spell the same page two
+// ways. Offering "all releases" next to a back link that already goes there
+// is noise.
+function sameLocation(a: string, b: string): boolean {
+  const decode = (value: string) => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  };
+  return decode(a) === decode(b);
 }
 
 /**
