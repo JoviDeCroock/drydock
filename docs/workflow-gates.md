@@ -51,7 +51,9 @@ Both are owner/admin-only (`roleCanManageIntegrations`), scoped through `ensureI
 
 `verify` returns `{ environment, protectionRule, defaultBranch }` where each check is `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and the wizard renders a gate as armed only on `protectionRule: "present"`. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup. Nothing logs a GitHub response body, header, or the installation token.
 
-Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable.
+Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable; only the generated workflow is unavailable for it.
+
+Existing mappings are detected in the wizard, and a pinned ecosystem stays locked until the maintainer explicitly removes that mapping, avoiding a duplicate create against the unique repository/environment pair.
 
 ### Generated workflows
 

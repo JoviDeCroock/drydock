@@ -28,6 +28,7 @@ import { Muted } from "../../../components/Typography";
 import { UserMenu } from "../../../components/UserMenu";
 import { GeneralSection } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
+import { GateSetupWizard } from "./GateSetupWizard";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
@@ -47,6 +48,7 @@ export default function SettingsPage() {
   const audit = useModel(AuditLogModel);
   const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
+  const gateSetupDeepLink = useSignal(false);
 
   useQuerySignal(activeTab, {
     name: "tab",
@@ -56,6 +58,17 @@ export default function SettingsPage() {
 
   useEffect(() => {
     rememberDashboardReturnUrl(location.url);
+  }, [location.url]);
+
+  // Other surfaces deep-link to /dashboard/settings#gate-setup. The wizard is on
+  // the integrations tab, so the hash has to select the tab before the browser
+  // has anything to scroll to; the wizard itself does the scrolling once it
+  // mounts.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#gate-setup") return;
+    gateSetupDeepLink.value = true;
+    activeTab.value = "integrations";
   }, [location.url]);
 
   // Surface the result of the Slack OAuth callback redirect, then strip the
@@ -139,6 +152,9 @@ export default function SettingsPage() {
   // The audit log is owner/admin-only: hide the tab from members and fall back
   // to General if a member deep-links to ?tab=audit (the endpoint 403s anyway).
   const canViewAudit = canManageMembers(organizations);
+  const activeGithubInstallations = githubApp.installations.value.filter(
+    (row) => row.status === "active",
+  );
   const requestedTab = activeTab.value;
   const tab = requestedTab === "audit" && !canViewAudit ? "general" : requestedTab;
   const visibleTabs = SETTINGS_TABS.filter((entry) => entry.id !== "audit" || canViewAudit);
@@ -212,6 +228,21 @@ export default function SettingsPage() {
               <>
                 <NpmConnectionSection npm={npm} defaultOpen />
                 <GithubAppSection githubApp={githubApp} defaultOpen />
+                {/* Always rendered: the wizard owns the #gate-setup anchor, and
+                    the audience deep-linking to it is precisely the one that has
+                    not installed the App yet. */}
+                <GateSetupWizard
+                  activeInstallations={activeGithubInstallations}
+                  releaseTargets={githubApp.releaseTargets.value}
+                  gateSetupEcosystems={githubApp.config.value?.gateSetupEcosystems ?? []}
+                  canManage={canManageIntegrations(organizations)}
+                  onReleaseTargetsChanged={() => void githubApp.loadReleaseTargets()}
+                  onInstall={() => void githubApp.startInstall()}
+                  installDisabled={
+                    githubApp.config.value?.configured !== true || githubApp.busy.value
+                  }
+                  deepLinked={gateSetupDeepLink.value}
+                />
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? <AuditLogSection audit={audit} /> : null}
