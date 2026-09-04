@@ -22,10 +22,12 @@ import {
   type ScanDecisionFilter,
   type ScanListItem,
 } from "../../models/scan";
+import { ScanOverviewModel } from "../../models/scan-overview";
 import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
+import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
 import { Button, LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -47,6 +49,7 @@ export default function DashboardPage() {
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
+  const overview = useModel(ScanOverviewModel);
   const sessionChecked = useSignal(false);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
@@ -77,23 +80,33 @@ export default function DashboardPage() {
       // they are in flight.
       await organizations.load();
       if (cancelled) return;
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), overview.refresh()]);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
+  // Every list mutation (refresh, decision, delete, Check npm) changes what
+  // the overview counts, so the strip follows the list rather than each action
+  // remembering to refresh it. The startup and organization-switch loads above
+  // already hold an in-flight request the model joins instead of repeating.
+  useSignalEffect(() => {
+    void scans.scans.value;
+    if (!overview.loaded.peek()) return;
+    void overview.refresh();
+  });
+
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), overview.refresh()]);
     }
   };
 
   const onCreateOrganization = async (name: string) => {
     const created = await organizations.create(name);
     if (created) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), overview.refresh()]);
     }
   };
 
@@ -121,7 +134,8 @@ export default function DashboardPage() {
   const user = sessionModel.user.value;
   const scansLoaded = scans.loaded.value;
   const npmLoaded = npm.loaded.value;
-  const workspaceLoaded = scansLoaded && npmLoaded;
+  const overviewLoaded = overview.loaded.value;
+  const workspaceLoaded = scansLoaded && npmLoaded && overviewLoaded;
 
   return (
     <PageShell
@@ -150,18 +164,23 @@ export default function DashboardPage() {
         <>
           <DashboardOnboarding scans={scans} npm={npm} />
           <NpmTokenStaleCallout npm={npm} />
+          <OverviewStrip
+            overview={overview.overview}
+            loaded={overview.loaded}
+            error={overview.error}
+          />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
       ) : (
         <LoadingState
           title="Loading workspace"
-          detail={
-            npmLoaded
-              ? "fetching recent reviews"
-              : scansLoaded
-                ? "checking npm connection"
-                : "loading reviews · checking npm connection"
-          }
+          detail={[
+            !scansLoaded && "loading reviews",
+            !npmLoaded && "checking npm connection",
+            !overviewLoaded && "counting the queue",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
       )}
     </PageShell>

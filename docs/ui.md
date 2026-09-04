@@ -70,6 +70,29 @@ Both review pages lead with the diff:
   `DiffView` keeps a `modified` file rendered from one side neutral instead of
   tinting every row as an insertion.
 
+## Dashboard overview strip
+
+`src/features/overview/OverviewStrip.tsx` sits above Recent reviews and answers
+"what is waiting on me, and is it approvable yet" for the active organization.
+npm now stages every trusted-publishing release and holds stage approval until
+its own malware scan settles, so every release sits in a window; the strip is
+that window as four tiles, each a link into the matching `?filter=` on the
+list: **Waiting on you** (completed npm reviews with no decision whose npm
+status is unknown, `staged`, or `validating`, with the age of the oldest),
+**npm still scanning** (`validating`, with how many already have a finished
+Drydock review), **Published, no decision** (the list's
+`published_without_decision` semantics, limited to scans created in the last 30
+days), and **Decided · 30d** (approved vs rejected plus the median
+completion-to-decision time). The first three count only npm staged-publish
+sources (`manual`, `auto_discovery`); workflow-gate and published-pair scans
+carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
+`GET /api/v1/scans/overview`, one aggregate D1 statement in
+`server/db/scan-overview.ts`; the dashboard re-reads it whenever the list
+changes and joins an in-flight request rather than repeating it. The strip is
+absent for an organization with no scans, keeps its previous figures while a
+refresh is in flight, and renders a mono loading or error line otherwise. Tiles
+are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`.
+
 ## Dashboard onboarding funnel
 
 `src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a

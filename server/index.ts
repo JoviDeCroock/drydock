@@ -332,6 +332,7 @@ app.get("/api", (c) =>
     endpoints: {
       createScan: "POST /api/v1/scans { stageId }",
       scans: "GET /api/v1/scans",
+      scanOverview: "GET /api/v1/scans/overview",
       scanDetail: "GET /api/v1/scans/:id",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
