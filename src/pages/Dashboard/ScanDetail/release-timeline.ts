@@ -20,6 +20,7 @@ export interface ReleaseTimelineEvent {
 
 type TimelineScan = Pick<
   PersistedScanDetail["scan"],
+  | "status"
   | "createdAt"
   | "startedAt"
   | "completedAt"
@@ -84,7 +85,13 @@ export function buildReleaseTimeline(
     },
     { key: "queued", label: "Review queued", detail: null, at: epoch(scan.createdAt) },
     { key: "started", label: "Review started", detail: null, at: epoch(scan.startedAt) },
-    { key: "completed", label: "Review completed", detail: null, at: epoch(scan.completedAt) },
+    {
+      key: "completed",
+      // A failed review stamps the same column when it gives up.
+      label: scan.status === "failed" ? "Review failed" : "Review completed",
+      detail: null,
+      at: epoch(scan.completedAt),
+    },
     {
       key: "registry_status",
       label: "npm status observed",

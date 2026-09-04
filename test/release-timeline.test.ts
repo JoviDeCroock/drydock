@@ -9,6 +9,7 @@ const minutes = (n: number) => n * 60 * 1000;
 
 function scan(overrides: Partial<Parameters<typeof buildReleaseTimeline>[0]> = {}) {
   return {
+    status: "complete",
     createdAt: T0 + minutes(1),
     startedAt: null,
     completedAt: null,
@@ -129,6 +130,14 @@ describe("buildReleaseTimeline", () => {
       stagedPublish: { createdAt: 12345 as unknown as string },
     });
     expect(events.map((event) => event.key)).toEqual(["queued"]);
+  });
+
+  test("a failed review names its terminal stamp as a failure, not a completion", () => {
+    const events = buildReleaseTimeline(
+      scan({ status: "failed", completedAt: T0 + minutes(4) }),
+      {},
+    );
+    expect(events.find((event) => event.key === "completed")?.label).toBe("Review failed");
   });
 
   test("ties keep pipeline order so a same-millisecond start and completion stay readable", () => {
