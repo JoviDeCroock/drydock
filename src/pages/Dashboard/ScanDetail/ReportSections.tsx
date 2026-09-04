@@ -2,6 +2,13 @@ import type { ComponentChildren } from "preact";
 import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
+import {
+  isTrustedAutomationActor,
+  parseNpmStagePublisher,
+  type NpmBuildIdentity,
+  type NpmStagePublisher,
+  type NpmTrustConfig,
+} from "../../../../server/lib/ecosystems/npm/publisher-identity";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -9,6 +16,7 @@ import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
+  const publisher = parseNpmStagePublisher(summary.stagedPublish?.publisher);
   return (
     <section class="flex flex-col gap-6">
       <ReportSection title="Manifest changes">
@@ -46,7 +54,89 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
           <ArtifactIntegrityView integrity={artifactIntegrity} />
         </ReportSection>
       ) : null}
+
+      {publisher ? (
+        <ReportSection title="Publisher">
+          <PublisherView publisher={publisher} />
+        </ReportSection>
+      ) : null}
     </section>
+  );
+}
+
+function PublisherView({ publisher }: { publisher: NpmStagePublisher }) {
+  const trusted = isTrustedAutomationActor(publisher.actorType);
+  const previousBuiltBy = describeBuild(publisher.previousBuild);
+  const stagedBuiltBy = describeBuild(publisher.stagedBuild);
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-2 min-w-0">
+        <span class="text-[13px] text-ink-muted">Staged by</span>
+        <code class="font-mono text-[12px] text-ink break-all min-w-0">
+          {publisher.actor ?? "unknown actor"}
+        </code>
+        {publisher.actorType ? (
+          <Badge tone={trusted ? "ok" : "neutral"}>{publisher.actorType}</Badge>
+        ) : null}
+      </div>
+      {publisher.trustConfigsState === "checked" && publisher.trustConfigs?.length ? (
+        <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+          {publisher.trustConfigs.map((config, index) => (
+            <TrustConfigRow key={config.id ?? index} config={config} />
+          ))}
+        </div>
+      ) : (
+        <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+          {publisher.trustConfigsState === "checked"
+            ? "No trusted-publisher configs on this package."
+            : publisher.trustConfigsState === "unsupported"
+              ? "This registry does not expose trusted-publisher configs."
+              : "Trusted-publisher configs were unavailable; the npm token may not be able to read them."}
+        </p>
+      )}
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+        {previousBuiltBy
+          ? `Previous version built by ${previousBuiltBy} (unverified provenance, read from npm's attestation).`
+          : "No build provenance was found for the previous version."}
+      </p>
+      {stagedBuiltBy ? (
+        <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+          This version's attestation names {stagedBuiltBy} (unverified; present only once npm has
+          published it).
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function describeBuild(build: NpmBuildIdentity | null): string | null {
+  if (!build) return null;
+  return [build.repository, build.workflowPath, build.ref].filter(Boolean).join(" · ") || null;
+}
+
+function TrustConfigRow({ config }: { config: NpmTrustConfig }) {
+  return (
+    <div class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">
+      <div class="flex flex-wrap items-center gap-2 min-w-0">
+        <Badge tone="neutral">{config.provider ?? "unknown provider"}</Badge>
+        <code class="font-mono text-[12px] text-ink break-all min-w-0">
+          {config.repository ?? "unknown repository"}
+        </code>
+        {config.workflowFile ? (
+          <code class="font-mono text-[11px] text-ink-muted break-all min-w-0">
+            {config.workflowFile}
+          </code>
+        ) : null}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <Badge tone={config.directPublish ? "medium" : "ok"}>
+          {config.directPublish ? "direct publish" : "stage-only"}
+        </Badge>
+        <Badge tone={config.environment ? "ok" : "neutral"}>
+          {config.environment ? `environment ${config.environment}` : "no environment"}
+        </Badge>
+      </div>
+    </div>
   );
 }
 

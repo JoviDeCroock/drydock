@@ -1,0 +1,46 @@
+{
+  "id": "publisher-no-environment",
+  "title": "Stage-only trusted-publisher config without an environment pin",
+  "category": "publishing-path-hygiene",
+  "intent": "A stage-only GitHub config that pins no environment lets any job running the named workflow file exchange its OIDC token for a stage credential, without an environment's protection rules. The stage came through trusted automation and no provenance exists to compare against, so the missing pin is the only signal. Low: hygiene, not compromise.",
+  "verdict": "benign",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "release-bot",
+    "actorType": "trusted automation",
+    "trustConfigsState": "checked",
+    "trustConfigs": [
+      {
+        "id": "tc_1",
+        "provider": "github",
+        "repository": "acme/tool",
+        "workflowFile": "publish.yml",
+        "environment": null,
+        "directPublish": false,
+        "stagePublish": true
+      }
+    ],
+    "previousBuild": null,
+    "stagedBuild": null
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [
+    { "ruleId": "publisher.no-environment", "severity": "low", "file": "<publisher>" }
+  ]
+}

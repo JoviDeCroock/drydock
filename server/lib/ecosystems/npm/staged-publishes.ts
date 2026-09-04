@@ -5,6 +5,7 @@ import { reliableFetch } from "../../platform/reliable-fetch";
 import { normalizePeerDependenciesMeta, normalizeStringRecord } from "../../tar-parser.js";
 import type { PackageJsonSummary } from "../../review";
 import type { StagedArtifactIntegrity } from "../artifact-integrity";
+import type { NpmStagePublisher } from "./publisher-identity";
 import { isValidStageId } from "./stage-id";
 
 export interface StagedPublishItem {
@@ -30,6 +31,7 @@ export interface StagedPublishDetails extends StagedPublishItem {
  */
 export interface NpmStagedDetails extends StagedPublishDetails {
   artifactIntegrity: StagedArtifactIntegrity;
+  publisher: NpmStagePublisher;
 }
 
 export interface StagedPublishesPage {

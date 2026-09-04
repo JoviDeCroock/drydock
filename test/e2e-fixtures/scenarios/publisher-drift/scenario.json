@@ -1,0 +1,64 @@
+{
+  "stageId": "stage-publisher-drift-000001",
+  "packageName": "@drydock/e2e-publisher-drift",
+  "tag": "latest",
+  "access": "public",
+  "actor": "maintainer-token",
+  "actorType": "automation",
+  "createdAt": "2026-09-03T00:00:00.000Z",
+  "versionStatus": "staged",
+  "trustConfigs": [
+    {
+      "id": "tc_release",
+      "type": "github",
+      "claims": {
+        "repository": "drydock-fixtures/e2e-publisher-drift",
+        "workflow_ref": { "file": "release.yml" },
+        "environment": "release"
+      },
+      "permissions": ["createStagedPackage"]
+    },
+    {
+      "id": "tc_nightly",
+      "type": "github",
+      "claims": {
+        "repository": "drydock-fixtures/e2e-publisher-drift-nightly",
+        "workflow_ref": { "file": "nightly.yml" }
+      },
+      "permissions": ["createPackage", "createStagedPackage"]
+    }
+  ],
+  "previousBuild": {
+    "repository": "https://github.com/drydock-fixtures/e2e-publisher-drift",
+    "workflowPath": ".github/workflows/release.yml",
+    "ref": "refs/tags/v1.0.0",
+    "builderId": "https://github.com/actions/runner/github-hosted"
+  },
+  "previous": {
+    "directory": "previous",
+    "tag": "latest",
+    "publishedAt": "2026-08-20T00:00:00.000Z"
+  },
+  "staged": {
+    "directory": "staged"
+  },
+  "expected": {
+    "releaseRisk": "low",
+    "artifactRisk": "medium",
+    "packageName": "@drydock/e2e-publisher-drift",
+    "stagedVersion": "1.0.1",
+    "previousVersion": "1.0.0",
+    "ruleIds": [
+      "publisher.direct-publish-allowed",
+      "publisher.no-environment",
+      "publisher.config-outside-provenance",
+      "publisher.actor-not-trusted",
+      "publisher.provenance-path-changed"
+    ],
+    "baseline": {
+      "version": "1.0.0",
+      "source": "dist-tag",
+      "tag": "latest"
+    }
+  }
+}

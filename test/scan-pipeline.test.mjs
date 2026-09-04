@@ -24,6 +24,10 @@ const publishedTarballMock = vi.hoisted(() => ({
 const stagedMock = vi.hoisted(() => ({
   fetchStagedPublishDetails: vi.fn(),
 }));
+const publisherMock = vi.hoisted(() => ({
+  fetchNpmTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: 404 })),
+  fetchNpmBuildIdentity: vi.fn(async () => null),
+}));
 const npmConnectionMock = vi.hoisted(() => ({
   decryptNpmToken: vi.fn(),
 }));
@@ -48,6 +52,7 @@ vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", async () => ({
   ...(await vi.importActual("../server/lib/ecosystems/npm/staged-publishes.ts")),
   fetchStagedPublishDetails: stagedMock.fetchStagedPublishDetails,
 }));
+vi.mock("../server/lib/ecosystems/npm/publisher-lookup.ts", () => publisherMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", async () => ({
   ...(await vi.importActual("../server/lib/ecosystems/npm/connection.ts")),
   decryptNpmToken: npmConnectionMock.decryptNpmToken,
@@ -137,6 +142,8 @@ describe("scan pipeline baseline selection", () => {
     sandboxMock.downloadInSandbox.mockReset();
     publishedTarballMock.downloadPublishedTarball.mockReset();
     stagedMock.fetchStagedPublishDetails.mockReset();
+    publisherMock.fetchNpmTrustConfigs.mockClear();
+    publisherMock.fetchNpmBuildIdentity.mockClear();
     aiReviewMock.runSelectiveAiReview.mockReset();
   });
 
@@ -642,6 +649,65 @@ describe("scan pipeline baseline selection", () => {
     expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
       status: "verified",
     });
+  });
+
+  test("persists the publisher block and keeps publisher findings out of release risk", async () => {
+    publisherMock.fetchNpmTrustConfigs.mockResolvedValueOnce({
+      state: "checked",
+      configs: [
+        {
+          id: "tc_1",
+          provider: "github",
+          repository: "acme/pkg",
+          workflowFile: "publish.yml",
+          environment: "release",
+          directPublish: false,
+          stagePublish: true,
+        },
+      ],
+    });
+    // Staged version: 404 → null. Previous version (2.0.0-beta.2): attested.
+    publisherMock.fetchNpmBuildIdentity.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      repository: "acme/pkg",
+      workflowPath: ".github/workflows/publish.yml",
+      ref: "refs/tags/v2.0.0-beta.2",
+      builderId: "https://github.com/actions/runner/github-hosted",
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_publisher",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    expect(publisherMock.fetchNpmTrustConfigs).toHaveBeenCalledTimes(1);
+    expect(publisherMock.fetchNpmBuildIdentity).toHaveBeenCalledWith(
+      "https://registry.npmjs.org",
+      "@scope/pkg",
+      "2.0.0-beta.2",
+      expect.anything(),
+    );
+    expect(persistedInput.summary.stagedPublish.publisher).toMatchObject({
+      actor: "octocat",
+      actorType: "user",
+      trustConfigsState: "checked",
+      trustConfigs: [expect.objectContaining({ repository: "acme/pkg" })],
+      previousBuild: expect.objectContaining({ repository: "acme/pkg" }),
+      stagedBuild: null,
+    });
+    const publisherRuleIds = result.ruleFindings
+      .filter((finding) => finding.ruleId.startsWith("publisher."))
+      .map((finding) => finding.ruleId)
+      .sort();
+    expect(publisherRuleIds).toEqual([
+      "publisher.actor-not-trusted",
+      "publisher.provenance-path-changed",
+    ]);
+    // Publishing-path findings describe how the release arrived, not its
+    // bytes, so they raise artifact risk but never release risk.
+    expect(result.riskSummary.artifactRisk).toBe("medium");
+    expect(result.riskSummary.releaseRisk).toBe("low");
   });
 
   test("suppresses tag baseline selection when staged metadata disagrees with the tarball", async () => {

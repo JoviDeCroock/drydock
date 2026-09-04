@@ -49,6 +49,7 @@ Optional fields:
 - `previousPackageJson` / `stagedPackageJson` — summaries for package-json diff assertions and deterministic manifest review.
 - `expectedPackageJsonDiff` — assertions for diff-only signals.
 - `coverageGaps` — signals represented in the fixture but not yet promoted to deterministic findings.
+- `stagedPublisher` — an npm stage's publisher block (`NpmStagePublisher`: actor, actor type, trusted-publisher configs and their lookup state, previous/staged build identity) for the `publisher.*` rules, which read registry metadata the `FileRecord` shape cannot carry.
 
 The test intentionally compares exact rule IDs, severities, files, and risk. If a rule change is intentional, update the fixture expectation in the same PR and explain why.
 
@@ -73,6 +74,7 @@ The first corpus slice covers:
 - dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - install-time self-propagation: code a consumer's install executes that invokes a registry publish (`propagation.registry-publish`) or writes into the directory the package manager unpacks dependencies into (`propagation.package-mutation`). Both are ordinary developer actions elsewhere — a release CLI publishes, a patch tool rewrites `node_modules` — so the family gates on install-time reachability rather than on the pattern, with `legit-release-cli-publish` and `legit-patch-tooling-node-modules` as the hard negatives that pin that gate;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
+- npm publishing-path hygiene and drift: a trusted-publisher config that may `npm publish` directly, one with no environment pin, one whose repository never built a release, a stage created outside the package's trusted publishers, and a stage that left the previous version's attested CI path. A stage-only, environment-pinned config matching provenance, staged by trusted automation, is the benign control.
 
 ## Rule inventory
 
@@ -119,6 +121,11 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 | `package-json.parse-failed`               | deterministic | anchor               | no              |
 | `propagation.package-mutation`            | deterministic | anchor               | yes             |
 | `propagation.registry-publish`            | deterministic | anchor               | yes             |
+| `publisher.actor-not-trusted`             | deterministic | anchor               | no              |
+| `publisher.config-outside-provenance`     | deterministic | anchor               | no              |
+| `publisher.direct-publish-allowed`        | deterministic | anchor               | no              |
+| `publisher.no-environment`                | deterministic | anchor               | no              |
+| `publisher.provenance-path-changed`       | deterministic | anchor               | no              |
 | `release.source-drift`                    | deterministic | anchor               | no              |
 | `stage.metadata-mismatch`                 | deterministic | anchor               | no              |
 | `stage.tarball-digest-mismatch`           | deterministic | anchor               | no              |
@@ -173,7 +180,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.31.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.32.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -445,6 +452,16 @@ review one set of files and hand npm another; the evidence names which one was f
   a file npm writes at the package root); and the `package/` root prefix is stripped only when it is
   the first component. A regular entry whose path is still not representable — traversal, drive letter,
   backslash separator, over-long — is now reported instead of silently dropped.
+
+`1.32.0` adds the npm `publisher.*` family over the stage's Publisher block (see
+[`npm-staged-publishing.md`](./npm-staged-publishing.md)): `publisher.direct-publish-allowed`,
+`publisher.no-environment`, and `publisher.config-outside-provenance` (low) describe trusted-publisher
+config hygiene; `publisher.actor-not-trusted` and `publisher.provenance-path-changed` (medium)
+describe a stage that arrived outside the configured or attested CI path. They carry the synthetic
+`<publisher>` file label so the diff annotator scores them as package context, never release delta.
+Pinned by the `publisher-*` fixtures, with `publisher-trusted-stage-only-control` as the benign
+control; every rule stays silent on an unknown actor type, an unreadable config list, or a previous
+version without provenance.
 
 `1.30.0` closes the disagreements found by checking `1.29.0` against node-tar 7.5.15 (and the
 adversarial re-check of that fix). Most still hid content the same way: a header one reader skips

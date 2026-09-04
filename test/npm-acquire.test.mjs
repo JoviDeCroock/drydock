@@ -45,6 +45,8 @@ describe("acquireBaselineNpm", () => {
   ])("degrades oversized baseline downloads for %s", async (_name, makeError) => {
     const broker = {
       dispose() {},
+      fetchTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: null })),
+      fetchBuildIdentity: vi.fn(async () => null),
       fetchPackageMetadata: vi.fn(async () => metadata()),
       fetchStagedDetails: vi.fn(async () => null),
       downloadStaged: vi.fn(async () => {
@@ -81,6 +83,8 @@ describe("acquireBaselineNpm", () => {
   ])("labels a 413 %s baseline with its actual cause", async (_name, error, expectedReason) => {
     const broker = {
       dispose() {},
+      fetchTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: null })),
+      fetchBuildIdentity: vi.fn(async () => null),
       fetchPackageMetadata: vi.fn(async () => metadata()),
       fetchStagedDetails: vi.fn(async () => null),
       downloadStaged: vi.fn(async () => {
@@ -100,6 +104,8 @@ describe("acquireBaselineNpm", () => {
   test("rethrows a non-safety-limit sandbox error instead of degrading", async () => {
     const broker = {
       dispose() {},
+      fetchTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: null })),
+      fetchBuildIdentity: vi.fn(async () => null),
       fetchPackageMetadata: vi.fn(async () => metadata()),
       fetchStagedDetails: vi.fn(async () => null),
       downloadStaged: vi.fn(async () => {
@@ -119,6 +125,8 @@ describe("acquireStagedNpm", () => {
     const browser = "dist/browser.js";
     const broker = {
       dispose() {},
+      fetchTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: null })),
+      fetchBuildIdentity: vi.fn(async () => null),
       downloadStaged: vi.fn(async () => ({
         files: [],
         packageJson: { name: "pkg", version: "2.0.0", browser },
@@ -143,6 +151,8 @@ describe("acquireStagedNpm tarball verification", () => {
   function brokerFor({ shasum, archiveSha1 }) {
     return {
       dispose() {},
+      fetchTrustConfigs: vi.fn(async () => ({ state: "unavailable", httpStatus: null })),
+      fetchBuildIdentity: vi.fn(async () => null),
       fetchPackageMetadata: vi.fn(async () => metadata()),
       fetchStagedDetails: vi.fn(async () => ({
         id: "stage-1",
@@ -283,6 +293,14 @@ describe("acquireStagedNpm tarball verification", () => {
         declared: null,
         computed: DECLARED,
         reason: "declared-digest-missing",
+      },
+      publisher: {
+        actor: null,
+        actorType: null,
+        trustConfigs: null,
+        trustConfigsState: "unavailable",
+        previousBuild: null,
+        stagedBuild: null,
       },
     });
     expect(result.artifact.files).toHaveLength(1);

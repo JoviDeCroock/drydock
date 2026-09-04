@@ -11,6 +11,13 @@ import {
 } from "../../review";
 import type { NpmStagedDetails } from "./staged-publishes";
 import type { AcquiredArtifact } from "../package-adapter";
+import {
+  isTrustedAutomationActor,
+  normalizeRepository,
+  PUBLISHER_FINDING_FILE,
+  type NpmStagePublisher,
+  type NpmTrustConfig,
+} from "./publisher-identity";
 
 export function buildNpmFindings(args: {
   staged: AcquiredArtifact;
@@ -36,7 +43,125 @@ function createStagedMetadataFindings(
   pkg: PackageJsonSummary | null,
 ): Finding[] {
   if (!details) return [];
-  return [...artifactDigestFindings(details), ...manifestMismatchFindings(details, pkg)];
+  return [
+    ...artifactDigestFindings(details),
+    ...manifestMismatchFindings(details, pkg),
+    ...npmPublisherFindings(details.publisher),
+  ];
+}
+
+/**
+ * Config-hygiene and publishing-path findings over the stage's publisher
+ * block. Every rule needs positive evidence on both sides of its comparison:
+ * an unknown actor type, an unreadable config list, or a previous version
+ * without provenance is absence of evidence and raises nothing. Never above
+ * medium — these describe how the release arrived, not what it contains.
+ */
+export function npmPublisherFindings(publisher: NpmStagePublisher | null | undefined): Finding[] {
+  if (!publisher) return [];
+  const configs = publisher.trustConfigsState === "checked" ? (publisher.trustConfigs ?? []) : [];
+  const findings: Finding[] = [];
+  const previousRepository = normalizeRepository(publisher.previousBuild?.repository ?? null);
+
+  for (const config of configs) {
+    const label = describeTrustConfig(config);
+    if (config.directPublish) {
+      findings.push(
+        publisherFinding("publisherDirectPublishAllowed", "low", label, {
+          reason:
+            "this trusted-publisher config may run `npm publish` directly (createPackage), so the workflow it names can make a release public without staging it for review; npm creates configs stage-only by default and direct publish is a per-config opt-in",
+        }),
+      );
+    }
+    if (!config.environment && (config.provider === "github" || config.provider === "gitlab")) {
+      findings.push(
+        publisherFinding("publisherNoEnvironment", "low", label, {
+          reason:
+            "this trusted-publisher config pins no CI environment, so any job running the named workflow file can exchange its OIDC token for a publish credential without an environment's protection rules or reviewers",
+        }),
+      );
+    }
+    const configRepository = normalizeRepository(config.repository);
+    if (previousRepository && configRepository && configRepository !== previousRepository) {
+      findings.push(
+        publisherFinding("publisherConfigOutsideProvenance", "low", label, {
+          reason: `the previous version's provenance was built from ${previousRepository}, so this config grants a publishing path from a repository that did not build the last release`,
+        }),
+      );
+    }
+  }
+
+  const actorType = publisher.actorType;
+  const actorKnown = typeof actorType === "string" && actorType.length > 0;
+  const actorLabel = `${publisher.actor ?? "unknown actor"} (${actorType ?? "unknown actor type"})`;
+  if (configs.length > 0 && actorKnown && !isTrustedAutomationActor(actorType)) {
+    findings.push(
+      publisherFinding(
+        "publisherActorNotTrusted",
+        "medium",
+        `staged by ${actorLabel}; ${configs.length} trusted-publisher config${configs.length === 1 ? "" : "s"}: ${configs.map(describeTrustConfig).join("; ")}`,
+        {
+          reason:
+            "the package has trusted publishing configured but this stage was not created through it: the bytes came from an account or token rather than the pinned CI workflow, which is the shape of a stolen-credential publish",
+        },
+      ),
+    );
+  }
+
+  if (publisher.previousBuild && actorKnown && !isTrustedAutomationActor(actorType)) {
+    const previous = publisher.previousBuild;
+    const built = [previous.repository, previous.workflowPath].filter(Boolean).join(" ");
+    findings.push(
+      publisherFinding(
+        "publisherProvenancePathChanged",
+        "medium",
+        `previous version built by ${built || previous.builderId || "an attested workflow"}; this stage was created by ${actorLabel}`,
+        {
+          reason:
+            "the previous version carried build provenance from CI, but this stage was created by a non-trusted-automation actor, so the release left its attested publishing path; confirm with the maintainer before approving",
+        },
+      ),
+    );
+  }
+
+  return findings;
+}
+
+function describeTrustConfig(config: NpmTrustConfig): string {
+  const parts = [config.provider ?? "unknown provider", config.repository ?? "unknown repository"];
+  if (config.workflowFile) parts.push(config.workflowFile);
+  parts.push(config.environment ? `environment ${config.environment}` : "no environment");
+  parts.push(
+    config.directPublish && config.stagePublish
+      ? "publish + stage"
+      : config.directPublish
+        ? "publish"
+        : config.stagePublish
+          ? "stage-only"
+          : "no permissions",
+  );
+  return parts.join(" · ");
+}
+
+function publisherFinding(
+  rule:
+    | "publisherDirectPublishAllowed"
+    | "publisherNoEnvironment"
+    | "publisherActorNotTrusted"
+    | "publisherConfigOutsideProvenance"
+    | "publisherProvenancePathChanged",
+  severity: "low" | "medium",
+  evidence: string,
+  detail: { reason: string },
+): Finding {
+  return {
+    severity,
+    file: PUBLISHER_FINDING_FILE,
+    evidence,
+    reason: detail.reason,
+    ruleId: DETERMINISTIC_RULE_IDS[rule],
+    ruleVersion: DETERMINISTIC_RULES_VERSION,
+  };
 }
 
 // The staged tarball's bytes did not hash to the digest npm recorded for the

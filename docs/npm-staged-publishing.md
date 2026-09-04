@@ -39,6 +39,14 @@ in-app guide at `/docs#staged-publishing` covers that setup.
    nothing else. `npm trust list <package>` shows what the package currently
    grants.
 
+   A package can hold up to ten trusted-publisher configs (npm changelog,
+   2026-09-03). Configs created since then are stage-only by default; direct
+   `npm publish` is a per-config opt-in. Each extra config is an extra
+   publishing path: a prerelease or nightly workflow with a config of its own
+   can stage bytes under the same package name, so the review must show which
+   path produced the stage, not only that some trusted path exists. Pin every
+   config to an environment and keep older, publish-capable configs pruned.
+
 2. **Set publishing access to "Require two-factor authentication and disallow
    tokens"** in the package settings on npmjs.com. This removes every token
    path — legacy, automation, and granular access tokens all stop working for
@@ -61,6 +69,17 @@ in-app guide at `/docs#staged-publishing` covers that setup.
 4. **Read the review.** Drydock discovers the stage and scans the private
    tarball, comparing it with the last published release on the same dist-tag.
    Record the decision and reason.
+
+   The report's **Publisher** section says who produced the stage: the actor
+   and actor type npm recorded (`user`, `automation`, or `trusted automation`),
+   every trusted-publisher config on the package as a row — provider,
+   repository, workflow file, stage-only or direct publish, environment pinned
+   or not — and the repository, workflow, and ref that built the previous
+   version, read from npm's public provenance attestation without signature
+   verification. Configs are read with the organization's npm token from the
+   endpoint `npm trust list` uses; when the token cannot read them the section
+   says so in one line rather than implying there are none. npm's own malware
+   scan blocks stage approval until it settles, independently of this review.
 
 5. **Approve on npm with 2FA.** Either `npm stage approve <stage-id>` from the
    CLI or the Staged Packages tab on npmjs.com. Drydock never holds a credential
@@ -100,6 +119,22 @@ They put the candidate in different places and give Drydock different authority.
 Stage-only is the shorter setup for a maintainer already running
 `npm stage publish`. The gate is the one that generalizes past npm and past a
 single package.
+
+## Publisher findings
+
+Five deterministic rules read the Publisher block. They are advisory context
+findings — they carry a synthetic `<publisher>` file label, never enter release
+risk, and never move a gate recommendation — and each needs positive evidence
+on both sides of its comparison: an unknown actor type, an unreadable config
+list, or a previous version without provenance raises nothing.
+
+| Rule                                  | Severity | Fires when                                                                                                  |
+| ------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `publisher.direct-publish-allowed`    | low      | a config carries `createPackage`, so its workflow can `npm publish` without staging                         |
+| `publisher.no-environment`            | low      | a GitHub or GitLab config pins no environment                                                               |
+| `publisher.config-outside-provenance` | low      | a config's repository differs from the repository that built the previous version                           |
+| `publisher.actor-not-trusted`         | medium   | the package has at least one trusted-publisher config but this stage's actor type is not trusted automation |
+| `publisher.provenance-path-changed`   | medium   | the previous version carried CI provenance but this stage was created by a non-trusted-automation actor     |
 
 ## What this does not stop
 

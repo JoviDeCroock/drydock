@@ -1,0 +1,51 @@
+{
+  "id": "publisher-direct-publish-allowed",
+  "title": "Trusted-publisher config opted into direct npm publish",
+  "category": "publishing-path-hygiene",
+  "intent": "The package's one trusted-publisher config carries createPackage, so the pinned workflow can run `npm publish` directly and make a release public without ever staging it. The stage itself arrived through trusted automation from the same repository the previous version's provenance names, so only the direct-publish opt-in is reported. Low: it is a configuration choice npm allows, not evidence of compromise.",
+  "verdict": "benign",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "release-bot",
+    "actorType": "trusted automation",
+    "trustConfigsState": "checked",
+    "trustConfigs": [
+      {
+        "id": "tc_1",
+        "provider": "github",
+        "repository": "acme/tool",
+        "workflowFile": "publish.yml",
+        "environment": "release",
+        "directPublish": true,
+        "stagePublish": true
+      }
+    ],
+    "previousBuild": {
+      "repository": "acme/tool",
+      "workflowPath": ".github/workflows/publish.yml",
+      "ref": "refs/tags/v1.0.0",
+      "builderId": "https://github.com/actions/runner/github-hosted"
+    },
+    "stagedBuild": null
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [
+    { "ruleId": "publisher.direct-publish-allowed", "severity": "low", "file": "<publisher>" }
+  ]
+}

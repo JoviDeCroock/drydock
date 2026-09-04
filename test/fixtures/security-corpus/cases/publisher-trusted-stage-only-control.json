@@ -1,0 +1,49 @@
+{
+  "id": "publisher-trusted-stage-only-control",
+  "title": "Stage-only, environment-pinned trusted publisher matching provenance (control)",
+  "category": "benign-control",
+  "intent": "The recommended setup: one stage-only GitHub config with an environment pin, from the same repository the previous version's provenance names, and a stage created by trusted automation. Nothing about the publishing path should be reported. Also pins that unknown data stays silent: the staged version's own attestation is absent, as it is for every unapproved stage.",
+  "verdict": "benign",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "release-bot",
+    "actorType": "trusted automation",
+    "trustConfigsState": "checked",
+    "trustConfigs": [
+      {
+        "id": "tc_1",
+        "provider": "github",
+        "repository": "Acme/Tool",
+        "workflowFile": "publish.yml",
+        "environment": "release",
+        "directPublish": false,
+        "stagePublish": true
+      }
+    ],
+    "previousBuild": {
+      "repository": "acme/tool",
+      "workflowPath": ".github/workflows/publish.yml",
+      "ref": "refs/tags/v1.0.0",
+      "builderId": "https://github.com/actions/runner/github-hosted"
+    },
+    "stagedBuild": null
+  },
+  "expectedRisk": "low",
+  "expectedFindings": []
+}

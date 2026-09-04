@@ -1,5 +1,6 @@
 import { normalizeRegistryUrl, type NormalizeRegistryUrlOptions } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
+import { readBoundedJson } from "../../platform/bounded-json";
 
 /**
  * npm's own lifecycle status for an exact package version, from
@@ -154,57 +155,10 @@ export async function fetchNpmVersionStatus(
     return unavailable(reasonForStatus(response.status), response.status);
   }
 
-  const data = await readBoundedJson(response, deadlineMs);
+  const data = await readBoundedJson(response, MAX_LOOKUP_RESPONSE_BYTES, deadlineMs);
   const status = readStatus(data, packageName, version);
   if (!status) return unavailable("unavailable", response.status);
   return { ok: true, status };
-}
-
-async function readBoundedJson(response: Response, deadlineMs: number): Promise<unknown> {
-  if (!response.body) return null;
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  const remainingMs = Math.max(0, deadlineMs - Date.now());
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolve) => {
-    timeoutId = setTimeout(() => resolve(null), remainingMs);
-  });
-
-  try {
-    while (true) {
-      const read = await Promise.race([reader.read(), timeout]);
-      if (read === null) {
-        void reader.cancel().catch(() => undefined);
-        return null;
-      }
-      if (read.done) break;
-      byteLength += read.value.byteLength;
-      if (byteLength > MAX_LOOKUP_RESPONSE_BYTES) {
-        void reader.cancel().catch(() => undefined);
-        return null;
-      }
-      chunks.push(read.value);
-    }
-  } catch {
-    void reader.cancel().catch(() => undefined);
-    return null;
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    reader.releaseLock();
-  }
-
-  const body = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(body)) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 function readStatus(

@@ -1,6 +1,7 @@
 import { compareSeverity, groupFindingsByRule } from "../../lib/findings";
 import { pluralize } from "../../lib/format";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../server/lib/release-fingerprint";
+import { PUBLISHER_FINDING_FILE } from "../../../server/lib/ecosystems/npm/publisher-identity";
 import type { FindingDiffStatus } from "../../../server/lib/review";
 import { Badge } from "../../components/Badge";
 import { FindingCard, FindingRow, GroupedFindingCard } from "../../components/FindingCard";
@@ -77,11 +78,13 @@ function FindingGrid({
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
 }) {
-  // release.* findings carry the synthetic "<release-process>" label — there is
-  // no such file in the artifact, so the label must not become an
+  // release.* and publisher.* findings carry synthetic labels — there is no
+  // such file in the artifact, so the label must not become an
   // open-in-the-diff button.
   const selectFile = (file: string) =>
-    onSelect && file !== RELEASE_PROCESS_FINDING_FILE ? () => onSelect(file) : undefined;
+    onSelect && file !== RELEASE_PROCESS_FINDING_FILE && file !== PUBLISHER_FINDING_FILE
+      ? () => onSelect(file)
+      : undefined;
   const groups = groupFindingsByRule(
     findings.map((item) => ({
       ruleId: item.finding.ruleId,

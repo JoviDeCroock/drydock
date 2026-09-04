@@ -39,8 +39,49 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    // npm's attestation route is public: the real registry answers it with no
+    // credentials, and the adapter must not attach any. Matched before the
+    // bearer check so a token on this request would still succeed, but the
+    // journal records whether one was sent.
+    const attestationsMatch = /^\/-\/npm\/v1\/attestations\/(.+)@([^@/]+)$/.exec(url.pathname);
+    if (attestationsMatch) {
+      const packageName = decodeURIComponent(attestationsMatch[1]);
+      const version = decodeURIComponent(attestationsMatch[2]);
+      const scenario = registry.scenarios.find(
+        (entry) => entry.packageName === packageName && entry.previous?.version === version,
+      );
+      const build = scenario?.previousBuild ?? null;
+      if (!build) {
+        await sendJson(request, response, startedAt, 404, { error: "not found" });
+        return;
+      }
+      await sendJson(
+        request,
+        response,
+        startedAt,
+        200,
+        attestationsBody(packageName, version, build),
+      );
+      return;
+    }
+
     if (!hasBearerToken(request)) {
       await sendJson(request, response, startedAt, 401, { error: "missing bearer token" });
+      return;
+    }
+
+    // `npm trust list`: the escaped-name form, like the status route below.
+    const trustMatch = /^\/-\/package\/([^/]+)\/trust$/.exec(url.pathname);
+    if (trustMatch) {
+      const packageName = decodeURIComponent(trustMatch[1]);
+      const scenario = registry.scenarios.find(
+        (entry) => entry.stagePackageName === packageName && Array.isArray(entry.trustConfigs),
+      );
+      if (!scenario) {
+        await sendJson(request, response, startedAt, 404, { error: "not found" });
+        return;
+      }
+      await sendJson(request, response, startedAt, 200, scenario.trustConfigs);
       return;
     }
 
@@ -203,6 +244,40 @@ function stageListItem(scenario) {
 function stageDetails(scenario) {
   return {
     ...stageListItem(scenario),
+  };
+}
+
+// A SLSA v1 provenance statement in npm's attestation envelope. The payload is
+// unsigned: Drydock reads the build identity without verifying it and says so.
+function attestationsBody(packageName, version, build) {
+  const statement = {
+    _type: "https://in-toto.io/Statement/v1",
+    subject: [{ name: `pkg:npm/${packageName}@${version}`, digest: { sha512: "0".repeat(128) } }],
+    predicateType: "https://slsa.dev/provenance/v1",
+    predicate: {
+      buildDefinition: {
+        externalParameters: {
+          workflow: { ref: build.ref, repository: build.repository, path: build.workflowPath },
+        },
+      },
+      runDetails: { builder: { id: build.builderId } },
+    },
+  };
+  return {
+    attestations: [
+      {
+        predicateType: "https://slsa.dev/provenance/v1",
+        bundle: {
+          mediaType: "application/vnd.dev.sigstore.bundle+json;version=0.1",
+          verificationMaterial: {},
+          dsseEnvelope: {
+            payload: Buffer.from(JSON.stringify(statement)).toString("base64"),
+            payloadType: "application/vnd.in-toto+json",
+            signatures: [],
+          },
+        },
+      },
+    ],
   };
 }
 

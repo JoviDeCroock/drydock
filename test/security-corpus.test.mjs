@@ -10,6 +10,7 @@ import {
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
+import { npmPublisherFindings } from "../server/lib/ecosystems/npm/findings";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases");
@@ -50,6 +51,9 @@ describe("security detection golden corpus", () => {
           entrypointResolution: "npm",
         }),
         ...packageJsonDiffFindings(packageJsonDiff),
+        // Stage-level publisher identity (actor, trust configs, provenance)
+        // is registry metadata the FileRecord shape cannot carry.
+        ...npmPublisherFindings(fixture.stagedPublisher ?? null),
       ];
 
       expect(computeRisk(findings)).toBe(fixture.expectedRisk);

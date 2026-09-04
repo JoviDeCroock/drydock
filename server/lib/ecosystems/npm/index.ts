@@ -1,6 +1,11 @@
 import type { NpmStagedDetails } from "./staged-publishes";
 import type { PackageAdapter } from "../package-adapter";
-import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
+import {
+  acquireBaselineNpm,
+  acquireStagedNpm,
+  attachPreviousBuildIdentity,
+  type NpmAdapterInput,
+} from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
 
@@ -30,8 +35,15 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     return acquireStagedNpm(ctx, input, broker);
   },
 
-  acquireBaseline(ctx, input, broker, staged) {
-    return acquireBaselineNpm(ctx, input, broker, staged);
+  async acquireBaseline(ctx, input, broker, staged) {
+    const result = await acquireBaselineNpm(ctx, input, broker, staged);
+    await attachPreviousBuildIdentity(
+      broker,
+      staged.details as NpmStagedDetails,
+      staged.artifact.manifest?.name ?? null,
+      result.baseline.version,
+    );
+    return result;
   },
 
   runFindings(args) {
@@ -71,6 +83,10 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       // report so a reviewer reading "file removed" months later can tell
       // whether the scan proved it was reading the staged bytes.
       artifactIntegrity: d.artifactIntegrity ?? null,
+      // Who produced the stage: actor, trusted-publisher configs, and the
+      // build identity npm attested for the previous version. Display and
+      // advisory findings only.
+      publisher: d.publisher ?? null,
     };
   },
 

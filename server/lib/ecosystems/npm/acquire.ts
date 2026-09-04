@@ -15,6 +15,7 @@ import type {
   StagedDetails,
 } from "../package-adapter";
 import { mergeStagedPackageJson } from "./findings";
+import type { NpmStagePublisher } from "./publisher-identity";
 import type { NpmBroker, NpmBrokerDownloadOptions } from "./broker";
 
 export interface NpmAdapterInput {
@@ -82,6 +83,23 @@ export async function acquireStagedNpm(
     });
   }
 
+  // Trust configs need the org token and the package name; the staged
+  // version's own attestation is public and normally 404s until approval.
+  // Both are fetched once here, and the previous version's build identity
+  // joins the block once the baseline step has chosen that version.
+  const [trustLookup, stagedBuild] = await Promise.all([
+    broker.fetchTrustConfigs(packageName),
+    broker.fetchBuildIdentity(packageName, version),
+  ]);
+  const publisher: NpmStagePublisher = {
+    actor: stagedDetails?.actor ?? null,
+    actorType: stagedDetails?.actorType ?? null,
+    trustConfigs: trustLookup.state === "checked" ? trustLookup.configs : null,
+    trustConfigsState: trustLookup.state,
+    previousBuild: null,
+    stagedBuild,
+  };
+
   return {
     artifact: {
       files: staged.files,
@@ -91,8 +109,23 @@ export async function acquireStagedNpm(
     // Persist an explicit unverified verdict even when the registry's detail
     // request failed. Otherwise a newly unbound scan is indistinguishable from
     // a legacy scan that predates artifact verification.
-    details: withArtifactIntegrity(input.stageId, stagedDetails, artifactIntegrity),
+    details: withArtifactIntegrity(input.stageId, stagedDetails, artifactIntegrity, publisher),
   };
+}
+
+/**
+ * Fill in the previous version's build identity after baseline selection.
+ * The details object is the adapter's own, created above, so the staged
+ * adapter completes it in place rather than re-deriving the baseline here.
+ */
+export async function attachPreviousBuildIdentity(
+  broker: NpmBroker,
+  details: NpmStagedDetails,
+  packageName: string | null,
+  previousVersion: string | null,
+): Promise<void> {
+  if (!previousVersion) return;
+  details.publisher.previousBuild = await broker.fetchBuildIdentity(packageName, previousVersion);
 }
 
 interface EvaluatedStagedArtifact {
@@ -142,6 +175,7 @@ function withArtifactIntegrity(
   stageId: string,
   details: StagedPublishDetails | null,
   artifactIntegrity: StagedArtifactIntegrity,
+  publisher: NpmStagePublisher,
 ): NpmStagedDetails {
   return {
     id: details?.id ?? stageId,
@@ -155,6 +189,7 @@ function withArtifactIntegrity(
     shasum: details?.shasum ?? null,
     packageJson: details?.packageJson ?? null,
     artifactIntegrity,
+    publisher,
   };
 }
 

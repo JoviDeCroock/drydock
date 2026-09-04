@@ -7,11 +7,22 @@ import { fetchPackageMetadataCached } from "./registry-cache";
 import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
+import {
+  fetchNpmBuildIdentity,
+  fetchNpmTrustConfigs,
+  type NpmTrustConfigsLookup,
+} from "./publisher-lookup";
+import type { NpmBuildIdentity } from "./publisher-identity";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
 
 export interface NpmBroker extends AdapterBroker {
   fetchPackageMetadata(name: string): Promise<RegistryMetadata | null>;
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
+  fetchTrustConfigs(packageName: string | null): Promise<NpmTrustConfigsLookup>;
+  fetchBuildIdentity(
+    packageName: string | null,
+    version: string | null,
+  ): Promise<NpmBuildIdentity | null>;
   downloadStaged(stageId: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
   downloadPublished(tarballUrl: string, opts: NpmBrokerDownloadOptions): Promise<DownloadResult>;
 }
@@ -59,6 +70,23 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
   async fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null> {
     const creds = await this.resolveCredentials();
     return fetchStagedPublishDetails(creds.registry, creds.token, stageId, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
+    }).catch(() => null);
+  }
+
+  async fetchTrustConfigs(packageName: string | null): Promise<NpmTrustConfigsLookup> {
+    const creds = await this.resolveCredentials();
+    return fetchNpmTrustConfigs(creds.registry, creds.token, packageName, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
+    }).catch(() => ({ state: "unavailable" as const, httpStatus: null }));
+  }
+
+  async fetchBuildIdentity(
+    packageName: string | null,
+    version: string | null,
+  ): Promise<NpmBuildIdentity | null> {
+    const creds = await this.resolveCredentials();
+    return fetchNpmBuildIdentity(creds.registry, packageName, version, {
       allowInsecureLocalhost: allowInsecureLocalRegistry(this.env),
     }).catch(() => null);
   }
@@ -163,6 +191,23 @@ class LocalNpmBroker implements NpmBroker {
   async fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null> {
     const creds = await this.resolve();
     return fetchStagedPublishDetails(creds.registry, creds.token, stageId, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
+    }).catch(() => null);
+  }
+
+  async fetchTrustConfigs(packageName: string | null): Promise<NpmTrustConfigsLookup> {
+    const creds = await this.resolve();
+    return fetchNpmTrustConfigs(creds.registry, creds.token, packageName, {
+      allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
+    }).catch(() => ({ state: "unavailable" as const, httpStatus: null }));
+  }
+
+  async fetchBuildIdentity(
+    packageName: string | null,
+    version: string | null,
+  ): Promise<NpmBuildIdentity | null> {
+    const creds = await this.resolve();
+    return fetchNpmBuildIdentity(creds.registry, packageName, version, {
       allowInsecureLocalhost: allowInsecureLocalRegistry(this.ctx.env),
     }).catch(() => null);
   }

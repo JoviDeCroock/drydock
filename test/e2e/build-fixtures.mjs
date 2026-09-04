@@ -62,6 +62,11 @@ for (const name of scenarioNames) {
     // is the realistic default: npm answers the same way for a version it does
     // not know and one the token may not ask about.
     versionStatus: scenario.versionStatus ?? null,
+    // Trusted-publisher configs served by `/-/package/{name}/trust` in the npm
+    // CLI body shape, and the SLSA build identity served for the previous
+    // version by the public attestation route. Absent means both routes 404.
+    trustConfigs: scenario.trustConfigs ?? null,
+    previousBuild: scenario.previousBuild ?? null,
     staged: {
       version: stagedManifest.version,
       manifest: stagedManifest,

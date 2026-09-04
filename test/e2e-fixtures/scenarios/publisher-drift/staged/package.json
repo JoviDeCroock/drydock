@@ -1,0 +1,12 @@
+{
+  "name": "@drydock/e2e-publisher-drift",
+  "version": "1.0.1",
+  "description": "Publisher-drift E2E fixture package.",
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "index.js"
+}

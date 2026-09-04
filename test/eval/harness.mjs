@@ -24,6 +24,7 @@ import {
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
+import { npmPublisherFindings } from "../../server/lib/ecosystems/npm/findings";
 import {
   createPyPiReleaseCandidateReview,
   parsePyPiReleaseManifest,
@@ -169,6 +170,7 @@ function detect(record, fxOverride) {
       entrypointResolution: "npm",
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
+    ...npmPublisherFindings(fx.stagedPublisher ?? null),
   ];
   return { risk: computeRisk(findings), findings };
 }

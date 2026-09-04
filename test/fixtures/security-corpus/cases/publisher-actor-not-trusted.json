@@ -1,0 +1,45 @@
+{
+  "id": "publisher-actor-not-trusted",
+  "title": "Package has trusted publishing but the stage came from a token",
+  "category": "publishing-path-drift",
+  "intent": "The package pins a stage-only, environment-pinned GitHub trusted publisher, yet this stage was created by an automation token rather than trusted automation. The bytes did not come through the pinned CI workflow: the stolen-credential shape. No provenance is known for the previous version, so only the actor mismatch fires. Medium: the artifact may be fine, but the publishing path is not the configured one.",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "maintainer-token",
+    "actorType": "automation",
+    "trustConfigsState": "checked",
+    "trustConfigs": [
+      {
+        "id": "tc_1",
+        "provider": "github",
+        "repository": "acme/tool",
+        "workflowFile": "publish.yml",
+        "environment": "release",
+        "directPublish": false,
+        "stagePublish": true
+      }
+    ],
+    "previousBuild": null,
+    "stagedBuild": null
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "publisher.actor-not-trusted", "severity": "medium", "file": "<publisher>" }
+  ]
+}

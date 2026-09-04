@@ -33,6 +33,12 @@ On npmjs.com, in the package's settings:
    gated environment (`production` below). With the environment pinned, npm
    refuses the OIDC exchange for any job outside that environment, and a job
    inside it cannot start until the environment's protection rules have passed.
+   Since 2026-09-03 a package may hold up to ten configs, and a config created
+   since then is stage-only unless direct publish is opted in — from the CLI,
+   `npm trust github ... --allow-publish` (at least one of `--allow-publish` /
+   `--allow-stage-publish` is required). Every config is a publishing path:
+   review `npm trust list <package>` and remove configs that name repositories,
+   workflows, or unpinned environments the gate does not cover.
 2. **Set publishing access to "Require two-factor authentication and disallow
    tokens"**. This removes every token path: legacy tokens, automation tokens,
    and granular access tokens all stop working for publish.
@@ -118,6 +124,11 @@ and the reviewed bytes were downloaded from that exact run.
 - **npm account takeover, including 2FA.** Whoever controls the account can
   edit or remove the trusted publisher configuration and re-enable tokens.
   Every registry-side control roots in account security.
+- **A second, weaker config.** A prerelease workflow with its own config can
+  publish (or stage) under the same name around the gated one. For staged
+  releases Drydock's Publisher section lists every config and raises
+  `publisher.*` findings for direct-publish, unpinned, and out-of-provenance
+  configs; see [`npm-staged-publishing.md`](./npm-staged-publishing.md).
 - **GitHub administrators.** Repo admins can edit the environment's protection
   rules and org admins can uninstall the App. Keep the admin set small; both
   actions land in GitHub's audit log.

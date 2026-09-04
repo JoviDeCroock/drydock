@@ -1,0 +1,40 @@
+{
+  "id": "publisher-provenance-path-changed",
+  "title": "Previous version had CI provenance; this stage was created interactively",
+  "category": "publishing-path-drift",
+  "intent": "The previous version carried SLSA provenance from a GitHub Actions workflow, but this stage was created by a user account rather than trusted automation. The trust-config lookup was unavailable (a read-only token cannot always ask), so the actor rule stays silent and only the provenance drift fires. Medium: the release left its attested publishing path.",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "octocat",
+    "actorType": "user",
+    "trustConfigsState": "unavailable",
+    "trustConfigs": null,
+    "previousBuild": {
+      "repository": "acme/tool",
+      "workflowPath": ".github/workflows/publish.yml",
+      "ref": "refs/tags/v1.0.0",
+      "builderId": "https://github.com/actions/runner/github-hosted"
+    },
+    "stagedBuild": null
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "publisher.provenance-path-changed", "severity": "medium", "file": "<publisher>" }
+  ]
+}

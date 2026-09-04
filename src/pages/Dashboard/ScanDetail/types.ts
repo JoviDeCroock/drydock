@@ -21,6 +21,8 @@ export interface PersistedSummary {
   stagedPublish?: {
     provenance?: ReleaseProvenance;
     artifactIntegrity?: unknown;
+    /** npm stage publisher identity; re-validated by `parseNpmStagePublisher`. */
+    publisher?: unknown;
     /** Named directly by a published-pair review, which has no gate provenance. */
     ecosystem?: string;
   };

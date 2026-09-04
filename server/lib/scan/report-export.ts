@@ -7,6 +7,7 @@ import { normalizeReleaseConsistency } from "./release-memory";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
+import { parseNpmStagePublisher } from "../ecosystems/npm/publisher-identity";
 import { canonicalJson } from "../platform/canonical-json";
 
 // A persisted scan detail, as returned by getScan (never null at the call site).
@@ -74,6 +75,10 @@ export function buildReportExport(detail: ScanDetail) {
     // Staged-artifact byte-verification verdict. Null for workflow gates,
     // legacy scans, and malformed persisted data.
     artifactIntegrity: extractArtifactIntegrity(summary.stagedPublish),
+    // Who produced an npm stage: actor, trusted-publisher configs, and the
+    // previous version's attested build. Additive and optional: null for
+    // workflow gates, published pairs, and scans persisted before it existed.
+    publisher: extractPublisher(summary.stagedPublish),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
@@ -202,6 +207,11 @@ function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
 function extractArtifactIntegrity(stagedPublish: unknown) {
   if (!isRecord(stagedPublish)) return null;
   return parseStagedArtifactIntegrity(stagedPublish.artifactIntegrity);
+}
+
+function extractPublisher(stagedPublish: unknown) {
+  if (!isRecord(stagedPublish)) return null;
+  return parseNpmStagePublisher(stagedPublish.publisher);
 }
 
 // Route through the display helper so invalid/unavailable fallbacks do not

@@ -1,0 +1,60 @@
+{
+  "id": "publisher-config-outside-provenance",
+  "title": "Second trusted-publisher config points at a repository that never built a release",
+  "category": "publishing-path-hygiene",
+  "intent": "npm allows up to ten trusted-publisher configs per package. The previous version's provenance names acme/tool, and one config matches it; a second, stage-only config names a different repository, which is a publishing path no release has used. This stage arrived through trusted automation. Low: it is a new path to review, not a used one.",
+  "verdict": "benign",
+  "stagedPackageJson": { "name": "tool", "version": "1.0.1", "main": "index.js" },
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"tool\",\"version\":\"1.0.1\",\"main\":\"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 26,
+      "sha256": "index-v1",
+      "flags": [],
+      "textSample": "export const answer = 42;\n"
+    }
+  ],
+  "stagedPublisher": {
+    "actor": "release-bot",
+    "actorType": "trusted automation",
+    "trustConfigsState": "checked",
+    "trustConfigs": [
+      {
+        "id": "tc_1",
+        "provider": "github",
+        "repository": "acme/tool",
+        "workflowFile": "publish.yml",
+        "environment": "release",
+        "directPublish": false,
+        "stagePublish": true
+      },
+      {
+        "id": "tc_2",
+        "provider": "github",
+        "repository": "contractor/tool-prerelease",
+        "workflowFile": "nightly.yml",
+        "environment": "nightly",
+        "directPublish": false,
+        "stagePublish": true
+      }
+    ],
+    "previousBuild": {
+      "repository": "acme/tool",
+      "workflowPath": ".github/workflows/publish.yml",
+      "ref": "refs/tags/v1.0.0",
+      "builderId": "https://github.com/actions/runner/github-hosted"
+    },
+    "stagedBuild": null
+  },
+  "expectedRisk": "low",
+  "expectedFindings": [
+    { "ruleId": "publisher.config-outside-provenance", "severity": "low", "file": "<publisher>" }
+  ]
+}

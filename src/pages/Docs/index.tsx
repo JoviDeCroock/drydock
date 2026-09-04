@@ -244,6 +244,11 @@ export default function DocsPage() {
                       Package identity, artifact hashes, baseline choice, and the evidence behind
                       every recommendation.
                     </ReviewAnswer>
+                    <ReviewAnswer label="Publisher" question="Who produced this stage?">
+                      The npm actor, every trusted-publisher config on the package (stage-only or
+                      direct publish, environment pinned or not), and the workflow that built the
+                      previous version.
+                    </ReviewAnswer>
                   </dl>
                 </div>
               </Card>
