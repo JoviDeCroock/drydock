@@ -3,12 +3,13 @@ import { getNpmConnection } from "../../../db/npm-connections";
 import {
   getScanReleaseIdentity,
   listScansAwaitingRegistryStatus,
+  markRegistryApprovableNotified,
   markRegistryPublishReminderSent,
   recordRegistryVersionStatus,
   supersedeRegistryReleaseIncarnations,
   type RegistryStatusCandidate,
 } from "../../../db/scans";
-import { notifyStagedReleaseAwaitingApproval } from "../../notify";
+import { notifyStagedReleaseApprovable, notifyStagedReleaseAwaitingApproval } from "../../notify";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { emitOperationalEvent } from "../../platform/observability";
@@ -53,6 +54,7 @@ export interface ResolveReleaseOutcomesResult {
   resolved: number;
   statuses: Partial<Record<NpmVersionStatus, number>>;
   reminded: number;
+  approvableNotified: number;
 }
 
 export async function resolveNpmReleaseOutcomes(
@@ -65,6 +67,7 @@ export async function resolveNpmReleaseOutcomes(
     resolved: 0,
     statuses: {},
     reminded: 0,
+    approvableNotified: 0,
   };
 
   const currentStages = new Map<
@@ -144,6 +147,35 @@ export async function resolveNpmReleaseOutcomes(
         if (!status) return;
         result.resolved += 1;
         result.statuses[status] = (result.statuses[status] ?? 0) + 1;
+
+        if (becameApprovable(candidate, status)) {
+          // Claim before sending so overlapping sweeps observing the same
+          // transition cannot both notify.
+          const claimed = await markRegistryApprovableNotified(db, {
+            scanId: candidate.id,
+            organizationId,
+            expectedRegistryStatusAt: now,
+            sentAt: now,
+          });
+          if (claimed) {
+            result.approvableNotified += 1;
+            await notifyStagedReleaseApprovable({
+              env,
+              db,
+              organizationId,
+              ownerUserId,
+              scanId: candidate.id,
+              stageId: candidate.stageId,
+              packageName: candidate.packageName,
+              version: candidate.stagedVersion,
+              decision: candidate.decision,
+              registryUrl: connection.registryUrl,
+            });
+            // The approvable notice already carries the approve command; a
+            // forgotten-approval reminder in the same sweep would repeat it.
+            return;
+          }
+        }
 
         if (!shouldRemindAboutForgottenApproval(candidate, status, now)) return;
         if (!candidate.decidedAt) return;
@@ -246,6 +278,29 @@ export async function lookupStagedReleaseFate(
 
 function releaseCoordinateKey(packageName: string, version: string): string {
   return JSON.stringify([packageName, version]);
+}
+
+/**
+ * npm gates `npm stage approve` behind its own validation, so the moment a
+ * maintainer can act is when the status leaves `validating`. A `staged` answer
+ * after a persisted `validating`, or after no answer at all (the review
+ * finished only once npm had already settled, or npm was never asked), is that
+ * moment. A `staged` after `staged` is a recheck, not a transition, and every
+ * candidate the sweep sees is a completed review of a staged-publish scan —
+ * workflow-gate and published-pair sources never reach it.
+ */
+function becameApprovable(
+  candidate: Pick<
+    RegistryStatusCandidate,
+    "registryVersionStatus" | "registryApprovableNotifiedAt"
+  >,
+  status: NpmVersionStatus,
+): boolean {
+  if (status !== "staged") return false;
+  if (candidate.registryApprovableNotifiedAt) return false;
+  return (
+    candidate.registryVersionStatus === null || candidate.registryVersionStatus === "validating"
+  );
 }
 
 export function shouldRemindAboutForgottenApproval(

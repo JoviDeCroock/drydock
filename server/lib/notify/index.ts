@@ -326,6 +326,131 @@ export async function notifyStagedReleaseAwaitingApproval(
   }));
 }
 
+export interface NotifyStagedReleaseApprovableInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  ownerUserId: string;
+  scanId: string;
+  stageId: string;
+  packageName: string;
+  version: string;
+  decision: string | null;
+  registryUrl: string;
+}
+
+/**
+ * Tell the organization that npm has finished validating a staged release the
+ * Drydock review already covers, so the maintainer can act now.
+ *
+ * npm holds `npm stage approve` until its own malware scan settles; a reviewer
+ * who finished reading the diff while the version was still `validating` had
+ * nothing to do but poll. This fires on the observed `validating` (or
+ * never-known) to `staged` transition, once per registry release. Send-once is
+ * owned by the caller, which claims the row's marker before calling. The body
+ * carries release identity, Drydock's release-risk grade and finding count, a
+ * dashboard link, and npm's approval command — no token, header, or package
+ * bytes.
+ */
+export async function notifyStagedReleaseApprovable(
+  input: NotifyStagedReleaseApprovableInput,
+): Promise<void> {
+  const { env, db, organizationId, ownerUserId, scanId, stageId, packageName, version } = input;
+  const notificationOwnerUserId =
+    (await getOrganizationOwnerUserId(db, organizationId)) ?? ownerUserId;
+  const [recipients, organizationName, detail] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
+    getOrganizationName(db, organizationId),
+    getScan(db, scanId, organizationId),
+  ]);
+
+  const release = `${packageName}@${version}`;
+  const link = scanUrl(env, scanId, organizationId);
+  const releaseRisk = detail?.riskSummary?.releaseRisk ?? detail?.scan.risk ?? null;
+  const findingsSummary = formatFindingsSummary(detail?.riskSummary);
+  const decisionLine =
+    input.decision === "publish"
+      ? "Drydock decision: publish — approved here, waiting on npm's own approval."
+      : input.decision === "no_publish"
+        ? "Drydock decision: do not publish — recorded here; nothing on npm changes until someone approves the stage."
+        : "Drydock decision: none recorded yet.";
+  const instructions = approvalInstructions(stageId, input.registryUrl);
+  const subject = `${release} is ready to approve on npm`;
+  const lines = [
+    "Hi there,",
+    "",
+    `npm has finished validating ${release}. The stage can be approved now; until a maintainer does, nothing is published.`,
+    "",
+    organizationName ? `Organization: ${organizationName}` : null,
+    releaseRisk ? `Release risk: ${releaseRisk}.` : null,
+    findingsSummary ? `Findings: ${findingsSummary}.` : null,
+    decisionLine,
+    ...instructions,
+    "",
+    link ? `Review: ${link}` : null,
+    "",
+    "This is sent once per release, when npm's status first allows approval.",
+    "",
+    "— Drydock",
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+
+  const slackPayload: SlackNotificationPayload = {
+    title: "Staged release ready to approve on npm",
+    packageLabel: release,
+    source: "npm staged publish",
+    risk: releaseRisk,
+    findingsSummary,
+    recommendation: decisionLine,
+    statusLine: [
+      `npm finished validating ${release}; the stage can be approved now.`,
+      ...instructions.filter((line) => line.trimStart().startsWith("npm stage approve")),
+    ].join("\n"),
+    dashboardUrl: link,
+  };
+
+  const emailDelivery = (async () => {
+    if (recipients.length === 0) {
+      await recordScanEvent(db, {
+        organizationId,
+        scanId,
+        actorUserId: ownerUserId,
+        type: "scan.notification_failed",
+        metadata: { channel: "email", trigger: "registry_approvable", reason: "no_recipients" },
+      });
+      return;
+    }
+    await deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+      organizationId,
+      scanId,
+      actorUserId: ownerUserId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: {
+        channel: "email",
+        trigger: "registry_approvable",
+        recipient,
+        ...(result.ok ? {} : { reason: result.reason }),
+      },
+    }));
+  })();
+
+  const slackDelivery = deliverToSlackConnection(
+    env,
+    db,
+    { organizationId, actorUserId: ownerUserId, scanId },
+    slackPayload,
+    (channel, result) => ({
+      organizationId,
+      scanId,
+      actorUserId: ownerUserId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: slackEventMetadata({ trigger: "registry_approvable" }, channel, result),
+    }),
+  );
+
+  await Promise.all([emailDelivery, slackDelivery]);
+}
+
 export interface NotifyWorkflowGateReviewInput {
   env: Cloudflare.Env;
   db: AppDb;
