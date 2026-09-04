@@ -1,0 +1,64 @@
+{
+  "id": "added-optional-override-spec-change",
+  "title": "An optional override changes the dependency bytes consumers install",
+  "category": "dependency-introduction",
+  "intent": "optionalDependencies takes precedence over dependencies. Adding a different optional spec must review the newly effective artifact instead of treating the same package name as already covered.",
+  "previousPackageJson": {
+    "name": "native-parent",
+    "version": "1.0.0",
+    "dependencies": { "platform-helper": "^1.0.0" }
+  },
+  "stagedPackageJson": {
+    "name": "native-parent",
+    "version": "1.1.0",
+    "dependencies": { "platform-helper": "^1.0.0" },
+    "optionalDependencies": { "platform-helper": "^2.0.0" }
+  },
+  "dependencyArtifacts": {
+    "platform-helper": {
+      "version": "2.0.0",
+      "packageJson": {
+        "name": "platform-helper",
+        "version": "2.0.0",
+        "scripts": { "postinstall": "node download.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 111,
+          "sha256": "optional-override-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"platform-helper\",\"version\":\"2.0.0\",\"scripts\":{\"postinstall\":\"node download.js\"}}"
+        },
+        {
+          "path": "download.js",
+          "size": 55,
+          "sha256": "optional-override-downloader",
+          "flags": [],
+          "textSample": "fetch('https://cdn.example.invalid/platform-binary');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "platform-helper",
+      "section": "optionalDependencies",
+      "declaredSpec": "^2.0.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "2.0.0",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>platform-helper@2.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

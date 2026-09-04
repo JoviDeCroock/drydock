@@ -1,4 +1,5 @@
 import type { FindingDiffStatus } from "../../../server/lib/review";
+import type { DependencySection } from "../../../server/lib/review/serialize";
 
 // The finding fields the shared review surface actually renders. Deliberately
 // narrower than a persisted scan finding: the authenticated workbench reads
@@ -15,6 +16,13 @@ export interface ReviewFinding {
   line?: number | null;
   source: string;
   ruleId?: string | null;
+  dependency?: {
+    name: string;
+    version: string | null;
+    path: string;
+    section?: DependencySection;
+    declaredSpec?: string;
+  };
 }
 
 // A review finding paired with its status against the active comparison.

@@ -1,0 +1,63 @@
+{
+  "id": "added-dependency-shell-eval-native-execution",
+  "title": "A computed shell eval command can select a bundled native executable",
+  "category": "dependency-introduction",
+  "intent": "Shell eval executes its expanded argument as a new command. Drydock must retain a bundled native artifact as a possible install target when command substitution computes that argument.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "eval-native": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "eval-native": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "eval-native",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "eval \"$(printf './bin/instal%s' ler.node)\"" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 128,
+          "sha256": "eval-native-package-json",
+          "textSample": "{\"name\":\"eval-native\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"eval \\\"$(printf './bin/instal%s' ler.node)\\\"\"}}",
+          "flags": []
+        },
+        {
+          "path": "bin/installer.node",
+          "size": 4096,
+          "sha256": "eval-native-binary",
+          "flags": ["binary"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "eval-native",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 2,
+      "observation": {
+        "execution": "observed",
+        "risk": "unknown",
+        "dynamicInstallTarget": true
+      },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>eval-native@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

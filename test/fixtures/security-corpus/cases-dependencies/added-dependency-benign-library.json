@@ -1,0 +1,56 @@
+{
+  "id": "added-dependency-benign-library",
+  "title": "A benign new dependency does not make the release high risk",
+  "category": "dependency-introduction",
+  "intent": "The hard negative for dependency review. A release adds an ordinary HTTP helper: it has a network capability, but nothing runs on install, so the release must not be graded risky merely because a dependency is new. Adding dependencies is normal software work.",
+  "previousPackageJson": { "name": "app-lib", "version": "2.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "app-lib",
+    "version": "2.1.0",
+    "main": "index.js",
+    "dependencies": { "tiny-fetch": "^1.2.0" }
+  },
+  "dependencyArtifacts": {
+    "tiny-fetch": {
+      "version": "1.2.4",
+      "packageJson": { "name": "tiny-fetch", "version": "1.2.4", "main": "index.js" },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 72,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"tiny-fetch\",\"version\":\"1.2.4\",\"main\":\"index.js\"}"
+        },
+        {
+          "path": "index.js",
+          "size": 90,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = function get(url) {\n  return fetch(url).then((r) => r.json());\n};\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "tiny-fetch",
+      "section": "dependencies",
+      "declaredSpec": "^1.2.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "1.2.4",
+      "observation": { "execution": "not-observed", "risk": "not-observed" },
+      "automaticExecution": []
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "info",
+      "file": "<dependency>tiny-fetch@1.2.4"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedRecommendation": "likely safe"
+}

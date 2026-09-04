@@ -141,6 +141,10 @@ export function mergeStagedPackageJson(
         stagedMetadataPackageJson?.optionalDependencies,
       ),
     ),
+    bundleDependencies:
+      tarballPackageJson?.bundleDependencies ?? stagedMetadataPackageJson?.bundleDependencies,
+    bundledDependencies:
+      tarballPackageJson?.bundledDependencies ?? stagedMetadataPackageJson?.bundledDependencies,
     files: stagedMetadataPackageJson?.files ?? tarballPackageJson?.files,
     bin: stagedMetadataPackageJson?.bin ?? tarballPackageJson?.bin,
     main: stagedMetadataPackageJson?.main ?? tarballPackageJson?.main,

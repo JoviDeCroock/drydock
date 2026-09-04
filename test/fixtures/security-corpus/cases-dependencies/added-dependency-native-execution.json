@@ -1,0 +1,78 @@
+{
+  "id": "added-dependency-native-execution",
+  "title": "An install hook launches a bundled native executable",
+  "category": "dependency-introduction",
+  "intent": "A lifecycle hook can reach both a bundled native artifact and the process-launch API that invokes it. This is stronger than an ordinary node-gyp build: every consumer install inherits execution of opaque native code, so the release must be held for manual approval without claiming the dependency is network-capable.",
+  "previousPackageJson": {
+    "name": "image-tool",
+    "version": "3.1.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "image-tool",
+    "version": "3.2.0",
+    "main": "index.js",
+    "dependencies": { "native-installer": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "native-installer": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "native-installer",
+        "version": "1.0.0",
+        "main": "index.js",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 151,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"native-installer\",\"version\":\"1.0.0\",\"main\":\"index.js\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+        },
+        {
+          "path": "install.js",
+          "size": 136,
+          "sha256": "dep-install-js",
+          "flags": [],
+          "textSample": "const { execFileSync } = require('child_process');\nrequire('./bin/installer.node');\nexecFileSync('./bin/installer.node');\n"
+        },
+        {
+          "path": "bin/installer.node",
+          "size": 32,
+          "sha256": "dep-native-binary",
+          "flags": ["binary"]
+        },
+        {
+          "path": "index.js",
+          "size": 42,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = function resize() {};\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "native-installer",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>native-installer@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

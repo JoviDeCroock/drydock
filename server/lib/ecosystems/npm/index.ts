@@ -2,6 +2,10 @@ import type { NpmStagedDetails } from "./staged-publishes";
 import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
+import {
+  inspectAddedNpmDependenciesForAdapter,
+  inspectBundledNpmDependenciesForAdapter,
+} from "./dependency-artifacts";
 import { buildNpmFindings } from "./findings";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
@@ -52,6 +56,14 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       stagedTag: stagedDetails?.tag ?? null,
       previousVersion: previous?.manifest?.version ?? null,
     };
+  },
+
+  inspectAddedDependencies(ctx, args) {
+    return inspectAddedNpmDependenciesForAdapter(ctx, args);
+  },
+
+  inspectEmbeddedAddedDependencies(args) {
+    return inspectBundledNpmDependenciesForAdapter(args);
   },
 
   summarizeDetails(details) {

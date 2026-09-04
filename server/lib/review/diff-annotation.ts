@@ -34,6 +34,7 @@ export function projectReleaseRuleFindings(
       ...(finding.line !== undefined ? { line: finding.line } : {}),
       ...(finding.ruleId !== undefined ? { ruleId: finding.ruleId } : {}),
       ...(finding.ruleVersion !== undefined ? { ruleVersion: finding.ruleVersion } : {}),
+      ...(finding.dependency !== undefined ? { dependency: finding.dependency } : {}),
     }));
 }
 
@@ -68,7 +69,11 @@ export function annotateFindingsWithDiffStatus<
     // score the package's whole contents as this release's delta. Report the
     // comparison as missing instead of inventing one.
     if (options.baselineComparisonSkipped) {
-      return { ...finding, diffStatus: "unknown" as FindingDiffStatus, releaseDelta: false };
+      return {
+        ...finding,
+        diffStatus: "unknown" as FindingDiffStatus,
+        releaseDelta: isReleaseScopedFinding(finding),
+      };
     }
 
     const diffStatus = diffByPath.get(finding.file) ?? "unknown";
@@ -94,6 +99,7 @@ export function annotateFindingsWithDiffStatus<
 function isReleaseScopedFinding(finding: {
   ruleId?: string | null;
   severity?: string | null;
+  file?: string | null;
 }): boolean {
   // Only the regression variant is about this release: a manifest that has
   // always over-claimed an entrypoint (medium) is package context, and scoping
@@ -102,17 +108,20 @@ function isReleaseScopedFinding(finding: {
     return finding.severity === "high";
   }
   return Boolean(
+    finding.file?.startsWith("dependency/") ||
+    finding.ruleId?.startsWith("dependency.") ||
     finding.ruleId?.startsWith("stage.") ||
     // release.* rules describe how THIS release arrived (burst/source
     // fingerprints), so they are always release-scoped even though their
     // synthetic file label never appears in the artifact diff.
     finding.ruleId?.startsWith("release.") ||
+    // dependency-artifact.* describes third-party code THIS release starts
+    // pulling into consumer installs. There is no such file in the artifact
+    // diff, and the whole point of the family is the delta, so it is always
+    // release-scoped — which is what puts it in front of the workflow gate.
+    finding.ruleId?.startsWith("dependency-artifact.") ||
     finding.ruleId?.startsWith("pypi.") ||
     finding.ruleId?.startsWith("vscode.") ||
-    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyUnusualSpec ||
-    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyOptionalAdded ||
-    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyAdded ||
-    finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyMajorBump ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,

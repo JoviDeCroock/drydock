@@ -10,6 +10,7 @@ import {
   packageJsonDiffFindings,
   summarizePackageJsonDiff,
 } from "../server/lib/review";
+import { dependencyCorpusFindings } from "./helpers/dependency-corpus.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const casesDir = join(__dirname, "fixtures/security-corpus/cases");
@@ -50,6 +51,7 @@ describe("security detection golden corpus", () => {
           entrypointResolution: "npm",
         }),
         ...packageJsonDiffFindings(packageJsonDiff),
+        ...dependencyCorpusFindings(fixture, packageJsonDiff),
       ];
 
       expect(computeRisk(findings)).toBe(fixture.expectedRisk);

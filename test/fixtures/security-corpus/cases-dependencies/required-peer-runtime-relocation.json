@@ -1,0 +1,21 @@
+{
+  "id": "required-peer-runtime-relocation",
+  "title": "Duplicating a required peer under dependencies ships no new code",
+  "category": "dependency-introduction",
+  "intent": "npm 7 and later already auto-install required peers. Adding the same required peer under dependencies is a declaration relocation, so dependency-artifact review must not describe it as newly introduced code.",
+  "previousPackageJson": {
+    "name": "component-lib",
+    "version": "1.0.0",
+    "peerDependencies": { "react": "^19.0.0" }
+  },
+  "stagedPackageJson": {
+    "name": "component-lib",
+    "version": "1.1.0",
+    "dependencies": { "react": "^19.0.0" },
+    "peerDependencies": { "react": "^19.0.0" }
+  },
+  "expectedDependencies": [],
+  "expectedFindings": [],
+  "expectedRisk": "low",
+  "expectedRecommendation": "likely safe"
+}

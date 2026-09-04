@@ -31,12 +31,22 @@ import {
   annotateFindingsWithDiffStatus,
   createPackageDiff,
   projectReleaseRuleFindings,
+  dependencyDeclarationKey,
+  dependencyScanFindings,
+  dependencyEvidenceFindings,
+  EMPTY_DEPENDENCY_REVIEW,
+  failedDependencyReview,
+  MAX_RECORDED_DEPENDENCIES,
+  mergeDependencyReviews,
   redactFileRecords,
   redactFindings,
   redactJson,
+  reconcileDependencyReviewFindings,
   summarizePackageJsonDiff,
   DETERMINISTIC_RULES_VERSION,
   type CodePatternSet,
+  type DependencyReview,
+  type DependencyEvidence,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -105,6 +115,13 @@ export interface ArtifactFacts {
 
 export interface DeterministicFindings {
   ruleFindings: Finding[];
+  dependencyEvidence: DependencyEvidence[];
+  /**
+   * Durable record of the dependencies this release newly introduces. Empty
+   * (`not-applicable`) for adapters without the capability and for releases
+   * that added none.
+   */
+  dependencyReview: DependencyReview;
   redactedStagedFiles: FileRecord[];
   redactedPreviousFiles: FileRecord[];
   redactedStagedManifest: PackageJsonSummary | null;
@@ -159,15 +176,35 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 ): DeterministicFindings {
   const { staged, baseline } = resolved;
 
-  const adapterFindings = adapter.runFindings({
-    staged: staged.artifact,
-    baseline: baseline.artifact,
-    details: staged.details,
-    fileDiff: diff.fileDiff,
-    manifestDiff: diff.manifestDiff,
-    stagedManifestText: diff.stagedManifestText,
+  const embeddedDependencyReview = redactJson(
+    adapter.inspectEmbeddedAddedDependencies?.({
+      manifestDiff: diff.manifestDiff,
+      baselineManifestUnavailable: baselineManifestUnavailable(diff, baseline.baseline),
+      stagedManifest: staged.artifact.manifest,
+      stagedFiles: staged.artifact.files,
+      stagedSuspiciousEntries: staged.artifact.suspiciousTarEntries,
+    }) ?? EMPTY_DEPENDENCY_REVIEW,
+  );
+  const adapterFindings = reconcileDependencyReviewFindings(
+    adapter.runFindings({
+      staged: staged.artifact,
+      baseline: baseline.artifact,
+      details: staged.details,
+      fileDiff: diff.fileDiff,
+      manifestDiff: diff.manifestDiff,
+      stagedManifestText: diff.stagedManifestText,
+    }),
+    embeddedDependencyReview,
+  );
+  const embeddedDependencyFindings = dependencyEvidenceFindings(embeddedDependencyReview, {
+    name: staged.artifact.manifest?.name ?? null,
+    version: staged.artifact.manifest?.version ?? null,
   });
-  const ruleFindings = redactFindings([...adapterFindings, ...extraFindings]);
+  const ruleFindings = redactFindings([
+    ...adapterFindings,
+    ...embeddedDependencyFindings,
+    ...extraFindings,
+  ]);
 
   const redactedStagedFiles = redactFileRecords(staged.artifact.files);
   const redactedPreviousFiles = baseline.artifact ? redactFileRecords(baseline.artifact.files) : [];
@@ -185,6 +222,8 @@ export function runDeterministicFindings<TInput, TBroker extends AdapterBroker>(
 
   return {
     ruleFindings,
+    dependencyEvidence: [],
+    dependencyReview: embeddedDependencyReview,
     redactedStagedFiles,
     redactedPreviousFiles,
     redactedStagedManifest,
@@ -279,6 +318,7 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   ctx: AdapterContext,
   adapterInput: TInput,
   broker: TBroker,
+  identity: PipelineIdentity,
   extraFindings: (resolved: ResolvedArtifacts) => Promise<Finding[]> = async () => [],
 ): Promise<ReleaseAnalysis> {
   const resolved = await resolveBaseline(adapter, ctx, adapterInput, broker);
@@ -289,7 +329,178 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
   // Raw manifest text; only `adapter.runFindings` reads it, and it has run.
   // `findings.redactedStagedManifest` is the redacted form later phases persist.
   diff.stagedManifestText = null;
+
+  // Deliberately AFTER the release. The dependency pass makes bounded network
+  // calls (see DEPENDENCY_REVIEW_BUDGET_MS), and it needs only the redacted
+  // manifest diff —
+  // holding both unredacted package sides alive for the length of those fetches
+  // would raise peak memory for the whole scan, which is what caps reviewable
+  // package size. Its findings are folded back in here so they still ride the
+  // same redaction, annotation, risk, and persistence path as any other rule
+  // finding.
+  applyDependencyReview(
+    findings,
+    await reviewAddedDependencies(adapter, ctx, broker, diff, findings, facts.baseline, identity),
+    facts.packageSummary,
+    { adapter, diff, baselineComparisonSkipped: facts.baselineComparisonSkipped },
+  );
   return { diff, findings, facts };
+}
+
+/**
+ * Fold a completed dependency review into an existing `DeterministicFindings`.
+ *
+ * Mutates rather than rebuilds because the arrays it updates are the exact
+ * ones every later phase reads (`ruleFindings` is persisted, `annotatedFindings`
+ * is scored, `releaseRuleFindings` feeds the AI reviewer). Dependency findings
+ * are release-scoped by rule ID, so annotation resolves them to
+ * `unknown` diff status + `releaseDelta: true` — there is no file in the
+ * artifact diff to pin them to, and the whole family is about what this release
+ * starts shipping.
+ */
+function applyDependencyReview<TInput, TBroker extends AdapterBroker>(
+  findings: DeterministicFindings,
+  review: DependencyReview,
+  parent: AdapterPackageSummary,
+  context: {
+    adapter: PackageAdapter<TInput, TBroker>;
+    diff: ComputedDiff;
+    baselineComparisonSkipped: boolean;
+  },
+): void {
+  const combinedReview = mergeDependencyReviews(findings.dependencyReview, review);
+  findings.dependencyReview = combinedReview;
+  findings.dependencyEvidence = review.evidence ?? [];
+  const ruleFindings = reconcileDependencyReviewFindings(findings.ruleFindings, combinedReview);
+  findings.ruleFindings.splice(0, findings.ruleFindings.length, ...ruleFindings);
+  const annotatedFindings = reconcileDependencyReviewFindings(
+    findings.annotatedFindings,
+    combinedReview,
+  );
+  findings.annotatedFindings.splice(0, findings.annotatedFindings.length, ...annotatedFindings);
+  const releaseRuleFindings = reconcileDependencyReviewFindings(
+    findings.releaseRuleFindings,
+    combinedReview,
+  );
+  findings.releaseRuleFindings.splice(
+    0,
+    findings.releaseRuleFindings.length,
+    ...releaseRuleFindings,
+  );
+  const dependencyFindings = redactFindings(
+    review.findings ??
+      dependencyEvidenceFindings(review, {
+        name: parent.name,
+        version: parent.stagedVersion,
+      }),
+  );
+  if (!dependencyFindings.length) return;
+
+  const annotated = annotateFindingsWithDiffStatus(dependencyFindings, context.diff.fileDiff, {
+    previousFiles: findings.redactedPreviousFiles,
+    stagedFiles: findings.redactedStagedFiles,
+    codePatternSet: context.adapter.codePatternSet,
+    baselineComparisonSkipped: context.baselineComparisonSkipped,
+  });
+  findings.ruleFindings.push(...dependencyFindings);
+  findings.annotatedFindings.push(...annotated);
+  findings.releaseRuleFindings.push(...projectReleaseRuleFindings(annotated));
+}
+
+/**
+ * Ask the adapter to review the dependency artifacts this release newly
+ * introduces, if it can.
+ *
+ * The dependency pass adds precise evidence about the release and replaces the
+ * manifest-only declaration signal for every dependency with a terminal review
+ * record. An adapter without the capability yields an empty review, while an
+ * unexpected throw becomes a bounded `review-failed` gap for every selected
+ * dependency. The adapter is expected to record ordinary
+ * per-dependency failures itself; this catch is the fail-visible backstop.
+ */
+async function reviewAddedDependencies<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+  ctx: AdapterContext,
+  _broker: TBroker,
+  diff: ComputedDiff,
+  findings: DeterministicFindings,
+  _baseline: BaselineInfo,
+  identity: PipelineIdentity,
+): Promise<DependencyReview> {
+  if (!adapter.inspectAddedDependencies || !diff.manifestDiff.hasPreviousManifest) {
+    return EMPTY_DEPENDENCY_REVIEW;
+  }
+  const selectionOptions = {
+    stagedManifest: findings.redactedStagedManifest,
+    stagedFiles: findings.redactedStagedFiles,
+  };
+  const maxRecordedDependencies = Math.max(
+    0,
+    MAX_RECORDED_DEPENDENCIES - findings.dependencyReview.dependencies.length,
+  );
+  try {
+    return redactJson(
+      await adapter.inspectAddedDependencies(ctx, {
+        manifestDiff: diff.manifestDiff,
+        stagedManifest: selectionOptions.stagedManifest,
+        stagedFiles: selectionOptions.stagedFiles,
+        maxRecordedDependencies,
+        scanId: identity.scanId,
+        organizationId: identity.organizationId,
+      }),
+    );
+  } catch (err) {
+    emitOperationalEvent("warn", "scan.dependency_review.failed", {
+      scanId: identity.scanId,
+      organizationId: identity.organizationId,
+      adapterId: adapter.id,
+      error: describeOperationalError(err),
+    });
+    const review = failedDependencyReview(
+      diff.manifestDiff,
+      {
+        stagedManifest: selectionOptions.stagedManifest,
+        stagedFiles: selectionOptions.stagedFiles,
+      },
+      maxRecordedDependencies,
+    );
+    const parent = {
+      name: findings.redactedStagedManifest?.name ?? null,
+      version: findings.redactedStagedManifest?.version ?? null,
+    };
+    const evidence: DependencyEvidence[] = review.dependencies.map((dependency) => ({
+      name: dependency.name,
+      section: dependency.section,
+      declaredSpec: dependency.declaredSpec,
+      path: `${parent.name ?? "parent"}@${parent.version ?? "unknown"} -> ${dependency.name}@unresolved`,
+      outcome: "fetch-failed",
+      outcomeDetail: "dependency inspection failed before the artifact could be reviewed",
+      resolution: null,
+      artifact: null,
+      entrypoints: null,
+      findingCount: 1,
+    }));
+    const dependencyFindings = dependencyScanFindings(
+      evidence.map(({ name, section, declaredSpec }) => ({ name, section, declaredSpec })),
+      Object.fromEntries(
+        evidence.map((entry) => [
+          dependencyDeclarationKey(entry.name, entry.section, entry.declaredSpec),
+          { ...entry, files: [], packageJson: null },
+        ]),
+      ),
+      parent,
+      review.omittedCount,
+    );
+    return { ...review, evidence, findings: dependencyFindings };
+  }
+}
+
+function baselineManifestUnavailable(diff: ComputedDiff, baseline: BaselineInfo): boolean {
+  if (diff.manifestDiff.hasPreviousManifest) return false;
+  // These reasons mean there genuinely is no earlier release to compare. Every
+  // other no-manifest outcome is an acquisition/parsing gap, so conservatively
+  // inspect every staged install dependency instead of reporting N/A.
+  return !["none", "dist-tag-points-at-staged-version"].includes(baseline.reason);
 }
 
 // Pure: fold deterministic + AI findings into the artifact/release/context
@@ -438,6 +649,8 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     riskSummary: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    dependencyReview: findings.dependencyReview,
+    dependencyEvidence: findings.dependencyEvidence,
     safety,
   };
 
@@ -472,6 +685,11 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     risk: args.riskSummary,
     releaseConsistency: args.releaseConsistency,
     intentEnvelope: args.intentEnvelope,
+    // Persisted so the review survives the dependency version being
+    // unpublished: the declaration, the review-time resolution, both digests,
+    // and the verdict are all here even once the artifact is gone.
+    dependencyReview: findings.dependencyReview,
+    dependencyEvidence: findings.dependencyEvidence,
     safety,
   };
   const reportJson = stableJson(reportPayload);
@@ -511,6 +729,10 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
       baseline: facts.baseline,
       releaseConsistency: args.releaseConsistency,
       intentEnvelope: args.intentEnvelope,
+      dependencyReview: {
+        ...findings.dependencyReview,
+        evidence: findings.dependencyEvidence,
+      },
       safety: result.safety,
     },
     ai: args.aiFindings,

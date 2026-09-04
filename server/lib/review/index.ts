@@ -1,6 +1,7 @@
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 import { DETERMINISTIC_RULE_IDS, DETERMINISTIC_RULES_VERSION, deterministicRuleIds } from "./rules";
 import type { DiffEntry } from "./diff";
+import type { DependencySection } from "./serialize";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -22,6 +23,13 @@ export interface Finding {
   ruleVersion?: string;
   obfuscated?: boolean;
   testScoped?: boolean;
+  dependency?: {
+    name: string;
+    version: string | null;
+    path: string;
+    section?: DependencySection;
+    declaredSpec?: string;
+  };
 }
 
 export type FindingDiffStatus = DiffEntry["status"] | "unknown";
@@ -42,6 +50,7 @@ export interface FindingAnnotationOptions {
 }
 
 export { createPackageDiff } from "./diff";
+export { parseVersionSpec } from "./dependency-specs";
 export type { DiffEntry } from "./diff";
 export { summarizePackageJsonDiff } from "./serialize";
 export type { PackageJsonDiff, PackageJsonDiffEntry, PackageJsonSummary } from "./serialize";
@@ -49,6 +58,7 @@ export {
   DETERMINISTIC_RULE_IDS,
   DETERMINISTIC_RULES_VERSION,
   deterministicFindings,
+  dependencyScanFindings,
   packageJsonDiffFindings,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
 } from "./rules";
@@ -57,6 +67,38 @@ export {
   normalizeFindingDiffStatus,
   projectReleaseRuleFindings,
 } from "./diff-annotation";
+export type { DependencyArtifactForReview } from "./rules";
+export {
+  assessDependencyArtifact,
+  classifyDependencyInstallRisk,
+  dependencyDeclarationKey,
+  dependencyDeclarationKind,
+  DEPENDENCY_ARTIFACT_MAX_FILES,
+  DEPENDENCY_TEXT_SAMPLE_LIMIT,
+  dependencyEvidenceFindings,
+  EMPTY_DEPENDENCY_REVIEW,
+  failedDependencyReview,
+  MAX_INSPECTED_DEPENDENCIES,
+  MAX_RECORDED_DEPENDENCIES,
+  mergeDependencyReviews,
+  normalizeDependencyEvidence,
+  normalizeDependencyReview,
+  reconcileDependencyReviewFindings,
+  sanitizeDependencyArtifactOrigin,
+  selectAddedDependencyDeclarations,
+  selectAddedRegistryDependencyDeclarations,
+  selectAddedDependencies,
+  selectBundledAddedDependencyDeclarations,
+  selectBundledAddedDependencies,
+} from "./dependency-evidence";
+export type {
+  AddedDependency,
+  DependencyDigest,
+  DependencyEvidence,
+  ReviewedDependencyEvidence,
+  DependencyReview,
+  DependencyUninspectableReason,
+} from "./dependency-evidence";
 export { redactFileRecords, redactFindings, redactJson, redactText } from "./redaction";
 
 const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
@@ -149,6 +191,8 @@ export function computeRisk(
     ruleId?: string | null;
     obfuscated?: boolean;
     testScoped?: boolean;
+    dependency?: unknown;
+    file?: string | null;
   }>,
 ): RiskLevel {
   let anchorRisk: RiskLevel = "low";
@@ -157,9 +201,10 @@ export function computeRisk(
   for (const finding of findings) {
     const ruleId = finding.ruleId ?? undefined;
     const risk = severityToRisk(finding.severity);
-    if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.testScoped) {
+    const dependencyScoped = Boolean(finding.dependency) || finding.file?.startsWith("dependency/");
+    if (!dependencyScoped && ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId) && finding.testScoped) {
       testCapabilities.set(ruleId, combineRisk(testCapabilities.get(ruleId), risk));
-    } else if (ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId)) {
+    } else if (!dependencyScoped && ruleId && CODE_CAPABILITY_RULE_IDS.has(ruleId)) {
       const prior = capabilities.get(ruleId);
       capabilities.set(ruleId, {
         risk: combineRisk(prior?.risk, risk),

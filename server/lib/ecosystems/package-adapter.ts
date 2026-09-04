@@ -1,6 +1,7 @@
 import { type AppDb, type WorkspaceSession } from "../../db/client";
 import type {
   CodePatternSet,
+  DependencyReview,
   DiffEntry,
   FileRecord,
   Finding,
@@ -120,4 +121,47 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   describe(args: AdapterDescribeArgs<TInput>): AdapterPackageSummary;
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
   registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
+
+  /**
+   * Inspect newly introduced dependencies whose exact bytes are embedded in
+   * the staged artifact. Runs synchronously while the raw parent files are
+   * still available, before the pipeline releases them ahead of network work.
+   */
+  inspectEmbeddedAddedDependencies?(args: EmbeddedDependencyInspectionArgs): DependencyReview;
+
+  /**
+   * Review the artifacts of dependencies this release newly introduces.
+   *
+   * Optional because it is a *capability*, not a stage every ecosystem can
+   * offer: it needs a registry that resolves a declared spec to fetchable
+   * bytes. An adapter without it simply omits the method and the pipeline
+   * records no dependency review — never a branch on the ecosystem name.
+   *
+   * The method receives no ecosystem broker so dependency acquisition cannot
+   * accidentally reuse organization credentials. It must not throw: the
+   * release's own review does not depend on it, and a failed dependency pass
+   * has to degrade to a visible coverage gap rather than cost the scan.
+   */
+  inspectAddedDependencies?(
+    ctx: AdapterContext,
+    args: DependencyInspectionArgs,
+  ): Promise<DependencyReview>;
+}
+
+export interface DependencyInspectionArgs {
+  manifestDiff: PackageJsonDiff;
+  stagedManifest: PackageJsonSummary | null;
+  stagedFiles: FileRecord[];
+  /** Remaining slots in the release-wide persisted dependency evidence budget. */
+  maxRecordedDependencies: number;
+  scanId: string;
+  organizationId: string;
+}
+
+export interface EmbeddedDependencyInspectionArgs {
+  manifestDiff: PackageJsonDiff;
+  baselineManifestUnavailable: boolean;
+  stagedManifest: PackageJsonSummary | null;
+  stagedFiles: FileRecord[];
+  stagedSuspiciousEntries?: TarSuspiciousEntry[];
 }

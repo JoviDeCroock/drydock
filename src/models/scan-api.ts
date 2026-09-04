@@ -11,6 +11,7 @@ import type {
   FindingDiffStatus,
   PackageJsonSummary,
 } from "../../server/lib/review";
+import type { DependencySection } from "../../server/lib/review/serialize";
 import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
 import { apiFetch, apiJson } from "./api";
 
@@ -131,6 +132,13 @@ export interface PersistedScanDetail {
     source: string;
     ruleId?: string | null;
     ruleVersion?: string | null;
+    dependency?: {
+      name: string;
+      version: string | null;
+      path: string;
+      section?: DependencySection;
+      declaredSpec?: string;
+    };
     diffStatus?: FindingDiffStatus;
     releaseDelta?: boolean;
   }>;

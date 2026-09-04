@@ -1,0 +1,37 @@
+{
+  "id": "dependency-artifact-oversized",
+  "title": "Added dependency exceeds the artifact byte cap",
+  "category": "dependency-supply-chain",
+  "intent": "A bounded parse never becomes a silent clean dependency.",
+  "previousPackageJson": { "name": "parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "dependencies": { "large-dep": "1.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "large-dep": {
+      "declaredSpec": "1.0.0",
+      "resolvedVersion": "1.0.0",
+      "outcome": "too-large",
+      "outcomeDetail": "artifact exceeded 25 MiB",
+      "files": [],
+      "packageJson": null
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" },
+    { "ruleId": "dependency.artifact-unavailable", "severity": "medium", "file": "package.json" }
+  ]
+}

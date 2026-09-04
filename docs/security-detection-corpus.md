@@ -70,7 +70,7 @@ The first corpus slice covers:
 - files that appear in the tarball outside a declared `package.json.files` allowlist;
 - malformed `package.json` parse failure;
 - releases whose manifest declares a `main`/`exports`/`bin` path the artifact does not contain;
-- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code the scan never inspects — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
+- dependency and entrypoint package-json diff changes; unusual non-registry dependency specs raise deterministic findings, a newly added runtime dependency raises `dependency.added` alongside any separate dependency-artifact evidence, and a spec crossing a major version boundary raises `dependency.major-bump` (the release pulls third-party code outside the parent artifact — the node-ipc/peacenotwar and event-stream/flatmap-stream vector), and a newly added `bin` command raises `diff.bin-added` because npm links it onto the consumer's install path;
 - install-time self-propagation: code a consumer's install executes that invokes a registry publish (`propagation.registry-publish`) or writes into the directory the package manager unpacks dependencies into (`propagation.package-mutation`). Both are ordinary developer actions elsewhere — a release CLI publishes, a patch tool rewrites `node_modules` — so the family gates on install-time reachability rather than on the pattern, with `legit-release-cli-publish` and `legit-patch-tooling-node-modules` as the hard negatives that pin that gate;
 - atpm release provenance: unverifiable bundles, subjects copied from another artifact, builds outside the declared trusted publisher, missing attestations, and loss of provenance present on the baseline. A matching verified build is the benign control.
 
@@ -101,6 +101,8 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 | `code.process-execution`                  | deterministic | weak-lone-capability | no              |
 | `code.remote-shell`                       | deterministic | capability           | yes             |
 | `dependency.added`                        | deterministic | anchor               | no              |
+| `dependency.artifact-unavailable`         | deterministic | anchor               | no              |
+| `dependency.install-time-capability`      | deterministic | anchor               | yes             |
 | `dependency.major-bump`                   | deterministic | anchor               | no              |
 | `dependency.optional-added`               | deterministic | anchor               | no              |
 | `dependency.unusual-spec`                 | deterministic | anchor               | no              |
@@ -143,7 +145,7 @@ that test naming the unit-test layer that covers it), and fixtures may only asse
 
 The corpus deliberately records some product gaps instead of hiding them:
 
-- Dependency findings stop at the manifest: an added or major-bumped dependency raises a deterministic finding, but the dependency's own tarball is not fetched or diffed, so a payload hidden inside it is only caught if the reviewer follows the finding to that dependency's own release diff. Within-major version bumps and unanchored specs (dist-tags such as `latest`, `*`, bare `>` ranges) raise nothing because they cannot prove a reviewed-range escape without registry resolution.
+- Dependency-artifact review covers newly introduced direct npm dependencies, but not their transitive closure or dependencies that only change version. Major bumps still raise the manifest-level deterministic finding without fetching the dependency artifact; within-major version bumps remain visible only in the manifest diff.
 - A newly added `bin` command raises `diff.bin-added` (medium), but `main`/`module`/`types`/`exports` retargets are intentionally not flagged: they change on almost every build (`index.js` → `dist/index.js`) and would be noise. They remain visible as the `entrypointsChanged` diff flag. A retarget that points at a path the artifact does not contain is a different question and does fire (`package-json.entrypoint-missing`).
 - Files a release stops shipping raise nothing on their own: file rules run over the staged artifact, so a dropped binary is visible only as a removed diff entry unless the manifest still declares it as an entrypoint. A `files` allowlist entry with no matching file is likewise not flagged — allowlist entries are globs whose absence can be legitimate (an optional platform build).
 - The propagation family only models the install path. A payload that republishes or rewrites its neighbours when the package is later imported or run — rather than while it is being installed — raises nothing from `propagation.*`, because separating that from ordinary release and patch tooling by pattern alone produced false positives on exactly the tools maintainers depend on. The capability rules still see its process, network, and credential use.
@@ -160,6 +162,64 @@ The corpus deliberately records some product gaps instead of hiding them:
 4. If the scenario is important but not yet detected, add `coverageGaps` and assert the current diff-only behavior where possible.
 5. Run `pnpm run test:node -- security-corpus.test.mjs` before opening the PR.
 
+## Dependency-artifact corpus
+
+Dependency-artifact review scans the bytes of a dependency a release newly introduces, so its fixtures
+describe _two_ packages: the parent's manifests, and the artifact each declared dependency resolves to.
+Active dependency-artifact fixtures live under `test/fixtures/security-corpus/cases/` with the
+`dependency-artifact-` prefix and run through `test/security-corpus.test.mjs`, which invokes the
+production composer. The older `cases-dependencies/` fixtures remain as historical comparison data
+and are not part of the active corpus. See [`dependency-review.md`](./dependency-review.md) for the
+rule family and its severity ladder.
+
+Fields, in addition to the shared `id` / `title` / `category` / `intent`:
+
+- `previousPackageJson` / `stagedPackageJson` — the parent's manifests; their diff drives selection.
+- `stagedFiles` — optional parent-artifact records used when selection must prove a declared bundled dependency is actually embedded under `node_modules/`.
+- `dependencyArtifacts` — a map of dependency name → `{ version, packageJson, files }`. This stands in
+  for the registry and the sandbox, so the corpus exercises selection → assessment → findings with no
+  network. Resolution itself is covered by `test/npm-dependency-artifacts.test.mjs` and
+  `test/npm-semver.test.mjs`.
+- `uninspectableReasons` — dependency name → `DependencyUninspectableReason` for dependencies with no
+  entry in `dependencyArtifacts`.
+- `expectedDependencies` — per-dependency evidence assertions (declaration kind, resolved version,
+  coverage status, install observations, automatic-execution entrypoints).
+- `expectedFindings` / `expectedRisk` — as in the npm corpus.
+- `expectedRecommendation` — the maintainer-facing verdict label from
+  `getReleaseRecommendation`. "Reaches critical" and "cannot be recommended for approval" are two
+  different claims, and this pins the second one.
+
+The corpus includes calibration cases that should stay that way:
+
+- `added-dependency-benign-library` — a new dependency with a network capability and no install hook must
+  not make a release risky just for being new.
+- `added-dependency-native-build` — a package that runs `node-gyp` on install is medium, not blocking;
+  otherwise every release adding a native dependency becomes unapprovable and the tier stops meaning
+  anything.
+- `added-dependency-prebuilt-downloader` — a package that downloads a platform binary during install
+  _does_ block, at `high` rather than `critical`. It is the loudest deliberate call in the family and the
+  one most likely to be argued with, so it is written down rather than left implicit.
+- `added-dependency-integrity-mismatch` pins the fail-closed boundary: inert dependency contents still
+  block when their recomputed digest disagrees with what the registry advertised.
+- `added-dependency-truncated-install-dropper` pins the two-axis boundary: an unrelated coverage gap is
+  reported without erasing critical install behavior already proven by retained bytes.
+- `added-dependency-dynamic-skipped-content` and
+  `added-dependency-computed-execfile-skipped-content` pin dynamic execution: computed module loads in
+  inline lifecycle code and renamed child-process targets make every omitted dependency body a visible
+  coverage gap. `added-dependency-aliased-require-skipped-content` pins renamed ESM
+  `createRequire` factories, `added-dependency-bound-require-skipped-content` pins bound
+  `module.require`, and `added-dependency-node-argv-skipped-content` pins multiple static Node argv
+  targets.
+- `added-dependency-bundled` pins the opposite boundary: bytes with a loadable child package identity
+  genuinely embedded in the reviewed parent artifact are assessed in place rather than replaced with a
+  second registry snapshot. `added-dependency-bundled-install-downloader` proves the child's own lifecycle
+  manifest is part of that assessment, while `added-dependency-bundled-placeholder` proves an arbitrary
+  file under the declared `node_modules` path cannot impersonate that identity and suppress registry
+  review. `added-dependency-bundled-mismatched-manifest` pins the adjacent boundary: once a declared
+  child manifest exists, an invalid identity must fail in place rather than redirect review to different
+  registry bytes. `added-dependency-bundled-ambiguous-install-dropper` proves archive ambiguity does not
+  erase stronger behavior already visible in readable child files.
+
 ## PyPI corpus
 
 The PyPI adapter (`server/lib/ecosystems/pypi/index.ts`) has its own golden corpus under
@@ -173,7 +233,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.31.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.58.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -529,6 +589,214 @@ line cannot hide a newly added propagation action from release risk. Pinned by
 `install-hook-registry-publish`, `install-hook-direct-registry-publish`,
 `install-hook-node-modules-write`, the PyPI parity case `15-sdist-setup-twine-upload`, the frontier
 case `npm-install-hook-worm-propagation`, and the two hard negatives that hold the gate honest.
+
+`1.32.0` adds bounded dependency-artifact review for newly introduced npm dependencies. The
+`dependency-artifact.*` family records install-time execution and capabilities, uninspectable coverage
+gaps, and a critical `dependency-artifact.integrity-mismatch` when fetched bytes disagree with the
+registry's advertised digest. Fixtures under `cases-dependencies/` pin the severity ladder, including
+benign-library and native-build calibration cases and the integrity-mismatch fail-closed boundary.
+
+`1.33.0` hardens dependency-artifact coverage: clipped dependency files fail visibly instead of being
+assessed from a retained prefix, baseline acquisition gaps conservatively inspect staged install
+dependencies, anonymous range/tag resolution bypasses stale metadata caches, the wall-clock budget
+includes registry lookup, and dependencies already embedded through npm's bundled-dependency fields
+stay within the parent artifact review. The bundled calibration fixture and focused invariant tests pin
+those boundaries.
+
+`1.34.0` closes two more dependency-artifact completeness gaps. Files retained hash-only after the
+sandbox's full-text body budget now make the dependency visibly uninspectable, pinned by
+`added-dependency-skipped-content`; an expired pass also aborts anonymous registry reads and prevents a
+late metadata response from starting a tarball parse. The bounded npm range resolver now follows npm's
+strict major-wildcard behavior and SemVer's ASCII prerelease ordering so the reviewed version matches
+the version a consumer install selects.
+
+`1.35.0` preserves the critical dependency integrity signal even when the same artifact is also
+uninspectable, pinned by `added-dependency-truncated-integrity-mismatch`. It also treats a required peer
+that npm 7+ already auto-installed as previously installed when the staged release duplicates or moves
+it under `dependencies`, pinned by `required-peer-runtime-relocation` and the
+`legit-required-peer-runtime-relocation` eval hard-negative. Optional peers remain excluded from that
+calibration because consumers do not inherit them automatically.
+
+`1.36.0` closes dependency-artifact completeness and attribution gaps. A missing or unreadable root
+manifest and active non-regular, duplicate, or visually-confusable archive paths now fail visibly rather
+than producing a clean inspected record, pinned by `added-dependency-invalid-artifacts`. Inline lifecycle
+commands are scanned separately from the rest of `package.json`, so network-capable test tooling is no
+longer presented as a proven install-time request; `added-dependency-non-install-network-script` pins the
+unproven medium tier while the existing install-downloader fixtures keep proven paths blocking.
+
+`1.37.0` closes dependency-selection and install-reachability gaps. Required peers moved to a different
+runtime spec are reviewed as new bytes, while an optional peer becoming required at an already-installed
+runtime spec stays a declaration-only change. Install hooks delegated through `npm run` now carry file and
+inline capabilities into the install-reachable set, and npm comparator whitespace resolves through the
+same bounded range parser. The required-peer transition, spec-change, and delegated-downloader fixtures
+pin these boundaries.
+
+`1.38.0` closes the remaining same-name dependency-review bypasses and integrity false positive. An
+optional override or installing-section relocation suppresses review only when its effective spec is
+unchanged; a newly required peer is likewise covered only by a same-spec runtime declaration. npm config
+flags around `npm run` can no longer hide a delegated install downloader, and a multi-hash SRI verifies
+when any advertised SHA-512 digest matches the reviewed bytes. The optional-override, different-spec peer,
+and flagged delegated-downloader dependency fixtures pin the gate-facing semantics; the SRI list behavior
+is pinned at the registry-resolution layer.
+
+`1.39.0` closes a dependency-artifact completeness gap and aligns the gate and report with the precise
+review result. A minified JavaScript file or source map whose text the parser deliberately omits now
+fails visibly when an install hook can reach it, pinned by
+`added-dependency-install-skipped-content`; unrelated omitted assets remain valid hard negatives. Once a
+dependency has a terminal inspected or uninspectable record, that evidence replaces the older
+declaration-only `dependency.added` / `dependency.optional-added` finding, so a dependency with no observed
+install behavior can remain low risk. Finding projection and the report UI share one install-risk policy
+mapping, keeping their severity and claims aligned.
+
+`1.40.0` closes registry-resolution and dependency-evidence trust gaps. Published versions and ranges
+with non-canonical or unsafe numeric identifiers are rejected instead of selecting bytes npm ignores;
+a missing staged package name or version is treated as a baseline acquisition gap rather than a genuine
+first release; and an unsupported or malformed `dist.integrity` cannot fall through to a matching legacy
+SHA-1 shasum. A lifecycle path that reaches both a process launch and a bundled native artifact is now a
+proven high-risk install path with native-specific finding and report copy, pinned by
+`added-dependency-native-execution`.
+
+`1.41.0` aligns dependency evidence with npm's install selection and closes two release-risk bypasses.
+Range resolution skips a deprecated `latest` while a healthy satisfying version exists and its
+synchronous parser now caps spec length, union branches, and comparator tokens. A declared bundle is
+excluded only when the embedded direct child has a readable matching package identity, pinned by
+`added-dependency-bundled-placeholder`. Dependency-artifact findings remain release-scoped when baseline
+acquisition failed, so an honest `unknown` file diff cannot remove newly introduced dependency evidence
+from `releaseRisk` or the workflow gate.
+
+`1.42.0` closes two executable-content gaps in dependency review. Newly introduced direct dependencies
+embedded through `bundleDependencies` / `bundledDependencies` are now assessed from the exact child
+subtree consumers install, including the child's own lifecycle manifest, rather than being treated as
+covered by root-manifest review. Install-reachable dynamic module loads also make omitted executable
+`.map` / minified JavaScript text fail visibly instead of recording partial bytes as inspected. The
+`added-dependency-bundled-install-downloader` fixture and focused skipped-text regressions pin both
+boundaries.
+
+`1.43.0` separates dependency coverage, install execution, and risk observations from gate policy.
+Unproven static reach is now recorded as `unknown` instead of an install-risk verdict, aggregate review
+coverage is partial whenever any selected dependency is uninspectable, and a computed install-time module
+load treats every omitted body as a possible target regardless of extension. The
+`added-dependency-dynamic-skipped-content` fixture pins the widened fail-visible boundary.
+
+`1.44.0` closes three durable dependency-evidence trust gaps. Registry projection preserves the presence
+of an oversized authoritative SRI so it cannot silently fall through to a matching legacy SHA-1; adapter
+evidence is secret-redacted before finding projection or persistence; and suspicious archive entries
+inside bundled child subtrees now make those dependencies visibly uninspectable. The existing
+`added-dependency-integrity-mismatch` and bundled-dependency corpus cases continue to pin the rule family,
+with focused registry, pipeline, and bundled-artifact regressions covering the new acquisition boundaries.
+
+`1.45.0` closes install-reachability gaps in dependency evidence. Active explicit and implicit node-gyp
+builds now seed root GYP files plus package paths named by their commands, so an omitted install-time
+script makes the artifact visibly incomplete and a reachable capability keeps its observed certainty.
+Dynamic `module.require()` and optional CommonJS calls receive the same omitted-body treatment as bare
+`require()`, while a dormant GYP command with `gypfile: false` no longer invents automatic execution.
+`added-dependency-node-gyp-skipped-content`, `added-dependency-module-require-skipped-content`, and
+`added-dependency-dormant-gyp` pin the two fail-visible boundaries and the false-positive calibration.
+
+`1.46.0` keeps dependency evidence bound to the bytes consumers install. A declared bundled child whose
+manifest body was retained hash-only now fails visibly as embedded evidence instead of being replaced by
+registry bytes, computed `module["require"]()` calls close the same omitted-body boundary as dot-member
+loaders, and a lifecycle path that directly invokes or loads a bundled native artifact is high risk
+without requiring an unrelated second process API call. npm wildcard ranges with prerelease suffixes no
+longer select prerelease bytes npm excludes. `added-dependency-bundled-skipped-manifest`,
+`added-dependency-module-require-skipped-content`, and `added-dependency-direct-native-execution` pin the
+gate-facing changes; focused semver tests pin version-selection parity.
+
+`1.47.0` closes two more install-reachability gaps for omitted dependency bodies. Statically named local
+targets passed to child-process execution APIs or shell `source` commands now join the install graph, and
+simple aliases of `require` or `createRequire(...)` fail visibly when an omitted body could be their
+target. `added-dependency-execfile-skipped-content` and
+`added-dependency-aliased-require-skipped-content` pin these completeness boundaries.
+
+`1.48.0` keeps partial dependency evidence fail-closed without erasing stronger retained-byte signals.
+Known install risk survives unrelated truncation, computed or aliased child-process and shell targets make
+omitted bodies visible, and omitted-only record counts still project an aggregate coverage gap. Alias
+propagation is bounded by a linear worklist, exact/range declarations cannot be reinterpreted through
+registry-controlled tag keys, and malformed persisted rows reject the review as a unit.
+`added-dependency-truncated-install-dropper` and
+`added-dependency-computed-execfile-skipped-content` pin the gate-facing coverage changes.
+
+`1.49.0` keeps dependency evidence attached to the code consumers actually receive across additional
+manifest, lifecycle, and archive edges. Malformed or mismatched bundled child manifests now remain
+embedded coverage gaps instead of redirecting review to registry bytes; computed loads inside inline
+Node lifecycle commands and renamed CommonJS/ESM child-process bindings make omitted bodies visible; and
+archive ambiguity no longer erases behavior proven by readable files. npm's `v1` and `v1.2` partial
+forms also remain range declarations even when a registry advertises same-named tags.
+`added-dependency-bundled-mismatched-manifest`, `added-dependency-dynamic-skipped-content`,
+`added-dependency-computed-execfile-skipped-content`, and
+`added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing changes.
+
+`1.50.0` aligns static install reachability with the loader and process forms the completeness detector
+already recognizes. Optional, bracketed, template-literal, and import-attributes module loads now keep
+their named omitted targets visible; renamed ESM `createRequire` factories remain conservative dynamic
+loaders; and `fork()` targets plus relative scripts passed in a Node interpreter argv join the install
+graph. Computed Node argv remains fail-closed.
+
+`1.51.0` closes two remaining omitted-body bypasses in dependency install reachability. Static Node
+interpreter argv now contributes every relative preload, import, and entry script instead of only the
+first path, and functions bound from `module.require` remain conservative loader aliases.
+`added-dependency-node-argv-skipped-content` and
+`added-dependency-bound-require-skipped-content` pin the fail-visible results.
+
+`1.52.0` keeps computed dependency install targets fail-visible across syntax boundaries. Escaped
+relative loader literals, bracket-property child-process calls, and shell-expanded lifecycle
+executables now make deliberately omitted bodies visible. A computed install edge that can select a
+bundled native artifact remains unknown rather than proven, but projects high native execution risk.
+`added-dependency-escaped-loader-skipped-content`,
+`added-dependency-bracket-process-skipped-content`,
+`added-dependency-shell-target-skipped-content`, and
+`added-dependency-dynamic-native-execution` pin the coverage and gate-facing results.
+
+`1.53.0` closes the cross-syntax edges left in dependency install completeness. Shell interpreters
+whose script operand is selected through expansion, shell `-c` bodies that dynamically source a file,
+and bracket-property Node process calls with static argv now keep deliberately omitted bodies visible.
+Bundled-child archive ambiguity also includes an entry at the child directory itself, not only its
+descendants, and persisted dependency-review status/counts are derived or rejected when they contradict
+the retained rows. `added-dependency-shell-target-skipped-content`,
+`added-dependency-bracket-process-skipped-content`, and
+`added-dependency-bundled-ambiguous-install-dropper` pin the gate-facing coverage changes.
+
+`1.54.0` closes dependency completeness gaps across JavaScript, lifecycle shell syntax, and npm range
+resolution. Constant-folded computed loader/process callees, direct Node lifecycle operands, and shell
+targets behind wrappers or control keywords now keep omitted bodies visible; quoted direct Node paths
+remain statically reachable. npm-compatible ranges accept numeric components after a wildcard and
+unbounded wildcard hyphen endpoints while rejecting partial prerelease endpoints. The
+`added-dependency-folded-callee-skipped-content`,
+`added-dependency-direct-node-skipped-content`, and
+`added-dependency-shell-wrapper-skipped-content` fixtures pin the gate-facing completeness changes.
+
+`1.55.0` closes dependency selection and install completeness gaps at syntax and version boundaries.
+Generated npm range ceilings now use npm's exclusive `-0` prerelease boundary, so a partial upper
+bound cannot select a prerelease from the next tuple. Parenthesized and transpiler-style `(0, callee)`
+module/process calls remain conservative install edges, and computed shell `eval` arguments retain
+every possible package target. `added-dependency-parenthesized-loader-skipped-content`,
+`added-dependency-parenthesized-native-execution`, and
+`added-dependency-shell-eval-native-execution` pin the gate-facing coverage and risk changes; focused
+semver tests pin version-selection parity.
+
+`1.56.0` aligns added-dependency artifact review with the shared deterministic finding contract.
+Dependency files keep their original rule IDs under the `dependency/<name>@<version>/` namespace,
+`dependency.install-time-capability` rolls automatic execution plus downloader, credential, process,
+or dynamic-evaluation behavior into one gate-facing signal, and
+`dependency.artifact-unavailable` makes every resolution, fetch, size, count, or deadline gap visible
+at the manifest declaration. The `dependency-artifact-*` cases in the main npm corpus pin critical
+downloader and credential-exfil paths, benign and range-resolved controls, and unavailable/oversized
+manual-review outcomes.
+
+`1.57.0` makes dependency-artifact evidence declaration-scoped and report-bounded. Section, name,
+and declared spec now identify artifacts and structured findings end to end, so duplicate package
+names across manifest sections cannot overwrite or misroute evidence. Reports retain at most 64
+individual rows and add one aggregate unavailable finding for omitted declarations. Metadata misses
+and valid packages with no satisfying version remain distinct operator outcomes. The
+`dependency-artifact-same-name-declarations` case pins the declaration identity boundary.
+
+`1.58.0` restores the full newly-installed declaration selector behind dependency-artifact review:
+different-spec runtime relocations and overrides, required peers beside a different installed spec,
+and optional peers becoming required all resolve through the same declaration-scoped artifact path as
+simple additions. It also preserves critical integrity and retained install-time signals when an
+artifact is incomplete, and applies one 64-record budget across bundled and registry evidence. The
+`dependency-artifact-optional-peer-required` case pins the gate-facing transition; focused npm and
+pipeline tests pin retained-risk, adapter-parity, and combined-budget behavior.
 
 ### Fixture format
 

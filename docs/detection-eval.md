@@ -44,20 +44,28 @@ false positives, and evasion robustness without digging through logs.
 
 ```
 test/fixtures/security-corpus/
-  cases/          npm golden cases     (regression set, also consumed by the eval)
-  cases-pypi/     PyPI golden cases    (regression set)
-  cases-atpm/     atpm provenance golden cases (regression set)
-  cases-vscode/   VS Code extension golden cases (regression set)
-  cases-frontier/ truth-labeled hard cases the rules may MISS  (reported, not gated)
-  cases-benign/   benign hard-negatives that the rules may flag (reported, not gated)
+  cases/              npm golden cases     (regression set, also consumed by the eval)
+  cases-pypi/         PyPI golden cases    (regression set)
+  cases-vscode/       VS Code golden cases (regression set)
+  cases-atpm/         atpm provenance golden cases (regression set)
+  cases-dependencies/ legacy deep dependency-analysis regressions
+  cases-frontier/     truth-labeled hard cases the rules may MISS  (reported, not gated)
+  cases-benign/       benign hard-negatives that the rules may flag (reported, not gated)
 ```
 
 The four ecosystem regression directories keep their existing golden schema;
-the eval infers any omitted labels. The gate also holds a per-ecosystem coverage
-floor, so deleting fixtures or an entire directory cannot turn into a vacuous
-100% recall. `cases-frontier/` and `cases-benign/` use the v2 schema below and
+npm cases may add `dependencyArtifacts` so production `dependencyScanFindings`
+assesses fetched direct-dependency bytes alongside the parent artifact. The eval
+infers any omitted labels. The gate also holds a per-ecosystem coverage floor, so
+deleting fixtures or an entire directory cannot turn into a vacuous 100% recall.
+`cases-frontier/` and `cases-benign/` use the v2 schema below and
 are eval-only (the golden tests never read them, so a frontier miss or a benign
 false positive does not break the regression suite).
+
+The main corpus includes a benign added dependency, a range-resolved lifecycle-only control, and
+critical downloader/credential paths. The frontier set also carries the defanged
+`npm-event-stream-dependency-vector`, so dependency propagation is measured through the same helper
+production uses rather than through a parallel evaluator.
 
 ## Fixture v2 schema
 
@@ -195,6 +203,7 @@ shapes only:
 | `npm-eslint-scope-npmrc-exfil`        | credential-steal        | eslint-scope 3.7.2 (2018)          | yes (postinstall + network)                                                                                         |
 | `npm-ua-parser-js-preinstall-dropper` | install-script-exfil    | ua-parser-js (2021)                | yes (preinstall dropper)                                                                                            |
 | `npm-event-stream-flatmap-decrypt`    | obfuscated-dropper      | event-stream/flatmap-stream (2018) | yes (env read + dynamic eval)                                                                                       |
+| `npm-event-stream-dependency-vector`  | dependency-supply-chain | event-stream/flatmap-stream shape  | yes (added dependency install-time capability)                                                                      |
 | `npm-shai-hulud-secret-harvest`       | credential-steal        | Shai-Hulud worm (2025)             | yes (postinstall harvest)                                                                                           |
 | `npm-miasma-phantom-gyp`              | phantom-gyp             | Miasma / Phantom Gyp (2026)        | yes (root `binding.gyp` command substitution)                                                                       |
 | `npm-prebuilt-node-addon-smuggle`     | native-artifact-smuggle | OpenSSF prebuilt-addon family      | yes (native artifact)                                                                                               |

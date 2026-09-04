@@ -1,0 +1,63 @@
+{
+  "id": "added-dependency-non-install-network-script",
+  "title": "A non-install network script is not proven install-time behavior",
+  "category": "dependency-introduction",
+  "intent": "A package may have a harmless postinstall hook and separate network-capable test tooling. The whole package.json is one file, but a finding in scripts.test must not be attributed to every consumer install. The co-occurrence remains visible as unproven medium evidence rather than a blocking proven download.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "main": "index.js",
+    "dependencies": { "network-tests": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "network-tests": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "network-tests",
+        "version": "1.0.0",
+        "scripts": {
+          "postinstall": "node setup.js",
+          "test": "node -e \"fetch('https://tests.example.invalid/fixture')\""
+        }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 180,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"network-tests\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node setup.js\",\"test\":\"node -e \\\"fetch('https://tests.example.invalid/fixture')\\\"\"}}"
+        },
+        {
+          "path": "setup.js",
+          "size": 31,
+          "sha256": "dep-setup-js",
+          "flags": [],
+          "textSample": "console.log('setup complete');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "network-tests",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "unknown" },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "medium",
+      "file": "<dependency>network-tests@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

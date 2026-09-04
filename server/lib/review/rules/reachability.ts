@@ -1,18 +1,141 @@
 import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
+import { isRootGypPath } from "../../tar-parser.js";
+import { jsTokenText, tokenizeJs, type JsToken } from "../../platform/js-lexer";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 
-// Static require/import edges between files inside the package. The walk is a
-// conservative over-approximation built from relative specifiers only: bare
-// (dependency) imports and dynamic expressions cannot pull a packaged file into
-// the consumer graph, and any file we cannot prove reachable simply keeps full
-// finding severity, so misses fail toward louder findings, never quieter ones.
+// Static code-loading and execution edges between files inside the package.
+// The walk is a conservative over-approximation built from relative targets:
+// bare dependency imports and dynamic expressions cannot pull a packaged file
+// into the consumer graph, and any file we cannot prove reachable simply keeps
+// full finding severity, so misses fail toward louder findings, never quieter
+// ones.
 const RELATIVE_SPECIFIER_PATTERNS = [
-  /\brequire\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
-  /\bimport\s*\(\s*["'](\.\.?\/[^"'\n]+)["']\s*\)/g,
+  /\brequire(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
+  /\bmodule(?:\?\.)?\s*\[\s*["']require["']\s*\](?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
+  /\bimport\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`](?:\s*\)|\s*,)/g,
   /\b(?:import|export)\s+[^"'\n]*?from\s+["'](\.\.?\/[^"'\n]+)["']/g,
   /\b(?:import|export)\s+["'](\.\.?\/[^"'\n]+)["']/g,
+  // Install hooks commonly split their work across executable files without a
+  // module import. Keep statically named child-process and shell-source targets
+  // in the same conservative graph so a skipped body cannot look inspected.
+  /\b(?:execFile|execFileSync|fork|spawn|spawnSync)(?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\[\s*["'](?:execFile|execFileSync|fork|spawn|spawnSync)["']\s*\](?:\?\.)?\s*\(\s*["'`](\.\.?\/[^"'`\n]+)["'`]/g,
+  /\b(?:exec|execSync)\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
+  /\[\s*["'](?:exec|execSync)["']\s*\](?:\?\.)?\s*\(\s*["'`]\s*(\.\.?\/[^\s"'`;&|]+)/g,
+  /(?:^|[;\n&|]\s*|\b(?:then|do|else|elif)\s+)(?:source|\.)\s+["']?(\.\.?\/[^\s"';&|\n]+)/gm,
 ];
+
+const NODE_INTERPRETER_CALLEES = new Set(["execFile", "execFileSync", "spawn", "spawnSync"]);
+
+export interface NodeInterpreterArgAnalysis {
+  paths: string[];
+  hasDynamic: boolean;
+}
+
+/** Static package paths and unresolved expressions passed through a Node child-process argv. */
+export function analyzeNodeInterpreterArgs(
+  text: string,
+  inputTokens?: JsToken[],
+): NodeInterpreterArgAnalysis {
+  const tokens =
+    inputTokens ??
+    tokenizeJs(text).filter((token) => token.type !== "ws" && token.type !== "comment");
+  const paths = new Set<string>();
+  let hasDynamic = false;
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const callee = tokens[index];
+    let openIndex: number;
+    if (callee.type === "ident" && NODE_INTERPRETER_CALLEES.has(jsTokenText(text, callee))) {
+      const optionalCall = tokens[index + 1];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 2
+          : index + 1;
+    } else if (callee.type === "string" && NODE_INTERPRETER_CALLEES.has(callee.value ?? "")) {
+      const bracketOpen = tokens[index - 1];
+      const bracketClose = tokens[index + 1];
+      if (
+        bracketOpen?.type !== "punct" ||
+        jsTokenText(text, bracketOpen) !== "[" ||
+        bracketClose?.type !== "punct" ||
+        jsTokenText(text, bracketClose) !== "]"
+      ) {
+        continue;
+      }
+      const optionalCall = tokens[index + 2];
+      openIndex =
+        optionalCall?.type === "punct" && jsTokenText(text, optionalCall) === "?."
+          ? index + 3
+          : index + 2;
+    } else {
+      continue;
+    }
+    const open = tokens[openIndex];
+    const interpreter = tokens[openIndex + 1];
+    const comma = tokens[openIndex + 2];
+    if (
+      open?.type !== "punct" ||
+      jsTokenText(text, open) !== "(" ||
+      interpreter?.type !== "string" ||
+      !["node", "nodejs"].includes(interpreter.value ?? "") ||
+      comma?.type !== "punct" ||
+      jsTokenText(text, comma) !== ","
+    ) {
+      continue;
+    }
+
+    const argv = tokens[openIndex + 3];
+    // `spawn("node", options)` supplies no argv. Any other non-array value is
+    // computed and can select an omitted package file at runtime.
+    if (argv?.type === "punct" && jsTokenText(text, argv) === "{") continue;
+    if (argv?.type !== "punct" || jsTokenText(text, argv) !== "[") {
+      hasDynamic = true;
+      continue;
+    }
+
+    const literalArgs: string[] = [];
+    let closed = false;
+    for (let argIndex = openIndex + 4; argIndex < tokens.length; argIndex += 1) {
+      const arg = tokens[argIndex];
+      const value = jsTokenText(text, arg);
+      if (arg.type === "punct" && value === "]") {
+        closed = true;
+        break;
+      }
+      if (arg.type === "punct" && value === ",") continue;
+      if (arg.type === "string") {
+        literalArgs.push(arg.value ?? "");
+        continue;
+      }
+      if (arg.type === "template" && !value.includes("${")) {
+        literalArgs.push(value.slice(1, -1));
+        continue;
+      }
+      hasDynamic = true;
+    }
+    if (!closed) hasDynamic = true;
+
+    for (const [argIndex, arg] of literalArgs.entries()) {
+      const directPath = relativeNodeArgumentPath(arg);
+      if (directPath) paths.add(directPath);
+      if (["-e", "--eval", "-p", "--print"].includes(literalArgs[argIndex - 1] ?? "")) {
+        for (const path of regexRelativeSpecifiers(arg)) paths.add(path);
+      }
+    }
+  }
+
+  return { paths: [...paths], hasDynamic };
+}
+
+function relativeNodeArgumentPath(value: string): string | null {
+  if (value.startsWith("./") || value.startsWith("../")) return value;
+  const optionValue = value.slice(value.indexOf("=") + 1);
+  return optionValue !== value && (optionValue.startsWith("./") || optionValue.startsWith("../"))
+    ? optionValue
+    : null;
+}
 
 const RESOLUTION_SUFFIXES = [
   "",
@@ -65,6 +188,28 @@ export function installReachablePaths(
   const seeds = lifecycleScriptSeedPaths(files, scripts, implicitScripts);
   if (!seeds.length) return new Set();
   return javascriptReachableFrom(files, seeds);
+}
+
+/**
+ * Files an *automatic* install/build entrypoint can execute, and nothing else.
+ *
+ * Deliberately narrower than {@link consumerReachablePaths}: that set also
+ * seeds from `main`/`bin`/`exports`, which is right for "can a consumer run
+ * this at all" but wrong for "does installing this package run this". The
+ * dependency-artifact review needs the second question — a newly introduced
+ * dependency whose dropper only runs when you `require()` it is a different
+ * (and lesser) claim than one that runs on `npm install`.
+ *
+ * Same conservative posture as the consumer walk: relative static targets
+ * only, so an unproven edge keeps a finding at full severity rather than
+ * escalating it.
+ */
+export function lifecycleReachablePaths(
+  files: FileRecord[],
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): Set<string> {
+  return installReachablePaths(files, scripts, implicitScripts, "javascript");
 }
 
 function javascriptReachableFrom(files: FileRecord[], seedCandidates: string[]): Set<string> {
@@ -249,24 +394,124 @@ export function lifecycleScriptSeedPaths(
   scripts: Record<string, string>,
   implicitScripts: Record<string, string>,
 ): string[] {
+  const installCommands = consumerInstallScriptCommands(scripts, implicitScripts);
   const tokens = new Set<string>();
-  for (const script of CONSUMER_INSTALL_LIFECYCLE_SCRIPTS) {
-    const command = scripts[script];
-    if (!command || implicitScripts[script] === command) continue;
+  for (const { command } of installCommands) {
     for (const token of scriptCommandTokens(command)) tokens.add(token);
+    // Preserve shell-quoted paths containing whitespace. The regex token pass
+    // above intentionally handles unquoted command text, while these bounded
+    // shell words let `node "./payload file.js"` seed the exact packaged path.
+    for (const word of shellCommandWords(command)) tokens.add(word.replace(/^\.\//, ""));
   }
-  if (!tokens.size) return [];
-  const seeds: string[] = [];
+
+  // npm's implicit `node-gyp rebuild` does not name binding.gyp in the command,
+  // but node-gyp still reads every root gyp file and executes command
+  // substitutions inside it. Explicit lifecycle commands that invoke node-gyp
+  // have the same reachability. Seed the gyp files themselves and every package
+  // path they name so omitted action scripts cannot masquerade as complete
+  // install evidence.
+  const nodeGypRuns =
+    CONSUMER_INSTALL_LIFECYCLE_SCRIPTS.some((name) => invokesNodeGyp(implicitScripts[name])) ||
+    installCommands.some(({ command }) => invokesNodeGyp(command));
+  const seeds = new Set<string>();
+  if (nodeGypRuns) {
+    for (const file of files) {
+      if (!isRootGypPath(file.path)) continue;
+      seeds.add(stripPackagePrefix(file.path));
+      if (!file.textSample) continue;
+      for (const token of scriptCommandTokens(file.textSample)) tokens.add(token);
+    }
+  }
+
+  if (!tokens.size) return [...seeds];
   for (const file of files) {
     const candidates = scriptPathCandidates(file.path);
     for (const candidate of candidates) {
       if (tokens.has(candidate)) {
-        seeds.push(stripPackagePrefix(file.path));
+        seeds.add(stripPackagePrefix(file.path));
         break;
       }
     }
   }
-  return seeds;
+  return [...seeds];
+}
+
+function invokesNodeGyp(command: string | undefined): boolean {
+  return typeof command === "string" && /\bnode-gyp\b/i.test(command);
+}
+
+export interface ConsumerInstallScriptCommand {
+  name: string;
+  command: string;
+}
+
+// npm lifecycle hooks frequently delegate to named scripts. Those commands
+// execute in the same install chain and must seed both file reachability and
+// inline capability detection. The queue and visited set also make cycles such
+// as `setup: npm run setup` finite.
+export function consumerInstallScriptCommands(
+  scripts: Record<string, string>,
+  implicitScripts: Record<string, string>,
+): ConsumerInstallScriptCommand[] {
+  const queue = [...CONSUMER_INSTALL_LIFECYCLE_SCRIPTS].map((name) => ({ name, root: true }));
+  const seen = new Set<string>();
+  const commands: ConsumerInstallScriptCommand[] = [];
+  while (queue.length) {
+    const next = queue.shift();
+    if (!next || seen.has(next.name)) continue;
+    seen.add(next.name);
+    const command = scripts[next.name];
+    if (!command || (next.root && implicitScripts[next.name] === command)) continue;
+    commands.push({ name: next.name, command });
+    for (const name of npmRunScriptNames(command, scripts)) {
+      // `npm run setup` also invokes `presetup` and `postsetup` when declared.
+      // Queue all three explicitly; `seen` prevents cycles and repeated work.
+      queue.push(
+        { name: `pre${name}`, root: false },
+        { name, root: false },
+        { name: `post${name}`, root: false },
+      );
+    }
+  }
+  return commands;
+}
+
+function npmRunScriptNames(command: string, scripts: Record<string, string>): string[] {
+  const names = new Set<string>();
+  // npm accepts config flags before or after the subcommand (`npm --silent run
+  // setup`, `npm run --silent setup`). Inspect every non-option word after the
+  // run command that names a declared script. This is intentionally
+  // conservative around config options with separate values: an extra
+  // statically-reachable script is safer than letting flag placement hide the
+  // install chain.
+  const words = shellCommandWords(command);
+  for (let npmIndex = 0; npmIndex < words.length; npmIndex += 1) {
+    if (words[npmIndex] !== "npm") continue;
+    const invocationEnd = words.findIndex(
+      (word, index) => index > npmIndex && SHELL_COMMAND_OPERATORS.has(word),
+    );
+    const end = invocationEnd === -1 ? words.length : invocationEnd;
+    const runOffset = words
+      .slice(npmIndex + 1, end)
+      .findIndex((word) => word === "run" || word === "run-script");
+    const runIndex = runOffset === -1 ? -1 : npmIndex + 1 + runOffset;
+    if (runIndex === -1) continue;
+    for (const word of words.slice(runIndex + 1, end)) {
+      if (word === "--") break;
+      if (word.startsWith("-") || !Object.hasOwn(scripts, word)) continue;
+      names.add(word);
+    }
+  }
+  return [...names];
+}
+
+const SHELL_COMMAND_OPERATORS = new Set([";", "&&", "||", "|"]);
+
+/** Bounded shell words/operators used by install-command reachability checks. */
+export function shellCommandWords(value: string): string[] {
+  return [...value.matchAll(/"([^"\n]*)"|'([^'\n]*)'|(&&|\|\||[;&|])|([^\s;&|]+)/g)].map(
+    (match) => match[1] ?? match[2] ?? match[3] ?? match[4],
+  );
 }
 
 export function scriptPathCandidates(path: string): Set<string> {
@@ -289,6 +534,10 @@ export function scriptCommandTokens(command: string): string[] {
 }
 
 function relativeSpecifiers(text: string): string[] {
+  return [...regexRelativeSpecifiers(text), ...analyzeNodeInterpreterArgs(text).paths];
+}
+
+function regexRelativeSpecifiers(text: string): string[] {
   const specifiers: string[] = [];
   for (const pattern of RELATIVE_SPECIFIER_PATTERNS) {
     pattern.lastIndex = 0;

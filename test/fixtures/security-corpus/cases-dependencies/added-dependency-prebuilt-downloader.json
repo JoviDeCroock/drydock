@@ -1,0 +1,68 @@
+{
+  "id": "added-dependency-prebuilt-downloader",
+  "title": "A dependency that downloads a prebuilt binary on install is high, not critical",
+  "category": "dependency-introduction",
+  "intent": "The deliberate loud case, and the one most likely to be argued with. prebuild-install / node-pre-gyp style packages fetch a platform binary during install; a dropper fetching a payload looks identical to a scanner. Both mean every consumer install now makes a network request the previous release did not, which is worth a maintainer reading once — so this blocks approval. It stays a tier below the remote-shell dropper because plain HTTPS download has a benign reading and `critical` has to keep meaning that nothing does.",
+  "previousPackageJson": { "name": "media-kit", "version": "4.2.0", "main": "index.js" },
+  "stagedPackageJson": {
+    "name": "media-kit",
+    "version": "4.3.0",
+    "main": "index.js",
+    "dependencies": { "prebuilt-codec": "^2.1.0" }
+  },
+  "dependencyArtifacts": {
+    "prebuilt-codec": {
+      "version": "2.1.4",
+      "packageJson": {
+        "name": "prebuilt-codec",
+        "version": "2.1.4",
+        "main": "index.js",
+        "scripts": { "install": "node scripts/download.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 160,
+          "sha256": "dep-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"prebuilt-codec\",\"version\":\"2.1.4\",\"main\":\"index.js\",\"scripts\":{\"install\":\"node scripts/download.js\"}}"
+        },
+        {
+          "path": "scripts/download.js",
+          "size": 220,
+          "sha256": "dep-download-js",
+          "flags": [],
+          "textSample": "const { createWriteStream } = require('fs');\nconst url = `https://binaries.example.invalid/codec-${process.platform}.node`;\nfetch(url).then((res) => res.body.pipeTo(createWriteStream('build/codec.node')));\n"
+        },
+        {
+          "path": "index.js",
+          "size": 60,
+          "sha256": "dep-index-js",
+          "flags": [],
+          "textSample": "module.exports = require('./build/codec.node');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "prebuilt-codec",
+      "section": "dependencies",
+      "declaredSpec": "^2.1.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "2.1.4",
+      "observation": { "execution": "observed", "risk": "observed" },
+      "automaticExecution": [{ "kind": "script", "name": "install" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>prebuilt-codec@2.1.4:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

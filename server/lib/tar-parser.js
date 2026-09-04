@@ -2055,6 +2055,14 @@ export function parsePackageJson(files) {
     const parsed = JSON.parse(pkg.textSample);
     if (!isPlainObject(parsed)) return null;
     const scripts = normalizeStringRecord(parsed.scripts);
+    const bundleDependencies =
+      typeof parsed.bundleDependencies === "boolean"
+        ? parsed.bundleDependencies
+        : normalizeStringList(parsed.bundleDependencies);
+    const bundledDependencies =
+      typeof parsed.bundledDependencies === "boolean"
+        ? parsed.bundledDependencies
+        : normalizeStringList(parsed.bundledDependencies);
     const npmAddsNodeGypInstall = hasImplicitNodeGypInstall(files, parsed);
     return {
       name: parsed.name,
@@ -2069,6 +2077,12 @@ export function parsePackageJson(files) {
       peerDependencies: parsed.peerDependencies || {},
       peerDependenciesMeta: normalizePeerDependenciesMeta(parsed.peerDependenciesMeta),
       optionalDependencies: parsed.optionalDependencies || {},
+      ...(typeof bundleDependencies === "boolean" || bundleDependencies.length
+        ? { bundleDependencies }
+        : {}),
+      ...(typeof bundledDependencies === "boolean" || bundledDependencies.length
+        ? { bundledDependencies }
+        : {}),
       ...(normalizeStringList(parsed.files).length
         ? { files: normalizeStringList(parsed.files) }
         : {}),

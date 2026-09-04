@@ -9,6 +9,8 @@ export interface PackageJsonSummary {
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   optionalDependencies?: Record<string, string>;
+  bundleDependencies?: string[] | boolean;
+  bundledDependencies?: string[] | boolean;
   files?: string[];
   bin?: string | Record<string, string>;
   main?: string;
@@ -32,6 +34,7 @@ export interface PackageJsonDiffEntry {
   previouslyDeclared?: true;
   previouslyInstalled?: true;
   previousInstalledSpec?: string;
+  previousRequiredPeerSpec?: string;
   previousDeclaredSpecs?: string[];
   previousPeerOptional?: true;
   stagedPeerOptional?: true;
@@ -114,14 +117,28 @@ function diffDependencySections(
       const previouslyDeclared = DEPENDENCY_SECTIONS.some(
         (candidate) => entry.key in (previousPkg?.[candidate] || {}),
       );
-      const previouslyInstalled = INSTALLING_DEPENDENCY_SECTIONS.some(
-        (candidate) => entry.key in (previousPkg?.[candidate] || {}),
-      );
+      const previouslyInstalled =
+        INSTALLING_DEPENDENCY_SECTIONS.some(
+          (candidate) => entry.key in (previousPkg?.[candidate] || {}),
+        ) ||
+        (entry.key in (previousPkg?.peerDependencies || {}) &&
+          !isOptionalPeer(previousPkg, entry.key));
+      const previousRequiredPeerSpec =
+        previousPkg?.peerDependencies?.[entry.key] !== undefined &&
+        !isOptionalPeer(previousPkg, entry.key)
+          ? previousPkg.peerDependencies[entry.key]
+          : undefined;
       const previousInstalledSpec =
         section === "optionalDependencies"
           ? (previousPkg?.optionalDependencies?.[entry.key] ??
             previousPkg?.dependencies?.[entry.key])
-          : undefined;
+          : section === "peerDependencies"
+            ? (previousPkg?.optionalDependencies?.[entry.key] ??
+              previousPkg?.dependencies?.[entry.key])
+            : previousRequiredPeerSpec !== undefined
+              ? (previousPkg?.optionalDependencies?.[entry.key] ??
+                previousPkg?.dependencies?.[entry.key])
+              : undefined;
       const previousDeclaredSpecs =
         entry.status === "added" && section === "peerDependencies"
           ? DEPENDENCY_SECTIONS.flatMap((candidate) => {
@@ -142,8 +159,16 @@ function diffDependencySections(
         ...(entry.status === "added" && previouslyInstalled
           ? { previouslyInstalled: true as const }
           : {}),
-        ...(entry.status === "added" && previousInstalledSpec !== undefined
+        ...((entry.status === "added" ||
+          (section === "peerDependencies" &&
+            entry.status === "modified" &&
+            previousPeerOptional &&
+            !stagedPeerOptional)) &&
+        previousInstalledSpec !== undefined
           ? { previousInstalledSpec }
+          : {}),
+        ...(entry.status === "added" && previousRequiredPeerSpec !== undefined
+          ? { previousRequiredPeerSpec }
           : {}),
         ...(previousDeclaredSpecs.length ? { previousDeclaredSpecs } : {}),
         ...(previousPeerOptional ? { previousPeerOptional: true as const } : {}),
@@ -157,6 +182,26 @@ function diffDependencySections(
     ...sectionEntries("optionalDependencies"),
     ...sectionEntries("peerDependencies"),
   ].sort((a, b) => a.key.localeCompare(b.key) || a.section.localeCompare(b.section));
+}
+
+// npm tolerates insignificant surrounding whitespace in dependency specs. Keep
+// relocation checks conservative: only an unchanged declaration is considered
+// already reviewed; a different range may resolve different package bytes.
+export function dependencySpecsEqual(left: string | undefined, right: string | undefined): boolean {
+  return left !== undefined && right !== undefined && left.trim() === right.trim();
+}
+
+export function dependencyWasInstalledAtStagedSpec(entry: PackageJsonDiffEntry): boolean {
+  if (!entry.previouslyInstalled) return false;
+  const previousSpecs = [entry.previousInstalledSpec, entry.previousRequiredPeerSpec].filter(
+    (spec): spec is string => spec !== undefined,
+  );
+  // Preserve compatibility with older/manually-created diff payloads that
+  // carry the boolean but predate spec provenance.
+  return (
+    previousSpecs.length === 0 ||
+    previousSpecs.some((spec) => dependencySpecsEqual(spec, entry.staged))
+  );
 }
 
 function isOptionalPeer(pkg: PackageJsonSummary | null | undefined, key: string): boolean {
