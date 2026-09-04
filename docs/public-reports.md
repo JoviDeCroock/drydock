@@ -55,7 +55,9 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
   organization/user identifiers. The export carries an additive nullable
   `capabilities` field (advisory per-side capability sets and their delta; see
   `server/lib/review/capabilities.ts`); older scans export `null`, so the schema
-  tag is unchanged.
+  tag is unchanged. Gate reports also expose nullable
+  `scan.registryVerifiedAt`; it becomes non-null only after the published
+  registry artifact set matches the persisted provenance digests.
   `x-drydock-share-includes-files: 1|0` says whether this share opted into file
   samples without changing the canonical, attested report bytes.
 - `GET /public/reports/:token/file?path=` — one redacted staged file sample, so
@@ -195,14 +197,13 @@ the value the badge itself uses.
 
 **Verified and unverified badges are visibly different.** Among listed
 candidates the newest **registry-verified** review wins (see package identity
-below), so on npm a workflow-gate scan claiming someone else's name cannot
-displace the real maintainer's staged review. That preference is only a
-tiebreak, and it does not generalize: only npm has a staged adapter, so every
-PyPI and VS Code review is a workflow gate and is _always_ manifest-claimed —
-there is never a registry-verified row to prefer. A manifest-claimed pick
-therefore renders as `drydock (unverified)` and never takes the clean green
-low-risk color, because anyone can build an artifact whose manifest claims any
-name, and a badge is read by people who will not open the report behind it.
+below), so a workflow-gate scan claiming someone else's name cannot displace a
+review whose exact artifact set the registry confirmed. A gate scan remains
+manifest-claimed until the asynchronous post-publish check succeeds. A
+manifest-claimed pick renders as `drydock (unverified)` and never takes the
+clean green low-risk color, because anyone can build an artifact whose manifest
+claims any name, and a badge is read by people who will not open the report
+behind it.
 
 **A tiebreak is not enough for a published-pair review, so it is not a badge
 candidate at all.** Ranking a `public-review` row last would still let it
@@ -281,16 +282,16 @@ Each feed entry carries `packageIdentity`, which says what the scan's source
 proves about the reviewer's relationship to the package name — never about the
 quality of the review:
 
-- `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`).
+- `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`),
+  plus workflow-gate reviews whose complete post-publish registry digest set
+  matches the reviewed provenance.
   The artifact was fetched from the registry with the org's npm token, and the
   registry accepted that token for that exact name, so it proved the org can
   publish under it. This is the only identity backed by a credential, and the
   only one the badge treats as authoritative.
-- `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
-  repo-built and its manifest claims the name; nothing verifies ownership yet.
-  Consumers should weigh these accordingly. (Known limitation: post-publish
-  digest verification against the registry would upgrade gate claims; not
-  built yet.)
+- `manifest-claimed` — workflow-gate reviews still waiting for that check, or
+  whose registry bytes did not match. The repo-built artifact claims the name,
+  but consumers should not treat that claim as registry-confirmed.
 - `public-review` — published-pair reviews, and the fail-closed default for any
   source not classified above. The bytes really are the registry's, but nothing
   connects the reviewing organization to the package: the scan needs no

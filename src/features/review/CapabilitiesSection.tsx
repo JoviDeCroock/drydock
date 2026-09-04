@@ -1,5 +1,5 @@
 import type { Capability, CapabilityDelta } from "../../../server/lib/review";
-import { Badge } from "../../components/Badge";
+import { Badge, type BadgeTone } from "../../components/Badge";
 import { Muted, SectionLabel } from "../../components/Typography";
 
 // Reader-facing names for the capability keys. Kept short: these render as a
@@ -27,6 +27,7 @@ const CAPABILITY_LABELS: Record<Capability, string> = {
 export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
   const escalations = new Set(delta.escalations);
   const carried = delta.to.capabilities.filter((capability) => !escalations.has(capability));
+  const emptyState = capabilityEmptyState(delta);
 
   return (
     <section class="flex flex-col gap-3 min-w-0">
@@ -42,7 +43,7 @@ export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
             {CAPABILITY_LABELS[capability]}
           </Badge>
         ))}
-        {!delta.to.capabilities.length ? <Badge tone="ok">none detected</Badge> : null}
+        {emptyState ? <Badge tone={emptyState.tone}>{emptyState.label}</Badge> : null}
       </div>
       <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
         {capabilityDeltaDescription(delta)}
@@ -78,6 +79,15 @@ export function capabilityDeltaDescription(delta: CapabilityDelta): string {
   }
   parts.push("Derived from the same patterns the deterministic rules match; advisory only.");
   return parts.join(" ");
+}
+
+export function capabilityEmptyState(
+  delta: CapabilityDelta,
+): { tone: BadgeTone; label: string } | null {
+  if (delta.to.capabilities.length) return null;
+  return delta.to.complete
+    ? { tone: "ok", label: "none detected" }
+    : { tone: "neutral", label: "inspection incomplete" };
 }
 
 // A persisted scan's capability delta is bound to the baseline selected when

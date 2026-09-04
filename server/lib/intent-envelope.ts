@@ -55,8 +55,8 @@ export interface IntentEnvelopeInput {
 
 const INTENT_ENVELOPE_TIERS: ReadonlySet<string> = new Set(["attested", "declared", "absent"]);
 
-// Hosts whose canonical repository identity is exactly `owner/repo`; extra
-// path segments (tree/…, monorepo directories) are trimmed to that identity.
+// Hosts whose canonical repository identity is case-insensitive `owner/repo`;
+// extra path segments (tree/…, monorepo directories) are trimmed to that identity.
 // GitLab is handled separately because nested groups are part of a project's
 // canonical identity (`group/subgroup/project`).
 const OWNER_REPO_HOSTS: ReadonlySet<string> = new Set(["github.com", "bitbucket.org"]);
@@ -120,7 +120,7 @@ function hostPathToUrl(host: string, path: string): string | null {
   if (!normalizedHost || !normalizedHost.includes(".")) return null;
   let segments = path.replace(/^\/+/, "").replace(/\/+$/, "").split("/").filter(Boolean);
   if (OWNER_REPO_HOSTS.has(normalizedHost)) {
-    segments = segments.slice(0, 2);
+    segments = segments.slice(0, 2).map((segment) => segment.toLowerCase());
   } else if (normalizedHost === "gitlab.com") {
     // GitLab browser URLs put revision/file paths after `/-/`; everything
     // before that marker is the namespace + project identity.

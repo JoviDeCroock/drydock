@@ -128,7 +128,7 @@ export function pickVscodeBaselineVersion(
   };
 }
 
-function vscodeVsixAssetUrl(version: VscodeMarketplaceVersion): string | null {
+export function vscodeVsixAssetUrl(version: VscodeMarketplaceVersion): string | null {
   for (const file of version.files) {
     if (file.assetType !== MARKETPLACE_VSIX_ASSET_TYPE || !file.source) continue;
     return isAllowedVscodeArtifactUrl(file.source) ? file.source : null;

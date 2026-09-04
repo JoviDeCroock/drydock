@@ -27,6 +27,7 @@ import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
 import type { ScanInput } from "../../types";
 import { recordProductEvent } from "../platform/analytics";
+import type { RegistryVerificationQueueMessage } from "../workflow-gates/registry-verification";
 
 export interface ScanQueueMessage extends ScanInput {
   scanId: string;
@@ -47,7 +48,16 @@ export interface WorkflowGateQueueMessage {
   gateId: string;
 }
 
-export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
+export type QueueMessage =
+  | ScanQueueMessage
+  | WorkflowGateQueueMessage
+  | RegistryVerificationQueueMessage;
+
+export function isRegistryVerificationMessage(
+  message: QueueMessage,
+): message is RegistryVerificationQueueMessage {
+  return "kind" in message && message.kind === "registry_verification";
+}
 
 export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
   return "kind" in message && message.kind === "workflow_gate";

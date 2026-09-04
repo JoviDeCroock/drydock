@@ -5,8 +5,7 @@ import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeCapabilityDelta } from "../review";
 import { normalizeReleaseConsistency } from "./release-memory";
-import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
-import { isEcosystemId } from "../ecosystems/labels";
+import { extractReleaseProvenance } from "../ecosystems/provenance";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
 import { canonicalJson } from "../platform/canonical-json";
 
@@ -49,6 +48,7 @@ export function buildReportExport(detail: ScanDetail) {
       source: scan.source,
       risk: scan.risk,
       decision: scan.decision ?? null,
+      registryVerifiedAt: toIso(scan.registryVerifiedAt),
       createdAt: toIso(scan.createdAt),
       completedAt: toIso(scan.completedAt),
     },
@@ -68,7 +68,7 @@ export function buildReportExport(detail: ScanDetail) {
     // from the immutable release bytes, so a consumer can verify the published
     // wheel/sdist/tarball matches what Drydock reviewed. Workflow-gate reviews
     // only; null for staged-publish scans.
-    provenance: extractProvenance(summary.stagedPublish),
+    provenance: extractReleaseProvenance(summary.stagedPublish),
     // Advisory source-binding tier (attested / declared / absent). Additive and
     // optional: scans persisted before the envelope existed export `null`.
     intentEnvelope: normalizeIntentEnvelope(summary.intentEnvelope),
@@ -174,33 +174,6 @@ function exportReleaseConsistency(raw: unknown) {
   if (!consistency) return null;
   const { priorScanId: _priorScanId, decidedAt: _decidedAt, ...exported } = consistency;
   return exported;
-}
-
-// Pull the provenance block out of the persisted, adapter-shaped staged details.
-// The shape is re-validated rather than trusted so a malformed or pre-provenance
-// record exports as `null` instead of leaking partial data.
-function extractProvenance(stagedPublish: unknown): ReleaseProvenance | null {
-  if (!isRecord(stagedPublish)) return null;
-  const provenance = stagedPublish.provenance;
-  if (!isRecord(provenance)) return null;
-  const { ecosystem, mode, artifacts } = provenance;
-  if (typeof ecosystem !== "string" || !isEcosystemId(ecosystem) || mode !== "workflow_gate") {
-    return null;
-  }
-  if (!Array.isArray(artifacts)) return null;
-  const mapped: ReleaseProvenanceArtifact[] = [];
-  for (const artifact of artifacts) {
-    if (!isRecord(artifact)) return null;
-    const { path, kind, sha256 } = artifact;
-    if (typeof path !== "string" || typeof sha256 !== "string") return null;
-    if (kind === "tarball" || kind === "wheel" || kind === "sdist" || kind === "vsix") {
-      mapped.push({ path, kind, sha256 });
-      continue;
-    }
-    return null;
-  }
-  if (!mapped.length) return null;
-  return { ecosystem, mode, artifacts: mapped };
 }
 
 function extractArtifactIntegrity(stagedPublish: unknown) {

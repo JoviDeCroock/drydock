@@ -1,4 +1,9 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
+import { createNpmBroker } from "./broker";
+import { getNpmConnectionAuthority } from "../../../db/npm-connections";
+import { allowInsecureLocalRegistry, normalizeRegistryUrl } from "./connection";
+import { downloadPublishedTarball } from "./published-tarball";
+import { fetchPackageMetadataCached } from "./registry-cache";
 import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
@@ -44,6 +49,66 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
 
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     return deriveNpmReleaseCandidates(artifacts);
+  },
+
+  async verifyPublishedRelease(ctx, input) {
+    let broker: ReturnType<typeof createNpmBroker> | null = null;
+    try {
+      let published: Awaited<ReturnType<typeof downloadPublishedTarball>> | undefined;
+      const allowInsecureLocalhost = allowInsecureLocalRegistry(ctx.env);
+      const deploymentRegistry = normalizeRegistryUrl(ctx.env.NPM_REGISTRY, {
+        allowInsecureLocalhost,
+      });
+      const authority = await getNpmConnectionAuthority(ctx.db, ctx.organizationId);
+      const organizationRegistry = authority?.registryUrl ?? null;
+      const sameRegistryAuthority =
+        organizationRegistry !== null &&
+        normalizeRegistryUrl(organizationRegistry, { allowInsecureLocalhost }) ===
+          deploymentRegistry;
+      // An organization connection chooses the registry authority. Absence or a
+      // transient error on that registry must stay pending there: falling
+      // through to the worker-wide registry leaks private names and can compare
+      // the gate against an unrelated public package with the same identity.
+      if (authority && (authority.validationStatus === "valid" || !sameRegistryAuthority)) {
+        broker = createNpmBroker(
+          { ...ctx, session: { userId: "registry-verification" } },
+          { organizationId: ctx.organizationId, registryUrl: authority.registryUrl },
+        );
+        const metadata = await broker.fetchPackageMetadata(input.packageName);
+        const tarballUrl = metadata?.versions?.[input.version]?.dist?.tarball;
+        if (tarballUrl) {
+          published = await broker.downloadPublished(tarballUrl, { maxFiles: 1 });
+        } else if (!sameRegistryAuthority) {
+          return { status: "not_published" };
+        }
+      }
+      if (!published) {
+        // A public gate still requires no npm connection. Only the complete
+        // absence of an organization authority, or a connection to this exact
+        // same registry, selects the credential-free deployment path.
+        const metadata = await fetchPackageMetadataCached(ctx.env, ctx.executionCtx, {
+          packageName: input.packageName,
+          registryUrl: deploymentRegistry,
+          cacheScope: "registry-verification:public",
+          abbreviated: true,
+        });
+        const tarballUrl = metadata.versions?.[input.version]?.dist?.tarball;
+        if (!tarballUrl) return { status: "not_published" };
+        published = await downloadPublishedTarball(ctx.env, ctx.executionCtx, tarballUrl, {
+          registryUrl: deploymentRegistry,
+          allowInsecureLocalhost,
+          maxFiles: 1,
+        });
+      }
+      if (!published.archiveSha256) throw new Error("published npm tarball digest unavailable");
+      const reviewedDigests = input.artifacts.map((artifact) => artifact.sha256).sort();
+      const publishedDigests = [published.archiveSha256.toLowerCase()];
+      return reviewedDigests.length === 1 && reviewedDigests[0] === publishedDigests[0]
+        ? { status: "verified" }
+        : { status: "mismatch", reviewedDigests, publishedDigests };
+    } finally {
+      await broker?.dispose();
+    }
   },
 };
 

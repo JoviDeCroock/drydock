@@ -16,6 +16,7 @@ atpm has no gate. Its releases are reviewed through an anonymous link from atpm'
 6. A queue worker runs the shared scan pipeline for each candidate.
 7. A maintainer accepts or rejects the gate review in Drydock.
 8. Drydock posts the deployment-protection decision back to GitHub; the workflow either continues to publish or fails closed.
+9. After an approval callback succeeds, Drydock queues a delayed registry digest check. The scheduled Worker sweep re-enqueues any approved scans that are still waiting, so a lost message or a release that was not immediately visible cannot silently skip verification.
 
 The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
@@ -165,6 +166,14 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 - Package identity comes from artifact metadata, not GitHub paths or artifact names alone.
 - If artifact resolution, baseline acquisition, validation, scan, or callback fails, the gate remains blocked or is rejected; do not fail open.
 - Drydock never publishes. It only posts the GitHub deployment-protection decision.
+
+## Post-publish registry verification
+
+An approved gate begins with a **manifest-claimed** package identity: Drydock proved what bytes the workflow supplied, but the registry has not yet proved that this organization published those bytes under the claimed name. The delayed verification job compares the persisted provenance artifact set with the published release: npm and VS Code hash the registry-served archive bytes, while PyPI compares the complete set of registry-recorded SHA-256 digests.
+
+When every digest matches, `scans.registry_verified_at` records the trust transition and public feed/badge projections report the gate scan as **registry-verified**. This timestamp is also part of the report export. Badge candidate ranking mirrors the same rule in SQL so a bounded candidate page cannot discard a verified gate scan behind newer unverified claims.
+
+Registry absence and transient fetch failures remain pending and are retried by the 15-minute cron backstop for seven days after approval. The bounded sweep runs never-attempted gates first and then rotates oldest attempts, so a long-lived unpublished release cannot monopolize the page and starve newer gates. Multi-file registries can expose a partially uploaded release, so the first observed disagreement starts a durable 15-minute propagation grace period (the approval timestamp is not used because GitHub callback delivery can delay the start of publishing). A disagreement that survives the grace period writes one durable `scan.registry_digest_mismatch` event and emits the `workflow_gate.registry_digest_mismatch` error alarm with package/version and the reviewed/published digest sets. The mismatch event and `registry_verified_at` are mutually exclusive terminal transitions, so overlapping at-least-once queue deliveries cannot persist both outcomes or upgrade a terminal mismatch.
 
 ## Maintainer workbench
 

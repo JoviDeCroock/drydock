@@ -75,6 +75,7 @@ async function seedCompletedScan(
     ecosystem?: "npm" | "pypi" | "vscode";
     source?: "manual" | "workflow_gate" | "published";
     registryUrl?: string;
+    registryVerifiedAt?: Date;
     // The dist-tag the release was staged under. Only npm staged-publish scans
     // carry one; omitted means a review that was never staged under a tag.
     tag?: string;
@@ -177,6 +178,12 @@ async function seedCompletedScan(
     },
     report: { version: 1, digest: "abc123" },
   });
+  if (options.registryVerifiedAt) {
+    await db
+      .update(schema.scans)
+      .set({ registryVerifiedAt: options.registryVerifiedAt })
+      .where(eq(schema.scans.id, scanId));
+  }
   return scanId;
 }
 
@@ -408,11 +415,7 @@ describe("shields badge endpoint", () => {
     });
   });
 
-  test("PyPI and VS Code badges are always labelled unverified", async () => {
-    // Only npm has a staged adapter, so every PyPI and VS Code review is a
-    // workflow gate and can never be registry-verified. The "verified wins"
-    // tiebreak has nothing to prefer there, which makes the label the only
-    // thing separating a maintainer's review from anyone's claim on the name.
+  test("PyPI and VS Code badges stay unverified until the registry digest matches", async () => {
     for (const ecosystem of ["pypi", "vscode"] as const) {
       const claimant = await seedUser();
       const claimantApp = buildTestApp(claimant);
@@ -428,6 +431,13 @@ describe("shields badge endpoint", () => {
       const badge = await fetchBadge(claimantApp, ecosystem, packageName);
       expect(badge.body.label).toBe("drydock (unverified)");
       expect(badge.body.color).toBe("lightgrey");
+
+      await env.DB.prepare("UPDATE scans SET registry_verified_at = ? WHERE id = ?")
+        .bind(Date.now(), scanId)
+        .run();
+      const verified = await fetchBadge(claimantApp, ecosystem, packageName, { cached: false });
+      expect(verified.body.label).toBe("drydock");
+      expect(verified.body.color).toBe("brightgreen");
     }
   });
 
