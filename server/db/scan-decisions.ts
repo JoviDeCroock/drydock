@@ -9,6 +9,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
+import { scanEcosystem } from "../lib/public-feed";
 import { recordProductEvent } from "../lib/platform/analytics";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -66,6 +67,8 @@ export async function recordScanDecision(
       risk: scans.risk,
       riskSummaryJson: scans.riskSummaryJson,
       aiJson: scans.aiJson,
+      source: scans.source,
+      summaryJson: scans.summaryJson,
     });
 
   if (updated.length === 0) return null;
@@ -78,12 +81,14 @@ export async function recordScanDecision(
     metadata: { decision: input.decision, reason },
   });
 
-  // Always npm here: this is the staged-publish decision route. Gated releases
-  // decide through `recordGatePackageDecision` below and report `gate`.
+  // Staged publishes are npm-only, but a published-pair review reaches this
+  // route for any ecosystem with a public-diff adapter, so the counter reads
+  // the scan rather than assuming. Gated releases decide through
+  // `recordGatePackageDecision` below and report `gate`.
   recordDecisionEvent(env, updated[0], {
     organizationId: input.organizationId,
     decision: input.decision,
-    ecosystem: "npm",
+    ecosystem: scanEcosystem(updated[0].source, updated[0].summaryJson) ?? "npm",
     now,
   });
 

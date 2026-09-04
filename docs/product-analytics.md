@@ -77,9 +77,13 @@ every event except `scan.decided`, where it is a human hold time — also in
 milliseconds, but on a scale of hours or days. A dataset-wide
 `quantile(0.95)(double1)` mixes the two; always filter by `blob2` first.
 
-**Ecosystem on `scan.decided` is the decision path, not the registry.** The
-staged-publish route reports `npm`; every gated decision reports `gate`,
-because the gate decision route resolves a package scan rather than an adapter.
+**Ecosystem on `scan.decided` is the decision path, not the registry.** Every
+gated decision reports `gate`, because the gate decision route resolves a
+package scan rather than an adapter. The other route reports the reviewed
+ecosystem: always `npm` for a staged publish, and `npm`/`pypi` for a
+published-pair review. It reported a literal `npm` before published-pair
+reviews shipped, so rows written then are indistinguishable from staged npm
+rows — which is correct, they were.
 
 **`blob4` on the scan-lifecycle events is only as specific as the path knows.**
 `scan.queued`, `scan.failed`, and `scan.discarded` reported a literal `npm`

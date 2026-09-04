@@ -106,7 +106,8 @@ for the most recent **feed-listed** review of that package's release line:
 
 The badge is a name-discoverable index, so it takes the same second opt-in as
 the threat feed — a report shared privately by link never becomes queryable by
-package name.
+package name. **Published-pair reviews never answer it at all** — see package
+identity below.
 
 ### Release lines (`?tag=`)
 
@@ -154,6 +155,16 @@ there is never a registry-verified row to prefer. A manifest-claimed pick
 therefore renders as `drydock (unverified)` and never takes the clean green
 low-risk color, because anyone can build an artifact whose manifest claims any
 name, and a badge is read by people who will not open the report behind it.
+
+**A tiebreak is not enough for a published-pair review, so it is not a badge
+candidate at all.** Ranking a `public-review` row last would still let it
+answer for a package nobody else has reviewed, and starting one needs no
+credential and no relationship to the package — any account can review any
+public release. That is a forged approval for a name the reviewer has no claim
+on. Two locks enforce it: `badgeLookupKey` gives such a scan no
+`public_package_key` on listing, so it never enters the badge index, and
+`listBadgeCandidateScans` excludes the source in SQL so a row that acquired a
+key some other way still never reaches `pickBadgeScan`.
 
 Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`
@@ -218,24 +229,45 @@ same persisted state and the 409 does not claim to tell them apart.
 
 ### Package identity
 
-Each feed entry carries `packageIdentity`:
+Each feed entry carries `packageIdentity`, which says what the scan's source
+proves about the reviewer's relationship to the package name — never about the
+quality of the review:
 
-- `registry-verified` — staged-publish reviews. The artifact was fetched from
-  the registry with the org's npm token, so the registry proved the org can
-  publish under that name.
+- `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`).
+  The artifact was fetched from the registry with the org's npm token, and the
+  registry accepted that token for that exact name, so it proved the org can
+  publish under it. This is the only identity backed by a credential, and the
+  only one the badge treats as authoritative.
 - `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
   repo-built and its manifest claims the name; nothing verifies ownership yet.
   Consumers should weigh these accordingly. (Known limitation: post-publish
   digest verification against the registry would upgrade gate claims; not
   built yet.)
+- `public-review` — published-pair reviews, and the fail-closed default for any
+  source not classified above. The bytes really are the registry's, but nothing
+  connects the reviewing organization to the package: the scan needs no
+  credential and any account can run one against any public release. Such a
+  review is shareable and feed-listable — publishing a review of a compromised
+  public release is exactly what the feed is for — but it is never
+  badge-discoverable, so it cannot render or displace an approval badge under
+  someone else's name.
 
-`ecosystem` is `null` when a gate scan's provenance snapshot never established
-one — a legacy pre-provenance record, or a redaction that failed. Such a scan
-can still be feed-listed, but it is not badge-discoverable under any ecosystem:
-defaulting an unknown to npm would let a PyPI or VS Code release take the npm
-badge for its own name, in the one ecosystem where a registry-verified review
-exists to be displaced. Partners should treat a null `ecosystem` as unknown
-rather than assuming npm.
+`scanPackageIdentity` allowlists the credential-backed sources rather than
+excluding the untrusted ones, so a scan source added later inherits
+`public-review` until it is classified deliberately. `SCAN_SOURCES` is asserted
+against that classifier in `test/workers/threat-feed-badge.test.ts`.
+
+`ecosystem` is `null` when nothing established one — a gate scan whose
+provenance snapshot is missing (a legacy pre-provenance record, or a redaction
+that failed), or a published-pair review of an ecosystem outside `npm`, `pypi`,
+and `vscode`. Only the staged sources fall back to npm, because npm is the sole
+staged ecosystem and pre-provenance staged rows carry no other clue; a
+published-pair review names its own ecosystem in its summary and is never
+guessed. Defaulting an unknown to npm would let a PyPI or VS Code release take
+the npm badge for its own name, in the one ecosystem where a registry-verified
+review exists to be displaced. Such a scan can still be feed-listed, but it is
+not badge-discoverable under any ecosystem. Partners should treat a null
+`ecosystem` as unknown rather than assuming npm.
 
 ### Caching
 

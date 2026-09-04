@@ -1,10 +1,11 @@
-import { and, desc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
 import {
+  BADGE_INELIGIBLE_SOURCES,
   DEFAULT_BADGE_TAG,
+  badgeEcosystem,
   publicPackageLookupKey,
   scanDistTag,
-  scanEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -215,11 +216,11 @@ export async function revokePublicShare(
 
 /**
  * The badge cache key a row occupies, or null when it can never occupy one —
- * no package name, or a gate scan whose provenance never established an
- * ecosystem. Same rule as the key written on listing, so a purge always
- * addresses the entry the write created. Exported for the decision routes,
- * which purge a listed scan's badge when the recorded decision changes what
- * the cached payload asserts.
+ * no package name, a source that may not answer the name-keyed badge index, or
+ * a scan whose ecosystem was never established. Same rule as the key written on
+ * listing, so a purge always addresses the entry the write created. Exported
+ * for the decision routes, which purge a listed scan's badge when the recorded
+ * decision changes what the cached payload asserts.
  */
 export function badgeLookupKey(row: {
   source: string;
@@ -227,7 +228,7 @@ export function badgeLookupKey(row: {
   summaryJson: unknown;
 }): string | null {
   if (!row.packageName) return null;
-  const ecosystem = scanEcosystem(row.source, row.summaryJson);
+  const ecosystem = badgeEcosystem(row.source, row.summaryJson);
   return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
 }
 
@@ -443,6 +444,11 @@ export async function listBadgeCandidateScans(
   // burst of newer manifest-claimed gate scans could crowd the verified review
   // out of the result set before pickBadgeScan gets a chance to prefer it.
   const packageIdentityPriority = sql<number>`CASE WHEN ${scans.source} = 'workflow_gate' THEN 1 ELSE 0 END`;
+  // Badge-ineligible sources never get a publicPackageKey, so this excludes
+  // nothing the key filter admits today. It stays as the second lock: a row
+  // that acquired a key before its source was reclassified, or through a future
+  // write that forgets the rule, must still never reach pickBadgeScan.
+  const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]);
   return db
     .select(SHARED_SCAN_COLUMNS)
     .from(scans)
@@ -455,6 +461,7 @@ export async function listBadgeCandidateScans(
         isNull(scans.registryStatusSupersededAt),
         ecosystemMatches,
         tagMatches,
+        badgeEligibleSource,
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
