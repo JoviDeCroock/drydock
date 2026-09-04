@@ -164,6 +164,7 @@ scanSharingRoutes.get("/:id/report.json", async (c) => {
     scanArtifactReadBucket(c.env),
     {
       files: "omit",
+      releaseAuthority: "stored",
     },
   );
   if (!detail) return c.json({ error: "not found" }, 404);
@@ -191,8 +192,12 @@ scanSharingRoutes.get(
     if (!organizationId) return c.json({ error: "not found" }, 404);
     const scanId = c.req.param("id");
     if (!scanId) return c.json({ error: "not found" }, 404);
+    // "stored" for the same reason as report.json: the receipt's report digest
+    // must match the report.json bytes for the same scan state, and an evidence
+    // read must not rewrite the pending delta it is attesting to.
     const detail = await getScan(db, scanId, organizationId, scanArtifactReadBucket(c.env), {
       files: "omit",
+      releaseAuthority: "stored",
     });
     if (!detail) return c.json({ error: "not found" }, 404);
     if (detail.scan.status !== "complete") {

@@ -9,9 +9,22 @@
 import { Hono } from "hono";
 import { createDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
-import { organizationRequiresTwoFactorForReleaseDecisions } from "../../db/organizations";
+import {
+  organizationRequiresAuthorityChangeApproval,
+  organizationRequiresTwoFactorForReleaseDecisions,
+} from "../../db/organizations";
+import {
+  prepareReleaseAuthorityApproval,
+  type ReleaseAuthorityRecord,
+  refreshReleaseAuthorityDeltaForGate,
+  releaseAuthorityAcknowledgementToken,
+} from "../../db/release-authority";
 import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
-import { getScan, recordGatePackageDecision } from "../../db/scans";
+import {
+  claimGatePackageDecision,
+  getScan,
+  recordClaimedGatePackageDecision,
+} from "../../db/scans";
 import { badgeLookupKey } from "../../db/scan-share";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../../lib/auth";
@@ -24,7 +37,6 @@ import {
 import { purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
 import { recordProductEvent } from "../../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
-import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import {
   buildHumanDecisionComment,
   buildReportUrl,
@@ -55,12 +67,18 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
   const scanId = c.req.param("scanId");
   const gate = await getGateByScanId(db, organizationId, scanId);
   if (!gate) return c.json({ error: "not found" }, 404);
-  const packages = await listGatePackageScans(db, organizationId, gate.id);
-  const orgRequiresTwoFactor = await organizationRequiresTwoFactorForReleaseDecisions(
-    db,
-    organizationId,
-  );
-  return c.json({ gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor) });
+  const [packages, orgRequiresTwoFactor, orgRequiresAuthorityApproval, authority] =
+    await Promise.all([
+      listGatePackageScans(db, organizationId, gate.id),
+      organizationRequiresTwoFactorForReleaseDecisions(db, organizationId),
+      organizationRequiresAuthorityChangeApproval(db, organizationId),
+      refreshReleaseAuthorityDeltaForGate(db, organizationId, gate.id),
+    ]);
+  return c.json({
+    gate: publicWorkflowGate(gate, packages, orgRequiresTwoFactor),
+    releaseAuthority: authority ? await publicReleaseAuthority(authority) : null,
+    organizationRequiresAuthorityApproval: orgRequiresAuthorityApproval,
+  });
 });
 
 // Record a maintainer's decision on one package of a gate and, once the whole
@@ -85,6 +103,8 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     comment: string;
     totpCode: string;
     scanId: string;
+    acknowledgeAuthorityChange: boolean;
+    authorityAcknowledgementToken: string;
   }>;
   if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
@@ -158,6 +178,74 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     );
   }
 
+  let authorityForDecision: ReleaseAuthorityRecord | null = null;
+  let expectedLatestApprovedSnapshotId: string | null | undefined;
+  let orgRequiresAuthorityApproval = false;
+  let authorityChangeAcknowledged = false;
+  if (decision === "approved") {
+    orgRequiresAuthorityApproval = await organizationRequiresAuthorityChangeApproval(
+      db,
+      organizationId,
+    );
+    const preparedAuthority = await prepareReleaseAuthorityApproval(db, {
+      organizationId,
+      releaseTargetId: existing.releaseTargetId,
+      gateId,
+    });
+    authorityForDecision = preparedAuthority.record;
+    expectedLatestApprovedSnapshotId = preparedAuthority.expectedLatestApprovedSnapshotId;
+    const authority = authorityForDecision;
+    if (orgRequiresAuthorityApproval && (!authority?.snapshot || !authority.delta)) {
+      const packages = await listGatePackageScans(db, organizationId, gateId);
+      return c.json(
+        {
+          gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+          error:
+            "release-authority evidence is not available for this gate — retry the review or reject the release",
+          code: "authority_assessment_required",
+          authorityChangeCount: 0,
+        },
+        409,
+      );
+    }
+    const requiresAuthorityApproval = authority?.delta?.requiresApproval === true;
+    const acknowledgementToken = await releaseAuthorityAcknowledgementToken(authority);
+    const authorityRevisionMatches =
+      acknowledgementToken === null ||
+      (typeof body.authorityAcknowledgementToken === "string" &&
+        body.authorityAcknowledgementToken === acknowledgementToken);
+    authorityChangeAcknowledged =
+      requiresAuthorityApproval &&
+      body.acknowledgeAuthorityChange === true &&
+      authorityRevisionMatches;
+    if (requiresAuthorityApproval && !authorityChangeAcknowledged && orgRequiresAuthorityApproval) {
+      const packages = await listGatePackageScans(db, organizationId, gateId);
+      return c.json(
+        {
+          gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+          error:
+            "this release's publishing authority changed since the last approved release — review the release-authority delta and confirm the change to continue",
+          code: "authority_change_acknowledgement_required",
+          authorityChangeCount: authority?.delta?.changeCount ?? 0,
+        },
+        409,
+      );
+    }
+    if (!authorityRevisionMatches) {
+      const packages = await listGatePackageScans(db, organizationId, gateId);
+      return c.json(
+        {
+          gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor),
+          error:
+            "the release-authority evidence changed after this review was loaded — review the refreshed delta and submit the decision again",
+          code: "authority_baseline_changed",
+          authorityChangeCount: authority?.delta?.changeCount ?? 0,
+        },
+        409,
+      );
+    }
+  }
+
   // 2FA step-up. Releasing or blocking a held deployment is a high-trust action
   // — approval immediately releases the GitHub job and publishing proceeds via
   // Trusted Publishing/OIDC, which can't be reversed. So a maintainer who has
@@ -209,24 +297,16 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     twoFactorVerified = true;
   }
 
-  // Persist the per-package decision while the gate is still pending.
-  // `recordGatePackageDecision` also writes the `scan.decided` audit event and
-  // keeps the workbench decision filters consistent (approved → publish,
-  // rejected → no_publish).
-  const decidedPackage = await recordGatePackageDecision(
-    db,
-    {
-      scanId: packageScanId,
-      organizationId,
-      gateId,
-      actorUserId: session.userId,
-      decision: decision === "approved" ? "publish" : "no_publish",
-      reason: comment || null,
-    },
-    scanArtifactReadBucket(c.env),
-    c.env,
-  );
-  if (!decidedPackage) {
+  const packageDecisionInput = {
+    scanId: packageScanId,
+    organizationId,
+    gateId,
+    actorUserId: session.userId,
+    decision: decision === "approved" ? ("publish" as const) : ("no_publish" as const),
+    reason: comment || null,
+  };
+  const claimedPackage = await claimGatePackageDecision(db, packageDecisionInput);
+  if (!claimedPackage) {
     const current = await getGateForOrganization(db, organizationId, gateId);
     const currentPackages = await listGatePackageScans(db, organizationId, gateId);
     return c.json(
@@ -245,18 +325,18 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // assert ("reviewed · risk" → "approved"/"blocked"); drop both so the
   // change is not delayed by the colo TTL in at least this region. Same
   // canonical-origin purge as the staged decision route and (un)listing.
-  if (decidedPackage.scan.publicFeedListedAt) {
+  if (scan.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
       badgeLookupKey({
-        source: decidedPackage.scan.source,
-        packageName: decidedPackage.scan.packageName,
-        summaryJson: decidedPackage.scan.summaryJson,
+        source: scan.scan.source,
+        packageName: scan.scan.packageName,
+        summaryJson: scan.scan.summaryJson,
       }),
       // Gate scans carry no dist-tag today, so this resolves to the default
       // entry — passed explicitly so it stays correct if they ever do.
-      scanDistTag(decidedPackage.scan.summaryJson),
+      scanDistTag(scan.scan.summaryJson),
     );
   }
 
@@ -267,6 +347,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const allApproved = packages.length > 0 && packages.every((pkg) => pkg.decision === "publish");
   if (!anyRejected && !allApproved) {
     // Other packages still need a decision; keep the deployment held.
+    await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
     return c.json({ gate: publicWorkflowGate(existing, packages, orgRequiresTwoFactor) });
   }
   if (allApproved && !existing.scanId) {
@@ -287,10 +368,51 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     decision: gateDecision,
     comment: comment || buildHumanDecisionComment(gateDecision, reportUrl),
     reportUrl,
+    packageClaim: {
+      scanId: packageScanId,
+      actorUserId: session.userId,
+      decidedAt: claimedPackage.decidedAt,
+      decision: packageDecisionInput.decision,
+    },
+    authorityApproval:
+      gateDecision === "approved" && authorityForDecision?.snapshot && authorityForDecision.delta
+        ? {
+            approvedByUserId: session.userId,
+            releaseTargetId: existing.releaseTargetId,
+            expectedLatestApprovedSnapshotId,
+          }
+        : undefined,
   });
   if (!decided) {
-    // Lost a race to a concurrent finalize or a fail-closed artifact reject.
     const current = await getGateForOrganization(db, organizationId, gateId);
+    if (current?.status !== "pending") {
+      await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
+    }
+    if (
+      current?.status === "pending" &&
+      gateDecision === "approved" &&
+      authorityForDecision?.delta
+    ) {
+      const refreshedAuthority = await refreshReleaseAuthorityDeltaForGate(
+        db,
+        organizationId,
+        gateId,
+      );
+      const currentPackages = await listGatePackageScans(db, organizationId, gateId);
+      return c.json(
+        {
+          gate: publicWorkflowGate(current, currentPackages, orgRequiresTwoFactor),
+          error: orgRequiresAuthorityApproval
+            ? "the approved release-authority baseline changed while this decision was being submitted — review the refreshed delta and confirm it again"
+            : "the approved release-authority baseline changed while this decision was being submitted — review the refreshed evidence and submit the decision again",
+          code: orgRequiresAuthorityApproval
+            ? "authority_change_acknowledgement_required"
+            : "authority_baseline_changed",
+          authorityChangeCount: refreshedAuthority?.delta?.changeCount ?? 0,
+        },
+        409,
+      );
+    }
     return c.json(
       {
         gate: current ? publicWorkflowGate(current, packages, orgRequiresTwoFactor) : null,
@@ -305,6 +427,17 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // GitHub instead of getting stuck behind a future 409.
   const message = { kind: "workflow_gate" as const, organizationId, gateId };
   c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
+
+  try {
+    await recordClaimedGatePackageDecision(db, packageDecisionInput, claimedPackage, c.env);
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.package_decision_bookkeeping_failed", {
+      organizationId,
+      gateId,
+      scanId: packageScanId,
+      error: describeOperationalError(err),
+    });
+  }
 
   // Counted separately from the automatic block below, so approval rate stays
   // measurable against reviews instead of being diluted by auto-rejections.
@@ -333,6 +466,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
         twoFactor: twoFactorVerified,
         twoFactorMethod: twoFactorVerified ? "totp" : null,
         twoFactorRequiredByOrg: orgRequiresTwoFactor,
+        authorityChangeAcknowledged,
       },
     });
   } catch (err) {
@@ -474,5 +608,20 @@ function publicWorkflowGate(
     decidedAt: record.decidedAt ? record.decidedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+async function publicReleaseAuthority(record: ReleaseAuthorityRecord) {
+  return {
+    capturedAt: record.createdAt.toISOString(),
+    runId: record.runId,
+    workflowPath: record.workflowPath || null,
+    headSha: record.headSha,
+    artifactBindingDigest: record.artifactBindingDigest,
+    approvedAt: record.approvedAt ? record.approvedAt.toISOString() : null,
+    acknowledgementToken: await releaseAuthorityAcknowledgementToken(record),
+    delta: record.delta,
+    workflows: record.snapshot?.workflows ?? [],
+    run: record.snapshot?.run ?? null,
   };
 }

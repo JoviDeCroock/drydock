@@ -46,6 +46,10 @@ import {
   ReleaseVerdictEvidence,
   ReleaseVerdictStrip,
 } from "./ReleaseRecommendation";
+import {
+  ReleaseAuthoritySection,
+  releaseAuthorityVisibleForFailedGate,
+} from "./ReleaseAuthoritySection";
 import { PersistedReportSections } from "./ReportSections";
 import { ReviewerSummary, reviewerSummaryVisible } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
@@ -235,6 +239,7 @@ export default function ScanDetailPage() {
     reviewerSummaryVisible(ai.value) ? "reviewer" : null,
     hasReleaseConsistencyNote(summary.value.releaseConsistency) ? "release memory" : null,
     envelope ? "source binding" : null,
+    isWorkflowGate ? "release authority" : null,
   ].filter((label): label is string => label !== null);
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
@@ -250,8 +255,9 @@ export default function ScanDetailPage() {
     decision: WorkflowGateDecision,
     comment: string | null,
     totpCode: string | null,
+    acknowledgeAuthorityChange: boolean,
   ) => {
-    await model.decideGate(decision, comment, totpCode);
+    await model.decideGate(decision, comment, totpCode, acknowledgeAuthorityChange);
     if (model.gateDecisionStatus.peek() === "idle") {
       gateDialogOpen.value = false;
     }
@@ -344,6 +350,12 @@ export default function ScanDetailPage() {
           that could not read the tarball because the release was published or
           removed is exactly when this is the only useful thing on the page. */}
       {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
+      {detail && releaseAuthorityVisibleForFailedGate(detail.scan.status, isWorkflowGate) ? (
+        <ReleaseAuthoritySection
+          authority={model.reviewReleaseAuthority.value}
+          workflowGate={isWorkflowGate}
+        />
+      ) : null}
 
       {!detail && !error ? (
         <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
@@ -425,6 +437,10 @@ export default function ScanDetailPage() {
                   approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
                 />
                 {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+                <ReleaseAuthoritySection
+                  authority={model.reviewReleaseAuthority.value}
+                  workflowGate={isWorkflowGate}
+                />
               </div>
             </CollapsibleCard>
 
@@ -504,6 +520,8 @@ export default function ScanDetailPage() {
             (detail.scan.status === "complete" || detail.scan.status === "failed")
           }
           reviewFailed={detail.scan.status === "failed"}
+          releaseAuthority={model.gateAuthority.value}
+          requireAuthorityAcknowledgement={model.gateRequiresAuthorityApproval.value}
           onSubmit={handleGateDecision}
         />
       ) : null}

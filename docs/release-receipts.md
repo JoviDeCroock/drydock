@@ -60,10 +60,21 @@ risk, and a structured decision with decision time and the authenticated Drydock
 - `registryOutcome` records the registry status and observation time only when a
   status was observed. It remains `unknown` for workflow gates, unsupported
   registries, failed lookups, and legacy scans.
+- `releaseAuthority` is present only when a persisted release-authority record
+  exists for the gated release (see
+  [`release-authority.md`](./release-authority.md)). It references the record —
+  snapshot id, capture time, entry workflow path, artifact binding digest, the
+  delta outcome against the approved baseline (status, change count, highest
+  significance, whether approval was required, coverage completeness, baseline
+  reference), and the approval time once the gate is approved. The full
+  snapshot and delta travel in the referenced report, not in the receipt. When
+  no record exists the field is absent — not null — so receipts for scans
+  without one keep their exact prior bytes.
 
 The aggregate evidence status covers evidence required by the selected mode.
-Registry outcome is reported independently because an unobserved post-review
-registry state does not make the review evidence incomplete.
+Registry outcome and release authority are reported independently: an
+unobserved post-review registry state does not make the review evidence
+incomplete, and authority capture is best effort and never blocks a review.
 
 ## Limitations
 

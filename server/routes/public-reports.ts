@@ -315,7 +315,7 @@ async function loadSharedScanDetail(c: Context<{ Bindings: Bindings; Variables: 
     resolved.scanId,
     resolved.organizationId,
     scanArtifactReadBucket(c.env),
-    { files: "omit" },
+    { files: "omit", releaseAuthority: "stored" },
   );
   if (!detail || detail.scan.status !== "complete") {
     return { error: sharedScanNotFound(c) } as const;

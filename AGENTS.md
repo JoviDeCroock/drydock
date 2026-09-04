@@ -12,7 +12,7 @@
 
 ## Hard boundaries
 
-- Treat package bytes as hostile evidence. Never execute package code, install its dependencies, run lifecycle scripts/builds/shells, import its modules, or render package-provided active content.
+- Treat package bytes as hostile evidence. Never execute package code, install its dependencies, run lifecycle scripts/builds/shells, import its modules, or render package-provided active content. Treat release-authority workflow definitions the same way: parse them with the bounded reader in `server/lib/release-authority/yaml.ts`; never evaluate them.
 - npm credentials stay outside the sandbox. Only `NpmStageGateway` may attach npm auth, and only to allowed staged, metadata, or tarball registry endpoints.
 - AI review is advisory and on by default. The organization `ai-review` flag is a killswitch; AI review cannot downgrade deterministic findings.
 - Every non-auth `/api/*` endpoint requires a Better Auth session and organization-scoped ownership; UI state is never an authority. `docs/security-model.md` enumerates the anonymous surfaces — adding one is a security decision.
