@@ -23,6 +23,11 @@ const stagedPublishesMock = vi.hoisted(() => ({
 }));
 const scanJobMock = vi.hoisted(() => ({ executeScanJob: vi.fn() }));
 const releaseOutcomeMock = vi.hoisted(() => ({ resolveNpmReleaseOutcomes: vi.fn() }));
+const outOfBandWatchMock = vi.hoisted(() => ({
+  sweepOutOfBandPublishes: vi.fn(() =>
+    Promise.resolve({ enabled: true, watched: 0, checked: 0, detected: 0 }),
+  ),
+}));
 
 vi.mock("../server/db/events.ts", () => dbMock);
 vi.mock("../server/db/npm-connections.ts", () => dbMock);
@@ -31,6 +36,7 @@ vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
 vi.mock("../server/lib/ecosystems/npm/release-outcome.ts", () => releaseOutcomeMock);
+vi.mock("../server/lib/ecosystems/npm/out-of-band-watch.ts", () => outOfBandWatchMock);
 
 const {
   createStageStartCoordinator,

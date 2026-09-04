@@ -153,18 +153,23 @@ describe("staged publishes discovery cron", () => {
 
     const fetchMock = vi.fn(async (input: Request | string | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
-      expect(url).toContain("/-/stage");
       const auth = authHeader(input, init);
       if (auth === `Bearer ${orgA.token}`) {
         if (url.endsWith(`/-/stage/${STAGE_ID}/tarball`)) {
           return new Response("", { status: 206 });
         }
-        return Response.json({
-          items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
-          total: 1,
-          perPage: 50,
-          page: 0,
-        });
+        if (url.includes("/-/stage")) {
+          return Response.json({
+            items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
+            total: 1,
+            perPage: 50,
+            page: 0,
+          });
+        }
+        // The out-of-band watch baselines the package the sweep just created a
+        // scan for; an empty packument means nothing is public yet.
+        expect(url).toBe("https://registry.npmjs.org/demo-package");
+        return Response.json({ name: "demo-package", versions: {} });
       }
       if (auth === `Bearer ${orgB.token}`) {
         return new Response("token expired", { status: 401 });
@@ -186,9 +191,10 @@ describe("staged publishes discovery cron", () => {
     );
     await waitOnExecutionContext(ctx);
 
-    // (c) excluded entirely: only (a) and (b) are swept. Org A lists and probes
-    // the staged tarball; org B fails on the staged-list auth check.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // (c) excluded entirely: only (a) and (b) are swept. Org A lists, probes
+    // the staged tarball, and baselines the out-of-band watch packument; org B
+    // fails on the staged-list auth check.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     // (a) only: exactly one scan enqueued, scoped to org A.
     expect(queue.send).toHaveBeenCalledTimes(1);
@@ -369,7 +375,10 @@ describe("staged publishes discovery cron", () => {
 
     const fetchMock = vi.fn(async (input: Request | string | URL) => {
       const url = String(input instanceof Request ? input.url : input);
-      expect(url).toContain("/-/stage");
+      if (!url.includes("/-/stage")) {
+        // Out-of-band watch packument baseline for the discovered package.
+        return Response.json({ name: "demo-package", versions: {} });
+      }
       return Response.json({
         items: [{ id: STAGE_ID, name: "demo-package", version: "1.0.0" }],
         total: 1,

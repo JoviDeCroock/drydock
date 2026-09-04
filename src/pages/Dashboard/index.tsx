@@ -23,6 +23,8 @@ import {
   type ScanListItem,
 } from "../../models/scan";
 import { StagedPublishesModel } from "../../models/staged-publishes";
+import { OutOfBandModel } from "../../models/package-watch";
+import { OutOfBandAlarms } from "./OutOfBandAlarms";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
@@ -47,6 +49,7 @@ export default function DashboardPage() {
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
+  const outOfBand = useModel(OutOfBandModel);
   const sessionChecked = useSignal(false);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
@@ -77,7 +80,7 @@ export default function DashboardPage() {
       // they are in flight.
       await organizations.load();
       if (cancelled) return;
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), outOfBand.refresh()]);
     })();
     return () => {
       cancelled = true;
@@ -86,14 +89,14 @@ export default function DashboardPage() {
 
   const onSwitchOrganization = async (organizationId: string) => {
     if (organizations.activate(organizationId)) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), outOfBand.refresh()]);
     }
   };
 
   const onCreateOrganization = async (name: string) => {
     const created = await organizations.create(name);
     if (created) {
-      await Promise.all([scans.refresh(), npm.load()]);
+      await Promise.all([scans.refresh(), npm.load(), outOfBand.refresh()]);
     }
   };
 
@@ -149,6 +152,7 @@ export default function DashboardPage() {
       {workspaceLoaded ? (
         <>
           <DashboardOnboarding scans={scans} npm={npm} />
+          <OutOfBandAlarms model={outOfBand} />
           <NpmTokenStaleCallout npm={npm} />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
         </>
