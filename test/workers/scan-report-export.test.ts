@@ -155,6 +155,7 @@ describe("scan report JSON export", () => {
       } | null;
       aiReview: unknown;
       registryStatus: { status: string; observedAt: string | null } | null;
+      publisher: unknown;
       findings: Array<{ ruleId: string | null; severity: string }>;
     };
     expect(body.schema).toBe("drydock.report.v2");
@@ -172,6 +173,9 @@ describe("scan report JSON export", () => {
       reason: "computed-digest-unavailable",
     });
     expect(body.aiReview).toBeNull();
+    // Additive and optional: a scan without a persisted publisher block
+    // exports null rather than an empty shape.
+    expect(body.publisher).toBeNull();
     // Additive and optional: a scan nobody has resolved a registry status for
     // exports null, not a guess.
     expect(body.registryStatus).toBeNull();

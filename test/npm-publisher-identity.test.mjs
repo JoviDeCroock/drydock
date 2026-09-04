@@ -91,6 +91,10 @@ describe("parseNpmTrustConfigs", () => {
     expect(parseNpmTrustConfigs([null, 7, "x", githubConfig])).toHaveLength(1);
   });
 
+  test("reads a single config object the way the npm CLI does", () => {
+    expect(parseNpmTrustConfigs(githubConfig)).toHaveLength(1);
+  });
+
   test("rejects control characters and over-long fields instead of rendering them", () => {
     const [config] = parseNpmTrustConfigs([
       {

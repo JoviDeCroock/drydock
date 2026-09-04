@@ -77,11 +77,21 @@ export function isTrustedAutomationActor(actorType: string | null | undefined): 
   return typeof actorType === "string" && /^trusted[ _-]?automation$/i.test(actorType.trim());
 }
 
-/** `GET /-/package/{name}/trust` body → bounded config list, or null when the body is not a list. */
+/**
+ * `GET /-/package/{name}/trust` body → bounded config list, or null when the
+ * body carries no list. The npm CLI tolerates a single config object as well
+ * as an array (`Array.isArray(body) ? body : [body]`), so both are read; any
+ * other shape is unknown rather than "no configs".
+ */
 export function parseNpmTrustConfigs(data: unknown): NpmTrustConfig[] | null {
-  if (!Array.isArray(data)) return null;
+  const list = Array.isArray(data)
+    ? data
+    : isRecord(data) && (isRecord(data.claims) || typeof data.type === "string")
+      ? [data]
+      : null;
+  if (!list) return null;
   const configs: NpmTrustConfig[] = [];
-  for (const entry of data.slice(0, MAX_TRUST_CONFIGS)) {
+  for (const entry of list.slice(0, MAX_TRUST_CONFIGS)) {
     const config = parseTrustConfig(entry);
     if (config) configs.push(config);
   }
