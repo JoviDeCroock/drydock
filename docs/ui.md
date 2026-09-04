@@ -114,6 +114,26 @@ a guess. Switching organizations immediately resets both progress answers to
 `null`, so the new organization cannot inherit a panel latch or completion tick
 from the previous one while its list request is in flight.
 
+## Package release view
+
+`/dashboard/packages/:name` (`src/pages/Dashboard/PackageReleases/`) lists one
+package's reviews for the active organization, grouped by channel (dist-tag)
+and newest first, over `GET /api/v1/packages/:name/releases`. A scoped name
+travels as one percent-encoded path segment (`%40scope%2Fname`), built by
+`src/lib/package-releases-path.ts`; the ecosystem rides in `?ecosystem=` only
+when it is not npm. Each row shows the version, what it was compared against
+(`describeBaseline` in `src/features/package-releases.ts` turns the persisted
+baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
+"(highest published)" / "no baseline"), release risk, the decision with who
+and when, npm's lifecycle badge with its observation time, the scan source,
+and the review link. `releaseAttention` marks the two disagreements the page
+exists to surface — npm published a version nobody here decided on (warn
+fill), and npm published a version Drydock blocked (danger fill) — and the
+summary strip counts both alongside total reviews, channels, and the last
+release. Package names in the dashboard list and the `all releases →` link in
+the scan header open it; the scan header's back link returns to whichever
+list surface the review was opened from (`getDashboardReturnUrl`).
+
 ## Copy and density
 
 - Lead with maintainer action and release risk, not internal pipeline detail.

@@ -13,7 +13,7 @@ The baseline selector is intentionally tag-aware:
 3. If there is no lower predecessor, it falls back to the highest published semver-like version.
 4. If no baseline can be selected or downloaded, the scan proceeds as an all-added diff and records the baseline reason in `summary_json.baseline`.
 
-This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
+This avoids forcing `2.0.0-beta.3 --tag beta` against `latest` and keeps maintenance or custom-channel releases from being compared with an unrelated highest-semver channel. The first release on a new channel has no dist-tag to follow and falls to rule 2, so `2.0.0-beta.1 --tag beta` diffs against the newest stable below it — the right answer for a channel that has just branched off. The package release view (`docs/ui.md`) states the rule that applied per release ("2.0.0-beta.1 (beta)" versus "1.4.2 (previous version)") so a reviewer can see which comparison a report rests on. A wrong baseline inflates changed-file count, which makes human review noisier and increases AI input size when AI review is enabled.
 
 ### Fetching the baseline tarball
 

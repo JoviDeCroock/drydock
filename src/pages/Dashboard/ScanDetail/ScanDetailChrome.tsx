@@ -1,5 +1,7 @@
 import type { ReadonlySignal } from "@preact/signals";
-import { getDashboardReturnUrl } from "../../../lib/query-state";
+import { dashboardReturnLabel, getDashboardReturnUrl } from "../../../lib/query-state";
+import { packageReleasesPath } from "../../../lib/package-releases-path";
+import { scanEcosystem } from "../../../../server/lib/public-feed";
 import { formatDateTime } from "../../../lib/format";
 import { reportExportFilename } from "../../../../server/lib/scan/report-export";
 import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan";
@@ -48,11 +50,17 @@ export function ScanDetailHeader({
   // version shipped.
   const registryBadge = detail ? registryStatusBadge(detail.scan) : null;
   const dashboardHref = getDashboardReturnUrl();
+  const packageHref = detail?.scan.packageName
+    ? packageReleasesPath(
+        detail.scan.packageName,
+        scanEcosystem(detail.scan.source ?? "manual", detail.scan.summaryJson),
+      )
+    : null;
   return (
     <header class="flex flex-wrap items-start justify-between gap-4">
       <div class="flex flex-col gap-2 min-w-0">
         <a href={dashboardHref} class="text-[13px] text-ink-muted hover:text-ink no-underline">
-          ← Reviews
+          ← {dashboardReturnLabel(dashboardHref)}
         </a>
         <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
           {detail?.scan.packageName || "Release review"}
@@ -72,6 +80,11 @@ export function ScanDetailHeader({
                 <Badge key="registry" tone={registryBadge.tone}>
                   {registryBadge.label}
                 </Badge>
+              ) : null,
+              packageHref && packageHref !== dashboardHref ? (
+                <a key="package" href={packageHref} class="text-ink-muted hover:text-ink">
+                  all releases →
+                </a>
               ) : null,
             ]}
           />

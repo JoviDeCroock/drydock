@@ -42,6 +42,7 @@ import { publishedPairStageId } from "../../lib/ecosystems/published-pair";
 import { PublicDiffError } from "../../lib/public-diff/error";
 import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
+import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list-cursor";
 import { recordProductEvent } from "../../lib/platform/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
@@ -234,20 +235,6 @@ async function preparePublishedScan(
 }
 
 const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
-
-function parseListScansCursor(raw: string | undefined) {
-  if (!raw) return null;
-  const sep = raw.indexOf(":");
-  if (sep <= 0) return null;
-  const createdAtMs = Number(raw.slice(0, sep));
-  const id = raw.slice(sep + 1);
-  if (!Number.isFinite(createdAtMs) || !id) return null;
-  return { createdAtMs, id };
-}
-
-function encodeListScansCursor(cursor: { createdAtMs: number; id: string } | null) {
-  return cursor ? `${cursor.createdAtMs}:${cursor.id}` : null;
-}
 
 scanLifecycleRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);

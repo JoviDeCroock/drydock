@@ -166,6 +166,18 @@ no token, header, or package bytes.
 The workbench shows the same state immediately, without the 6-hour delay: the
 delay only gates the email.
 
+## Where the status is rendered
+
+- The dashboard list's Decision cell (`RegistryStatusBadge`) and the
+  **Published without Drydock decision** filter.
+- The scan workbench header badge and `RegistryStatusNotice`.
+- The package release view (`/dashboard/packages/:name`), which shows the
+  badge with its observation time per release and highlights the rows where
+  npm's outcome disagrees with Drydock's record: published with no decision,
+  and published over a `no_publish` decision. Its summary counts reuse the
+  same `published`/`deleted` conditions as the dashboard filter
+  (`publishedWithoutDecisionConditions` in `server/db/scan-list.ts`).
+
 ## Token scope
 
 The endpoint's specification says the caller "must have publish access to the

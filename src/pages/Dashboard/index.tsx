@@ -5,6 +5,7 @@ import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
 import { formatDateTime, pluralize } from "../../lib/format";
+import { packageReleasesPath } from "../../lib/package-releases-path";
 import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
 import {
@@ -623,12 +624,32 @@ function ScanRows({
             <div class="flex min-w-0 flex-col gap-1.5">
               <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 min-w-0">
                 <ScanRiskChip scan={scan} />
-                <a
-                  href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
-                  class="min-w-0 truncate text-[14px] font-medium"
-                >
-                  {scanTitle(scan)}
-                </a>
+                {scan.packageName ? (
+                  <span class="flex min-w-0 items-baseline">
+                    <a
+                      href={packageReleasesPath(scan.packageName, scan.ecosystem)}
+                      class="min-w-0 truncate text-[14px] font-medium"
+                      title={`All reviewed releases of ${scan.packageName}`}
+                    >
+                      {scan.packageName}
+                    </a>
+                    {scan.stagedVersion ? (
+                      <a
+                        href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                        class="shrink-0 font-mono text-[13px] font-medium"
+                      >
+                        @{scan.stagedVersion}
+                      </a>
+                    ) : null}
+                  </span>
+                ) : (
+                  <a
+                    href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                    class="min-w-0 truncate text-[14px] font-medium"
+                  >
+                    {scan.stageId}
+                  </a>
+                )}
                 {scan.previousVersion ? (
                   <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap">
                     from {scan.previousVersion}
@@ -681,11 +702,6 @@ function ScanRows({
       ))}
     </ul>
   );
-}
-
-function scanTitle(scan: ScanListItem): string {
-  const name = scan.packageName || scan.stageId;
-  return scan.stagedVersion ? `${name}@${scan.stagedVersion}` : name;
 }
 
 const SCAN_SOURCE_LABELS: Record<string, string> = {

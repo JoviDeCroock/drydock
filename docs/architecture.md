@@ -145,6 +145,10 @@ Organizations store their own encrypted npm connection. The UI validates baselin
 
 Reports remain canonical and signable: stable ordering, explicit release/artifact/context risk sections, redacted evidence, and enough metadata to reproduce the reviewed artifact identity. The canonical export (`drydock.report.v2`) is the signing boundary — publicly shared reports serve those exact bytes at `/public/reports/:token`, and the attestation endpoint signs their SHA-256 inside a DSSE envelope (see `public-reports.md`). Changing the export shape changes the attested bytes, so bump the schema tag when consumers must branch.
 
+## Package release view
+
+`GET /api/v1/packages/:name/releases[?ecosystem=&cursor=&limit=]` (`server/routes/packages.ts`, query in `server/db/scan-package-releases.ts`) is the per-package projection of the same `scans` rows the dashboard lists: session plus active-organization scoped, keyset-paginated with the list cursor, newest first. Package identity is `coalesce(registry_package_name, package_name)` matched inside one ecosystem, where the ecosystem is the SQL twin of `scanEcosystem` (`scanEcosystemSql`): the gate provenance or published-pair declaration in `summary_json`, else npm for the credential-backed staged sources. A pending workflow-gate scan has no ecosystem yet and is not listed until its report says which registry it describes. Rows add the dist-tag (`summary_json.stagedPublish.tag`), the persisted baseline selection, and the deciding user's display name; the summary block carries total reviews, per-channel counts, the newest release, and the npm-published-without-decision and published-over-a-block counts.
+
 ## API direction
 
 Keep request/response types shared between `server/` and `src/`. Prefer route helpers and typed fetch wrappers over ad hoc shape duplication. New API behavior should update this file only when it changes runtime shape, trust boundaries, storage, or cross-layer contracts; otherwise point to route-local tests and code.

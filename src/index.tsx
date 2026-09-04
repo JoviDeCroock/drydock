@@ -18,6 +18,7 @@ const RegisterPage = lazy(() => import("./pages/Auth/Register"));
 const VerifyEmailPage = lazy(() => import("./pages/Auth/VerifyEmail"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const ScanDetailPage = lazy(() => import("./pages/Dashboard/ScanDetail"));
+const PackageReleasesPage = lazy(() => import("./pages/Dashboard/PackageReleases"));
 const SettingsPage = lazy(() => import("./pages/Dashboard/Settings"));
 const AccountPage = lazy(() => import("./pages/Dashboard/Account"));
 const InvitePage = lazy(() => import("./pages/Dashboard/Invite"));
@@ -64,6 +65,7 @@ export function App() {
           <Route path="/reports/:token" component={PublicReportPage} />
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
+          <Route path="/dashboard/packages/:name" component={PackageReleasesPage} />
           <Route path="/dashboard/settings" component={SettingsPage} />
           <Route path="/dashboard/account" component={AccountPage} />
           <Route path="/dashboard/invite" component={InvitePage} />

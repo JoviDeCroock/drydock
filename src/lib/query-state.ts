@@ -37,12 +37,27 @@ export function getDashboardReturnUrl(): string {
   return normalizeDashboardReturnUrl(stored) ?? "/dashboard";
 }
 
+/** What the back link should call the surface `getDashboardReturnUrl` leads to. */
+export function dashboardReturnLabel(url: string): string {
+  return isPackageReleasesPath(url) ? "Package releases" : "Reviews";
+}
+
+const PACKAGE_RELEASES_PREFIX = "/dashboard/packages/";
+
+function isPackageReleasesPath(pathname: string): boolean {
+  return (
+    pathname.startsWith(PACKAGE_RELEASES_PREFIX) && pathname.length > PACKAGE_RELEASES_PREFIX.length
+  );
+}
+
+// Only the two list surfaces a review is opened from may be returned to, so a
+// stored value can never send the back link to an arbitrary page.
 function normalizeDashboardReturnUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const parsed = new URL(url, window.location.origin);
     if (parsed.origin !== window.location.origin) return null;
-    if (parsed.pathname !== "/dashboard") return null;
+    if (parsed.pathname !== "/dashboard" && !isPackageReleasesPath(parsed.pathname)) return null;
     return parsed.pathname + parsed.search;
   } catch {
     return null;
