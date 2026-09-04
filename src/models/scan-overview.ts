@@ -1,7 +1,7 @@
 /**
  * The dashboard overview strip's data: one aggregate read per organization.
  */
-import { createModel, signal } from "@preact/signals";
+import { createModel, effect, signal } from "@preact/signals";
 import type { ScanOverview } from "../../server/db/scans";
 import { activeOrganizationId } from "./active-organization";
 import { apiFetch, errorMessage } from "./api";
@@ -37,6 +37,19 @@ export const ScanOverviewModel = createModel(() => {
     }
   }
 
+  // Figures belong to one organization. Switching drops them before the new
+  // request answers, so the strip cannot show the previous organization's
+  // queue under the new name; an in-flight answer is discarded on arrival.
+  let organizationId = activeOrganizationId.peek();
+  effect(() => {
+    const next = activeOrganizationId.value;
+    if (next === organizationId) return;
+    organizationId = next;
+    overview.value = null;
+    loaded.value = false;
+    error.value = null;
+  });
+
   return {
     overview,
     loaded,
@@ -45,12 +58,6 @@ export const ScanOverviewModel = createModel(() => {
     refresh(): Promise<void> {
       const organizationId = activeOrganizationId.peek();
       if (inflight && inflight.organizationId === organizationId) return inflight.promise;
-      if (inflight) {
-        // The organization changed under an in-flight request; its answer is
-        // discarded on arrival, and the strip must not keep the old one.
-        overview.value = null;
-        loaded.value = false;
-      }
       const promise = fetchOverview(organizationId);
       inflight = { organizationId, promise };
       return promise;

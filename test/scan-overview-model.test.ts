@@ -114,6 +114,22 @@ describe("ScanOverviewModel", () => {
     expect(model.overview.value?.totalScans).toBe(1);
     expect(model.loaded.value).toBe(true);
   });
+
+  test("drops the previous organization's figures the moment the organization switches", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(overview()))),
+    );
+    setActiveOrganizationId("org-a");
+    model = new ScanOverviewModel();
+    await model.refresh();
+    expect(model.loaded.value).toBe(true);
+
+    setActiveOrganizationId("org-b");
+
+    expect(model.overview.value).toBeNull();
+    expect(model.loaded.value).toBe(false);
+  });
 });
 
 describe("overviewTiles", () => {
