@@ -1,0 +1,23 @@
+{
+  "name": "consumer",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "consumer", "version": "1.0.0" },
+    "node_modules/@scope/tool": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/@scope/tool/-/tool-2.0.0.tgz"
+    },
+    "node_modules/left-pad": {
+      "version": "1.3.0",
+      "resolved": "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
+    },
+    "node_modules/shared": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/shared/-/shared-1.0.0.tgz"
+    },
+    "node_modules/parent/node_modules/shared": {
+      "version": "2.0.0",
+      "resolved": "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz"
+    }
+  }
+}

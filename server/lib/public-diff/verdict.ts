@@ -21,14 +21,15 @@ import type { PublicPackageDiff } from ".";
 export const PUBLIC_VERDICT_SCHEMA = "drydock.verdict.v1";
 
 type VerdictGrade = "clear" | "notable" | "needs-review";
+type PublicArtifactIntegrity = { sha1: string } | null;
 
 export interface PublicDiffVerdict {
   schema: typeof PUBLIC_VERDICT_SCHEMA;
   ecosystem: string;
   package: string;
   displayName: string | null;
-  from: { version: string; publishedAt: string | null };
-  to: { version: string; publishedAt: string | null };
+  from: { version: string; publishedAt: string | null; integrity: PublicArtifactIntegrity };
+  to: { version: string; publishedAt: string | null; integrity: PublicArtifactIntegrity };
   /** Analysis identity: payload projection + deterministic rules + risk aggregation. */
   rulesVersion: string;
   grade: VerdictGrade;
@@ -57,8 +58,16 @@ export function buildPublicDiffVerdict(
     ecosystem: payload.ecosystem,
     package: payload.packageName,
     displayName: payload.displayName ?? null,
-    from: { version: payload.fromVersion, publishedAt: payload.fromPublishedAt ?? null },
-    to: { version: payload.toVersion, publishedAt: payload.toPublishedAt ?? null },
+    from: {
+      version: payload.fromVersion,
+      publishedAt: payload.fromPublishedAt ?? null,
+      integrity: archiveIntegrity(payload.fromArchiveSha1),
+    },
+    to: {
+      version: payload.toVersion,
+      publishedAt: payload.toPublishedAt ?? null,
+      integrity: archiveIntegrity(payload.toArchiveSha1),
+    },
     rulesVersion: options.rulesVersion,
     grade: verdictGrade(combineRisk(payload.risk.artifactRisk, payload.risk.releaseRisk)),
     risk: { artifactRisk: payload.risk.artifactRisk, releaseRisk: payload.risk.releaseRisk },
@@ -73,6 +82,12 @@ export function buildPublicDiffVerdict(
     diffUrl: options.diffUrl,
     computedAt: payload.cachedAt,
   };
+}
+
+function archiveIntegrity(sha1: string | undefined): PublicArtifactIntegrity {
+  return typeof sha1 === "string" && /^[a-f0-9]{40}$/i.test(sha1)
+    ? { sha1: sha1.toLowerCase() }
+    : null;
 }
 
 // Ceiling is "needs-review", never an accusation: high and critical both fold

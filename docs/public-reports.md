@@ -45,8 +45,9 @@ a shields.io badge per package and an opt-in public threat feed.
 ## Public endpoints (no auth)
 
 Mounted at `/public` ahead of the Better Auth middleware, like `/webhooks`.
-The unguessable 256-bit share token is the capability; all endpoints are
-rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
+All endpoints are rate-limited per IP. For report and attestation reads, the
+unguessable 256-bit share token is the capability; those routes return `404`
+for unknown, malformed, or revoked tokens.
 
 - `GET /public/reports/:token` — the canonical report export
   (`drydock.report.v2`, same bytes as the authenticated
@@ -65,6 +66,14 @@ rate-limited per IP and return `404` for unknown, malformed, or revoked tokens.
   Statement about the report (see below).
 - `GET /public/attestation-key` — the Ed25519 public key (JWK) and its RFC 7638
   thumbprint key id.
+- `GET /public/reviews/:ecosystem/:package/:version` — a minimal
+  `drydock.review-lookup.v1` response for consumer policy (`{ listed: boolean }`).
+  It returns true only for an exact version whose registry-established review
+  is both shared and feed-listed, whose staged artifact integrity was verified,
+  and whose computed SHA-1 equals the required published `?sha1=` digest.
+  Workflow-gate manifest claims remain visible in badges/feed entries as
+  unverified evidence but cannot satisfy an automated maintainer-review
+  requirement.
 
 ## Shared file samples
 

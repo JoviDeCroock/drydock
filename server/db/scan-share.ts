@@ -6,6 +6,7 @@ import {
   badgeEcosystem,
   publicPackageLookupKey,
   scanDistTag,
+  type PublicEcosystem,
 } from "../lib/public-feed";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
@@ -508,6 +509,46 @@ export async function listBadgeCandidateScans(
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
     .limit(limit);
+}
+
+/**
+ * Whether a package version has a feed-listed review whose package identity
+ * the registry established and whose verified staged bytes equal the published
+ * archive the consumer is installing. Sources without registry-backed package
+ * identity are deliberately excluded: their manifest can claim any package
+ * name, so accepting one here would let an unrelated organization satisfy a
+ * consumer's policy. Requiring the digest also keeps a mutable stage from
+ * satisfying the lookup after its reviewed bytes are replaced.
+ */
+export async function hasListedMaintainerReview(
+  db: AppDb,
+  input: {
+    ecosystem: PublicEcosystem;
+    packageName: string;
+    version: string;
+    publishedSha1: string;
+  },
+): Promise<boolean> {
+  const packageKey = publicPackageLookupKey(input.ecosystem, input.packageName);
+  const integrityStatus = sql`json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.status')`;
+  const reviewedSha1 = sql`lower(json_extract(${scans.summaryJson}, '$.stagedPublish.artifactIntegrity.computed'))`;
+  const [row] = await db
+    .select({ scanId: scans.id })
+    .from(scans)
+    .where(
+      and(
+        eq(scans.publicPackageKey, packageKey),
+        eq(scans.stagedVersion, input.version),
+        isNotNull(scans.publicShareToken),
+        isNotNull(scans.publicFeedListedAt),
+        eq(scans.status, "complete"),
+        notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]),
+        sql`${integrityStatus} = 'verified'`,
+        sql`${reviewedSha1} = ${input.publishedSha1.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 /**

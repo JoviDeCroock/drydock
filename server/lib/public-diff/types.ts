@@ -14,6 +14,8 @@ export interface PublicDiffAcquiredSide {
    * publication timestamp for the side (pkg.pr.new previews, atpm records).
    */
   publishedAt?: string;
+  /** SHA-1 over the complete raw archive when the ecosystem exposes it. */
+  archiveSha1?: string;
 }
 
 export interface PublicDiffProvenanceEntry {
