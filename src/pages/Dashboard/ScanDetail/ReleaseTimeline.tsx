@@ -1,4 +1,4 @@
-import { formatDateTime } from "../../../lib/format";
+import { formatDateTime, pluralize } from "../../../lib/format";
 import { SectionLabel } from "../../../components/Typography";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { buildReleaseTimeline, formatDelta } from "./release-timeline";
@@ -21,7 +21,7 @@ export function ReleaseTimeline({
   if (!events.length) return null;
   return (
     <section class="flex flex-col gap-3">
-      <SectionLabel as="h2" aside={`${events.length} events`}>
+      <SectionLabel as="h2" aside={`${events.length} ${pluralize("event", events.length)}`}>
         Release timeline
       </SectionLabel>
       <ol class="m-0 list-none p-0 border-l border-border ml-1 pl-4 flex flex-col divide-y divide-border">
