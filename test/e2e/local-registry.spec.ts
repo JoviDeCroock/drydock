@@ -157,7 +157,12 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
 
 for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   test(`scenario: ${scenario.name}`, async ({ browser, baseURL }) => {
-    const { context, page } = await openAuthenticatedPage(browser, baseURL);
+    // The fixture corpus now contains more manual scans than one organization
+    // may create per hour. Run the intentional registry-failure case under a
+    // fresh organization instead of weakening the production rate limit.
+    const { context, page } = scenario.expected.errorCode
+      ? await openFreshAuthenticatedPage(browser, baseURL)
+      : await openAuthenticatedPage(browser, baseURL);
     try {
       await page.goto("/dashboard");
       await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
@@ -299,6 +304,16 @@ async function openAuthenticatedPage(
 ): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ baseURL, storageState: authStatePath });
   const page = await context.newPage();
+  return { context, page };
+}
+
+async function openFreshAuthenticatedPage(
+  browser: Browser,
+  baseURL: string | undefined,
+): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  await registerAndConnect(page);
   return { context, page };
 }
 
