@@ -13,7 +13,8 @@ export interface DiffSpec {
   toVersion: string;
 }
 
-function encodePackageName(packageName: string): string {
+/** Percent-encode a package name for a URL path, keeping the scope `@` and `/` readable. */
+export function encodePackageName(packageName: string): string {
   return packageName
     .split("/")
     .map((segment) => encodeURIComponent(segment).replace(/^%40/, "@").replace(/%3A/g, ":"))

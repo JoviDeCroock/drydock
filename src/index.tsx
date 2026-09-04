@@ -65,7 +65,7 @@ export function App() {
           <Route path="/reports/:token" component={PublicReportPage} />
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/dashboard/scans/:id" component={ScanDetailPage} />
-          <Route path="/dashboard/packages/:name" component={PackageReleasesPage} />
+          <Route path="/dashboard/packages/:name+" component={PackageReleasesPage} />
           <Route path="/dashboard/settings" component={SettingsPage} />
           <Route path="/dashboard/account" component={AccountPage} />
           <Route path="/dashboard/invite" component={InvitePage} />

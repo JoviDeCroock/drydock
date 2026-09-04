@@ -160,32 +160,34 @@ describe("GET /api/v1/packages/:name/releases", () => {
     const ownedId = await seedRelease(owner, name, { version: "1.0.0" });
     await seedRelease(intruder, name, { version: "9.9.9" });
 
-    const res = await fetchReleases(owner, `/api/v1/packages/${encodeURIComponent(name)}/releases`);
+    const res = await fetchReleases(owner, `/api/v1/packages/${name}/releases`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as ReleasesBody;
     expect(body.package).toEqual({ name, ecosystem: "npm" });
     expect(body.releases.map((row) => row.id)).toEqual([ownedId]);
     expect(body.summary.totalReviews).toBe(1);
 
-    const intruderRes = await fetchReleases(
-      intruder,
-      `/api/v1/packages/${encodeURIComponent(name)}/releases`,
-    );
+    const intruderRes = await fetchReleases(intruder, `/api/v1/packages/${name}/releases`);
     const intruderBody = (await intruderRes.json()) as ReleasesBody;
     expect(intruderBody.releases.map((row) => row.id)).not.toContain(ownedId);
     expect(intruderBody.summary.totalReviews).toBe(1);
   });
 
-  test("round-trips a scoped name through one encoded path segment", async () => {
+  test("round-trips a scoped name with its slash in the path", async () => {
     const owner = await seedUser();
     const name = `@scope/name-${crypto.randomUUID().slice(0, 8)}`;
     const scanId = await seedRelease(owner, name, { version: "2.0.0" });
 
-    const res = await fetchReleases(owner, `/api/v1/packages/%40scope%2F${name.slice(7)}/releases`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as ReleasesBody;
-    expect(body.package.name).toBe(name);
-    expect(body.releases[0]?.id).toBe(scanId);
+    for (const path of [
+      `/api/v1/packages/${name}/releases`,
+      `/api/v1/packages/%40scope/${name.slice(7)}/releases`,
+    ]) {
+      const res = await fetchReleases(owner, path);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as ReleasesBody;
+      expect(body.package.name).toBe(name);
+      expect(body.releases[0]?.id).toBe(scanId);
+    }
   });
 
   test("carries channel, decision author, npm outcome, and the baseline rule per row", async () => {

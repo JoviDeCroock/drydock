@@ -5,6 +5,7 @@
  * outcome agree with ours" — the per-package, per-channel question npm's
  * multiple trusted-publishing configurations make maintainers ask.
  */
+import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
@@ -36,6 +37,26 @@ export default function PackageReleasesPage() {
   const route = useRoute();
   const packageName = route.params.name ?? "";
   const ecosystem = location.query.ecosystem || "npm";
+  // The model is built once per mount, so a navigation from one package page
+  // straight to another must remount rather than reuse a model bound to the
+  // previous name.
+  return (
+    <PackageReleasesView
+      key={`${ecosystem}:${packageName}`}
+      packageName={packageName}
+      ecosystem={ecosystem}
+    />
+  );
+}
+
+function PackageReleasesView({
+  packageName,
+  ecosystem,
+}: {
+  packageName: string;
+  ecosystem: string;
+}) {
+  const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
   const sessionChecked = useSignal(false);
 
@@ -58,7 +79,7 @@ export default function PackageReleasesPage() {
     return () => {
       cancelled = true;
     };
-  }, [packageName, ecosystem]);
+  }, []);
 
   const channels = useComputed(() => groupReleasesByChannel(model.releases.value));
   const ready = useComputed(() => sessionChecked.value && model.loaded.value);
@@ -168,7 +189,6 @@ function SummaryStrip({
 }) {
   const channelNames = summary.channels.map((channel) => channelLabel(channel.tag));
   const unreviewedTone = summary.publishedWithoutDecision > 0 ? "medium" : "ok";
-  const overriddenTone = summary.publishedDespiteBlock > 0 ? "critical" : "ok";
   return (
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <SummaryCard label="reviews">
@@ -202,7 +222,7 @@ function SummaryStrip({
         <span class="flex flex-wrap items-center gap-2">
           <Badge tone={unreviewedTone}>{summary.publishedWithoutDecision}</Badge>
           {summary.publishedDespiteBlock > 0 ? (
-            <Badge tone={overriddenTone}>{summary.publishedDespiteBlock} over a block</Badge>
+            <Badge tone="critical">{summary.publishedDespiteBlock} over a block</Badge>
           ) : null}
         </span>
         <span class="text-[13px] text-ink-muted">published by npm with no Drydock decision</span>
@@ -211,7 +231,7 @@ function SummaryStrip({
   );
 }
 
-function SummaryCard({ label, children }: { label: string; children: preact.ComponentChildren }) {
+function SummaryCard({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <Card padding="compact" class="flex flex-col gap-1.5 min-h-[96px]">
       <MonoLabel>{label}</MonoLabel>
@@ -356,7 +376,7 @@ function DecisionCell({ release }: { release: PackageRelease }) {
   );
 }
 
-function Th({ children }: { children: preact.ComponentChildren }) {
+function Th({ children }: { children: ComponentChildren }) {
   return (
     <th class="text-left font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
       {children}
@@ -364,12 +384,6 @@ function Th({ children }: { children: preact.ComponentChildren }) {
   );
 }
 
-function Td({
-  children,
-  class: className,
-}: {
-  children: preact.ComponentChildren;
-  class?: string;
-}) {
+function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
   return <td class={`px-4 py-2.5 align-top ${className || ""}`}>{children}</td>;
 }

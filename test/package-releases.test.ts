@@ -111,13 +111,14 @@ describe("describeBaseline", () => {
 });
 
 describe("package release paths", () => {
-  test("encodes a scoped name as one segment and omits the npm default", () => {
-    expect(packageReleasesPath("@scope/name")).toBe("/dashboard/packages/%40scope%2Fname");
+  test("keeps a scoped name's slash in the path and omits the npm default", () => {
+    expect(packageReleasesPath("@scope/name")).toBe("/dashboard/packages/@scope/name");
+    expect(packageReleasesPath("weird name")).toBe("/dashboard/packages/weird%20name");
     expect(packageReleasesPath("requests", "pypi")).toBe(
       "/dashboard/packages/requests?ecosystem=pypi",
     );
     expect(packageReleasesApiPath("@scope/name", { cursor: "1:abc", ecosystem: "npm" })).toBe(
-      "/api/v1/packages/%40scope%2Fname/releases?cursor=1%3Aabc",
+      "/api/v1/packages/@scope/name/releases?cursor=1%3Aabc",
     );
   });
 });

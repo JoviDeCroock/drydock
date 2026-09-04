@@ -336,7 +336,7 @@ app.get("/api", (c) =>
       scanOverview: "GET /api/v1/scans/overview",
       scanDetail: "GET /api/v1/scans/:id",
       packageReleases:
-        "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names percent-encoded as one segment)",
+        "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:

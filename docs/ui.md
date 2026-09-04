@@ -119,9 +119,11 @@ from the previous one while its list request is in flight.
 `/dashboard/packages/:name` (`src/pages/Dashboard/PackageReleases/`) lists one
 package's reviews for the active organization, grouped by channel (dist-tag)
 and newest first, over `GET /api/v1/packages/:name/releases`. A scoped name
-travels as one percent-encoded path segment (`%40scope%2Fname`), built by
-`src/lib/package-releases-path.ts`; the ecosystem rides in `?ecosystem=` only
-when it is not npm. Each row shows the version, what it was compared against
+keeps its slash in both paths (`/dashboard/packages/@scope/name`, as `/diff`
+does — the asset layer redirects an encoded slash to a literal one, so a
+single encoded segment does not survive a hard load); both routes take the
+name as a rest parameter and `src/lib/package-releases-path.ts` builds the
+URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. Each row shows the version, what it was compared against
 (`describeBaseline` in `src/features/package-releases.ts` turns the persisted
 baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
 "(highest published)" / "no baseline"), release risk, the decision with who

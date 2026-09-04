@@ -68,18 +68,22 @@ export const registryFailureCodeSql = sql<
 >`json_extract(${scans.errorJson}, '$.code')`;
 
 /**
- * SQL twin of `scanEcosystem` in `lib/public-feed.ts`: the gate provenance or
- * published-pair declaration when the report recorded one, else npm for the
- * credential-backed staged sources — which are the only sources that can
- * exist without a report. A pending workflow-gate scan therefore has no
- * ecosystem yet, and stays out of any per-ecosystem package view until its
- * report says which registry it describes.
+ * SQL twin of `scanEcosystem` in `lib/public-feed.ts`: npm for the
+ * credential-backed staged sources — the only sources that can exist without
+ * a report — else the gate provenance or published-pair declaration the report
+ * recorded. A pending workflow-gate scan therefore has no ecosystem yet, and
+ * stays out of any per-ecosystem package view until its report says which
+ * registry it describes. The staged branch is tested first so SQLite never
+ * parses a staged review's (large) summary for an answer its source already
+ * gives.
  */
-export const scanEcosystemSql = sql<string | null>`coalesce(
-  json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem'),
-  json_extract(${scans.summaryJson}, '$.stagedPublish.ecosystem'),
-  case when ${scans.source} in ('manual', 'auto_discovery') then 'npm' end
-)`;
+export const scanEcosystemSql = sql<string | null>`case
+  when ${scans.source} in ('manual', 'auto_discovery') then 'npm'
+  else coalesce(
+    json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem'),
+    json_extract(${scans.summaryJson}, '$.stagedPublish.ecosystem')
+  )
+end`;
 
 /** npm shipped the version, or shipped it and later removed it. */
 export function publishedReleaseOutcomeCondition() {
