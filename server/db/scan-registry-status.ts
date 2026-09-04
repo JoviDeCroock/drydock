@@ -38,6 +38,7 @@ export function registrySupersessionPatch(supersededAt: Date) {
     publicShareToken: null,
     publicSharedAt: null,
     publicSharedByUserId: null,
+    publicShareIncludesFiles: false,
     publicFeedListedAt: null,
     publicPackageKey: null,
   };

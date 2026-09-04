@@ -217,6 +217,7 @@ describe("public report sharing", () => {
 
     const pub = await request(app, `/public/reports/${share.token}`);
     expect(pub.status).toBe(200);
+    expect(pub.headers.get("x-drydock-share-includes-files")).toBe("1");
     const text = await pub.text();
     const body = JSON.parse(text) as Record<string, unknown>;
     expect(body.schema).toBe("drydock.report.v2");
@@ -380,6 +381,9 @@ describe("public report sharing", () => {
     const report = await request(app, `/public/reports/${share.token}`);
     expect(report.headers.get("cache-control")).toBe("no-store");
     expect(report.headers.get("access-control-allow-origin")).toBe("*");
+    expect(report.headers.get("access-control-expose-headers")).toContain(
+      "x-drydock-share-includes-files",
+    );
 
     const attestation = await request(
       app,
@@ -522,6 +526,129 @@ describe("public report sharing", () => {
       const headers = { "cf-connecting-ip": ip };
       for (let i = 0; i <= 120; i += 1) {
         const res = await request(app, `/public/reports/${"B".repeat(43)}`, { headers });
+        if (res.status === 429) {
+          limited = true;
+          break;
+        }
+        expect(res.status).toBe(404);
+      }
+    }
+    expect(limited).toBe(true);
+  });
+});
+
+// The file route is the one place a shared report discloses package bytes, so
+// each of these pins a property the report route already had: the same redacted
+// artifact, the same uniform 404, and the same per-IP budget.
+describe("public report file samples", () => {
+  test("legacy shares stay evidence-only until an owner deliberately re-shares", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const first = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string; includesFiles: boolean };
+    };
+    expect(first.share.includesFiles).toBe(true);
+
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ publicShareIncludesFiles: false })
+      .where(eq(schema.scans.id, scanId));
+
+    const legacyReport = await request(app, `/public/reports/${first.share.token}`);
+    expect(legacyReport.status).toBe(200);
+    expect(legacyReport.headers.get("x-drydock-share-includes-files")).toBe("0");
+    expect(
+      (await request(app, `/public/reports/${first.share.token}/file?path=package.json`)).status,
+    ).toBe(404);
+
+    const upgraded = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string; includesFiles: boolean };
+    };
+    expect(upgraded.share).toMatchObject({ token: first.share.token, includesFiles: true });
+    expect(
+      (await request(app, `/public/reports/${first.share.token}/file?path=package.json`)).status,
+    ).toBe(200);
+    const detail = (await (await request(app, `/api/v1/scans/${scanId}`)).json()) as {
+      events: Array<{ type: string }>;
+    };
+    expect(detail.events.filter((event) => event.type === "scan.share_enabled")).toHaveLength(2);
+  });
+
+  test("a live token serves the same redacted sample as the authenticated route", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+
+    const res = await request(app, `/public/reports/${share.token}/file?path=package.json`);
+    expect(res.status).toBe(200);
+    // A cached sample would outlive a revoke, exactly as it would for the report.
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const { file } = (await res.json()) as { file: { path: string; textSample: string } };
+    expect(file.path).toBe("package.json");
+
+    const authed = await request(app, `/api/v1/scans/${scanId}/file?path=package.json`);
+    expect(await authed.json()).toEqual({ file });
+  });
+
+  test("a path outside the shared review is indistinguishable from a bad token", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+
+    const uniformBody = await (await request(app, `/public/reports/${"C".repeat(43)}`)).json();
+    for (const path of [
+      `/public/reports/${share.token}/file?path=../../etc/passwd`,
+      `/public/reports/${share.token}/file?path=install.js`,
+      `/public/reports/${share.token}/file`,
+    ]) {
+      const res = await request(app, path);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual(uniformBody);
+    }
+  });
+
+  test("revoked, unknown, and malformed tokens all 404", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+    expect(
+      (await request(app, `/public/reports/${share.token}/file?path=package.json`)).status,
+    ).toBe(200);
+
+    await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
+    expect(
+      (await request(app, `/public/reports/${share.token}/file?path=package.json`)).status,
+    ).toBe(404);
+    expect(
+      (await request(app, `/public/reports/${"D".repeat(43)}/file?path=package.json`)).status,
+    ).toBe(404);
+    expect((await request(app, `/public/reports/short/file?path=package.json`)).status).toBe(404);
+  });
+
+  test("file reads spend the same per-IP budget as report reads", async () => {
+    const app = buildTestApp(null);
+    let limited = false;
+    // Same fixed wall-clock bucketing as the report rate-limit test: a loop that
+    // straddles the minute boundary spends its budget across two windows and
+    // never trips, so retry from a fresh address a bounded number of times.
+    for (let attempt = 0; attempt < 5 && !limited; attempt += 1) {
+      const ip = `10.1.${attempt}.${Math.floor(Math.random() * 200) + 1}`;
+      const headers = { "cf-connecting-ip": ip };
+      for (let i = 0; i <= 120; i += 1) {
+        const res = await request(app, `/public/reports/${"E".repeat(43)}/file?path=package.json`, {
+          headers,
+        });
         if (res.status === 429) {
           limited = true;
           break;

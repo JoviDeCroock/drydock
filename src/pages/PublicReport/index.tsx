@@ -1,9 +1,15 @@
 import { useEffect } from "preact/hooks";
-import { useComputed, useSignal } from "@preact/signals";
+import { useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useRoute } from "preact-iso";
 import { formatDateTime } from "../../lib/format";
 import { sortFindingsBySeverity } from "../../lib/findings";
+import { useQuerySignal } from "../../lib/query-state";
+import {
+  hasNoLoadableBody,
+  PublicReportModel,
+  type PublicReport,
+} from "../../models/public-report";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone, statusTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
@@ -12,51 +18,12 @@ import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
+import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
-
-// The canonical report export served at /public/reports/:token — the same
-// document `serializeReportExport` produces (schema drydock.report.v2).
-interface PublicReport {
-  schema: string;
-  scan: {
-    id: string;
-    status: string;
-    source: string;
-    risk: string;
-    decision: string | null;
-    createdAt: string | null;
-    completedAt: string | null;
-  };
-  package: {
-    name: string | null;
-    stagedVersion: string | null;
-    previousVersion: string | null;
-  };
-  riskSummary: {
-    releaseRisk: string;
-    contextRisk: string;
-    releaseFindingCount: number;
-    contextFindingCount: number;
-  } | null;
-  diff: Array<{ path: string; status: string }> | null;
-  findings: Array<{
-    severity: string;
-    file: string;
-    line: number | null;
-    ruleId: string | null;
-    diffStatus: string | null;
-    releaseDelta: boolean | null;
-    evidence: string;
-    reason: string;
-  }>;
-}
-
-interface LoadedPublicReport {
-  data: PublicReport;
-  attestationAvailable: boolean;
-}
+import { ReportDiffPanel } from "./ReportDiffPanel";
 
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
@@ -77,8 +44,9 @@ export default function PublicReportPage() {
   const token = route.params.token ?? "";
   const tokenPresent = hasShareToken(token);
   const authed = useAuthedSession();
-  const report = useSignal<LoadedPublicReport | null>(null);
-  const errorState = useSignal<"none" | "not_found" | "failed">("none");
+  const model = useModel(() => new PublicReportModel());
+  const fileFilter = useSignal("");
+  const changedFilesOnly = useSignal(true);
   // The prerendered `/reports` document is also the shell served for every
   // `/reports/:token` request (see `assetFallbackRequest`), so the explainer
   // must not be in the server-rendered output — a share link would flash "there
@@ -89,57 +57,62 @@ export default function PublicReportPage() {
     mounted.value = true;
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    report.value = null;
-    errorState.value = "none";
-    if (!hasShareToken(token)) return;
-    void (async () => {
-      const keyRequest = fetch("/public/attestation-key", {
-        headers: { accept: "application/json" },
-      }).catch(() => null);
-      try {
-        const res = await fetch(`/public/reports/${encodeURIComponent(token)}`, {
-          headers: { accept: "application/json" },
-        });
-        if (cancelled) return;
-        if (res.status === 404) {
-          errorState.value = "not_found";
-          return;
-        }
-        if (!res.ok) {
-          errorState.value = "failed";
-          return;
-        }
-        const data = (await res.json()) as PublicReport;
-        const keyResponse = await keyRequest;
-        if (!cancelled) {
-          report.value = { data, attestationAvailable: keyResponse?.ok ?? false };
-        }
-      } catch {
-        if (!cancelled) errorState.value = "failed";
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+  // Deep-linkable review state, exactly as the authenticated workbench binds it,
+  // so a maintainer can share a link that opens on the file they mean.
+  useQuerySignal(fileFilter, {
+    name: "file",
+    parse: (raw) => raw ?? "",
+    serialize: (value) => value || null,
+    debounceMs: 250,
+  });
+  useQuerySignal(changedFilesOnly, {
+    name: "changedOnly",
+    parse: (raw) => raw !== "0",
+    serialize: (value) => (value ? null : "0"),
+  });
+  useQuerySignal(model.selectedPath, {
+    name: "path",
+    parse: (raw) => raw ?? null,
+    serialize: (value) => value,
+  });
 
   useEffect(() => {
-    const data = report.value?.data;
+    if (!hasShareToken(token)) return;
+    void model.load(token);
+  }, [token]);
+
+  // Open on the release delta. A shared report exists to be read, and landing
+  // on "select a file" makes the reader do the work of finding the change.
+  useSignalEffect(() => {
+    const includesFiles = model.includesFiles.value;
+    const entries = model.diffEntries.value;
+    if (!includesFiles || !entries.length || model.selectedPath.peek()) return;
+    // Prefer a file with a staged body: a `removed` entry is a legitimate first
+    // change but its contents belong to the previous version, so landing there
+    // opens the report on an explanation instead of on the diff.
+    const first =
+      entries.find((entry) => entry.status === "modified" || entry.status === "added") ??
+      entries.find((entry) => entry.status !== "unchanged") ??
+      entries[0];
+    if (first) model.selectPath(first.path);
+  });
+
+  useSignalEffect(() => {
+    const includesFiles = model.includesFiles.value;
+    const entry = model.selectedEntry.value;
+    if (!includesFiles || !entry || entry.status === "removed") return;
+    if (hasNoLoadableBody(entry.flags)) return;
+    void model.loadFile(entry.path);
+  });
+
+  useEffect(() => {
+    const data = model.report.value;
     if (data?.package.name) {
       document.title = `${data.package.name} ${data.package.stagedVersion ?? ""} · Drydock review`;
     }
     // report is a signal; this effect re-runs via the render below, which is
     // enough for a one-shot title update after load.
-  }, [report.value]);
-
-  const sortedFindings = useComputed(() =>
-    report.value ? sortFindingsBySeverity(report.value.data.findings) : [],
-  );
-  const changedFiles = useComputed(
-    () => report.value?.data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [],
-  );
+  }, [model.report.value]);
 
   if (!tokenPresent) {
     if (!mounted.value) {
@@ -159,7 +132,7 @@ export default function PublicReportPage() {
           <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
             A Drydock public report is a single release review that the package's owner chose to
             share: the same canonical report export Drydock produced for them — risk, findings, and
-            the files the release changed — served read-only at its own link.
+            the diff the release actually shipped — served read-only at its own link.
           </Muted>
         </header>
 
@@ -191,7 +164,7 @@ export default function PublicReportPage() {
     );
   }
 
-  if (errorState.value === "not_found") {
+  if (model.errorState.value === "not_found") {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">
@@ -200,7 +173,7 @@ export default function PublicReportPage() {
       </PageShell>
     );
   }
-  if (errorState.value === "failed") {
+  if (model.errorState.value === "failed") {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <Alert tone="critical">The report could not be loaded. Try again in a minute.</Alert>
@@ -208,8 +181,8 @@ export default function PublicReportPage() {
     );
   }
 
-  const loaded = report.value;
-  if (!loaded) {
+  const data = model.report.value;
+  if (!data) {
     return (
       <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
         <LoadingState title="Loading public review" detail="fetching report" />
@@ -217,16 +190,15 @@ export default function PublicReportPage() {
     );
   }
 
-  const { data, attestationAvailable } = loaded;
-
   const releaseRisk = data.riskSummary?.releaseRisk ?? data.scan.risk;
   const decision = data.scan.decision;
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
-  const findings = sortedFindings.value;
-  const changes = changedFiles.value;
+  const changedCount = model.diffEntries.value.filter(
+    (entry) => entry.status !== "unchanged",
+  ).length;
 
   return (
-    <PageShell width="doc" headerActions={<MarketingHeaderActions authed={authed} />}>
+    <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
       <header class="flex flex-wrap items-start justify-between gap-4">
         <div class="flex flex-col gap-2 min-w-0">
           <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
@@ -243,6 +215,9 @@ export default function PublicReportPage() {
               data.scan.completedAt ? (
                 <span key="completed">reviewed {formatDateTime(data.scan.completedAt)}</span>
               ) : null,
+              <span key="changed">
+                {changedCount} changed {changedCount === 1 ? "file" : "files"}
+              </span>,
               <span key="findings">
                 {data.findings.length} finding{data.findings.length === 1 ? "" : "s"}
               </span>,
@@ -275,6 +250,124 @@ export default function PublicReportPage() {
             : "."}
         </EmptyLine>
       </Card>
+
+      <Show when={model.includesFiles} fallback={<EvidenceOnlyReport data={data} />}>
+        {() => (
+          <>
+            <ReviewWorkbench
+              entries={model.diffEntries}
+              fileFilter={fileFilter}
+              changedFilesOnly={changedFilesOnly}
+              selectedPath={model.selectedPath}
+              findingCounts={model.findingCounts}
+              onSelect={(path) => model.selectPath(path)}
+            >
+              <ReportDiffPanel
+                entry={model.selectedEntry.value}
+                file={model.selectedFile.value}
+                loading={model.loadingPath.value === model.selectedPath.value}
+                missing={Boolean(
+                  model.selectedPath.value && model.fileMisses.value[model.selectedPath.value],
+                )}
+                stagedVersion={data.package.stagedVersion}
+                findings={model.selectedFindings.value}
+              />
+            </ReviewWorkbench>
+
+            <RiskSignalsSection
+              findings={model.findingItems.value}
+              onSelect={(file) => model.selectPath(file)}
+              description={
+                "Deterministic rules scanned the full staged artifact. Changed-file signals are pinned " +
+                "to their line in the diff above; unchanged signals stay here as package context."
+              }
+            />
+          </>
+        )}
+      </Show>
+
+      <section class="flex flex-col gap-3">
+        <SectionLabel as="h2">Verify this report</SectionLabel>
+        {model.attestationAvailable.value ? (
+          <EmptyLine>
+            The signed attestation covers the exact JSON served for this link: its subject digest is
+            the SHA-256 of the report bytes, signed with Drydock's Ed25519 key (DSSE envelope, key
+            published at{" "}
+            <a
+              href="/public/attestation-key"
+              target="_blank"
+              rel="noreferrer"
+              class="text-ink-muted underline hover:text-ink"
+            >
+              /public/attestation-key
+            </a>
+            ).
+          </EmptyLine>
+        ) : (
+          <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
+        )}
+        <div class="flex flex-wrap gap-2">
+          {model.attestationAvailable.value ? (
+            <LinkButton variant="secondary" size="sm" href={attestationHref} download>
+              Download attestation
+            </LinkButton>
+          ) : null}
+          <LinkButton
+            variant="ghost"
+            size="sm"
+            href={`/public/reports/${encodeURIComponent(token)}`}
+            download
+          >
+            Download report JSON
+          </LinkButton>
+        </div>
+      </section>
+
+      <section class="flex flex-col gap-3 pt-3">
+        <SectionLabel as="p">Before it ships</SectionLabel>
+        <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          This release was reviewed while it could still be stopped.
+        </h2>
+        <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
+          The publisher held this release — an npm staged publish or a GitHub-gated job —{" "}
+          {decision === "publish"
+            ? "and read this report before letting it ship."
+            : decision
+              ? "read this report, and stopped it from shipping."
+              : "and is reading this report before deciding whether it ships."}{" "}
+          Drydock runs the same review on every version you publish; the maintainer keeps the final
+          decision. You can also diff any published npm, PyPI, or atpm package without an account.
+        </Muted>
+        <div class="flex flex-wrap gap-3 mt-1">
+          <Show
+            when={authed}
+            fallback={
+              <>
+                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/diff" variant="secondary">
+                  Diff a package
+                </LinkButton>
+              </>
+            }
+          >
+            <LinkButton href="/diff">Diff a package</LinkButton>
+          </Show>
+        </div>
+      </section>
+    </PageShell>
+  );
+}
+
+function EvidenceOnlyReport({ data }: { data: PublicReport }) {
+  const findings = sortFindingsBySeverity(data.findings);
+  const changes = data.diff?.filter((entry) => CHANGED_STATUSES.has(entry.status)) ?? [];
+
+  return (
+    <>
+      <Muted class="m-0 text-[13px] leading-[1.6] max-w-[760px]">
+        This link was created before shared file diffs were available. The maintainer can open this
+        review in Drydock and re-share it to include the diff.
+      </Muted>
 
       {findings.length ? (
         <section class="flex flex-col gap-3">
@@ -328,75 +421,6 @@ export default function PublicReportPage() {
           ) : null}
         </section>
       ) : null}
-
-      <section class="flex flex-col gap-3">
-        <SectionLabel as="h2">Verify this report</SectionLabel>
-        {attestationAvailable ? (
-          <EmptyLine>
-            The signed attestation covers the exact JSON served for this link: its subject digest is
-            the SHA-256 of the report bytes, signed with Drydock's Ed25519 key (DSSE envelope, key
-            published at{" "}
-            <a
-              href="/public/attestation-key"
-              target="_blank"
-              rel="noreferrer"
-              class="text-ink-muted underline hover:text-ink"
-            >
-              /public/attestation-key
-            </a>
-            ).
-          </EmptyLine>
-        ) : (
-          <EmptyLine>Signed attestations are not configured for this deployment.</EmptyLine>
-        )}
-        <div class="flex flex-wrap gap-2">
-          {attestationAvailable ? (
-            <LinkButton variant="secondary" size="sm" href={attestationHref} download>
-              Download attestation
-            </LinkButton>
-          ) : null}
-          <LinkButton
-            variant="ghost"
-            size="sm"
-            href={`/public/reports/${encodeURIComponent(token)}`}
-            download
-          >
-            Download report JSON
-          </LinkButton>
-        </div>
-      </section>
-
-      <section class="flex flex-col gap-3 pt-3">
-        <SectionLabel as="p">Before it ships</SectionLabel>
-        <h2 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-          This release was reviewed while it could still be stopped.
-        </h2>
-        <Muted class="m-0 text-[14px] leading-[1.65] max-w-[680px]">
-          The publisher held this release — an npm staged publish or a GitHub-gated job —{" "}
-          {decision === "publish"
-            ? "and read this report before letting it ship."
-            : decision
-              ? "read this report, and stopped it from shipping."
-              : "and is reading this report before deciding whether it ships."}{" "}
-          Drydock runs the same review on every version you publish; the maintainer keeps the final
-          decision. You can also diff any published npm, PyPI, or atpm package without an account.
-        </Muted>
-        <div class="flex flex-wrap gap-3 mt-1">
-          <Show
-            when={authed}
-            fallback={
-              <>
-                <LinkButton href="/register">Create account</LinkButton>
-                <LinkButton href="/diff" variant="secondary">
-                  Diff a package
-                </LinkButton>
-              </>
-            }
-          >
-            <LinkButton href="/diff">Diff a package</LinkButton>
-          </Show>
-        </div>
-      </section>
-    </PageShell>
+    </>
   );
 }

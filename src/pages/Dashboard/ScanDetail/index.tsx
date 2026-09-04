@@ -26,28 +26,31 @@ import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed"
 import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
-import { Card } from "../../../components/Card";
-import { FileTree } from "../../../components/FileTree";
-import { Input } from "../../../components/Input";
+import { CollapsibleCard } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
-import { LoadingLine, SectionLabel } from "../../../components/Typography";
+import { LoadingLine } from "../../../components/Typography";
 import { VersionPicker } from "../../../components/VersionPicker";
 import { DeleteScanDialog } from "./DeleteScanDialog";
 import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
+import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
-import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
-import { ReleaseRecommendation } from "./ReleaseRecommendation";
+import { hasReleaseConsistencyNote, ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
+import {
+  buildReleaseVerdict,
+  ReleaseVerdictEvidence,
+  ReleaseVerdictStrip,
+} from "./ReleaseRecommendation";
 import { PersistedReportSections } from "./ReportSections";
-import { ReviewerSummary } from "./ReviewerSummary";
+import { ReviewerSummary, reviewerSummaryVisible } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
 import { ShareDialog } from "./ShareDialog";
-import { filterDiffEntries, findingCountsByPath } from "../../../features/review/diff-entries";
+import { findingCountsByPath } from "../../../features/review/diff-entries";
 import { scanFilesToFileRecords } from "./diff-helpers";
 import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
 import { useScanFileContent } from "./hooks/useScanFileContent";
@@ -162,10 +165,6 @@ export default function ScanDetailPage() {
     return entries.find((entry) => entry.path === path) ?? null;
   });
 
-  const visibleDiffEntries = useComputed(() =>
-    filterDiffEntries(diffEntries.value, fileFilter.value, changedFilesOnly.value),
-  );
-
   const findingsWithDiffStatus = useFindingsWithDiff(
     model.detail,
     model.compare,
@@ -213,11 +212,30 @@ export default function ScanDetailPage() {
   const selectedVersion = model.selectedVersion.value;
   const compare = model.compare.value;
   const hasRuleFindings = Boolean(detail?.findings.length);
-  const workbenchGridClass = "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4";
 
   const isWorkflowGate = model.isWorkflowGate.value;
   const gate = model.gate.value;
   const envelope = intentEnvelope.value;
+
+  const verdict =
+    detail && detail.scan.status === "complete"
+      ? buildReleaseVerdict({
+          detail,
+          summary: summary.value,
+          diffCount: diffEntries.value.filter((entry) => entry.status !== "unchanged").length,
+          findingsWithDiffStatus: findingsWithDiffStatus.value,
+          usePersistedRiskSummary: model.isDefaultComparison.value || !compare,
+          isWorkflowGate,
+        })
+      : null;
+
+  // The advisory sections below the workbench, named so the collapsed group
+  // still says what is inside it and opens itself when that is worth reading.
+  const reviewNotes = [
+    reviewerSummaryVisible(ai.value) ? "reviewer" : null,
+    hasReleaseConsistencyNote(summary.value.releaseConsistency) ? "release memory" : null,
+    envelope ? "source binding" : null,
+  ].filter((label): label is string => label !== null);
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
@@ -267,6 +285,11 @@ export default function ScanDetailPage() {
       ? () => (decisionDialogOpen.value = true)
       : undefined;
 
+  // The decision button rides the verdict strip on a completed review, beside
+  // the comparison it is a decision about. A failed gate review renders no
+  // strip, so there it stays the header action.
+  const headerDecideClick = detail?.scan.status === "complete" ? undefined : onDecideClick;
+
   const onShareClick =
     detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
       ? () => {
@@ -279,7 +302,7 @@ export default function ScanDetailPage() {
     <PageShell>
       <ScanDetailHeader
         detail={detail}
-        onDecideClick={onDecideClick}
+        onDecideClick={headerDecideClick}
         onDeleteClick={
           detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
         }
@@ -315,7 +338,7 @@ export default function ScanDetailPage() {
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
       ) : null}
 
-      {/* Above the recommendation on purpose: npm blocking a version, or still
+      {/* Above the verdict on purpose: npm blocking a version, or still
           holding one this organization already approved, outranks anything the
           report has to say about it. Rendered for failed scans too — a review
           that could not read the tarball because the release was published or
@@ -327,102 +350,83 @@ export default function ScanDetailPage() {
       ) : null}
 
       {detail ? (
-        detail.scan.status === "complete" ? (
+        detail.scan.status === "complete" && verdict ? (
           <>
-            <ReleaseRecommendation
-              detail={detail}
-              summary={summary.value}
+            {/* Verdict, comparison, and the decision — one strip, then the
+                diff. Everything explaining the verdict moves below the
+                workbench: a reviewer reads the change first. */}
+            <ReleaseVerdictStrip
+              verdict={verdict}
               ai={ai.value}
-              diffCount={diffEntries.value.filter((entry) => entry.status !== "unchanged").length}
-              findingsWithDiffStatus={findingsWithDiffStatus.value}
-              usePersistedRiskSummary={model.isDefaultComparison.value || !compare}
-              isWorkflowGate={isWorkflowGate}
+              actions={
+                <>
+                  {detail.scan.packageName ? (
+                    versions ? (
+                      <VersionPicker
+                        options={versions.versions}
+                        selected={selectedVersion}
+                        defaultVersion={versions.defaultPreviousVersion}
+                        stagedVersion={versions.stagedVersion}
+                        onChange={(value) => model.selectVersion(value)}
+                        disabled={compareLoading}
+                      />
+                    ) : (
+                      <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+                    )
+                  ) : null}
+                  {onDecideClick ? (
+                    <Button
+                      variant={detail.scan.decision ? "secondary" : "primary"}
+                      onClick={onDecideClick}
+                    >
+                      {detail.scan.decision ? "Update decision" : "Decide"}
+                    </Button>
+                  ) : null}
+                </>
+              }
             />
-
-            <ReviewerSummary ai={ai.value} />
-
-            <ReleaseConsistencyNotice
-              value={summary.value.releaseConsistency}
-              approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
-            />
-
-            {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
-
-            {detail.scan.packageName ? (
-              <div class="flex flex-col gap-2 border-t border-border pt-3">
-                {versions ? (
-                  <VersionPicker
-                    options={versions.versions}
-                    selected={selectedVersion}
-                    defaultVersion={versions.defaultPreviousVersion}
-                    stagedVersion={versions.stagedVersion}
-                    onChange={(value) => model.selectVersion(value)}
-                    disabled={compareLoading}
-                  />
-                ) : (
-                  <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
-                )}
-                {compareLoading ? (
-                  <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
-                ) : null}
-                {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
-              </div>
-            ) : compareError ? (
-              <Alert tone="warn">{compareError}</Alert>
+            {compareLoading ? (
+              <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
             ) : null}
+            {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
 
-            <section class={workbenchGridClass}>
-              <Card as="aside" class="p-5 flex flex-col gap-3 lg:h-[720px] overflow-hidden">
-                <SectionLabel as="h2">Release tree</SectionLabel>
-                <Input
-                  type="search"
-                  value={fileFilter.value}
-                  placeholder="Filter files"
-                  onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
-                  autoComplete="off"
-                  spellcheck={false}
-                />
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <label class="flex items-center gap-2 text-[13px] text-ink-muted">
-                    <input
-                      type="checkbox"
-                      checked={changedFilesOnly.value}
-                      onChange={(e) =>
-                        (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
-                      }
-                    />
-                    Changed files only
-                  </label>
-                  <span class="font-mono text-[11px] text-ink-subtle">
-                    {visibleDiffEntries.value.length} / {diffEntries.value.length}
-                  </span>
-                </div>
-                <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
-                  <FileTree
-                    entries={visibleDiffEntries.value}
-                    selectedPath={model.selectedPath.value}
-                    onSelect={(path) => model.selectPath(path)}
-                    findingCounts={findingCounts.value}
-                  />
-                </div>
-              </Card>
+            <ReviewWorkbench
+              entries={diffEntries}
+              fileFilter={fileFilter}
+              changedFilesOnly={changedFilesOnly}
+              selectedPath={model.selectedPath}
+              findingCounts={findingCounts}
+              onSelect={(path) => model.selectPath(path)}
+            >
+              <DiffWorkbench
+                entry={selectedEntry.value}
+                stagedMeta={stagedFileMeta.value}
+                staged={stagedFile.value}
+                previousMeta={previousFileMeta.value}
+                previousContent={previousFile.value}
+                compareReady={Boolean(compare)}
+                compareLoading={compareLoading}
+                selectedVersion={selectedVersion}
+                stagedVersion={detail.scan.stagedVersion}
+                findings={selectedFindings.value}
+              />
+            </ReviewWorkbench>
 
-              <Card class="p-5 flex flex-col gap-3 lg:h-[720px]">
-                <SectionLabel as="h2">File diff</SectionLabel>
-                <DiffWorkbench
-                  entry={selectedEntry.value}
-                  stagedMeta={stagedFileMeta.value}
-                  staged={stagedFile.value}
-                  previousMeta={previousFileMeta.value}
-                  previousContent={previousFile.value}
-                  compareReady={Boolean(compare)}
-                  compareLoading={compareLoading}
-                  selectedVersion={selectedVersion}
-                  stagedVersion={detail.scan.stagedVersion}
-                  findings={selectedFindings.value}
+            <CollapsibleCard
+              title="Review notes"
+              aside={reviewNotes.length ? reviewNotes.join(" · ") : "nothing flagged"}
+              defaultOpen={reviewNotes.length > 0 || verdict.hasSignals}
+            >
+              <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
+                <ReleaseVerdictEvidence verdict={verdict} />
+                <ReviewerSummary ai={ai.value} />
+                <ReleaseConsistencyNotice
+                  value={summary.value.releaseConsistency}
+                  approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
                 />
-              </Card>
-            </section>
+                {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+              </div>
+            </CollapsibleCard>
 
             {hasRuleFindings ? (
               <RiskSignalsSection

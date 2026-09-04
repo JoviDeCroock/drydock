@@ -318,6 +318,7 @@ scanLifecycleRoutes.get("/:id", async (c) => {
       publicShareUrl: scan.scan.publicShareToken
         ? `${canonicalOrigin(c)}/reports/${scan.scan.publicShareToken}`
         : null,
+      publicShareIncludesFiles: scan.scan.publicShareIncludesFiles,
     },
   });
 });

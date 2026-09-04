@@ -107,6 +107,7 @@ export interface PersistedScanDetail {
     publicShareUrl?: string | null;
     publicSharedAt?: string | number | Date | null;
     publicFeedListedAt?: string | number | Date | null;
+    publicShareIncludesFiles?: boolean;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
   };
@@ -235,6 +236,7 @@ export interface PublicShareInfo {
   url: string;
   sharedAt: string | number | Date;
   threatFeedListedAt: string | number | Date | null;
+  includesFiles: boolean;
 }
 
 export function enableScanShare(

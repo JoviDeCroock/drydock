@@ -185,6 +185,12 @@ export const scans = sqliteTable(
     publicSharedByUserId: text("public_shared_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
+    // Existing share tokens predate file-sample disclosure. Default false keeps
+    // those capabilities evidence-only until an owner/admin deliberately
+    // re-shares; newly created shares opt in when their token is minted.
+    publicShareIncludesFiles: integer("public_share_includes_files", { mode: "boolean" })
+      .notNull()
+      .default(false),
     // Public threat-feed listing is a second, separate opt-in on top of the
     // share link: a shared report is reachable by anyone holding the link,
     // but only feed-listed scans appear in the discoverable

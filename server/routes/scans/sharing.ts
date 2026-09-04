@@ -131,13 +131,19 @@ scanSharingRoutes.delete("/:id/share", async (c) => {
 
 function publicShareResponse(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
-  share: { publicShareToken: string; publicSharedAt: Date; publicFeedListedAt: Date | null },
+  share: {
+    publicShareToken: string;
+    publicSharedAt: Date;
+    publicFeedListedAt: Date | null;
+    publicShareIncludesFiles: boolean;
+  },
 ) {
   return {
     token: share.publicShareToken,
     url: `${canonicalOrigin(c)}/reports/${share.publicShareToken}`,
     sharedAt: share.publicSharedAt,
     threatFeedListedAt: share.publicFeedListedAt,
+    includesFiles: share.publicShareIncludesFiles,
   };
 }
 

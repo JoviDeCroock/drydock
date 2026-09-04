@@ -229,6 +229,7 @@ export const ScanDetailModel = createModel((id: string) => {
                 url: data.scan.publicShareUrl ?? publicReportUrl(data.scan.publicShareToken),
                 sharedAt: data.scan.publicSharedAt ?? data.scan.updatedAt,
                 threatFeedListedAt: data.scan.publicFeedListedAt ?? null,
+                includesFiles: data.scan.publicShareIncludesFiles ?? false,
               }
             : null;
           if (this.selectedPath.peek() === null) {

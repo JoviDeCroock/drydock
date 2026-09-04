@@ -204,6 +204,13 @@
       "when": 1787725506345,
       "tag": "0028_deep_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1788369426817,
+      "tag": "0029_empty_ravenous",
+      "breakpoints": true
     }
   ]
 }

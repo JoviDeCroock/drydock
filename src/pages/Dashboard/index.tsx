@@ -1,11 +1,10 @@
-import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
-import { pluralize } from "../../lib/format";
+import { formatDateTime, pluralize } from "../../lib/format";
 import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
 import {
@@ -365,7 +364,7 @@ function RecentReviewsSection({
       ) : null}
       <div class="border-t border-border">
         {scans.scans.value.length ? (
-          <ScanTable
+          <ScanRows
             scans={scans.scans.value}
             quickDecisionScanId={quickDecisionScan.value?.id ?? null}
             decisionSaving={scans.decisionStatus.value === "saving"}
@@ -571,7 +570,15 @@ function NpmSetupCallout() {
   );
 }
 
-function ScanTable({
+/**
+ * One row per review, led by the risk chip and the change it describes.
+ *
+ * This replaced a seven-column table: a column grid gave "Status" and
+ * "Decision" the same visual weight as the diff, and forced every row to the
+ * width of its widest cell. Rows put the release delta on the first line and
+ * demote provenance and timing to a muted second line.
+ */
+function ScanRows({
   scans,
   quickDecisionScanId,
   decisionSaving,
@@ -587,92 +594,95 @@ function ScanTable({
   onDelete: (scan: ScanListItem) => void;
 }) {
   return (
-    <div class="overflow-x-auto">
-      <table class="w-full border-collapse text-[13px]">
-        <thead>
-          <tr class="border-b border-border bg-surface-2">
-            <Th>Package</Th>
-            <Th>Version</Th>
-            <Th>Risk</Th>
-            <Th>Changed</Th>
-            <Th>Status</Th>
-            <Th>Decision</Th>
-            <Th>Actions</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {scans.map((scan) => (
-            <tr key={scan.id} class="border-b border-border last:border-b-0 hover:bg-surface-2">
-              <Td>
-                <span class="flex items-center gap-2 min-w-[180px]">
-                  <a href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                    {scan.packageName || scan.stageId}
-                  </a>
-                  {scan.source === "workflow_gate" ? <Badge tone="neutral">gate</Badge> : null}
-                </span>
-              </Td>
-              <Td class="font-mono text-xs text-ink-muted whitespace-nowrap">
-                {scan.previousVersion || "—"} → {scan.stagedVersion || "—"}
-              </Td>
-              <Td>
-                <ScanRiskCell scan={scan} />
-              </Td>
-              <Td>
-                <ScanChangedCell scan={scan} />
-              </Td>
-              <Td>
-                <ScanStatusBadge status={scan.status} />
-              </Td>
-              <Td>
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <DecisionBadge decision={scan.decision} />
-                  <RegistryStatusBadge scan={scan} />
-                </div>
-              </Td>
-              <Td>
-                <div class="flex items-center gap-2">
-                  {canQuickDecide(scan) ? (
-                    <Button
-                      variant={scan.decision ? "secondary" : "primary"}
-                      size="sm"
-                      onClick={() => onQuickDecide(scan)}
-                      disabled={decisionSaving}
-                      title="Record a decision without leaving the dashboard"
-                    >
-                      {decisionSaving && quickDecisionScanId === scan.id
-                        ? "Saving…"
-                        : scan.decision
-                          ? "Update"
-                          : "Decide"}
-                    </Button>
-                  ) : null}
-                  <Menu
-                    align="end"
-                    triggerAriaLabel={`More actions for ${scan.packageName || scan.stageId}`}
-                    triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
-                    trigger={() => (
-                      <span aria-hidden="true" class="text-[13px] leading-none">
-                        ⋯
-                      </span>
-                    )}
-                  >
-                    <MenuLink href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
-                      Open review
-                    </MenuLink>
-                    {scan.status === "failed" ? (
-                      <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
-                        Delete review
-                      </MenuItem>
-                    ) : null}
-                  </Menu>
-                </div>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul class="list-none p-0 m-0">
+      {scans.map((scan) => (
+        <li
+          key={scan.id}
+          class="border-b border-border last:border-b-0 px-5 py-3.5 transition-colors duration-150 hover:bg-surface-2"
+        >
+          <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 min-w-0">
+                <ScanRiskChip scan={scan} />
+                <a
+                  href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}
+                  class="min-w-0 truncate text-[14px] font-medium"
+                >
+                  {scanTitle(scan)}
+                </a>
+                {scan.previousVersion ? (
+                  <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap">
+                    from {scan.previousVersion}
+                  </span>
+                ) : null}
+                <ScanDiffSummary scan={scan} />
+                <DecisionBadge decision={scan.decision} />
+                <RegistryStatusBadge scan={scan} />
+              </div>
+              <p class="m-0 font-mono text-[11px] text-ink-subtle">{scanMetaLine(scan)}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              {canQuickDecide(scan) ? (
+                <Button
+                  variant={scan.decision ? "secondary" : "primary"}
+                  size="sm"
+                  onClick={() => onQuickDecide(scan)}
+                  disabled={decisionSaving}
+                  title="Record a decision without leaving the dashboard"
+                >
+                  {decisionSaving && quickDecisionScanId === scan.id
+                    ? "Saving…"
+                    : scan.decision
+                      ? "Update"
+                      : "Decide"}
+                </Button>
+              ) : null}
+              <Menu
+                align="end"
+                triggerAriaLabel={`More actions for ${scan.packageName || scan.stageId}`}
+                triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
+                trigger={() => (
+                  <span aria-hidden="true" class="text-[13px] leading-none">
+                    ⋯
+                  </span>
+                )}
+              >
+                <MenuLink href={`/dashboard/scans/${encodeURIComponent(scan.id)}`}>
+                  Open review
+                </MenuLink>
+                {scan.status === "failed" ? (
+                  <MenuItem tone="danger" onSelect={() => onDelete(scan)} disabled={deleteBusy}>
+                    Delete review
+                  </MenuItem>
+                ) : null}
+              </Menu>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
+}
+
+function scanTitle(scan: ScanListItem): string {
+  const name = scan.packageName || scan.stageId;
+  return scan.stagedVersion ? `${name}@${scan.stagedVersion}` : name;
+}
+
+const SCAN_SOURCE_LABELS: Record<string, string> = {
+  manual: "started by hand",
+  auto_discovery: "found on npm",
+  workflow_gate: "workflow gate",
+};
+
+// Provenance and timing: real context, but never the reason a row is read.
+function scanMetaLine(scan: ScanListItem): string {
+  const source = scan.source ?? "manual";
+  const parts = [SCAN_SOURCE_LABELS[source] ?? source];
+  if (scan.decidedAt) parts.push(`decided ${formatDateTime(scan.decidedAt)}`);
+  else if (scan.completedAt) parts.push(`reviewed ${formatDateTime(scan.completedAt)}`);
+  else parts.push(`queued ${formatDateTime(scan.createdAt)}`);
+  return parts.join(" · ");
 }
 
 function canQuickDecide(scan: ScanListItem): boolean {
@@ -683,22 +693,34 @@ function canQuickDecide(scan: ScanListItem): boolean {
   );
 }
 
-function ScanRiskCell({ scan }: { scan: ScanListItem }) {
-  if (scan.status !== "complete") {
-    return <span class="font-mono text-xs text-ink-subtle">—</span>;
-  }
+// The row leads with release risk once there is one. A queued, running, or
+// failed review has none, so its lifecycle status takes the leading slot rather
+// than a placeholder that would claim a grade the review never reached.
+function ScanRiskChip({ scan }: { scan: ScanListItem }) {
+  if (scan.status !== "complete") return <ScanStatusBadge status={scan.status} />;
   const releaseRisk = scan.riskSummary?.releaseRisk ?? scan.risk;
   return <Badge tone={severityTone(releaseRisk)}>{releaseRisk}</Badge>;
 }
 
-function ScanChangedCell({ scan }: { scan: ScanListItem }) {
-  if (scan.status !== "complete") {
-    return <span class="font-mono text-xs text-ink-subtle">—</span>;
-  }
+/**
+ * What the release changed, in the two numbers a reviewer opens the row for.
+ *
+ * Both already ride the list projection (`changed_file_count` and the
+ * denormalized `risk_summary_json`), so a page of rows still costs no finding
+ * read. `releaseFindingCount` is the release delta — findings on lines this
+ * version introduced — which is why it reads as "on changed lines" rather than
+ * as the artifact's total.
+ */
+function ScanDiffSummary({ scan }: { scan: ScanListItem }) {
+  if (scan.status !== "complete") return null;
   const changedFiles = scan.changedFileCount ?? 0;
+  const releaseFindings = scan.riskSummary?.releaseFindingCount ?? 0;
   return (
-    <span class="font-mono text-xs text-ink-muted whitespace-nowrap">
-      {changedFiles} {pluralize("file", changedFiles)}
+    <span class="font-mono text-[11px] text-ink-muted whitespace-nowrap">
+      {changedFiles} {pluralize("file", changedFiles)} changed
+      {releaseFindings
+        ? ` · ${releaseFindings} ${pluralize("finding", releaseFindings)} on changed lines`
+        : ""}
     </span>
   );
 }
@@ -725,18 +747,6 @@ function DecisionBadge({ decision }: { decision?: string | null }) {
 function ScanStatusBadge({ status }: { status: string }) {
   const tone = status === "failed" ? "critical" : status === "running" ? "info" : "neutral";
   return <Badge tone={tone}>{status}</Badge>;
-}
-
-function Th({ children }: { children: ComponentChildren }) {
-  return (
-    <th class="text-left font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle px-4 py-2.5">
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, class: className }: { children: ComponentChildren; class?: string }) {
-  return <td class={`px-4 py-2.5 align-middle ${className || ""}`}>{children}</td>;
 }
 
 // Freshness is shown as a readable mono line ("checked 2 minutes ago") rather

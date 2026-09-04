@@ -1,21 +1,31 @@
 import type { ComponentChildren } from "preact";
 import { countSeverities, highestFindingRisk, sortFindingsBySeverity } from "../../../lib/findings";
 import { pluralize } from "../../../lib/format";
-import { getReleaseRecommendation } from "../recommendation";
+import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { Badge } from "../../../components/Badge";
-import { Card } from "../../../components/Card";
 import { SeverityBar } from "../../../components/SeverityBar";
 import { SectionLabel } from "../../../components/Typography";
 import { verdictTextClass } from "../../../features/review/verdict";
 import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
 import type { PersistedSummary } from "./types";
 
-export function ReleaseRecommendation({
+export interface ReleaseVerdict {
+  recommendation: ReleaseRecommendationCopy;
+  artifactRisk: string;
+  releaseRisk: string;
+  evidence: Array<{ label: string; value: ComponentChildren }>;
+  severityCounts: Record<string, number>;
+  findingTotal: number;
+  // Whether the evidence says anything beyond "nothing changed and nothing
+  // fired". Drives whether the review notes open by default.
+  hasSignals: boolean;
+}
+
+export function buildReleaseVerdict({
   detail,
   summary,
-  ai,
   diffCount,
   findingsWithDiffStatus,
   usePersistedRiskSummary,
@@ -23,14 +33,11 @@ export function ReleaseRecommendation({
 }: {
   detail: PersistedScanDetail;
   summary: PersistedSummary;
-  ai: DisplayedAiResult | null;
   diffCount: number;
   findingsWithDiffStatus: FindingWithDiffStatus[];
   usePersistedRiskSummary: boolean;
   isWorkflowGate: boolean;
-}) {
-  if (detail.scan.status !== "complete") return null;
-
+}): ReleaseVerdict {
   const changedFindings = findingsWithDiffStatus
     .filter((item) => item.releaseDelta)
     .map((item) => item.finding);
@@ -64,40 +71,76 @@ export function ReleaseRecommendation({
   );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
+  const manifest = summary.packageJsonDiff;
 
-  // The recommendation is the report's verdict, so it gets the only elevated
-  // (carded) section among the supplementary bare sections below it, plus a
-  // headline-scale verdict in the matching severity text color. Elevation +
-  // scale make it out-rank Reviewer / Risk signals / Manifest, which all share
-  // the flat SectionLabel altitude.
+  return {
+    recommendation,
+    artifactRisk,
+    releaseRisk,
+    evidence,
+    severityCounts,
+    findingTotal,
+    hasSignals:
+      baselineComparisonSkipped ||
+      releaseFindingCount > 0 ||
+      Boolean(manifest?.scripts.length) ||
+      Boolean(manifest?.dependencies.length) ||
+      Boolean(manifest?.entrypointsChanged),
+  };
+}
+
+/**
+ * The verdict line the page opens on, above the diff.
+ *
+ * Deliberately one row: the recommendation, the risk badges that qualify it,
+ * and — through `actions` — the version picker and the decision button. The
+ * evidence behind the verdict moves below the workbench into the review notes,
+ * because a reviewer reads the diff first and the reasoning second.
+ */
+export function ReleaseVerdictStrip({
+  verdict,
+  ai,
+  actions,
+}: {
+  verdict: ReleaseVerdict;
+  ai: DisplayedAiResult | null;
+  actions?: ComponentChildren;
+}) {
+  const { recommendation, artifactRisk, releaseRisk } = verdict;
   return (
-    <Card class="p-5 sm:p-6 flex flex-col gap-4">
-      <div class="flex flex-col gap-2">
-        <SectionLabel as="h2">Recommendation</SectionLabel>
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <h3
-            class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
-          >
-            {capitalize(recommendation.label)}
-          </h3>
-          <div class="flex flex-wrap items-center gap-2">
-            {artifactRisk !== releaseRisk ? (
-              <Badge tone="neutral">artifact {artifactRisk}</Badge>
-            ) : null}
-            {ai?.model != null &&
-              (ai.kind === "complete" ? (
-                <>
-                  <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                    {ai.requiresManualReview ? "manual review" : "no extra review"}
-                  </Badge>
-                  <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-                </>
-              ) : (
-                <Badge tone="neutral">assistant unavailable</Badge>
-              ))}
-          </div>
-        </div>
+    <section class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
+        <h2
+          class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
+        >
+          {capitalize(recommendation.label)}
+        </h2>
+        {artifactRisk !== releaseRisk ? (
+          <Badge tone="neutral">artifact {artifactRisk}</Badge>
+        ) : null}
+        {ai?.model != null &&
+          (ai.kind === "complete" ? (
+            <>
+              <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
+                {ai.requiresManualReview ? "manual review" : "no extra review"}
+              </Badge>
+              <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+            </>
+          ) : (
+            <Badge tone="neutral">assistant unavailable</Badge>
+          ))}
       </div>
+      {actions ? <div class="flex flex-wrap items-center gap-3">{actions}</div> : null}
+    </section>
+  );
+}
+
+/** Why the verdict reads the way it does. Lives in the review notes group. */
+export function ReleaseVerdictEvidence({ verdict }: { verdict: ReleaseVerdict }) {
+  const { recommendation, evidence, severityCounts, findingTotal } = verdict;
+  return (
+    <section class="flex flex-col gap-3">
+      <SectionLabel as="h3">Why this verdict</SectionLabel>
       {recommendation.copy ? (
         <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
           {recommendation.copy}
@@ -117,7 +160,7 @@ export function ReleaseRecommendation({
         ))}
       </ul>
       {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
-    </Card>
+    </section>
   );
 }
 

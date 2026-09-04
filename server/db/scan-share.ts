@@ -24,6 +24,7 @@ export interface PublicShareState {
   publicShareToken: string;
   publicSharedAt: Date;
   publicFeedListedAt: Date | null;
+  publicShareIncludesFiles: boolean;
   /**
    * Canonical badge key this scan occupies, so a caller can purge the colo-
    * cached badge after a listing change. Present whether or not the scan is
@@ -55,6 +56,7 @@ export async function readPublicShare(
       publicShareToken: scans.publicShareToken,
       publicSharedAt: scans.publicSharedAt,
       publicFeedListedAt: scans.publicFeedListedAt,
+      publicShareIncludesFiles: scans.publicShareIncludesFiles,
       publicPackageKey: scans.publicPackageKey,
       summaryJson: scans.summaryJson,
     })
@@ -72,6 +74,7 @@ export async function readPublicShare(
     publicShareToken: row.publicShareToken,
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,
+    publicShareIncludesFiles: row.publicShareIncludesFiles,
     publicPackageKey: row.publicPackageKey,
     publicBadgeTag: scanDistTag(row.summaryJson),
   };
@@ -93,6 +96,7 @@ export async function enablePublicShare(
         publicShareToken: scans.publicShareToken,
         publicSharedAt: scans.publicSharedAt,
         publicFeedListedAt: scans.publicFeedListedAt,
+        publicShareIncludesFiles: scans.publicShareIncludesFiles,
         packageName: scans.packageName,
         stagedVersion: scans.stagedVersion,
       })
@@ -110,10 +114,38 @@ export async function enablePublicShare(
   if (!existing) return null;
   if (existing.status !== "complete") return null;
   if (existing.publicShareToken && existing.publicSharedAt) {
+    if (!existing.publicShareIncludesFiles) {
+      const [upgraded] = await db
+        .update(scans)
+        .set({ publicShareIncludesFiles: true, updatedAt: new Date() })
+        .where(
+          and(
+            eq(scans.id, input.scanId),
+            eq(scans.organizationId, input.organizationId),
+            eq(scans.status, "complete"),
+            eq(scans.publicShareToken, existing.publicShareToken),
+            isNull(scans.registryStatusSupersededAt),
+          ),
+        )
+        .returning({ publicShareIncludesFiles: scans.publicShareIncludesFiles });
+      if (!upgraded?.publicShareIncludesFiles) return null;
+      await recordScanEvent(db, {
+        organizationId: input.organizationId,
+        actorUserId: input.actorUserId,
+        scanId: input.scanId,
+        type: "scan.share_enabled",
+        metadata: {
+          packageName: existing.packageName,
+          stagedVersion: existing.stagedVersion,
+          includesFiles: true,
+        },
+      });
+    }
     return {
       publicShareToken: existing.publicShareToken,
       publicSharedAt: existing.publicSharedAt,
       publicFeedListedAt: existing.publicFeedListedAt,
+      publicShareIncludesFiles: true,
     };
   }
 
@@ -125,6 +157,7 @@ export async function enablePublicShare(
       publicShareToken: token,
       publicSharedAt: now,
       publicSharedByUserId: input.actorUserId,
+      publicShareIncludesFiles: true,
       updatedAt: now,
     })
     .where(
@@ -147,6 +180,7 @@ export async function enablePublicShare(
         publicShareToken: current.publicShareToken,
         publicSharedAt: current.publicSharedAt,
         publicFeedListedAt: current.publicFeedListedAt,
+        publicShareIncludesFiles: current.publicShareIncludesFiles,
       };
     }
     return null;
@@ -159,7 +193,12 @@ export async function enablePublicShare(
     type: "scan.share_enabled",
     metadata: { packageName: existing.packageName, stagedVersion: existing.stagedVersion },
   });
-  return { publicShareToken: token, publicSharedAt: now, publicFeedListedAt: null };
+  return {
+    publicShareToken: token,
+    publicSharedAt: now,
+    publicFeedListedAt: null,
+    publicShareIncludesFiles: true,
+  };
 }
 
 /**
@@ -178,6 +217,7 @@ export async function revokePublicShare(
       publicShareToken: null,
       publicSharedAt: null,
       publicSharedByUserId: null,
+      publicShareIncludesFiles: false,
       publicFeedListedAt: null,
       publicPackageKey: null,
       updatedAt: now,
@@ -276,6 +316,7 @@ export async function setThreatFeedListing(
       publicShareToken: scans.publicShareToken,
       publicSharedAt: scans.publicSharedAt,
       publicFeedListedAt: scans.publicFeedListedAt,
+      publicShareIncludesFiles: scans.publicShareIncludesFiles,
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
     });
@@ -297,6 +338,7 @@ export async function setThreatFeedListing(
     publicShareToken: row.publicShareToken,
     publicSharedAt: row.publicSharedAt,
     publicFeedListedAt: row.publicFeedListedAt,
+    publicShareIncludesFiles: row.publicShareIncludesFiles,
   };
 }
 
@@ -477,13 +519,22 @@ export async function listBadgeCandidateScans(
 export async function resolvePublicShareToken(
   db: AppDb,
   token: string,
-): Promise<{ scanId: string; organizationId: string } | null> {
+): Promise<{ scanId: string; organizationId: string; includesFiles: boolean } | null> {
   if (!token) return null;
   const [row] = await db
-    .select({ scanId: scans.id, organizationId: scans.organizationId, status: scans.status })
+    .select({
+      scanId: scans.id,
+      organizationId: scans.organizationId,
+      status: scans.status,
+      includesFiles: scans.publicShareIncludesFiles,
+    })
     .from(scans)
     .where(and(eq(scans.publicShareToken, token), isNull(scans.registryStatusSupersededAt)))
     .limit(1);
   if (!row || row.status !== "complete" || !row.organizationId) return null;
-  return { scanId: row.scanId, organizationId: row.organizationId };
+  return {
+    scanId: row.scanId,
+    organizationId: row.organizationId,
+    includesFiles: row.includesFiles,
+  };
 }
