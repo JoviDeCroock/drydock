@@ -304,11 +304,11 @@ describe("ai review orchestration", () => {
     });
   });
 
-  test("keeps Gateway logs metadata-only and disables hidden retries", () => {
-    expect(aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1)).toMatchObject({
-      "cf-aig-collect-log-payload": "false",
-      "cf-aig-max-attempts": "1",
-    });
+  test("disables hidden Gateway retries and keeps request/response logging on", () => {
+    const headers = aiReviewRequestHeaders({}, BASE_OPTIONS, AI_MODEL, 1);
+
+    expect(headers).toMatchObject({ "cf-aig-max-attempts": "1" });
+    expect(headers).not.toHaveProperty("cf-aig-collect-log-payload");
   });
 
   test("Agent Trace metadata is versioned and excludes review-record identifiers", () => {

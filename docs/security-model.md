@@ -98,6 +98,14 @@ no-package-content rule; a maintainer decision is feedback, never an automatic
 truth label. See
 [`ai-review-eval.md`](./ai-review-eval.md).
 
+AI Gateway logs are the one deliberate exception: request and response bodies
+are retained there, so the changed-file evidence in a prompt and the model's raw
+output are readable to anyone with Cloudflare account access. That is the point
+— the reviewer is only debuggable if its actual inputs and outputs can be
+inspected. It does not widen the prompt itself, which still carries only minimum
+changed-file evidence and never credentials, sessions, or raw headers. Agent
+Traces stay payload-free regardless.
+
 For npm registry tarballs, consumer install lifecycle hooks are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time hooks and should not be treated as consumer-install evidence unless other evidence shows they changed the shipped artifact.
 
 ## Authorization posture
