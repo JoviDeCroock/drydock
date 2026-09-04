@@ -656,7 +656,7 @@ describe("registry version status resolution", () => {
         decision: "publish",
         actorUserId: org.userId,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ outcome: "not_actionable" });
     expect((await readScan(older.scanId)).decision).toBeNull();
   });
 

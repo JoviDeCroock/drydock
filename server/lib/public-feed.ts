@@ -101,6 +101,30 @@ export function purgePublicFeedCache(
   }
 }
 
+export interface ReconciledPublicFeedScan {
+  source: string;
+  packageName: string | null;
+  summaryJson: unknown;
+  publicFeedListedAt: Date | string | number | null;
+  publicPackageKey: string | null;
+}
+
+/** Purge every listed scan whose persisted decision projection just changed. */
+export function purgeReconciledPublicFeedCaches(
+  executionCtx: ExecutionContext | null,
+  origin: string,
+  scans: ReconciledPublicFeedScan[],
+): void {
+  for (const scan of scans) {
+    if (!scan.publicFeedListedAt) continue;
+    const ecosystem = scan.packageName ? scanEcosystem(scan.source, scan.summaryJson) : null;
+    const packageKey =
+      scan.publicPackageKey ??
+      (ecosystem && scan.packageName ? publicPackageLookupKey(ecosystem, scan.packageName) : null);
+    purgePublicFeedCache(executionCtx, origin, packageKey, scanDistTag(scan.summaryJson));
+  }
+}
+
 function provenanceEcosystem(summaryJson: unknown): PublicEcosystem | null {
   if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
     const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;

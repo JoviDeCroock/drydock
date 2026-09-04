@@ -3,6 +3,10 @@ import { personalOrganizationId } from "../lib/auth/ownership";
 import { deleteOrganizationArtifacts } from "../lib/scan/artifacts";
 import type { AppDb, WorkspaceSession } from "./client";
 import {
+  removeUserMembershipsAndReconcileApprovals,
+  type ReconciledScanProjection,
+} from "./scan-approvals";
+import {
   githubAppInstallations,
   githubReleaseTargets,
   githubWorkflowGates,
@@ -12,6 +16,7 @@ import {
   organizationNotificationRecipients,
   organizationSlackConnections,
   organizations,
+  scanApprovals,
   scanEvents,
   scans,
   twoFactor,
@@ -117,6 +122,7 @@ export interface OrganizationListEntry {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  requiredReleaseApprovals: number;
   createdAt: Date | string | number;
   updatedAt: Date | string | number;
 }
@@ -133,6 +139,7 @@ export async function listUserOrganizations(
       ownerUserId: organizations.ownerUserId,
       role: organizationMembers.role,
       requireTwoFactorForReleaseDecisions: organizations.requireTwoFactorForReleaseDecisions,
+      requiredReleaseApprovals: organizations.requiredReleaseApprovals,
       createdAt: organizations.createdAt,
       updatedAt: organizations.updatedAt,
       npmConnectionConfigured: sql<boolean>`exists (
@@ -154,6 +161,7 @@ export async function listUserOrganizations(
       isPersonal: row.id === personalId,
       npmConnectionConfigured: Boolean(row.npmConnectionConfigured),
       requireTwoFactorForReleaseDecisions: Boolean(row.requireTwoFactorForReleaseDecisions),
+      requiredReleaseApprovals: Math.max(1, row.requiredReleaseApprovals ?? 1),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     }))
@@ -246,11 +254,10 @@ export async function setRequireTwoFactorForReleaseDecisions(
  * children explicitly (in dependency order) rather than relying on
  * `ON DELETE CASCADE`, because D1 does not enforce foreign keys by default and a
  * silent orphan here would leak one org's scans/credentials past its deletion.
- * scan_files / scan_findings hang off scan_id, so they're cleared via a subquery
- * over the org's scans before the scans themselves go. The org's derived R2
- * artifacts are removed after the D1 teardown so redacted evidence doesn't
- * outlive the org; pass the ARTIFACTS bucket (the deletion is a no-op without
- * it, e.g. in environments with no bucket bound).
+ * Approval votes are cleared before their scans. The org's derived R2 artifacts
+ * are removed after the D1 teardown so redacted evidence doesn't outlive the
+ * org; pass the ARTIFACTS bucket (the deletion is a no-op without it, e.g. in
+ * environments with no bucket bound).
  */
 export async function deleteOrganization(
   db: AppDb,
@@ -258,6 +265,7 @@ export async function deleteOrganization(
   artifactBucket?: R2Bucket,
 ): Promise<void> {
   await db.batch([
+    db.delete(scanApprovals).where(eq(scanApprovals.organizationId, organizationId)),
     db.delete(scanEvents).where(eq(scanEvents.organizationId, organizationId)),
     db.delete(scans).where(eq(scans.organizationId, organizationId)),
     db.delete(githubWorkflowGates).where(eq(githubWorkflowGates.organizationId, organizationId)),
@@ -340,7 +348,7 @@ export async function deleteUserAccount(
   db: AppDb,
   userId: string,
   artifactBucket?: R2Bucket,
-): Promise<void> {
+): Promise<ReconciledScanProjection[]> {
   const personalId = personalOrganizationId(userId);
   const owned = await db
     .select({ id: organizations.id })
@@ -360,9 +368,18 @@ export async function deleteUserAccount(
     await deleteOrganization(db, org.id, artifactBucket);
   }
 
+  // A vote on an undecided release is not historical quorum yet. Revoke the
+  // remaining memberships, remove those live approvals, and repair pending
+  // gate projections in one transaction so an in-flight vote cannot land in a
+  // gap before membership cleanup. Historical rows are anonymized below.
+  const changedScans = await removeUserMembershipsAndReconcileApprovals(db, userId);
+
   await db.batch([
     db.update(scans).set({ ownerUserId: null }).where(eq(scans.ownerUserId, userId)),
     db.update(scans).set({ decidedByUserId: null }).where(eq(scans.decidedByUserId, userId)),
+    // Scrubbed, not deleted: the release really was approved by that many
+    // people, and dropping the row would silently lower a past quorum.
+    db.update(scanApprovals).set({ userId: null }).where(eq(scanApprovals.userId, userId)),
     db
       .update(scans)
       .set({ publicSharedByUserId: null })
@@ -396,9 +413,9 @@ export async function deleteUserAccount(
       .update(organizationInvitations)
       .set({ acceptedByUserId: null })
       .where(eq(organizationInvitations.acceptedByUserId, userId)),
-    db.delete(organizationMembers).where(eq(organizationMembers.userId, userId)),
     db.delete(twoFactor).where(eq(twoFactor.userId, userId)),
   ]);
+  return changedScans;
 }
 
 export interface NotificationRecipient {

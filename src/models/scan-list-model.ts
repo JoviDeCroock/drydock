@@ -32,6 +32,9 @@ export const ScanListModel = createModel(() => {
   const filter = signal<ScanDecisionFilter>("undecided");
   const nextCursor = signal<string | null>(null);
   const error = signal<string | null>(null);
+  // The org's approval bar, echoed by the list endpoint. 1 means a single
+  // approval decides — the queue then never mentions approvals at all.
+  const requiredApprovals = signal(1);
   const decisionStatus = signal<DecisionStatus>("idle");
   const decisionError = signal<string | null>(null);
   const deleteStatus = signal<DeleteStatus>("idle");
@@ -91,6 +94,7 @@ export const ScanListModel = createModel(() => {
       const data = { ...firstPage, scans: refreshed, nextCursor: cursor };
       scans.value = data.scans;
       nextCursor.value = data.nextCursor;
+      requiredApprovals.value = data.requiredApprovals ?? 1;
       error.value = null;
       // Resolved on every refresh rather than latched once, because `refresh`
       // is also what runs on an organization switch: a stale `true` carried
@@ -262,6 +266,7 @@ export const ScanListModel = createModel(() => {
     filter,
     nextCursor,
     error,
+    requiredApprovals,
     decisionStatus,
     decisionError,
     deleteStatus,
@@ -312,6 +317,14 @@ export const ScanListModel = createModel(() => {
         ) {
           return;
         }
+        const nextRequiredApprovals = data.requiredApprovals ?? 1;
+        if (nextRequiredApprovals !== this.requiredApprovals.peek()) {
+          // A policy change reconciles decisions across the whole queue. The
+          // rows already loaded were projected under the previous threshold,
+          // so appending this page would combine incompatible snapshots.
+          await refresh();
+          return;
+        }
         this.scans.value = [...this.scans.value, ...data.scans];
         this.nextCursor.value = data.nextCursor;
         this.error.value = null;
@@ -324,7 +337,11 @@ export const ScanListModel = createModel(() => {
       }
     },
 
-    async setDecision(id: string, decision: ScanDecision, reason: string | null): Promise<void> {
+    async setDecision(
+      id: string,
+      decision: ScanDecision,
+      reason: string | null,
+    ): Promise<Awaited<ReturnType<typeof setScanDecision>> | null> {
       this.decisionStatus.value = "saving";
       this.decisionError.value = null;
       try {
@@ -339,6 +356,9 @@ export const ScanListModel = createModel(() => {
               ? {
                   ...scan,
                   ...updated.scan,
+                  approvalCount: updated.approvals?.approvedCount ?? scan.approvalCount,
+                  legacyDecision: updated.approvals?.legacyDecision ?? scan.legacyDecision,
+                  viewerDecision: updated.approvals?.viewerDecision ?? scan.viewerDecision,
                   riskSummary: updated.riskSummary ?? updated.scan.riskSummary ?? scan.riskSummary,
                 }
               : scan,
@@ -348,9 +368,11 @@ export const ScanListModel = createModel(() => {
         // row itself is usually filtered out of the list a line above.
         this.hasAnyDecision.value = true;
         this.decisionStatus.value = "idle";
+        return updated;
       } catch (err) {
         this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
+        return null;
       }
     },
 

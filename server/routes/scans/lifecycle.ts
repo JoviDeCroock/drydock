@@ -26,6 +26,7 @@ import {
   getScan,
   getScanFile,
   getScanStatus,
+  loadScanApprovalState,
   listScans,
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
@@ -251,6 +252,7 @@ function encodeListScansCursor(cursor: { createdAtMs: number; id: string } | nul
 
 scanLifecycleRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
+  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
   const rawFilter = c.req.query("filter");
@@ -267,12 +269,18 @@ scanLifecycleRoutes.get("/", async (c) => {
 
   const cursor = parseListScansCursor(c.req.query("cursor"));
 
-  const result = await listScans(db, organizationId, { cursor, limit, decisionFilter });
+  const result = await listScans(db, organizationId, {
+    cursor,
+    limit,
+    decisionFilter,
+    viewerUserId: session.userId,
+  });
   return c.json({
     scans: result.scans,
     nextCursor: encodeListScansCursor(result.nextCursor),
     filter: decisionFilter,
     limit,
+    requiredApprovals: result.requiredApprovals,
   });
 });
 
@@ -284,6 +292,12 @@ scanLifecycleRoutes.delete("/:id", async (c) => {
 
   const result = await deleteFailedScan(db, scanId, organizationId);
   if (result.outcome === "not_found") return c.json({ error: "not found" }, 404);
+  if (result.outcome === "workflow_gate_managed") {
+    return c.json(
+      { error: "workflow-gate package scans are managed by the gate review and cannot be deleted" },
+      409,
+    );
+  }
   if (result.outcome === "not_failed") {
     return c.json({ error: "only failed scans can be deleted" }, 409);
   }
@@ -306,13 +320,24 @@ scanLifecycleRoutes.delete("/:id", async (c) => {
 
 scanLifecycleRoutes.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
+  const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
     files: "list",
   });
   if (!scan) return c.json({ error: "not found" }, 404);
+  // Who has approved so far, and how many the org requires. Attached here
+  // rather than inside `getScan` on purpose: the same reader backs the public
+  // report export, which must never carry reviewer identities.
+  const approvals = await loadScanApprovalState(db, {
+    scanId: scan.scan.id,
+    organizationId,
+    viewerUserId: session.userId,
+    scan: scan.scan,
+  });
   return c.json({
     ...scan,
+    approvals,
     scan: {
       ...scan.scan,
       publicShareUrl: scan.scan.publicShareToken

@@ -41,6 +41,13 @@ function buildTestApp(session: { userId: string }) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use("*", async (c, next) => {
     c.set("authSession", { userId: session.userId });
+    c.set("auth", {
+      api: {
+        verifyTOTP: async ({ body }: { body: { code: string } }) => {
+          if (body.code !== "123456") throw new Error("invalid code");
+        },
+      },
+    } as Variables["auth"]);
     await next();
   });
   app.route("/api/v1/organizations", organizationsRoutes);
@@ -680,5 +687,149 @@ describe("organization deletion", () => {
 
     const db = createDb(env.DB);
     expect(await getOrganizationRole(db, owner.personalOrganizationId, owner.userId)).toBe("owner");
+  });
+});
+
+describe("required release approvals policy", () => {
+  test("the owner raises the bar and it caps at the org's member count", async () => {
+    const owner = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "Two Person Co" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: second.userId,
+      role: "member",
+    });
+
+    const ok = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      {
+        body: { requiredApprovals: 2 },
+      },
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ requiredApprovals: 2 });
+
+    const unchanged = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 2 } },
+    );
+    expect(unchanged.status).toBe(200);
+    expect(
+      await db
+        .select({ id: schema.scanEvents.id })
+        .from(schema.scanEvents)
+        .where(eq(schema.scanEvents.type, "organization.release_approvals_changed")),
+    ).toHaveLength(1);
+
+    // Three approvals in a two-person org is not a stricter policy, it is a
+    // release process that can never complete.
+    const tooMany = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 3 } },
+    );
+    expect(tooMany.status).toBe(409);
+    expect(await tooMany.json()).toMatchObject({ code: "not_enough_members", memberCount: 2 });
+  });
+
+  test("lowering the bar requires owner enrollment and a fresh TOTP code", async () => {
+    const owner = await seedUser();
+    const second = await seedUser();
+    const db = createDb(env.DB);
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "Stepped Up Co" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: second.userId,
+      role: "member",
+    });
+    await call(buildTestApp(owner), "PUT", `/api/v1/organizations/${orgId}/release-approvals`, {
+      body: { requiredApprovals: 2 },
+    });
+
+    const unenrolled = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 1 } },
+    );
+    expect(unenrolled.status).toBe(403);
+    expect(await unenrolled.json()).toMatchObject({ code: "two_factor_enrollment_required" });
+
+    await setEnrolledInTwoFactor(owner.userId, true);
+    const missing = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 1 } },
+    );
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toMatchObject({ code: "two_factor_required" });
+
+    const invalid = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 1, totpCode: "000000" } },
+    );
+    expect(invalid.status).toBe(401);
+    expect(await invalid.json()).toMatchObject({ code: "two_factor_invalid" });
+
+    const valid = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 1, totpCode: "123456" } },
+    );
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toEqual({ requiredApprovals: 1 });
+  });
+
+  test("a non-owner member cannot change the bar", async () => {
+    const owner = await seedUser();
+    const member = await seedUser();
+    const db = createDb(env.DB);
+    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+      body: { name: "Locked Down" },
+    });
+    const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
+    await addOrganizationMember(db, {
+      organizationId: orgId,
+      userId: member.userId,
+      role: "admin",
+    });
+
+    const res = await call(
+      buildTestApp(member),
+      "PUT",
+      `/api/v1/organizations/${orgId}/release-approvals`,
+      { body: { requiredApprovals: 2 } },
+    );
+    // 404 rather than 403: an admin has no business learning the policy exists
+    // on an org they cannot govern, and this matches the two-factor policy route.
+    expect(res.status).toBe(404);
+  });
+
+  test("rejects a bar outside the allowed range", async () => {
+    const owner = await seedUser();
+    const res = await call(
+      buildTestApp(owner),
+      "PUT",
+      `/api/v1/organizations/${owner.personalOrganizationId}/release-approvals`,
+      { body: { requiredApprovals: 0 } },
+    );
+    expect(res.status).toBe(400);
   });
 });

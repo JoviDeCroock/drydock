@@ -37,7 +37,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
-  const updated = await recordScanDecision(
+  const result = await recordScanDecision(
     db,
     {
       scanId: c.req.param("id"),
@@ -50,7 +50,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     c.env,
   );
 
-  if (!updated) {
+  if (result.outcome !== "recorded") {
     // Existence check only — skip the R2 artifact load; the detail is discarded.
     const existing = await getScan(db, c.req.param("id"), organizationId);
     if (!existing) return c.json({ error: "not found" }, 404);
@@ -60,14 +60,20 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
         409,
       );
     }
+    if (existing.scan.source === "workflow_gate") {
+      return c.json({ error: "workflow-gate decisions must be submitted through the gate" }, 409);
+    }
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
+  const updated = result.detail;
 
   // A decision changes what a listed scan's cached badge and feed entry
   // assert ("reviewed · risk" → "approved"/"blocked"), and a publish →
   // no_publish flip must not leave a brightgreen "approved" badge sitting in
   // this colo for the full TTL. Same canonical-origin purge as (un)listing.
-  if (updated.scan.publicFeedListedAt) {
+  // An approval that has not yet met the org's bar changes nothing the badge
+  // asserts, so it is not worth a purge.
+  if (result.verdictChanged && updated.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
@@ -82,5 +88,5 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     );
   }
 
-  return c.json(updated);
+  return c.json({ ...updated, approvals: result.approvals });
 });

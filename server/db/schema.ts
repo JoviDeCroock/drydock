@@ -35,6 +35,12 @@ export const organizations = sqliteTable(
     })
       .notNull()
       .default(false),
+    // How many distinct members must approve a release before its decision
+    // flips to `publish`. 1 (the default) is today's behavior: the first
+    // approval is the decision. Above 1 the release stays undecided — and, for
+    // a gated release, the deployment stays held — until that many distinct
+    // members have approved it. A single block is always final regardless.
+    requiredReleaseApprovals: integer("required_release_approvals").notNull().default(1),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -300,6 +306,49 @@ export const scans = sqliteTable(
   }),
 );
 
+/**
+ * One member's vote on one release, and the record that makes multi-party
+ * approval auditable. `scans.decision` stays the single final verdict; these
+ * rows are what it is computed from, so a release that needs two approvals sits
+ * with `decision = null` and one `publish` row until a second, *distinct*
+ * member adds theirs.
+ *
+ * `user_id` is nullable so a deleted account's vote keeps its place in the
+ * count (the release was genuinely approved by that many people) while losing
+ * the identity — the same scrub-not-delete treatment `scans.decided_by_user_id`
+ * gets.
+ */
+export const scanApprovals = sqliteTable(
+  "scan_approvals",
+  {
+    id: text("id").primaryKey(),
+    scanId: text("scan_id")
+      .notNull()
+      .references(() => scans.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    decision: text("decision").notNull(),
+    reason: text("reason"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    // One vote per member per scan. This is the quorum rule itself: without it
+    // a single member could approve twice and release alone.
+    scanUserUniqueIdx: uniqueIndex("scan_approvals_scan_user_unique_idx").on(
+      table.scanId,
+      table.userId,
+    ),
+    scanIdx: index("scan_approvals_scan_idx").on(table.scanId),
+    orgIdx: index("scan_approvals_org_idx").on(table.organizationId),
+    // Account deletion scrubs by user id, and removing a member drops their
+    // still-pending votes; both scan by user without this.
+    userIdx: index("scan_approvals_user_idx").on(table.userId),
+  }),
+);
+
 export const scanEvents = sqliteTable(
   "scan_events",
   {
@@ -483,6 +532,10 @@ export const githubWorkflowGates = sqliteTable(
     decision: text("decision"),
     decisionComment: text("decision_comment"),
     reportUrl: text("report_url"),
+    // Snapshot the approval bar when the gate leaves `pending`. Organization
+    // policy keeps evolving, but a completed gate must keep describing the
+    // quorum that actually released or blocked its deployment.
+    requiredReleaseApprovals: integer("required_release_approvals"),
     // Representative (highest-risk) package scan for the gate. The full set of
     // per-package scans is found via `scans.gate_id = github_workflow_gates.id`.
     scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),

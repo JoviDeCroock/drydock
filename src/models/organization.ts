@@ -10,6 +10,8 @@ export interface Organization {
   isPersonal: boolean;
   npmConnectionConfigured: boolean;
   requireTwoFactorForReleaseDecisions: boolean;
+  /** Distinct members who must approve a release before it counts as approved. 1 = today's default. */
+  requiredReleaseApprovals: number;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 }
@@ -36,6 +38,24 @@ function releaseTwoFactorErrorMessage(err: unknown): string {
     }
     if (err.code === "two_factor_required") {
       return "Enter the code from your authenticator app to stop requiring two-factor.";
+    }
+    if (err.code === "two_factor_invalid") {
+      return "That authentication code is invalid or expired — enter the current code.";
+    }
+    if (err.code === "approval_policy_changed") {
+      return "The approval requirement changed while you were saving. Reload and try again.";
+    }
+  }
+  return errorMessage(err);
+}
+
+function releaseApprovalsErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "two_factor_enrollment_required") {
+      return "Enable two-factor authentication on your own account before lowering the approval requirement.";
+    }
+    if (err.code === "two_factor_required") {
+      return "Enter the code from your authenticator app to lower the approval requirement.";
     }
     if (err.code === "two_factor_invalid") {
       return "That authentication code is invalid or expired — enter the current code.";
@@ -190,6 +210,34 @@ export const OrganizationModel = createModel(() => {
         return true;
       } catch (err) {
         this.error.value = releaseTwoFactorErrorMessage(err);
+        return false;
+      } finally {
+        this.status.value = "idle";
+      }
+    },
+
+    // Raise or lower how many distinct members must approve a release. The
+    // route caps this at the org's member count, so the one error worth its
+    // own copy is "you don't have that many people".
+    async setRequiredReleaseApprovals(
+      organizationId: string,
+      requiredApprovals: number,
+      totpCode?: string | null,
+    ): Promise<boolean> {
+      this.status.value = "updating";
+      this.error.value = null;
+      try {
+        await apiJson<{ requiredApprovals: number }>(
+          `/api/v1/organizations/${encodeURIComponent(organizationId)}/release-approvals`,
+          { requiredApprovals, totpCode: totpCode?.trim() || undefined },
+          { method: "PUT" },
+        );
+        // Reload so `active.requiredReleaseApprovals` is right everywhere that
+        // reads the org list.
+        await this.load();
+        return true;
+      } catch (err) {
+        this.error.value = releaseApprovalsErrorMessage(err);
         return false;
       } finally {
         this.status.value = "idle";

@@ -30,7 +30,8 @@ Workers Logs is a short-retention debugging stream, so without that counter the
 removal left scan volume and failure rate unanswerable rather than just
 un-audited.
 
-Everything else is still written: `scan.decided`, `github_workflow_gate.*`,
+Everything else is still written: `scan.decided`, `scan.approval_recorded`,
+`github_workflow_gate.*`,
 `npm_connection.{upserted,validated,deleted,token_expired}`, `github_app_*`,
 `organization.*`, and notification-delivery events.
 

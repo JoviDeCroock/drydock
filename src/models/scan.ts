@@ -14,6 +14,8 @@ export {
   type DeleteStatus,
   type PersistedScanDetail,
   type PublicShareInfo,
+  type ScanApprovalRecord,
+  type ScanApprovalState,
   type ScanCompareResponse,
   type ScanDecision,
   type ScanDecisionFilter,

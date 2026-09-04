@@ -8,7 +8,12 @@
 import { Hono, type Context } from "hono";
 import { createDb } from "../../db/client";
 import { getOrganizationRole } from "../../db/invitations";
-import { getScan, getScanStatus } from "../../db/scans";
+import {
+  getOrganizationApprovalPolicy,
+  getScan,
+  getScanStatus,
+  listScanApprovalVotes,
+} from "../../db/scans";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
@@ -202,7 +207,34 @@ scanSharingRoutes.get(
       detail.scan.source === "workflow_gate"
         ? await getGateByScanId(db, organizationId, detail.scan.id)
         : null;
-    const document = await buildReleaseReceipt(detail, gate);
+    // The bar that governed this scan: a completed gate snapshots the policy at
+    // its final CAS, everything still live answers to the current org policy —
+    // the same rule the approval state applies (docs/release-approvals.md).
+    // Under the default one-approval bar the receipt omits the roster entirely
+    // so pre-approval receipts stay byte-identical.
+    const gateCompleted = gate !== null && gate.status !== "pending";
+    const required = gateCompleted
+      ? (gate.requiredReleaseApprovals ?? 1)
+      : (await getOrganizationApprovalPolicy(db, organizationId)).required;
+    let approvals = null;
+    if (required > 1) {
+      const votes = await listScanApprovalVotes(db, detail.scan.id, organizationId);
+      // A verdict with no vote roster predates multi-party approval, and the
+      // live policy never governed it — only a completed gate's snapshot proves
+      // the bar applied at decision time. Claiming today's bar there would read
+      // as a decision that skipped its own quorum.
+      if (gateCompleted || votes.length > 0 || !detail.scan.decision) {
+        approvals = {
+          required,
+          votes: votes.map((vote) => ({
+            userId: vote.userId,
+            decision: vote.decision,
+            votedAt: vote.updatedAt,
+          })),
+        };
+      }
+    }
+    const document = await buildReleaseReceipt(detail, gate, approvals);
     const bytes = serializeReleaseReceipt(document);
     const documentSha256 = await sha256Hex(bytes);
     return new Response(bytes, {

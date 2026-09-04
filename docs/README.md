@@ -46,6 +46,7 @@ The user-facing learning guide is [`../src/pages/Docs/index.tsx`](../src/pages/D
 - [`registry-version-status.md`](./registry-version-status.md) — npm's own lifecycle status for a staged version (`blocked` / `validating` / `published` / …), the forgotten-approval reminder, and why an unresolved lookup is never a verdict.
 - [`release-fingerprint.md`](./release-fingerprint.md) — the history-based `release.source-drift` rule and its FP posture.
 - [`organization-members.md`](./organization-members.md) — organization invitation/membership behavior.
+- [`release-approvals.md`](./release-approvals.md) — multi-party release approval: the org-wide bar, how `scans.decision` is derived from per-member votes, and why a block stays unilateral.
 - [`audit-log.md`](./audit-log.md) — organization audit log surface, visible-event allowlist, and retention.
 - [`product-analytics.md`](./product-analytics.md) — Analytics Engine counters, privacy posture, and the positional event schema.
 - [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) — the `renovate/diff-links.json` shared preset and Dependabot workflow that link dependency-update PRs to public `/diff` pages; the preset path is a public contract.

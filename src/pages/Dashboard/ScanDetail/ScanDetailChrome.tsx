@@ -40,6 +40,13 @@ export function ScanDetailHeader({
 } = {}) {
   const decision = detail?.scan.decision;
   const decidedAt = detail?.scan.decidedAt;
+  const approvals = detail?.approvals ?? null;
+  // Partial approval has no `decision` to render, and is exactly the state a
+  // reviewer landing on this page needs to see at a glance.
+  const pendingApproval =
+    approvals && approvals.required > 1 && !decision && approvals.approvedCount > 0
+      ? approvals
+      : null;
   const isComplete = detail?.scan.status === "complete";
   const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
   // npm's own state for the version, next to our risk verdict. The two answer
@@ -79,8 +86,13 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDecideClick || onDeleteClick || (detail && isComplete) ? (
+      {decision || pendingApproval || onDecideClick || onDeleteClick || (detail && isComplete) ? (
         <div class="flex flex-wrap items-start gap-3">
+          {pendingApproval ? (
+            <Badge tone="medium">
+              {pendingApproval.approvedCount} of {pendingApproval.required} approvals
+            </Badge>
+          ) : null}
           {decision ? (
             <div class="flex flex-col items-end gap-1">
               <Badge tone={decision === "publish" ? "ok" : "critical"}>

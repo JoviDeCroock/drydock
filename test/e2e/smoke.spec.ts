@@ -371,6 +371,9 @@ function workflowGate(
     reportUrl: null,
     scanId,
     failureReason: null,
+    // One approval per package — the default policy, and what the smoke flow
+    // asserts. Multi-party approval has its own coverage in test/workers.
+    requiredApprovals: 1,
     packages: [
       {
         scanId,
@@ -379,6 +382,7 @@ function workflowGate(
         status: "complete",
         releaseRisk: "high",
         decision: packageDecision,
+        approvalCount: packageDecision === "publish" ? 1 : 0,
       },
       {
         scanId: "gate-smoke-sidecar-000001",
@@ -387,6 +391,7 @@ function workflowGate(
         status: "complete",
         releaseRisk: "low",
         decision: "publish",
+        approvalCount: 1,
       },
     ],
     requestedAt: now,

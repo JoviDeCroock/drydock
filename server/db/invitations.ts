@@ -1,6 +1,12 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { normalizeRole, type OrganizationRole } from "../lib/auth/roles";
 import type { AppDb } from "./client";
+import {
+  addMemberAndReconcileApprovals,
+  removeMemberAndReconcileApprovals,
+  type ReconciledScanDecision,
+  type ReconciledScanProjection,
+} from "./scan-approvals";
 import { organizationInvitations, organizationMembers, organizations, user } from "./schema";
 
 export function normalizeEmail(email: string): string {
@@ -90,22 +96,16 @@ export async function listOrganizationMembers(
 export async function addOrganizationMember(
   db: AppDb,
   input: { organizationId: string; userId: string; role: OrganizationRole },
-): Promise<void> {
-  const now = new Date();
-  await db
-    .insert(organizationMembers)
-    .values({
-      id: `member:${input.organizationId}:${input.userId}`,
-      organizationId: input.organizationId,
-      userId: input.userId,
-      role: input.role,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [organizationMembers.organizationId, organizationMembers.userId],
-      set: { role: input.role, updatedAt: now },
-    });
+): Promise<ReconciledScanDecision[]> {
+  return addMemberAndReconcileApprovals(db, input);
+}
+
+export async function removeOrganizationMemberWithApprovalReconciliation(
+  db: AppDb,
+  organizationId: string,
+  userId: string,
+): Promise<{ removed: boolean; changedScans: ReconciledScanProjection[] }> {
+  return removeMemberAndReconcileApprovals(db, organizationId, userId);
 }
 
 export async function removeOrganizationMember(
@@ -113,16 +113,8 @@ export async function removeOrganizationMember(
   organizationId: string,
   userId: string,
 ): Promise<boolean> {
-  const result = await db
-    .delete(organizationMembers)
-    .where(
-      and(
-        eq(organizationMembers.organizationId, organizationId),
-        eq(organizationMembers.userId, userId),
-      ),
-    )
-    .returning({ id: organizationMembers.id });
-  return result.length > 0;
+  return (await removeOrganizationMemberWithApprovalReconciliation(db, organizationId, userId))
+    .removed;
 }
 
 export interface InvitationRecord {

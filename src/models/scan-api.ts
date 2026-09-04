@@ -50,6 +50,43 @@ export type ScanDecisionFilter =
   | "no_publish"
   | "all";
 
+/** One member's recorded vote on a release. */
+export interface ScanApprovalRecord {
+  userId: string | null;
+  name: string | null;
+  email: string | null;
+  decision: ScanDecision;
+  reason: string | null;
+  createdAt: string | number | Date;
+  /** False when the voter has since left and remains only in the historical roster. */
+  eligible?: boolean;
+  /** Synthesized from the scan's own columns — a decision made before, or outside, the vote roster. */
+  legacy?: boolean;
+}
+
+/**
+ * Where a release stands against its organization's approval bar. `verdict` is
+ * the scan's actual decision; `approvedCount` short of `required` is the state
+ * this whole feature exists for — approved by someone, not yet approved.
+ */
+export interface ScanApprovalState {
+  required: number;
+  approvedCount: number;
+  blockedCount: number;
+  verdict: ScanDecision | null;
+  /** True when the verdict predates, or was produced outside, the member vote roster. */
+  legacyDecision?: boolean;
+  approvals: ScanApprovalRecord[];
+  viewerDecision: ScanDecision | null;
+  /**
+   * Members the approvals can come from. `null` when the surface only has the
+   * counts and not the org's member list — the dashboard's quick-decide dialog,
+   * built from a list row — so "the bar can never be met" is not claimed from
+   * data that cannot support it.
+   */
+  eligibleApproverCount: number | null;
+}
+
 interface ScanRiskSummary {
   artifactRisk: string;
   releaseRisk: string;
@@ -76,6 +113,10 @@ export interface ScanListItem {
   decisionReason?: string | null;
   decidedByUserId?: string | null;
   decidedAt?: string | number | Date | null;
+  approvalCount?: number;
+  legacyDecision?: boolean;
+  /** The current viewer's vote, when one exists. */
+  viewerDecision?: ScanDecision | null;
   changedFileCount?: number;
   findingCount?: number;
   riskSummary?: ScanRiskSummary | null;
@@ -97,6 +138,7 @@ export interface ScanListItem {
 }
 
 export interface PersistedScanDetail {
+  approvals?: ScanApprovalState;
   scan: ScanListItem & {
     summaryJson?: unknown;
     aiJson?: unknown;
@@ -150,6 +192,8 @@ export interface ListScansResponse {
   nextCursor: string | null;
   filter: ScanDecisionFilter;
   limit: number;
+  /** Distinct approvals this org requires before a release counts as approved. */
+  requiredApprovals?: number;
 }
 
 export function listScans(

@@ -130,6 +130,18 @@ All recorded via `recordScanEvent` into `scan_events`:
 - `organization.member_joined`
 - `organization.member_removed`
 
+## Removal and release approvals
+
+`removeOrganizationMember` delegates to `removeMemberAndReconcileApprovals`,
+which removes the membership and live approvals in one D1 batch. Someone who
+has left must not keep counting toward the org's release quorum — including on
+a package that met its own bar while sibling packages keep the overall workflow
+gate pending. Such a package is reopened when its remaining approvals fall
+short. Durable blocks, final staged decisions, and completed gates keep their
+historical roster. Removal can also drop the member count below the org's
+required-approvals bar; that is surfaced as a warning rather than silently
+clamped. See [`release-approvals.md`](./release-approvals.md).
+
 ## Tests
 
 `test/workers/organization-members-routes.test.ts` covers invite creation,
