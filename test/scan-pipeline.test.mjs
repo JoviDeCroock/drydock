@@ -65,6 +65,7 @@ const { AI_MODEL } = await import("../server/lib/ai-review/index.ts");
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {
     dbMock.getNpmConnection.mockResolvedValue({
+      id: "connection_1",
       registryUrl: "https://registry.npmjs.org",
       tokenCiphertext: "ct",
       tokenNonce: "nonce",
@@ -220,6 +221,29 @@ describe("scan pipeline baseline selection", () => {
     ).rejects.toThrow("staged release identity changed after this scan was queued");
 
     expect(dbMock.persistScan).not.toHaveBeenCalled();
+  });
+
+  test("refuses to resolve credentials after the selected connection generation is replaced", async () => {
+    dbMock.getNpmConnection.mockResolvedValue({
+      id: "connection_2",
+      registryUrl: "https://registry.npmjs.org",
+      tokenCiphertext: "ct-new",
+      tokenNonce: "nonce-new",
+      validationStatus: "valid",
+    });
+
+    await expect(
+      runScanPipeline(baseContext, npmAdapter, {
+        scanId: "scan_replaced_connection",
+        stageId: "stage-beta-123",
+        organizationId: "org_1",
+        connectionId: "connection_1",
+      }),
+    ).rejects.toThrow("npm connection was replaced");
+
+    expect(npmConnectionMock.decryptNpmToken).not.toHaveBeenCalled();
+    expect(stagedMock.fetchStagedPublishDetails).not.toHaveBeenCalled();
+    expect(sandboxMock.downloadInSandbox).not.toHaveBeenCalled();
   });
 
   test("propagates credential failures during baseline metadata lookup", async () => {

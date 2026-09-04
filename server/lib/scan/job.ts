@@ -7,6 +7,7 @@ import {
   discardScanAttempt,
   markScanFailed,
   recordRegistryVersionStatus,
+  scanExists,
 } from "../../db/scans";
 import { lookupStagedReleaseFate } from "../ecosystems/npm/release-outcome";
 import {
@@ -32,6 +33,8 @@ export interface ScanQueueMessage extends ScanInput {
   scanId: string;
   organizationId: string;
   actorUserId: string;
+  /** Credential generation that selected this staged candidate. */
+  connectionId?: string;
   source?: ScanSource;
 }
 
@@ -49,8 +52,37 @@ export interface WorkflowGateQueueMessage {
 
 export type QueueMessage = ScanQueueMessage | WorkflowGateQueueMessage;
 
-export function isWorkflowGateMessage(message: QueueMessage): message is WorkflowGateQueueMessage {
-  return "kind" in message && message.kind === "workflow_gate";
+export function isWorkflowGateMessage(message: unknown): message is WorkflowGateQueueMessage {
+  if (typeof message !== "object" || message === null) return false;
+  const candidate = message as Partial<WorkflowGateQueueMessage>;
+  return (
+    candidate.kind === "workflow_gate" &&
+    typeof candidate.organizationId === "string" &&
+    candidate.organizationId.length > 0 &&
+    typeof candidate.gateId === "string" &&
+    candidate.gateId.length > 0
+  );
+}
+
+/**
+ * Whether a queue body is a scan job. Scan messages are the one shape with no
+ * `kind` discriminator, so this is a positive shape check rather than "whatever
+ * is left": without it, a body with an unrecognized `kind` — a future message
+ * type, a rolled-back deploy, a hand-published message — would fall through to
+ * `executeScanJob` and run it with undefined ids.
+ */
+export function isScanQueueMessage(message: unknown): message is ScanQueueMessage {
+  if (typeof message !== "object" || message === null) return false;
+  if ("kind" in message) return false;
+  const candidate = message as Partial<ScanQueueMessage>;
+  return (
+    typeof candidate.scanId === "string" &&
+    typeof candidate.organizationId === "string" &&
+    typeof candidate.stageId === "string" &&
+    typeof candidate.actorUserId === "string" &&
+    (candidate.connectionId === undefined ||
+      (typeof candidate.connectionId === "string" && candidate.connectionId.length > 0))
+  );
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
@@ -78,13 +110,35 @@ export async function executeScanJob(
   const session: WorkspaceSession = { userId: message.actorUserId };
   const claimed = await claimScanForRun(db, message.scanId, message.organizationId);
   if (!claimed) {
+    // The claim can fail two ways, and conflating them hides a real path: the
+    // scan finished (or failed) already, or the row is gone because discovery
+    // rolled it back after a `sendBatch` that was rejected on the response path
+    // yet still delivered. One bounded read tells them apart so the log does not
+    // report a deleted row as "already terminal".
+    let stillExists: boolean | null = null;
+    try {
+      stillExists = await scanExists(db, message.scanId, message.organizationId);
+    } catch (err) {
+      // This read only refines the skip reason. A transient diagnostics failure
+      // must not turn an already-safe no-op into a queue retry or DLQ entry.
+      emitOperationalEvent("warn", "scan.job.skip_reason_unavailable", {
+        scanId: message.scanId,
+        organizationId: message.organizationId,
+        error: describeOperationalError(err),
+      });
+    }
     emitOperationalEvent("warn", "scan.job.skipped", {
       scanId: message.scanId,
       organizationId: message.organizationId,
       stageId: message.stageId,
       source: message.source ?? "manual",
       attempt,
-      reason: "already_terminal",
+      reason:
+        stillExists === true
+          ? "already_terminal"
+          : stillExists === false
+            ? "scan_row_missing"
+            : "claim_rejected",
       durationMs: durationMsSince(startedAtMs),
     });
     return null;
@@ -126,7 +180,8 @@ export async function executeScanJob(
     const { error: safe, registryStatus } = await refineStagedFailure(env, db, message, classified);
     if (!safe.retryable || options.finalAttempt) {
       const skip =
-        message.source === "auto_discovery" && AUTO_DISCOVERY_DISCARD_CODES.has(safe.code);
+        safe.code === "npm_connection_replaced" ||
+        (message.source === "auto_discovery" && AUTO_DISCOVERY_DISCARD_CODES.has(safe.code));
       if (skip) {
         await discardScanAttempt(db, message.scanId, message.organizationId);
         emitOperationalEvent("warn", "scan.job.skipped", {
@@ -141,8 +196,8 @@ export async function executeScanJob(
           error: safe,
         });
         // Terminal counterpart to this scan's `scan.queued`, so a discovered
-        // candidate that npm removed before we could review it does not read
-        // as a scan that queued and vanished.
+        // candidate withdrawn before review, or invalidated by a connection
+        // replacement, does not read as a scan that queued and vanished.
         recordProductEvent(env, {
           name: "scan.discarded",
           organizationId: message.organizationId,
@@ -235,6 +290,9 @@ async function runStagedScan(
   if (!npmConnection) {
     throw new Error("Connect an organization npm token before scanning staged publishes.");
   }
+  if (message.connectionId && npmConnection.id !== message.connectionId) {
+    throw new Error("The npm connection was replaced before the staged review completed.");
+  }
   if (npmConnection.validationStatus !== "valid") {
     throw new Error("Validate the organization npm token before scanning staged publishes.");
   }
@@ -255,6 +313,7 @@ async function runStagedScan(
     stageId: message.stageId,
     maxFiles: message.maxFiles,
     organizationId: message.organizationId,
+    connectionId: message.connectionId,
     source: message.source ?? "manual",
     registryUrl: releaseIdentity.registryUrl,
   });
@@ -368,6 +427,13 @@ export function classifyScanError(err: unknown): SafeScanError {
     return {
       code: "npm_connection_unvalidated",
       message: "Validate the organization npm token before scanning staged publishes.",
+      retryable: false,
+    };
+  }
+  if (message.includes("npm connection was replaced")) {
+    return {
+      code: "npm_connection_replaced",
+      message: "The npm connection changed before the staged review completed.",
       retryable: false,
     };
   }

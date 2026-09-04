@@ -14,6 +14,7 @@ const dbMock = vi.hoisted(() => ({
   markScanFailed: vi.fn(),
   recordRegistryVersionStatus: vi.fn(),
   recordScanEvent: vi.fn(),
+  scanExists: vi.fn(),
 }));
 const pipelineMock = vi.hoisted(() => ({ runScanPipeline: vi.fn() }));
 const npmConnectionMock = vi.hoisted(() => ({
@@ -114,6 +115,14 @@ describe("scan job retry classification", () => {
     });
     expect(
       classifyScanError(
+        new Error("The npm connection was replaced before the staged review completed."),
+      ),
+    ).toMatchObject({
+      code: "npm_connection_replaced",
+      retryable: false,
+    });
+    expect(
+      classifyScanError(
         new SandboxError(JSON.stringify({ error: "download failed", status: 403 })),
       ),
     ).toMatchObject({
@@ -194,6 +203,7 @@ describe("executeScanJob idempotency", () => {
     organizationId: "org_a",
     actorUserId: "user_a",
     stageId: "stage-abc",
+    connectionId: "connection_1",
   };
 
   beforeEach(() => {
@@ -201,6 +211,7 @@ describe("executeScanJob idempotency", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     dbMock.getNpmConnection.mockResolvedValue({
+      id: "connection_1",
       registryUrl: "https://registry.npmjs.org",
       tokenFingerprint: "fp",
       validationStatus: "valid",
@@ -234,6 +245,8 @@ describe("executeScanJob idempotency", () => {
 
   test("returns null without running the pipeline when claim is rejected", async () => {
     dbMock.claimScanForRun.mockResolvedValue(false);
+    dbMock.scanExists.mockResolvedValue(true);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = await executeScanJob(env, ctx, message, {}, { attempt: 2 });
 
@@ -241,6 +254,46 @@ describe("executeScanJob idempotency", () => {
     expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
     expect(dbMock.recordScanEvent).not.toHaveBeenCalled();
     expect(dbMock.markScanFailed).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.find((call) => call[0] === "scan.job.skipped")?.[1]).toMatchObject({
+      reason: "already_terminal",
+    });
+  });
+
+  test("reports a rolled-back scan row as scan_row_missing, not already_terminal", async () => {
+    // Discovery deletes a scan row when its sendBatch is rejected. The reject can
+    // still have been delivered, so the consumer can receive a message pointing
+    // at a row that no longer exists; calling that "already terminal" sent
+    // whoever read the log looking for a completed scan that never ran.
+    dbMock.claimScanForRun.mockResolvedValue(false);
+    dbMock.scanExists.mockResolvedValue(false);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(result).toBeNull();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.find((call) => call[0] === "scan.job.skipped")?.[1]).toMatchObject({
+      scanId: message.scanId,
+      reason: "scan_row_missing",
+    });
+  });
+
+  test("keeps a failed skip-reason lookup from retrying an already rejected claim", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(false);
+    dbMock.scanExists.mockRejectedValue(new Error("D1_ERROR: transient read failure"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await executeScanJob(env, ctx, message, {}, { attempt: 1 });
+
+    expect(result).toBeNull();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.find((call) => call[0] === "scan.job.skipped")?.[1]).toMatchObject({
+      scanId: message.scanId,
+      reason: "claim_rejected",
+    });
+    expect(
+      warnSpy.mock.calls.find((call) => call[0] === "scan.job.skip_reason_unavailable")?.[1],
+    ).toMatchObject({ scanId: message.scanId });
   });
 
   test("runs the pipeline exactly once after a successful claim", async () => {
@@ -255,8 +308,13 @@ describe("executeScanJob idempotency", () => {
     await executeScanJob(env, ctx, message, {}, { attempt: 1 });
 
     expect(pipelineMock.runScanPipeline).toHaveBeenCalledTimes(1);
-    expect(pipelineMock.runScanPipeline.mock.calls[0]?.[2]).toEqual(
-      expect.objectContaining({ registryUrl: "https://registry.npmjs.org" }),
+    expect(pipelineMock.runScanPipeline).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        connectionId: message.connectionId,
+        registryUrl: "https://registry.npmjs.org",
+      }),
     );
     expect(dbMock.markNpmConnectionUsed).toHaveBeenCalledWith({}, message.organizationId);
   });
@@ -426,6 +484,7 @@ describe("executeScanJob idempotency", () => {
   test("fails before decrypting when the queued job sees an unvalidated rotated connection", async () => {
     dbMock.claimScanForRun.mockResolvedValue(true);
     dbMock.getNpmConnection.mockResolvedValue({
+      id: "connection_1",
       registryUrl: "https://registry.npmjs.org",
       tokenFingerprint: "fp",
       validationStatus: "unvalidated",
@@ -443,6 +502,30 @@ describe("executeScanJob idempotency", () => {
       message: "Validate the organization npm token before scanning staged publishes.",
       retryable: false,
     });
+  });
+
+  test("discards a queued scan when its npm connection generation was replaced", async () => {
+    dbMock.claimScanForRun.mockResolvedValue(true);
+    dbMock.getNpmConnection.mockResolvedValue({
+      id: "connection_2",
+      registryUrl: "https://registry.npmjs.org",
+      tokenFingerprint: "fp-new",
+      validationStatus: "valid",
+    });
+
+    await expect(
+      executeScanJob(env, ctx, message, {}, { attempt: 1, finalAttempt: true }),
+    ).rejects.toThrow("npm connection was replaced");
+
+    expect(dbMock.markNpmConnectionUsed).not.toHaveBeenCalled();
+    expect(pipelineMock.runScanPipeline).not.toHaveBeenCalled();
+    expect(dbMock.markScanFailed).not.toHaveBeenCalled();
+    expect(dbMock.discardScanAttempt).toHaveBeenCalledWith(
+      {},
+      message.scanId,
+      message.organizationId,
+    );
+    expect(notifyMock.notifyScanCompletion).not.toHaveBeenCalled();
   });
 
   test("discards auto-discovered scans when the org's token cannot access the tarball", async () => {

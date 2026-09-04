@@ -4,12 +4,13 @@ export {
   claimScanForRun,
   createScanJob,
   deleteFailedScan,
-  deletePendingScanJob,
+  deletePendingScanJobs,
   discardGateScans,
   discardScanAttempt,
   listExistingScanStageIds,
   markScanFailed,
   SCAN_SOURCES,
+  scanExists,
   type ScanSource,
 } from "./scan-jobs";
 

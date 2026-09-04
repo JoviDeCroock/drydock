@@ -116,7 +116,12 @@ async function eventMetadataForOrg(
   return (match?.metadata as Record<string, unknown> | null) ?? null;
 }
 
-describe("staged publishes discovery cron", () => {
+// These cover the cron's inline fallback: no DISCOVERY_QUEUE binding is passed,
+// so the tick sweeps every eligible org inside the scheduled invocation (the
+// local-dev / self-hosted-without-queue path). The deployed shape — the tick
+// enqueues one message per org and a queue consumer sweeps — is covered by
+// discovery-sweep-queue.test.ts.
+describe("staged publishes discovery cron (inline fallback)", () => {
   // The cron sweeps every eligible connection in the database, so a prior
   // test's seeded connections would otherwise be picked up here. Clear them so
   // each test's assertions reflect only the orgs it seeds.
@@ -176,7 +181,7 @@ describe("staged publishes discovery cron", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { sendBatch: vi.fn(async () => undefined) };
     const send = vi.fn(async () => undefined);
     const ctx = createExecutionContext();
     await worker.scheduled(
@@ -191,12 +196,16 @@ describe("staged publishes discovery cron", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
     // (a) only: exactly one scan enqueued, scoped to org A.
-    expect(queue.send).toHaveBeenCalledTimes(1);
-    expect(queue.send.mock.calls[0]![0]).toMatchObject({
-      organizationId: orgA.organizationId,
-      stageId: STAGE_ID,
-      source: "auto_discovery",
-    });
+    expect(queue.sendBatch).toHaveBeenCalledTimes(1);
+    expect(queue.sendBatch.mock.calls[0]![0]).toMatchObject([
+      {
+        body: {
+          organizationId: orgA.organizationId,
+          stageId: STAGE_ID,
+          source: "auto_discovery",
+        },
+      },
+    ]);
 
     // (b) expired token: marked invalid, audited, and the maintainer emailed —
     // not a silent skip. No unhandled crash logged.
@@ -220,8 +229,10 @@ describe("staged publishes discovery cron", () => {
     expect(genericFailureForOrgB).toBeUndefined();
 
     // (c) never queued, errored, nor emailed.
-    for (const call of queue.send.mock.calls) {
-      expect(call[0]).not.toMatchObject({ organizationId: orgC.organizationId });
+    for (const call of queue.sendBatch.mock.calls) {
+      for (const entry of call[0] as Array<{ body: { organizationId: string } }>) {
+        expect(entry.body.organizationId).not.toBe(orgC.organizationId);
+      }
     }
     expect(await eventTypesForOrg(orgC.organizationId)).toHaveLength(0);
 
@@ -401,7 +412,7 @@ describe("staged publishes discovery cron", () => {
   });
 
   // Regression: on 2026-07-16 a transient D1 outage made the sweep's first
-  // read (listAutoDiscoveryNpmConnections) throw before the per-organization
+  // read (the eligible-connection enumeration) throw before the per-organization
   // try/catch, which surfaced as an uncaught exception on the scheduled
   // invocation and skipped audit pruning. The tick must log and complete.
   test("a D1 failure during the sweep does not crash the scheduled invocation", async () => {

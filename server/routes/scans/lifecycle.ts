@@ -87,6 +87,7 @@ scanLifecycleRoutes.post("/", async (c) => {
       organizationId,
       actorUserId: session.userId,
       source: prepared.source,
+      connectionId: prepared.connectionId,
     };
 
     // Counted at creation, not completion, so the queued → completed drop-off
@@ -123,6 +124,7 @@ type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: 
 interface PreparedScan {
   input: ScanInput;
   source: ScanSource;
+  connectionId?: string;
   ecosystem: string;
   packageName: string | null;
   version: string | null;
@@ -182,6 +184,7 @@ async function prepareStagedScan(
   return {
     input,
     source: "manual",
+    connectionId: npmConnection.id,
     ecosystem: "npm",
     packageName: staged?.packageName ?? null,
     version: staged?.version ?? null,
