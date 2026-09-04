@@ -42,7 +42,10 @@ export const npmPublicDiff: PublicDiffAdapter = {
   // every sample, and mark the records that lost one. Entries written by v4
   // carry no sample at all for a pair this large, so they must not be served
   // once the prioritized retention ships.
-  payloadVersion: "v5",
+  // v6: payloads carry the capability delta, per-side publication timestamps,
+  // and declared source binding; v5 entries would serve none of them. v7
+  // aligns capability projection with deterministic code-matching semantics.
+  payloadVersion: "v7",
 
   isValidPackageName: isValidNpmPackageName,
   normalizePackageName: (name) => name,
@@ -98,6 +101,8 @@ export const npmPublicDiff: PublicDiffAdapter = {
     // preview-vs-preview pair may not be published on npm at all yet.
     let fromTarballUrl = fromPreview?.url;
     let toTarballUrl = toPreview?.url;
+    let fromPublishedAt: string | undefined;
+    let toPublishedAt: string | undefined;
     if (!fromTarballUrl || !toTarballUrl) {
       const metadata = await fetchPublicPackageMetadata(
         env,
@@ -107,6 +112,10 @@ export const npmPublicDiff: PublicDiffAdapter = {
       );
       fromTarballUrl ??= metadata.versions?.[input.fromVersion]?.dist?.tarball;
       toTarballUrl ??= metadata.versions?.[input.toVersion]?.dist?.tarball;
+      // Publication times only exist for registry versions; a preview side
+      // deliberately reports none.
+      fromPublishedAt = fromPreview ? undefined : publishedTime(metadata.time, input.fromVersion);
+      toPublishedAt = toPreview ? undefined : publishedTime(metadata.time, input.toVersion);
       if (!fromTarballUrl || !toTarballUrl) {
         throw new PublicDiffError("unknown version", 404);
       }
@@ -137,8 +146,16 @@ export const npmPublicDiff: PublicDiffAdapter = {
     ]);
 
     return {
-      from: { files: fromArchive.files, packageJson: fromArchive.packageJson ?? null },
-      to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
+      from: {
+        files: fromArchive.files,
+        packageJson: fromArchive.packageJson ?? null,
+        ...(fromPublishedAt ? { publishedAt: fromPublishedAt } : {}),
+      },
+      to: {
+        files: toArchive.files,
+        packageJson: toArchive.packageJson ?? null,
+        ...(toPublishedAt ? { publishedAt: toPublishedAt } : {}),
+      },
       buildFindings: (fileDiff, manifestDiff) =>
         buildNpmFindings({
           staged: {
@@ -155,6 +172,14 @@ export const npmPublicDiff: PublicDiffAdapter = {
     };
   },
 };
+
+function publishedTime(
+  time: Record<string, string> | undefined,
+  version: string,
+): string | undefined {
+  const value = time?.[version];
+  return typeof value === "string" && value ? value : undefined;
+}
 
 async function downloadArchive(
   env: Cloudflare.Env,

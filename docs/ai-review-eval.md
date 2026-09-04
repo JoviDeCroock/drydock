@@ -145,11 +145,12 @@ CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... pnpm run eval:ai:live
 It drives the real `analyzeWithAi` agent loop against real Workers AI models
 over the npm, PyPI, and VS Code security corpora, one model at a time (no
 failover, or the comparison would measure the wrong model). Each ecosystem case
-is built through its production acquisition/review helpers. atpm remains an
-explicit skip because it is public-diff-only and does not run staged AI review.
-It is paid and network-bound, so it is gated behind `AI_REVIEW_LIVE_EVAL` and
-never runs in `pnpm test` or `pnpm run verify`. Reports land in
-`.context/eval/ai-review-model-compare.json` and
+is built through its production acquisition/review helpers and projects the
+same per-side capability delta production sends in the initial reviewer
+payload. atpm remains an explicit skip because it is public-diff-only and does
+not run staged AI review. It is paid and network-bound, so it is gated behind
+`AI_REVIEW_LIVE_EVAL` and never runs in `pnpm test` or `pnpm run verify`.
+Reports land in `.context/eval/ai-review-model-compare.json` and
 `.context/eval/ai-review-model-compare.md`; a write failure fails the command.
 
 Environment: `AI_REVIEW_LIVE_MODELS` (comma-separated ids, defaults to the two

