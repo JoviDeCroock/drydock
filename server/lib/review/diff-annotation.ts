@@ -1,5 +1,6 @@
 import { diffLines } from "diff";
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
+import { hasMatchingCodeLine } from "../platform/text-utils";
 import {
   codePatternsFor,
   DETERMINISTIC_RULE_IDS,
@@ -227,6 +228,9 @@ function findingPatternMatchesChangedLine(
   if (!stagedText) return false;
   const patterns = patternsForFinding(finding, codePatternSet);
   if (!patterns.length) return false;
+  if (isPropagationFinding(finding)) {
+    return hasMatchingCodeLine(stagedText, patterns, changedLines);
+  }
   const lines = splitComparableLines(stagedText);
   for (const lineNumber of changedLines) {
     const line = lines[lineNumber - 1];
@@ -237,6 +241,13 @@ function findingPatternMatchesChangedLine(
     }
   }
   return false;
+}
+
+function isPropagationFinding(finding: { ruleId?: string | null }): boolean {
+  return (
+    finding.ruleId === DETERMINISTIC_RULE_IDS.propagationRegistryPublish ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.propagationPackageMutation
+  );
 }
 
 function patternsForFinding(
@@ -267,6 +278,10 @@ function patternsForFinding(
       return patterns.dynamicEvaluation;
     case DETERMINISTIC_RULE_IDS.codeCredentialAccess:
       return patterns.credentialAccess;
+    case DETERMINISTIC_RULE_IDS.propagationRegistryPublish:
+      return patterns.registryPublish;
+    case DETERMINISTIC_RULE_IDS.propagationPackageMutation:
+      return [...patterns.installRootPath, ...patterns.installWrite];
     case DETERMINISTIC_RULE_IDS.fileSecretContent:
       // The finding-side set, so line matching agrees with what detection
       // actually flagged (placeholder URL credentials are not secrets).

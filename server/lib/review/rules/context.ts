@@ -3,6 +3,7 @@ import type { CodePatternSet, DiffEntry, FileRecord, PackageJsonSummary } from "
 import { codePatternsFor, type JS_PATTERN_SET } from "./patterns";
 import {
   consumerReachablePaths,
+  installReachablePaths,
   lifecycleScriptSeedPaths,
   normalizeReachabilityPath,
 } from "./reachability";
@@ -36,6 +37,8 @@ export interface RuleContext {
   implicitScripts: Record<string, string>;
   rootGypFile: FileRecord | undefined;
   consumerReachable: Set<string>;
+  /** Subset of `consumerReachable` an install can execute; see `installReachablePaths`. */
+  installReachable: Set<string>;
   patterns: typeof JS_PATTERN_SET;
   codePatternSet: CodePatternSet | undefined;
   entrypointResolution: EntrypointResolution | null;
@@ -70,6 +73,12 @@ export function buildRuleContext(
       files,
       packageJson,
       lifecycleScriptSeedPaths(files, scripts, implicitScripts),
+      options.codePatternSet,
+    ),
+    installReachable: installReachablePaths(
+      files,
+      scripts,
+      implicitScripts,
       options.codePatternSet,
     ),
     patterns: codePatternsFor(options.codePatternSet),

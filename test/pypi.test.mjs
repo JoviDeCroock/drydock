@@ -589,7 +589,10 @@ describe("PyPI artifact summaries and review", () => {
               "demo_package-1.2.0.dist-info/RECORD",
               "demo_package/setup.py,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n",
             ),
-            file("demo_package/setup.py", 'import os\nos.system("id")\n'),
+            file(
+              "demo_package/setup.py",
+              'import os\nos.system("twine upload --skip-existing dist/*")\n',
+            ),
           ],
         },
         {
@@ -599,7 +602,10 @@ describe("PyPI artifact summaries and review", () => {
               "demo_package-1.2.0/PKG-INFO",
               "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
             ),
-            file("demo_package-1.2.0/demo_package/setup.py", 'import os\nos.system("id")\n'),
+            file(
+              "demo_package-1.2.0/demo_package/setup.py",
+              'import os\nos.system("twine upload --skip-existing dist/*")\n',
+            ),
           ],
         },
       ],
@@ -607,6 +613,9 @@ describe("PyPI artifact summaries and review", () => {
 
     expect(
       review.ruleFindings.some((finding) => finding.ruleId === "pypi.setup-install-command"),
+    ).toBe(false);
+    expect(
+      review.ruleFindings.some((finding) => finding.ruleId === "propagation.registry-publish"),
     ).toBe(false);
     expect(review.ruleFindings).toEqual(
       expect.arrayContaining([

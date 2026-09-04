@@ -1,0 +1,57 @@
+{
+  "id": "legit-patch-tooling-node-modules",
+  "title": "Patch tool writes into node_modules from its bin entry (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-dependency-patching",
+  "source": "benign-popular",
+  "intent": "Rewriting installed dependencies is the entire point of a patch tool. The propagation family separates it from a worm by install-time reachability rather than by pattern, so this case pins that propagation.package-mutation stays quiet for a bin-invoked patcher.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "patchkit",
+    "version": "2.0.0",
+    "bin": {
+      "patchkit": "cli.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "patchkit",
+    "version": "2.1.0",
+    "bin": {
+      "patchkit": "cli.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 65,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"patchkit\",\"version\":\"2.0.0\",\"bin\":{\"patchkit\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 441,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\n// Apply the project's own checked-in patches to its installed dependencies.\n// The consuming project invokes this from a package script; patchkit itself\n// declares no install hook.\nfor (const patch of fs.readdirSync('patches')) {\n  const target = path.join('node_modules', patch.replace(/\\.patch$/, ''));\n  fs.writeFileSync(path.join(target, '.patchkit-applied'), 'ok');\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 65,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\":\"patchkit\",\"version\":\"2.1.0\",\"bin\":{\"patchkit\":\"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 441,
+      "sha256": "cli-js",
+      "flags": [],
+      "textSample": "const fs = require('node:fs');\nconst path = require('node:path');\n// Apply the project's own checked-in patches to its installed dependencies.\n// The consuming project invokes this from a package script; patchkit itself\n// declares no install hook.\nfor (const patch of fs.readdirSync('patches')) {\n  const target = path.join('node_modules', patch.replace(/\\.patch$/, ''));\n  fs.writeFileSync(path.join(target, '.patchkit-applied'), 'ok');\n}\n"
+    }
+  ]
+}

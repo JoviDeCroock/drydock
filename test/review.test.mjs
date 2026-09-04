@@ -2270,6 +2270,162 @@ describe("review", () => {
   });
 });
 
+describe("install-time propagation", () => {
+  const file = (path, textSample, sha256 = path) => ({
+    path,
+    size: textSample.length,
+    sha256,
+    flags: [],
+    textSample,
+  });
+
+  test.each([
+    {
+      command: "npm version --no-git-tag-version patch && npm publish",
+      ruleId: "propagation.registry-publish",
+      severity: "critical",
+    },
+    {
+      command:
+        "node -e \"require('node:fs').writeFileSync('node_modules/pkg/package.json', '{}')\"",
+      ruleId: "propagation.package-mutation",
+      severity: "high",
+    },
+  ])("scans direct lifecycle commands for $ruleId", ({ command, ruleId, severity }) => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: command } });
+    const staged = [file("package.json", packageJson)];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings).toContainEqual(
+      expect.objectContaining({ ruleId, severity, file: "package.json", line: 1 }),
+    );
+  });
+
+  test("ignores publish commands that only appear in lifecycle-script comments", () => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: "node install.js" } });
+    const staged = [
+      file("package.json", packageJson),
+      file("install.js", "// Maintainers run npm publish from the release workflow.\nexport {};\n"),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "propagation.registry-publish")).toBe(
+      false,
+    );
+  });
+
+  test("does not treat importing twine as a registry upload", () => {
+    const staged = [
+      file(
+        "sdist/setup.py",
+        "# Maintainers use twine upload from CI.\nimport twine\nfrom setuptools import setup\nsetup()\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      codePatternSet: "python",
+    });
+
+    expect(findings.some((finding) => finding.ruleId === "propagation.registry-publish")).toBe(
+      false,
+    );
+  });
+
+  test("does not reach an unrelated file that only shares a lifecycle target basename", () => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: "node setup.js" } });
+    const staged = [
+      file("package.json", packageJson),
+      file("setup.js", "export {};\n"),
+      file(
+        "tools/setup.js",
+        "const libnpmpublish = () => {};\nlibnpmpublish({ name: 'release-tool' });\n",
+      ),
+    ];
+    const findings = deterministicFindings(staged, createPackageDiff([], staged));
+
+    expect(findings.some((finding) => finding.ruleId === "propagation.registry-publish")).toBe(
+      false,
+    );
+  });
+
+  test("keeps a newly added package mutation in release risk when its first match is unchanged", () => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: "node install.js" } });
+    const previous = [
+      file("package.json", packageJson, "package-json"),
+      file(
+        "install.js",
+        "const fs = require('node:fs');\nconst path = require('node:path');\nconst root = 'node_modules';\nfor (const name of fs.readdirSync(root)) console.log(name);\n",
+        "old-install",
+      ),
+    ];
+    const staged = [
+      file("package.json", packageJson, "package-json"),
+      file(
+        "install.js",
+        "const fs = require('node:fs');\nconst path = require('node:path');\nconst root = 'node_modules';\nfor (const name of fs.readdirSync(root)) console.log(name);\nfs.writeFileSync(path.join(root, 'pkg', 'package.json'), '{}');\n",
+        "new-install",
+      ),
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(deterministicFindings(staged, diff), diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+    const mutation = annotated.find((finding) => finding.ruleId === "propagation.package-mutation");
+
+    expect(mutation).toMatchObject({ line: 3, diffStatus: "modified", releaseDelta: true });
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("high");
+  });
+
+  test("keeps an added registry publish in release risk when an earlier match is unchanged", () => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: "node install.js" } });
+    const previous = [
+      file("package.json", packageJson, "package-json"),
+      file("install.js", "libnpmpublish({ name: 'first' });\n", "old-install"),
+    ];
+    const staged = [
+      file("package.json", packageJson, "package-json"),
+      file(
+        "install.js",
+        "libnpmpublish({ name: 'first' });\nlibnpmpublish.publish({ name: 'second' });\n",
+        "new-install",
+      ),
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(deterministicFindings(staged, diff), diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+    const publish = annotated.find((finding) => finding.ruleId === "propagation.registry-publish");
+
+    expect(publish).toMatchObject({ line: 1, diffStatus: "modified", releaseDelta: true });
+    expect(computeRisk(annotated.filter((finding) => finding.releaseDelta))).toBe("critical");
+  });
+
+  test("does not make an existing propagation finding release-scoped for a new comment", () => {
+    const packageJson = JSON.stringify({ scripts: { postinstall: "node install.js" } });
+    const previous = [
+      file("package.json", packageJson, "package-json"),
+      file("install.js", "libnpmpublish({ name: 'first' });\n", "old-install"),
+    ];
+    const staged = [
+      file("package.json", packageJson, "package-json"),
+      file(
+        "install.js",
+        "libnpmpublish({ name: 'first' });\n/* Maintainers run npm publish from CI. */\n",
+        "new-install",
+      ),
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const annotated = annotateFindingsWithDiffStatus(deterministicFindings(staged, diff), diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+    const publish = annotated.find((finding) => finding.ruleId === "propagation.registry-publish");
+
+    expect(publish).toMatchObject({ line: 1, diffStatus: "modified", releaseDelta: false });
+  });
+});
+
 describe("computeRisk weighted multi-signal roll-up (issue #193)", () => {
   const code = (ruleId, severity, extra = {}) => ({ ruleId, severity, file: "f.js", ...extra });
 

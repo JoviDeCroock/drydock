@@ -151,12 +151,50 @@ const PYTHON_CREDENTIAL_ACCESS_PATTERNS = [
   /\.netrc/,
 ];
 
+// Self-propagation: the primitives a payload needs to put itself into the *next*
+// artifact rather than only into the machine it landed on. Publishing to a
+// registry and rewriting the packages already installed alongside this one are
+// both ordinary developer actions in the right place — a release CLI, a patch
+// tool — so the propagation rules gate on install-time reachability instead of
+// trying to tell those apart by pattern. See `propagation.ts`.
+// The separator class covers both the shell form (`npm publish`) and the argv
+// form a spawn call uses (`["npm", "publish"]`), which is the same command.
+const JS_REGISTRY_PUBLISH_PATTERNS = [
+  /\b(?:npm|pnpm|yarn|bun)\b["'\s,[\]]{1,12}publish\b/,
+  /\bnpm\b["'\s,[\]]{1,12}stage["'\s,[\]]{1,12}(?:publish|approve)\b/,
+  /\bnpm\b["'\s,[\]]{1,12}dist-tag["'\s,[\]]{1,12}add\b/,
+  /\blibnpmpublish(?:\.publish)?\s*\(/,
+];
+const PYTHON_REGISTRY_PUBLISH_PATTERNS = [
+  /\btwine\b["'\s,[\]]{1,12}upload\b/,
+  /\btwine\.commands\.upload(?:\.upload)?\s*\(/,
+  /\bsetup\.py\b[^\n]*\bupload\b/,
+];
+// The directory a package manager unpacks dependencies into. A path literal
+// naming it is what separates "this package writes files" (every build tool)
+// from "this package writes into its neighbours".
+const JS_INSTALL_ROOT_PATH_PATTERNS = [/\bnode_modules\b/];
+const PYTHON_INSTALL_ROOT_PATH_PATTERNS = [/\bsite-packages\b/, /\bdist-packages\b/];
+const JS_INSTALL_WRITE_PATTERNS = [
+  /\b(?:writeFile|appendFile|copyFile|outputFile)(?:Sync)?\s*\(/,
+  /\bcreateWriteStream\s*\(/,
+  /\bcpSync\s*\(/,
+];
+const PYTHON_INSTALL_WRITE_PATTERNS = [
+  /\bopen\s*\([^)\n]*["'][wax]b?\+?["']/,
+  /\bshutil\.(?:copy|copy2|copyfile|copytree|move)\s*\(/,
+  /\.write_(?:text|bytes)\s*\(/,
+];
+
 export const JS_PATTERN_SET = {
   processExecution: JS_PROCESS_EXECUTION_PATTERNS,
   remoteShell: SHELL_REMOTE_PATTERNS,
   networkAccess: JS_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: JS_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: JS_CREDENTIAL_ACCESS_PATTERNS,
+  registryPublish: JS_REGISTRY_PUBLISH_PATTERNS,
+  installRootPath: JS_INSTALL_ROOT_PATH_PATTERNS,
+  installWrite: JS_INSTALL_WRITE_PATTERNS,
 };
 export const PYTHON_PATTERN_SET = {
   processExecution: PYTHON_PROCESS_EXECUTION_PATTERNS,
@@ -164,6 +202,9 @@ export const PYTHON_PATTERN_SET = {
   networkAccess: PYTHON_NETWORK_ACCESS_PATTERNS,
   dynamicEvaluation: PYTHON_DYNAMIC_EVALUATION_PATTERNS,
   credentialAccess: PYTHON_CREDENTIAL_ACCESS_PATTERNS,
+  registryPublish: PYTHON_REGISTRY_PUBLISH_PATTERNS,
+  installRootPath: PYTHON_INSTALL_ROOT_PATH_PATTERNS,
+  installWrite: PYTHON_INSTALL_WRITE_PATTERNS,
 };
 
 // Python process-execution, network, and dynamic-evaluation capability in one set.

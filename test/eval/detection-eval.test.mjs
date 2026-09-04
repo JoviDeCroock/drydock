@@ -12,16 +12,16 @@ writeReport(result);
 describe("detection eval (gated thresholds)", () => {
   test("the gated corpus cannot silently shrink below its ecosystem coverage floor", () => {
     const regressionFloor = {
-      npm: 27,
-      pypi: 14,
+      npm: 30,
+      pypi: 15,
       atpm: 6,
       vscode: 3,
     };
     for (const [ecosystem, minimum] of Object.entries(regressionFloor)) {
       expect(result.coverage.regressionByEcosystem[ecosystem]).toBeGreaterThanOrEqual(minimum);
     }
-    expect(result.coverage.frontierByEcosystem.npm).toBeGreaterThanOrEqual(11);
-    expect(result.coverage.benignByEcosystem.npm).toBeGreaterThanOrEqual(10);
+    expect(result.coverage.frontierByEcosystem.npm).toBeGreaterThanOrEqual(12);
+    expect(result.coverage.benignByEcosystem.npm).toBeGreaterThanOrEqual(12);
     for (const samples of Object.values(result.coverage.evasionSamples)) {
       expect(samples).toBeGreaterThan(0);
     }
