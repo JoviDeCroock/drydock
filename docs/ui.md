@@ -91,6 +91,17 @@ a guess. Switching organizations immediately resets both progress answers to
 `null`, so the new organization cannot inherit a panel latch or completion tick
 from the previous one while its list request is in flight.
 
+## Release timeline
+
+`ScanDetail/ReleaseTimeline.tsx` closes the scan detail page for every scan
+status: a `SectionLabel` (event count in the `aside`) over a left-ruled `<ol>`
+whose rows carry the event label, an optional muted detail, a mono 11px
+timestamp, and a mono `+delta` from the previous row. Rows are divided with
+`divide-y`, so nothing draws a second rule under the label. It renders nothing
+when no event has a timestamp. Ordering, phrasing, and the delta format are pure
+functions in `ScanDetail/release-timeline.ts`; see `docs/registry-version-status.md`
+for the npm-status wording and the sit-below-the-report rationale.
+
 ## Copy and density
 
 - Lead with maintainer action and release risk, not internal pipeline detail.

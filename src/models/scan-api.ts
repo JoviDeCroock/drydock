@@ -110,6 +110,8 @@ export interface PersistedScanDetail {
     publicShareIncludesFiles?: boolean;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
+    /** Display name of the member who recorded the decision, when known. */
+    decidedByName?: string | null;
   };
   riskSummary?: ScanRiskSummary | null;
   files: Array<{

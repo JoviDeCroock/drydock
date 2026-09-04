@@ -46,6 +46,7 @@ import {
   ReleaseVerdictEvidence,
   ReleaseVerdictStrip,
 } from "./ReleaseRecommendation";
+import { ReleaseTimeline } from "./ReleaseTimeline";
 import { PersistedReportSections } from "./ReportSections";
 import { ReviewerSummary, reviewerSummaryVisible } from "./ReviewerSummary";
 import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
@@ -448,6 +449,11 @@ export default function ScanDetailPage() {
           )
         ) : null
       ) : null}
+
+      {/* Below the report on purpose: pipeline latency is supporting context,
+          not the verdict. Rendered for every status so a failed or queued
+          review still shows how far the release got. */}
+      {detail ? <ReleaseTimeline scan={detail.scan} summary={summary.value} /> : null}
 
       {detail &&
       detail.scan.status === "complete" &&

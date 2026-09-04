@@ -50,10 +50,10 @@ therefore collapses to "we do not know":
 
 ## Where it runs
 
-| Path                                      | Trigger                                                             | What it does                                                                                                                                                                                                                                        |
-| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button) | Resolves status for completed reviews and sends the forgotten-approval nudge. On-demand checks use `waitUntil`; cron awaits a smaller, serial-per-org slice so its five-organization cap also bounds status traffic. Failures never fail discovery. |
-| `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                    | Asks npm what happened before deciding the message.                                                                                                                                                                                                 |
+| Path                                      | Trigger                                                             | What it does                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/ecosystems/npm/release-outcome.ts`   | discovery sweep (cron `*/15`, and the on-demand "Check npm" button) | Resolves status for completed reviews and sends the approvable-now notice and the forgotten-approval nudge. On-demand checks use `waitUntil`; cron awaits a smaller, serial-per-org slice so its five-organization cap also bounds status traffic. Failures never fail discovery. |
+| `lib/scan/job.ts` → `refineStagedFailure` | a scan failing with `staged_tarball_unavailable`                    | Asks npm what happened before deciding the message.                                                                                                                                                                                                                               |
 
 On-demand lookups are bounded per organization per invocation (16, concurrency
 4), so four worst-case five-second waves leave headroom inside Workers'
@@ -163,6 +163,43 @@ no token, header, or package bytes.
 The workbench shows the same state immediately, without the 6-hour delay: the
 delay only gates the email.
 
+## Approvable-now notice
+
+npm holds `npm stage approve` until its own malware scan settles, so the moment
+a maintainer can act is when the status leaves `validating`. The sweep sends one
+"ready to approve" notice (email plus Slack, through the same recipient and
+connection plumbing as scan completion) when a lookup observes `staged` after a
+persisted `validating`, or after no persisted status at all — which is also how
+a review that completed only after npm had already settled gets told on its
+first lookup. It carries package and version, Drydock's release-risk grade and
+finding count, the recorded Drydock decision if any, a dashboard link, and the
+registry-pinned `npm stage approve` command. Never for `published`, `blocked`,
+`deleted`, or superseded releases, and never for workflow-gate or published-pair
+scans, which the sweep does not select.
+
+`registry_approvable_notified_at` is the send-once marker. The sweep claims it
+before sending, only if the `staged` observation it acted on is still current
+and no other review of the same stage id has already sent one, so overlapping
+sweeps and duplicate reviews produce a single notice. A `staged` recheck of a
+row already persisted as `staged` is not a transition: rows that predate the
+notice are never announced retroactively. When the forgotten-approval reminder
+would fire in the same sweep, the notice — which already carries the approve
+command — is sent instead and the reminder keeps its own marker for a later
+sweep.
+
+## Release timeline
+
+The scan detail page lists every dated event the persisted review knows about,
+oldest first, with the gap to the previous row: staged on npm (the stage's
+`createdAt` under `summary.stagedPublish`), review queued/started/completed,
+npm status last observed (`registry_version_status_at`, phrased as "npm is
+still validating", "approvable on npm", "published on npm", "blocked by npm's
+validation", or "removed from npm"), the Drydock decision, and supersession. A
+null or undocumented status renders no row, and a superseded review shows the
+supersession instead of its stale registry status.
+`src/pages/Dashboard/ScanDetail/release-timeline.ts` owns the ordering and
+phrasing.
+
 ## Token scope
 
 The endpoint's specification says the caller "must have publish access to the
@@ -176,7 +213,7 @@ against `/-/stage`. Do not widen the requested token scope to make it work.
 
 ## Storage
 
-Eight columns on `scans` (migration `0027`):
+Eight columns on `scans` (migration `0027`), plus one from `0029`:
 
 - `registry_url` — registry base URL captured when the scan is created; legacy
   null rows fail closed and are not polled.
@@ -190,6 +227,8 @@ Eight columns on `scans` (migration `0027`):
 - `registry_status_superseded_at` — durable marker that a newer scan owns this
   registry/package/version lifecycle.
 - `registry_publish_reminder_at` — send-once marker for the nudge.
+- `registry_approvable_notified_at` — send-once marker for the approvable-now
+  notice (migration `0029`).
 
 Exported additively as `registryStatus: { status, observedAt } | null` on
 `report.json`. No schema bump: the field is optional and additive, and
