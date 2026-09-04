@@ -167,6 +167,7 @@ function detect(record, fxOverride) {
   const findings = [
     ...deterministicFindings(stagedFiles, diff, fx.stagedPackageJson, {
       entrypointResolution: "npm",
+      previousFiles,
     }),
     ...packageJsonDiffFindings(packageJsonDiff),
   ];

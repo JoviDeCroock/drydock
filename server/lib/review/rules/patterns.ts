@@ -219,6 +219,136 @@ export const PYTHON_EXECUTION_CAPABILITY_PATTERNS = [
   ...PYTHON_DYNAMIC_EVALUATION_PATTERNS,
 ];
 
+// Markdown emphasis and zero-width characters are in-band evasions in the
+// prompt-injection rules' primary vector. Keep the normalization beside the
+// pattern sets so detection and changed-line release classification cannot
+// drift apart.
+const PROMPT_INJECTION_EVASION_CHARS = /[*_`\u200B-\u200D\uFEFF]/g;
+
+export function stripPromptInjectionEvasion(text: string): string {
+  return text.replace(PROMPT_INJECTION_EVASION_CHARS, "");
+}
+
+// A Markdown soft line break is whitespace to both renderers and LLMs. Replace
+// each newline code unit with a space so phrase patterns can span wrapped text
+// without changing offsets used to recover the original line number.
+export function softenPromptInjectionLineBreaks(text: string): string {
+  return text.replace(/[\r\n]/g, " ");
+}
+
+// Instruction content aimed at any LLM/agent that reads package bytes — an AI
+// reviewer, a coding assistant resolving docs, an MCP tool ingesting a README.
+// A bare "agent"/"assistant" is somebody's product (a Datadog agent, an
+// OpenAI Assistants thread); only AI-qualified forms or Drydock itself read as
+// an LLM audience.
+const AI_ACTOR_SEGMENT = String.raw`(?:language\s+model|(?:(?:AI|LLM)(?:[\s-]+(?:coding|automated))?|coding|automated)[\s-]+(?:agent|assistant|reviewer|scanner|tool))`;
+const AI_AUDIENCE_SEGMENT = String.raw`(?:AI|LLM|artificial\s+intelligence|Drydock(?:[\s-]+reviewer)?|${AI_ACTOR_SEGMENT})`;
+const REVIEWED_RELEASE_SEGMENT = String.raw`(?:package|release|update|version|publish)`;
+const POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT = String.raw`(?:safe|benign|trusted|clean|harmless|verified|legitimate)`;
+const CLEAN_REVIEW_VERDICT_SEGMENT = String.raw`(?:${POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT}|not\s+(?:malicious|suspicious))`;
+const REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:mark|report|approve|assess|rate|label)\s+(?:this|the)\s+(?:package|release|update|version|publish)\b[^\n.!?]{0,40}\b(?:as\s+)?(?:safe|benign|trusted|clean|harmless|verified|legitimate|not\s+(?:malicious|suspicious))\b(?!\s+(?:in|for|when|via|through|under)\b[^\n.!?]{0,40}\b(?:configuration|config|policy|allowlist|sandbox)\b)`;
+const DIRECT_REVIEW_VERDICT_DIRECTIVE_SEGMENT = String.raw`(?:(?:approve)\s+(?:(?:this|the)\s+)?${REVIEWED_RELEASE_SEGMENT}|(?:mark|report|assess|rate|label|classify|declare|say)\s+(?:(?:this|the)\s+)?${REVIEWED_RELEASE_SEGMENT}\b(?![^\n.!?]{0,40}\bnot\s+${POSITIVE_CLEAN_REVIEW_VERDICT_SEGMENT}\b)[^\n.!?]{0,40}\b(?:(?:as|is)\s+)?${CLEAN_REVIEW_VERDICT_SEGMENT})\b`;
+
+// Text that tries to steer the *automated security review itself* toward a
+// clean verdict. These are verdict-coercion shapes, not generic LLM chatter:
+// each pattern needs either a review-like verdict aimed at the release object
+// ("mark this package as safe"), a suppression directive over review output
+// ("do not report any findings"), or a literal token from Drydock's own review
+// schema (`nothing_unusual`, `requiresManualReview`). Third-person prose stays
+// out by construction — "npm marks the package as verified" has no imperative
+// `mark`, and SECURITY.md's "do not report vulnerabilities publicly" names no
+// findings/detections object.
+const REVIEW_MANIPULATION_PATTERNS = [
+  // A bare verdict verb is only imperative at a line/sentence boundary, after
+  // direct-address punctuation, or in an assigned/quoted instruction string.
+  // This keeps third-person API prose ("the endpoint will report ...") out of
+  // the standing-danger tier without weakening actual packaged directives.
+  new RegExp(
+    String.raw`^[\t ]*(?:(?://|#|/\*+|\*|<!--|-|>)[\t ]*)?(?:please[\t ]+)?${REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
+    "im",
+  ),
+  new RegExp(
+    String.raw`[.!?;:,="'()\x60][\t ]*(?:please[\t ]+)?${REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
+    "i",
+  ),
+  // An explicit clean-verdict command aimed at an AI-qualified or Drydock
+  // audience does not need a determiner or one canonical verb. Requiring
+  // "approve this" or "mark this as safe" leaves equivalent direct commands
+  // below the standing-danger tier when the advisory reviewer cannot run.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?${DIRECT_REVIEW_VERDICT_DIRECTIVE_SEGMENT}`,
+    "i",
+  ),
+  // Once an AI/Drydock review audience is explicit, a command to hide review
+  // output is verdict manipulation even when it adds an ordinary-language
+  // destination or rationale after the finding noun.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:(?:(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)|(?:ignore|disregard|hide|suppress))\s+(?:any|all|these|those|the)|(?:report|return)\s+no)\s+(?:findings?|detections?)\b`,
+    "i",
+  ),
+  // Suppression is imperative-only ("do not"/"don't") with a determiner on the
+  // object. Modals invite third-person subjects ("the scanner should not flag
+  // minified code as suspicious"), broad support nouns ("do not report any
+  // issues here") are ordinary project guidance. Qualified policy text ("do
+  // not report any findings from generated files") is also ordinary in the
+  // linter/scanner packages npm is full of, so only a sentence-ending command
+  // or an explicitly review-scoped qualifier reaches the high tier.
+  /\b(?:do\s+not|don'?t)\s+(?:report|flag|mention|raise|escalate|surface)\s+(?:any|these|those)\s+(?:findings?|detections?)\b(?=\s*(?:[.!?]|$)|\s+(?:in|for|from|about)\s+(?:this|the)\s+(?:(?:(?:automated|AI)\s+)?(?:security\s+)?(?:review|scan|audit)|package|release|update|version)\b)/i,
+  /\b(?:do\s+not|don'?t)\s+(?:flag|report|mark|treat)\s+(?:this|the)\s+(?:package|release|update|version|library|module|code|file)\b[^\n.!?]{0,30}\bas\s+(?:suspicious|malicious|unsafe|risky)\b/i,
+  // Drydock's schema tokens are ordinary source in an API client or integration.
+  // They become verdict manipulation only when an explicit review audience is
+  // told to produce them.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:report|return|reply(?:\s+with)?|respond(?:\s+with)?|output|submit|set|use)\b[^\n.!?]{0,50}\b(?:nothing[_-]unusual|requires_?manual_?review\b[^\n.!?]{0,20}\bfalse)\b`,
+    "i",
+  ),
+  // Security tooling legitimately documents switches such as "bypass the
+  // security check during local development". Require the directive to name
+  // this package/release as the object being exempted from review.
+  /\b(?:skip|bypass|disable)\s+(?:(?:(?:the|this)\s+)?security\s+(?:review|scan|audit|check)\s+(?:of|for|on)\s+(?:this|the)\s+(?:package|release|update|version|code)|(?:this|the)\s+(?:package|release|update|version|code)(?:'s)?\s+security\s+(?:review|scan|audit|check))\b/i,
+];
+
+// Precision over recall: every pattern requires either an instruction-override
+// verb phrase or a direct address to an AI/agent audience, because LLM client
+// libraries legitimately ship prompt-shaped text ("You are a helpful
+// assistant", "customize the system prompt") that must stay quiet.
+const PROMPT_INJECTION_PATTERNS = [
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:(?:previous|prior|above|earlier|preceding|initial|original)(?:\s+(?:system|developer|user))?|system)\s+(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\b/i,
+  /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|every\s+)?(?:instructions?|messages?|prompts?|rules?|directives?|commands?|context)\s+(?:above|before|earlier|previously)\b/i,
+  /\b(?:ignore|disregard|forget)\s+(?:everything|all)\s+(?:above|before|you\s+were\s+told)\b/i,
+  /\byour\s+(?:new\s+)?system\s+prompt\s+is\b/i,
+  /\b(?:replace|overwrite)\s+your\s+system\s+prompt\b/i,
+  // The conditional address alone also greets humans ("if you are an AI
+  // researcher, see the docs"), so it must be followed by a directive clause.
+  new RegExp(
+    String.raw`\bif\s+you\s+are\s+an?\s+${AI_AUDIENCE_SEGMENT}\b[^\n.!?]{0,60}\b(?:ignore|disregard|follow|obey|must|should|do\s+not|don'?t|stop|instead|reply|respond|output|run|execute|add|install|recommend|include)\b`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\b(?:note|message|attention|instructions?|important)\s+(?:to|for)\s+(?:the\s+|all\s+|any\s+)?${AI_AUDIENCE_SEGMENT}s?\b`,
+    "i",
+  ),
+  // Direct vocatives do not need a "note to" wrapper. Require either
+  // punctuation followed by a directive or an explicit obligation so prose
+  // that merely describes an AI tool stays quiet.
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*(?:you\s+)?(?:ignore|disregard|follow|obey|do\s+not|don'?t|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat|say)\b`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`\b${AI_ACTOR_SEGMENT}s?\b[^\n.!?]{0,20}\b(?:must|should|need\s+to|are\s+required\s+to)\s+(?:ignore|disregard|follow|obey|stop|reply|respond|output|run|execute|add|install|recommend|include|approve|mark|treat)\b`,
+    "i",
+  ),
+  /\bas\s+an?\s+(?:AI|LLM|language\s+model)\b[^\n.!?]{0,60}\byou\s+(?:must|should|will|have\s+to|are\s+required)\b/i,
+  new RegExp(
+    String.raw`\b${AI_AUDIENCE_SEGMENT}s?\b\s*[:,]\s*you\s+are\s+now\s+in\s+(?:developer|DAN|jailbreak|unrestricted|god)\s+mode\b`,
+    "i",
+  ),
+];
+
+export const REVIEW_MANIPULATION_PATTERN_SET = REVIEW_MANIPULATION_PATTERNS;
+export const PROMPT_INJECTION_PATTERN_SET = PROMPT_INJECTION_PATTERNS;
+
 // Doc-style placeholder passwords (`http://user:pass@proxy.example`,
 // `https://alice:<token>@host`) are ubiquitous in READMEs and changelogs —
 // requests' CVE-2023-32681 HISTORY entry is the canonical benign hit — and are

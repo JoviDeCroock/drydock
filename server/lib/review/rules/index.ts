@@ -6,20 +6,23 @@ import { binaryFindings } from "./binaries";
 import { dependencyDiffFindings } from "./deps";
 import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 import { propagationFindings } from "./propagation";
+import { promptInjectionFindings } from "./prompt-injection";
 
 // Bump when deterministic rule semantics, severities, or coverage change in a
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.31.0";
+export const DETERMINISTIC_RULES_VERSION = "1.44.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export {
   codePatternsFor,
   FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
+  PROMPT_INJECTION_PATTERN_SET,
   PYTHON_PATTERN_SET,
   PYTHON_EXECUTION_CAPABILITY_PATTERNS,
+  REVIEW_MANIPULATION_PATTERN_SET,
   SECRET_PATTERNS,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./patterns";
@@ -43,6 +46,7 @@ export function deterministicFindings(
     ...metadataFindings(ctx),
     ...scriptFindings(ctx),
     ...binaryFindings(ctx),
+    ...promptInjectionFindings(ctx),
     ...entrypointPresenceFindings(ctx),
     ...propagationFindings(ctx),
   ]);

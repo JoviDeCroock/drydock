@@ -276,6 +276,7 @@ describe("release memory as a risk input", () => {
     ["install-script.implicit-node-gyp"],
     ["install-script.gyp-command-substitution"],
     ["code.remote-shell"],
+    ["file.review-manipulation"],
     ["file.secret-content"],
     ["tar.suspicious-entry"],
   ])("an approval never discounts %s", (ruleId) => {

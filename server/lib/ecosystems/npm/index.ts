@@ -37,6 +37,7 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   runFindings(args) {
     return buildNpmFindings({
       staged: args.staged,
+      previousFiles: args.baseline?.files,
       details: args.details as NpmStagedDetails | null,
       fileDiff: args.fileDiff,
       manifestDiff: args.manifestDiff,
