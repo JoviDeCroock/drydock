@@ -20,6 +20,8 @@ import { errorMessage } from "./api";
 interface ScanListRefreshOptions {
   /** Keep every page the user has already loaded instead of returning to page one. */
   preserveLoaded?: boolean;
+  /** Also reveal this many newly created rows without making the user paginate. */
+  includeNewItems?: number;
 }
 
 const LIST_SCANS_REFRESH_LIMIT = 100;
@@ -68,19 +70,20 @@ export const ScanListModel = createModel(() => {
     const organizationId = activeOrganizationId.peek();
     const currentFilter = filter.peek();
     const loadedCount = options.preserveLoaded ? scans.peek().length : 0;
+    const requestedCount = loadedCount + Math.max(0, options.includeNewItems ?? 0);
     refreshing.value = true;
     try {
       const firstLimit =
-        loadedCount > 0 ? Math.min(LIST_SCANS_REFRESH_LIMIT, loadedCount) : undefined;
+        loadedCount > 0 ? Math.min(LIST_SCANS_REFRESH_LIMIT, requestedCount) : undefined;
       const firstPage = await listScans({ filter: currentFilter, limit: firstLimit });
       if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
       const refreshed = [...firstPage.scans];
       let cursor = firstPage.nextCursor;
-      while (options.preserveLoaded && refreshed.length < loadedCount && cursor) {
+      while (options.preserveLoaded && refreshed.length < requestedCount && cursor) {
         const page = await listScans({
           cursor,
           filter: currentFilter,
-          limit: Math.min(LIST_SCANS_REFRESH_LIMIT, loadedCount - refreshed.length),
+          limit: Math.min(LIST_SCANS_REFRESH_LIMIT, requestedCount - refreshed.length),
         });
         if (!isCurrentRefresh(requestId, mutationId, organizationId)) return;
         refreshed.push(...page.scans);
@@ -269,6 +272,13 @@ export const ScanListModel = createModel(() => {
     hasAnyScan,
     hasAnyDecision,
     refresh,
+
+    async refreshAfterDiscovery(createdScanCount: number): Promise<void> {
+      const activeFilter = filter.peek();
+      const newlyMatchingItems =
+        activeFilter === "undecided" || activeFilter === "all" ? createdScanCount : 0;
+      await refresh({ preserveLoaded: true, includeNewItems: newlyMatchingItems });
+    },
 
     /**
      * Settle the funnel's last step. Called by the getting-started panel only,
