@@ -229,6 +229,12 @@ export const scans = sqliteTable(
     // A separate column rather than an event lookup because the sweep decides
     // whether to send while holding only this row.
     registryPublishReminderAt: integer("registry_publish_reminder_at", { mode: "timestamp_ms" }),
+    // Send-once stamp for the "npm finished validating, you can approve now"
+    // notice. Claimed conditionally on the observation that triggered it, so
+    // overlapping sweeps observing the same transition cannot both send.
+    registryApprovableNotifiedAt: integer("registry_approvable_notified_at", {
+      mode: "timestamp_ms",
+    }),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
