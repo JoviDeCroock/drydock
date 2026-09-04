@@ -255,7 +255,8 @@ quality of the review:
 `scanPackageIdentity` allowlists the credential-backed sources rather than
 excluding the untrusted ones, so a scan source added later inherits
 `public-review` until it is classified deliberately. `SCAN_SOURCES` is asserted
-against that classifier in `test/workers/threat-feed-badge.test.ts`.
+against that classifier — and against the `BADGE_INELIGIBLE_SOURCES` list the
+candidate query filters on — in `test/badge-eligibility.test.ts`.
 
 `ecosystem` is `null` when nothing established one — a gate scan whose
 provenance snapshot is missing (a legacy pre-provenance record, or a redaction
