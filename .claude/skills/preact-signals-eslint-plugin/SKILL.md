@@ -1,82 +1,25 @@
 ---
 name: preact-signals-eslint-plugin
-description: Configure, extend, or debug @preact/eslint-plugin-signals rules for unsafe reads, truthiness, computed writes, async use, or component-local creation.
+description: Diagnose or change Signals lint behavior in Drydock’s Oxlint setup, including local rule coverage and static-analysis limits.
 ---
 
-# Preact Signals ESLint Plugin
+# Signals lint in Drydock
 
-## Core Approach
+The repository uses Oxlint with `@preact/eslint-plugin-signals` plus local rules under `tooling/oxlint/signals-local/`. Read `.oxlintrc.json` for active configuration and `docs/tooling.md` for rule ownership and test commands. Do not introduce a parallel ESLint configuration to fix an Oxlint diagnostic.
 
-Use lint rules for common static signal misuse that issue history shows humans and agents repeat. The plugin supports projects using `@preact/signals-core`, `@preact/signals`, `@preact/signals-react`, and `@preact/signals-react/runtime`.
+## Interpret the diagnostic
 
-Treat each `.value` read as an intentional unboxing/subscription decision. The plugin catches many incorrect unboxing sites, such as reads after `await`, hidden reads behind non-reactive guards, writes from computed callbacks, and signal objects used as always-truthy booleans. It does not prove that a `.value` read is as granular as it could be; code review still needs to catch parent/provider unboxing that should have been deferred to a leaf component or DOM binding.
-
-## Configuration
-
-Oxlint:
-
-```jsonc
-{
-  "jsPlugins": ["@preact/eslint-plugin-signals"],
-  "rules": {
-    "@preact/signals/no-signal-write-in-computed": "error",
-    "@preact/signals/no-value-after-await": "error",
-    "@preact/signals/no-signal-truthiness": "warn",
-    "@preact/signals/no-signal-in-component-body": "error",
-    "@preact/signals/no-conditional-value-read": "error"
-  }
-}
-```
-
-ESLint flat config:
-
-```js
-import signals from "@preact/eslint-plugin-signals";
-import tsParser from "@typescript-eslint/parser";
-
-export default [
-  {
-    plugins: { signals },
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: "module",
-      parser: tsParser,
-      parserOptions: {
-        ecmaFeatures: { jsx: true },
-        project: true,
-        tsconfigRootDir: import.meta.dirname
-      }
-    },
-    rules: {
-      "signals/no-signal-write-in-computed": "error",
-      "signals/no-value-after-await": "error",
-      "signals/no-signal-truthiness": "warn",
-      "signals/no-signal-in-component-body": "error",
-      "signals/no-conditional-value-read": "error"
-    }
-  }
-];
-```
-
-## Rule Intent
-
-| Rule | Catches |
+| Rule | Correctness question |
 | --- | --- |
-| `no-signal-write-in-computed` | Side effects inside `computed()` or `useComputed()` |
-| `no-value-after-await` | `.value` reads after `await` that are not tracked |
-| `no-signal-truthiness` | `if (signal)` and similar always-truthy checks |
-| `no-signal-in-component-body` | `signal()`, `computed()`, `effect()` created on every render |
-| `no-conditional-value-read` | `.value` reads hidden behind non-reactive guards |
+| `no-signal-write-in-computed` | Is a derivation mutating its dependencies? |
+| `no-value-after-await` | Was a dependency read after reactive tracking ended? |
+| `no-signal-truthiness` | Is a signal object being treated as its boolean value? |
+| `no-signal-in-component-body` | Is render recreating state or a subscription? |
+| `no-conditional-value-read` | Does a non-reactive guard hide a tracked dependency? |
+| `signals-local/no-signal-conditional-jsx` | Should a JSX condition subscribe inside `Show`? |
 
-These rules protect correctness more than performance. They should be paired with the Preact integration skill's "unbox late" guidance for granularity.
+Inspect the reactive scope and intended behavior before choosing a fix. For guarded computeds, reading required signals before branching can preserve tracking. For async code, decide which values are snapshots and which must remain live; blindly moving reads before `await` can change semantics.
 
-## Common Limitations
+Oxlint's available type information and the plugins' alias/data-flow analysis are limited. A missing diagnostic does not prove a model-member read or cross-function flow is correct. Consult the installed `node_modules/@preact/eslint-plugin-signals/README.md` and source for supported options and actual detection behavior.
 
-- Cross-function data flow is not fully traced.
-- Dynamic object aliases may not be detected without TypeScript type information.
-- Oxlint currently has less type-aware information than ESLint with `@typescript-eslint/parser` and `project: true`.
-
-## References
-
-- Package docs: `node_modules/@preact/eslint-plugin-signals/README.md`
-- Online: https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md
+For a rule change, add a failing misuse fixture and a valid counterexample in the owning fixture suite. The local JSX rule uses `test/fixtures/oxlint-signals/` and `test/oxlint-signal-conditional-jsx.test.mjs`. Verify both diagnostics and valid code; do not weaken a rule globally to silence one call site without establishing why it is wrong.
