@@ -537,6 +537,59 @@ describe("ScanListModel registry status refreshes", () => {
     expect(model.nextCursor.value).toBe("cursor-after-refresh");
   });
 
+  test.each(["undecided", "all"] as const)(
+    "reveals newly discovered reviews in the %s list without another pagination step",
+    async (filter) => {
+      const existingScans = [
+        { ...scanDetail(null).scan, id: "scan-a" },
+        { ...scanDetail(null).scan, id: "scan-b" },
+      ];
+      const refreshedScans = [{ ...scanDetail(null).scan, id: "scan-new" }, ...existingScans];
+      const fetchMock = vi.fn(() =>
+        Promise.resolve(jsonResponse({ scans: refreshedScans, nextCursor: null })),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      model = new ScanListModel();
+      model.filter.value = filter;
+      model.scans.value = existingScans;
+      model.nextCursor.value = "cursor-b";
+
+      await model.refreshAfterDiscovery(1);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/scans?filter=${filter}&limit=3`,
+        expect.any(Object),
+      );
+      expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-new", "scan-a", "scan-b"]);
+      expect(model.nextCursor.value).toBeNull();
+    },
+  );
+
+  test.each(["published_without_decision", "publish", "no_publish"] as const)(
+    "does not expand the %s list for newly discovered undecided reviews",
+    async (filter) => {
+      const existingScans = [
+        { ...scanDetail(null).scan, id: "scan-a" },
+        { ...scanDetail(null).scan, id: "scan-b" },
+      ];
+      const fetchMock = vi.fn(() =>
+        Promise.resolve(jsonResponse({ scans: existingScans, nextCursor: "cursor-b" })),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      model = new ScanListModel();
+      model.filter.value = filter;
+      model.scans.value = existingScans;
+
+      await model.refreshAfterDiscovery(1);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/scans?filter=${filter}&limit=2`,
+        expect.any(Object),
+      );
+      expect(model.scans.value).toHaveLength(2);
+    },
+  );
+
   test("ignores pagination that an overlapping refresh superseded", async () => {
     const loadMoreResponse = deferred<Response>();
     const refreshResponse = deferred<Response>();

@@ -250,7 +250,7 @@ async function discoverStagedPublishes(
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>,
 ) {
   const result = await stagedPublishes.discover();
-  await scans.refresh({ preserveLoaded: true });
+  await scans.refreshAfterDiscovery(result?.created ?? 0);
   if (result) scans.scheduleRegistryStatusRefreshes();
 }
 
