@@ -9,6 +9,24 @@ import type { CreateReleaseTargetInput } from "./persistence";
 const REPO_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * Identifiers the gate-setup wizard is allowed to interpolate into generated
+ * workflow YAML.
+ *
+ * Deliberately narrower than what GitHub or a registry accepts: these strings
+ * end up inside double-quoted YAML scalars in a file a maintainer will merge,
+ * so anything that could terminate the scalar or look like an Actions
+ * expression (`"`, `\`, backtick, newline, `${{ }}`) is refused rather than
+ * escaped. npm `@scope/name`, PEP 503 project names, and VS Code
+ * `publisher.name` all fit.
+ *
+ * They live here, in the dependency-free validation module, because the wizard
+ * UI checks the same shapes before it lets a maintainer trigger a GitHub
+ * mutation — a listed GitHub environment can be outside this allowlist.
+ */
+export const GATE_SETUP_PACKAGE_NAME_RE = /^[@A-Za-z0-9][A-Za-z0-9@._/-]{0,213}$/;
+export const GATE_SETUP_ENVIRONMENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/;
+
 export function validateReleaseTargetShape(input: CreateReleaseTargetInput) {
   // Null pins nothing: the runner auto-detects the ecosystem from the uploaded
   // artifacts. A non-null value must be a supported ecosystem.
