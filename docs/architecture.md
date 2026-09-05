@@ -127,7 +127,7 @@ Within a single org sweep, new staged publishes are started through a bounded-co
 - **D1** — Better Auth tables, organizations, npm connections, scans, scan files/findings, workflow gates, release targets, summaries, and audit/event metadata. D1 remains the operational source of truth.
 - **R2** — canonical report JSON and redacted file/diff artifacts. D1 keeps compact metadata and historical fallback samples so list/detail pages remain cheap.
 - **KV** — session-related state where configured.
-- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is a killswitch that is on by default; deterministic findings remain authoritative. Sampled Agent Traces retain no message or tool payloads; Analytics Engine stores only aggregate execution and decision dimensions keyed by reviewer version.
+- **Workers AI / AI Gateway** — optional advisory review path. The per-organization `ai-review` Flagship flag is a killswitch that is on by default; deterministic findings remain authoritative. Agent Traces retain no message or tool payloads; Analytics Engine stores only aggregate execution and decision dimensions keyed by reviewer version.
 
 ## Organization and auth model
 

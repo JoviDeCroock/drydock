@@ -25,12 +25,17 @@
 			"enabled": true,
 			"invocation_logs": true
 		},
-		// Optional sampled Agent Traces. Message and tool payload persistence is
+		// Optional Agent Traces. Message and tool payload persistence is
 		// disabled in code; traces retain operation timing, model/usage metadata,
 		// tool names, and the non-identifying reviewer version only.
+		//
+		// Sampling is per invocation and worker-wide, so a rate low enough to
+		// thin out fetch traffic also thins out the handful of daily agent
+		// turns you actually want to read. Lower `head_sampling_rate` only once
+		// your own traffic makes the span volume matter.
 		"traces": {
 			"enabled": true,
-			"head_sampling_rate": 0.1,
+			"head_sampling_rate": 1,
 			"persist": true
 		}
 	},

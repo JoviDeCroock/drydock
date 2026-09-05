@@ -13,9 +13,14 @@
 			"enabled": true,
 			"invocation_logs": true
 		},
+		// Head sampling is per invocation and worker-wide, so it cannot be aimed
+		// at the reviewer. Agent turns run a few times a day (one scan per queue
+		// invocation, max_batch_size 1), and at 10% that left the Agents
+		// dashboard empty on most days. Trace everything until the span volume
+		// is worth measuring against the Workers Logs quota.
 		"traces": {
 			"enabled": true,
-			"head_sampling_rate": 0.1,
+			"head_sampling_rate": 1,
 			"persist": true
 		}
 	},

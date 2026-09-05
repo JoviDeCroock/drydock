@@ -84,7 +84,7 @@ Workflow gates never publish. GitHub Environment protection holds the publish jo
 
 Package contents are hostile instructions. AI prompts must frame package text as evidence, restrict outputs to schema-validated findings, and keep deterministic findings/risk independent. AI input should include only the minimum changed-file evidence needed for review, never credentials, sessions, raw headers, or operator secrets. Invalid, partial, or unsafe AI output is ignored/unavailable rather than treated as a clean review.
 
-Cloudflare Agent Traces are sampled at 10% for reviewer debugging, with message
+Cloudflare Agent Traces are fully sampled for reviewer debugging, with message
 and tool payload persistence explicitly disabled at both the tracing wrapper
 (`storeMessages`/`storeTools`) and the AI SDK call
 (`recordInputs`/`recordOutputs`). Trace metadata is restricted to an explicit

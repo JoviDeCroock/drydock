@@ -212,10 +212,11 @@ After deploying:
 3. Sign in and create an organization.
 4. Add and validate an npm connection.
 5. Run a test staged-publish review.
-6. Check Worker logs and sampled Agent Traces for structured events without raw
-   package contents or secrets. The template persists 10% of traces while the
-   reviewer wrapper disables message and tool payload storage; remove the
-   `observability.traces` block if you do not want persisted traces at all.
+6. Check Worker logs and Agent Traces for structured events without raw
+   package contents or secrets. The template persists every trace while the
+   reviewer wrapper disables message and tool payload storage; lower
+   `head_sampling_rate` once your traffic makes span volume matter, or remove
+   the `observability.traces` block if you do not want persisted traces at all.
 
 ## GitHub workflow gates
 
