@@ -28,6 +28,8 @@ export interface ListScansResult {
     id: string;
     stageId: string;
     source: string;
+    /** Registry the review describes; null while a workflow-gate scan has no report yet. */
+    ecosystem: string | null;
     organizationId: string | null;
     ownerUserId: string | null;
     packageName: string | null;
@@ -60,6 +62,53 @@ export interface ListScansResult {
 export const LIST_SCANS_DEFAULT_LIMIT = 20;
 export const LIST_SCANS_MAX_LIMIT = 100;
 
+/** The terminal failure code a scan recorded, if any. */
+export const registryFailureCodeSql = sql<
+  string | null
+>`json_extract(${scans.errorJson}, '$.code')`;
+
+/**
+ * SQL twin of `scanEcosystem` in `lib/public-feed.ts`: npm for the
+ * credential-backed staged sources — the only sources that can exist without
+ * a report — else the gate provenance or published-pair declaration the report
+ * recorded. A pending workflow-gate scan therefore has no ecosystem yet, and
+ * stays out of any per-ecosystem package view until its report says which
+ * registry it describes. The staged branch is tested first so SQLite never
+ * parses a staged review's (large) summary for an answer its source already
+ * gives.
+ */
+export const scanEcosystemSql = sql<string | null>`case
+  when ${scans.source} in ('manual', 'auto_discovery') then 'npm'
+  else coalesce(
+    json_extract(${scans.summaryJson}, '$.stagedPublish.provenance.ecosystem'),
+    json_extract(${scans.summaryJson}, '$.stagedPublish.ecosystem')
+  )
+end`;
+
+/** npm shipped the version, or shipped it and later removed it. */
+export function publishedReleaseOutcomeCondition() {
+  return or(
+    inArray(scans.registryVersionStatus, ["published", "deleted"]),
+    inArray(registryFailureCodeSql, [
+      NPM_RELEASE_OUTCOME_FAILURE_CODES.published,
+      NPM_RELEASE_OUTCOME_FAILURE_CODES.deleted,
+    ]),
+  )!;
+}
+
+/**
+ * Releases npm reports as live (or live-then-removed) with no Drydock decision
+ * on record. Shared with the package view so its "published without review"
+ * count is the same set the dashboard filter shows.
+ */
+export function publishedWithoutDecisionConditions() {
+  return [
+    isNull(scans.decision),
+    isNull(scans.registryStatusSupersededAt),
+    publishedReleaseOutcomeCondition(),
+  ];
+}
+
 export async function listScans(
   db: AppDb,
   organizationId: string,
@@ -70,13 +119,8 @@ export async function listScans(
     Math.max(1, Math.floor(options.limit ?? LIST_SCANS_DEFAULT_LIMIT)),
   );
   const decisionFilter = options.decisionFilter ?? "undecided";
-  const registryFailureCode = sql<string | null>`json_extract(${scans.errorJson}, '$.code')`;
+  const registryFailureCode = registryFailureCodeSql;
   const settledFailureCodes = Object.values(NPM_RELEASE_OUTCOME_FAILURE_CODES);
-  const publishedStatuses = ["published", "deleted"] as const;
-  const publishedFailureCodes = [
-    NPM_RELEASE_OUTCOME_FAILURE_CODES.published,
-    NPM_RELEASE_OUTCOME_FAILURE_CODES.deleted,
-  ];
 
   const conditions = [eq(scans.organizationId, organizationId)];
   if (decisionFilter === "undecided") {
@@ -95,14 +139,7 @@ export async function listScans(
       or(isNull(registryFailureCode), notInArray(registryFailureCode, settledFailureCodes))!,
     );
   } else if (decisionFilter === "published_without_decision") {
-    conditions.push(
-      isNull(scans.decision),
-      isNull(scans.registryStatusSupersededAt),
-      or(
-        inArray(scans.registryVersionStatus, [...publishedStatuses]),
-        inArray(registryFailureCode, publishedFailureCodes),
-      )!,
-    );
+    conditions.push(...publishedWithoutDecisionConditions());
   } else if (decisionFilter === "publish") conditions.push(eq(scans.decision, "publish"));
   else if (decisionFilter === "no_publish") conditions.push(eq(scans.decision, "no_publish"));
 
@@ -121,6 +158,7 @@ export async function listScans(
       id: scans.id,
       stageId: scans.stageId,
       source: scans.source,
+      ecosystem: scanEcosystemSql,
       organizationId: scans.organizationId,
       ownerUserId: scans.ownerUserId,
       packageName: scans.packageName,
@@ -165,6 +203,7 @@ export async function listScans(
       id: row.id,
       stageId: row.stageId,
       source: row.source,
+      ecosystem: row.ecosystem,
       organizationId: row.organizationId,
       ownerUserId: row.ownerUserId,
       packageName: row.packageName,

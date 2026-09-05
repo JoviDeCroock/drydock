@@ -50,7 +50,7 @@ export type ScanDecisionFilter =
   | "no_publish"
   | "all";
 
-interface ScanRiskSummary {
+export interface ScanRiskSummary {
   artifactRisk: string;
   releaseRisk: string;
   contextRisk: string;
@@ -65,6 +65,8 @@ export interface ScanListItem {
   id: string;
   stageId: string;
   source?: string | null;
+  /** Registry the review describes (`npm`, `pypi`, …); null while a gate scan has no report. */
+  ecosystem?: string | null;
   organizationId?: string | null;
   ownerUserId?: string | null;
   packageName: string | null;
