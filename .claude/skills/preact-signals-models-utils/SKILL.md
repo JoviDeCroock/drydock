@@ -1,154 +1,39 @@
 ---
 name: preact-signals-models-utils
-description: Design or debug Preact Signals models and utilities such as createModel, useModel, Show, For, live signals, refs, nested state, and disposal.
+description: Design or debug Drydock signal models, action boundaries, constructor inputs, useModel lifetime, and disposal.
 ---
 
-# Preact Signals Models And Utils
+# Signal models and lifetime
 
-## Core Approach
-
-Use models for cohesive signal state plus actions. A model should contain signals, actions, and nested objects containing only signals and actions. `useModel()` creates one model instance for a component lifetime and disposes it on unmount.
-
-Models should preserve signal boundaries. Store live state as signals and expose those signal objects so components can decide whether to render `{model.count}`, read `model.count.value`, or pass `model.count` farther down. Do not turn model state into plain aggregate values unless the caller intentionally needs a snapshot.
-
-## createModel Pattern
+Use a model when state and its actions form a cohesive unit. Keep a single independent value in a signal. Models expose signals and actions, including nested signal/action objects, so consumers retain control of subscription boundaries.
 
 ```tsx
-import { createModel, signal, computed } from "@preact/signals";
+import { createModel, signal, computed, useModel } from "@preact/signals";
 
 const CountModel = createModel((initialCount: number) => {
   const count = signal(initialCount);
   const double = computed(() => count.value * 2);
-
   return {
     count,
     double,
     increment() {
-      this.count.value++;
-    }
+      count.value++;
+    },
   };
 });
-```
 
-Model functions are wrapped as actions, so they run batched and untracked.
-
-## useModel Pattern
-
-Use the model constructor directly only when it takes no arguments:
-
-```tsx
-function Counter() {
-  const model = useModel(CountModelWithoutArgs);
-  return <button onClick={model.increment}>{model.count}</button>;
-}
-```
-
-Wrap constructors with arguments in a factory:
-
-```tsx
 function Counter() {
   const model = useModel(() => new CountModel(5));
-  return <button onClick={model.increment}>{model.count}</button>;
+  return <button onClick={model.increment}>{model.double}</button>;
 }
 ```
 
-`useModel()` ignores factory changes after the initial render. If constructor inputs can change and the model must react to them, pass a signal such as `useLiveSignal(inputSignal)` into the model and observe it inside the model.
+`createModel` wraps actions as batched and untracked calls. `useModel` owns an instance for the component lifetime and disposes it on unmount. A no-argument constructor can be passed directly; wrap constructors with arguments in a factory.
 
-## Live Inputs And Unboxing
+## Inputs and async state
 
-Constructor arguments are snapshots unless they are signals:
+Changing the factory passed to `useModel` does not recreate the model. Constructor arguments are initial snapshots unless they are reactive inputs. If a model must follow future input changes, accept a signal and read it in a computed/effect. If the parent may replace the signal object, adapt it with `useLiveSignal` from `@preact/signals/utils` before handing it to the long-lived model.
 
-```tsx
-function Detail({ id }: { id: string }) {
-  const model = useModel(() => new DetailModel(id));
-  return <DetailView model={model} />;
-}
-```
+Keep derived state in computed signals and writes in actions/effects. Async methods should keep data, loading, and error state coherent; account for overlapping requests or disposal when the flow permits them. Do not assume batching or dependency tracking spans an `await`.
 
-Use a signal input when the model must track future changes:
-
-```tsx
-import type { Signal } from "@preact/signals";
-import { useLiveSignal } from "@preact/signals/utils";
-
-function Detail({ selectedId }: { selectedId: Signal<string> }) {
-  const liveSelectedId = useLiveSignal(selectedId);
-  const model = useModel(() => new DetailModel(liveSelectedId));
-  return <DetailView model={model} />;
-}
-```
-
-Inside the model, unbox in the smallest reactive scope that needs the current value:
-
-```ts
-const DetailModel = createModel((selectedId: Signal<string>) => {
-  const resourceUrl = computed(() => `/api/items/${selectedId.value}`);
-
-  return { selectedId, resourceUrl };
-});
-```
-
-Pass model signals to leaf components instead of reading `.value` in a parent and forwarding plain values, unless the parent really owns the render decision.
-
-## State Shape
-
-- Store mutable UI state in signals.
-- Store derived values in computed signals.
-- Put writes in action methods or effects, not computed callbacks.
-- Update arrays and objects by assigning new references.
-- Keep async loading methods responsible for loading/error signals together with the data they update.
-
-```tsx
-const ListModel = createModel(() => {
-  const items = signal<Item[]>([]);
-  const loading = signal(false);
-
-  return {
-    items,
-    loading,
-    async load() {
-      loading.value = true;
-      try {
-        items.value = await fetchItems();
-      } finally {
-        loading.value = false;
-      }
-    },
-    add(item: Item) {
-      items.value = [...items.value, item];
-    }
-  };
-});
-```
-
-## Utility Components
-
-Use `Show` for signal-backed conditionals and `For` for signal arrays:
-
-```tsx
-import { For, Show } from "@preact/signals/utils";
-
-function ItemList({ model }: { model: Model }) {
-  return (
-    <Show when={model.hasItems} fallback={<p>No items</p>}>
-      <For each={model.items}>{item => <Item item={item} />}</For>
-    </Show>
-  );
-}
-```
-
-For values inside `For` children that should keep updating after the child is cached, pass signals down or render a child component that reads the signal.
-
-## Common Mistakes
-
-- Passing `useModel(ModelWithArgs)` instead of `useModel(() => new ModelWithArgs(args))`.
-- Expecting a changed factory function to recreate the model.
-- Returning plain mutable values from a model where callers expect reactivity.
-- Creating signals inside a computed returned by the model.
-- Treating `For` as a normal array map that reruns on unrelated parent values.
-
-## References
-
-- Preact package docs: `node_modules/@preact/signals/README.md`
-- Preact utilities: https://github.com/preactjs/signals/blob/main/packages/preact/README.md#utility-components-and-hooks
-- React utilities: https://github.com/preactjs/signals/blob/main/packages/react/utils/README.md
+For rendering and `Show`/`For` child caching, use [Preact integration](../preact-signals-preact-integration/SKILL.md). Inspect the installed `node_modules/@preact/signals/README.md` and source/types when lifecycle or action semantics matter; do not infer them from a React utility example.

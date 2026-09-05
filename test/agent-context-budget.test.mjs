@@ -11,8 +11,8 @@ import { describe, expect, test } from "vitest";
 // cut something or raise the number deliberately. They are set close to current
 // size on purpose, so headroom is not an invitation.
 //
-// A rule a lint or test already enforces does not belong in these files at all
-// — the build fails on its own, and the prose is pure per-session tax.
+// Lint/tests own enforceable detail; prose retains rationale and trust boundaries
+// when they change an agent's decisions before a check runs.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const skillsDir = path.join(repoRoot, ".claude/skills");
@@ -46,8 +46,8 @@ function frontmatterDescription(file) {
 
 describe("agent context budget", () => {
   // Loaded on every session, before the task is known.
-  test("AGENTS.md and CLAUDE.md together stay under 4,000 characters", () => {
-    expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(4_000);
+  test("AGENTS.md and CLAUDE.md together stay under 6,000 characters", () => {
+    expect(size("AGENTS.md") + size("CLAUDE.md")).toBeLessThanOrEqual(6_000);
   });
 
   test("every skill directory has a SKILL.md", () => {

@@ -194,21 +194,37 @@ The rule ships as `error` with no existing violations, so every infraction fails
 
 ### What belongs in an agent file
 
-The ceilings above are about cost, not adherence. A factorial study of coding-agent
-configuration files ([arXiv 2605.10039](https://arxiv.org/abs/2605.10039), 1,650 Claude
-Code sessions) found no detectable effect of file size, instruction position, file
-architecture, or contradictions between adjacent config files, with affirmative-null
-Bayes factors for size and conflict; [IFScale](https://arxiv.org/pdf/2507.11538) puts
-the instruction-count knee around 150–200, and AGENTS.md holds roughly 25 rules. So a
-long agent file is not measurably ignored — it is just paid for on every session.
+`AGENTS.md` is the shared repository contract; `CLAUDE.md` imports it. Keep durable
+trust boundaries, ownership constraints, and context routing there. Skills under
+`.claude/skills/` supply task-specific contracts and evidence requirements, with the
+same files exposed through `.agents/skills`. Describe capabilities conditionally rather
+than pinning model names or assuming every runtime exposes the same tools.
 
-That makes the useful test a maintenance one, not a psychological one. A rule that a
-lint rule or an invariant test enforces does not belong in AGENTS.md or a skill at all:
-the build fails on its own, so the prose is pure tax and can go stale besides. When
-deleting such a rule, make sure the check's failure message explains the fix, because
-that message is now the only place the rule is stated. Knowledge that matters only for
-one kind of task belongs in the skill for that task, which loads on demand — the
-ecosystem-name branching rule lives in `.claude/skills/add-ecosystem/` for that reason.
+The operating expectation is a super agent that owns the full outcome: investigate,
+implement, recover, integrate, verify, and complete authorized delivery. The
+[super-agent skill](../.claude/skills/super-agent/SKILL.md) provides the execution model
+for complex work, including independent delegation with file ownership and critical
+assessment of agent results. Keep this guidance in the shared contract so Claude and
+other agents follow the same standard. Small tasks do not need a planning ceremony
+or a team.
+
+Assume the agent can choose an implementation strategy. State the desired outcome,
+non-obvious repository facts, and what evidence establishes completion. Prescribe a
+sequence only when ordering protects a real boundary, such as triaging findings
+before edits or inspecting remote divergence before a push. Avoid generic coding
+tutorials, repeated checklists, historical anecdotes, and automatic escalation from
+a local task into commits or external actions.
+
+Lint and invariant tests own mechanically enforceable detail. Keep a short rationale
+or routing hint in prose when it changes a design decision or protects a trust
+boundary; do not duplicate entire configurations. The context ceilings are maintenance
+budgets, not targets or claims about a particular model's instruction capacity.
+
+For review fixes and branch finishing, [pre-pr](../.claude/skills/pre-pr/SKILL.md)
+owns triage, parity-wide fixes, the adversarial fix review, and the stopping rule.
+Record dispositions and reviewed revisions in `.context/review-log.md`. Use the skill's
+completion conditions, including resolving earlier P1/P2 findings, before carrying P3
+polish into follow-ups. Remote actions follow the user's session authorization.
 
 ### Prose invariants with static checks
 
@@ -236,7 +252,7 @@ regexes via the non-executing JS lexer before scanning (see
   since the ordering argument only holds for the file it reads.
 - `test/agent-context-budget.test.mjs` — AGENTS.md and CLAUDE.md load on every session
   and each skill `description` sits in the always-present skill listing, so both carry a
-  per-session cost no other file has. Character ceilings (4,000 combined for
+  per-session cost no other file has. Character ceilings (6,000 combined for
   AGENTS.md + CLAUDE.md, 8,000 per SKILL.md, 200 per description) make growth a
   deliberate trade rather than an accumulation. The same file checks that every
   `docs/` Markdown file is reachable by following links from `docs/README.md`, which is
@@ -279,12 +295,12 @@ The `.claude/skills/` directory ships the canonical reference set used by Claude
 
 Codebase-shape skills:
 
-- [`shared-primitives`](../.claude/skills/shared-primitives/SKILL.md) — where a small helper belongs (`server/lib/platform/`, `src/features/`, an ecosystem directory), why a name has to state the context it is safe for (`escapeHtmlText` vs `escapeHtmlAttribute` vs `escapeXml`), and why hoisting obliges you to pin the primitive with direct tests.
-- [`split-large-module`](../.claude/skills/split-large-module/SKILL.md) — choosing a seam, keeping a barrel, verifying a split with a declaration census rather than a green suite, and which files stay whole.
+- [`shared-primitives`](../.claude/skills/shared-primitives/SKILL.md) — ownership, contract compatibility, context-specific naming, and direct tests where shared correctness matters.
+- [`split-large-module`](../.claude/skills/split-large-module/SKILL.md) — responsibility seams, public contracts, and evidence that declarations, routes, and initialization behavior survived the move.
 
 Signals and models:
 
-- `preact-signals-preact-integration` — `useSignal`, JSX rendering choices, `Show`/`For`, `useLiveSignal`.
-- `preact-signals-models-utils` — `createModel`/`useModel` patterns and state shape.
-- `preact-signals-eslint-plugin` — what the rules catch.
-- `preact-signals-no-eager-unwrap` — eager-unwrap anti-patterns (conditional render → `Show`, text/attr → direct signal, derivations → `useComputed`) and the local lint rule.
+- `preact-signals-preact-integration` — component ownership, props/context, and subscription boundaries.
+- `preact-signals-models-utils` — model actions, constructor inputs, async state, and lifetime.
+- `preact-signals-eslint-plugin` — diagnosing or changing the repository's Signals lint rules.
+- `preact-signals-no-eager-unwrap` — JSX refactors using `Show`, direct bindings, and computeds while preserving live inputs and prop contracts.

@@ -1,37 +1,30 @@
 ---
 name: add-ecosystem
-description: Add a Drydock package ecosystem or staged, gate, or public-diff capability, including adapters, registry wiring, tests, and docs.
+description: Add or extend a Drydock ecosystem capability through its staged, workflow-gate, or public-diff adapter and verify the affected release paths.
 ---
 
-# Add A Package Ecosystem
+# Add an ecosystem capability
 
-An ecosystem is one directory plus one registry entry. Adding one must never mean branching on the ecosystem name in a route or orchestrator — if shared code needs per-ecosystem behavior, it becomes an optional method on the adapter contract.
+An ecosystem owns resolution, fetching, validation, and findings under `server/lib/ecosystems/<id>/`. Declare its ID/label in the dependency-free `server/lib/ecosystems/labels.ts`; register only supported capabilities in `ECOSYSTEM_MODULES` in `server/lib/ecosystems/index.ts`. The registry drives capability discovery; do not add another ecosystem list to routes or orchestrators.
 
-## Checklist
+Read the contract for the capability being changed and a nearby implementation:
 
-1. **Declare the ID and label** in `ECOSYSTEM_LABELS` in `server/lib/ecosystems/labels.ts`. This module is dependency-free so the browser bundle can import it; `EcosystemId` is derived from its keys and matches persisted `ecosystem` columns.
-2. **Create the directory** `server/lib/ecosystems/<id>/`. All ecosystem-specific resolution, fetching, validation, and findings code lives here.
-3. **Pick the release paths** the ecosystem supports — each is an optional, independent capability on `EcosystemModule` (`server/lib/ecosystems/types.ts`):
-   - `staged` — the registry can hold a private release candidate (npm `stage publish`). Implemented as a `PackageAdapter` (`server/lib/ecosystems/package-adapter.ts`); npm is the only staged ecosystem today.
-   - `gate` — a GitHub Actions publish job is held by an Environment deployment-protection rule while Drydock reviews the built artifacts.
-   - `publicDiff` — two published versions diff anonymously on `/diff`, credential-free, nothing persisted to D1.
-4. **Register it** in `ECOSYSTEM_MODULES` in `server/lib/ecosystems/index.ts`. Presence or absence of a field is the capability declaration — `supportedStagedEcosystems()`, `supportedWorkflowGateEcosystems()`, and `supportedPublicDiffEcosystems()` all derive from it, and `getWorkflowGateAdapter`/`getPublicDiffAdapter`/`getStagedAdapter` resolve adapters from it. Nothing else should enumerate ecosystems.
-5. **Gate path (if supported):** implement `WorkflowGateAdapter` (`server/lib/workflow-gates/types.ts`) in `server/lib/ecosystems/<id>/workflow-gate.ts` — `ecosystem`, `artifactName`, `packageAdapter`, `classifyArtifact` (keep/drop bundle entries by path), `detectArtifact` (content-based claim for ambiguous archives; npm claims a root `package.json`, PyPI a root `PKG-INFO`), and `prepareReleaseCandidates` (group parsed artifacts by package identity, throwing `WorkflowArtifactError` from `server/lib/github-app/artifacts.ts` on inconsistency so the gate fails closed). `server/lib/workflow-gates/` stays ecosystem-agnostic plumbing: when one ecosystem needs extra behavior there, add an optional method to `WorkflowGateAdapter` — `narrowParsedArtifact?` (PyPI wheel dedup) and `shardedArtifactNames?` are the precedents — never an `ecosystem === "x"` branch.
-6. **Public-diff path (if supported):** implement `PublicDiffAdapter` (`server/lib/public-diff/types.ts`) — name/version validation and normalization, cache identity (`rulesVersionSegment`, `payloadVersion`, `cacheTag`, and `cacheTtlSeconds` when release identity is mutable), `listVersions`, and `acquire` returning `PublicDiffAcquiredSources` (both sides' `FileRecord[]` + manifest summary, a `buildFindings` callback for the deterministic rules to run, and optional `notices`/`provenance`/`displayName`). The orchestrator in `server/lib/public-diff/index.ts` owns diffing, redaction, risk, and caching; the adapter only fetches bytes and picks rules. Adapters must stay credential-free and persist nothing.
-7. **Keep artifact parsing in the sandbox.** Package bytes are hostile: archives are parsed by the shared credentials-free sandbox (`server/lib/sandbox.ts`), and adapters receive parsed `FileRecord[]`, never raw bytes plus a token. Manifests normalize into the shared `PackageJsonSummary` carrier rather than widening it.
-8. **Tests, at the narrowest layer that covers the trust boundary:**
-   - Adapter logic → a logic suite like `test/atpm.test.ts`; route/persistence behavior → `test/workers/` (e.g. `test/workers/public-diff-routes.test.ts`).
-   - Adapter-level scan tests need at least one baseline-backed fixture asserting a `diff.*` rule ID (see `docs/security-detection-corpus.md`), so the adapter can't silently drop the package diff.
-   - Registry behavior, staged discovery, workflow gates, and browser-visible flows → fake-registry e2e: a scenario directory under `test/e2e-fixtures/scenarios/<name>/` (`scenario.json` with `stageId`/`packageName`/`expected`, plus `previous/` and `staged/` package trees) driven by `test/e2e/local-registry.spec.ts`. A publicDiff-only ecosystem with no registry surface tests at the logic/workers layers instead.
-9. **Docs:** update `docs/architecture.md`; `docs/workflow-gates.md` if gated; add an ecosystem doc when resolution is non-obvious (pattern: `docs/atpm-public-diff.md`) and list it in `docs/README.md`; extend the ecosystems bullet in `AGENTS.md` if the layout description changes.
-10. **Verify:** `pnpm run verify` (plus `pnpm run test:e2e` when e2e scenarios changed).
+| Capability | Contract | Responsibility |
+| --- | --- | --- |
+| `staged` | `server/lib/ecosystems/package-adapter.ts` | Review registry-held private release candidates |
+| `gate` | `server/lib/workflow-gates/types.ts` | Review built artifacts while a GitHub Environment holds the publish job |
+| `publicDiff` | `server/lib/public-diff/types.ts` | Compare published releases anonymously without credentials or D1 persistence |
 
-## Worked Example: atpm (publicDiff-only)
+## Boundaries that shape the adapter
 
-atpm releases live in the publisher's own AT Protocol repository — no registry staging, no gate — so it registers exactly one capability.
+Archive parsing stays in the credentials-free sandbox (`server/lib/sandbox.ts`). Adapters consume parsed `FileRecord[]`; never pair raw package bytes with registry credentials or execute package content. Normalize manifests into `PackageJsonSummary`.
 
-- Registry entry: `atpm: { id: "atpm", label: ECOSYSTEM_LABELS.atpm, publicDiff: atpmPublicDiff }` in `server/lib/ecosystems/index.ts`; label added in `server/lib/ecosystems/labels.ts`.
-- Directory: `server/lib/ecosystems/atpm/` — `identity.ts` (handle → DID → PDS resolution, host policy, name validation), `record.ts` (the `dev.atpm.alpha.package` lexicon record, version listing, blob/digest checks), `findings.ts` (record-vs-tarball integrity findings), `public-diff.ts` (the `PublicDiffAdapter`).
-- Adapter details worth copying: `registryUrl` is the protocol identifier `at://` because there is no single host; `provenance` entries show the reader each resolution authority (DNS TXT, DID directory, PDS) as text, never links; `cacheTtlSeconds` bounds caching because handle→DID resolution is mutable; a version's tarball is an ordinary npm tarball, so `buildFindings` reuses `buildNpmFindings` from `server/lib/ecosystems/npm/findings.ts` and adds only atpm-specific checks.
-- Tests: `test/atpm.test.ts` (identity, record parsing, digest and URL boundaries) plus the shared public-diff route coverage in `test/workers/`. No e2e-fixture scenario — there is no fake-registry surface for a publicDiff-only ecosystem.
-- Docs: `docs/atpm-public-diff.md`, listed in `docs/README.md`; the `lib/public-diff/` and `lib/ecosystems/` bullets in `AGENTS.md` mention it.
+For gates, put `workflow-gate.ts` in the ecosystem directory. Preserve artifact classification, content-based detection, package-identity grouping, and fail-closed handling of inconsistent artifacts through `WorkflowArtifactError` from `server/lib/github-app/artifacts.ts`. If shared plumbing needs custom behavior, extend `WorkflowGateAdapter` with an optional hook and check existing adapters; `narrowParsedArtifact?` and `shardedArtifactNames?` are precedents.
+
+For public diff, the adapter validates/normalizes identity, lists versions, acquires both sides, and selects findings. Shared orchestration owns diffing, redaction, risk, and caching. Bind cache identity to rule/payload versions and bound cache lifetime when release identity or resolution is mutable. Read `docs/atpm-public-diff.md` for the publisher-controlled resolution/egress case; do not copy its protocol choices into unrelated ecosystems.
+
+## Evidence and docs
+
+Use `docs/release-safety.md` for the affected boundaries: adapter logic tests, Worker tests for HTTP/D1 contracts, and fake-registry scenarios for registry or gated scan workflows. Adapter scan coverage needs a baseline-backed case asserting a `diff.*` rule ID so the integration cannot silently discard diff findings. A public-diff-only adapter without a fake-registry surface uses logic and Worker tests.
+
+Update `docs/architecture.md`, `docs/workflow-gates.md` when gated, and any ecosystem-specific behavior/setup docs. Link a new doc from `docs/README.md`; update `docs/repository-map.md` if ownership changes. Verify the supported capabilities and the absence of unsupported ones, then run the checks required for the changed release paths.
