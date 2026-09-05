@@ -15,7 +15,7 @@ describe("dashboard onboarding contracts", () => {
   test("resolves the active organization before organization-scoped startup requests", () => {
     const organizationLoad = dashboardSource.indexOf("await organizations.load();");
     const organizationScopedLoads = dashboardSource.indexOf(
-      "await Promise.all([scans.refresh(), npm.load()]);",
+      "await Promise.all([scans.refresh(), npm.load(), overview.refresh()]);",
     );
 
     expect(organizationLoad).toBeGreaterThan(-1);

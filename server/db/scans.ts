@@ -27,6 +27,8 @@ export {
 
 export { LIST_SCANS_DEFAULT_LIMIT, LIST_SCANS_MAX_LIMIT, listScans } from "./scan-list";
 
+export { getScanOverview, type ScanOverview } from "./scan-overview";
+
 export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
 export {

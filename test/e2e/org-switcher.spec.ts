@@ -72,6 +72,24 @@ test("OrgSwitcher trigger updates after organizations load", async ({ page }) =>
     });
   });
 
+  // Register the literal route after the broad scan-list matcher so
+  // Playwright gives it precedence. The overview model expects its aggregate
+  // shape; returning the list fixture here would crash the dashboard render.
+  await page.route("**/api/v1/scans/overview", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        totalScans: 1,
+        windowDays: 30,
+        waiting: { count: 0, oldestCompletedAt: null },
+        validating: { count: 0, reviewReady: 0 },
+        publishedWithoutDecision: { count: 0 },
+        decided: { count: 0, approved: 0, rejected: 0, medianDecisionMs: null },
+      }),
+    });
+  });
+
   await page.route("**/api/v1/npm-connection", async (route) => {
     await route.fulfill({
       status: 200,

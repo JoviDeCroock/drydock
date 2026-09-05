@@ -47,6 +47,9 @@ therefore collapses to "we do not know":
   reassurance. `RegistryStatusNotice` and `registryStatusVariant` own that rule.
 - A `staged` status with no decision recorded also renders nothing: that is the
   normal resting state of a release under review.
+- The dashboard overview strip (`server/db/scan-overview.ts`, `docs/ui.md`)
+  counts a null status only as "not settled" alongside `staged` and
+  `validating`; it never becomes a tile of its own.
 
 ## Where it runs
 
