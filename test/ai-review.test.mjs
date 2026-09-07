@@ -110,12 +110,20 @@ function aiFinding(severity, file) {
   };
 }
 
-// Routing invariants only. We deliberately do NOT assert exact prompt copy
-// (technique wording, lifecycle-script phrasing, etc.) — that wording is tuned
-// often and string-match assertions break with no behavior change. The invariant
-// that matters is that each ecosystem routes to its own prompt and does not leak
-// the other ecosystem's guidance.
+// Stable policy and routing invariants only. We deliberately do NOT assert
+// technique wording or lifecycle-script phrasing — that copy is tuned often.
+// The invariants here are single-sourced deterministic injection findings and
+// ecosystem-specific routing without cross-ecosystem leakage.
 describe("AI review prompt selection", () => {
+  test("keeps deterministic injection rows single-sourced while letting AI report gaps", () => {
+    const prompt = buildReviewerSystemPrompt("npm");
+
+    expect(prompt).toContain("do not repeat it as an AI finding");
+    expect(prompt).toContain("materially distinct injection evidence");
+    expect(prompt).toContain("ordinary documentation and MUST NOT affect risk");
+    expect(prompt).toContain('A bare "agent" or "scanner" is not an AI audience');
+  });
+
   test("routes the npm ecosystem to the npm prompt without PyPI leakage", () => {
     const prompt = buildReviewerSystemPrompt("npm");
 

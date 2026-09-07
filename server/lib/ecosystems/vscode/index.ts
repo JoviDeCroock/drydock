@@ -116,6 +116,7 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
   runFindings(args) {
     return buildVscodeFindings({
       staged: args.staged,
+      previousFiles: args.baseline?.files,
       details: args.details as VscodeAdapterDetails,
       fileDiff: args.fileDiff,
       manifestDiff: args.manifestDiff,

@@ -1,4 +1,3 @@
-import { diffLines } from "diff";
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { hasMatchingCodeLine } from "../platform/text-utils";
 import {
@@ -7,10 +6,14 @@ import {
   deterministicFindings,
   FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
+  PROMPT_INJECTION_PATTERN_SET,
   PYTHON_PATTERN_SET,
+  REVIEW_MANIPULATION_PATTERN_SET,
   safeJson,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules";
+import { changedStagedLines, splitComparableLines } from "./rules/context";
+import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import type {
   CodePatternSet,
   FileRecord,
@@ -196,29 +199,6 @@ function changedStagedLinesForPath(
   return lines;
 }
 
-function changedStagedLines(previous: string, staged: string): Set<number> {
-  const changed = new Set<number>();
-  let stagedLine = 0;
-  for (const part of diffLines(previous, staged)) {
-    const lines = splitComparableLines(part.value);
-    if (part.added) {
-      for (const _line of lines) {
-        stagedLine += 1;
-        changed.add(stagedLine);
-      }
-    } else if (!part.removed) {
-      stagedLine += lines.length;
-    }
-  }
-  return changed;
-}
-
-function splitComparableLines(text: string): string[] {
-  const lines = text.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
-
 function findingPatternMatchesChangedLine(
   finding: { file: string; ruleId?: string | null },
   stagedText: string | undefined,
@@ -230,6 +210,16 @@ function findingPatternMatchesChangedLine(
   if (!patterns.length) return false;
   if (isPropagationFinding(finding)) {
     return hasMatchingCodeLine(stagedText, patterns, changedLines);
+  }
+  if (isPromptInjectionFinding(finding)) {
+    return promptInjectionPatternsMatchChangedLines(
+      stagedText,
+      changedLines,
+      patterns,
+      finding.ruleId === DETERMINISTIC_RULE_IDS.filePromptInjection
+        ? REVIEW_MANIPULATION_PATTERN_SET
+        : [],
+    );
   }
   const lines = splitComparableLines(stagedText);
   for (const lineNumber of changedLines) {
@@ -247,6 +237,13 @@ function isPropagationFinding(finding: { ruleId?: string | null }): boolean {
   return (
     finding.ruleId === DETERMINISTIC_RULE_IDS.propagationRegistryPublish ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.propagationPackageMutation
+  );
+}
+
+function isPromptInjectionFinding(finding: { ruleId?: string | null }): boolean {
+  return (
+    finding.ruleId === DETERMINISTIC_RULE_IDS.filePromptInjection ||
+    finding.ruleId === DETERMINISTIC_RULE_IDS.fileReviewManipulation
   );
 }
 
@@ -286,6 +283,10 @@ function patternsForFinding(
       // The finding-side set, so line matching agrees with what detection
       // actually flagged (placeholder URL credentials are not secrets).
       return FINDING_SECRET_PATTERNS.map(([pattern]) => pattern);
+    case DETERMINISTIC_RULE_IDS.filePromptInjection:
+      return PROMPT_INJECTION_PATTERN_SET;
+    case DETERMINISTIC_RULE_IDS.fileReviewManipulation:
+      return REVIEW_MANIPULATION_PATTERN_SET;
     default:
       return [];
   }

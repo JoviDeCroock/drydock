@@ -503,7 +503,10 @@ export function buildPublicPyPiDiffSources(input: {
     // release findings) — keep the two in lockstep; delegating would require
     // fabricating a full AdapterRunFindingsArgs this path doesn't have.
     buildFindings: (fileDiff) => [
-      ...deterministicFindings(toFiles, fileDiff, null, { codePatternSet: "python" }),
+      ...deterministicFindings(toFiles, fileDiff, null, {
+        codePatternSet: "python",
+        previousFiles: flattenPyPiArtifactFiles(fromPrepared),
+      }),
       ...remapPyPiFindingPaths(pyPiReleaseFindings(manifest, toPrepared, fileDiff), toPrepared),
     ],
   };

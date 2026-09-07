@@ -74,6 +74,7 @@ const MODULE_RESOLUTION_SUFFIXES = [
 
 export function buildVscodeFindings(args: {
   staged: AcquiredArtifact;
+  previousFiles?: AcquiredArtifact["files"];
   details: VscodeAdapterDetails;
   fileDiff: DiffEntry[];
   manifestDiff: PackageJsonDiff;
@@ -84,6 +85,7 @@ export function buildVscodeFindings(args: {
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       codePatternSet: "javascript",
       entrypointResolution: "vscode",
+      previousFiles: args.previousFiles,
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...tarSuspiciousEntryFindings(args.staged.suspiciousTarEntries, {

@@ -14,6 +14,7 @@ import type { AcquiredArtifact } from "../package-adapter";
 
 export function buildNpmFindings(args: {
   staged: AcquiredArtifact;
+  previousFiles?: AcquiredArtifact["files"];
   details: NpmStagedDetails | null;
   fileDiff: DiffEntry[];
   manifestDiff: PackageJsonDiff;
@@ -22,6 +23,7 @@ export function buildNpmFindings(args: {
   return [
     ...deterministicFindings(args.staged.files, args.fileDiff, args.staged.manifest, {
       entrypointResolution: "npm",
+      previousFiles: args.previousFiles,
     }),
     ...packageJsonDiffFindings(args.manifestDiff, args.stagedManifestText),
     ...createStagedMetadataFindings(args.details, args.staged.manifest),
