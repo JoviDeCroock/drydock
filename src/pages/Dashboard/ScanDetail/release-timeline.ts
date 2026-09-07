@@ -1,3 +1,4 @@
+import { registryStatusPhrase } from "../../../features/registry-status";
 import type { PersistedScanDetail } from "../../../models/scan";
 import type { PersistedSummary } from "./types";
 
@@ -32,17 +33,6 @@ type TimelineScan = Pick<
   | "registryStatusSupersededAt"
 >;
 
-// Phrasing follows docs/registry-version-status.md: `staged` is the state a
-// maintainer can act on, `validating` is npm still working, and anything npm
-// has not documented renders nothing rather than a guess.
-const REGISTRY_STATUS_DETAIL: Record<string, string> = {
-  validating: "npm is still validating",
-  staged: "approvable on npm",
-  published: "published on npm",
-  blocked: "blocked by npm's validation",
-  deleted: "removed from npm",
-};
-
 function epoch(value: string | number | Date | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   const ms = new Date(value).getTime();
@@ -67,9 +57,9 @@ export function buildReleaseTimeline(
       : scan.decision === "no_publish"
         ? "do not publish"
         : null;
-  const registryDetail = superseded
-    ? null
-    : (REGISTRY_STATUS_DETAIL[scan.registryVersionStatus ?? ""] ?? null);
+  // Same vocabulary as the dashboard badge; a superseded review shows the
+  // supersession instead of a stale status.
+  const registryDetail = superseded ? null : registryStatusPhrase(scan.registryVersionStatus);
 
   const candidates: Array<{
     key: ReleaseTimelineEventKey;

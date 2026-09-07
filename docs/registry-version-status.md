@@ -207,13 +207,14 @@ sweep.
 The scan detail page lists every dated event the persisted review knows about,
 oldest first, with the gap to the previous row: staged on npm (the stage's
 `createdAt` under `summary.stagedPublish`), review queued/started/completed,
-npm status last observed (`registry_version_status_at`, phrased as "npm is
-still validating", "approvable on npm", "published on npm", "blocked by npm's
-validation", or "removed from npm"), the Drydock decision, and supersession. A
+npm status last observed (`registry_version_status_at`, phrased with the same
+vocabulary as the dashboard badge — "validating", "awaiting approval",
+"published", "blocked", "removed" — from `registryStatusPhrase` in
+`src/features/registry-status.ts`), the Drydock decision, and supersession. A
 null or undocumented status renders no row, and a superseded review shows the
-supersession instead of its stale registry status.
-`src/pages/Dashboard/ScanDetail/release-timeline.ts` owns the ordering and
-phrasing.
+supersession instead of its stale registry status. Stamps carry the year and
+seconds, because rows are often seconds apart and a stage can straddle a year.
+`src/pages/Dashboard/ScanDetail/release-timeline.ts` owns the ordering.
 
 ## Token scope
 

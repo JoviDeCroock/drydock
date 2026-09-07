@@ -1,4 +1,4 @@
-import { formatDateTime, pluralize } from "../../../lib/format";
+import { formatDateTimeExact, pluralize } from "../../../lib/format";
 import { SectionLabel } from "../../../components/Typography";
 import type { PersistedScanDetail } from "../../../models/scan";
 import { buildReleaseTimeline, formatDelta } from "./release-timeline";
@@ -24,7 +24,11 @@ export function ReleaseTimeline({
       <SectionLabel as="h2" aside={`${events.length} ${pluralize("event", events.length)}`}>
         Release timeline
       </SectionLabel>
-      <ol class="m-0 list-none p-0 border-l border-border ml-1 pl-4 flex flex-col divide-y divide-border">
+      {/* list-none drops list semantics in Safari; the role restores them. */}
+      <ol
+        role="list"
+        class="m-0 list-none p-0 border-l border-border ml-1 pl-4 flex flex-col divide-y divide-border"
+      >
         {events.map((event, index) => {
           const previous = index > 0 ? events[index - 1] : null;
           return (
@@ -38,7 +42,7 @@ export function ReleaseTimeline({
                   {event.detail ? <span class="text-ink-muted"> — {event.detail}</span> : null}
                 </span>
                 <span class="font-mono text-[11px] text-ink-subtle">
-                  {formatDateTime(event.at)}
+                  {formatDateTimeExact(event.at)}
                 </span>
               </div>
               <span class="font-mono text-[11px] text-ink-subtle tabular-nums">

@@ -3,6 +3,7 @@ import {
   buildReleaseTimeline,
   formatDelta,
 } from "../src/pages/Dashboard/ScanDetail/release-timeline";
+import { formatDateTimeExact } from "../src/lib/format";
 
 const T0 = Date.UTC(2026, 8, 3, 10, 0, 0);
 const minutes = (n: number) => n * 60 * 1000;
@@ -61,7 +62,7 @@ describe("buildReleaseTimeline", () => {
     expect(events.map((event) => event.key)).toEqual(["queued"]);
   });
 
-  test("an unknown npm status renders nothing, validating and staged use the documented phrasing", () => {
+  test("an unknown npm status renders nothing, validating and staged share the dashboard badge vocabulary", () => {
     const at = T0 + minutes(3);
     expect(
       buildReleaseTimeline(
@@ -77,22 +78,28 @@ describe("buildReleaseTimeline", () => {
     ).toBe(false);
     expect(
       buildReleaseTimeline(
+        scan({ registryVersionStatus: "constructor", registryVersionStatusAt: at }),
+        {},
+      ).some((event) => event.key === "registry_status"),
+    ).toBe(false);
+    expect(
+      buildReleaseTimeline(
         scan({ registryVersionStatus: "validating", registryVersionStatusAt: at }),
         {},
       ).find((event) => event.key === "registry_status")?.detail,
-    ).toBe("npm is still validating");
+    ).toBe("validating");
     expect(
       buildReleaseTimeline(
         scan({ registryVersionStatus: "staged", registryVersionStatusAt: at }),
         {},
       ).find((event) => event.key === "registry_status")?.detail,
-    ).toBe("approvable on npm");
+    ).toBe("awaiting approval");
     expect(
       buildReleaseTimeline(
         scan({ registryVersionStatus: "blocked", registryVersionStatusAt: at }),
         {},
       ).find((event) => event.key === "registry_status")?.detail,
-    ).toBe("blocked by npm's validation");
+    ).toBe("blocked");
   });
 
   test("a superseded review drops its stale npm status and shows the supersession instead", () => {
@@ -160,5 +167,13 @@ describe("formatDelta", () => {
 
   test("never renders a negative gap", () => {
     expect(formatDelta(-5000)).toBe("+0s");
+  });
+});
+
+describe("formatDateTimeExact", () => {
+  test("carries the year and seconds so adjacent rows and year-straddling stages stay unambiguous", () => {
+    const stamp = formatDateTimeExact(Date.UTC(2026, 0, 2, 3, 4, 5));
+    expect(stamp).toMatch(/2026/);
+    expect(stamp).toMatch(/\d\d:\d\d:\d\d|\d:\d\d:\d\d/);
   });
 });

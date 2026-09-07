@@ -141,7 +141,8 @@ list surface the review was opened from (`getDashboardReturnUrl`).
 `ScanDetail/ReleaseTimeline.tsx` closes the scan detail page for every scan
 status: a `SectionLabel` (event count in the `aside`) over a left-ruled `<ol>`
 whose rows carry the event label, an optional muted detail, a mono 11px
-timestamp, and a mono `+delta` from the previous row. Rows are divided with
+timestamp with year and seconds (`formatDateTimeExact`), and a mono `+delta`
+from the previous row. Rows are divided with
 `divide-y`, so nothing draws a second rule under the label. It renders nothing
 when no event has a timestamp. Ordering, phrasing, and the delta format are pure
 functions in `ScanDetail/release-timeline.ts`; see `docs/registry-version-status.md`
