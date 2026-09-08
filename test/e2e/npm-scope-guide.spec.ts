@@ -3,19 +3,21 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 // The npm connection card states the exact granular-token permissions to pick.
 // It has been dropped once already by an unrelated settings refactor, and its
 // absence is invisible until a maintainer provisions the wrong token — so assert
-// the permission rows, not just the card.
+// the permission guidance, not just the card.
 test("npm connection card names the exact token permissions", async ({ page }) => {
   await installSettingsMocks(page);
   await page.goto("/dashboard/settings?tab=integrations");
 
-  const guide = page.getByText("token permissions to select").locator("xpath=..");
+  const guide = page.getByText(/^Use a granular access token/);
   await expect(guide).toBeVisible();
-
-  await expect(guide.getByText("Granular access token")).toBeVisible();
-  await expect(guide.locator("dt", { hasText: "packages and scopes" })).toBeVisible();
-  await expect(guide.getByText("Read-only", { exact: true })).toBeVisible();
-  await expect(guide.locator("dt", { hasText: "organizations" })).toBeVisible();
-  await expect(guide.getByText("No access", { exact: true })).toBeVisible();
+  await expect(guide).toContainText(
+    "Use a granular access token with Read-only access to the packages or scopes you want to review.",
+  );
+  await expect(guide).toContainText("Set Organizations to No access.");
+  await expect(guide.getByRole("link", { name: "Create a token" })).toHaveAttribute(
+    "href",
+    "https://docs.npmjs.com/creating-and-viewing-access-tokens/",
+  );
 });
 
 async function installSettingsMocks(page: Page) {
