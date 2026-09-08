@@ -7,7 +7,7 @@ import { Button } from "../../../components/Button";
 import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { MonoLabel, Muted } from "../../../components/Typography";
+import { Muted } from "../../../components/Typography";
 
 export function NpmConnectionSection({
   npm,
@@ -50,8 +50,7 @@ export function NpmConnectionSection({
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
-          Add an npm token so reviews can fetch this organization's staged packages securely. We
-          encrypt it, hide it after save, and use it only to retrieve release evidence.
+          Connect npm to review your organization's staged packages.
         </Muted>
 
         {connection && connection.validationStatus === "invalid" ? (
@@ -59,22 +58,6 @@ export function NpmConnectionSection({
             Drydock can no longer reach the staging registry with this token, so staged-release
             reviews are paused. Rotate the token below to resume.
           </Alert>
-        ) : null}
-
-        {connection ? (
-          <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 m-0">
-            <MetadataField label="label" value={connection.label} />
-            <MetadataField label="registry" value={connection.registryUrl} />
-            <MetadataField label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
-            <MetadataField
-              label="validated"
-              value={connection.validatedAt ? formatTimestamp(connection.validatedAt) : "not yet"}
-            />
-            <MetadataField
-              label="last used"
-              value={connection.lastUsedAt ? formatTimestamp(connection.lastUsedAt) : "never"}
-            />
-          </dl>
         ) : null}
 
         <NpmTokenScopeGuide />
@@ -106,9 +89,7 @@ export function NpmConnectionSection({
               id="npmToken"
               type="password"
               value={token}
-              placeholder={
-                connection ? "Paste a new read-only token to rotate" : "npm_... (read-only)"
-              }
+              placeholder={connection ? "Paste a new read-only token" : "npm_... (read-only)"}
               onInput={(e) => (npm.token.value = (e.target as HTMLInputElement).value)}
               disabled={busy}
               autoComplete="off"
@@ -127,11 +108,30 @@ export function NpmConnectionSection({
           </Button>
         </form>
 
-        <Muted class="text-xs">
-          After save, Drydock validates the token before any review uses it.
-        </Muted>
+        <Muted class="text-xs">Tokens are encrypted and validated before use.</Muted>
 
         {error ? <Alert tone="critical">{error}</Alert> : null}
+
+        {connection ? (
+          <details class="text-[13px] text-ink-muted">
+            <summary class="cursor-pointer focus-visible:outline-accent">
+              Connection details
+            </summary>
+            <dl class="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-4 m-0 pt-4">
+              <MetadataField label="label" value={connection.label} />
+              <MetadataField label="registry" value={connection.registryUrl} />
+              <MetadataField label="token" value={`•••• ${connection.tokenLast4 || "stored"}`} />
+              <MetadataField
+                label="validated"
+                value={connection.validatedAt ? formatTimestamp(connection.validatedAt) : "not yet"}
+              />
+              <MetadataField
+                label="last used"
+                value={connection.lastUsedAt ? formatTimestamp(connection.lastUsedAt) : "never"}
+              />
+            </dl>
+          </details>
+        ) : null}
 
         {connection ? (
           <div class="flex items-center justify-end border-t border-border pt-4 gap-3">
@@ -145,61 +145,21 @@ export function NpmConnectionSection({
   );
 }
 
-// The terms mirror the field names on npm's granular-token form, so a maintainer
-// can read this top to bottom while filling that form in. Getting this wrong is
-// the slowest part of onboarding: an over-scoped token is a needless credential
-// risk, and an under-scoped one fails validation with a 403 they have to guess at.
 function NpmTokenScopeGuide() {
   return (
-    <div class="border border-border rounded-lg bg-surface-2 px-4 py-3 flex flex-col gap-3">
-      <MonoLabel>token permissions to select</MonoLabel>
-      <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 m-0">
-        <ScopeRow term="token type" detail="Granular access token" />
-        <ScopeRow term="packages and scopes" detail="Read-only" />
-        <ScopeRow
-          term="select packages"
-          detail="The packages you stage — or their scope, e.g. @nanostores"
-        />
-        <ScopeRow term="organizations" detail="No access" />
-        <ScopeRow term="expiration" detail="Short, with planned rotation" />
-      </dl>
-      {/* Maintainers keep asking whether org-scoped packages need the Organizations
-          permission. They do not — a scope is selectable under Packages and scopes. */}
-      <Muted class="text-[12px] leading-[1.55] m-0">
-        A scoped package such as{" "}
-        <span class="font-mono text-[11px] text-ink-muted">@nanostores/i18n</span> is covered by
-        picking the <span class="text-ink">@nanostores</span> scope under{" "}
-        <span class="text-ink">Packages and scopes</span>; npm's separate{" "}
-        <span class="text-ink">Organizations</span> permission grants member and settings
-        management, which Drydock never reads. Read-only is all it uses — it lists staged releases
-        and downloads the staged tarball, never publishes, and the token never reaches the sandbox
-        that opens package bytes.
-      </Muted>
-      <p class="font-mono text-[11px] text-ink-subtle m-0">
-        npmjs.com → Access Tokens → Generate New Token → Granular ·{" "}
-        <a
-          class="underline"
-          href="https://docs.npmjs.com/creating-and-viewing-access-tokens/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          npm docs
-        </a>
-      </p>
-    </div>
-  );
-}
-
-function ScopeRow({ term, detail }: { term: string; detail: string }) {
-  // 160px holds the longest term ("packages and scopes") on one line at 11px mono
-  // with 0.1em tracking; anything narrower wraps the label. On phones the term
-  // stacks above the value instead — a fixed label column leaves the value too
-  // narrow to read there.
-  return (
-    <div class="grid grid-cols-1 sm:grid-cols-[160px_minmax(0,1fr)] gap-x-3 gap-y-0.5 items-baseline text-[13px] min-w-0">
-      <MonoLabel as="dt">{term}</MonoLabel>
-      <dd class="m-0 text-ink-muted break-words">{detail}</dd>
-    </div>
+    <Muted class="text-[13px] m-0 max-w-[680px]">
+      Use a granular access token with <span class="text-ink">Read-only</span> access to the
+      packages or scopes you want to review. Set <span class="text-ink">Organizations</span> to{" "}
+      <span class="text-ink">No access</span>.{" "}
+      <a
+        class="underline"
+        href="https://docs.npmjs.com/creating-and-viewing-access-tokens/"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Create a token
+      </a>
+    </Muted>
   );
 }
 

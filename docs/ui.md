@@ -143,6 +143,15 @@ list surface the review was opened from (`getDashboardReturnUrl`).
 - Use severity stacked bars for risk distribution; avoid decorative charts.
 - Icons are text glyphs only; no SVG icon libraries.
 
+## npm access settings
+
+Keep the token form and a short, generic permissions guide visible. Saved connection
+metadata lives in the collapsed “Connection details” disclosure; validation failures
+stay visible above the form. Link to npm's token instructions for the full setup steps.
+
+Layout references: [desktop](screenshots/npm-access-desktop.png) and
+[mobile](screenshots/npm-access-mobile.png), captured against the local fake registry.
+
 ## Large diffs
 
 `DiffView` must stay responsive on megabyte-scale bundled artifacts (e.g. vite's 1.3 MiB `dist/node/chunks/node.js`):

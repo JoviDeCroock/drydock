@@ -158,7 +158,7 @@ async function connectNpmThroughSettings(page: Page) {
   await page.getByLabel("Registry").fill(registryUrl);
   await page.getByLabel("npm token").fill("npm_agent_tour_token_0123456789");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText("valid").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("valid", { exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
 async function createScan(page: Page, stageId: string): Promise<{ scan: { id: string } }> {
