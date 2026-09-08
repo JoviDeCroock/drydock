@@ -149,6 +149,105 @@ describe("computeScanRiskBreakdown", () => {
     expect(result.releaseRisk).toBe("high");
   });
 
+  test("releaseRisk drops AI risk whose findings all cite package context", () => {
+    const findings = [
+      { severity: "low", file: "a.js", evidence: "e", reason: "r", releaseDelta: true },
+    ];
+    const aiReview = makeAiReview({
+      status: "complete",
+      releaseAssessment: "suspicious",
+      risk: "high",
+      requiresManualReview: false,
+      findings: [
+        { severity: "high", file: "old.js", evidence: "e", reason: "r", recommendation: "fix" },
+      ],
+      model: "llama-3",
+    });
+    const aiFindings = [
+      { severity: "high", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
+    ];
+    const result = computeScanRiskBreakdown([...findings, ...aiFindings], aiReview, null, {
+      aiFindings,
+    });
+    // The concern is about the package, so the headline still carries it...
+    expect(result.artifactRisk).toBe("high");
+    // ...but the release delta, which the workflow gate reads, does not.
+    expect(result.releaseRisk).toBe("low");
+    expect(result.contextRisk).toBe("high");
+  });
+
+  test("releaseRisk keeps AI risk when any AI finding cites the release delta", () => {
+    const aiReview = makeAiReview({
+      status: "complete",
+      releaseAssessment: "suspicious",
+      risk: "high",
+      findings: [
+        { severity: "high", file: "old.js", evidence: "e", reason: "r", recommendation: "fix" },
+        { severity: "high", file: "new.js", evidence: "e", reason: "r", recommendation: "fix" },
+      ],
+      model: "llama-3",
+    });
+    const aiFindings = [
+      { severity: "high", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
+      { severity: "high", file: "new.js", evidence: "e", reason: "r", releaseDelta: true },
+    ];
+    const result = computeScanRiskBreakdown(aiFindings, aiReview, null, { aiFindings });
+    expect(result.releaseRisk).toBe("high");
+  });
+
+  test("a context-only AI review keeps its manual-review floor on releaseRisk", () => {
+    const aiReview = makeAiReview({
+      status: "complete",
+      releaseAssessment: "review_recommended",
+      risk: "critical",
+      requiresManualReview: true,
+      findings: [
+        { severity: "critical", file: "old.js", evidence: "e", reason: "r", recommendation: "fix" },
+      ],
+      model: "llama-3",
+    });
+    const aiFindings = [
+      { severity: "critical", file: "old.js", evidence: "e", reason: "r", releaseDelta: false },
+    ];
+    const result = computeScanRiskBreakdown(aiFindings, aiReview, null, { aiFindings });
+    expect(result.artifactRisk).toBe("critical");
+    expect(result.releaseRisk).toBe("medium");
+  });
+
+  test("an AI review with no findings is scored wholesale on releaseRisk", () => {
+    const aiReview = makeAiReview({
+      status: "complete",
+      releaseAssessment: "review_recommended",
+      risk: "high",
+      requiresManualReview: true,
+      findings: [],
+      model: "llama-3",
+    });
+    const result = computeScanRiskBreakdown([], aiReview, null, { aiFindings: [] });
+    expect(result.releaseRisk).toBe("high");
+  });
+
+  test("without AI annotations the review is scored wholesale, as before", () => {
+    const aiReview = makeAiReview({
+      status: "complete",
+      releaseAssessment: "suspicious",
+      risk: "high",
+      findings: [
+        { severity: "high", file: "old.js", evidence: "e", reason: "r", recommendation: "fix" },
+      ],
+      model: "llama-3",
+    });
+    const result = computeScanRiskBreakdown([], aiReview);
+    expect(result.releaseRisk).toBe("high");
+  });
+
+  test("an attempted-but-failed AI review keeps its medium floor with annotations passed", () => {
+    const result = computeScanRiskBreakdown([], makeAiReview({ model: "llama-3" }), null, {
+      aiFindings: [{ releaseDelta: false }],
+    });
+    expect(result.releaseRisk).toBe("medium");
+  });
+
   test("returns zeros when no findings", () => {
     const result = computeScanRiskBreakdown([], makeAiReview());
     expect(result.releaseFindingCount).toBe(0);

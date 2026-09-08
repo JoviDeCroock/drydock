@@ -44,7 +44,11 @@ import {
   type PackageJsonDiff,
   type PackageJsonSummary,
 } from "../review";
-import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
+import {
+  computeScanRiskBreakdown,
+  type ScanRiskBreakdown,
+  type ScanRiskOptions,
+} from "../review/risk";
 import {
   discardScanArtifactRun,
   writeScanArtifactsWithRetry,
@@ -295,12 +299,14 @@ export async function analyzeRelease<TInput, TBroker extends AdapterBroker>(
 // Pure: fold deterministic + AI findings into the artifact/release/context
 // risk breakdown. `releaseConsistency` only ever removes previously-approved
 // package context from the artifact/context scores; release-delta findings are
-// scored in full regardless, so it cannot move `releaseRisk`.
+// scored in full regardless, so it cannot move `releaseRisk`. Pass the merged
+// AI records as `options.aiFindings` so a review whose findings all cite
+// unchanged files stays out of `releaseRisk` too.
 export function scoreRisk(
   annotatedFindings: Array<Finding & FindingDiffAnnotation>,
   aiFindings: AiReview,
   releaseConsistency?: ReleaseConsistency | null,
-  options: { baselineComparisonSkipped?: boolean } = {},
+  options: ScanRiskOptions = {},
 ): ScanRiskBreakdown {
   return computeScanRiskBreakdown(annotatedFindings, aiFindings, releaseConsistency, options);
 }

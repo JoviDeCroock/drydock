@@ -71,7 +71,7 @@ However, report payloads, report presentation, and AI payload construction shoul
 
 New scan reports persist this split as a risk breakdown in `summary_json.risk`:
 
-- `releaseRisk` is computed from findings annotated as part of the package-to-package delta, plus any complete AI review result when AI review is enabled, and is the focused release-delta verdict;
+- `releaseRisk` is computed from findings annotated as part of the package-to-package delta and is the focused release-delta verdict. A complete AI review contributes its risk here only when at least one of its findings is annotated as release delta; a review whose findings all cite unchanged files is package context and leaves `releaseRisk` alone (its manual-review flag still floors the score at medium, below the gate's blocking threshold). A review with no findings cannot be attributed and is scored wholesale;
 - `artifactRisk` is computed from the full staged artifact findings, plus any complete AI review result when AI review is enabled, and is the primary scan risk stored in `scans.risk` so deterministic evidence cannot be hidden by context classification;
 - `contextRisk` covers findings that were not part of the release delta.
 
