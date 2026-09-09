@@ -20,7 +20,8 @@
 // the given paths (a test file relates to itself). Knip is skipped: an unused
 // export is a whole-graph question that `--quick` and the full gate answer.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import {
   filterByExtension,
   listChangedFiles,
@@ -32,7 +33,16 @@ import { condenseFailureOutput } from "./lib/output-truncation.mjs";
 
 const quick = process.argv.includes("--quick");
 const fileFlagIndex = process.argv.indexOf("--file");
-const scopedFiles = fileFlagIndex === -1 ? null : process.argv.slice(fileFlagIndex + 1);
+// `pnpm run verify:file -- src/x.ts` forwards the `--` literally; accept both
+// spellings. Paths are normalized to repo-relative so an absolute path (what
+// an agent usually has in hand) reaches oxlint/oxfmt in a form they match.
+const scopedFiles =
+  fileFlagIndex === -1
+    ? null
+    : process.argv
+        .slice(fileFlagIndex + 1)
+        .filter((arg, index) => !(index === 0 && arg === "--"))
+        .map((file) => path.relative(process.cwd(), path.resolve(file)) || ".");
 const label = scopedFiles !== null ? "verify --file" : quick ? "verify --quick" : "verify";
 
 function buildFullChecks() {
@@ -110,12 +120,20 @@ function buildQuickChecks() {
 
 function buildFileChecks(files) {
   const missing = files.filter((file) => !existsSync(file));
-  if (files.length === 0 || missing.length > 0) {
-    process.stdout.write(
-      files.length === 0
-        ? "verify --file: pass one or more repository paths, e.g. pnpm run verify:file src/pages/Diff/index.tsx\n"
-        : `verify --file: no such file: ${missing.join(", ")}\n`,
-    );
+  const directories = files.filter((file) => existsSync(file) && statSync(file).isDirectory());
+  const outside = files.filter((file) => file.startsWith(".."));
+  const problem =
+    files.length === 0
+      ? "pass one or more repository paths, e.g. pnpm run verify:file src/pages/Diff/index.tsx"
+      : missing.length > 0
+        ? `no such file: ${missing.join(", ")}`
+        : outside.length > 0
+          ? `outside the repository: ${outside.join(", ")}`
+          : directories.length > 0
+            ? `${directories.join(", ")}: pass files, not directories (a directory relates to no tests and would pass green)`
+            : null;
+  if (problem !== null) {
+    process.stdout.write(`verify --file: ${problem}\n`);
     process.exitCode = 1;
     return null;
   }
