@@ -34,7 +34,9 @@ relying on the clamp.
 ## Agent Traces
 
 The AI SDK is wrapped with Cloudflare's Agent Traces integration. Production
-and the self-host template enable persisted traces at a 10% head sample. The
+and the self-host template enable persisted traces at a head sample of 1 (every
+invocation); head sampling is worker-wide and cannot be aimed at the reviewer,
+and at 10% the few daily agent turns rarely reached the Agents dashboard. The
 wrapper explicitly sets `storeMessages: false` and `storeTools: false`, and the
 call sets `recordInputs: false` and `recordOutputs: false`, because prompts and
 tool results can contain private pre-release source, secrets, or hostile
