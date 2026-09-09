@@ -280,6 +280,12 @@ regexes via the non-executing JS lexer before scanning (see
   the non-executing JS lexer, including inline and JSX comments. Paths that intentionally name something outside the repo — inside a
   package under review, inside a dependency, or in a gitignored output directory —
   are listed in the test's explicit non-repository exceptions.
+- `test/env-binding-parity.test.mjs` — every binding and var in `wrangler.jsonc`,
+  `docs/examples/wrangler.self-host.jsonc`, `test/config/wrangler.jsonc`, and the e2e
+  dev server is declared in `server/env.d.ts` (typecheck uses that file, not
+  `cf-typegen` output); the self-host template declares exactly the production set;
+  and every required `Env` member is a production binding, var, or listed secret. A
+  binding added to one file and forgotten in another fails `verify` and names the file.
 
 ## Client API helpers
 
