@@ -5,9 +5,13 @@
  * Loaded via `jsPlugins` in `.oxlintrc.json` under the `design-local` alias.
  * Rules:
  *   - design-local/no-stacked-section-rule
+ *   - design-local/no-off-system-color
+ *   - design-local/no-sub-floor-text
  */
 
+import noOffSystemColor from "./no-off-system-color.mjs";
 import noStackedSectionRule from "./no-stacked-section-rule.mjs";
+import noSubFloorText from "./no-sub-floor-text.mjs";
 
 const plugin = {
   meta: {
@@ -16,6 +20,8 @@ const plugin = {
   },
   rules: {
     "no-stacked-section-rule": noStackedSectionRule,
+    "no-off-system-color": noOffSystemColor,
+    "no-sub-floor-text": noSubFloorText,
   },
 };
 

@@ -8,6 +8,8 @@
     }
   ],
   "rules": {
-    "design-local/no-stacked-section-rule": "error"
+    "design-local/no-stacked-section-rule": "error",
+    "design-local/no-off-system-color": "error",
+    "design-local/no-sub-floor-text": "error"
   }
 }

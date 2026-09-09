@@ -60,6 +60,16 @@
   },
   "overrides": [
     {
+      // The design token system is a UI contract. Server-rendered images
+      // (the OG card SVG) legitimately carry literal colors: no dark mode, no
+      // Tailwind.
+      "files": ["src/**"],
+      "rules": {
+        "design-local/no-off-system-color": "error",
+        "design-local/no-sub-floor-text": "error"
+      }
+    },
+    {
       "files": ["server/**"],
       "excludeFiles": ["server/lib/platform/observability.ts"],
       "rules": {
