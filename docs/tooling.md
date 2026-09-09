@@ -199,15 +199,18 @@ hand and hardest to see in review. Both are scoped to `src/**` (server-rendered 
 such as the OG card legitimately carry literal colors) and scan every static string
 literal and template quasi token by token, so class maps in plain objects are covered,
 not just `class=`. `no-off-system-color` reports a Tailwind default-palette utility
-(`text-red-600`, `hover:bg-zinc-100`), a raw color inside an arbitrary value or a
-`style` prop (`bg-[#fafafa]`, `shadow-[…rgba(…)]`, `style={{ color: "#c2410c" }}`), and a
+(`text-red-600`, `hover:bg-zinc-100`), a raw color inside an arbitrary value or
+anywhere in the value of a color-carrying style property (`bg-[#fafafa]`, `shadow-[…rgba(…)]`,
+`style={{ boxShadow: "0 0 0 1px #e4e4e7" }}`), and a
 saturated severity token used as a text color (`text-warn`, `text-ok/80`), pointing at the
 `-text` variant. `var(--color-…)` inside an arbitrary value, `white`/`black`, and prose
-containing `#123` are not reported. `no-sub-floor-text` reports an arbitrary `text-[…]`
-size below 10px in `px`, `rem`, or `em`; whether a 10px string is a glyph or a label stays a
+containing `#123` are not reported. `no-sub-floor-text` reports an arbitrary `text-[…]`,
+`text-[length:…]`, or `[font-size:…]` size below 10px in `px`, `rem`, or `em`, with or without a
+`/leading` modifier; whether a 10px string is a glyph or a label stays a
 review judgement. Fixtures and test: `test/fixtures/oxlint-design/src/off-system-color.tsx`,
 `test/fixtures/oxlint-design/src/sub-floor-text.tsx`, `test/fixtures/oxlint-design/src/tokens-clean.tsx`,
-and `test/oxlint-design-tokens.test.mjs`. Both ship as `error` with no existing violations.
+`test/fixtures/oxlint-design/server/card.ts` (must stay unreported: the fixture config uses the
+same `src/**` override as the repo config), and `test/oxlint-design-tokens.test.mjs`. Both ship as `error` with no existing violations.
 
 ### What belongs in an agent file
 

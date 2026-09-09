@@ -43,3 +43,12 @@ export function SmallButAllowed({ active }: { active: boolean }) {
     </span>
   );
 }
+
+export function ShorthandAboveFloor() {
+  return <span class="text-[13px]/5 text-[length:11px] [font-size:12px]">fine</span>;
+}
+
+export function PropertyValueWithoutColor() {
+  const meta = { href: "#section-1", label: "Issue #1234" };
+  return <a href={meta.href}>{meta.label}</a>;
+}

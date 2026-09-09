@@ -8,8 +8,17 @@
     }
   ],
   "rules": {
-    "design-local/no-stacked-section-rule": "error",
-    "design-local/no-off-system-color": "error",
-    "design-local/no-sub-floor-text": "error"
-  }
+    "design-local/no-stacked-section-rule": "error"
+  },
+  // Same shape as the repo config: the token rules apply to src/** only, so
+  // server/ here must stay unreported.
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "rules": {
+        "design-local/no-off-system-color": "error",
+        "design-local/no-sub-floor-text": "error"
+      }
+    }
+  ]
 }

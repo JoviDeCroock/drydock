@@ -26,6 +26,15 @@ export function InlineStyleFunction() {
   return <div style={{ color: "rgb(24, 24, 27)" }}>ink</div>;
 }
 
+export function InlineStyleEmbedded() {
+  return <div style={{ boxShadow: "0 0 0 1px #e4e4e7", border: "1px solid rgb(0,0,0)" }}>x</div>;
+}
+
+export function StyleMap() {
+  const styles = { background: "linear-gradient(#fff, #000)" };
+  return <div style={styles}>gradient</div>;
+}
+
 export function SaturatedText() {
   return <span class="text-warn">amber label</span>;
 }

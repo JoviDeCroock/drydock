@@ -10,8 +10,10 @@
  *     no dark-mode value, and severity hues outside the token pairs break the
  *     "color = signal" rule.
  *   - A raw color in an arbitrary value or a `style` prop (`bg-[#fff]`,
- *     `shadow-[0_0_0_1px_rgba(0,0,0,.2)]`, `style={{ color: "#c2410c" }}`).
- *     Same dark-mode problem, and the contrast work in design.md never sees it.
+ *     `shadow-[0_0_0_1px_rgba(0,0,0,.2)]`, `style={{ color: "#c2410c" }}`,
+ *     `style={{ border: "1px solid #ccc" }}`). Same dark-mode problem, and the
+ *     contrast work in design.md never sees it. Named CSS colors (`"red"`) are
+ *     not recognized; nothing in the design uses them.
  *   - A saturated severity token as a text color (`text-warn`, `text-ok`). Those
  *     fail WCAG AA on white (3.8:1 and 3.0:1); design.md reserves them for shapes
  *     and provides `text-warn-text` / `text-ok-text` for text.
@@ -47,6 +49,10 @@ const RAW_COLOR_INSIDE =
   /#[0-9a-f]{3,8}(?![0-9a-f])|(?<![A-Za-z0-9-])(?:rgba?|hsla?|oklch|oklab|color)\(/i;
 const RAW_COLOR_LITERAL = /^\s*(?:#[0-9a-f]{3,8}|(?:rgba?|hsla?|oklch|oklab|color)\([^)]*\))\s*$/i;
 const SATURATED_SEVERITY_TEXT = /^text-(danger|warn|info|ok)$/;
+// Object keys whose string value is CSS that can carry a color (camelCase or
+// kebab-case): color, background, borderColor, boxShadow, fill, outline, …
+const CSS_COLOR_PROPERTY =
+  /color|background|border|shadow|fill|stroke|outline|caret|accent|decoration/i;
 
 /** `bg-[#fff]`, `shadow-[0_0_0_1px_rgba(0,0,0,.2)]`: an arbitrary value carrying a raw color. */
 function arbitraryRawColor(utility) {
@@ -83,9 +89,23 @@ const rule = {
   },
 
   create(context) {
+    // A string that is the value of a color-carrying CSS property
+    // (`style={{ color: … }}`, `const styles = { boxShadow: "0 0 0 1px #e4e4e7" }`)
+    // is CSS, not a class list, so a color anywhere inside it is raw. Elsewhere
+    // only a string that *is* a color counts: prose and hrefs legitimately
+    // contain `#1234`.
+    function isStyleValue(node) {
+      const parent = node.parent;
+      if (parent?.type !== "Property" || parent.value !== node) return false;
+      const key = parent.key?.name ?? parent.key?.value;
+      return typeof key === "string" && CSS_COLOR_PROPERTY.test(key);
+    }
+
     function check(node) {
       for (const text of staticStrings(node)) {
-        if (RAW_COLOR_LITERAL.test(text)) {
+        const raw =
+          RAW_COLOR_LITERAL.test(text) || (isStyleValue(node) && RAW_COLOR_INSIDE.test(text));
+        if (raw) {
           context.report({ node, messageId: "rawLiteral", data: { token: text.trim() } });
           continue;
         }

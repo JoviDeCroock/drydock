@@ -9,17 +9,23 @@
  *
  *   <span class="text-[9px]">…</span>      // flagged
  *   <span class="text-[0.5rem]">…</span>   // flagged (8px)
+ *   <span class="text-[9px]/3">…</span>    // flagged (line-height shorthand)
+ *   <span class="[font-size:9px]">…</span> // flagged (arbitrary property)
  *   <span class="text-[10px]">▸</span>     // ok (scanning glyph; the role is reviewed, not linted)
  *   <span class="text-[11px]">Label</span> // ok
  *
  * Whether a 10px string is a glyph or a label is a judgement design.md leaves to
- * review; this rule only closes the floor.
+ * review; this rule only closes the floor. `em` is converted at 16px, the root
+ * size; the design never sets a smaller parent size.
  */
 
 import { classTokens, staticStrings, utilityWithoutVariants } from "./class-tokens.mjs";
 
 const FLOOR_PX = 10;
-const ARBITRARY_TEXT_SIZE = /^text-\[(\d*\.?\d+)(px|rem|em)\]$/;
+// `text-[9px]`, `text-[length:9px]`, and the arbitrary property `[font-size:9px]`,
+// each with an optional `/leading` modifier after the bracket.
+const ARBITRARY_TEXT_SIZE =
+  /^(?:text-\[(?:length:)?|\[font-size:)(\d*\.?\d+)(px|rem|em)\](?:\/.*)?$/;
 
 function pixels(value, unit) {
   const number = Number(value);
