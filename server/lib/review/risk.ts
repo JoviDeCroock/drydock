@@ -19,6 +19,16 @@ type RiskFinding = Finding & {
   releaseDelta?: boolean | null;
 };
 
+export interface ScanRiskOptions {
+  baselineComparisonSkipped?: boolean;
+  /**
+   * The completed AI review's findings with their diff annotations. When every
+   * one of them is package context, the review's risk is kept out of
+   * `releaseRisk`. Omit (or pass empty) to score the review wholesale.
+   */
+  aiFindings?: ReadonlyArray<Pick<RiskFinding, "releaseDelta">>;
+}
+
 export function computeScanRisk(ruleFindings: Finding[], aiReview: AiReview): RiskLevel {
   const ai = displayedAiResult(aiReview);
   const deterministicRisk = computeRisk(ruleFindings);
@@ -41,7 +51,7 @@ export function computeScanRiskBreakdown(
   ruleFindings: RiskFinding[],
   aiFindings: AiReview,
   releaseConsistency?: ReleaseConsistency | null,
-  options: { baselineComparisonSkipped?: boolean } = {},
+  options: ScanRiskOptions = {},
 ): ScanRiskBreakdown {
   const releaseFindings = ruleFindings.filter((finding) => finding.releaseDelta === true);
   const contextFindings = ruleFindings.filter((finding) => finding.releaseDelta !== true);
@@ -54,7 +64,10 @@ export function computeScanRiskBreakdown(
     approvedCount === 0 ? ruleFindings : [...releaseFindings, ...scoredContextFindings];
   return {
     artifactRisk: computeScanRisk(scoredFindings, aiFindings),
-    releaseRisk: computeScanRisk(releaseFindings, aiFindings),
+    releaseRisk: computeScanRisk(
+      releaseFindings,
+      releaseScopedAiReview(aiFindings, options.aiFindings),
+    ),
     contextRisk: computeRisk(scoredContextFindings),
     releaseFindingCount: releaseFindings.length,
     contextFindingCount: contextFindings.length,
@@ -62,6 +75,27 @@ export function computeScanRiskBreakdown(
       .length,
     priorApprovedContextFindingCount: approvedCount,
   };
+}
+
+// The deterministic side grades `releaseRisk` from release-delta findings only,
+// and the workflow gate reads that score. The AI review's risk is a single
+// review-level number, so it is attributed through the files its findings
+// cite: when every cited file is package context (unchanged in this release),
+// the concern is about the package, not the delta, and it must not reject a
+// gate that nothing in the release changed. `artifactRisk` still carries it.
+// The review's manual-review flag survives as its usual medium floor, which is
+// below the gate's blocking threshold. A review with no findings cannot be
+// attributed and is scored wholesale, as is any caller that passes no
+// annotations: the scoping only ever narrows on positive evidence.
+function releaseScopedAiReview(
+  aiReview: AiReview,
+  annotatedAiFindings: ScanRiskOptions["aiFindings"],
+): AiReview {
+  if (!annotatedAiFindings?.length) return aiReview;
+  const ai = displayedAiResult(aiReview);
+  if (ai?.kind !== "complete" || ai.findings.length === 0) return aiReview;
+  if (annotatedAiFindings.some((finding) => finding.releaseDelta === true)) return aiReview;
+  return { ...aiReview, risk: "low", findings: [] };
 }
 
 // Approval never discounts evidence of active compromise.
