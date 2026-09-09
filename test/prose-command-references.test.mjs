@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,9 +20,21 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 // Matches the `run <script>` and bare `<script>` spellings, with or without
 // trailing arguments. Flags never match; built-in sub-commands are filtered
-// through PNPM_BUILTINS. A `run` followed by a placeholder rather than a name
-// (prose explaining the spelling itself) matches nothing.
-const COMMAND_REFERENCE = /\bpnpm(?:\s+run)?\s+(?!run\b)([A-Za-z][\w:.-]*)/g;
+// through PNPM_BUILTINS and bare binaries through isRepoBinary. A `run`
+// followed by a placeholder rather than a name (prose explaining the spelling
+// itself) matches nothing, and a line break after the word ends the match so a
+// wrapped sentence ("…use pnpm\nthen…") is not a command.
+const COMMAND_REFERENCE = /\bpnpm(?:[ \t]+run)?[ \t]+(?!run\b)([A-Za-z][\w:.-]*)/g;
+
+// Reviewed-package bytes: fixture READMEs and sources describe *their own*
+// scripts, not ours. Same reasoning as the path test's non-repository list.
+const FIXTURE_PREFIXES = ["test/e2e-fixtures/", "test/fixtures/"];
+
+// `pnpm wrangler …` / `pnpm vitest …` is pnpm's implicit `exec`: the name is a
+// binary in node_modules/.bin, not a script.
+function isRepoBinary(name) {
+  return existsSync(path.join(repoRoot, "node_modules/.bin", name));
+}
 
 // Built-in sub-commands that are not package.json scripts. The `test` and
 // `start` built-ins alias the script of the same name, so they are resolved as
@@ -69,7 +82,9 @@ function repoFiles() {
     execFileSync("git", ["ls-files", "-z", ...args], { cwd: repoRoot, encoding: "utf8" })
       .split("\0")
       .filter(Boolean);
-  return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])].sort();
+  return [...new Set([...list([]), ...list(["--others", "--exclude-standard"])])]
+    .filter((file) => !FIXTURE_PREFIXES.some((prefix) => file.startsWith(prefix)))
+    .sort();
 }
 
 function isSourceFile(file) {
@@ -97,7 +112,7 @@ async function unknownCommands(files, scripts, { commentsOnly }) {
     files.map(async (file) => {
       const text = await readFile(path.join(repoRoot, file), "utf8");
       for (const { script, line } of commandReferences(text, { commentsOnly })) {
-        if (PNPM_BUILTINS.has(script) || scripts.has(script)) continue;
+        if (PNPM_BUILTINS.has(script) || scripts.has(script) || isRepoBinary(script)) continue;
         unknown.push(`${file}:${line}: \`pnpm ${script}\``);
       }
     }),
@@ -160,6 +175,16 @@ describe("prose command references", () => {
       "db:generate",
       "install",
     ]);
+  });
+
+  test("does not read across a line break or past a placeholder", () => {
+    const prose = "Install with pnpm\nthen run it. The spelling is `pnpm run <script>`.";
+    expect(commandReferences(prose, { commentsOnly: false })).toEqual([]);
+  });
+
+  test("treats a node_modules/.bin name as an implicit exec, not a script", () => {
+    expect(isRepoBinary("vitest")).toBe(true);
+    expect(isRepoBinary("definitely-not-a-binary")).toBe(false);
   });
 
   test("extracts commands from comments without treating strings as comments", () => {

@@ -330,7 +330,9 @@ regexes via the non-executing JS lexer before scanning (see
 - `test/prose-command-references.test.mjs` — the command-shaped sibling: every
   `pnpm <script>` or `pnpm run <script>` in markdown or a source comment must be a
   `package.json` script, and every script must have a row in the table above, so a
-  renamed script fails `verify` instead of failing the next reader who types it.
+  renamed script fails `verify` instead of failing the next reader who types it. Built-in
+  sub-commands, bare binaries from `node_modules/.bin` (`pnpm wrangler …`), and
+  reviewed-package fixtures under `test/` are not checked.
 
 ## Client API helpers
 
