@@ -72,10 +72,11 @@ function closingQuote(text, openIndex) {
   throw new Error("unterminated string in JSONC");
 }
 
-// Rate limits and Send Email declare their binding under `name`; every other
-// resource uses `binding`. Anything else called `name` (the Worker's own name,
-// a queue name) is not a binding.
-const NAME_IS_BINDING = new Set(["ratelimits", "send_email"]);
+// Rate limits, Send Email, Durable Objects (`durable_objects.bindings`), and
+// `unsafe.bindings` declare their binding under `name`; every other resource
+// uses `binding`. Anything else called `name` (the Worker's own name, a queue
+// name) is not a binding.
+const NAME_IS_BINDING = new Set(["ratelimits", "send_email", "bindings"]);
 
 function bindingNames(config) {
   const names = new Set();
@@ -112,6 +113,21 @@ function envDeclarations(source) {
   return { required, optional, all: new Set([...required, ...optional]) };
 }
 
+/**
+ * The e2e dev server builds its Wrangler config as a JS object literal, so it is
+ * read textually: `binding: "X"` and ratelimit `name: "X"` entries, plus the
+ * keys of its `vars: { … }` block.
+ */
+function devServerBindings(source) {
+  const names = new Set();
+  for (const match of source.matchAll(/\b(?:binding|name):\s*"([A-Z][A-Z0-9_]*)"/g)) {
+    names.add(match[1]);
+  }
+  const vars = source.match(/\bvars:\s*\{(?<body>[\s\S]*?)\n\s*\}/)?.groups?.body ?? "";
+  for (const match of vars.matchAll(/^\s*([A-Z][A-Z0-9_]*):/gm)) names.add(match[1]);
+  return names;
+}
+
 const sorted = (set) => [...set].sort();
 
 describe("Cloudflare binding parity", () => {
@@ -119,9 +135,7 @@ describe("Cloudflare binding parity", () => {
   const production = bindingNames(parseJsonc(read(PRODUCTION)));
   const selfHost = bindingNames(parseJsonc(read(SELF_HOST)));
   const testConfig = bindingNames(parseJsonc(read(TEST_CONFIG)));
-  const devServer = new Set(
-    [...read(DEV_SERVER).matchAll(/\bbinding:\s*"([A-Z][A-Z0-9_]*)"/g)].map((match) => match[1]),
-  );
+  const devServer = devServerBindings(read(DEV_SERVER));
 
   test("the parsed sources are not empty", () => {
     expect(env.all.size).toBeGreaterThan(10);
@@ -175,6 +189,7 @@ describe("Cloudflare binding parity", () => {
       d1_databases: [{ binding: "DB", database_name: "x" }],
       ratelimits: [{ name: "RATE_LIMIT_10_PER_MINUTE", namespace_id: "1" }],
       send_email: [{ name: "SEND_EMAIL" }],
+      durable_objects: { bindings: [{ name: "GATE_ROOM", class_name: "GateRoom" }] },
       queues: {
         producers: [{ binding: "SCAN_QUEUE", queue: "scans" }],
         consumers: [{ queue: "scans" }],
@@ -183,10 +198,25 @@ describe("Cloudflare binding parity", () => {
     });
     expect(sorted(names)).toEqual([
       "DB",
+      "GATE_ROOM",
       "NPM_REGISTRY",
       "RATE_LIMIT_10_PER_MINUTE",
       "SCAN_QUEUE",
       "SEND_EMAIL",
+    ]);
+  });
+
+  test("reads the dev server's binding, ratelimit name, and vars entries", () => {
+    const names = devServerBindings(
+      'x = {\n  name: "worker",\n  d1_databases: [{ binding: "DB" }],\n' +
+        '  ratelimits: [{ name: "RATE_LIMIT_10_PER_MINUTE", simple: { limit: 10 } }],\n' +
+        '  vars: {\n    NPM_REGISTRY: registryUrl,\n    AI_CACHE_AFFINITY: "e2e",\n  },\n};',
+    );
+    expect(sorted(names)).toEqual([
+      "AI_CACHE_AFFINITY",
+      "DB",
+      "NPM_REGISTRY",
+      "RATE_LIMIT_10_PER_MINUTE",
     ]);
   });
 
