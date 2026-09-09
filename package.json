@@ -50,7 +50,7 @@
     "better-auth": "^1.6.29",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.2",
+    "hono": "^4.13.7",
     "hoofd": "^1.7.3",
     "multiformats": "14.0.5",
     "preact": "^10.29.8",
@@ -78,7 +78,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "wrangler": "4.123.0"
   },
   "engines": {
