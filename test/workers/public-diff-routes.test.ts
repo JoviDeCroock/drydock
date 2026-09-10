@@ -2,9 +2,10 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
 import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
-import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
+import { npmPublicDiff, PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
 import {
   computePublicDiffCacheKey,
+  publicDiffAnalysisVersion,
   PublicDiffError,
   writePublicDiffCache,
   type PublicPackageDiff,
@@ -473,7 +474,7 @@ describe("public package-diff routes", () => {
       schema: "drydock.verdict.v1",
       ecosystem: "npm",
       package: packageName,
-      rulesVersion: "1.31.0+risk-1+payload-v7",
+      rulesVersion: publicDiffAnalysisVersion(npmPublicDiff),
       grade: "needs-review",
       findingCounts: { critical: 0, high: 1, medium: 0, low: 0, info: 0 },
       diffUrl: `http://example.com/diff/${packageName}/1.0.0/1.0.1`,
