@@ -700,8 +700,9 @@ export default function DocsPage() {
               <Prose>
                 The same public diff pages work from the consumer side. A Renovate or Dependabot PR
                 names an exact version pair, so the published-package diff has a predictable URL —
-                no account, token, or API call. Set it up once and every dependency bump links its
-                own diff.
+                no account and no token. Set it up once and every dependency bump links its own
+                diff. When a bot needs to decide something rather than link somewhere, the same pair
+                is readable as JSON.
               </Prose>
             </div>
 
@@ -854,6 +855,118 @@ jobs:
               — only when a reviewer clicks — and the linked pages serve public-registry data
               anonymously.
             </Callout>
+
+            <Subsection id="diff-capabilities" title="Capabilities">
+              <Prose>
+                Every diff page carries a capability row: what this release can do, and what changed
+                against the version it replaces. Capabilities that the previous version did not show
+                lead the row with a <InlineCode>+</InlineCode>, because that is the question a
+                dependency bump actually raises — a patch release of a color library that now
+                touches the network is worth a human minute.
+              </Prose>
+              <div class="flex flex-wrap items-center gap-2">
+                <Badge tone="medium">+ network</Badge>
+                <Badge tone="medium">+ process execution</Badge>
+                <Badge tone="neutral">install scripts</Badge>
+                <Badge tone="neutral">CLI commands</Badge>
+              </div>
+              <Prose>
+                The seven capabilities are network, process execution, credential access, dynamic
+                eval, native code, install scripts, and CLI commands. They are derived from the
+                package's own bytes and manifest — the same patterns the deterministic rules match —
+                and not from the findings, because the rules read only the new version and a
+                capability row has to describe both sides to compare them.
+              </Prose>
+              <Callout label="A lower bound, and it says so">
+                Some file bodies exceed the inspection tier — large binaries, minified bundles,
+                content the parser never retained. Those are counted and disclosed per side, and an
+                empty escalation list over uninspected bytes is never presented as “no escalation.”
+                Capabilities are advisory context: they never change a risk level or a finding.
+              </Callout>
+            </Subsection>
+
+            <Subsection id="diff-verdict-api" title="Verdict API">
+              <Prose>
+                <InlineCode>drydock.verdict.v1</InlineCode> is the machine-readable form of a diff,
+                for tooling that has to decide whether a bump deserves a human. Anonymous, no token,
+                one GET:
+              </Prose>
+              <CodeBlock name="Request" lang="bash">
+                {`curl 'https://drydock.org/api/public/v1/package-diff/verdict\
+?package=left-pad&from=1.2.0&to=1.3.0'
+
+# PyPI and atpm pairs take the same shape:
+#   ?ecosystem=pypi&package=django&from=5.0.1&to=5.0.2`}
+              </CodeBlock>
+              <CodeBlock name="Response" lang="json">
+                {`{
+  "schema": "drydock.verdict.v1",
+  "ecosystem": "npm",
+  "package": "left-pad",
+  "displayName": null,
+  "from": { "version": "1.2.0", "publishedAt": "2017-11-17T05:48:38.934Z" },
+  "to": { "version": "1.3.0", "publishedAt": "2018-04-09T01:10:45.796Z" },
+  "rulesVersion": "1.28.0+risk-1+payload-v7",
+  "grade": "clear",
+  "risk": { "artifactRisk": "low", "releaseRisk": "low" },
+  "findingCounts": { "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0 },
+  "capabilities": {
+    "from": {
+      "capabilities": [],
+      "inspectedFiles": 8,
+      "uninspectedFiles": 0,
+      "complete": true
+    },
+    "to": {
+      "capabilities": [],
+      "inspectedFiles": 7,
+      "uninspectedFiles": 0,
+      "complete": true
+    },
+    "escalations": [],
+    "reductions": [],
+    "confident": true
+  },
+  "sourceBinding": {
+    "from": "https://github.com/stevemao/left-pad",
+    "to": "https://github.com/stevemao/left-pad",
+    "changed": false
+  },
+  "coverage": { "fromUninspectedFiles": 0, "toUninspectedFiles": 0, "notices": [] },
+  "diffUrl": "https://drydock.org/diff/left-pad/1.2.0/1.3.0",
+  "computedAt": "2026-08-27T11:02:44.900Z"
+}`}
+              </CodeBlock>
+              <Prose>
+                <InlineCode>grade</InlineCode> folds artifact and release risk — whichever of the
+                two is higher — into three tiers. <InlineCode>clear</InlineCode> is a bump that
+                stayed low risk, <InlineCode>notable</InlineCode> is medium and worth a glance, and{" "}
+                <InlineCode>needs-review</InlineCode> is high or critical: open the diff before
+                merging. <InlineCode>clear</InlineCode> means no medium-or-higher signal, not an
+                empty report. A clear verdict can still carry <InlineCode>low</InlineCode> and{" "}
+                <InlineCode>info</InlineCode> counts, so branch on{" "}
+                <InlineCode>findingCounts</InlineCode> when those matter. There is no fourth tier:
+                this endpoint reads public registry bytes and cannot prove intent, so{" "}
+                <InlineCode>needs-review</InlineCode> is the strongest thing it will say about
+                anyone's release.
+              </Prose>
+              <Prose>
+                For the same reason the payload carries counts, tiers, and capability deltas but no
+                finding text and no rule identifiers. A bot reading this at scale should not be able
+                to auto-publish an accusation about a third party's package; evidence stays on the{" "}
+                <InlineCode>diffUrl</InlineCode> page a person chose to open.
+              </Prose>
+              <Callout label="Cite the rulesVersion">
+                <InlineCode>rulesVersion</InlineCode> identifies the analysis, not the package. Two
+                verdicts for one version pair are comparable only when it matches — record it
+                alongside any verdict you store or act on, and re-read the pair when it changes.
+              </Callout>
+              <Prose>
+                Requests are rate limited per IP. A pair someone has already looked at is served
+                from cache cheaply; a cold pair also spends the shared computation budget, so poll
+                the versions you actually merge rather than sweeping a lockfile.
+              </Prose>
+            </Subsection>
           </section>
 
           <section class="border-t border-border pt-10">

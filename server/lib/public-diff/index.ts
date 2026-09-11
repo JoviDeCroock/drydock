@@ -5,6 +5,7 @@ import { coloCache } from "../platform/http";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import { writePublicDiffDisplayName } from "./display-metadata";
+import { projectPublicDiffCapabilities, projectPublicDiffSourceBinding } from "./projection";
 import type {
   PublicDiffAdapter,
   PublicDiffAttestation,
@@ -18,6 +19,7 @@ import {
   redactFindings,
   redactJson,
   summarizePackageJsonDiff,
+  type CapabilityDelta,
   type DiffEntry,
   type FileRecord,
   type Finding,
@@ -64,6 +66,22 @@ export interface PublicPackageDiff {
   packageJsonDiff: PackageJsonDiff;
   findings: Array<Finding & FindingDiffAnnotation>;
   risk: ScanRiskBreakdown;
+  // Advisory per-side capability sets and their cross-version delta. Derived
+  // from the same pattern sets the deterministic rules match; never feeds the
+  // findings or risk above.
+  capabilities: CapabilityDelta;
+  // Registry publication timestamps per side, when the ecosystem has them.
+  // The verdict projection turns these into the release-age signal.
+  fromPublishedAt?: string;
+  toPublishedAt?: string;
+  // Declared-tier source binding per side (repository the manifest/metadata
+  // claims, normalized). `changed` marks a repository move between versions —
+  // itself a signal. Never verified on the anonymous plane.
+  sourceBinding: {
+    from: string | null;
+    to: string | null;
+    changed: boolean;
+  };
   // True when the cached payload could not carry every file's display sample.
   // Retention is prioritized (see retainedSamplePaths), so this being set does
   // not mean no sample survived; the per-file `sample-omitted` flag marks the
@@ -158,6 +176,12 @@ export async function loadPublicPackageDiff(
     codePatternSet: adapter.codePatternSet,
   });
   const risk = computeScanRiskBreakdown(findings, AI_REVIEW_DISABLED);
+  const fromPackageJson = redactJson(sources.from.packageJson);
+  const toPackageJson = redactJson(sources.to.packageJson);
+  // Projected before the cache-size sample reduction below, so a payload whose
+  // samples were dropped still carries the capability sets computed over them.
+  const capabilities = projectPublicDiffCapabilities(sources, adapter.codePatternSet);
+  const sourceBinding = projectPublicDiffSourceBinding(sources.from, sources.to);
 
   const cachedAtMs = Date.now();
   const cachedAt = new Date(cachedAtMs).toISOString();
@@ -167,14 +191,18 @@ export async function loadPublicPackageDiff(
     packageName: input.packageName,
     fromVersion: input.fromVersion,
     toVersion: input.toVersion,
-    fromPackageJson: redactJson(sources.from.packageJson),
-    toPackageJson: redactJson(sources.to.packageJson),
+    fromPackageJson,
+    toPackageJson,
     fromFiles: redactedFromFiles,
     toFiles: redactedToFiles,
     diff: fileDiff,
     packageJsonDiff: manifestDiff,
     findings,
     risk,
+    capabilities,
+    ...(sources.from.publishedAt ? { fromPublishedAt: sources.from.publishedAt } : {}),
+    ...(sources.to.publishedAt ? { toPublishedAt: sources.to.publishedAt } : {}),
+    sourceBinding,
     ...(sources.notices?.length ? { notices: sources.notices } : {}),
     ...(sources.provenance?.length ? { provenance: sources.provenance } : {}),
     ...(sources.attestation ? { attestation: sources.attestation } : {}),
@@ -193,6 +221,18 @@ export async function loadPublicPackageDiff(
   );
   await writePublicDiffCache(env, cacheKey, payload, { ttlSeconds });
   return payload;
+}
+
+/**
+ * Full analysis identity of a payload this module computes: its payload
+ * projection, ecosystem deterministic-rules segment, and risk-aggregation
+ * version. The verdict cites this so consumers can distinguish any analysis
+ * change for the same package/version pair.
+ */
+export function publicDiffAnalysisVersion(
+  adapter: Pick<PublicDiffAdapter, "rulesVersionSegment" | "payloadVersion">,
+): string {
+  return `${adapter.rulesVersionSegment}+risk-${PUBLIC_DIFF_RISK_VERSION}+payload-${adapter.payloadVersion}`;
 }
 
 export async function computePublicDiffCacheKey(input: {

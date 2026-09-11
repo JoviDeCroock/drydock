@@ -4,6 +4,16 @@ import type { FileRecord, PackageJsonSummary } from "../review";
 export interface PublicDiffAcquiredSide {
   files: FileRecord[];
   packageJson: PackageJsonSummary | null;
+  /** False only when this side represents an absent first-release baseline. */
+  comparable?: boolean;
+  /** False when acquisition omitted artifact evidence capabilities could hide in. */
+  capabilityCoverageComplete?: boolean;
+  /**
+   * When the registry says this version was published, for the release-age
+   * signal on the verdict projection. Omitted when the ecosystem has no
+   * publication timestamp for the side (pkg.pr.new previews, atpm records).
+   */
+  publishedAt?: string;
 }
 
 export interface PublicDiffProvenanceEntry {

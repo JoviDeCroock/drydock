@@ -100,8 +100,11 @@ export const atpmPublicDiff: PublicDiffAdapter = {
   // cached v7 reviews may have accepted an echoed CID or historical scope.
   // v9 binds baseline provenance to its tarball and fails closed when a staged
   // candidate's publisher has no currently verified handle. v10 carries the
-  // authenticated Rekor instance alongside its log-local index.
-  payloadVersion: "v10",
+  // authenticated Rekor instance alongside its log-local index. v11 carries
+  // the capability delta and declared source binding. v12 keeps a first
+  // release's absent baseline out of the capability comparison and aligns the
+  // projection with deterministic code-matching semantics.
+  payloadVersion: "v12",
   cacheTtlSeconds: ATPM_PAIR_CACHE_TTL_SECONDS,
 
   isValidPackageName: isValidAtpmPackageName,
@@ -186,6 +189,7 @@ export const atpmPublicDiff: PublicDiffAdapter = {
       from: {
         files: fromArchive?.files ?? [],
         packageJson: fromArchive?.packageJson ?? null,
+        comparable: from !== null,
       },
       to: { files: toArchive.files, packageJson: toArchive.packageJson ?? null },
       provenance: resolutionTrail(ref, identity, stagedCandidate?.uri),

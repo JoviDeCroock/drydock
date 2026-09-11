@@ -31,6 +31,9 @@ export interface PersistedSummary {
   // predate the feature or may be malformed; readers re-validate through
   // `normalizeIntentEnvelope`.
   intentEnvelope?: unknown;
+  // Advisory capability delta; same posture — readers re-validate through
+  // `normalizeCapabilityDelta`.
+  capabilities?: unknown;
 }
 
 export type PersistedFinding = PersistedScanDetail["findings"][number];

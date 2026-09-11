@@ -11,10 +11,13 @@ import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
   PublicDiffError,
+  publicDiffAnalysisVersion,
   readPublicDiffCache,
   remainingCacheTtlSeconds,
   type PublicPackageDiff,
 } from "../lib/public-diff";
+import { buildPublicDiffVerdict } from "../lib/public-diff/verdict";
+import { packageDiffPath, type DiffEcosystem } from "../../src/lib/package-diff-path";
 import type { PublicDiffAdapter } from "../lib/public-diff/types";
 import type { Bindings, Variables } from "../types";
 
@@ -361,6 +364,10 @@ publicDiffRoutes.get("/", async (c) => {
       packageJsonDiff: payload.packageJsonDiff,
       findings: payload.findings,
       risk: payload.risk,
+      capabilities: payload.capabilities,
+      fromPublishedAt: payload.fromPublishedAt ?? null,
+      toPublishedAt: payload.toPublishedAt ?? null,
+      sourceBinding: payload.sourceBinding,
       textSamplesOmitted: payload.textSamplesOmitted ?? false,
       notices: payload.notices ?? [],
       provenance: payload.provenance ?? [],
@@ -372,6 +379,57 @@ publicDiffRoutes.get("/", async (c) => {
     analyzedPairHeaders(payload.ecosystem, payload.packageName),
   );
 });
+
+// Machine-readable projection of an analyzed pair (`drydock.verdict.v1`).
+// Same anonymous posture as its siblings — per-IP buckets, custom-registry
+// killswitch, no AI, no D1, deterministic only — with one addition: the
+// response carries counts, tiers, and capability deltas but never finding
+// prose, because this endpoint is read by dependency-update tooling at scale
+// and must not automate public accusations. See docs/security-model.md.
+//
+// Budget shape mirrors `/file`: a cached pair costs only the cheap verdict
+// bucket, while a cold pair also spends the shared expensive `fetch` bucket
+// before computing — CI polling warm pairs stays cheap without opening a
+// second door to cold computation.
+publicDiffRoutes.get("/verdict", async (c) => {
+  const limited = await enforcePublicRateLimit(c, "verdict", 30);
+  if (limited) return limited;
+
+  const startedAtMs = Date.now();
+  const loaded = await loadRequestedDiff(c, { limitColdComputation: true });
+  if ("error" in loaded) return loaded.error;
+  const { payload } = loaded;
+
+  const adapter = getPublicDiffAdapter(payload.ecosystem);
+  const verdict = buildPublicDiffVerdict(payload, {
+    rulesVersion: adapter ? publicDiffAnalysisVersion(adapter) : "unknown",
+    diffUrl: publicDiffPageUrl(c, payload),
+  });
+  recordProductEvent(c.env, {
+    name: "public_diff.verdict_served",
+    ecosystem: payload.ecosystem,
+    packageName: payload.packageName,
+    grade: verdict.grade,
+    durationMs: Math.max(0, Date.now() - startedAtMs),
+  });
+  return c.json(verdict, 200, analyzedPairHeaders(payload.ecosystem, payload.packageName));
+});
+
+// Absolute URL of the human-facing diff page for a verdict. Built from the
+// same path helper the frontend routes with, so the two can never disagree
+// about how a scoped name is encoded. Any payload reaching this point names a
+// registry-declared publicDiff ecosystem, and the /diff page serves exactly
+// that set — the assertion is the registry being authoritative, not a branch;
+// the path helper's round-trip test covers each member.
+function publicDiffPageUrl(c: PublicDiffContext, payload: PublicPackageDiff): string {
+  const path = packageDiffPath(
+    payload.ecosystem as DiffEcosystem,
+    payload.packageName,
+    payload.fromVersion,
+    payload.toVersion,
+  );
+  return new URL(path, canonicalOrigin(c)).toString();
+}
 
 publicDiffRoutes.get("/file", async (c) => {
   const limited = await enforcePublicRateLimit(c, "file", 120);
