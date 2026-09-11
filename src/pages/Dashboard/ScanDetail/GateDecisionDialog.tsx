@@ -4,6 +4,7 @@ import type { DecisionStatus } from "../../../models/scan";
 import type {
   GatePackageDecision,
   GatePackageScan,
+  GateReleaseAuthority,
   PublicWorkflowGate,
   WorkflowGateDecision,
 } from "../../../models/github-app";
@@ -224,6 +225,8 @@ export function GateDecisionDialog({
   canApprove,
   requireTwoFactor,
   reviewFailed,
+  releaseAuthority,
+  requireAuthorityAcknowledgement,
   onSubmit,
 }: {
   open: boolean;
@@ -237,14 +240,20 @@ export function GateDecisionDialog({
   canApprove: boolean;
   requireTwoFactor: boolean;
   reviewFailed?: boolean;
+  /** The gate's authority delta; null when it was never captured. */
+  releaseAuthority: GateReleaseAuthority | null;
+  /** Org policy: hold the release until the authority change is accepted. */
+  requireAuthorityAcknowledgement: boolean;
   onSubmit: (
     decision: WorkflowGateDecision,
     comment: string | null,
     totpCode: string | null,
+    acknowledgeAuthorityChange: boolean,
   ) => void | Promise<void>;
 }) {
   const commentDraft = useSignal("");
   const codeDraft = useSignal("");
+  const authorityAcknowledged = useSignal(false);
   const saving = status === "saving";
   const gateDecided = gate.status === "approved" || gate.status === "rejected";
   const packageAlreadyDecided = packageDecision !== null;
@@ -265,17 +274,39 @@ export function GateDecisionDialog({
     !gateDecided &&
     !packageAlreadyDecided;
 
+  // The authority policy only gates *approval*. Blocking a release must stay
+  // one click. An opted-in organization also fails closed when capture did not
+  // produce evidence; there is then nothing meaningful to acknowledge.
+  const authorityDelta = releaseAuthority?.delta ?? null;
+  const authorityChanged = authorityDelta?.status === "changed" && !gateDecided;
+  const authorityAssessmentMissing = authorityAssessmentMissingForGateApproval(
+    releaseAuthority,
+    requireAuthorityAcknowledgement,
+    gateDecided,
+  );
+  const blockedOnAuthority =
+    authorityAssessmentMissing ||
+    (authorityChanged && requireAuthorityAcknowledgement && !authorityAcknowledged.value);
+
   useEffect(() => {
     if (open) {
       commentDraft.value = "";
       codeDraft.value = "";
+      authorityAcknowledged.value = false;
     }
-  }, [open]);
+  }, [open, releaseAuthority?.acknowledgementToken]);
 
   const submit = (next: WorkflowGateDecision) => {
-    if (saving || gateDecided || packageAlreadyDecided || blockedOnCode || mustEnroll) return;
+    if (saving || gateDecided || packageAlreadyDecided || mustEnroll) return;
+    if (blockedOnCode) return;
+    if (next === "approved" && blockedOnAuthority) return;
     const trimmed = commentDraft.value.trim();
-    void onSubmit(next, trimmed.length ? trimmed : null, needsCode ? code : null);
+    void onSubmit(
+      next,
+      trimmed.length ? trimmed : null,
+      needsCode ? code : null,
+      authorityAcknowledged.value,
+    );
   };
 
   const handleClose = () => {
@@ -337,6 +368,38 @@ export function GateDecisionDialog({
         </Alert>
       ) : null}
 
+      {authorityChanged && authorityDelta ? (
+        <Alert tone="warn">
+          The authority to publish this release changed since the last release you approved:{" "}
+          {authorityDelta.changeCount} {authorityDelta.changeCount === 1 ? "change" : "changes"}
+          {authorityDelta.highestSignificance !== "none"
+            ? `, highest ${authorityDelta.highestSignificance}`
+            : ""}
+          . The Release authority section on this page lists each one. Approving accepts the new
+          authority as the baseline for future releases.
+        </Alert>
+      ) : null}
+
+      {authorityAssessmentMissing ? (
+        <Alert tone="warn">
+          Release-authority evidence is unavailable for this gate. Retry the review before
+          approving, or reject the release.
+        </Alert>
+      ) : null}
+
+      {authorityChanged && !gateDecided && !packageAlreadyDecided ? (
+        <label class="flex items-start gap-2 text-[13px] leading-[1.5] text-ink-muted">
+          <input
+            type="checkbox"
+            class="mt-0.5"
+            checked={authorityAcknowledged.value}
+            disabled={saving || mustEnroll}
+            onChange={(e) => (authorityAcknowledged.value = (e.target as HTMLInputElement).checked)}
+          />
+          I reviewed the release-authority changes and accept them for this release.
+        </label>
+      ) : null}
+
       <Field label="Comment (optional, shown in the GitHub run log)" for="gateComment">
         <Input
           id="gateComment"
@@ -385,7 +448,7 @@ export function GateDecisionDialog({
           {canApprove ? (
             <Button
               onClick={() => submit("approved")}
-              disabled={saving || blockedOnCode || mustEnroll}
+              disabled={saving || blockedOnCode || blockedOnAuthority || mustEnroll}
             >
               {saving
                 ? "Submitting…"
@@ -416,4 +479,12 @@ export function GateDecisionDialog({
       {error ? <Alert tone="critical">{error}</Alert> : null}
     </Dialog>
   );
+}
+
+export function authorityAssessmentMissingForGateApproval(
+  authority: Pick<GateReleaseAuthority, "delta" | "run"> | null,
+  required: boolean,
+  gateDecided: boolean,
+): boolean {
+  return required && (!authority?.run || authority.delta === null) && !gateDecided;
 }

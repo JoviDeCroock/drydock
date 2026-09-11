@@ -26,6 +26,7 @@ The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and byp
 - `server/routes/github-app/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/github-app/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
+- `server/lib/release-authority/` captures the release's publishing authority and compares it to the last approved baseline; `server/lib/github-app/workflow-source.ts` fetches the workflow graph. See [`release-authority.md`](./release-authority.md).
 - `server/lib/scan/pipeline.ts` runs the same deterministic/AI/report pipeline used by npm registry-staged scans.
 
 Required bindings/secrets include the GitHub App id/private key/client credentials, webhook secret, installation access, queues, D1, R2, and normal scan pipeline bindings. See [`self-hosting.md`](./self-hosting.md) for setup.
@@ -168,7 +169,13 @@ The publish job must publish the reviewed VSIX bytes. Repacking after approval b
 
 ## Maintainer workbench
 
-The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
+The gate review workbench shows the release target, package identity/version, artifact set, scan status, findings, changed files, the release-authority delta, and accept/reject controls. Accept/reject actions require an authenticated maintainer in the owning organization. Step-up auth requirements should match other sensitive release decisions; see [`two-factor-auth.md`](./two-factor-auth.md).
+
+## Release authority
+
+Alongside the package review, each gate captures the _authority_ that produced the release — the entry workflow and its reusable-workflow graph at the run's own commit, plus triggers, permissions, environments, publish steps, release safeguards, action pins, and artifact paths — and compares it to the last release a maintainer approved for the same repository/environment/release path.
+
+Capture is best effort and never blocks a review: an unreadable definition is recorded as incomplete coverage, and a failed capture renders as _not assessed_, which is deliberately distinct from _unchanged_. The delta never modifies risk or findings. An organization can opt into holding the gate until an authority change is explicitly acknowledged (off by default). See [`release-authority.md`](./release-authority.md).
 
 ## Adding a new ecosystem
 

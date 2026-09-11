@@ -4,10 +4,20 @@ import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
+import {
+  markAuthoritySnapshotApproved,
+  recordReleaseAuthoritySnapshot,
+} from "../../server/db/release-authority";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import { computeReleaseAuthorityDelta } from "../../server/lib/release-authority/delta";
+import {
+  buildReleaseAuthoritySnapshot,
+  computeArtifactBindingDigest,
+} from "../../server/lib/release-authority/snapshot";
+import { parseWorkflowYaml } from "../../server/lib/release-authority/yaml";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -181,6 +191,7 @@ describe("canonical release receipt v1", () => {
 
     const document = JSON.parse(bytes) as any;
     expect(document.schema).toBe("drydock.release-receipt.v1");
+    expect(bytes).not.toContain('"releaseAuthority"');
     expect(document.address.value).toBe(await sha256Hex(canonicalJson(document.content)));
     expect(first.headers.get("x-drydock-receipt-sha256")).toBe(await sha256Hex(bytes));
     expect(first.headers.get("etag")).toBe(`"sha256:${await sha256Hex(bytes)}"`);
@@ -303,6 +314,98 @@ describe("canonical release receipt v1", () => {
       status: "unknown",
       observation: null,
     });
+    // No release-authority record was captured for this gate: the field must be
+    // absent, not null, so pre-feature receipts keep their exact bytes.
+    expect("releaseAuthority" in receipt.content.evidence).toBe(false);
+  });
+
+  test("references the release-authority record when one exists for the gate", async () => {
+    const owner = await seedOwner();
+    const gateId = await seedGate(owner);
+    const db = createDb(env.DB);
+    const [gate] = await db
+      .select({ releaseTargetId: schema.githubWorkflowGates.releaseTargetId })
+      .from(schema.githubWorkflowGates)
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+
+    const workflow =
+      "on: push\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n" +
+      "    permissions:\n      id-token: write\n    environment: production\n    steps:\n" +
+      "      - uses: pypa/gh-action-pypi-publish@release/v1\n";
+    const parsed = parseWorkflowYaml(workflow);
+    const artifacts = [{ name: "dist/example-2.0.0.whl", kind: "wheel", sha256: "c".repeat(64) }];
+    const snapshot = await buildReleaseAuthoritySnapshot({
+      run: {
+        repositoryFullName: "octo/release",
+        environment: "production",
+        runId: 987654,
+        runAttempt: 1,
+        workflowPath: ".github/workflows/release.yml",
+        headSha: "a".repeat(40),
+        ref: "refs/tags/v2.0.0",
+        event: "push",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+      },
+      workflows: [
+        {
+          path: ".github/workflows/release.yml",
+          repositoryFullName: "octo/release",
+          sha: "a".repeat(40),
+          ref: "refs/tags/v2.0.0",
+          role: "entry",
+          content: workflow,
+          document: parsed.value,
+          documentComplete: parsed.complete,
+        },
+      ],
+      artifacts,
+      unresolved: [],
+    });
+    await recordReleaseAuthoritySnapshot(db, {
+      organizationId: owner.organizationId,
+      releaseTargetId: gate.releaseTargetId,
+      gateId,
+      runId: 987654,
+      workflowPath: snapshot.run.workflowPath,
+      headSha: snapshot.run.headSha,
+      snapshot,
+      delta: computeReleaseAuthorityDelta(snapshot, null),
+      artifactBindingDigest: await computeArtifactBindingDigest(artifacts),
+    });
+    await markAuthoritySnapshotApproved(db, {
+      organizationId: owner.organizationId,
+      gateId,
+      approvedByUserId: owner.userId,
+    });
+
+    const scanId = await seedCompleted(owner, { source: "workflow_gate", gateId });
+    const app = appFor(owner);
+    const response = await request(app, scanId, "release-receipt.json");
+    const receipt = (await response.json()) as any;
+
+    const authority = receipt.content.evidence.releaseAuthority;
+    expect(authority).toMatchObject({
+      status: "complete",
+      workflowPath: ".github/workflows/release.yml",
+      delta: {
+        status: "no_baseline",
+        changeCount: 0,
+        highestSignificance: "none",
+        requiresApproval: false,
+        coverageComplete: true,
+        baseline: null,
+      },
+      approval: { approvedAt: expect.any(String) },
+    });
+    expect(authority.snapshotId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(authority.capturedAt).toEqual(expect.any(String));
+    expect(authority.artifactBindingDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    // The referenced report is the same stored serialization report.json
+    // returns, so the receipt's report digest still matches byte for byte.
+    const report = await request(app, scanId, "report.json");
+    expect(receipt.content.report.digest.value).toBe(await sha256Hex(await report.text()));
   });
 
   test("marks pending gates and malformed artifact digests as incomplete evidence", async () => {
