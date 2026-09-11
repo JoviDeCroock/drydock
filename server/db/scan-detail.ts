@@ -8,7 +8,7 @@ import {
 import type { AppDb } from "./client";
 import { redactScanEventForClient } from "./events";
 import { computeRiskSummary, readPersistedRiskBreakdown } from "./scan-risk";
-import { scanEvents, scans } from "./schema";
+import { scanEvents, scans, user } from "./schema";
 
 export type ScanDetailFileMode = "samples" | "list" | "omit";
 
@@ -33,6 +33,15 @@ export async function getScan(
   ]);
   const scan = scanRows[0];
   if (!scan) return null;
+  const decidedByName = scan.decidedByUserId
+    ? ((
+        await db
+          .select({ name: user.name })
+          .from(user)
+          .where(eq(user.id, scan.decidedByUserId))
+          .limit(1)
+      )[0]?.name ?? null)
+    : null;
   const fileMode = options.files ?? "samples";
   const artifactDetail =
     fileMode === "list"
@@ -50,7 +59,7 @@ export async function getScan(
       })
     : [];
   return {
-    scan,
+    scan: { ...scan, decidedByName },
     files: responseFiles,
     findings: annotatedFindings,
     riskSummary:

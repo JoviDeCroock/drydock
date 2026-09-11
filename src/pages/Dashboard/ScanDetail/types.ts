@@ -17,10 +17,13 @@ export interface PersistedSummary {
   // never downloaded, so the diff is not a release delta.
   baseline?: { version?: string | null; comparisonSkipped?: string };
   // Adapter-shaped staged details persisted by summarizeDetails. The UI only
-  // reads the byte-continuity blocks; the rest stays opaque.
+  // reads the byte-continuity blocks and the stage timestamp; the rest stays
+  // opaque.
   stagedPublish?: {
     provenance?: ReleaseProvenance;
     artifactIntegrity?: unknown;
+    /** npm's own creation time for the stage, as the registry reported it. */
+    createdAt?: string | null;
     /** Named directly by a published-pair review, which has no gate provenance. */
     ecosystem?: string;
   };

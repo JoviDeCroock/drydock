@@ -247,6 +247,7 @@ export interface RegistryStatusCandidate {
   decidedAt: Date | null;
   registryVersionStatus: string | null;
   registryPublishReminderAt: Date | null;
+  registryApprovableNotifiedAt: Date | null;
 }
 
 interface RegistryStatusRecheckRule {
@@ -290,6 +291,7 @@ export async function listScansAwaitingRegistryStatus(
       decidedAt: scans.decidedAt,
       registryVersionStatus: scans.registryVersionStatus,
       registryPublishReminderAt: scans.registryPublishReminderAt,
+      registryApprovableNotifiedAt: scans.registryApprovableNotifiedAt,
     })
     .from(scans)
     .where(
@@ -350,6 +352,7 @@ export async function listScansAwaitingRegistryStatus(
             decidedAt: row.decidedAt,
             registryVersionStatus: row.registryVersionStatus,
             registryPublishReminderAt: row.registryPublishReminderAt,
+            registryApprovableNotifiedAt: row.registryApprovableNotifiedAt,
           },
         ]
       : [],
@@ -390,6 +393,55 @@ export async function markRegistryPublishReminderSent(
                 eq(priorReminder.registryUrl, scans.registryUrl),
                 eq(priorReminder.stageId, scans.stageId),
                 isNotNull(priorReminder.registryPublishReminderAt),
+              ),
+            )
+            .limit(1),
+        ),
+      ),
+    )
+    .returning({ id: scans.id });
+  return rows.length > 0;
+}
+
+/**
+ * Claim the send-once "approvable on npm" marker. Like the reminder claim, it
+ * only succeeds while the `staged` observation that triggered it is still the
+ * current one, so a concurrent sweep that already wrote a newer answer cannot
+ * be followed by a stale notice, and duplicate reviews of one stage id share a
+ * single notice.
+ */
+export async function markRegistryApprovableNotified(
+  db: AppDb,
+  input: {
+    scanId: string;
+    organizationId: string;
+    expectedRegistryStatusAt: Date;
+    sentAt?: Date;
+  },
+): Promise<boolean> {
+  const priorNotice = aliasedTable(scans, "prior_registry_approvable_notice");
+  const rows = await db
+    .update(scans)
+    .set({ registryApprovableNotifiedAt: input.sentAt ?? new Date() })
+    .where(
+      and(
+        eq(scans.id, input.scanId),
+        eq(scans.organizationId, input.organizationId),
+        eq(scans.status, "complete"),
+        eq(scans.registryVersionStatus, "staged"),
+        eq(scans.registryVersionStatusAt, input.expectedRegistryStatusAt),
+        isNull(scans.registryStatusSupersededAt),
+        isNull(scans.registryApprovableNotifiedAt),
+        notExists(
+          db
+            .select({ id: priorNotice.id })
+            .from(priorNotice)
+            .where(
+              and(
+                eq(priorNotice.organizationId, scans.organizationId),
+                eq(priorNotice.registryUrl, scans.registryUrl),
+                eq(priorNotice.stageId, scans.stageId),
+                isNotNull(priorNotice.registryApprovableNotifiedAt),
               ),
             )
             .limit(1),

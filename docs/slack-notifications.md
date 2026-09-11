@@ -91,8 +91,10 @@ connections and notification recipients. Members are read-only (`403` on write).
 
 ## Delivery
 
-`server/lib/notify/index.ts` runs email and Slack concurrently. `notifyScanCompletion`
-and `notifyWorkflowGateReview` build a `SlackNotificationPayload`, then
+`server/lib/notify/index.ts` runs email and Slack concurrently. `notifyScanCompletion`,
+`notifyWorkflowGateReview`, and `notifyStagedReleaseApprovable` (npm finished
+validating a reviewed stage; see `registry-version-status.md`) build a
+`SlackNotificationPayload`, then
 `deliverToSlackConnection` loads the org's `getSlackConnectionSecret`, and — only
 if the connection exists, is enabled, and has a channel — decrypts the token,
 renders one Block Kit message (`renderSlackMessage`), and POSTs it with

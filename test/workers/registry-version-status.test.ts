@@ -1209,7 +1209,9 @@ describe("registry version status resolution", () => {
 
   test("nudges once when we approved a release npm is still holding", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedCompletedScan(org, {
+      registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
     const db = createDb(env.DB);
     await recordScanDecision(db, {
       scanId,
@@ -1218,10 +1220,16 @@ describe("registry version status resolution", () => {
       actorUserId: org.userId,
     });
     // Backdate the approval past the grace period, so this reads as forgotten
-    // rather than as a publish still in progress.
+    // rather than as a publish still in progress. npm already reported
+    // `staged` earlier, so this sweep is a recheck rather than the transition
+    // that sends the approvable notice instead.
     await db
       .update(schema.scans)
-      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .set({
+        decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000),
+        registryVersionStatus: "staged",
+        registryVersionStatusAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      })
       .where(eq(schema.scans.id, scanId));
     stubRegistry(() => statusResponse("staged"));
     const args = {
@@ -1251,6 +1259,7 @@ describe("registry version status resolution", () => {
     const older = await seedCompletedScan(org, {
       stageId: "stage-duplicate",
       createdAt: new Date(Date.now() - 2 * 60 * 1000),
+      registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
     const db = createDb(env.DB);
     await recordScanDecision(db, {
@@ -1261,7 +1270,11 @@ describe("registry version status resolution", () => {
     });
     await db
       .update(schema.scans)
-      .set({ decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000) })
+      .set({
+        decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000),
+        registryVersionStatus: "staged",
+        registryVersionStatusAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      })
       .where(eq(schema.scans.id, older.scanId));
     stubRegistry(() => statusResponse("staged"));
     const args = {
@@ -1437,6 +1450,212 @@ describe("registry version status resolution", () => {
 
     expect(result.reminded).toBe(0);
     expect((await readScan(scanId)).registryPublishReminderAt).toBeNull();
+  });
+
+  async function approvableNotices(scanId: string) {
+    const rows = await createDb(env.DB)
+      .select()
+      .from(schema.scanEvents)
+      .where(eq(schema.scanEvents.scanId, scanId));
+    return rows.filter(
+      (row) =>
+        typeof row.metadataJson === "object" &&
+        row.metadataJson !== null &&
+        (row.metadataJson as { trigger?: string }).trigger === "registry_approvable",
+    );
+  }
+
+  test("tells the organization once when npm finishes validating a reviewed release", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const args = {
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    stubRegistry(() => statusResponse("validating"));
+    const validating = await resolveNpmReleaseOutcomes(args);
+    expect(validating.approvableNotified).toBe(0);
+    expect((await readScan(scanId)).registryApprovableNotifiedAt).toBeNull();
+
+    stubRegistry(() => statusResponse("staged"));
+    const staged = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(Date.now() + 20 * 60 * 1000),
+    });
+    expect(staged.approvableNotified).toBe(1);
+    expect((await readScan(scanId)).registryApprovableNotifiedAt).toBeTruthy();
+    // Email delivery has no transport here, so the attempt is recorded as a
+    // failure — what matters is that exactly one notice was attempted.
+    expect(await approvableNotices(scanId)).toHaveLength(1);
+
+    const recheck = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(Date.now() + 3 * 60 * 60 * 1000),
+    });
+    expect(recheck.checked).toBe(1);
+    expect(recheck.approvableNotified).toBe(0);
+    expect(await approvableNotices(scanId)).toHaveLength(1);
+  });
+
+  test("notifies on the first lookup when the review completed after npm had already settled", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    stubRegistry(() => statusResponse("staged"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result).toMatchObject({ checked: 1, approvableNotified: 1 });
+    expect((await readScan(scanId)).registryApprovableNotifiedAt).toBeTruthy();
+  });
+
+  test("a staged recheck of a release already known as staged is not a transition", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org, {
+      registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+    const db = createDb(env.DB);
+    // A row persisted before the notice existed: npm already said `staged`
+    // and nobody was told. Rolling the feature out must not page every
+    // organization about every release it has ever left staged.
+    await db
+      .update(schema.scans)
+      .set({
+        registryVersionStatus: "staged",
+        registryVersionStatusAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      })
+      .where(eq(schema.scans.id, scanId));
+    stubRegistry(() => statusResponse("staged"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result).toMatchObject({ checked: 1, approvableNotified: 0 });
+    expect((await readScan(scanId)).registryApprovableNotifiedAt).toBeNull();
+  });
+
+  test("does not announce a release npm has already published, blocked, or removed", async () => {
+    const org = await seedOrg();
+    const db = createDb(env.DB);
+    for (const status of ["published", "blocked", "deleted"] as const) {
+      await db.delete(schema.scans);
+      const { scanId } = await seedCompletedScan(org);
+      stubRegistry(() => statusResponse(status));
+
+      const result = await resolveNpmReleaseOutcomes({
+        db,
+        env,
+        organizationId: org.organizationId,
+        ownerUserId: org.userId,
+        connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+      });
+
+      expect(result).toMatchObject({ checked: 1, approvableNotified: 0 });
+      expect((await readScan(scanId)).registryApprovableNotifiedAt).toBeNull();
+    }
+  });
+
+  test("never announces workflow-gate or published-pair reviews", async () => {
+    const org = await seedOrg();
+    await seedCompletedScan(org, { source: "workflow_gate", version: "1.4.0" });
+    await seedCompletedScan(org, { source: "published", version: "1.4.1" });
+    const fetchMock = stubRegistry(() => statusResponse("staged"));
+
+    const result = await resolveNpmReleaseOutcomes({
+      db: createDb(env.DB),
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    });
+
+    expect(result).toMatchObject({ checked: 0, approvableNotified: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("the approvable notice stands in for a same-sweep forgotten-approval reminder", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org, {
+      registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+    const db = createDb(env.DB);
+    await recordScanDecision(db, {
+      scanId,
+      organizationId: org.organizationId,
+      decision: "publish",
+      actorUserId: org.userId,
+    });
+    await db
+      .update(schema.scans)
+      .set({
+        decidedAt: new Date(Date.now() - 12 * 60 * 60 * 1000),
+        registryVersionStatus: "validating",
+        registryVersionStatusAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      })
+      .where(eq(schema.scans.id, scanId));
+    stubRegistry(() => statusResponse("staged"));
+    const args = {
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    const first = await resolveNpmReleaseOutcomes(args);
+    expect(first).toMatchObject({ approvableNotified: 1, reminded: 0 });
+    expect((await readScan(scanId)).registryPublishReminderAt).toBeNull();
+
+    // The notice carried the approve command once; the reminder still owns
+    // the later "you never ran it" follow-up.
+    const second = await resolveNpmReleaseOutcomes({
+      ...args,
+      now: new Date(Date.now() + 2 * 60 * 60 * 1000),
+    });
+    expect(second).toMatchObject({ approvableNotified: 0, reminded: 1 });
+  });
+
+  test("an older overlapping sweep cannot send a second approvable notice", async () => {
+    const org = await seedOrg();
+    const { scanId } = await seedCompletedScan(org);
+    const db = createDb(env.DB);
+    const args = {
+      db,
+      env,
+      organizationId: org.organizationId,
+      ownerUserId: org.userId,
+      connection: { token: TOKEN, registryUrl: REGISTRY_URL },
+    };
+
+    let finishOlderLookup: ((response: Response) => void) | undefined;
+    const olderLookup = new Promise<Response>((resolve) => {
+      finishOlderLookup = resolve;
+    });
+    const fetchMock = stubRegistry(() => olderLookup);
+    const older = resolveNpmReleaseOutcomes({ ...args, now: new Date(Date.now() - 60 * 1000) });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    stubRegistry(() => statusResponse("staged"));
+    const newer = await resolveNpmReleaseOutcomes(args);
+    expect(newer.approvableNotified).toBe(1);
+
+    finishOlderLookup?.(statusResponse("staged"));
+    await expect(older).resolves.toMatchObject({ approvableNotified: 0 });
+    expect(await approvableNotices(scanId)).toHaveLength(1);
   });
 
   test("scopes lookups to the asking organization", async () => {

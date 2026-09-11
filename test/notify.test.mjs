@@ -53,6 +53,7 @@ function slackEvents() {
 const {
   notifyNpmConnectionExpired,
   notifyScanCompletion,
+  notifyStagedReleaseApprovable,
   notifyStagedReleaseAwaitingApproval,
   notifyWorkflowGateReview,
 } = await import("../server/lib/notify");
@@ -314,6 +315,103 @@ describe("notifyStagedReleaseAwaitingApproval", () => {
     const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
     expect(message.text).not.toContain("user:password");
     expect(message.text).not.toContain("npm stage approve");
+  });
+});
+
+describe("notifyStagedReleaseApprovable", () => {
+  function approvableInput(overrides = {}) {
+    return {
+      env: { BETTER_AUTH_URL: "https://drydock.test" },
+      db: {},
+      organizationId: "org_1",
+      ownerUserId: "user_1",
+      scanId: "scan_1",
+      stageId: "stage-safe_123",
+      packageName: "demo-package",
+      version: "1.2.0",
+      decision: null,
+      registryUrl: "https://registry.example.test/npm",
+      ...overrides,
+    };
+  }
+
+  test("emails release identity, the risk grade, finding count, review link and the approve command", async () => {
+    dbMock.getScan.mockResolvedValue({
+      scan: { packageName: "demo-package", stagedVersion: "1.2.0", risk: "high" },
+      riskSummary: {
+        releaseRisk: "medium",
+        artifactRisk: "high",
+        releaseFindingCount: 2,
+        contextFindingCount: 3,
+      },
+    });
+
+    await notifyStagedReleaseApprovable(approvableInput());
+
+    expect(emailMock.sendNotificationEmail).toHaveBeenCalledTimes(1);
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.to).toBe("owner@example.com");
+    expect(message.subject).toBe("demo-package@1.2.0 is ready to approve on npm");
+    expect(message.text).toContain("npm has finished validating demo-package@1.2.0");
+    expect(message.text).toContain("Release risk: medium.");
+    expect(message.text).toContain("Findings: 5 findings (2 on the release diff).");
+    expect(message.text).toContain("Drydock decision: none recorded yet.");
+    expect(message.text).toContain("https://drydock.test/dashboard/scans/scan_1?org=org_1");
+    expect(message.text).toContain(
+      "npm stage approve stage-safe_123 --registry 'https://registry.example.test/npm'",
+    );
+
+    const [event] = dbMock.recordScanEvent.mock.calls.map(([, item]) => item);
+    expect(event.type).toBe("scan.notification_sent");
+    expect(event.metadata).toMatchObject({ channel: "email", trigger: "registry_approvable" });
+  });
+
+  test("names the Drydock decision when one was already recorded", async () => {
+    await notifyStagedReleaseApprovable(approvableInput({ decision: "publish" }));
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).toContain("Drydock decision: publish");
+  });
+
+  test("posts the same facts to Slack with the approve command in the status line", async () => {
+    dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+
+    await notifyStagedReleaseApprovable(approvableInput());
+
+    expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
+    const [payload] = slackMock.renderSlackMessage.mock.calls.at(-1);
+    expect(payload).toMatchObject({
+      title: "Staged release ready to approve on npm",
+      packageLabel: "demo-package@1.2.0",
+      risk: "high",
+      dashboardUrl: "https://drydock.test/dashboard/scans/scan_1?org=org_1",
+    });
+    expect(payload.statusLine).toContain("npm stage approve stage-safe_123 --registry");
+    const [event] = slackEvents();
+    expect(event.type).toBe("scan.notification_sent");
+    expect(event.metadata).toMatchObject({ channel: "slack", trigger: "registry_approvable" });
+  });
+
+  test("drops the approve command rather than pasting an unsafe stage id or registry", async () => {
+    await notifyStagedReleaseApprovable(
+      approvableInput({ registryUrl: "https://user:password@registry.example.test" }),
+    );
+    const [, message] = emailMock.sendNotificationEmail.mock.calls[0];
+    expect(message.text).not.toContain("user:password");
+    expect(message.text).not.toContain("npm stage approve");
+  });
+
+  test("records a failure event instead of throwing when no recipients resolve", async () => {
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+
+    await expect(notifyStagedReleaseApprovable(approvableInput())).resolves.toBeUndefined();
+
+    expect(emailMock.sendNotificationEmail).not.toHaveBeenCalled();
+    const [event] = dbMock.recordScanEvent.mock.calls.map(([, item]) => item);
+    expect(event.type).toBe("scan.notification_failed");
+    expect(event.metadata).toMatchObject({
+      trigger: "registry_approvable",
+      reason: "no_recipients",
+    });
   });
 });
 
