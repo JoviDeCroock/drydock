@@ -134,6 +134,8 @@ importers:
         specifier: 4.123.0
         version: 4.123.0(@cloudflare/workers-types@5.20260817.1)
 
+  packages/verify: {}
+
 packages:
 
   '@ai-sdk/gateway@4.0.52':

@@ -11,6 +11,7 @@ Drydock runs as a hosted service at [drydock.org](https://drydock.org); this rep
 - **Read a package diff:** compare any two public npm, PyPI, or atpm releases at [drydock.org/diff](https://drydock.org/diff). Drydock parses the archives without installing or executing package code.
 - **Add diffs to Renovate PRs:** extend `"github>JoviDeCroock/drydock//renovate/diff-links"` after your base presets. Every linkable npm and PyPI update gains a Drydock column.
 - **Add diffs to Dependabot PRs:** copy the [verified comment workflow](https://drydock.org/docs#dependabot-diff-links). It supports grouped updates and never checks out PR code.
+- **Enforce dependency policy in CI:** run [`drydock verify`](docs/verify-ci.md) to check changed npm package pairs for release age, verdict grade, capability escalations, and listed maintainer reviews.
 - **Show reviewed releases:** after opting a shared review into the public feed, copy its README badge from the share dialog. The badge points readers back to verifiable review evidence.
 
 The dependency-PR integrations add plain links, so Drydock is contacted only when a reviewer chooses to open a diff. See the [integration contract](docs/dependency-pr-diff-links.md) for version-pair guards and security details.
@@ -128,6 +129,7 @@ start with [`docs/README.md`](docs/README.md) to pick the smallest relevant one.
 ```text
 server/       Hono Worker, scan pipeline, adapters, persistence, webhooks
 src/          Preact UI and typed API models
+packages/     Published consumer tooling, including the drydock verify CLI
 drizzle/      D1 migrations
 docs/         Architecture, security, workflow, setup, and test references
 test/         Vitest, Worker-runtime, security corpus, and fake-registry e2e

@@ -58,6 +58,8 @@ function payload(overrides: Partial<PublicPackageDiff> = {}): PublicPackageDiff 
     capabilities: diffCapabilities(projectCapabilities([], null), projectCapabilities([], null)),
     fromPublishedAt: "2026-01-01T00:00:00.000Z",
     toPublishedAt: "2026-08-01T00:00:00.000Z",
+    fromArchiveSha1: "a".repeat(40),
+    toArchiveSha1: "b".repeat(40),
     sourceBinding: {
       from: "https://github.com/owner/repo",
       to: "https://github.com/owner/repo",
@@ -92,8 +94,16 @@ describe("buildPublicDiffVerdict", () => {
     const verdict = buildPublicDiffVerdict(payload(), OPTIONS);
     expect(verdict.schema).toBe(PUBLIC_VERDICT_SCHEMA);
     expect(verdict.package).toBe("example");
-    expect(verdict.from).toEqual({ version: "1.2.3", publishedAt: "2026-01-01T00:00:00.000Z" });
-    expect(verdict.to).toEqual({ version: "1.2.4", publishedAt: "2026-08-01T00:00:00.000Z" });
+    expect(verdict.from).toEqual({
+      version: "1.2.3",
+      publishedAt: "2026-01-01T00:00:00.000Z",
+      integrity: { sha1: "a".repeat(40) },
+    });
+    expect(verdict.to).toEqual({
+      version: "1.2.4",
+      publishedAt: "2026-08-01T00:00:00.000Z",
+      integrity: { sha1: "b".repeat(40) },
+    });
     expect(verdict.rulesVersion).toBe("1.28.0+risk-1+payload-v7");
     expect(verdict.diffUrl).toBe(OPTIONS.diffUrl);
     expect(verdict.computedAt).toBe("2026-08-26T00:00:00.000Z");
