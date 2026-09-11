@@ -3,6 +3,7 @@ import { useSignal } from "@preact/signals";
 import { Badge } from "../../components/Badge";
 import { LinkButton } from "../../components/Button";
 import { Card } from "../../components/Card";
+import { CodeBlock } from "../../components/CodeBlock";
 import { cn } from "../../components/cn";
 import { PageShell } from "../../components/PageShell";
 import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
@@ -11,7 +12,6 @@ import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 import {
   Callout,
-  CodeBlock,
   JourneyCard,
   PathCard,
   Requirement,
@@ -514,23 +514,28 @@ export default function DocsPage() {
                     Drydock GitHub App on the account that hosts your repository.
                   </>,
                   <>
-                    In the repository, create a GitHub Environment such as{" "}
-                    <InlineCode>production</InlineCode> and enable Drydock as a custom deployment
-                    protection rule.
+                    Open <InlineCode>Guided gate setup</InlineCode> in the same settings tab and
+                    pick the repository. The wizard walks you through creating the GitHub
+                    Environment and enabling Drydock as its deployment protection rule, and confirms
+                    each one by reading GitHub back.
                   </>,
                   <>
-                    Back in Drydock settings, map that repository and environment to the
-                    organization. You can optionally narrow the gate to one artifact name.
-                  </>,
-                  <>
-                    Add a build job that uploads release candidates and a publish job that uses the
-                    protected environment. Start from one of the examples below.
+                    Generate the publish workflow for your package, commit it, and create the
+                    release target in the last step of the wizard.
                   </>,
                 ]}
               />
+              <Callout label="You make the changes, Drydock verifies them">
+                Drydock holds no write permission on your repository — creating environments and
+                committing workflow files would mean holding the power to rewrite the very publish
+                workflow the gate protects. So the wizard generates the workflow, links to each
+                GitHub screen, and then reads GitHub back: it reports the gate as armed only when
+                GitHub confirms Drydock is the environment's protection rule. The examples below are
+                the same files the wizard writes.
+              </Callout>
               <div class="flex flex-wrap gap-2 pt-1">
-                <LinkButton href="/dashboard/settings?tab=integrations" size="sm">
-                  Open Organization settings
+                <LinkButton href="/dashboard/settings#gate-setup" size="sm">
+                  Open the setup wizard
                 </LinkButton>
               </div>
             </Subsection>
