@@ -25,6 +25,15 @@ describe("normalizeRepositoryUrl", () => {
     );
   });
 
+  test("canonicalizes case-insensitive forge identities", () => {
+    expect(normalizeRepositoryUrl("https://github.com/Owner/Repo.git")).toBe(
+      "https://github.com/owner/repo",
+    );
+    expect(normalizeRepositoryUrl("bitbucket:Workspace/Repo")).toBe(
+      "https://bitbucket.org/workspace/repo",
+    );
+  });
+
   test("preserves GitLab subgroup paths and trims browser suffixes", () => {
     expect(normalizeRepositoryUrl("https://gitlab.com/group/subgroup/project.git")).toBe(
       "https://gitlab.com/group/subgroup/project",

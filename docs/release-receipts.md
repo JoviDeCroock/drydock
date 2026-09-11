@@ -44,8 +44,10 @@ risk, and a structured decision with decision time and the authenticated Drydock
 - `report` says the report reference is present.
 - `reviewedArtifacts` reuses the report's validated workflow provenance
   (`sha256` per artifact) or staged artifact integrity verdict (registry-declared
-  and computed SHA-1). Missing legacy evidence is `unknown`; an unverified
-  staged digest is `partial`; a validated mismatch is `conflicting`.
+  and computed SHA-1). Missing legacy evidence is `unknown`; a gate record whose
+  persisted provenance block fails the export's re-validation is `conflicting`
+  rather than absent evidence; an unverified staged digest is `partial`; a
+  validated mismatch is `conflicting`.
 - `intentBinding` reuses the validated intent envelope. Missing or malformed
   persisted data is `unknown`; an explicit `absent` tier is complete evidence
   that no source binding was found.

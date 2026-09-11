@@ -1,3 +1,4 @@
+import { isRecord } from "../platform/guards";
 import type { getScan } from "../../db/scans";
 import type { WorkflowGateRecord } from "../github-app/webhook-gates";
 import { canonicalJson } from "../platform/canonical-json";
@@ -20,7 +21,7 @@ export async function buildReleaseReceipt(
   const report = buildReportExport(detail);
   const reportBytes = serializeReportExportDocument(report);
   const mode = detail.scan.source === "workflow_gate" ? "workflow_gate" : "staged_publish";
-  const reviewedArtifacts = buildReviewedArtifacts(mode, report);
+  const reviewedArtifacts = buildReviewedArtifacts(mode, report, claimsProvenance(detail));
   const intentBinding = {
     status: report.intentEnvelope ? ("complete" as const) : ("unknown" as const),
     envelope: report.intentEnvelope,
@@ -90,19 +91,29 @@ export function releaseReceiptFilename(scanId: string, documentSha256: string): 
   return `drydock-release-receipt-${id}-${documentSha256}.json`;
 }
 
+// The export re-validates the persisted provenance and drops it whole when any
+// part is malformed, so a record that claims provenance the export rejected is
+// conflicting evidence rather than the absence of evidence.
+function claimsProvenance(detail: ScanDetail): boolean {
+  const summary = isRecord(detail.scan.summaryJson) ? detail.scan.summaryJson : {};
+  return isRecord(summary.stagedPublish) && isRecord(summary.stagedPublish.provenance);
+}
+
 function buildReviewedArtifacts(
   mode: "workflow_gate" | "staged_publish",
   report: ReturnType<typeof buildReportExport>,
+  provenanceClaimed: boolean,
 ) {
   if (mode === "workflow_gate") {
     if (!report.provenance) {
-      return { status: "unknown" as const, provenance: null, stagedArtifactIntegrity: null };
+      return {
+        status: provenanceClaimed ? ("conflicting" as const) : ("unknown" as const),
+        provenance: null,
+        stagedArtifactIntegrity: null,
+      };
     }
-    const digestsValid = report.provenance.artifacts.every((artifact) =>
-      /^[a-f0-9]{64}$/i.test(artifact.sha256),
-    );
     return {
-      status: digestsValid ? ("complete" as const) : ("conflicting" as const),
+      status: "complete" as const,
       provenance: report.provenance,
       stagedArtifactIntegrity: null,
     };

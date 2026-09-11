@@ -161,13 +161,17 @@ type PackageIdentity = "registry-verified" | "manifest-claimed" | "public-review
 
 /**
  * How much the scan's source proves about the reviewer's relationship to the
- * package name. Fails closed: only the credential-backed staged sources are
- * registry-verified, so a source added later inherits the weakest identity
- * until it is classified here deliberately.
+ * package name. Staged-publish scans fetched the artifact using the org's npm
+ * token. Workflow-gate scans cross the same boundary only after the registry
+ * verifier proves the published artifact set matches the reviewed provenance.
+ * A source added later inherits the weakest identity until classified here.
  */
-function scanPackageIdentity(source: string): PackageIdentity {
+function scanPackageIdentity(source: string, registryVerifiedAt: Date | null): PackageIdentity {
   if (REGISTRY_VERIFIED_SOURCES.has(source)) return "registry-verified";
-  return source === "workflow_gate" ? "manifest-claimed" : "public-review";
+  if (source === "workflow_gate") {
+    return registryVerifiedAt ? "registry-verified" : "manifest-claimed";
+  }
+  return "public-review";
 }
 
 /**
@@ -184,7 +188,7 @@ function scanPackageIdentity(source: string): PackageIdentity {
  * feed-listable, where the entry names its own identity.
  */
 export function isBadgeEligibleSource(source: string): boolean {
-  return scanPackageIdentity(source) !== "public-review";
+  return scanPackageIdentity(source, null) !== "public-review";
 }
 
 /**
@@ -209,7 +213,9 @@ export function badgeEcosystem(source: string, summaryJson: unknown): PublicEcos
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
   const eligible = rows.filter((row) => isBadgeEligibleSource(row.source));
   return (
-    eligible.find((row) => scanPackageIdentity(row.source) === "registry-verified") ??
+    eligible.find(
+      (row) => scanPackageIdentity(row.source, row.registryVerifiedAt) === "registry-verified",
+    ) ??
     eligible[0] ??
     null
   );
@@ -247,7 +253,7 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     previousVersion: row.previousVersion,
     ecosystem: scanEcosystem(row.source, row.summaryJson),
     tag: scanDistTag(row.summaryJson),
-    packageIdentity: scanPackageIdentity(row.source),
+    packageIdentity: scanPackageIdentity(row.source, row.registryVerifiedAt),
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,
     decision: row.decision,
@@ -296,9 +302,9 @@ const RISK_BADGE_COLOR: Record<string, string> = {
 function badgeLabel(row: SharedScanRow | null, tag: string): string {
   const qualifiers = [
     ...(tag === DEFAULT_BADGE_TAG ? [] : [tag]),
-    // Anything short of registry-verified says so, so a row that ever reaches
-    // here without the registry's proof cannot read as the maintainer's own.
-    ...(row && scanPackageIdentity(row.source) !== "registry-verified" ? ["unverified"] : []),
+    ...(row && scanPackageIdentity(row.source, row.registryVerifiedAt) === "manifest-claimed"
+      ? ["unverified"]
+      : []),
   ];
   return qualifiers.length > 0 ? `${BADGE_LABEL} (${qualifiers.join(", ")})` : BADGE_LABEL;
 }
@@ -340,7 +346,11 @@ export function buildBadgePayload(
       schemaVersion: 1,
       label: badgeLabel(row, tag),
       message: `${badgeVersion(row.stagedVersion)} approved`,
-      color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
+      // An unverified name claim still never renders clean green.
+      color:
+        scanPackageIdentity(row.source, row.registryVerifiedAt) === "registry-verified"
+          ? "brightgreen"
+          : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }
@@ -350,7 +360,7 @@ export function buildBadgePayload(
     label: badgeLabel(row, tag),
     message: `${badgeVersion(row.stagedVersion)} reviewed · ${risk} risk`,
     color:
-      scanPackageIdentity(row.source) === "registry-verified"
+      scanPackageIdentity(row.source, row.registryVerifiedAt) === "registry-verified"
         ? (RISK_BADGE_COLOR[risk] ?? "lightgrey")
         : risk === "low"
           ? "lightgrey"

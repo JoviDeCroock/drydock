@@ -280,6 +280,7 @@ export function pickPyPiBaselineRelease(
 export function selectPyPiReleaseArtifacts(
   metadata: PyPiProjectMetadata,
   version: string,
+  options: { includeYanked?: boolean } = {},
 ): PyPiRemoteArtifact[] {
   // Own-property check: `releases` is JSON.parse'd, so a bare index would
   // resolve prototype-named versions ("constructor", "toString") to
@@ -289,7 +290,7 @@ export function selectPyPiReleaseArtifacts(
       ? metadata.releases[version]
       : undefined;
   return (Array.isArray(files) ? files : [])
-    .filter((file) => !file.yanked)
+    .filter((file) => options.includeYanked || !file.yanked)
     .map((file) => {
       const filename = file.filename ?? "";
       const kind = inferPyPiArtifactKind(filename);

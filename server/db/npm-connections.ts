@@ -71,6 +71,22 @@ export async function getNpmConnection(db: AppDb, organizationId: string) {
   return connection ?? null;
 }
 
+/** Credential-free registry authority lookup for orchestration paths. */
+export async function getNpmConnectionAuthority(
+  db: AppDb,
+  organizationId: string,
+): Promise<{ registryUrl: string; validationStatus: string } | null> {
+  const [connection] = await db
+    .select({
+      registryUrl: npmConnections.registryUrl,
+      validationStatus: npmConnections.validationStatus,
+    })
+    .from(npmConnections)
+    .where(eq(npmConnections.organizationId, organizationId))
+    .limit(1);
+  return connection ?? null;
+}
+
 export async function listAutoDiscoveryNpmConnections(db: AppDb) {
   return db
     .select()

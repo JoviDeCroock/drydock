@@ -78,7 +78,7 @@ The sandbox must remain small and boring. Genuine parser bugs and malformed arch
 
 ## Workflow-gate posture
 
-Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone.
+Workflow gates never publish. GitHub Environment protection holds the publish job, Drydock reviews uploaded artifacts, and Drydock only posts an accept/reject callback to GitHub. Gate state must resolve to the original installation, repository, workflow run, environment, callback URL, and organization. Artifact identity/digests are recomputed from bytes, not trusted from file names alone. After approval, a delayed queue job and scheduled backstop compare those persisted digests with the registry release. A gate identity remains manifest-claimed until the complete artifact set matches; a persistent disagreement raises a one-time durable mismatch alarm and never becomes registry-verified.
 
 ## AI prompt-injection posture
 

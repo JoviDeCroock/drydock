@@ -197,6 +197,10 @@ export const scans = sqliteTable(
     // /public/threat-feed.json index. Cleared whenever the share is revoked or
     // the registry stage is superseded.
     publicFeedListedAt: integer("public_feed_listed_at", { mode: "timestamp_ms" }),
+    // Set only after a post-publish registry check proves that every artifact
+    // digest recorded by a workflow-gate review matches the published release.
+    // Null means the gate's package identity is still manifest-claimed.
+    registryVerifiedAt: integer("registry_verified_at", { mode: "timestamp_ms" }),
     // Ecosystem-prefixed canonical package identity used by the public badge.
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
@@ -493,6 +497,11 @@ export const githubWorkflowGates = sqliteTable(
     failureReason: text("failure_reason"),
     requestedAt: integer("requested_at", { mode: "timestamp_ms" }).notNull(),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    // Fairness cursor for the bounded post-publish verification sweep. Null
+    // gates run first; retries then rotate by their oldest attempted timestamp.
+    registryVerificationAttemptedAt: integer("registry_verification_attempted_at", {
+      mode: "timestamp_ms",
+    }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
