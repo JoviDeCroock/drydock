@@ -133,7 +133,7 @@ Required non-secret vars:
 - `BETTER_AUTH_URL` — canonical deployed origin
 - `NPM_REGISTRY` — defaults to `https://registry.npmjs.org`
 - `AI_CACHE_AFFINITY` — stable prefix-cache affinity string for Workers AI
-- `PNPM_VERSION` — used by the runtime where npm tooling parity matters
+- `PNPM_VERSION` — mirrors `packageManager` in `package.json` for operators; the Worker never reads it
 
 Optional integrations:
 

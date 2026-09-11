@@ -26,7 +26,7 @@ Own the requested outcome: inspect, implement, verify, and report. Choose the ap
 - AI review is advisory and on by default. The organization `ai-review` flag is a killswitch; AI review cannot downgrade deterministic findings.
 - Except for the anonymous surfaces in `docs/security-model.md`, non-auth `/api/*` endpoints require a Better Auth session and organization-scoped ownership. UI state is never authority; adding an anonymous surface is a security decision.
 - Never log raw tokens, headers, package contents, or unredacted errors. Server logging goes through `emitOperationalEvent`, which redacts the fields it is handed.
-- Declare Cloudflare bindings by hand in `server/env.d.ts` (`cf-typegen` is not used by typecheck), `wrangler.jsonc`, `docs/examples/wrangler.self-host.jsonc`, and, when tests need them, `test/config/wrangler.jsonc`.
+- Cloudflare bindings are declared by hand in `server/env.d.ts` (`cf-typegen` output is not used by typecheck); `test/env-binding-parity.test.mjs` names every config that must agree with it.
 
 ## Architecture invariants
 
