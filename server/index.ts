@@ -61,6 +61,7 @@ import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
+import { packageWatchRoutes } from "./routes/package-watch";
 import type { Bindings, Variables } from "./types";
 import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "../src/lib/public-content-routes";
 
@@ -338,6 +339,8 @@ app.get("/api", (c) =>
       packageReleases:
         "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
+      packageWatch:
+        "GET /api/v1/package-watch/out-of-band; POST /api/v1/package-watch/out-of-band/:id/acknowledge",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
@@ -380,6 +383,7 @@ app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/packages", packagesRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
+app.route("/api/v1/package-watch", packageWatchRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 
 app.notFound(async (c) => {

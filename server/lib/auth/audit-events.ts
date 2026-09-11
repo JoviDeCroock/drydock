@@ -140,6 +140,18 @@ const REGISTRY: Record<string, AuditEventDef> = {
     severity: "security",
     summarize: (m) => str(m.registryUrl),
   },
+  "package_watch.out_of_band_publish": {
+    category: "security",
+    label: "Published without review",
+    severity: "security",
+    summarize: summarizePackageVersion,
+  },
+  "package_watch.out_of_band_acknowledged": {
+    category: "security",
+    label: "Out-of-band publish acknowledged",
+    severity: "notice",
+    summarize: summarizePackageVersion,
+  },
 
   // ── Integrations ─────────────────────────────────────────────────────────
   "npm_connection.upserted": {

@@ -326,6 +326,110 @@ export async function notifyStagedReleaseAwaitingApproval(
   }));
 }
 
+export interface NotifyOutOfBandPublishInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  ownerUserId: string;
+  packageName: string;
+  version: string;
+  registryUrl: string;
+  /** npm's version-status endpoint confirmed "published"; false means the alarm rests on packument presence alone. */
+  statusConfirmed: boolean;
+  detectedAt: Date;
+}
+
+/**
+ * Email and Slack alert that a version of a previously reviewed package
+ * reached the public registry with no Drydock review — the fingerprint of a
+ * publish that routed around the staged path and the workflow gate. Send-once
+ * is owned by the caller (the alarm row's unique release index). The body
+ * carries release identity, timestamps, and dashboard links only — never
+ * tokens, headers, or package bytes.
+ */
+export async function notifyOutOfBandPublish(input: NotifyOutOfBandPublishInput): Promise<void> {
+  const { env, db, organizationId, ownerUserId, packageName, version, registryUrl } = input;
+  const notificationOwnerUserId =
+    (await getOrganizationOwnerUserId(db, organizationId)) ?? ownerUserId;
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, notificationOwnerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
+
+  const release = `${packageName}@${version}`;
+  const link = dashboardRootUrl(env, organizationId);
+  const detectedLabel = formatTimestamp(input.detectedAt);
+  const subject = `${release} was published without a Drydock review`;
+  const lines = [
+    "Hi there,",
+    "",
+    `${release} appeared on the registry${detectedLabel ? ` (detected ${detectedLabel})` : ""}, and no Drydock review exists for it — it did not go through your staged review or workflow gate.`,
+    "",
+    organizationName ? `Organization: ${organizationName}` : null,
+    `Registry: ${registryUrl}`,
+    input.statusConfirmed
+      ? "npm confirms the version is published."
+      : "npm's version-status lookup could not confirm the publish; the version is visible in the package's public metadata.",
+    "",
+    "If a maintainer published this on purpose outside the review path, acknowledge the alert on your dashboard.",
+    "If nobody did, treat the publishing credential as compromised: rotate the npm token or account credentials, review npm's account activity, and consider deprecating the version.",
+    "",
+    link ? `Dashboard: ${link}` : null,
+    "",
+    "This alert is sent once per release.",
+    "",
+    "— Drydock",
+  ];
+  const text = lines.filter((line): line is string => line !== null).join("\n");
+
+  const emailDelivery =
+    recipients.length === 0
+      ? recordScanEvent(db, {
+          organizationId,
+          actorUserId: ownerUserId,
+          type: "scan.notification_failed",
+          metadata: {
+            channel: "email",
+            trigger: "out_of_band_publish",
+            reason: "no_recipients",
+          },
+        })
+      : deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+          organizationId,
+          actorUserId: ownerUserId,
+          type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+          metadata: {
+            channel: "email",
+            trigger: "out_of_band_publish",
+            recipient,
+            ...(result.ok ? {} : { reason: result.reason }),
+          },
+        }));
+
+  const slackDelivery = deliverToSlackConnection(
+    env,
+    db,
+    { organizationId, actorUserId: ownerUserId, scanId: null },
+    {
+      title: "Published without review",
+      packageLabel: release,
+      source: "registry watch",
+      statusLine: input.statusConfirmed
+        ? "No Drydock review exists for this version; npm confirms it is published."
+        : "No Drydock review exists for this version; it is visible in the package's public metadata.",
+      dashboardUrl: link ?? undefined,
+    },
+    (channel, result) => ({
+      organizationId,
+      actorUserId: ownerUserId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: slackEventMetadata({ trigger: "out_of_band_publish" }, channel, result),
+    }),
+  );
+
+  await Promise.all([emailDelivery, slackDelivery]);
+}
+
 export interface NotifyWorkflowGateReviewInput {
   env: Cloudflare.Env;
   db: AppDb;
@@ -600,7 +704,7 @@ interface SlackDeliveryChannel {
 async function deliverToSlackConnection(
   env: Cloudflare.Env,
   db: AppDb,
-  context: { organizationId: string; actorUserId: string; scanId: string },
+  context: { organizationId: string; actorUserId: string; scanId: string | null },
   payload: SlackNotificationPayload,
   event: (
     channel: SlackDeliveryChannel,
@@ -768,6 +872,18 @@ function scanUrl(env: Cloudflare.Env, scanId: string, organizationId?: string): 
   if (typeof base !== "string" || !base) return null;
   try {
     const url = new URL(`/dashboard/scans/${encodeURIComponent(scanId)}`, base);
+    if (organizationId) url.searchParams.set("org", organizationId);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function dashboardRootUrl(env: Cloudflare.Env, organizationId?: string): string | null {
+  const base = env.BETTER_AUTH_URL;
+  if (typeof base !== "string" || !base) return null;
+  try {
+    const url = new URL("/dashboard", base);
     if (organizationId) url.searchParams.set("org", organizationId);
     return url.toString();
   } catch {
