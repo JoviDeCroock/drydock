@@ -1,6 +1,12 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
-import { githubWorkflowGates, scans } from "../../db/schema";
+import {
+  githubWorkflowGates,
+  organizationMembers,
+  organizations,
+  scanApprovals,
+  scans,
+} from "../../db/schema";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
 
@@ -23,6 +29,8 @@ export interface WorkflowGateRecord {
   decision: "approved" | "rejected" | null;
   decisionComment: string | null;
   reportUrl: string | null;
+  /** Approval bar captured when this gate left `pending`; null on legacy rows. */
+  requiredReleaseApprovals: number | null;
   // Representative (highest-risk) package scan. A monorepo gate fans out into
   // several per-package scans (`scans.gate_id = this.id`); this points at the
   // one surfaced as the gate's headline.
@@ -152,6 +160,9 @@ export interface GatePackageScan {
   risk: string;
   status: string;
   decision: string | null;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date | null;
   releaseRisk: string | null;
 }
 
@@ -174,6 +185,9 @@ export async function listGatePackageScans(
       risk: scans.risk,
       status: scans.status,
       decision: scans.decision,
+      decisionReason: scans.decisionReason,
+      decidedByUserId: scans.decidedByUserId,
+      decidedAt: scans.decidedAt,
       riskSummaryJson: scans.riskSummaryJson,
       createdAt: scans.createdAt,
     })
@@ -189,8 +203,49 @@ export async function listGatePackageScans(
       risk: row.risk,
       status: row.status,
       decision: row.decision,
+      decisionReason: row.decisionReason,
+      decidedByUserId: row.decidedByUserId,
+      decidedAt: row.decidedAt,
       releaseRisk: readReleaseRisk(row.riskSummaryJson),
     }));
+}
+
+/** The first durable human block across every package in one gate. */
+export async function getGateFirstBlockingVote(
+  db: AppDb,
+  organizationId: string,
+  gateId: string,
+): Promise<{
+  scanId: string;
+  decisionReason: string | null;
+  decidedByUserId: string | null;
+  decidedAt: Date;
+} | null> {
+  const [row] = await db
+    .select({
+      scanId: scanApprovals.scanId,
+      decisionReason: scanApprovals.reason,
+      decidedByUserId: scanApprovals.userId,
+      decidedAt: scanApprovals.updatedAt,
+    })
+    .from(scanApprovals)
+    .innerJoin(
+      scans,
+      and(
+        eq(scans.id, scanApprovals.scanId),
+        eq(scans.organizationId, organizationId),
+        eq(scans.gateId, gateId),
+      ),
+    )
+    .where(
+      and(
+        eq(scanApprovals.organizationId, organizationId),
+        eq(scanApprovals.decision, "no_publish"),
+      ),
+    )
+    .orderBy(scanApprovals.updatedAt, scanApprovals.id)
+    .limit(1);
+  return row ?? null;
 }
 
 function readReleaseRisk(riskSummaryJson: unknown): string | null {
@@ -261,7 +316,10 @@ export async function resetGateReviewForRetry(
       scanId: null,
       reviewStartedAt: null,
       failureReason: null,
-      updatedAt: now,
+      // `updatedAt` is also the review generation observed by decision
+      // requests. Guarantee that a reset advances it even if both operations
+      // happen within the same millisecond.
+      updatedAt: sql`max(${githubWorkflowGates.updatedAt} + 1, ${now.getTime()})`,
     })
     .where(
       and(
@@ -281,6 +339,14 @@ export async function resetGateReviewForRetry(
           where ${scans.gateId} = ${input.gateId}
             and ${scans.organizationId} = ${input.organizationId}
             and ${scans.decision} is not null
+        )`,
+        sql`not exists (
+          select 1
+          from ${scanApprovals}
+          inner join ${scans} on ${scans.id} = ${scanApprovals.scanId}
+          where ${scans.gateId} = ${input.gateId}
+            and ${scans.organizationId} = ${input.organizationId}
+            and ${scanApprovals.organizationId} = ${input.organizationId}
         )`,
       ),
     )
@@ -338,6 +404,11 @@ export async function markGateDecided(
       decision: input.decision,
       decisionComment: input.comment,
       reportUrl: input.reportUrl ?? null,
+      requiredReleaseApprovals: sql<number>`(
+        select ${organizations.requiredReleaseApprovals}
+        from ${organizations}
+        where ${organizations.id} = ${githubWorkflowGates.organizationId}
+      )`,
       decidedAt: now,
       updatedAt: now,
     })
@@ -367,6 +438,34 @@ export async function markGateDecidedForPackageAggregate(
   input: DecideGateWithPackageAggregateInput,
 ): Promise<WorkflowGateRecord | null> {
   const now = new Date();
+  const currentRequiredApprovals = sql`(
+    select ${organizations.requiredReleaseApprovals}
+    from ${organizations}
+    where ${organizations.id} = ${input.organizationId}
+  )`;
+  const packageHasVotes = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+  )`;
+  const packageHasBlock = sql`exists (
+    select 1
+    from ${scanApprovals}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'no_publish'
+  )`;
+  const packageEligibleApprovalCount = sql`(
+    select count(*)
+    from ${scanApprovals}
+    inner join ${organizationMembers}
+      on ${organizationMembers.organizationId} = ${input.organizationId}
+      and ${organizationMembers.userId} = ${scanApprovals.userId}
+    where ${scanApprovals.scanId} = ${scans.id}
+      and ${scanApprovals.organizationId} = ${input.organizationId}
+      and ${scanApprovals.decision} = 'publish'
+  )`;
   const packageDecisionCondition =
     input.decision === "approved"
       ? sql`exists (
@@ -380,7 +479,15 @@ export async function markGateDecidedForPackageAggregate(
           from ${scans}
           where ${scans.gateId} = ${input.gateId}
             and ${scans.organizationId} = ${input.organizationId}
-            and (${scans.decision} is null or ${scans.decision} <> 'publish')
+            and (
+              ${scans.decision} is null
+              or ${scans.decision} <> 'publish'
+              or ${packageHasBlock}
+              or (
+                (${currentRequiredApprovals} > 1 or ${packageHasVotes})
+                and ${packageEligibleApprovalCount} < ${currentRequiredApprovals}
+              )
+            )
         )`
       : sql`exists (
           select 1
@@ -396,6 +503,14 @@ export async function markGateDecidedForPackageAggregate(
       decision: input.decision,
       decisionComment: input.comment,
       reportUrl: input.reportUrl ?? null,
+      // Snapshot the policy in the same statement that finalizes the gate. A
+      // vote request may have observed an older bar before an owner changed it;
+      // completed gates must describe the policy live at their final CAS.
+      requiredReleaseApprovals: sql<number>`(
+        select ${organizations.requiredReleaseApprovals}
+        from ${organizations}
+        where ${organizations.id} = ${githubWorkflowGates.organizationId}
+      )`,
       decidedAt: now,
       updatedAt: now,
     })
@@ -455,6 +570,7 @@ function readGateRow(row: {
   decision: string | null;
   decisionComment: string | null;
   reportUrl: string | null;
+  requiredReleaseApprovals: number | null;
   scanId: string | null;
   reviewStartedAt: Date | string | number | null;
   failureReason: string | null;
@@ -480,6 +596,7 @@ function readGateRow(row: {
     decision: normalizeGateDecision(row.decision),
     decisionComment: row.decisionComment,
     reportUrl: row.reportUrl,
+    requiredReleaseApprovals: row.requiredReleaseApprovals,
     scanId: row.scanId,
     reviewStartedAt: row.reviewStartedAt ? new Date(row.reviewStartedAt) : null,
     failureReason: row.failureReason,

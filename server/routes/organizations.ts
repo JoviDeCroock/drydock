@@ -17,11 +17,23 @@ import {
   renameOrganization,
   setRequireTwoFactorForReleaseDecisions,
 } from "../db/organizations";
+import {
+  MAX_REQUIRED_RELEASE_APPROVALS,
+  getOrganizationApprovalPolicy,
+  recordScanDecisionProductEvents,
+  setRequiredReleaseApprovals,
+} from "../db/scans";
 import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/notify/email";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
+import { finalizeReconciledWorkflowGateDecision } from "../lib/workflow-gate-job";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
@@ -187,6 +199,205 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
     },
   });
   return c.json({ requireTwoFactorForReleaseDecisions: enabled });
+});
+
+// Set how many distinct members must approve a release before it counts as
+// approved. Owner-only for the same reason as the two-factor policy: it binds
+// every member, and an admin must not be able to lower a bar the owner raised.
+//
+// The bar is capped at the org's current member count. A three-approval policy
+// in a two-person org is not a stricter policy, it is a release process that
+// can never complete — and the failure would surface later, as a deployment
+// that silently never releases, rather than here.
+organizationsRoutes.put("/:id/release-approvals", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    requiredApprovals?: unknown;
+    totpCode?: unknown;
+  };
+  const requested = Number(body.requiredApprovals);
+  if (!Number.isInteger(requested) || requested < 1 || requested > MAX_REQUIRED_RELEASE_APPROVALS) {
+    return c.json(
+      { error: `requiredApprovals must be an integer from 1 to ${MAX_REQUIRED_RELEASE_APPROVALS}` },
+      400,
+    );
+  }
+
+  const db = createDb(c.env.DB);
+  const session = c.get("authSession");
+  const organizationId = c.req.param("id");
+  const owner = await isOrganizationOwner(db, organizationId, session.userId);
+  if (!owner) return c.json({ error: "not found" }, 404);
+
+  try {
+    await enforceRateLimit(c.env, {
+      key: `organizations:release-approvals:${session.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      return rateLimitResponse(c, "release approvals rate limit exceeded", err);
+    }
+    throw err;
+  }
+
+  const policy = await getOrganizationApprovalPolicy(db, organizationId);
+  if (requested > policy.memberCount) {
+    return c.json(
+      {
+        error: `this organization has ${policy.memberCount} member${
+          policy.memberCount === 1 ? "" : "s"
+        } — invite more before requiring ${requested} approvals`,
+        code: "not_enough_members",
+        memberCount: policy.memberCount,
+      },
+      409,
+    );
+  }
+
+  // Lowering the bar weakens the same release control that gate decisions
+  // enforce, and can immediately release a held deployment during the
+  // reconciliation below. A live owner session is therefore not enough: match
+  // the release-two-factor relax path and require a fresh second factor.
+  const lowering = requested < policy.required;
+  let twoFactorVerified = false;
+  if (lowering) {
+    if (!(await userHasTwoFactor(db, session.userId))) {
+      return c.json(
+        {
+          error:
+            "enable two-factor authentication on your account before lowering required release approvals",
+          code: "two_factor_enrollment_required",
+        },
+        403,
+      );
+    }
+    const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
+    if (!totpCode) {
+      return c.json(
+        { error: "two-factor verification required", code: "two_factor_required" },
+        401,
+      );
+    }
+    if (!(await verifyTotpStepUp(c.get("auth"), c.req.raw, totpCode))) {
+      return c.json({ error: "invalid two-factor code", code: "two_factor_invalid" }, 401);
+    }
+    twoFactorVerified = true;
+  }
+
+  const reconciliation = await setRequiredReleaseApprovals(
+    db,
+    organizationId,
+    requested,
+    policy.required,
+  );
+  let policyChangedByThisRequest = reconciliation.applied;
+  if (!reconciliation.applied) {
+    const currentPolicy = await getOrganizationApprovalPolicy(db, organizationId);
+    if (currentPolicy.required !== requested) {
+      // A different state must be re-submitted so its live direction (and
+      // therefore TOTP requirement) is evaluated again.
+      return c.json(
+        {
+          error: "the release approval policy changed while this request was being applied",
+          code: "approval_policy_changed",
+          requiredApprovals: currentPolicy.required,
+        },
+        409,
+      );
+    }
+    // A concurrent identical request committed the policy transaction, but it
+    // may have been interrupted before finalizing a now-ready gate. Continue
+    // through the idempotent CAS work below; only the policy audit belongs to
+    // the request whose conditional write actually succeeded.
+    policyChangedByThisRequest = false;
+  }
+  purgeReconciledPublicFeedCaches(
+    optionalWorkerExecutionContext(c),
+    canonicalOrigin(c),
+    reconciliation.changedScans,
+  );
+  for (const readyGate of reconciliation.readyGates) {
+    await finalizeReconciledWorkflowGateDecision(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      db,
+      {
+        organizationId,
+        gateId: readyGate.id,
+        decision: readyGate.decision,
+        requiredApprovals: requested,
+        trigger: "approval_policy",
+        reconciledByUserId: session.userId,
+      },
+    );
+  }
+  for (const scan of reconciliation.changedScans) {
+    if (scan.decision !== "publish" && scan.decision !== "no_publish") continue;
+    try {
+      await recordScanEvent(db, {
+        organizationId,
+        // The vote that became decisive owns the release verdict. The owner
+        // changing policy is the reconciliation trigger, recorded separately
+        // here and by organization.release_approvals_changed.
+        actorUserId: scan.decidedByUserId,
+        scanId: scan.id,
+        type: "scan.decided",
+        metadata: {
+          decision: scan.decision,
+          reason: scan.decisionReason,
+          approvedCount: scan.approvalCount,
+          requiredApprovals: requested,
+          trigger: "approval_policy",
+          reconciledByUserId: session.userId,
+          decisionAt: scan.decidedAt?.toISOString() ?? null,
+        },
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "scan.decision_bookkeeping_failed", {
+        organizationId,
+        scanId: scan.id,
+        decision: scan.decision,
+        trigger: "approval_policy",
+        error: describeOperationalError(err),
+      });
+    }
+    recordScanDecisionProductEvents(c.env, scan, {
+      organizationId,
+      decision: scan.decision,
+      ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+      approvalCount: scan.approvalCount,
+      requiredApprovals: requested,
+      now: scan.decidedAt ?? new Date(),
+    });
+  }
+  // The policy and any gate decisions above are already durable. Audit
+  // bookkeeping must not strand a gate whose packages were reconciled to
+  // approved, so contain it after every ready gate has been finalized and
+  // scheduled for delivery.
+  if (policyChangedByThisRequest) {
+    try {
+      await recordScanEvent(db, {
+        organizationId,
+        actorUserId: session.userId,
+        type: "organization.release_approvals_changed",
+        metadata: {
+          requiredApprovals: requested,
+          previousRequiredApprovals: policy.required,
+          twoFactor: twoFactorVerified,
+          twoFactorMethod: twoFactorVerified ? "totp" : null,
+        },
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "organization.release_approvals_bookkeeping_failed", {
+        organizationId,
+        requiredApprovals: requested,
+        previousRequiredApprovals: policy.required,
+        error: describeOperationalError(err),
+      });
+    }
+  }
+  return c.json({ requiredApprovals: requested });
 });
 
 organizationsRoutes.delete("/:id", async (c) => {

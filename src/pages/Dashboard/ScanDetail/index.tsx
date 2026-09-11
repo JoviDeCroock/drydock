@@ -17,6 +17,7 @@ import {
   type DecisionStatus,
   type DeleteStatus,
   type PublicShareInfo,
+  type ScanApprovalState,
   type ScanDecision,
 } from "../../../models/scan";
 import type { WorkflowGateDecision } from "../../../models/github-app";
@@ -238,12 +239,11 @@ export default function ScanDetailPage() {
   ].filter((label): label is string => label !== null);
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
-    await model.setDecision(decision, reason);
-    const saved = model.decisionStatus.peek() === "idle";
-    if (saved) {
+    const updated = await model.setDecision(decision, reason);
+    if (updated) {
       decisionDialogOpen.value = false;
     }
-    return saved;
+    return updated;
   };
 
   const handleGateDecision = async (
@@ -272,6 +272,7 @@ export default function ScanDetailPage() {
 
   const gateReviewComplete = detail?.scan.status === "complete";
   const gateReviewFailed = detail?.scan.status === "failed";
+  const gateHasRecordedApprovals = gate?.packages.some((pkg) => pkg.approvalCount > 0) ?? false;
 
   // npm scans become decidable once complete; gate scans are decidable while
   // pending after the review either completes or fails. Human decisions remain
@@ -304,7 +305,9 @@ export default function ScanDetailPage() {
         detail={detail}
         onDecideClick={headerDecideClick}
         onDeleteClick={
-          detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
+          detail?.scan.status === "failed" && !isWorkflowGate
+            ? () => (deleteDialogOpen.value = true)
+            : undefined
         }
         onShareClick={onShareClick}
         shareSignal={model.share}
@@ -325,7 +328,12 @@ export default function ScanDetailPage() {
         <GateContextPanel
           gate={gate}
           packageName={detail.scan.packageName}
-          canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
+          canRetry={
+            gate?.status === "pending" &&
+            gateReviewFailed &&
+            !detail.scan.decision &&
+            !gateHasRecordedApprovals
+          }
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}
           onRetry={handleGateRetry}
@@ -461,6 +469,7 @@ export default function ScanDetailPage() {
           decidedAt={detail.scan.decidedAt}
           statusSignal={model.decisionStatus}
           errorSignal={model.decisionError}
+          approvalsSignal={model.approvals}
           npmStagedPackagesUrlSignal={npmStagedPackagesUrlSignal}
           scan={detail.scan}
           onSubmit={handleDecisionSubmit}
@@ -494,6 +503,7 @@ export default function ScanDetailPage() {
           packageName={detail.scan.packageName}
           statusSignal={model.gateDecisionStatus}
           errorSignal={model.gateDecisionError}
+          approvalsSignal={model.approvals}
           packageDecision={
             detail.scan.decision === "publish" || detail.scan.decision === "no_publish"
               ? detail.scan.decision
@@ -510,7 +520,7 @@ export default function ScanDetailPage() {
 
       <StageCommandDialogHost />
 
-      {detail?.scan.status === "failed" ? (
+      {detail?.scan.status === "failed" && !isWorkflowGate ? (
         <DeleteDialogHost
           openSignal={deleteDialogOpen}
           onClose={() => (deleteDialogOpen.value = false)}
@@ -535,15 +545,17 @@ function DecisionDialogHost({
   openSignal,
   statusSignal,
   errorSignal,
+  approvalsSignal,
   npmStagedPackagesUrlSignal,
   ...props
 }: Omit<
   ComponentProps<typeof DecisionDialog>,
-  "open" | "status" | "error" | "npmStagedPackagesUrl"
+  "open" | "status" | "error" | "npmStagedPackagesUrl" | "approvals" | "viewerUserId"
 > & {
   openSignal: ReadonlySignal<boolean>;
   statusSignal: ReadonlySignal<DecisionStatus>;
   errorSignal: ReadonlySignal<string | null>;
+  approvalsSignal: ReadonlySignal<ScanApprovalState | null>;
   npmStagedPackagesUrlSignal: ReadonlySignal<string | null>;
 }) {
   return (
@@ -551,6 +563,10 @@ function DecisionDialogHost({
       open={openSignal.value}
       status={statusSignal.value}
       error={errorSignal.value}
+      approvals={approvalsSignal.value}
+      // Marks the viewer's own row in the roster. Read here, like the 2FA flag
+      // below, so the subscription stays off the page body.
+      viewerUserId={sessionModel.user.value?.id ?? null}
       npmStagedPackagesUrl={npmStagedPackagesUrlSignal.value}
       {...props}
     />
@@ -610,14 +626,16 @@ function GateDialogHost({
   openSignal,
   statusSignal,
   errorSignal,
+  approvalsSignal,
   ...props
 }: Omit<
   ComponentProps<typeof GateDecisionDialog>,
-  "open" | "status" | "error" | "requireTwoFactor"
+  "open" | "status" | "error" | "requireTwoFactor" | "approvals" | "viewerUserId"
 > & {
   openSignal: ReadonlySignal<boolean>;
   statusSignal: ReadonlySignal<DecisionStatus>;
   errorSignal: ReadonlySignal<string | null>;
+  approvalsSignal: ReadonlySignal<ScanApprovalState | null>;
 }) {
   // Read the session here so a step-up prompt only appears for members who
   // enrolled in 2FA. Reading it inside the host keeps the subscription off the
@@ -629,6 +647,8 @@ function GateDialogHost({
       status={statusSignal.value}
       error={errorSignal.value}
       requireTwoFactor={requireTwoFactor}
+      approvals={approvalsSignal.value}
+      viewerUserId={sessionModel.user.value?.id ?? null}
       {...props}
     />
   );

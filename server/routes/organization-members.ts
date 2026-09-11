@@ -13,10 +13,15 @@ import {
   listPendingInvitations,
   markInvitationAccepted,
   normalizeEmail,
-  removeOrganizationMember,
+  removeOrganizationMemberWithApprovalReconciliation,
   revokeInvitation,
   upsertInvitation,
 } from "../db/invitations";
+import {
+  getOrganizationApprovalPolicy,
+  listReadyPendingGates,
+  recordScanDecisionProductEvents,
+} from "../db/scans";
 import {
   getOrganizationName,
   getOrganizationOwnerUserId,
@@ -28,7 +33,14 @@ import {
   requireActiveOrganizationContext,
 } from "../lib/auth/active-organization";
 import { sanitizeAddress } from "../lib/notify/email";
-import { rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import {
+  optionalWorkerExecutionContext,
+  workerExecutionContext,
+} from "../lib/platform/execution-context";
+import { purgeReconciledPublicFeedCaches } from "../lib/public-feed";
+import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
+import { finalizeReconciledWorkflowGateDecision } from "../lib/workflow-gate-job";
 import { generateInvitationToken, hashInvitationToken } from "../lib/auth/invitation-token";
 import { notifyOrganizationInvite } from "../lib/notify";
 import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/auth/roles";
@@ -57,8 +69,17 @@ organizationMembersRoutes.delete("/members/:userId", async (c) => {
     return c.json({ error: "cannot remove the organization owner" }, 400);
   }
 
-  const removed = await removeOrganizationMember(db, organizationId, targetUserId);
-  if (!removed) return c.json({ error: "not found" }, 404);
+  const removal = await removeOrganizationMemberWithApprovalReconciliation(
+    db,
+    organizationId,
+    targetUserId,
+  );
+  if (!removal.removed) return c.json({ error: "not found" }, 404);
+  purgeReconciledPublicFeedCaches(
+    optionalWorkerExecutionContext(c),
+    canonicalOrigin(c),
+    removal.changedScans,
+  );
 
   await recordScanEvent(db, {
     organizationId,
@@ -198,11 +219,71 @@ organizationMembersRoutes.post("/invitations/accept", async (c) => {
     return c.json({ error: "invitation is no longer valid" }, 409);
   }
 
-  await addOrganizationMember(db, {
+  const changedScans = await addOrganizationMember(db, {
     organizationId: invitation.organizationId,
     userId: session.userId,
     role: invitation.role,
   });
+  purgeReconciledPublicFeedCaches(
+    optionalWorkerExecutionContext(c),
+    canonicalOrigin(c),
+    changedScans,
+  );
+  const policy = await getOrganizationApprovalPolicy(db, invitation.organizationId);
+  // Ready gates come from the shared readiness query rather than from the
+  // scans this join happened to change: joining is also a recovery point, so a
+  // gate left ready by an earlier interrupted request is finalized here too,
+  // with the fail-closed rejection already selected when a sibling package
+  // carries a durable block.
+  for (const gate of await listReadyPendingGates(db, invitation.organizationId)) {
+    await finalizeReconciledWorkflowGateDecision(
+      c.env,
+      workerExecutionContext(c.executionCtx),
+      db,
+      {
+        organizationId: invitation.organizationId,
+        gateId: gate.id,
+        decision: gate.decision,
+        requiredApprovals: policy.required,
+        trigger: "member_joined",
+        reconciledByUserId: session.userId,
+      },
+    );
+  }
+  for (const scan of changedScans) {
+    try {
+      await recordScanEvent(db, {
+        organizationId: invitation.organizationId,
+        actorUserId: session.userId,
+        scanId: scan.id,
+        type: "scan.decided",
+        metadata: {
+          decision: "publish",
+          reason: scan.decisionReason,
+          approvedCount: scan.approvalCount,
+          requiredApprovals: policy.required,
+          trigger: "member_joined",
+          decisionAt: scan.decidedAt?.toISOString() ?? null,
+        },
+      });
+    } catch (err) {
+      emitOperationalEvent("warn", "scan.decision_bookkeeping_failed", {
+        organizationId: invitation.organizationId,
+        scanId: scan.id,
+        decision: "publish",
+        trigger: "member_joined",
+        error: describeOperationalError(err),
+      });
+    }
+    recordScanDecisionProductEvents(c.env, scan, {
+      organizationId: invitation.organizationId,
+      decision: "publish",
+      ecosystem: scan.source === "workflow_gate" ? "gate" : "npm",
+      approvalCount: scan.approvalCount,
+      requiredApprovals: policy.required,
+      now: scan.decidedAt ?? new Date(),
+    });
+  }
   await recordScanEvent(db, {
     organizationId: invitation.organizationId,
     actorUserId: session.userId,

@@ -65,6 +65,32 @@ The aggregate evidence status covers evidence required by the selected mode.
 Registry outcome is reported independently because an unobserved post-review
 registry state does not make the review evidence incomplete.
 
+## Multi-party approvals
+
+When the bar governing the scan requires more than one approval
+([`release-approvals.md`](./release-approvals.md)), `content.release.decision`
+additionally carries `approvals`: the bar as `required` and the recorded vote
+roster as `votes`, each vote holding `voter` (a `drydock_user` id like
+`reviewer`, or null once that account is deleted), `decision`, and `votedAt` —
+the vote's latest submission time, in submission order. The `reviewer` field
+keeps its existing meaning: the member whose vote produced the verdict, always
+also present in the roster when votes exist.
+
+`required` is the same bar the approval state reports: a completed workflow
+gate's snapshot of the policy at its final decision, otherwise the live
+organization policy. Under the default one-approval bar the field is absent
+entirely, so single-approver and pre-approval receipts stay byte-identical to
+receipts minted before this field existed. It is also absent for a verdict with
+no vote roster outside a completed gate — a decision that predates multi-party
+approval was never governed by the live bar, and the receipt must not claim it
+was. A former member's vote remains in the roster of a final decision — that is
+the roster that produced the verdict.
+
+Like every receipt claim, the roster is a snapshot at mint time of the state
+that produced the recorded decision. A receipt minted before a later policy
+raise reopens the scan keeps the old verdict and its roster; re-export after
+any reconciliation to obtain a receipt describing the new state.
+
 ## Limitations
 
 - v1 receipts are generated from current persisted state rather than stored as

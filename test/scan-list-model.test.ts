@@ -135,6 +135,35 @@ describe("ScanListModel decisions", () => {
 
     expect(model.scans.value).toEqual([]);
   });
+
+  test("updates the approval count when a successful vote is still short of quorum", async () => {
+    const partial = scanDetail(null);
+    partial.approvals = {
+      required: 2,
+      approvedCount: 1,
+      blockedCount: 0,
+      verdict: null,
+      legacyDecision: false,
+      approvals: [],
+      viewerDecision: "publish",
+      eligibleApproverCount: 2,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(jsonResponse(partial))),
+    );
+
+    model = new ScanListModel();
+    model.scans.value = [{ ...scanDetail(null).scan, approvalCount: 0, legacyDecision: true }];
+    model.filter.value = "undecided";
+
+    const updated = await model.setDecision("scan-1", "publish", "reviewed");
+
+    expect(updated?.approvals?.verdict).toBeNull();
+    expect(model.scans.value[0]?.approvalCount).toBe(1);
+    expect(model.scans.value[0]?.legacyDecision).toBe(false);
+    expect(model.scans.value[0]?.viewerDecision).toBe("publish");
+  });
 });
 
 describe("ScanListModel deletion", () => {
@@ -208,6 +237,57 @@ describe("ScanListModel deletion", () => {
     await refreshing;
 
     expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-2"]);
+  });
+});
+
+describe("ScanListModel pagination", () => {
+  afterEach(() => {
+    model?.[Symbol.dispose]();
+    model = null;
+    vi.unstubAllGlobals();
+  });
+
+  test("appends the next page when the approval bar is unchanged", async () => {
+    const next = { ...scanDetail(null).scan, id: "scan-2" };
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse({ scans: [next], nextCursor: null, requiredApprovals: 2 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+    model.requiredApprovals.value = 2;
+    model.nextCursor.value = "next-page";
+
+    await model.loadMore();
+
+    expect(model.scans.value.map((scan) => scan.id)).toEqual(["scan-1", "scan-2"]);
+    expect(model.nextCursor.value).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("refreshes the whole list when the approval bar changes between pages", async () => {
+    const refreshed = { ...scanDetail("publish").scan, id: "scan-refreshed" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ scans: [], nextCursor: null, requiredApprovals: 3 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ scans: [refreshed], nextCursor: null, requiredApprovals: 3 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    model = new ScanListModel();
+    model.scans.value = [scanDetail(null).scan];
+    model.requiredApprovals.value = 2;
+    model.nextCursor.value = "next-page";
+
+    await model.loadMore();
+
+    expect(model.requiredApprovals.value).toBe(3);
+    expect(model.scans.value).toEqual([refreshed]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("cursor=next-page");
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("cursor=");
   });
 });
 

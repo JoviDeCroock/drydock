@@ -13,9 +13,21 @@ type EvidenceStatus = "complete" | "partial" | "unknown" | "conflicting" | "not_
 
 const RELEASE_RECEIPT_SCHEMA = "drydock.release-receipt.v1";
 
+export interface ReleaseReceiptApprovalsInput {
+  /** The approval bar governing this scan: a completed gate's snapshot, else the live org policy. */
+  required: number;
+  /** The scan's recorded vote roster, in submission order. */
+  votes: Array<{
+    userId: string | null;
+    decision: "publish" | "no_publish";
+    votedAt: Date | number | string | null;
+  }>;
+}
+
 export async function buildReleaseReceipt(
   detail: ScanDetail,
   workflowGate: WorkflowGateRecord | null,
+  approvals: ReleaseReceiptApprovalsInput | null = null,
 ) {
   const report = buildReportExport(detail);
   const reportBytes = serializeReportExportDocument(report);
@@ -26,7 +38,7 @@ export async function buildReleaseReceipt(
     envelope: report.intentEnvelope,
   };
   const gate = buildWorkflowGate(mode, workflowGate);
-  const releaseDecision = buildReleaseDecision(detail.scan);
+  const releaseDecision = buildReleaseDecision(detail.scan, approvals);
   const requiredStatuses = [
     reviewedArtifacts.status,
     intentBinding.status,
@@ -161,7 +173,10 @@ function buildWorkflowGate(
   };
 }
 
-function buildReleaseDecision(scan: ScanDetail["scan"]) {
+function buildReleaseDecision(
+  scan: ScanDetail["scan"],
+  approvals: ReleaseReceiptApprovalsInput | null,
+) {
   const decidedAt = toIso(scan.decidedAt);
   const reviewer = scan.decidedByUserId
     ? { kind: "drydock_user" as const, id: scan.decidedByUserId }
@@ -170,6 +185,23 @@ function buildReleaseDecision(scan: ScanDetail["scan"]) {
     outcome: scan.decision ?? null,
     decidedAt,
     reviewer,
+    // Only a multi-party bar changes what the single `reviewer` field can
+    // claim, so only then does the receipt carry the roster; under the default
+    // one-approval policy the field is absent and the bytes match receipts
+    // minted before approvals existed. Voter identity mirrors `reviewer`: user
+    // id only, and null for a vote whose account has since been deleted.
+    ...(approvals && approvals.required > 1
+      ? {
+          approvals: {
+            required: approvals.required,
+            votes: approvals.votes.map((vote) => ({
+              voter: vote.userId ? { kind: "drydock_user" as const, id: vote.userId } : null,
+              decision: vote.decision,
+              votedAt: toIso(vote.votedAt),
+            })),
+          },
+        }
+      : {}),
   };
   return {
     status:

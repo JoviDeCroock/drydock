@@ -102,7 +102,8 @@ export async function deletePendingScanJob(db: AppDb, scanId: string, organizati
 export type DeleteFailedScanResult =
   | { outcome: "deleted"; source: string }
   | { outcome: "not_found" }
-  | { outcome: "not_failed" };
+  | { outcome: "not_failed" }
+  | { outcome: "workflow_gate_managed" };
 
 /**
  * Delete one user-visible failed scan. The status predicate belongs on the
@@ -121,17 +122,26 @@ export async function deleteFailedScan(
         eq(scans.id, scanId),
         eq(scans.organizationId, organizationId),
         eq(scans.status, "failed"),
+        // Workflow-gate scans belong to the gate review batch. In particular,
+        // deleting a failed package with a partial approval would erase the
+        // vote that prevents resetGateReviewForRetry from replacing reviewed
+        // release state. The gate retry path owns discarding these scans.
+        ne(scans.source, "workflow_gate"),
       ),
     )
     .returning({ source: scans.source });
   if (deleted[0]) return { outcome: "deleted", source: deleted[0].source };
 
   const [existing] = await db
-    .select({ id: scans.id })
+    .select({ id: scans.id, source: scans.source, status: scans.status })
     .from(scans)
     .where(and(eq(scans.id, scanId), eq(scans.organizationId, organizationId)))
     .limit(1);
-  return existing ? { outcome: "not_failed" } : { outcome: "not_found" };
+  if (!existing) return { outcome: "not_found" };
+  if (existing.status === "failed" && existing.source === "workflow_gate") {
+    return { outcome: "workflow_gate_managed" };
+  }
+  return { outcome: "not_failed" };
 }
 
 export async function listExistingScanStageIds(

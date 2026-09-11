@@ -76,6 +76,10 @@ export const ScanDetailModel = createModel((id: string) => {
   const gateRetryStatus = signal<DecisionStatus>("idle");
   const gateRetryError = signal<string | null>(null);
 
+  // Who has approved this release and how many the org requires. Read off the
+  // detail payload rather than tracked separately: every path that changes it
+  // (a vote, a poll, a gate decision) already replaces `detail`.
+  const approvals = computed(() => detail.value?.approvals ?? null);
   const isWorkflowGate = computed(() => detail.value?.scan.source === "workflow_gate");
   const status = computed(() => detail.value?.scan.status ?? null);
   const isPolling = computed(() => status.value === "pending" || status.value === "running");
@@ -197,6 +201,7 @@ export const ScanDetailModel = createModel((id: string) => {
     compareLoading,
     fileLoading,
     compareError,
+    approvals,
     decisionStatus,
     decisionError,
     deleteStatus,
@@ -324,7 +329,10 @@ export const ScanDetailModel = createModel((id: string) => {
       this.selectedVersion.value = version;
     },
 
-    async setDecision(decision: ScanDecision, reason: string | null): Promise<void> {
+    async setDecision(
+      decision: ScanDecision,
+      reason: string | null,
+    ): Promise<PersistedScanDetail | null> {
       const id = this.scanId.peek();
       this.decisionStatus.value = "saving";
       this.decisionError.value = null;
@@ -332,9 +340,11 @@ export const ScanDetailModel = createModel((id: string) => {
         const updated = await setScanDecision(id, decision, reason);
         this.detail.value = updated;
         this.decisionStatus.value = "idle";
+        return updated;
       } catch (err) {
         this.decisionError.value = errorMessage(err);
         this.decisionStatus.value = "error";
+        return null;
       }
     },
 

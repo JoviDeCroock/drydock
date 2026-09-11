@@ -46,6 +46,9 @@ export type AnalyticsEvent =
       releaseRisk: string;
       artifactRisk: string;
       timeToDecisionMs: number;
+      /** Distinct members who approved, against the bar the org set. */
+      approvalCount: number;
+      requiredApprovals: number;
     }
   | {
       name: "ai_review.finished";
@@ -222,7 +225,7 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         event.organizationId,
         event.ecosystem,
         [event.decision, event.releaseRisk, event.artifactRisk],
-        [event.timeToDecisionMs],
+        [event.timeToDecisionMs, event.approvalCount, event.requiredApprovals],
       );
     case "ai_review.finished":
       return base(
