@@ -12,7 +12,16 @@
 // (`--changed <merge-base>`; verified on Vitest 4 to cover committed, staged,
 // unstaged, and untracked files for both the node and workers projects). Quick
 // mode is not the pre-commit gate — full `pnpm run verify` is.
+//
+// `--file <path...>` (pnpm run verify:file <path...>) is the inner loop after
+// editing one or two files: lint and format check on exactly those files, the
+// full typecheck (1–2s with the native compiler, so scoping buys nothing), and
+// `vitest related` for both projects, which runs only the test files that import
+// the given paths (a test file relates to itself). Knip is skipped: an unused
+// export is a whole-graph question that `--quick` and the full gate answer.
 import { spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import {
   filterByExtension,
   listChangedFiles,
@@ -23,7 +32,18 @@ import {
 import { condenseFailureOutput } from "./lib/output-truncation.mjs";
 
 const quick = process.argv.includes("--quick");
-const label = quick ? "verify --quick" : "verify";
+const fileFlagIndex = process.argv.indexOf("--file");
+// `pnpm run verify:file -- src/x.ts` forwards the `--` literally; accept both
+// spellings. Paths are normalized to repo-relative so an absolute path (what
+// an agent usually has in hand) reaches oxlint/oxfmt in a form they match.
+const scopedFiles =
+  fileFlagIndex === -1
+    ? null
+    : process.argv
+        .slice(fileFlagIndex + 1)
+        .filter((arg, index) => !(index === 0 && arg === "--"))
+        .map((file) => path.relative(process.cwd(), path.resolve(file)) || ".");
+const label = scopedFiles !== null ? "verify --file" : quick ? "verify --quick" : "verify";
 
 function buildFullChecks() {
   return [
@@ -98,6 +118,100 @@ function buildQuickChecks() {
   ];
 }
 
+function buildFileChecks(files) {
+  const missing = files.filter((file) => !existsSync(file));
+  const directories = files.filter((file) => existsSync(file) && statSync(file).isDirectory());
+  const outside = files.filter((file) => file.startsWith(".."));
+  const problem =
+    files.length === 0
+      ? "pass one or more repository paths, e.g. pnpm run verify:file src/pages/Diff/index.tsx"
+      : missing.length > 0
+        ? `no such file: ${missing.join(", ")}`
+        : outside.length > 0
+          ? `outside the repository: ${outside.join(", ")}`
+          : directories.length > 0
+            ? `${directories.join(", ")}: pass files, not directories (a directory relates to no tests and would pass green)`
+            : null;
+  if (problem !== null) {
+    process.stdout.write(`verify --file: ${problem}\n`);
+    process.exitCode = 1;
+    return null;
+  }
+
+  const lintFiles = filterByExtension(files, OXLINT_EXTENSIONS);
+  const formatFiles = filterByExtension(files, OXFMT_EXTENSIONS);
+  const asArgs = (list) => list.map((file) => `./${file}`);
+  return [
+    ...(lintFiles.length > 0
+      ? [{ name: "lint", args: ["exec", "oxlint", ...asArgs(lintFiles)] }]
+      : []),
+    ...(formatFiles.length > 0
+      ? [
+          {
+            name: "format:check",
+            args: [
+              "exec",
+              "oxfmt",
+              "--check",
+              "--no-error-on-unmatched-pattern",
+              ...asArgs(formatFiles),
+            ],
+          },
+        ]
+      : []),
+    { name: "typecheck", args: ["run", "typecheck"] },
+    // `related` resolves importers through Vite's module graph, so a change to
+    // a widely imported helper still fans out to every suite that depends on
+    // it; a leaf file runs only its own tests. `--passWithNoTests` keeps a file
+    // with no importers in one project (UI code and the workers project) green.
+    {
+      name: "test:node:related",
+      args: [
+        "exec",
+        "vitest",
+        "related",
+        ...files,
+        "--run",
+        "--project",
+        "node",
+        "--passWithNoTests",
+      ],
+    },
+    {
+      name: "test:workers:related",
+      args: [
+        "exec",
+        "vitest",
+        "related",
+        ...files,
+        "--run",
+        "--project",
+        "workers",
+        "--passWithNoTests",
+      ],
+    },
+    // Markdown is read, not imported, so `related` cannot see the prose checks
+    // (path and command references, the agent context budget). Run them by
+    // name when a doc is in the set.
+    ...(files.some((file) => file.endsWith(".md"))
+      ? [
+          {
+            name: "test:prose",
+            args: [
+              "exec",
+              "vitest",
+              "run",
+              "--project",
+              "node",
+              "test/prose-",
+              "test/agent-context-budget",
+            ],
+          },
+        ]
+      : []),
+  ];
+}
+
 function runCheck(check) {
   return new Promise((resolve) => {
     const start = Date.now();
@@ -117,7 +231,12 @@ function runCheck(check) {
   });
 }
 
-const checks = quick ? buildQuickChecks() : buildFullChecks();
+const checks =
+  scopedFiles !== null
+    ? buildFileChecks(scopedFiles)
+    : quick
+      ? buildQuickChecks()
+      : buildFullChecks();
 
 if (checks !== null) {
   const pending = new Set(checks.map((check) => check.name));
@@ -153,6 +272,10 @@ if (checks !== null) {
     process.stdout.write(`\n${label} failed: ${failures.map((f) => f.name).join(", ")}\n`);
     // See scripts/test.mjs: process.exit() truncates buffered stdout on a pipe.
     process.exitCode = 1;
+  } else if (scopedFiles !== null) {
+    process.stdout.write(
+      "\nfile verify passed — run pnpm run verify:quick before pushing and pnpm run verify before committing\n",
+    );
   } else if (quick) {
     process.stdout.write("\nquick verify passed — run pnpm run verify before committing\n");
   }

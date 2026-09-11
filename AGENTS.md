@@ -44,6 +44,6 @@ Own the requested outcome: inspect, implement, verify, and report. Choose the ap
 
 - Add tests at the narrowest layer in `docs/repository-map.md`; follow `docs/release-safety.md` when behavior crosses a trust boundary.
 - Detection changes require security-corpus fixtures with explicit rule ID/severity/risk and relevant eval coverage.
-- Use `pnpm run verify:quick` while iterating and `pnpm run verify` before commits when practical. Generate migrations with `pnpm db:generate`.
+- Use `pnpm run verify:file <path>` after an edit, `pnpm run verify:quick` while iterating, and `pnpm run verify` before commits when practical. Generate migrations with `pnpm db:generate`.
 - Update the relevant docs for behavior, API, UI, security, workflow, deployment, or operator changes, or record `docs checked, no update needed` in the PR/testing summary.
 - For review fixes or branch finishing, use `.claude/skills/pre-pr/SKILL.md`: triage in `.context/review-log.md`, fix accepted findings across equivalent surfaces, and adversarially re-review the fix diff. Follow its completion rule; a clean delta does not clear older unresolved P1/P2.

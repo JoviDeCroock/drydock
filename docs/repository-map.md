@@ -32,7 +32,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 The complete script table is in `tooling.md`.
 
-- Iteration: `pnpm run verify:quick`.
+- After an edit: `pnpm run verify:file <path...>`. Iteration: `pnpm run verify:quick`.
 - Commit gate: `pnpm run verify`.
 - Targeted tests: `pnpm test -- <file> --project node|workers`.
 - Browser tests: `pnpm run test:e2e`.
