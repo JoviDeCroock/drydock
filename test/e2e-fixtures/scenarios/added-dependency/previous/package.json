@@ -1,0 +1,7 @@
+{
+  "name": "@drydock/e2e-dependency-parent",
+  "version": "1.0.0",
+  "description": "Parent package before it started depending on third-party code.",
+  "license": "MIT",
+  "main": "index.js"
+}

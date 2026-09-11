@@ -16,6 +16,7 @@ import {
  */
 import {
   normalizeFindingDiffStatus,
+  normalizeDependencyEvidence,
   redactFindings,
   type DiffEntry,
   type Finding,
@@ -105,6 +106,7 @@ export function parseReportArtifactMetadata(
     diff,
     findings: reportFindings.findings,
     findingAnnotations: reportFindings.annotations,
+    dependencyEvidence: normalizeDependencyEvidence(parsed.dependencyEvidence),
   };
 }
 
@@ -174,15 +176,6 @@ function artifactFindingId(scanId: string, index: number): string {
 // derived finding id so the annotation join matches the rows we hand back.
 // Returns null only when the findings array is structurally invalid — an empty
 // array (a clean scan) is valid and yields no findings.
-export function parseReportFindings(
-  text: string,
-  scanId: string,
-): { findings: ScanArtifactFindingRow[]; annotations: Map<string, FindingDiffAnnotation> } | null {
-  const parsed = parseJsonObject(text);
-  if (!parsed) return null;
-  return parseReportFindingsObject(parsed, scanId);
-}
-
 function parseReportFindingsObject(
   parsed: Record<string, unknown>,
   scanId: string,
@@ -214,6 +207,9 @@ function parseReportFindingsObject(
       source: "rule",
       ruleId: typeof item.ruleId === "string" ? item.ruleId : null,
       ruleVersion: typeof item.ruleVersion === "string" ? item.ruleVersion : null,
+      ...(parseFindingDependency(item.dependency)
+        ? { dependency: parseFindingDependency(item.dependency) ?? undefined }
+        : {}),
     });
   }
 
@@ -255,6 +251,31 @@ function parseReportFindingsObject(
   }
 
   return { findings, annotations };
+}
+
+function parseFindingDependency(value: unknown): Finding["dependency"] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const dependency = value as Record<string, unknown>;
+  if (
+    typeof dependency.name !== "string" ||
+    (dependency.version !== null && typeof dependency.version !== "string") ||
+    typeof dependency.path !== "string"
+  ) {
+    return null;
+  }
+  return {
+    name: dependency.name,
+    version: dependency.version as string | null,
+    path: dependency.path,
+    ...(dependency.section === "dependencies" ||
+    dependency.section === "optionalDependencies" ||
+    dependency.section === "peerDependencies"
+      ? { section: dependency.section }
+      : {}),
+    ...(typeof dependency.declaredSpec === "string"
+      ? { declaredSpec: dependency.declaredSpec }
+      : {}),
+  };
 }
 
 // Project a completed AI review's findings into the deterministic Finding

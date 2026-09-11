@@ -4,12 +4,14 @@ This directory contains Drydock's corpus for deterministic staged-publish review
 
 - `cases/` holds npm fixtures evaluated by `test/security-corpus.test.mjs`.
 - `cases-pypi/` holds PyPI release-artifact fixtures evaluated by `test/security-corpus-pypi.test.mjs`.
-- `cases-atpm/` holds atpm provenance fixtures evaluated by `test/security-corpus-atpm.test.mjs`.
 - `cases-vscode/` holds VS Code extension fixtures evaluated by `test/security-corpus-vscode.test.mjs`.
+- `cases-atpm/` holds atpm provenance fixtures evaluated by `test/security-corpus-atpm.test.mjs`.
+- `cases-dependencies/` retains legacy deep dependency-analysis cases for historical comparison. Current dependency-artifact golden coverage lives in `cases/dependency-artifact-*.json` and runs through the production composer in `test/security-corpus.test.mjs`.
 - `cases-frontier/` and `cases-benign/` are eval-only (read by `test/eval/`, not the golden tests). They use the v2 schema and include `real-sanitized` cases distilled from published incidents. See `docs/detection-eval.md` for the schema, the threat-class taxonomy, and the defanging rules (`real-sanitized` cases must carry a `provenance` note).
 - Fixtures are intentionally small JSON documents, not tarballs and not real malware.
 - `stagedFiles`/`previousFiles` (npm) and `artifacts`/`previousArtifacts` (PyPI) use the same `FileRecord` shape returned by the sandbox.
 - atpm fixtures provide target/baseline record projections, downloaded archive digests, and the optional trusted-publisher declaration consumed by `atpmRecordFindings`.
+- `dependencyArtifacts` entries may also provide `declaredDigest`, `reviewedDigest`, and `digestVerified` to pin dependency-review integrity outcomes. When the same package name appears in multiple selected sections, its map value is an array whose entries identify `section` and `declaredSpec`.
 - `expectedFindings` names the exact deterministic rule IDs, severities, and files expected today.
 - `expectedRisk` records the expected deterministic risk from those findings.
 - Optional `expectedPackageJsonDiff` assertions cover diff surfaces that may not yet produce findings.

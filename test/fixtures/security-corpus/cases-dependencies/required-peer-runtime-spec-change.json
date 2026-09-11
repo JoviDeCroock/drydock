@@ -1,0 +1,63 @@
+{
+  "id": "required-peer-runtime-spec-change",
+  "title": "A required peer moved to a different runtime spec is reviewed",
+  "category": "dependency-introduction",
+  "intent": "A required peer was already installed by npm, but changing its range while moving it under dependencies can resolve different bytes. The relocation exemption must apply only to the same spec.",
+  "previousPackageJson": {
+    "name": "component-lib",
+    "version": "1.0.0",
+    "peerDependencies": { "setup-helper": "^1.0.0" }
+  },
+  "stagedPackageJson": {
+    "name": "component-lib",
+    "version": "1.1.0",
+    "dependencies": { "setup-helper": "^2.0.0" },
+    "peerDependencies": { "setup-helper": "^2.0.0" }
+  },
+  "dependencyArtifacts": {
+    "setup-helper": {
+      "version": "2.0.0",
+      "packageJson": {
+        "name": "setup-helper",
+        "version": "2.0.0",
+        "scripts": { "postinstall": "node setup.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 110,
+          "sha256": "changed-peer-package-json",
+          "flags": [],
+          "textSample": "{\"name\":\"setup-helper\",\"version\":\"2.0.0\",\"scripts\":{\"postinstall\":\"node setup.js\"}}"
+        },
+        {
+          "path": "setup.js",
+          "size": 31,
+          "sha256": "changed-peer-setup-js",
+          "flags": [],
+          "textSample": "console.log('setup complete');\n"
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "setup-helper",
+      "section": "dependencies",
+      "declaredSpec": "^2.0.0",
+      "declarationKind": "range",
+      "status": "inspected",
+      "resolvedVersion": "2.0.0",
+      "observation": { "execution": "observed", "risk": "not-observed" }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "medium",
+      "file": "<dependency>setup-helper@2.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

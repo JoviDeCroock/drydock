@@ -1,7 +1,25 @@
 import { reliableFetch } from "../../platform/reliable-fetch";
+import { compareParsedSemver, parseSemver, type ParsedSemver } from "./semver";
+
+/**
+ * The `dist` fields Drydock reads off a packument version.
+ *
+ * `shasum`/`integrity` are the registry's own digests for the published
+ * artifact. They are kept (rather than projected away with the rest of `dist`)
+ * because the dependency-artifact review records what the registry claimed the
+ * bytes were alongside the digest Drydock recomputed from the bytes it fetched
+ * — evidence that survives the version being unpublished later.
+ */
+interface RegistryVersionDist {
+  tarball?: string;
+  shasum?: string;
+  integrity?: string;
+  /** Preserve authoritative-SRI presence even when its value exceeds the retained bound. */
+  integrityPresent?: true;
+}
 
 export interface RegistryMetadata {
-  versions?: Record<string, { dist?: { tarball?: string } }>;
+  versions?: Record<string, { dist?: RegistryVersionDist; deprecated?: true }>;
   "dist-tags"?: Record<string, string>;
   time?: Record<string, string>;
 }
@@ -34,9 +52,16 @@ export function isValidNpmPackageName(name: string): boolean {
 const ABBREVIATED_PACKUMENT_ACCEPT =
   "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8";
 
+// Packuments are package-controlled input read in the trusted parent isolate.
+// Keep enough room for long-lived packages while preventing an unbounded body
+// from consuming the Worker's 128 MiB memory budget.
+const MAX_PACKUMENT_BYTES = 32 * 1024 * 1024;
+const PACKUMENT_BODY_TIMEOUT_MS = 15_000;
+
 export interface FetchPackageMetadataOptions {
   npmToken?: string;
   npmRegistry?: string;
+  signal?: AbortSignal;
   /**
    * Ask for the abbreviated packument. Safe wherever only tarball URLs and
    * dist-tags are needed (the scan pipeline). Leave off when per-version
@@ -62,7 +87,7 @@ export async function fetchPackageMetadata(
   const fetchWith = (accept: string) => {
     const headers = new Headers({ accept });
     if (options.npmToken) headers.set("authorization", `Bearer ${options.npmToken}`);
-    return reliableFetch(url, { headers });
+    return reliableFetch(url, { headers, signal: options.signal });
   };
 
   let res = await fetchWith(
@@ -73,10 +98,63 @@ export async function fetchPackageMetadata(
     // scan its baseline: the broker maps a metadata failure to "no baseline",
     // which reports every file as added. Custom registries are a supported
     // deployment, so fall back to the plain document once before giving up.
+    await res.body?.cancel();
     res = await fetchWith("application/json");
   }
-  if (!res.ok) throw new Error(`metadata fetch failed: ${res.status}`);
-  return projectRegistryMetadata(await res.json());
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`metadata fetch failed: ${res.status}`);
+  }
+  return projectRegistryMetadata(await readPackumentJson(res, options.signal));
+}
+
+async function readPackumentJson(response: Response, callerSignal?: AbortSignal): Promise<unknown> {
+  const advertisedLength = Number(response.headers.get("content-length") || "0");
+  if (Number.isFinite(advertisedLength) && advertisedLength > MAX_PACKUMENT_BYTES) {
+    await response.body?.cancel();
+    throw new Error("metadata body too large");
+  }
+  if (!response.body) throw new Error("metadata response has no body");
+
+  // reliableFetch's per-attempt timer ends when headers arrive. Keep a body
+  // deadline here as well, and preserve the dependency review's earlier
+  // whole-pass deadline when the caller supplied one.
+  const bodyTimeout = AbortSignal.timeout(PACKUMENT_BODY_TIMEOUT_MS);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, bodyTimeout]) : bodyTimeout;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let complete = false;
+  const cancelOnAbort = () => {
+    void reader.cancel(signal.reason).catch(() => undefined);
+  };
+  if (signal.aborted) cancelOnAbort();
+  else signal.addEventListener("abort", cancelOnAbort, { once: true });
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason ?? new Error("metadata body read aborted");
+      if (done) {
+        complete = true;
+        break;
+      }
+      byteLength += value.byteLength;
+      if (byteLength > MAX_PACKUMENT_BYTES) throw new Error("metadata body too large");
+      chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener("abort", cancelOnAbort);
+    if (!complete) await reader.cancel().catch(() => undefined);
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 // Statuses a registry might answer with when it does not understand
@@ -104,12 +182,16 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   const projected: RegistryMetadata = {};
 
   if (doc.versions && typeof doc.versions === "object") {
-    const versions: Record<string, { dist?: { tarball?: string } }> = {};
+    const versions: Record<string, { dist?: RegistryVersionDist; deprecated?: true }> = {};
     for (const [version, entry] of Object.entries(doc.versions)) {
-      const tarball = entry?.dist?.tarball;
+      const dist = projectVersionDist(entry?.dist);
+      const deprecated = projectDeprecation(entry?.deprecated);
       // Every published version must survive as a truthy entry: baseline
       // selection walks the key set and dist-tag resolution checks presence.
-      versions[version] = typeof tarball === "string" ? { dist: { tarball } } : {};
+      versions[version] = {
+        ...(dist ? { dist } : {}),
+        ...(deprecated ? { deprecated } : {}),
+      };
     }
     projected.versions = versions;
   }
@@ -133,6 +215,27 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
   }
 
   return projected;
+}
+
+function projectDeprecation(value: unknown): true | null {
+  // Only the truthiness affects npm's range selection. Retaining the entire
+  // package-controlled message would grow every cached packument for no gain.
+  return typeof value === "string" && value.length > 0 ? true : null;
+}
+
+function projectVersionDist(dist: unknown): RegistryVersionDist | null {
+  if (!dist || typeof dist !== "object") return null;
+  const raw = dist as RegistryVersionDist;
+  const projected: RegistryVersionDist = {};
+  if (typeof raw.tarball === "string") projected.tarball = raw.tarball;
+  // Bounded on purpose: these are package-controlled strings that ride into the
+  // cached document and the persisted report, and a real digest is far shorter.
+  if (typeof raw.shasum === "string" && raw.shasum.length <= 128) projected.shasum = raw.shasum;
+  if (typeof raw.integrity === "string") {
+    projected.integrityPresent = true;
+    if (raw.integrity.length <= 512) projected.integrity = raw.integrity;
+  }
+  return Object.keys(projected).length ? projected : null;
 }
 
 export function pickPreviousVersion(
@@ -219,52 +322,4 @@ function pickSemverFallbackVersion(
     source: "highest-published",
     reason: "highest-published-fallback",
   };
-}
-
-interface ParsedSemver {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string[];
-}
-
-function parseSemver(version: string): ParsedSemver | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/.exec(version);
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ? match[4].split(".") : [],
-  };
-}
-
-function compareParsedSemver(a: ParsedSemver, b: ParsedSemver) {
-  for (const key of ["major", "minor", "patch"] as const) {
-    const diff = a[key] - b[key];
-    if (diff) return diff;
-  }
-  if (!a.prerelease.length && !b.prerelease.length) return 0;
-  if (!a.prerelease.length) return 1;
-  if (!b.prerelease.length) return -1;
-  for (let i = 0; i < Math.max(a.prerelease.length, b.prerelease.length); i++) {
-    const left = a.prerelease[i];
-    const right = b.prerelease[i];
-    if (left === undefined) return -1;
-    if (right === undefined) return 1;
-    const leftNumber = /^\d+$/.test(left) ? Number(left) : null;
-    const rightNumber = /^\d+$/.test(right) ? Number(right) : null;
-    if (leftNumber !== null && rightNumber !== null) {
-      const diff = leftNumber - rightNumber;
-      if (diff) return diff;
-    } else if (leftNumber !== null) {
-      return -1;
-    } else if (rightNumber !== null) {
-      return 1;
-    } else {
-      const diff = left.localeCompare(right);
-      if (diff) return diff;
-    }
-  }
-  return 0;
 }

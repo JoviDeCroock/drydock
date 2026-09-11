@@ -1,5 +1,10 @@
 import type { PackageJsonDiff } from "../../server/types";
+import {
+  dependencyDeclarationKey,
+  type DependencyEvidence,
+} from "../../server/lib/review/dependency-evidence";
 import { dependencyDiffHref, type DependencyDiffRow } from "../lib/package-diff-path";
+import { dependencyEvidenceDomId } from "../lib/dependency-evidence-navigation";
 import { Badge, statusTone } from "./Badge";
 import { EmptyLine } from "./Typography";
 
@@ -11,9 +16,11 @@ import { EmptyLine } from "./Typography";
 export function PackageJsonDiffView({
   diff,
   linkDependencyDiffs,
+  dependencyEvidenceByDeclaration,
 }: {
   diff: PackageJsonDiff;
   linkDependencyDiffs?: boolean;
+  dependencyEvidenceByDeclaration?: Record<string, DependencyEvidence>;
 }) {
   return (
     <div class="flex flex-col gap-4">
@@ -31,6 +38,7 @@ export function PackageJsonDiffView({
           title="dependencies"
           rows={diff.dependencies}
           linkFor={linkDependencyDiffs ? dependencyDiffHref : undefined}
+          dependencyEvidenceByDeclaration={dependencyEvidenceByDeclaration}
         />
         {/* Only surfaced when present: most releases change no bin, and a new
             bin command is the install-path change flagged by diff.bin-added.
@@ -62,10 +70,12 @@ function ChangeList({
   title,
   rows,
   linkFor,
+  dependencyEvidenceByDeclaration,
 }: {
   title: string;
   rows: DependencyDiffRow[];
   linkFor?: (row: DependencyDiffRow) => string | null;
+  dependencyEvidenceByDeclaration?: Record<string, DependencyEvidence>;
 }) {
   return (
     <div class="border border-border rounded-lg overflow-hidden">
@@ -76,17 +86,33 @@ function ChangeList({
         <div class="divide-y divide-border">
           {rows.map((row) => {
             const href = linkFor ? linkFor(row) : null;
+            const section = row.section ?? "dependencies";
+            const evidence =
+              row.status === "added" && row.staged !== undefined
+                ? dependencyEvidenceByDeclaration?.[
+                    dependencyDeclarationKey(row.key, section, row.staged)
+                  ]
+                : null;
             return (
               <div
                 // A key changed in two dependency sections at once yields two
                 // rows for the same package name, so the section is part of
                 // the identity.
-                key={`${title}-${row.section ?? ""}-${row.key}`}
+                key={`${title}-${section}-${row.key}`}
                 class="flex flex-col gap-1.5 px-3 py-2.5 text-[13px] min-w-0"
               >
                 <div class="flex flex-wrap items-center gap-2 min-w-0">
                   <Badge tone={statusTone(row.status)}>{row.status}</Badge>
                   <code class="font-mono text-[12px] text-ink break-all min-w-0">{row.key}</code>
+                  {evidence ? (
+                    <a href={`#${dependencyEvidenceDomId(evidence)}`} class="no-underline">
+                      <Badge tone={evidence.outcome === "inspected" ? "ok" : "medium"}>
+                        {evidence.outcome === "inspected"
+                          ? `reviewed ${evidence.resolution?.version ?? ""}`.trim()
+                          : "uninspectable"}
+                      </Badge>
+                    </a>
+                  ) : null}
                   {href ? (
                     <a
                       href={href}

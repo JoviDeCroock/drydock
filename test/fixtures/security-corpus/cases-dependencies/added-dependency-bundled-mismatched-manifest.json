@@ -1,0 +1,40 @@
+{
+  "id": "added-dependency-bundled-mismatched-manifest",
+  "title": "A mismatched bundled manifest cannot redirect review to registry bytes",
+  "category": "dependency-introduction",
+  "intent": "A declared bundled child is the exact subtree consumers receive even when its manifest claims another name. Drydock must report the embedded identity gap instead of substituting a registry artifact for different bytes.",
+  "previousPackageJson": { "name": "bundled-parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "bundled-parent",
+    "version": "1.1.0",
+    "dependencies": { "embedded-helper": "1.0.0" },
+    "bundleDependencies": ["embedded-helper"]
+  },
+  "stagedFiles": [
+    {
+      "path": "node_modules/embedded-helper/package.json",
+      "size": 38,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "flags": [],
+      "textSample": "{\"name\":\"different\",\"version\":\"1.0.0\"}"
+    }
+  ],
+  "expectedDependencies": [
+    {
+      "name": "embedded-helper",
+      "status": "uninspectable",
+      "reason": "manifest-unavailable",
+      "registryHost": null,
+      "fileCount": 1
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.artifact-unavailable",
+      "severity": "medium",
+      "file": "<dependency>embedded-helper@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

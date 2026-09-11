@@ -1,0 +1,42 @@
+{
+  "id": "dependency-artifact-benign",
+  "title": "Added dependency has no install-time behavior",
+  "category": "dependency-supply-chain",
+  "intent": "Benign parity control for dependency artifact inspection.",
+  "previousPackageJson": { "name": "parent", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "parent",
+    "version": "1.1.0",
+    "dependencies": { "plain-dep": "1.0.0" }
+  },
+  "previousFiles": [],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 2,
+      "sha256": "parent-manifest",
+      "flags": [],
+      "textSample": "{}"
+    }
+  ],
+  "dependencyArtifacts": {
+    "plain-dep": {
+      "declaredSpec": "1.0.0",
+      "resolvedVersion": "1.0.0",
+      "packageJson": { "name": "plain-dep", "version": "1.0.0", "main": "index.js" },
+      "files": [
+        {
+          "path": "index.js",
+          "size": 20,
+          "sha256": "index",
+          "flags": [],
+          "textSample": "module.exports = {};"
+        }
+      ]
+    }
+  },
+  "expectedRisk": "medium",
+  "expectedFindings": [
+    { "ruleId": "dependency.added", "severity": "medium", "file": "package.json" }
+  ]
+}

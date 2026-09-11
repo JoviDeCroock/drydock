@@ -7,14 +7,15 @@ ready just because TypeScript compiles.
 
 ## Required test layer by change type
 
-| Change type                                                                                  | Required coverage                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/`                                                                                                                                                  |
-| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch      | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes                                                                                         |
-| Sandbox, tar/zip parsing, archive limits, credential egress                                  | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved |
-| Deterministic findings, risk, redaction, package diff behavior                               | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk                                                       |
-| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts`                                                                             |
-| UI-only changes                                                                              | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes                                                                  |
+| Change type                                                                                  | Required coverage                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server/routes/*`, auth, organization scoping, rate limits, D1 persistence, queue enqueueing | Worker-route tests in `test/workers/`                                                                                                                                                                 |
+| Scan job lifecycle, retry classification, queue retry/exhaustion, notification dispatch      | Node tests near `test/scan-job.test.mjs` plus Worker-route coverage when HTTP behavior changes                                                                                                        |
+| Sandbox, tar/zip parsing, archive limits, credential egress                                  | Invariant tests in `test/sandbox-gateway.test.mjs`, `test/workers/sandbox-gateway-runtime.test.ts`, parser regression tests, and e2e journal checks when registry behavior is involved                |
+| Deterministic findings, risk, redaction, package diff behavior                               | Focused Node tests plus `test/fixtures/security-corpus/cases/*.json` fixtures with exact expected rule IDs, severities, and risk                                                                      |
+| Dependency-artifact review (selection, resolution, deterministic scanning, coverage gaps)    | Focused Node tests plus `test/fixtures/security-corpus/cases/dependency-artifact-*.json`, eval/frontier coverage, and the fake-registry journal assertion for credential-free public-registry fetches |
+| npm staged-publish API, registry metadata, fake registry behavior, browser-visible scan flow | Scenario fixtures under `test/e2e-fixtures/scenarios/` and assertions in `test/e2e/local-registry.spec.ts`                                                                                            |
+| UI-only changes                                                                              | Component/page-level logic where available, `pnpm run verify`, and Playwright coverage when workflow behavior changes                                                                                 |
 
 When a change spans layers, test the lowest deterministic unit and the highest
 user- or operator-visible contract. For example, a new scan route should usually
@@ -31,6 +32,9 @@ for the lifecycle behavior behind it.
 - The Dynamic Worker sandbox never receives npm token material.
 - `NpmStageGateway` is the only credentialed sandbox egress path and only forwards
   auth to allowlisted registry endpoints.
+- Dependency-artifact fetches carry no credential at all. A dependency an
+  anonymous request cannot reach is recorded as an uninspected coverage gap,
+  never retried with the organization's npm token.
 - Package code is never executed, imported, installed, built, rendered as active
   content, or allowed to define instructions for reviewers.
 - Archive parsing fails closed on traversal, symlinks/hardlinks, malformed

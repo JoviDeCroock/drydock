@@ -8,11 +8,11 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/routes/scans/` owns scan HTTP behavior, split by caller intent into `lifecycle`, `decisions`, `sharing`, and `compare` and mounted by its `index.ts`.
 - `server/routes/github-webhooks.ts` is the signed GitHub App webhook. It persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `workflow-gates.md` and the npm, PyPI, and VS Code gate docs.
 - `server/lib/sandbox.ts` is the Dynamic Worker that downloads and parses package artifacts. `NpmStageGateway` is the only npm-token egress.
-- `server/lib/review/` owns deterministic findings, package and `package.json` diffs, redaction, serialization, risk, and shared UI types. Its public entry is `server/lib/review/index.ts`.
+- `server/lib/review/` owns deterministic findings, package and `package.json` diffs, dependency selection/composition, redaction, serialization, risk, and shared UI types. Its public entry is `server/lib/review/index.ts`.
 - `server/lib/ai-review/` owns the Workers AI reviewer, wired through `server/lib/scan/pipeline.ts`.
 - `server/lib/scan/` owns pipeline phases, queue jobs, input parsing, artifact persistence, report export, and release memory.
 - `server/lib/public-diff/` owns anonymous `/diff` orchestration and `PublicDiffAdapter`. The atpm ecosystem resolves releases over AT Protocol; see `atpm-public-diff.md`.
-- `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
+- `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`, npm owns public-registry dependency resolution/acquisition, and `published-pair.ts` turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.

@@ -19,7 +19,19 @@ const tarballDir = path.join(stateDir, "tarballs");
 const registry = JSON.parse(await readFile(registryFile, "utf8"));
 const baseUrl = `http://${host}:${port}`;
 const stageById = new Map(registry.scenarios.map((scenario) => [scenario.stageId, scenario]));
-const packages = buildPackageMap(registry.scenarios);
+const packages = buildPackageMap(registry.scenarios, registry.dependencies ?? []);
+// Paths a real public registry serves to anonymous clients: package documents
+// and their tarballs. Everything else — whoami and the whole staging API —
+// still requires the bearer token. Modelling this split is what lets the e2e
+// prove Drydock fetches a dependency artifact WITHOUT the organization's npm
+// credential (see `registry journal limits credential forwarding`).
+function isPublicReadPath(pathname) {
+  const decoded = decodeURIComponent(pathname).replace(/^\/+/, "");
+  if (decoded.startsWith("-/")) return false;
+  const tarball = /^(@[^/]+\/[^/]+|[^/]+)\/-\/([^/]+\.tgz)$/.exec(decoded);
+  if (tarball) return packages.has(tarball[1]);
+  return packages.has(decoded);
+}
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || "/", baseUrl);
@@ -39,7 +51,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (!hasBearerToken(request)) {
+    if (!hasBearerToken(request) && !isPublicReadPath(url.pathname)) {
       await sendJson(request, response, startedAt, 401, { error: "missing bearer token" });
       return;
     }
@@ -144,8 +156,20 @@ server.listen(port, host, () => {
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 process.on("SIGINT", () => server.close(() => process.exit(0)));
 
-function buildPackageMap(scenarios) {
+function buildPackageMap(scenarios, dependencies) {
   const byPackage = new Map();
+  for (const dependency of dependencies) {
+    const packument = byPackage.get(dependency.packageName) ?? {
+      name: dependency.packageName,
+      distTags: {},
+      versions: {},
+      times: {},
+    };
+    packument.distTags[dependency.tag || "latest"] = dependency.version;
+    packument.versions[dependency.version] = dependency;
+    if (dependency.publishedAt) packument.times[dependency.version] = dependency.publishedAt;
+    byPackage.set(dependency.packageName, packument);
+  }
   for (const scenario of scenarios) {
     const packument = byPackage.get(scenario.packageName) ?? {
       name: scenario.packageName,

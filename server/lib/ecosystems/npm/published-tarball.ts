@@ -6,6 +6,7 @@ import {
   downloadInSandboxStream,
   SandboxError,
   SANDBOX_MAX_STREAM_TAR_BYTES,
+  type ArchiveDigestAlgorithm,
   type DownloadResult,
 } from "../../sandbox";
 
@@ -34,6 +35,9 @@ export interface PublishedTarballFetchOptions {
   allowInsecureLocalhost?: boolean;
   maxBytes?: number;
   waitUntil?: (promise: Promise<unknown>) => void;
+  signal?: AbortSignal;
+  /** Bypass the shared byte cache when evidence must reflect a fresh registry read. */
+  cacheMode?: "default" | "bypass";
 }
 
 // Published tarball URLs are version-pinned and immutable, so the TTL bounds
@@ -66,6 +70,7 @@ function publishedTarballCacheEligible(
   tarballUrl: string,
   options: PublishedTarballFetchOptions,
 ): boolean {
+  if (options.cacheMode === "bypass") return false;
   if (options.allowInsecureLocalhost) return false;
   try {
     const url = new URL(tarballUrl);
@@ -160,7 +165,7 @@ export async function fetchPublishedTarballStream(
   const cacheEligible = publishedTarballCacheEligible(tarballUrl, options);
   if (cacheEligible) {
     const cachedBody = await matchPublishedTarballCache(tarballUrl, maxBytes);
-    if (cachedBody) return capByteStream(cachedBody, maxBytes);
+    if (cachedBody) return capByteStream(cachedBody, maxBytes, options.signal);
   }
 
   const headers = tarballRequestHeaders();
@@ -168,7 +173,11 @@ export async function fetchPublishedTarballStream(
 
   let response: Response;
   try {
-    response = await reliableFetch(tarballUrl, { headers, timeoutMs: 60_000 });
+    response = await reliableFetch(tarballUrl, {
+      headers,
+      timeoutMs: 60_000,
+      signal: options.signal,
+    });
   } catch {
     throw new SandboxError(JSON.stringify({ error: "download failed", status: 502 }));
   }
@@ -183,7 +192,7 @@ export async function fetchPublishedTarballStream(
     throw new SandboxError(JSON.stringify({ error: "archive download failed", status: 502 }));
   }
   if (cacheEligible) options.waitUntil?.(warmPublishedTarballCache(tarballUrl));
-  return capByteStream(response.body, maxBytes);
+  return capByteStream(response.body, maxBytes, options.signal);
 }
 
 // Backstop, not enforcement. The sandbox bounds the compressed wire bytes
@@ -198,6 +207,7 @@ export async function fetchPublishedTarballStream(
 function capByteStream(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
+  signal?: AbortSignal,
 ): ReadableStream<Uint8Array> {
   const backstop = 2 * maxBytes;
   let total = 0;
@@ -212,6 +222,7 @@ function capByteStream(
         controller.enqueue(chunk);
       },
     }),
+    { signal },
   );
 }
 
@@ -285,6 +296,12 @@ export interface DownloadPublishedTarballOptions extends PublishedTarballFetchOp
   maxFiles?: number;
   /** See `DownloadOptions.maxTextSampleChars` in `lib/sandbox.ts`. */
   maxTextSampleChars?: number;
+  /**
+   * See `DownloadOptions.archiveDigestAlgorithms`. The dependency-artifact path
+   * asks for SHA-512 so the digest it recomputes is comparable to the SRI npm
+   * publishes as `dist.integrity`.
+   */
+  archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
 }
 
 /**
@@ -308,5 +325,6 @@ export async function downloadPublishedTarball(
     maxFiles: options.maxFiles,
     maxTextSampleChars: options.maxTextSampleChars,
     tarRootStrip: "strip1",
+    archiveDigestAlgorithms: options.archiveDigestAlgorithms,
   });
 }

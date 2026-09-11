@@ -1,0 +1,70 @@
+{
+  "id": "added-dependency-parenthesized-native-execution",
+  "title": "A sequence-wrapped process call can select a bundled native executable",
+  "category": "dependency-introduction",
+  "intent": "A transpiler-style (0, spawn)(target) call prevents the static graph from proving which package file runs. Drydock must preserve the bundled native artifact as a possible install target and keep the release at high risk.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "wrapped-native": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "wrapped-native": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "wrapped-native",
+        "version": "1.0.0",
+        "scripts": { "postinstall": "node install.js" }
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 112,
+          "sha256": "wrapped-native-package-json",
+          "textSample": "{\"name\":\"wrapped-native\",\"version\":\"1.0.0\",\"scripts\":{\"postinstall\":\"node install.js\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.js",
+          "size": 112,
+          "sha256": "wrapped-native-install-js",
+          "textSample": "const { spawn } = require(\"node:child_process\"); (0, spawn)(\"./bin/installer.node\");",
+          "flags": []
+        },
+        {
+          "path": "bin/installer.node",
+          "size": 4096,
+          "sha256": "wrapped-native-binary",
+          "flags": ["binary"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "wrapped-native",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "inspected",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 3,
+      "observation": {
+        "execution": "observed",
+        "risk": "unknown",
+        "dynamicInstallTarget": true
+      },
+      "automaticExecution": [{ "kind": "script", "name": "postinstall" }]
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.install-time-capability",
+      "severity": "high",
+      "file": "<dependency>wrapped-native@1.0.0:package.json"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedRecommendation": "block manual approval"
+}

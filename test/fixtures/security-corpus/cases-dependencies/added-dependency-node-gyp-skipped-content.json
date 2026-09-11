@@ -1,0 +1,68 @@
+{
+  "id": "added-dependency-node-gyp-skipped-content",
+  "title": "An implicit node-gyp action cannot execute omitted dependency text",
+  "category": "dependency-introduction",
+  "intent": "npm automatically runs root GYP files for packages with an implicit node-gyp install. A command substitution that names an omitted script must make the dependency uninspectable rather than treating the hidden install-time bytes as clean.",
+  "previousPackageJson": { "name": "consumer", "version": "1.0.0" },
+  "stagedPackageJson": {
+    "name": "consumer",
+    "version": "1.1.0",
+    "dependencies": { "gyp-action": "1.0.0" }
+  },
+  "dependencyArtifacts": {
+    "gyp-action": {
+      "version": "1.0.0",
+      "packageJson": {
+        "name": "gyp-action",
+        "version": "1.0.0",
+        "scripts": { "install": "node-gyp rebuild" },
+        "implicitScripts": { "install": "node-gyp rebuild" },
+        "gypfile": true
+      },
+      "files": [
+        {
+          "path": "package.json",
+          "size": 155,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "textSample": "{\"name\":\"gyp-action\",\"version\":\"1.0.0\",\"scripts\":{\"install\":\"node-gyp rebuild\"},\"implicitScripts\":{\"install\":\"node-gyp rebuild\"},\"gypfile\":true}",
+          "flags": []
+        },
+        {
+          "path": "binding.gyp",
+          "size": 58,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "textSample": "{\"variables\":{\"generated\":\"<!(node install.min.js)\"}}",
+          "flags": []
+        },
+        {
+          "path": "install.min.js",
+          "size": 4096,
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "flags": ["text-sample-skipped"]
+        }
+      ]
+    }
+  },
+  "expectedDependencies": [
+    {
+      "name": "gyp-action",
+      "section": "dependencies",
+      "declaredSpec": "1.0.0",
+      "declarationKind": "exact",
+      "status": "uninspectable",
+      "reason": "artifact-truncated",
+      "resolvedVersion": "1.0.0",
+      "fileCount": 3,
+      "observation": { "execution": "observed", "risk": "not-observed" }
+    }
+  ],
+  "expectedFindings": [
+    {
+      "ruleId": "dependency.artifact-unavailable",
+      "severity": "medium",
+      "file": "<dependency>gyp-action@1.0.0"
+    }
+  ],
+  "expectedRisk": "medium",
+  "expectedRecommendation": "review carefully"
+}

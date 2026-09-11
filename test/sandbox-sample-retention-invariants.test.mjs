@@ -25,8 +25,18 @@ function relative(file) {
 
 // Files allowed to *originate* a per-file text-sample cap. Everything else may
 // only forward a cap it was handed, which is plumbing rather than policy.
-const BASELINE_ACQUISITION_FILES = [
+//
+// Every entry here parses something that is NOT the reviewed release: the
+// previous-version baselines, and the artifacts of dependencies a release newly
+// introduces. Capping those trades a bounded amount of detection depth on
+// third-party bytes for memory the reviewed side needs. Adding the staged
+// download, the workflow-gate inline parse, or either side of the public diff
+// has to change this list — and should not.
+const CAPPED_ACQUISITION_FILES = [
   "lib/ecosystems/npm/acquire.ts",
+  // Dependency artifacts: several may be fetched for one release, none of their
+  // bodies are persisted or rendered, and the cap is 8x the display sample.
+  "lib/ecosystems/npm/dependency-artifacts.ts",
   "lib/ecosystems/pypi/acquire.ts",
   "lib/ecosystems/vscode/index.ts",
 ];
@@ -65,8 +75,25 @@ describe("sandbox text-sample retention invariants", () => {
   // The option is reachable from anywhere that talks to the sandbox, so pin
   // *who may set one*: adding it to the staged download, the workflow-gate
   // inline parse, or either side of the public diff has to change this list.
-  test("only baseline acquisitions set a text-sample cap", () => {
-    expect(capSetters()).toEqual([...BASELINE_ACQUISITION_FILES].sort());
+  test("only baseline and dependency acquisitions set a text-sample cap", () => {
+    expect(capSetters()).toEqual([...CAPPED_ACQUISITION_FILES].sort());
+  });
+
+  test("dependency review rejects every clipped text sample before assessment", () => {
+    const source = readFileSync(
+      path.join(SERVER_DIR, "lib/ecosystems/npm/dependency-artifacts.ts"),
+      "utf8",
+    );
+    const inspection = region(source, "async function inspectOne(", "/**\n * Which version");
+    expect(inspection).toContain('file.flags.includes("baseline-truncated")');
+    expect(inspection).toContain('file.flags.includes("content-skipped")');
+    expect(inspection.indexOf('file.flags.includes("baseline-truncated")')).toBeLessThan(
+      inspection.indexOf("assessDependencyArtifact("),
+    );
+    expect(inspection.indexOf('file.flags.includes("content-skipped")')).toBeLessThan(
+      inspection.indexOf("assessDependencyArtifact("),
+    );
+    expect(inspection).toContain('"artifact-truncated"');
   });
 
   test("the staged npm download is parsed without a cap in both broker impls", () => {
