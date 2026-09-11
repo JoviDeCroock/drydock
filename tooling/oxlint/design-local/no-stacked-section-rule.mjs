@@ -37,31 +37,13 @@
 
 const SECTION_LABEL = "SectionLabel";
 
+import { utilityWithoutVariants } from "./class-tokens.mjs";
+
 // Tailwind's directional border namespace contains both widths and colors:
 // `border-t-2` sets a width, while `border-t-border` only sets a color and does
 // not draw anything by itself. Recognize the built-in numeric/px widths and
 // arbitrary length values, plus `border-y` because it draws both horizontal
-// edges. Colons inside arbitrary variants/values are not variant separators.
-function utilityWithoutVariants(token) {
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let lastVariantSeparator = -1;
-  for (let index = 0; index < token.length; index++) {
-    const char = token[index];
-    if (char === "[") bracketDepth++;
-    else if (char === "]") bracketDepth--;
-    else if (char === "(") parenDepth++;
-    else if (char === ")") parenDepth--;
-    else if (char === ":" && bracketDepth === 0 && parenDepth === 0) {
-      lastVariantSeparator = index;
-    }
-  }
-  return token
-    .slice(lastVariantSeparator + 1)
-    .replace(/^!/, "")
-    .replace(/!$/, "");
-}
-
+// edges.
 function isZeroCssLength(value) {
   return /^[-+]?(?:0+(?:\.0*)?|\.0+)(?:[A-Za-z%]+)?$/.test(value.trim());
 }

@@ -66,7 +66,7 @@ export function DirectionalColorsOnly() {
   return (
     <SectionLabel
       as="h2"
-      class="border-t-border border-b-accent border-t-[#fff] border-b-[color:var(--border)] border-t-[var(--border)]"
+      class="border-t-border border-b-accent border-t-[var(--color-border)] border-b-[color:var(--border)] border-t-[var(--border)]"
     >
       Findings
     </SectionLabel>

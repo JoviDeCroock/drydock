@@ -54,6 +54,7 @@ The system has three small-text sizes (10/11/12px). They are not interchangeable
 - `--fg-subtle` is now AA-passing at all sizes (6.2:1 on `--bg`). Don't pair sub-11px text with anything lower contrast.
 - White text on `--accent` (Button primary) requires 13px / 500 minimum — `--accent` is 4.97:1, so 13px/500 clears AA. Smaller white-on-accent controls (the view-switcher pills) use the soft-accent active treatment instead — `bg-accent-soft` + `text-accent` + accent border — never white-on-accent below 13px.
 - Severity-as-text uses the `-text` variants (`text-warn-text`, `text-ok-text`). The saturated tokens (`text-warn`, `text-ok`) are reserved for shapes — chart segments, borders, alert discs.
+- Machine-checked in `src/`: `design-local/no-off-system-color` rejects Tailwind palette colors, raw hex/rgb values in classes or `style` props, and saturated severity tokens as text; `design-local/no-sub-floor-text` rejects arbitrary text sizes below 10px. Colors come from the `src/style.css` tokens only.
 
 ## Color
 
