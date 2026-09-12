@@ -10,15 +10,19 @@ import type { AdapterBroker, PackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import type {
   ArchiveContents,
+  GateSetupTemplate,
+  GateSetupTemplateInput,
   ParsedGateArtifact,
   PreparedReleaseCandidate,
   WorkflowArtifactKind,
   WorkflowGateAdapter,
 } from "../../workflow-gates/types";
 
+const VSCODE_GATE_ARTIFACT_NAME = "vscode-release-candidate";
+
 export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
   ecosystem: "vscode",
-  artifactName: "vscode-release-candidate",
+  artifactName: VSCODE_GATE_ARTIFACT_NAME,
   packageAdapter: vscodeAdapter as PackageAdapter<unknown, AdapterBroker>,
 
   classifyArtifact(path: string): WorkflowArtifactKind | null {
@@ -36,7 +40,81 @@ export const vscodeWorkflowGateAdapter: WorkflowGateAdapter = {
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
     return deriveVscodeReleaseCandidates(artifacts);
   },
+
+  gateSetupTemplate(input: GateSetupTemplateInput): GateSetupTemplate {
+    return vscodeGateSetupTemplate(input);
+  },
 };
+
+/**
+ * The VS Code extension publish workflow the setup wizard offers as a pull
+ * request.
+ *
+ * Same contract as the canonical example in `docs/workflow-gates.md`: package
+ * once, record `SHA256SUMS` beside the VSIX, upload both, pause at the gated
+ * environment, re-check the digest on download, and publish the reviewed VSIX
+ * bytes without repacking. The Marketplace has no OIDC path, so the PAT lives
+ * in the gated environment's secrets — reachable only from the approved job.
+ */
+function vscodeGateSetupTemplate({
+  environmentName,
+  packageName,
+}: GateSetupTemplateInput): GateSetupTemplate {
+  return {
+    workflowPath: ".github/workflows/drydock-vscode-release.yml",
+    yaml: `# Drydock workflow gate — VS Code extension
+# Extension: ${packageName}
+# Drydock reviews the packaged VSIX before the publish job is allowed to run.
+name: "Publish ${packageName}"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: mkdir -p dist
+      - run: npx @vscode/vsce package --out dist/extension.vsix
+      # Record the digest Drydock reviews and the publish job re-checks.
+      - run: cd dist && sha256sum *.vsix > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${VSCODE_GATE_ARTIFACT_NAME}
+          path: dist/
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    # Drydock is this environment's deployment-protection rule: the job stays
+    # queued until the release is approved in Drydock.
+    environment: "${environmentName}"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${VSCODE_GATE_ARTIFACT_NAME}
+          path: dist
+      # Fail closed if the downloaded bytes drifted from what was reviewed.
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: npx @vscode/vsce publish --packagePath dist/extension.vsix
+        env:
+          VSCE_PAT: \${{ secrets.VSCE_PAT }}
+`,
+    notes: [
+      `Store the Marketplace PAT as a secret on the \`${environmentName}\` environment, not as a repository secret — an environment secret is only readable from the job the gate has released.`,
+      `Publish the reviewed VSIX bytes for \`${packageName}\`: repacking after approval breaks the review boundary.`,
+      "Scope the PAT to the publisher and rotate it on the same schedule as any other release credential.",
+    ],
+  };
+}
 
 function deriveVscodeReleaseCandidates(
   artifacts: ParsedGateArtifact[],
