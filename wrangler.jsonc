@@ -136,6 +136,10 @@
 			{
 				"binding": "SCAN_QUEUE",
 				"queue": "staged-publish-review-scans"
+			},
+			{
+				"binding": "DISCOVERY_QUEUE",
+				"queue": "staged-publish-review-discovery"
 			}
 		],
 		"consumers": [
@@ -146,6 +150,12 @@
 				"max_concurrency": 10,
 				"max_retries": 3,
 				"dead_letter_queue": "staged-publish-review-scans-dlq"
+			},
+			{
+				"queue": "staged-publish-review-discovery",
+				"max_batch_size": 1,
+				"max_batch_timeout": 5,
+				"max_retries": 1
 			}
 		]
 	},

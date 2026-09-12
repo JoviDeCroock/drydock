@@ -41,7 +41,10 @@ async function seedOrgWithValidConnection(index: number): Promise<string> {
   return organizationId;
 }
 
-describe("discovery cron concurrency", () => {
+// Inline-fallback concurrency (no DISCOVERY_QUEUE binding). With the binding the
+// tick enqueues instead of sweeping, and per-org parallelism is then the queue
+// consumer's max_concurrency rather than this constant.
+describe("discovery cron concurrency (inline fallback)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
