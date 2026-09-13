@@ -15,7 +15,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
-- `server/lib/notify/` owns notification fan-out, Slack, and email.
+- `server/lib/notify/` owns notification fan-out, webhooks, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.
 - `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, and `scan-risk`.
 

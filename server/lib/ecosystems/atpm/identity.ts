@@ -1,3 +1,4 @@
+import { isPublicHostname } from "../../platform/public-hostname";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { PublicDiffError } from "../../public-diff/error";
 
@@ -55,7 +56,6 @@ const MAX_IDENTITY_DOCUMENT_BYTES = 256 * 1024;
  * A handle label, per the atproto handle syntax: ASCII alphanumerics and
  * hyphens, not starting or ending with a hyphen.
  */
-const HANDLE_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const DID_PLC_RE = /^did:plc:[a-z2-7]{24}$/;
 
@@ -174,49 +174,6 @@ function normalizeDid(input: string): string | null {
   }
   return null;
 }
-
-/**
- * Hostname policy for every publisher-controlled host the parent Worker fetches.
- *
- * A DID document names its own PDS, so "which host do we call" is data supplied
- * by the party under review. This blocks the shapes that turn that into a probe
- * of something that is not on the public internet: literal addresses (which skip
- * public DNS entirely), loopback and protocol-reserved suffixes, and
- * single-label names that resolve through a private search domain.
- */
-function isPublicHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (!host || host.length > 253) return false;
-  if (host.startsWith("[") || host.endsWith("]")) return false;
-  // IPv4 literal, or anything that is all digits and dots.
-  if (/^[0-9.]+$/.test(host)) return false;
-  // IPv6 literal without brackets.
-  if (host.includes(":")) return false;
-  const labels = host.split(".");
-  if (labels.length < 2) return false;
-  if (!labels.every((label) => HANDLE_LABEL_RE.test(label))) return false;
-  const tld = labels[labels.length - 1];
-  if (!/^[a-z]/.test(tld)) return false;
-  return !RESERVED_TLDS.has(tld);
-}
-
-// atproto-reserved and local-use suffixes cannot identify a public PDS or
-// handle. Keep the protocol list even where URL fetches would ordinarily fail:
-// rejection must happen before attacker-chosen resolution or redirects.
-const RESERVED_TLDS = new Set([
-  "alt",
-  "arpa",
-  "example",
-  "invalid",
-  "local",
-  "localhost",
-  "onion",
-  "internal",
-  "intranet",
-  "home",
-  "lan",
-  "test",
-]);
 
 /**
  * Re-validate a URL built from resolved data before the parent Worker fetches

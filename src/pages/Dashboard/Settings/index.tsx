@@ -10,6 +10,7 @@ import { sessionModel } from "../../../models/auth";
 import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
+import { NotificationWebhookModel } from "../../../models/notification-webhook";
 import { SlackConnectionModel } from "../../../models/slack-connection";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
@@ -30,6 +31,7 @@ import { GeneralSection } from "./GeneralSection";
 import { ReleaseSecuritySection } from "./ReleaseSecuritySection";
 import { GithubAppSection } from "./GithubAppSection";
 import { NotificationRecipientsSection } from "./NotificationRecipientsSection";
+import { NotificationWebhookSection } from "./NotificationWebhookSection";
 import { SlackConnectionSection } from "./SlackConnectionSection";
 import { NpmConnectionSection } from "./NpmConnectionSection";
 import { OrganizationMembersSection } from "./OrganizationMembersSection";
@@ -44,6 +46,7 @@ export default function SettingsPage() {
   const members = useModel(MembersModel);
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
+  const webhook = useModel(NotificationWebhookModel);
   const audit = useModel(AuditLogModel);
   const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
@@ -86,6 +89,7 @@ export default function SettingsPage() {
         members.load(canManageMembers(organizations)),
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
+        webhook.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
       ]);
     })();
@@ -101,6 +105,7 @@ export default function SettingsPage() {
     loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
+    loaders.push(webhook.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
     await Promise.all(loaders);
   };
@@ -200,6 +205,10 @@ export default function SettingsPage() {
                   canManage={canManageIntegrations(organizations)}
                   fallbackEmail={ownerFallbackEmail(organizations, user)}
                   defaultOpen
+                />
+                <NotificationWebhookSection
+                  webhook={webhook}
+                  canManage={canManageIntegrations(organizations)}
                 />
                 <SlackConnectionSection
                   slack={slack}

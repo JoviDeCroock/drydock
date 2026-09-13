@@ -6,9 +6,8 @@ flow**. Each organization connects one Slack workspace and picks exactly one
 "review ready" transition post to that channel. Slack delivery runs alongside the
 email recipients, is best-effort, and never blocks scan or gate processing.
 
-Webhook-URL destinations are gone — Slack steers integrators toward OAuth, and a
-bot token plus an in-app channel picker is a better fit than asking users to mint
-and paste an incoming-webhook URL.
+Slack uses OAuth and an in-app channel picker. For a custom JSON receiver, use
+the separate [signed webhook channel](./webhook-notifications.md).
 
 ## OAuth scopes
 
@@ -91,7 +90,7 @@ connections and notification recipients. Members are read-only (`403` on write).
 
 ## Delivery
 
-`server/lib/notify/index.ts` runs email and Slack concurrently. `notifyScanCompletion`
+`server/lib/notify/index.ts` runs email, Slack, and the configured webhook concurrently. `notifyScanCompletion`
 and `notifyWorkflowGateReview` build a `SlackNotificationPayload`, then
 `deliverToSlackConnection` loads the org's `getSlackConnectionSecret`, and — only
 if the connection exists, is enabled, and has a channel — decrypts the token,

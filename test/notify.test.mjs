@@ -6,6 +6,7 @@ const dbMock = vi.hoisted(() => ({
   getScan: vi.fn(),
   resolveNotificationEmails: vi.fn(),
   getSlackConnectionSecret: vi.fn(),
+  getWebhookConnectionSecret: vi.fn(),
   recordScanEvent: vi.fn().mockResolvedValue(undefined),
 }));
 const emailMock = vi.hoisted(() => ({
@@ -26,6 +27,14 @@ vi.mock("../server/db/slack-connection.ts", () => dbMock);
 vi.mock("../server/lib/notify/email.ts", () => emailMock);
 vi.mock("../server/lib/platform/secret-box.ts", () => secretBoxMock);
 vi.mock("../server/lib/notify/slack.ts", () => slackMock);
+
+const webhookMock = vi.hoisted(() => ({
+  decryptWebhookCredentials: vi.fn(),
+  sendWebhookNotification: vi.fn(),
+}));
+vi.mock("../server/db/webhook-connection.ts", () => dbMock);
+vi.mock("../server/lib/notify/webhook-credentials.ts", () => webhookMock);
+vi.mock("../server/lib/notify/webhook.ts", () => webhookMock);
 
 const BOT_TOKEN = "xoxb-0000000000-SUPERSECRETTOKEN";
 
@@ -118,6 +127,12 @@ beforeEach(() => {
   dbMock.getOrganizationName.mockResolvedValue("Acme Corp");
   dbMock.resolveNotificationEmails.mockResolvedValue(["owner@example.com"]);
   dbMock.getSlackConnectionSecret.mockResolvedValue(null);
+  dbMock.getWebhookConnectionSecret.mockResolvedValue(null);
+  webhookMock.decryptWebhookCredentials.mockResolvedValue({
+    url: "https://hooks.example.com/private-path",
+    secret: "private-signing-secret",
+  });
+  webhookMock.sendWebhookNotification.mockResolvedValue(undefined);
   dbMock.getScan.mockResolvedValue({
     scan: { packageName: "demo-package", stagedVersion: "1.2.0", risk: "high" },
   });
@@ -131,6 +146,9 @@ afterEach(() => {
   dbMock.getOrganizationName.mockReset();
   dbMock.resolveNotificationEmails.mockReset();
   dbMock.getSlackConnectionSecret.mockReset();
+  dbMock.getWebhookConnectionSecret.mockReset();
+  webhookMock.decryptWebhookCredentials.mockReset();
+  webhookMock.sendWebhookNotification.mockReset();
   dbMock.getScan.mockReset();
   dbMock.recordScanEvent.mockClear();
   emailMock.sendNotificationEmail.mockReset();
@@ -562,4 +580,110 @@ describe("Slack connection delivery", () => {
     const [slackEvent] = slackEvents();
     expect(slackEvent.type).toBe("scan.notification_sent");
   });
+});
+
+describe("webhook fan-out", () => {
+  function connect() {
+    dbMock.getWebhookConnectionSecret.mockResolvedValue({
+      enabled: true,
+      credentialsCiphertext: "ciphertext",
+      credentialsNonce: "nonce",
+    });
+  }
+
+  function events() {
+    return dbMock.recordScanEvent.mock.calls
+      .map(([, event]) => event)
+      .filter((event) => event.metadata.channel === "webhook");
+  }
+
+  test.each(["complete", "failed"])(
+    "delivers %s scans without email recipients",
+    async (outcome) => {
+      connect();
+      dbMock.resolveNotificationEmails.mockResolvedValue([]);
+      await notifyScanCompletion(
+        scanInput({ outcome, error: { code: "scan_error", message: "private package text" } }),
+      );
+      expect(webhookMock.sendWebhookNotification).toHaveBeenCalledOnce();
+      const [{ event }] = webhookMock.sendWebhookNotification.mock.calls[0];
+      expect(event).toMatchObject({
+        version: 1,
+        organizationId: "org_1",
+        type: outcome === "complete" ? "scan.completed" : "scan.failed",
+        data: {
+          scanId: "scan_1",
+          packageName: "demo-package",
+          version: "1.2.0",
+          releaseRisk: "high",
+        },
+      });
+      expect(event.id).toEqual(expect.any(String));
+      expect(JSON.stringify(event)).not.toContain("private package text");
+      expect(events()[0].type).toBe("scan.notification_sent");
+      expect(JSON.stringify(events())).not.toMatch(
+        /private-path|private-signing-secret|ciphertext|nonce/,
+      );
+    },
+  );
+
+  test("delivers the workflow gate identity and monorepo package count", async () => {
+    connect();
+    dbMock.resolveNotificationEmails.mockResolvedValue([]);
+    await notifyWorkflowGateReview(gateInput({ packageCount: 3 }));
+    expect(webhookMock.sendWebhookNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "workflow_gate.review_ready",
+          data: expect.objectContaining({
+            gateId: "gate_1",
+            repositoryFullName: "octo/example",
+            packageCount: 3,
+          }),
+        }),
+      }),
+    );
+    expect(events()[0].type).toBe("github_workflow_gate.notification_sent");
+  });
+
+  test.each([null, { enabled: false }])("skips unavailable connections: %j", async (connection) => {
+    dbMock.getWebhookConnectionSecret.mockResolvedValue(connection);
+    await notifyScanCompletion(scanInput());
+    expect(webhookMock.sendWebhookNotification).not.toHaveBeenCalled();
+    expect(events()).toEqual([]);
+  });
+
+  test.each(["post", "decrypt", "lookup", "audit"])(
+    "isolates %s failures from scan completion and other channels",
+    async (failure) => {
+      connect();
+      dbMock.getSlackConnectionSecret.mockResolvedValue(slackConnection());
+      if (failure === "post")
+        webhookMock.sendWebhookNotification.mockRejectedValue(new Error("Webhook delivery failed"));
+      if (failure === "decrypt")
+        webhookMock.decryptWebhookCredentials.mockRejectedValue(
+          new Error("private-signing-secret"),
+        );
+      if (failure === "lookup")
+        dbMock.getWebhookConnectionSecret.mockRejectedValue(new Error("private-path"));
+      if (failure === "audit")
+        dbMock.recordScanEvent.mockImplementation(async (_db, event) => {
+          if (event.metadata.channel === "webhook") throw new Error("private-signing-secret");
+        });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await expect(notifyScanCompletion(scanInput())).resolves.toBeUndefined();
+        expect(emailMock.sendNotificationEmail).toHaveBeenCalled();
+        expect(slackMock.postSlackMessage).toHaveBeenCalled();
+        expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+          /private-signing-secret|private-path/,
+        );
+        if (failure === "post" || failure === "decrypt")
+          expect(events()[0].type).toBe("scan.notification_failed");
+      } finally {
+        warning.mockRestore();
+        dbMock.recordScanEvent.mockReset().mockResolvedValue(undefined);
+      }
+    },
+  );
 });

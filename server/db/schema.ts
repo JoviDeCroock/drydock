@@ -396,6 +396,29 @@ export const organizationSlackConnections = sqliteTable(
   }),
 );
 
+// The URL can itself contain a credential, so only its hostname is public.
+export const organizationWebhookConnections = sqliteTable(
+  "organization_webhook_connections",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    hostname: text("hostname").notNull(),
+    credentialsCiphertext: text("credentials_ciphertext").notNull(),
+    credentialsNonce: text("credentials_nonce").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => ({
+    orgUniqueIdx: uniqueIndex("organization_webhook_connections_org_unique_idx").on(
+      table.organizationId,
+    ),
+  }),
+);
+
 export const githubAppInstallations = sqliteTable(
   "github_app_installations",
   {

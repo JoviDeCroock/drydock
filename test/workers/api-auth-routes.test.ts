@@ -11,6 +11,11 @@ interface RouteCase {
 }
 
 const protectedRoutes: RouteCase[] = [
+  { method: "GET", path: "/api/v1/notification-webhook" },
+  { method: "PUT", path: "/api/v1/notification-webhook", body: {} },
+  { method: "PATCH", path: "/api/v1/notification-webhook", body: {} },
+  { method: "DELETE", path: "/api/v1/notification-webhook" },
+  { method: "POST", path: "/api/v1/notification-webhook/test", body: {} },
   { method: "GET", path: "/api/health" },
   { method: "GET", path: "/api/v1/organizations" },
   { method: "POST", path: "/api/v1/organizations", body: { name: "acme" } },

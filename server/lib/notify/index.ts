@@ -10,6 +10,10 @@ import { isValidStageId } from "../ecosystems/npm/stage-id";
 import { isSafeHttpUrlForShellArgument, quotePosixShellArgument } from "../platform/shell-command";
 import { getSlackConnectionSecret } from "../../db/slack-connection";
 import { sendNotificationEmail } from "./email";
+import { getWebhookConnectionSecret } from "../../db/webhook-connection";
+import { decryptWebhookCredentials } from "./webhook-credentials";
+import { sendWebhookNotification, type WebhookEvent } from "./webhook";
+import { emitOperationalEvent } from "../platform/observability";
 import { normalizeReleaseConsistency, type ReleaseConsistency } from "../scan/release-memory";
 import type { RiskLevel } from "../review";
 import type { OrganizationRole } from "../auth/roles";
@@ -131,7 +135,28 @@ export async function notifyScanCompletion(input: NotifyScanCompletionInput): Pr
     }),
   );
 
-  await Promise.all([emailDelivery, slackDelivery]);
+  const webhookDelivery = deliverToWebhookConnection(
+    env,
+    db,
+    {
+      organizationId,
+      actorUserId: notificationOwnerUserId,
+      scanId,
+      eventType: "scan",
+    },
+    {
+      type: outcome === "complete" ? "scan.completed" : "scan.failed",
+      data: {
+        scanId,
+        packageName: scan?.packageName ?? null,
+        version: scan?.stagedVersion ?? null,
+        releaseRisk,
+        dashboardUrl,
+        ...(outcome === "failed" ? { errorCode: error?.code ?? null } : {}),
+      },
+    },
+  );
+  await Promise.all([emailDelivery, slackDelivery, webhookDelivery]);
 }
 
 function formatReleaseMemory(summaryJson: unknown): string | null {
@@ -468,7 +493,31 @@ export async function notifyWorkflowGateReview(
     }),
   );
 
-  await Promise.all([emailDelivery, slackDelivery]);
+  const webhookDelivery = deliverToWebhookConnection(
+    env,
+    db,
+    {
+      organizationId,
+      actorUserId: ownerUserId,
+      scanId,
+      eventType: "github_workflow_gate",
+    },
+    {
+      type: "workflow_gate.review_ready",
+      data: {
+        gateId,
+        scanId,
+        repositoryFullName,
+        environment,
+        packageName,
+        version,
+        packageCount: packageCount ?? 1,
+        releaseRisk,
+        dashboardUrl,
+      },
+    },
+  );
+  await Promise.all([emailDelivery, slackDelivery, webhookDelivery]);
 }
 
 export interface NotifyWorkflowGateTimeoutInput {
@@ -582,6 +631,64 @@ async function deliverToRecipients(
       await recordScanEvent(db, event(recipient, result));
     }),
   );
+}
+
+async function deliverToWebhookConnection(
+  env: Cloudflare.Env,
+  db: AppDb,
+  context: {
+    organizationId: string;
+    actorUserId: string;
+    scanId: string;
+    eventType: "scan" | "github_workflow_gate";
+  },
+  payload: Pick<WebhookEvent, "type" | "data">,
+): Promise<void> {
+  // Include persistence and decryption in the isolation boundary: a webhook
+  // outage must never cause the caller to retry a completed release review.
+  try {
+    const connection = await getWebhookConnectionSecret(db, context.organizationId);
+    if (!connection?.enabled) return;
+    let result: { ok: boolean; reason?: string };
+    const eventId = crypto.randomUUID();
+    try {
+      const credentials = await decryptWebhookCredentials(env, {
+        ciphertext: connection.credentialsCiphertext,
+        nonce: connection.credentialsNonce,
+      });
+      await sendWebhookNotification({
+        ...credentials,
+        event: {
+          version: 1,
+          id: eventId,
+          createdAt: new Date().toISOString(),
+          organizationId: context.organizationId,
+          ...payload,
+        },
+      });
+      result = { ok: true };
+    } catch {
+      result = { ok: false, reason: "delivery_error" };
+    }
+    await recordScanEvent(db, {
+      organizationId: context.organizationId,
+      actorUserId: context.actorUserId,
+      scanId: context.scanId,
+      type: `${context.eventType}.notification_${result.ok ? "sent" : "failed"}`,
+      metadata: {
+        channel: "webhook",
+        eventId,
+        eventType: payload.type,
+        ...(result.ok ? {} : { reason: result.reason }),
+      },
+    });
+  } catch {
+    emitOperationalEvent("warn", "notification.webhook.failed", {
+      organizationId: context.organizationId,
+      scanId: context.scanId,
+      reason: "delivery_error",
+    });
+  }
 }
 
 interface SlackDeliveryChannel {

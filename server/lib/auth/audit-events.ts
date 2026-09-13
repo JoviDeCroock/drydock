@@ -177,6 +177,36 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "Release target removed",
     severity: "notice",
   },
+  "organization.webhook_connected": {
+    category: "integration",
+    label: "Webhook connected",
+    severity: "notice",
+  },
+  "organization.webhook_enabled": {
+    category: "integration",
+    label: "Webhook notifications enabled",
+    severity: "info",
+  },
+  "organization.webhook_disabled": {
+    category: "integration",
+    label: "Webhook notifications disabled",
+    severity: "info",
+  },
+  "organization.webhook_disconnected": {
+    category: "integration",
+    label: "Webhook disconnected",
+    severity: "notice",
+  },
+  "organization.webhook_tested": {
+    category: "integration",
+    label: "Webhook test delivered",
+    severity: "info",
+  },
+  "organization.webhook_test_failed": {
+    category: "integration",
+    label: "Webhook test failed",
+    severity: "notice",
+  },
   "organization.slack_connected": {
     category: "integration",
     label: "Slack connected",

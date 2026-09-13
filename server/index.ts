@@ -57,6 +57,7 @@ import { organizationMembersRoutes } from "./routes/organization-members";
 import { ogRoutes } from "./routes/og";
 import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
+import { notificationWebhookRoutes } from "./routes/notification-webhook";
 import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { scansRoutes } from "./routes/scans";
@@ -356,6 +357,8 @@ app.get("/api", (c) =>
         "GET /public/threat-feed.json (feed-listed shared reviews); GET /public/badge/:ecosystem/:package[?tag=] (shields.io endpoint badge; tag defaults to latest)",
       slack:
         "GET /api/v1/slack; POST /api/v1/slack/connect; GET /api/v1/slack/callback; GET /api/v1/slack/channels; PUT /api/v1/slack/channel; PATCH /api/v1/slack; DELETE /api/v1/slack; POST /api/v1/slack/test",
+      notificationWebhook:
+        "GET/PUT/PATCH/DELETE /api/v1/notification-webhook; POST /api/v1/notification-webhook/test",
       authConfig:
         "GET /api/auth/config (anonymous; which optional sign-in methods are offered, and whether email verification can be enforced)",
       health: "GET /api/health",
@@ -379,6 +382,7 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/packages", packagesRoutes);
 app.route("/api/v1/slack", slackRoutes);
+app.route("/api/v1/notification-webhook", notificationWebhookRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);
 
