@@ -140,7 +140,7 @@ describe("acquireStagedNpm tarball verification", () => {
   const DECLARED = "cf6abd23c6a49417b8e8cd8635a1bba94a6fe5d2";
   const OTHER = "48283451416861c231a367b872a700c1ef002013";
 
-  function brokerFor({ shasum, archiveSha1 }) {
+  function brokerFor({ shasum, archiveSha1, archiveSha256 }) {
     return {
       dispose() {},
       fetchPackageMetadata: vi.fn(async () => metadata()),
@@ -156,6 +156,7 @@ describe("acquireStagedNpm tarball verification", () => {
         files: [{ path: "package.json", size: 10, sha256: "a", flags: [] }],
         packageJson: { name: "pkg", version: "2.0.0" },
         ...(archiveSha1 === undefined ? {} : { archiveSha1 }),
+        ...(archiveSha256 === undefined ? {} : { archiveSha256 }),
       })),
       downloadPublished: vi.fn(async () => {
         throw new Error("unused");
@@ -190,6 +191,23 @@ describe("acquireStagedNpm tarball verification", () => {
       expect(result.details.artifactIntegrity).toMatchObject(expected);
     },
   );
+
+  test("carries the sandbox's SHA-256 of the staged bytes for gate continuity", async () => {
+    const sha256 = "e".repeat(64);
+    const result = await acquireStagedNpm(
+      {},
+      { stageId: "stage-1" },
+      brokerFor({ shasum: DECLARED, archiveSha1: DECLARED, archiveSha256: sha256 }),
+    );
+    expect(result.details.artifactSha256).toBe(sha256);
+
+    const withoutDigest = await acquireStagedNpm(
+      {},
+      { stageId: "stage-1" },
+      brokerFor({ shasum: DECLARED, archiveSha1: DECLARED }),
+    );
+    expect(withoutDigest.details.artifactSha256).toBeNull();
+  });
 
   test("confirms a mismatch against a fresh read of the stage record before accusing", async () => {
     // The bytes and the digest they are checked against come from two
@@ -277,6 +295,7 @@ describe("acquireStagedNpm tarball verification", () => {
       createdAt: null,
       shasum: null,
       packageJson: null,
+      artifactSha256: null,
       artifactIntegrity: {
         algorithm: "sha1",
         status: "unverified",

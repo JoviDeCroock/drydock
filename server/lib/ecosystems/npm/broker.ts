@@ -10,6 +10,11 @@ import { ScanPreconditionError } from "../../scan/errors";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
 
+// SHA-1 binds the review to npm's own stage record (`shasum`); SHA-256 is the
+// digest a workflow gate recomputes for the same `.tgz`, so a stage can be
+// matched back to the gated review of the same bytes (gate continuity).
+const STAGED_ARCHIVE_DIGESTS = ["SHA-1", "SHA-256"] as const;
+
 export interface NpmBroker extends AdapterBroker {
   fetchPackageMetadata(name: string): Promise<RegistryMetadata | null>;
   fetchStagedDetails(stageId: string): Promise<StagedPublishDetails | null>;
@@ -73,6 +78,7 @@ export class NpmAdapterBroker extends WorkerEntrypoint<Cloudflare.Env, NpmBroker
         npmToken: creds.token,
         npmRegistry: creds.registry,
         tarRootStrip: "strip1",
+        archiveDigestAlgorithms: STAGED_ARCHIVE_DIGESTS,
       }),
     );
   }
@@ -176,6 +182,7 @@ class LocalNpmBroker implements NpmBroker {
       npmToken: creds.token,
       npmRegistry: creds.registry,
       tarRootStrip: "strip1",
+      archiveDigestAlgorithms: STAGED_ARCHIVE_DIGESTS,
     });
   }
 
