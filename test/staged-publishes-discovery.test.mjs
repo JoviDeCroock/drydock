@@ -13,6 +13,7 @@ const dbMock = vi.hoisted(() => ({
   updateNpmConnectionValidation: vi.fn(),
 }));
 const npmConnectionMock = vi.hoisted(() => ({
+  allowInsecureLocalRegistry: vi.fn(() => false),
   decryptNpmToken: vi.fn(),
   validateNpmCredential: vi.fn(),
 }));
@@ -30,6 +31,9 @@ vi.mock("../server/db/scans.ts", () => dbMock);
 vi.mock("../server/lib/ecosystems/npm/connection.ts", () => npmConnectionMock);
 vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", () => stagedPublishesMock);
 vi.mock("../server/lib/scan/job.ts", () => scanJobMock);
+vi.mock("../server/lib/ecosystems/npm/publication-auto-enrollment.ts", () => ({
+  registerStagedPublicationCandidates: vi.fn(async () => ({ deferred: 0, suggestions: [] })),
+}));
 vi.mock("../server/lib/ecosystems/npm/release-outcome.ts", () => releaseOutcomeMock);
 
 const {

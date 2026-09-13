@@ -11,11 +11,7 @@ import { isRecord } from "../../platform/guards";
 import { parseStagedArtifactIntegrity } from "../artifact-integrity";
 import { parseNpmReleaseManifest } from "./manifest";
 import { isPublishedTarballUrlAllowed } from "./published-tarball";
-import {
-  allowInsecureLocalRegistry,
-  isLoopbackHostname,
-  registryProtocolAllowed,
-} from "./connection";
+import { npmPublicationRegistry } from "./publication-registry";
 import { emitOperationalEvent } from "../../platform/observability";
 
 const REGISTRY = "https://registry.npmjs.org";
@@ -232,22 +228,7 @@ export async function checkNpmPublicationWatch(
   env: Cloudflare.Env,
   watch: PublicationWatch,
 ) {
-  let registry = REGISTRY;
-  if (allowInsecureLocalRegistry(env)) {
-    try {
-      const local = new URL(env.NPM_REGISTRY);
-      if (
-        isLoopbackHostname(local.hostname) &&
-        registryProtocolAllowed(local, { allowInsecureLocalhost: true }) &&
-        !local.username &&
-        !local.password &&
-        !local.search &&
-        !local.hash &&
-        local.pathname === "/"
-      )
-        registry = local.origin;
-    } catch {}
-  }
+  const registry = npmPublicationRegistry(env);
   const now = new Date();
   // A lease also makes manual checks and overlapping cron invocations share the bound.
   const claimed = await db

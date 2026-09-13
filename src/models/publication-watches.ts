@@ -5,6 +5,7 @@ import { apiFetch, apiJson, errorMessage } from "./api";
 export interface PublicationWatch {
   id: string;
   packageName: string;
+  source: "manual" | "staged_discovery" | "published_history";
   createdAt: string;
   lastCheckedAt: string | null;
   lastError: string | null;
@@ -24,6 +25,11 @@ export interface PublicationObservation {
   scanId: string | null;
 }
 
+export interface AutoEnrollmentInfo {
+  deferred: number;
+  suggestions: Array<{ packageName: string }>;
+}
+
 interface WatchDetail {
   watch: PublicationWatch;
   observations: PublicationObservation[];
@@ -33,12 +39,14 @@ const endpoint = "/api/v1/publication-watches";
 
 export const PublicationWatchesModel = createModel(() => {
   const watches = signal<PublicationWatch[]>([]);
+  const autoEnrollment = signal<AutoEnrollmentInfo>({ deferred: 0, suggestions: [] });
   const detail = signal<WatchDetail | null>(null);
   const packageName = signal("");
   const busy = signal(false);
   const loaded = signal(false);
   const error = signal<string | null>(null);
   let generation = 0;
+  let refreshPending = false;
 
   async function run<T>(request: () => Promise<T>, apply: (data: T) => void): Promise<void> {
     if (busy.peek()) return;
@@ -54,16 +62,28 @@ export const PublicationWatchesModel = createModel(() => {
       if (current === generation) {
         busy.value = false;
         loaded.value = true;
+        if (refreshPending) {
+          refreshPending = false;
+          await refresh();
+        }
       }
     }
   }
 
-  function refresh() {
+  function refresh(): Promise<void> {
+    if (busy.peek()) {
+      refreshPending = true;
+      return Promise.resolve();
+    }
     return run(
-      () => apiFetch<{ watches: PublicationWatch[] }>(endpoint),
+      () => apiFetch<{ watches: PublicationWatch[]; autoEnrollment: AutoEnrollmentInfo }>(endpoint),
       (data) => {
         watches.value = data.watches;
-        detail.value = null;
+        autoEnrollment.value = data.autoEnrollment;
+        const selected = detail.peek();
+        const selectedWatch =
+          selected && data.watches.find((watch) => watch.id === selected.watch.id);
+        detail.value = selected && selectedWatch ? { ...selected, watch: selectedWatch } : null;
       },
     );
   }
@@ -86,7 +106,9 @@ export const PublicationWatchesModel = createModel(() => {
 
   effect(() => {
     void activeOrganizationId.value;
+    refreshPending = false;
     watches.value = [];
+    autoEnrollment.value = { deferred: 0, suggestions: [] };
     detail.value = null;
     packageName.value = "";
     error.value = null;
@@ -101,6 +123,7 @@ export const PublicationWatchesModel = createModel(() => {
 
   return {
     watches,
+    autoEnrollment,
     detail,
     packageName,
     busy,
@@ -108,15 +131,22 @@ export const PublicationWatchesModel = createModel(() => {
     error,
     refresh,
     show,
-    enroll() {
-      const name = packageName.peek().trim();
+    enroll(suggestedPackageName?: string) {
+      const name = (suggestedPackageName ?? packageName.peek()).trim();
       if (!name) return Promise.resolve();
       return run(
         () => apiJson<{ watch: PublicationWatch }>(endpoint, { packageName: name }),
         ({ watch }) => {
           watches.value = [watch, ...watches.peek().filter((existing) => existing.id !== watch.id)];
-          packageName.value = "";
+          if (suggestedPackageName === undefined) packageName.value = "";
+          autoEnrollment.value = {
+            ...autoEnrollment.peek(),
+            suggestions: autoEnrollment
+              .peek()
+              .suggestions.filter((suggestion) => suggestion.packageName !== watch.packageName),
+          };
           detail.value = null;
+          refreshPending = true;
         },
       );
     },
@@ -126,6 +156,7 @@ export const PublicationWatchesModel = createModel(() => {
         () => {
           watches.value = watches.peek().filter((watch) => watch.id !== id);
           if (detail.peek()?.watch.id === id) detail.value = null;
+          refreshPending = true;
         },
       );
     },

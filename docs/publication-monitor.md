@@ -1,6 +1,6 @@
 # Public npm publication monitoring
 
-The dashboard's **Publication monitor** watches explicitly enrolled public npm
+The dashboard's **Publication monitor** watches automatically and manually enrolled public npm
 packages independently of staged scans. It checks new public versions against
 the active organization's prior release decisions and hashes the actual
 published tarball. A direct publication can therefore appear even when Drydock
@@ -12,11 +12,25 @@ Private packages and custom registries are not supported in production.
 
 ## Enrollment and observations
 
-Enter a public npm package name on the dashboard and choose **Watch package**.
-No npm token or existing scan is required. Enrollment starts a new observation
-window; versions with registry publication times before enrollment are excluded.
-Duplicate enrollment preserves the original start time. Removing a watch deletes
-its observations; enrolling it again starts a new window.
+Drydock automatically watches public npm packages from the organization's completed
+staged reviews whose captured registry status confirms publication. It also enrolls
+public packages as stages are discovered or manually submitted, before review runs.
+Only stages from public npm qualify in production; private or unknown visibility,
+custom registries, and published-pair reviews do not enroll packages. Completed npm
+workflow gates supply suggestions that require **Watch package**, because a gate
+alone does not establish public visibility.
+
+Historical enrollment runs when the dashboard lists watches and in bounded cron
+batches. It starts monitoring at enrollment time, never at the older review date;
+older releases are not retrospectively reported as bypasses. The dashboard shows
+where each watch came from and how many eligible packages await capacity at the
+20-watch limit. Deferred packages enroll as slots become available.
+
+You can also enter a public npm package name and choose **Watch package** without
+an npm token or existing scan. Duplicate enrollment preserves the original start
+time. Removing a watch deletes its observations and persists an organization-scoped
+opt-out, so later discovery or history reconciliation cannot silently restore it.
+Explicitly enrolling it again clears the opt-out and starts a new observation window.
 
 The existing 15-minute cron checks watches independently of staged discovery.
 **Check npm** runs a bounded check on demand. The dashboard displays the latest
@@ -66,12 +80,14 @@ identity, or Release Receipt v1.
 
 All endpoints require a Better Auth session and active-organization membership:
 
-- `GET /api/v1/publication-watches` lists watches.
+- `GET /api/v1/publication-watches` reconciles eligible packages and lists watches,
+  plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
 - `POST /api/v1/publication-watches/:id/check` checks a bounded batch and returns
   current observations. Repeated checks are rate-limited.
-- `DELETE /api/v1/publication-watches/:id` stops monitoring and removes history.
+- `DELETE /api/v1/publication-watches/:id` stops monitoring, removes history,
+  and remembers the opt-out.
 
 Responses are private and not cacheable. The organization has a 20-watch limit.
 A cron sweep selects up to eight watches by oldest check; an individual check
@@ -82,7 +98,9 @@ per response. A package exceeding 10,000 versions or stored observations reports
 a history-limit coverage problem rather than silently treating a partial history
 as complete.
 
-Persistence lives in `publication_watches` and `publication_observations`.
+Persistence lives in `publication_watches`, `publication_observations`, and
+`publication_watch_candidates` (enrollment evidence and persistent opt-outs).
+`server/lib/ecosystems/npm/publication-auto-enrollment.ts` owns enrollment;
 `server/lib/ecosystems/npm/publication-monitor.ts` owns acquisition and comparison;
 `server/routes/publication-watches.ts` owns the authenticated API. Operational
 failures use safe codes through `emitOperationalEvent`, never raw registry errors.

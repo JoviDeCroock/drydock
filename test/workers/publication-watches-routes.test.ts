@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { user } from "../../server/db/schema";
+import { scans, user } from "../../server/db/schema";
 import { publicationWatchRoutes } from "../../server/routes/publication-watches";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -90,7 +90,10 @@ test("watch IDs and organization selectors never grant access to another organiz
     expect(response.status).toBe(404);
   }
   const response = await request(outsider, "GET", "", undefined, owner.organizationId!);
-  expect(await response.json()).toEqual({ watches: [] });
+  expect(await response.json()).toMatchObject({
+    watches: [],
+    autoEnrollment: { deferred: 0, suggestions: [] },
+  });
   expect((await request(owner, "GET", `/${watch.id}`)).status).toBe(200);
 });
 
@@ -102,4 +105,44 @@ test("rejects URL and malformed package enrollment and preserves enrollment time
   const first = await request(owner, "POST", "", { packageName: "preact" });
   const second = await request(owner, "POST", "", { packageName: "preact" });
   expect(await second.json()).toEqual(await first.json());
+});
+
+test("GET derives historical public publishers, preserves opt-out and permits explicit reenrollment", async () => {
+  const owner = await seedOwner();
+  const now = new Date();
+  await createDb(env.DB)
+    .insert(scans)
+    .values({
+      id: crypto.randomUUID(),
+      stageId: "stage-auto-history",
+      organizationId: owner.organizationId!,
+      source: "auto_discovery",
+      status: "complete",
+      packageName: "@scope/history",
+      stagedVersion: "1.0.0",
+      registryUrl: "https://registry.npmjs.org",
+      registryPackageName: "@scope/history",
+      registryVersion: "1.0.0",
+      registryVersionStatus: "published",
+      registryVersionStatusAt: now,
+      summaryJson: { stagedPublish: { access: "public" } },
+      createdAt: new Date(0),
+      updatedAt: now,
+    });
+  const listed = await request(owner, "GET");
+  const body = await listed.json<{
+    watches: Array<{ id: string; source: string; createdAt: string }>;
+    autoEnrollment: { deferred: number };
+  }>();
+  expect(body.watches).toHaveLength(1);
+  expect(body.watches[0]?.source).toBe("published_history");
+  expect(Date.parse(body.watches[0]!.createdAt)).toBeGreaterThanOrEqual(now.getTime());
+  expect(body.autoEnrollment.deferred).toBe(0);
+  await request(owner, "DELETE", `/${body.watches[0]!.id}`);
+  expect(await (await request(owner, "GET")).json()).toMatchObject({ watches: [] });
+  const reenrolled = await request(owner, "POST", "", { packageName: "@scope/history" });
+  expect(await reenrolled.json()).toMatchObject({ watch: { source: "manual" } });
+  expect(await (await request(owner, "GET")).json()).toMatchObject({
+    watches: [{ source: "manual" }],
+  });
 });

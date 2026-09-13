@@ -172,7 +172,7 @@ export default function DashboardPage() {
             error={overview.error}
           />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
-          <PublicationMonitor />
+          <PublicationMonitor reviews={scans.scans} />
         </>
       ) : (
         <LoadingState

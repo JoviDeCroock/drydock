@@ -61,6 +61,8 @@ import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { publicationWatchRoutes } from "./routes/publication-watches";
 import { sweepNpmPublicationWatches } from "./lib/ecosystems/npm/publication-monitor";
+import { backfillNpmPublicationWatches } from "./lib/ecosystems/npm/publication-auto-enrollment";
+import { npmPublicationRegistry } from "./lib/ecosystems/npm/publication-registry";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import type { Bindings, Variables } from "./types";
@@ -601,6 +603,13 @@ export default {
     }
     // Public release monitoring also covers organizations with no npm token or
     // stage discovery connection. Its failure must not disable stage review.
+    try {
+      await backfillNpmPublicationWatches(createDb(env.DB), npmPublicationRegistry(env));
+    } catch (err) {
+      emitOperationalEvent("error", "npm.publication_monitor.backfill_failed", {
+        error: describeOperationalError(err),
+      });
+    }
     try {
       await sweepNpmPublicationWatches(createDb(env.DB), env);
     } catch (err) {
