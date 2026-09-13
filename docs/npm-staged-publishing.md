@@ -139,15 +139,19 @@ What this buys:
 - **The stage becomes the receipt.** Drydock still discovers and scans the
   stage. For a package the organization gates, the staged review carries a
   **Gate continuity** section: the SHA-256 the sandbox computed from the staged
-  bytes is matched against the organization's workflow-gate reviews of the
-  same package version.
+  bytes is matched against the organization's completed workflow-gate reviews
+  of the same package version. The lookup is keyed on npm's own stage record
+  (package name and version from the registry), never on the tarball's
+  manifest, so a hostile stage cannot rename itself out of its package's gate
+  history.
 
-| Gate continuity   | Meaning                                                                                                               |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `matched`         | npm holds the tarball the gate reviewed; approving on npm publishes the gated bytes. Links the gate review.           |
-| `digest-mismatch` | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw. |
-| `unverified`      | The gate reviewed this version; the staged digest could not be computed, so nothing is bound.                         |
-| `ungated`         | The organization gates this package and no gate review exists for this version. The stage was produced out of band.   |
+| Gate continuity     | Meaning                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `matched`           | npm holds the tarball the gate reviewed **and approved**; approving on npm publishes the gated bytes. Links the gate review.                                                                      |
+| `gate-not-approved` | The gate reviewed exactly these bytes and rejected them (or has not decided), yet they were staged anyway. Reject on npm.                                                                         |
+| `digest-mismatch`   | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw.                                                                             |
+| `unverified`        | The gate reviewed this version, but one of the two digests is unavailable (uncomputed stage digest, a gate review with no single-tarball provenance, or a deleted gate row), so nothing is bound. |
+| `ungated`           | The organization has completed gate reviews of this package and none for this version. The stage was produced out of band.                                                                        |
 
 The record is advisory and additive: it never moves risk, findings, or a
 decision, and a lookup failure degrades to "no record" (`scan.gate_continuity.lookup_failed`).
