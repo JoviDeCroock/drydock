@@ -88,12 +88,23 @@ for (const name of scenarioNames) {
   });
 }
 
+const publicPackageDir = path.join(repoRoot, "test/e2e-fixtures/publication-monitor");
+const publicManifest = await readJson(path.join(publicPackageDir, "package.json"));
+const publicPack = packPackage(publicPackageDir, tarballRoot);
+
 await writeFile(
   path.join(outputRoot, "registry.json"),
   JSON.stringify(
     {
       generatedAt: new Date().toISOString(),
       scenarios,
+      publicPublication: {
+        manifest: publicManifest,
+        version: publicManifest.version,
+        tarballFile: publicPack.filename,
+        shasum: publicPack.shasum,
+        integrity: publicPack.integrity,
+      },
     },
     null,
     2,
@@ -107,11 +118,15 @@ async function readJson(filePath) {
 }
 
 function packPackage(packageDir, destination) {
-  const result = spawnSync("npm", ["pack", "--json", "--pack-destination", destination], {
-    cwd: packageDir,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const result = spawnSync(
+    "npm",
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", destination],
+    {
+      cwd: packageDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   if (result.status !== 0) {
     throw new Error(
       `npm pack failed in ${relative(packageDir)}\n${result.stdout}\n${result.stderr}`,

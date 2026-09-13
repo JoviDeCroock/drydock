@@ -323,6 +323,56 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   });
 }
 
+test("publication monitor observes an unreviewed public release", async ({ browser, baseURL }) => {
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  const browserErrors: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) =>
+    browserErrors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
+  );
+  try {
+    await page.goto("/dashboard");
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: /^Publication monitor/ }) });
+    await expect(monitor.getByText("No packages watched yet.")).toBeVisible();
+    await monitor.getByLabel("Public npm package").fill("@drydock/e2e-publication");
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    await expect(monitor.getByText("@drydock/e2e-publication", { exact: true })).toBeVisible();
+    // Materialize the fixture release after enrollment and before the check;
+    // its stable registry timestamp must not appear to be in the future.
+    const published = await fetch(`${registryUrl}/@drydock%2Fe2e-publication`);
+    expect(published.ok).toBe(true);
+    await published.json();
+    await monitor.getByRole("button", { name: "Check npm", exact: true }).click();
+    await expect(
+      monitor.getByText("Published without prior approval", { exact: true }),
+    ).toBeVisible();
+    await expect(monitor.getByText("1.0.0", { exact: true })).toBeVisible();
+    await expect(monitor.getByRole("link", { name: "Open review" })).toHaveCount(0);
+    await monitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor.png"),
+      fullPage: true,
+    });
+    await monitor.getByRole("button", { name: "Stop watching", exact: true }).click();
+    await expect(monitor.getByText("No packages watched yet.")).toBeVisible();
+    expect(browserErrors).toEqual([]);
+    const publicRequests = (await readJournal()).filter((entry) =>
+      /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(decodeURIComponent(entry.path)),
+    );
+    expect(
+      publicRequests.some((entry) => entry.path.includes("/-/drydock-e2e-publication-1.0.0.tgz")),
+    ).toBe(true);
+    expect(publicRequests.every((entry) => entry.authorization === "absent")).toBe(true);
+  } finally {
+    await context.close();
+  }
+});
+
 test("registry journal limits credential forwarding", async () => {
   const journal = await readJournal();
   expect(journal.some((entry) => entry.path === "/-/whoami")).toBe(true);
@@ -334,7 +384,10 @@ test("registry journal limits credential forwarding", async () => {
   );
 
   for (const entry of journal.filter((item) => item.path !== "/__health")) {
-    expect(entry.authorization, entry.path).toBe("present");
+    const publicPublication = /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(
+      decodeURIComponent(entry.path),
+    );
+    expect(entry.authorization, entry.path).toBe(publicPublication ? "absent" : "present");
   }
 
   // Credentialed paths are allowlisted, not merely observed: this is what fails
