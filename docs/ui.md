@@ -39,7 +39,8 @@ the primitive, which makes the primitive the subscriber rather than the page.
 The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`.
 Its signal model in `src/models/publication-watches.ts` refreshes automatic enrollment
 after review discovery, supports manual enrollment and gate suggestions, displays
-watch origins and capacity deferrals, shows the latest 100 publication observations, and
+watch origins, capacity deferrals and unacknowledged alert counts, supports audited
+acknowledgment without changing release evidence, shows up to 100 publication observations with unacknowledged alerts first, and
 fences requests across organization changes. The card mirrors the Recent
 reviews anatomy (header row with the enrol form, edge-to-edge rows, a per-row
 `⋯` menu for show releases and stop watching) so the dashboard reads as one

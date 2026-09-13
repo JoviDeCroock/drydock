@@ -34,7 +34,7 @@ Explicitly enrolling it again clears the opt-out and starts a new observation wi
 
 The existing 15-minute cron checks watches independently of staged discovery.
 **Check npm** runs a bounded check on demand. The dashboard displays the latest
-100 observed versions for the selected watch, along with the enrollment time,
+100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
 last check and any coverage problem. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
@@ -53,6 +53,43 @@ overwrite its prior decision timestamp; when current records cannot establish
 that history, the monitor reports uncertainty instead of assuming no approval
 ever existed. Observations describe the evidence available when checked, not a
 complete immutable history of every decision, deleted review or registry event.
+
+## Alerts and acknowledgment
+
+New confirmed discrepancies (missing prior approval, publication despite rejection,
+or different published bytes) create one durable alert per organization/package/version.
+The monitor attempts email delivery to the organization's configured recipients (owner
+fallback) and Slack delivery to its connected channel. Unknown evidence and matching
+approvals do not generate discrepancy alerts. Existing observations from before alert
+support are not retroactively announced.
+
+Each watch row shows the unacknowledged alerts represented in its current observation
+window. Stopping removes that visible history; retained deduplication records from older
+windows do not create inaccessible alert counts on a new watch. Expand its releases to acknowledge
+an alert; any organization member can acknowledge it. Acknowledgment is audited and
+leaves the publication evidence unchanged. The alert ledger survives stopping a watch,
+so explicitly re-enrolling cannot resend that release's notification or erase its
+acknowledgment. Observation history still follows the watch's enrollment window.
+
+Observation, alert and audit creation commit together. Delivery is attempted only by
+the transaction that first creates the alert, matching the existing send-once notification
+pattern; interruption or delivery failure can lose that attempt, and delivery is not
+retried automatically. The durable dashboard alert remains available until the watch is stopped.
+
+The organization `out-of-band-watch` flag disables acquisition and new alerts when
+false, including manual checks. It defaults on without a FLAGS binding. Enrollment
+and existing evidence remain accessible while disabled.
+
+This consolidates the out-of-band watcher proposed in PR #651 into one monitor.
+A matching scan alone does not suppress an alert: it needs qualifying approval and
+matching bytes. No separate metadata-only poller, package-watch tables, or dashboard
+banner is needed. Public npm is the production registry boundary.
+
+Gate registry verification in PR #658 remains a distinct lifecycle: it verifies known
+approved gate artifacts across ecosystems and can establish registry-verified identity.
+This monitor also discovers releases that have no gate and makes no public badge claim.
+Both use the existing npm published-tarball URL policy; their credential/authority and
+acquisition contracts differ, so the monitor does not call the gate's sandbox parser.
 
 ## Byte and decision binding
 
@@ -81,11 +118,13 @@ identity, or Release Receipt v1.
 All endpoints require a Better Auth session and active-organization membership:
 
 - `GET /api/v1/publication-watches` reconciles eligible packages and lists watches,
-  plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
+  with per-watch `unresolvedAlertCount`, plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
 - `POST /api/v1/publication-watches/:id/check` checks a bounded batch and returns
   current observations. Repeated checks are rate-limited.
+- `POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge`
+  acknowledges a discrepancy and returns current watch/observations; repeats are idempotent.
 - `DELETE /api/v1/publication-watches/:id` stops monitoring, removes history,
   and remembers the opt-out.
 
@@ -99,7 +138,8 @@ a history-limit coverage problem rather than silently treating a partial history
 as complete.
 
 Persistence lives in `publication_watches`, `publication_observations`, and
-`publication_watch_candidates` (enrollment evidence and persistent opt-outs).
+`publication_watch_candidates` (enrollment evidence and persistent opt-outs), and
+`publication_alerts` (durable notification deduplication and acknowledgment).
 `server/lib/ecosystems/npm/publication-auto-enrollment.ts` owns enrollment;
 `server/lib/ecosystems/npm/publication-monitor.ts` owns acquisition and comparison;
 `server/routes/publication-watches.ts` owns the authenticated API. Operational

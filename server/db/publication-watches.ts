@@ -1,23 +1,30 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
-import { publicationObservations, publicationWatchCandidates, publicationWatches } from "./schema";
+import {
+  publicationAlerts,
+  publicationObservations,
+  publicationWatchCandidates,
+  publicationWatches,
+} from "./schema";
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 class PublicationWatchNameError extends Error {}
 
+const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
+
 export function listPublicationWatches(db: AppDb, organizationId: string) {
   return db
-    .select()
+    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
     .from(publicationWatches)
     .where(eq(publicationWatches.organizationId, organizationId))
     .orderBy(asc(publicationWatches.createdAt));
 }
 export async function getPublicationWatch(db: AppDb, organizationId: string, id: string) {
   const [watch] = await db
-    .select()
+    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
     .from(publicationWatches)
     .where(
       and(eq(publicationWatches.organizationId, organizationId), eq(publicationWatches.id, id)),
@@ -55,7 +62,7 @@ export async function createPublicationWatch(
       }),
   ]);
   const [watch] = await db
-    .select()
+    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
     .from(publicationWatches)
     .where(
       and(
@@ -93,14 +100,30 @@ export async function deletePublicationWatch(db: AppDb, organizationId: string, 
 }
 export function listPublicationObservations(db: AppDb, organizationId: string, watchId: string) {
   return db
-    .select()
+    .select({
+      ...getTableColumns(publicationObservations),
+      acknowledgedAt: publicationAlerts.acknowledgedAt,
+    })
     .from(publicationObservations)
+    .innerJoin(publicationWatches, eq(publicationWatches.id, publicationObservations.watchId))
+    .leftJoin(
+      publicationAlerts,
+      and(
+        eq(publicationAlerts.organizationId, publicationObservations.organizationId),
+        eq(publicationAlerts.packageName, publicationWatches.packageName),
+        eq(publicationAlerts.version, publicationObservations.version),
+      ),
+    )
     .where(
       and(
         eq(publicationObservations.organizationId, organizationId),
         eq(publicationObservations.watchId, watchId),
       ),
     )
-    .orderBy(desc(publicationObservations.firstSeenAt), desc(publicationObservations.id))
+    .orderBy(
+      sql`case when ${publicationAlerts.id} is not null and ${publicationAlerts.acknowledgedAt} is null then 0 else 1 end`,
+      desc(publicationObservations.firstSeenAt),
+      desc(publicationObservations.id),
+    )
     .limit(100);
 }

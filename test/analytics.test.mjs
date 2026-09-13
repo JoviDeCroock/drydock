@@ -109,6 +109,12 @@ describe("recordProductEvent", () => {
     const { points, env } = fakeDataset();
     const events = [
       {
+        name: "publication.discrepancy",
+        organizationId: "org",
+        ecosystem: "npm",
+        status: "artifact_mismatch",
+      },
+      {
         name: "scan.completed",
         organizationId: "org_1",
         ecosystem: "npm",

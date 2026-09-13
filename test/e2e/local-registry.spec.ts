@@ -364,6 +364,24 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     ).toBeVisible();
     await expect(monitor.getByText("1.0.0", { exact: true })).toBeVisible();
     await expect(monitor.getByRole("link", { name: "Open review" })).toHaveCount(0);
+    await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await monitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor-unacknowledged.png"),
+      fullPage: true,
+    });
+    await monitor.getByRole("button", { name: "Acknowledge", exact: true }).click();
+    await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
+    await expect(monitor.getByRole("button", { name: "Acknowledge", exact: true })).toHaveCount(0);
+    await page.reload();
+    await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
+    await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
+    await expect(
+      monitor.getByText("Published without prior approval", { exact: true }),
+    ).toBeVisible();
     await monitor.scrollIntoViewIfNeeded();
     await page.screenshot({
       path: path.join(artifactsDir, "publication-monitor.png"),

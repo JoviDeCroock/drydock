@@ -10,6 +10,7 @@ const watch: PublicationWatch = {
   createdAt: "2026-09-01T00:00:00.000Z",
   lastCheckedAt: null,
   lastError: null,
+  unresolvedAlertCount: 0,
 };
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
@@ -273,4 +274,98 @@ test("keeps fresh checked observations through a queued list refresh until that 
   expect(model.detail.value).toEqual({ watch: checkedWatch, observations });
   await model.refresh();
   expect(model.detail.value).toBeNull();
+});
+
+test("acknowledges a release and preserves the updated detail through a queued refresh", async () => {
+  const response = deferred();
+  const acknowledgedAt = "2026-09-13T13:00:00.000Z";
+  const observation = {
+    id: "observation/1",
+    version: "1.0.0",
+    status: "published_without_approval",
+    acknowledgedAt: null,
+  };
+  const updated = { ...observation, acknowledgedAt };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({
+        watches: [{ ...watch, unresolvedAlertCount: 1 }],
+        autoEnrollment: { deferred: 0, suggestions: [] },
+      }),
+    )
+    .mockResolvedValueOnce(json({ watch, observations: [observation] }))
+    .mockReturnValueOnce(response.promise)
+    .mockResolvedValueOnce(
+      json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  await model.show(watch.id);
+  const pending = model.acknowledge(watch.id, observation.id);
+  await model.refresh();
+  await model.acknowledge(watch.id, observation.id);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock.mock.calls[2]?.[0]).toBe(
+    "/api/v1/publication-watches/watch-1/observations/observation%2F1/acknowledge",
+  );
+  expect(fetchMock.mock.calls[2]?.[1].method).toBe("POST");
+  response.resolve(json({ watch, observations: [updated] }));
+  await pending;
+  expect(model.detail.value?.observations).toEqual([updated]);
+  expect(model.watches.value[0]?.unresolvedAlertCount).toBe(0);
+});
+
+test("a failed acknowledgment keeps the evidence and reports the error", async () => {
+  const observation = { id: "observation-1", status: "artifact_mismatch", acknowledgedAt: null };
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      )
+      .mockResolvedValueOnce(json({ watch, observations: [observation] }))
+      .mockResolvedValueOnce(json({ error: "Acknowledgment unavailable" }, 503)),
+  );
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  await model.show(watch.id);
+  await model.acknowledge(watch.id, observation.id);
+  expect(model.detail.value?.observations).toEqual([observation]);
+  expect(model.error.value).toBe("Acknowledgment unavailable");
+  expect(model.busy.value).toBe(false);
+});
+
+test("does not apply an acknowledgment response after an organization switch", async () => {
+  const response = deferred();
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ watches: [watch], autoEnrollment: { deferred: 0, suggestions: [] } }),
+      )
+      .mockResolvedValueOnce(json({ watch, observations: [] }))
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValue(json({ watches: [], autoEnrollment: { deferred: 0, suggestions: [] } })),
+  );
+  setActiveOrganizationId("org-a");
+  model = new PublicationWatchesModel();
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  await model.show(watch.id);
+  const pending = model.acknowledge(watch.id, "observation-1");
+  setActiveOrganizationId("org-b");
+  setActiveOrganizationId("org-a");
+  response.resolve(
+    json({
+      watch,
+      observations: [{ id: "observation-1", acknowledgedAt: "2026-09-13T13:00:00.000Z" }],
+    }),
+  );
+  await pending;
+  await vi.waitFor(() => expect(model!.loaded.value).toBe(true));
+  expect(model.detail.value).toBeNull();
+  expect(model.watches.value).toEqual([]);
 });

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { acknowledgePublicationAlert } from "../db/publication-alerts";
 import { createDb } from "../db/client";
 import {
   createPublicationWatch,
@@ -98,6 +99,26 @@ publicationWatchRoutes.post("/:id/check", async (c) => {
   if (!current) return c.json({ error: "not found" }, 404);
   return c.json({
     watch: current,
+    observations: await listPublicationObservations(db, organizationId, watch.id),
+  });
+});
+
+publicationWatchRoutes.post("/:id/observations/:observationId/acknowledge", async (c) => {
+  const db = createDb(c.env.DB);
+  const organizationId = await requireActiveOrganization(c, db);
+  const session = c.get("authSession");
+  if (!session) return c.json({ error: "unauthorized" }, 401);
+  const acknowledged = await acknowledgePublicationAlert(db, {
+    organizationId,
+    watchId: c.req.param("id"),
+    observationId: c.req.param("observationId"),
+    actorUserId: session.userId,
+  });
+  if (!acknowledged) return c.json({ error: "not found" }, 404);
+  const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
+  if (!watch) return c.json({ error: "not found" }, 404);
+  return c.json({
+    watch,
     observations: await listPublicationObservations(db, organizationId, watch.id),
   });
 });

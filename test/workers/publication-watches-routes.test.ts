@@ -3,7 +3,10 @@ import { Hono } from "hono";
 import { expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { scans, user } from "../../server/db/schema";
+import { and, eq } from "drizzle-orm";
+import { savePublicationObservation } from "../../server/db/publication-alerts";
+import { createPublicationWatch } from "../../server/db/publication-watches";
+import { scanEvents, scans, user } from "../../server/db/schema";
 import { publicationWatchRoutes } from "../../server/routes/publication-watches";
 import type { Bindings, Variables } from "../../server/types";
 
@@ -145,4 +148,64 @@ test("GET derives historical public publishers, preserves opt-out and permits ex
   expect(await (await request(owner, "GET")).json()).toMatchObject({
     watches: [{ source: "manual" }],
   });
+});
+
+test("acknowledgment is scoped, idempotent, audited and preserves discrepancy evidence", async () => {
+  const owner = await seedOwner();
+  const outsider = await seedOwner();
+  const db = createDb(env.DB);
+  const watch = await createPublicationWatch(db, owner.organizationId, "alerted-package");
+  const otherWatch = await createPublicationWatch(db, owner.organizationId, "different-package");
+  await createPublicationWatch(db, outsider.organizationId, "alerted-package");
+  const observationId = crypto.randomUUID();
+  const now = new Date();
+  await savePublicationObservation(
+    db,
+    {
+      id: observationId,
+      watchId: watch.id,
+      organizationId: owner.organizationId,
+      version: "1.0.0",
+      publishedAt: now,
+      firstSeenAt: now,
+      checkedAt: now,
+      status: "artifact_mismatch",
+    },
+    watch.packageName,
+  );
+  const listed = await request(owner, "GET");
+  expect(await listed.json()).toMatchObject({
+    watches: expect.arrayContaining([
+      { ...otherWatch, createdAt: otherWatch.createdAt.toISOString(), unresolvedAlertCount: 0 },
+      expect.objectContaining({ id: watch.id, unresolvedAlertCount: 1 }),
+    ]),
+  });
+  expect(await (await request(outsider, "GET")).json()).toMatchObject({
+    watches: [expect.objectContaining({ unresolvedAlertCount: 0 })],
+  });
+  const path = `/${watch.id}/observations/${observationId}/acknowledge`;
+  expect((await request(outsider, "POST", path)).status).toBe(404);
+  expect(
+    (await request(owner, "POST", `/${otherWatch.id}/observations/${observationId}/acknowledge`))
+      .status,
+  ).toBe(404);
+  const first = await request(owner, "POST", path);
+  expect(first.status).toBe(200);
+  const result = await first.json<{ observations: { acknowledgedAt: string }[] }>();
+  expect(result).toMatchObject({
+    watch: { unresolvedAlertCount: 0 },
+    observations: [{ status: "artifact_mismatch", acknowledgedAt: expect.any(String) }],
+  });
+  expect(await (await request(owner, "POST", path)).json()).toEqual(result);
+  const events = await db
+    .select()
+    .from(scanEvents)
+    .where(
+      and(
+        eq(scanEvents.organizationId, owner.organizationId),
+        eq(scanEvents.type, "publication.acknowledged"),
+      ),
+    );
+  expect(events).toHaveLength(1);
+  expect(events[0]?.actorUserId).toBe(owner.userId);
 });

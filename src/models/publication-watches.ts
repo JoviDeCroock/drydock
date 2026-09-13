@@ -9,9 +9,12 @@ export interface PublicationWatch {
   createdAt: string;
   lastCheckedAt: string | null;
   lastError: string | null;
+  unresolvedAlertCount: number;
 }
 
 export interface PublicationObservation {
+  id: string;
+  acknowledgedAt: string | null;
   version: string;
   publishedAt: string | null;
   firstSeenAt: string;
@@ -147,6 +150,21 @@ export const PublicationWatchesModel = createModel(() => {
           };
           detail.value = null;
           refreshPending = true;
+        },
+      );
+    },
+    acknowledge(watchId: string, observationId: string) {
+      return run(
+        () =>
+          apiFetch<WatchDetail>(
+            `${endpoint}/${encodeURIComponent(watchId)}/observations/${encodeURIComponent(observationId)}/acknowledge`,
+            { method: "POST" },
+          ),
+        (data) => {
+          watches.value = watches
+            .peek()
+            .map((watch) => (watch.id === data.watch.id ? data.watch : watch));
+          if (detail.peek()?.watch.id === watchId) detail.value = data;
         },
       );
     },
