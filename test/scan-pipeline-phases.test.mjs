@@ -249,10 +249,24 @@ describe("summarizeResolvedArtifacts", () => {
       previousVersionAvailable: true,
       baselineComparisonSkipped: false,
       declaredRepository: null,
+      stagedArtifactSha256: null,
     });
     // Nothing in the facts carries file text: that is the whole point.
     expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);
     expect(JSON.stringify(facts)).not.toContain("export const value");
+  });
+
+  test("reads the staged artifact digest off the adapter when it computes one", () => {
+    const adapter = makeAdapter();
+    adapter.stagedArtifactSha256 = (details) => details?.artifactSha256 ?? null;
+    const withDigest = {
+      ...resolved,
+      staged: { ...resolved.staged, details: { artifactSha256: "a".repeat(64) } },
+    };
+
+    expect(summarizeResolvedArtifacts(adapter, { stageId: "stage-1" }, withDigest)).toMatchObject({
+      stagedArtifactSha256: "a".repeat(64),
+    });
   });
 
   test("carries the staged manifest's declared repository", () => {

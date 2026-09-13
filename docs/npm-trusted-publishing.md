@@ -16,6 +16,10 @@ trusted publisher to `npm stage publish` and let npm hold the candidate instead
 of GitHub holding the job. See
 [`npm-staged-publishing.md`](./npm-staged-publishing.md) for that recipe and a
 comparison of **Workflow Gate — enforced** with **Stage Watchtower — advisory**.
+The two compose: a stage-only publisher pinned to the gate environment, with
+the protected job running `npm stage publish`, gives an enforced review before
+npm holds the bytes and a staged review that is bound back to the gate
+([gated staging](./npm-staged-publishing.md#gated-staging-compose-both)).
 
 This page is the recipe, followed by an honest accounting of what it does and
 does not stop. Prerequisite: a working npm workflow gate as described in

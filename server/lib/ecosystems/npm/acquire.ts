@@ -91,7 +91,12 @@ export async function acquireStagedNpm(
     // Persist an explicit unverified verdict even when the registry's detail
     // request failed. Otherwise a newly unbound scan is indistinguishable from
     // a legacy scan that predates artifact verification.
-    details: withArtifactIntegrity(input.stageId, stagedDetails, artifactIntegrity),
+    details: withArtifactIntegrity(
+      input.stageId,
+      stagedDetails,
+      artifactIntegrity,
+      staged.archiveSha256 ?? null,
+    ),
   };
 }
 
@@ -142,6 +147,7 @@ function withArtifactIntegrity(
   stageId: string,
   details: StagedPublishDetails | null,
   artifactIntegrity: StagedArtifactIntegrity,
+  artifactSha256: string | null,
 ): NpmStagedDetails {
   return {
     id: details?.id ?? stageId,
@@ -155,6 +161,7 @@ function withArtifactIntegrity(
     shasum: details?.shasum ?? null,
     packageJson: details?.packageJson ?? null,
     artifactIntegrity,
+    artifactSha256,
   };
 }
 
