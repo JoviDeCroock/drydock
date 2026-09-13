@@ -76,7 +76,7 @@ describe("evaluateGateContinuity", () => {
     });
   });
 
-  test("prefers a matching review over a newer non-matching re-run", () => {
+  test("prefers a same-bytes review over a newer re-run of different bytes", () => {
     const rerun = gateRow(OTHER, { scanId: "scan_rerun" });
     const continuity = evaluateGateContinuity(
       { forVersion: [rerun, gateRow(GATED)], packageHasGateHistory: true },
@@ -125,13 +125,21 @@ describe("evaluateGateContinuity", () => {
         review: { scanId: row.scanId, sha256: GATED },
       });
     }
-    // An approved re-run of the same bytes outranks an earlier rejection.
-    const continuity = evaluateGateContinuity(
+    // Reviews are newest first and the latest decision on these bytes wins:
+    // an approved re-run outranks an earlier rejection, and a later rejection
+    // outranks an earlier approval.
+    const approvedLater = evaluateGateContinuity(
+      { forVersion: [gateRow(GATED), rejected], packageHasGateHistory: true },
+      GATED,
+    );
+    expect(approvedLater?.status).toBe("matched");
+    expect(approvedLater?.review?.scanId).toBe("scan_gate");
+    const rejectedLater = evaluateGateContinuity(
       { forVersion: [rejected, gateRow(GATED)], packageHasGateHistory: true },
       GATED,
     );
-    expect(continuity?.status).toBe("matched");
-    expect(continuity?.review?.scanId).toBe("scan_gate");
+    expect(rejectedLater?.status).toBe("gate-not-approved");
+    expect(rejectedLater?.review?.scanId).toBe("scan_rejected");
   });
 
   test("never matches against a multi-artifact or malformed gate provenance", () => {
