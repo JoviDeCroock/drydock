@@ -48,9 +48,6 @@ interface ScanDetailBody {
 
 const scenarios = readScenarioDefinitions();
 
-/** Set by the UI smoke test; the public-report test shares the review it made. */
-let reviewedScanId: string | null = null;
-
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser, baseURL }) => {
@@ -80,7 +77,6 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     const scanId = created.body?.scan?.id;
     expect(scanId, "scan id present in create-scan response").toBeTruthy();
     expect(typeof created.body?.queued, "queued flag present").toBe("boolean");
-    reviewedScanId = String(scanId);
 
     const detail = await pollScanUntilTerminal(page, String(scanId));
     expect(detail.scan.status, "implicit-node-gyp scan completed").toBe("complete");
@@ -165,12 +161,17 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
 // rendered and the Worker route never ran. Drive the real one — share the
 // reviewed release, then read it back from a context carrying no cookies.
 test("a shared review is readable as an anonymous public report", async ({ browser, baseURL }) => {
-  expect(reviewedScanId, "the UI smoke test recorded the review it decided").toBeTruthy();
-
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   let token = "";
   try {
     await page.goto("/dashboard");
+    // Its own scan rather than the UI smoke test's: a test that reads state
+    // another test left behind cannot be run on its own to reproduce a failure.
+    const created = await createScan(page, uiStageId);
+    expect(created.status, "scan accepted").toBe(202);
+    const detail = await pollScanUntilTerminal(page, String(created.body?.scan?.id));
+    expect(detail.scan.status, "scan completed").toBe("complete");
+
     const shared = await evaluateOnStablePage(
       page,
       async (id) => {
@@ -181,7 +182,7 @@ test("a shared review is readable as an anonymous public report", async ({ brows
         });
         return { status: response.status, body: await response.json().catch(() => null) };
       },
-      String(reviewedScanId),
+      String(created.body?.scan?.id),
     );
     expect(shared.status, "share link created").toBe(200);
     token = String(shared.body?.share?.token ?? "");
