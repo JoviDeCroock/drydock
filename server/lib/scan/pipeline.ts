@@ -83,13 +83,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // the AI review, risk scoring, and persistence below run while only the
     // redacted copies are reachable — peak memory is what caps reviewable
     // package size.
+    // The registry's own coordinates for the stage, captured for the gate
+    // continuity lookup below: package-controlled manifest fields must never
+    // aim a lookup at another package's gate history.
+    let registryIdentity: { packageName: string; version: string } | null = null;
     const { diff, findings, facts } = await analyzeRelease(
       adapter,
       adapterCtx,
       adapterInput,
       broker,
       async (resolved) => {
-        const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
+        registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
         if (input.scanId && registryUrl && registryIdentity) {
           const identityResult = await backfillScanRegistryReleaseIdentity(db, {
             scanId: input.scanId,
@@ -166,8 +170,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       db,
       identity,
       source: input.source,
-      packageName: findings.redactedStagedManifest?.name ?? null,
-      version: findings.redactedStagedManifest?.version ?? null,
+      registryIdentity,
       stagedDigest: facts.stagedArtifactSha256,
     });
 

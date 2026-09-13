@@ -5,7 +5,7 @@ import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/
 import {
   normalizeGateContinuity,
   type GateContinuity,
-} from "../../../../server/lib/scan/gate-continuity";
+} from "../../../../server/lib/scan/gate-continuity-record";
 import { Badge } from "../../../components/Badge";
 import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -65,19 +65,21 @@ function GateContinuityView({ continuity }: { continuity: GateContinuity }) {
   const review = continuity.review;
   const description =
     continuity.status === "matched"
-      ? "The tarball npm holds for this stage is byte-for-byte the tarball the workflow gate reviewed. Approving on npm publishes the gated bytes."
-      : continuity.status === "digest-mismatch"
-        ? "The workflow gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw; do not approve on npm from the gated review alone."
-        : continuity.status === "unverified"
-          ? "The workflow gate reviewed this version, but Drydock could not hash the complete staged tarball, so the stage is not bound to the gated review."
-          : "This organization gates releases of this package, and no gate review exists for this version. The stage was produced outside the gated workflow.";
+      ? "The tarball npm holds for this stage is byte-for-byte the tarball the workflow gate reviewed and approved. Approving on npm publishes the gated bytes."
+      : continuity.status === "gate-not-approved"
+        ? "The workflow gate reviewed exactly these bytes and did not approve them, yet they were staged anyway. Reject this stage on npm."
+        : continuity.status === "digest-mismatch"
+          ? "The workflow gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw; do not approve on npm from the gated review alone."
+          : continuity.status === "unverified"
+            ? "The workflow gate reviewed this version, but one of the two digests is unavailable, so the stage is not bound to the gated review."
+            : "This organization gates releases of this package, and no gate review exists for this version. The stage was produced outside the gated workflow.";
   // Only a matched stage is good news. A mismatch is an accusation backed by
   // two digests, so it reads as critical; an ungated stage of a gated package
   // is the out-of-band signal and reads as a warning, never as neutral.
   const tone =
     continuity.status === "matched"
       ? "ok"
-      : continuity.status === "digest-mismatch"
+      : continuity.status === "digest-mismatch" || continuity.status === "gate-not-approved"
         ? "critical"
         : continuity.status === "ungated"
           ? "high"

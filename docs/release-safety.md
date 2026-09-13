@@ -70,8 +70,9 @@ Current structured events cover:
   verification working, so a registry that stops returning digests — or a cap
   that starts biting — is visible as a coverage outage rather than silence.
 - `scan.gate_continuity.broken` when a registry stage of a package the
-  organization gates does not match a gate review (`digest-mismatch`,
-  `unverified`, or `ungated`; scan, package, version, and the gate scan id), and
+  organization gates does not match an approved gate review
+  (`gate-not-approved`, `digest-mismatch`, `unverified`, or `ungated`; scan,
+  package, version, and the gate scan id), and
   `scan.gate_continuity.lookup_failed` when the history read failed and the
   scan persisted with no record.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
