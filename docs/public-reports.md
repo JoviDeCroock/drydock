@@ -285,9 +285,11 @@ quality of the review:
   only one the badge treats as authoritative.
 - `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
   repo-built and its manifest claims the name; nothing verifies ownership yet.
-  Consumers should weigh these accordingly. (Known limitation: post-publish
-  digest verification against the registry would upgrade gate claims; not
-  built yet.)
+  Consumers should weigh these accordingly. The authenticated
+  [publication monitor](./publication-monitor.md) can compare an enrolled npm
+  package's published bytes with prior gate approvals. Those observations do
+  not upgrade public identity claims or prove the reviewing organization owns
+  the package.
 - `public-review` — published-pair reviews, and the fail-closed default for any
   source not classified above. The bytes really are the registry's, but nothing
   connects the reviewing organization to the package: the scan needs no

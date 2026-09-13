@@ -612,3 +612,59 @@ export const twoFactor = sqliteTable(
     userIdx: index("two_factor_user_idx").on(table.userId),
   }),
 );
+
+export const publicationWatches = sqliteTable(
+  "publication_watches",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
+    lastError: text("last_error"),
+  },
+  (table) => [
+    uniqueIndex("publication_watches_org_package").on(table.organizationId, table.packageName),
+    index("publication_watches_due").on(table.lastCheckedAt),
+  ],
+);
+
+export const publicationObservations = sqliteTable(
+  "publication_observations",
+  {
+    id: text("id").primaryKey(),
+    watchId: text("watch_id")
+      .notNull()
+      .references(() => publicationWatches.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+    checkedAt: integer("checked_at", { mode: "timestamp_ms" }).notNull(),
+    status: text("status", {
+      enum: [
+        "approved_match",
+        "published_without_approval",
+        "published_despite_rejection",
+        "artifact_mismatch",
+        "unknown",
+      ],
+    }).notNull(),
+    reason: text("reason"),
+    sha256: text("sha256"),
+    sha1: text("sha1"),
+    scanId: text("scan_id").references(() => scans.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("publication_observations_watch_version").on(table.watchId, table.version),
+    index("publication_observations_org_watch").on(
+      table.organizationId,
+      table.watchId,
+      table.firstSeenAt,
+    ),
+  ],
+);

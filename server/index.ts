@@ -23,6 +23,8 @@ import { organizationsRoutes } from "./routes/organizations";
 import { publicDiffRoutes } from "./routes/public-diff";
 import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
+import { publicationWatchRoutes } from "./routes/publication-watches";
+import { sweepNpmPublicationWatches } from "./lib/ecosystems/npm/publication-monitor";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import { queue } from "./queue";
@@ -130,6 +132,8 @@ app.get("/api", (c) =>
       packageReleases:
         "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
+      publicationWatches:
+        "GET/POST /api/v1/publication-watches; GET/DELETE /api/v1/publication-watches/:id; POST /api/v1/publication-watches/:id/check (organization-scoped public npm publication monitoring)",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",
@@ -170,6 +174,7 @@ app.route("/api/v1/organizations", organizationMembersRoutes);
 // CPU-timeout risk, so no synchronous submit route exists.
 app.route("/api/v1/scans", scansRoutes);
 app.route("/api/v1/packages", packagesRoutes);
+app.route("/api/v1/publication-watches", publicationWatchRoutes);
 app.route("/api/v1/slack", slackRoutes);
 app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
 app.route("/api/v1/audit-events", auditRoutes);

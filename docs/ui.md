@@ -36,6 +36,13 @@ the primitive, which makes the primitive the subscriber rather than the page.
 
 ## Shared review surface
 
+The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`.
+Its signal model in `src/models/publication-watches.ts` enrolls public npm packages
+independently of reviews, shows the latest 100 publication observations, and
+fences requests across organization changes. This advisory section states that
+checks happen after publication; unknown evidence never receives an approval
+badge. See [publication monitoring](./publication-monitor.md) for scope and API.
+
 Three surfaces render the same review: the authenticated scan workbench
 (`src/pages/Dashboard/ScanDetail/`), the anonymous public diff
 (`src/pages/Diff/`), and the shared public report (`src/pages/PublicReport/`).
