@@ -241,11 +241,113 @@ describe("canonical release receipt v1", () => {
       decision: null,
       callback: null,
     });
+    expect(receipt.content.evidence.gateContinuity).toEqual({
+      status: "not_applicable",
+      record: null,
+    });
     expect(receipt.content.evidence.registryOutcome).toEqual({
       status: "complete",
       observation: { status: "published", observedAt: "2026-08-04T00:00:00.000Z" },
     });
   });
+
+  test("carries a matched gate review as complete continuity evidence on a staged receipt", async () => {
+    const owner = await seedOwner();
+    const gateContinuity = {
+      status: "matched",
+      algorithm: "sha256",
+      stagedDigest: "e".repeat(64),
+      review: {
+        scanId: "scan_gate",
+        gateId: "gate_1",
+        repository: "octo/release",
+        environment: "production",
+        runId: 987654,
+        status: "approved",
+        decision: "approved",
+        decidedAt: "2026-08-02T00:00:00.000Z",
+        sha256: "e".repeat(64),
+      },
+    };
+    const scanId = await seedCompleted(owner, {
+      summary: {
+        intentEnvelope: { tier: "absent", repository: null, signals: [] },
+        stagedPublish: {
+          artifactIntegrity: {
+            algorithm: "sha1",
+            status: "verified",
+            declared: "b".repeat(40),
+            computed: "b".repeat(40),
+          },
+        },
+        gateContinuity,
+      },
+    });
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: owner.userId,
+        decidedAt: new Date("2026-08-03T00:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, scanId));
+
+    const receipt = (await (
+      await request(appFor(owner), scanId, "release-receipt.json")
+    ).json()) as any;
+    expect(receipt.content.release.control.classification).toBe("advisory");
+    expect(receipt.content.evidence.status).toBe("complete");
+    expect(receipt.content.evidence.gateContinuity).toEqual({
+      status: "complete",
+      record: gateContinuity,
+    });
+  });
+
+  test.each([
+    ["digest-mismatch", "conflicting", "conflicting"],
+    ["ungated", "partial", "partial"],
+  ])(
+    "a %s stage of a gated package is %s continuity evidence",
+    async (status, evidence, aggregate) => {
+      const owner = await seedOwner();
+      const scanId = await seedCompleted(owner, {
+        summary: {
+          intentEnvelope: { tier: "absent", repository: null, signals: [] },
+          stagedPublish: {
+            artifactIntegrity: {
+              algorithm: "sha1",
+              status: "verified",
+              declared: "b".repeat(40),
+              computed: "b".repeat(40),
+            },
+          },
+          gateContinuity: {
+            status,
+            algorithm: "sha256",
+            stagedDigest: "f".repeat(64),
+            review:
+              status === "ungated"
+                ? null
+                : { scanId: "scan_gate", gateId: "gate_1", sha256: "e".repeat(64) },
+          },
+        },
+      });
+      await createDb(env.DB)
+        .update(schema.scans)
+        .set({
+          decision: "publish",
+          decidedByUserId: owner.userId,
+          decidedAt: new Date("2026-08-03T00:00:00.000Z"),
+        })
+        .where(eq(schema.scans.id, scanId));
+
+      const receipt = (await (
+        await request(appFor(owner), scanId, "release-receipt.json")
+      ).json()) as any;
+      expect(receipt.content.evidence.gateContinuity.status).toBe(evidence);
+      expect(receipt.content.evidence.status).toBe(aggregate);
+    },
+  );
 
   test("binds workflow identity and durable decision without claiming callback delivery", async () => {
     const owner = await seedOwner();

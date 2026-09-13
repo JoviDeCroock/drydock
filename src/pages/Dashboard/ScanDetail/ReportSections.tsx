@@ -2,6 +2,10 @@ import type { ComponentChildren } from "preact";
 import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../server/types";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
+import {
+  normalizeGateContinuity,
+  type GateContinuity,
+} from "../../../../server/lib/scan/gate-continuity";
 import { Badge } from "../../../components/Badge";
 import { manifestVersionRange, PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
@@ -14,6 +18,7 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
   const manifestRange = summary.packageJsonDiff
     ? manifestVersionRange(summary.packageJsonDiff)
     : null;
+  const gateContinuity = normalizeGateContinuity(summary.gateContinuity);
   return (
     <section class="flex flex-col gap-6">
       <ReportSection
@@ -61,7 +66,77 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
           <ArtifactIntegrityView integrity={artifactIntegrity} />
         </ReportSection>
       ) : null}
+
+      {gateContinuity ? (
+        <ReportSection title="Gate continuity">
+          <GateContinuityView continuity={gateContinuity} />
+        </ReportSection>
+      ) : null}
     </section>
+  );
+}
+
+function GateContinuityView({ continuity }: { continuity: GateContinuity }) {
+  const review = continuity.review;
+  const description =
+    continuity.status === "matched"
+      ? "The tarball npm holds for this stage is byte-for-byte the tarball the workflow gate reviewed. Approving on npm publishes the gated bytes."
+      : continuity.status === "digest-mismatch"
+        ? "The workflow gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw; do not approve on npm from the gated review alone."
+        : continuity.status === "unverified"
+          ? "The workflow gate reviewed this version, but Drydock could not hash the complete staged tarball, so the stage is not bound to the gated review."
+          : "This organization gates releases of this package, and no gate review exists for this version. The stage was produced outside the gated workflow.";
+  // Only a matched stage is good news. A mismatch is an accusation backed by
+  // two digests, so it reads as critical; an ungated stage of a gated package
+  // is the out-of-band signal and reads as a warning, never as neutral.
+  const tone =
+    continuity.status === "matched"
+      ? "ok"
+      : continuity.status === "digest-mismatch"
+        ? "critical"
+        : continuity.status === "ungated"
+          ? "high"
+          : "medium";
+  const gateLabel = review
+    ? [review.repository, review.environment, review.runId ? `run ${review.runId}` : null]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+  const decisionLabel = review?.decision
+    ? `${review.decision}${review.decidedAt ? ` · ${new Date(review.decidedAt).toLocaleString()}` : ""}`
+    : (review?.status ?? null);
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap gap-2">
+        <Badge tone={tone}>{continuity.status}</Badge>
+        <Badge tone="neutral">{continuity.algorithm}</Badge>
+      </div>
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{description}</p>
+      {review ? (
+        <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+          <div class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">
+            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
+              gate review
+            </span>
+            <a
+              href={`/dashboard/scans/${encodeURIComponent(review.scanId)}`}
+              class="text-[13px] text-ink underline-offset-2 hover:underline break-all min-w-0"
+            >
+              {gateLabel || review.scanId}
+            </a>
+            {decisionLabel ? (
+              <span class="text-[12px] text-ink-muted">gate {decisionLabel}</span>
+            ) : null}
+          </div>
+          <DigestRow label="gate reviewed" value={review.sha256} />
+          <DigestRow label="npm holds" value={continuity.stagedDigest} />
+        </div>
+      ) : (
+        <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+          <DigestRow label="npm holds" value={continuity.stagedDigest} />
+        </div>
+      )}
+    </div>
   );
 }
 

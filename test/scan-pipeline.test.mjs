@@ -8,6 +8,7 @@ vi.mock("cloudflare:workers", () => ({
 const dbMock = vi.hoisted(() => ({
   backfillScanRegistryReleaseIdentity: vi.fn(async () => undefined),
   persistScan: vi.fn(async () => ({ persisted: true })),
+  loadGateReviewHistory: vi.fn(async () => ({ forVersion: [], packageHasGateHistory: false })),
   recordScanEvent: vi.fn(async () => undefined),
   getNpmConnection: vi.fn(),
   createDb: vi.fn(() => ({})),
@@ -141,6 +142,7 @@ describe("scan pipeline baseline selection", () => {
   afterEach(() => {
     dbMock.backfillScanRegistryReleaseIdentity.mockClear();
     dbMock.persistScan.mockClear();
+    dbMock.loadGateReviewHistory.mockClear();
     dbMock.recordScanEvent.mockClear();
     dbMock.getNpmConnection.mockReset();
     npmConnectionMock.decryptNpmToken.mockReset();
@@ -653,6 +655,101 @@ describe("scan pipeline baseline selection", () => {
     expect(persistedInput.summary.stagedPublish.artifactIntegrity).toMatchObject({
       status: "verified",
     });
+  });
+
+  test("binds a registry stage to the organization's gate review of the same bytes", async () => {
+    const gatedSha256 = "c".repeat(64);
+    sandboxMock.downloadInSandbox.mockResolvedValue({
+      files: [
+        {
+          path: "package.json",
+          size: 64,
+          sha256: "staged-pkg",
+          flags: [],
+          textSample: JSON.stringify({ name: "@scope/pkg", version: "2.0.0-beta.3" }),
+        },
+      ],
+      packageJson: { name: "@scope/pkg", version: "2.0.0-beta.3" },
+      archiveSha1: "4f7f5f1d5bcf2f72f6e4d6c4f3b2812d8a2f6c19",
+      archiveSha256: gatedSha256,
+    });
+    dbMock.loadGateReviewHistory.mockResolvedValueOnce({
+      forVersion: [
+        {
+          scanId: "scan_gate",
+          stagedVersion: "2.0.0-beta.3",
+          completedAt: new Date("2026-09-01T00:00:00.000Z"),
+          summaryJson: {
+            stagedPublish: {
+              provenance: {
+                ecosystem: "npm",
+                mode: "workflow_gate",
+                artifacts: [{ path: "pkg.tgz", kind: "tarball", sha256: gatedSha256 }],
+              },
+            },
+          },
+          gate: {
+            id: "gate_1",
+            repositoryFullName: "octo/pkg",
+            environment: "production",
+            runId: 7,
+            status: "approved",
+            decision: "approved",
+            decidedAt: new Date("2026-09-01T01:00:00.000Z"),
+          },
+        },
+      ],
+      packageHasGateHistory: true,
+    });
+
+    const result = await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_continuity",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+      source: "auto_discovery",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    // The staged SHA-256 is requested alongside npm's SHA-1 so the stage can
+    // be matched to the gate's provenance digest of the same `.tgz`.
+    expect(sandboxMock.downloadInSandbox.mock.calls[0]?.[2]).toMatchObject({
+      stageId: "stage-beta-123",
+      archiveDigestAlgorithms: ["SHA-1", "SHA-256"],
+    });
+    expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org_1",
+      packageName: "@scope/pkg",
+      version: "2.0.0-beta.3",
+    });
+    expect(persistedInput.summary.stagedPublish.artifactSha256).toBe(gatedSha256);
+    expect(persistedInput.summary.gateContinuity).toMatchObject({
+      status: "matched",
+      stagedDigest: gatedSha256,
+      review: {
+        scanId: "scan_gate",
+        gateId: "gate_1",
+        repository: "octo/pkg",
+        sha256: gatedSha256,
+      },
+    });
+    // Advisory only: a matched gate never changes what the artifact review found.
+    expect(result.risk).toBe(persistedInput.risk);
+    expect(result.ruleFindings.map((finding) => finding.ruleId)).not.toContain(
+      expect.stringContaining("gate"),
+    );
+  });
+
+  test("never looks up gate continuity for a workflow-gate scan", async () => {
+    await runScanPipeline(baseContext, npmAdapter, {
+      scanId: "scan_gate_source",
+      stageId: "stage-beta-123",
+      organizationId: "org_1",
+      source: "workflow_gate",
+    });
+    const persistedInput = dbMock.persistScan.mock.calls[0]?.[1];
+
+    expect(dbMock.loadGateReviewHistory).not.toHaveBeenCalled();
+    expect(persistedInput.summary.gateContinuity).toBeNull();
   });
 
   test("suppresses tag baseline selection when staged metadata disagrees with the tarball", async () => {

@@ -30,6 +30,12 @@ export interface StagedPublishDetails extends StagedPublishItem {
  */
 export interface NpmStagedDetails extends StagedPublishDetails {
   artifactIntegrity: StagedArtifactIntegrity;
+  /**
+   * SHA-256 the sandbox computed from the staged tarball's wire bytes. npm's
+   * stage record only publishes SHA-1, so this is Drydock's own digest; it
+   * matches the `.tgz` digest a workflow gate records in its provenance block.
+   */
+  artifactSha256: string | null;
 }
 
 export interface StagedPublishesPage {

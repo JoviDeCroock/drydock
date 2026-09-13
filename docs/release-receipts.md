@@ -63,6 +63,14 @@ risk, and a structured decision with decision time and the authenticated Drydock
   `not_applicable`. Callback outcome is `unknown` in v1:
   callback success/failure is not durably persisted, and a stored gate decision
   is not proof GitHub received it.
+- `gateContinuity` binds a staged-publish receipt to the organization's
+  workflow-gate review of the same bytes, when the organization gates the
+  package: `complete` when the staged SHA-256 matches a gate review's
+  provenance digest (the validated record names that gate scan, gate identity,
+  and decision), `conflicting` on a digest mismatch, `partial` when the stage
+  is `ungated` or `unverified`, and `not_applicable` for gate receipts and for
+  packages the organization never gated. It carries the gate's evidence
+  second-hand; the receipt's control classification stays `advisory`.
 - `registryOutcome` records the registry status and observation time only when a
   status was observed. It remains `unknown` for workflow gates, unsupported
   registries, failed lookups, and legacy scans.

@@ -79,7 +79,13 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
       // report so a reviewer reading "file removed" months later can tell
       // whether the scan proved it was reading the staged bytes.
       artifactIntegrity: d.artifactIntegrity ?? null,
+      artifactSha256: d.artifactSha256 ?? null,
     };
+  },
+
+  stagedArtifactSha256(details) {
+    const d = details as NpmStagedDetails | null;
+    return d?.artifactSha256 ?? null;
   },
 
   registryReleaseIdentity(details) {
