@@ -10,6 +10,8 @@ import {
 } from "../db/publication-watches";
 import { requireActiveOrganization } from "../lib/auth/active-organization";
 import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-monitor";
+import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
+import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
 import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
 import { isRecord } from "../lib/platform/guards";
 import { rateLimitResponse } from "../lib/platform/http";
@@ -26,7 +28,12 @@ publicationWatchRoutes.use("*", async (c, next) => {
 publicationWatchRoutes.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const organizationId = await requireActiveOrganization(c, db);
-  return c.json({ watches: await listPublicationWatches(db, organizationId) });
+  const autoEnrollment = await reconcilePublicationWatches(
+    db,
+    organizationId,
+    npmPublicationRegistry(c.env),
+  );
+  return c.json({ watches: await listPublicationWatches(db, organizationId), autoEnrollment });
 });
 
 publicationWatchRoutes.post("/", async (c) => {

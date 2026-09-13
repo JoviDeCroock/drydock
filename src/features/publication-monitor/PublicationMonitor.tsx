@@ -1,4 +1,4 @@
-import { useModel, useSignal } from "@preact/signals";
+import { useModel, useSignal, useSignalEffect, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
@@ -31,17 +31,30 @@ const checkErrors: Record<string, string> = {
     "Some registry versions have invalid metadata and could not be checked. Coverage is incomplete.",
 };
 
+const sourceLabels: Record<PublicationWatch["source"], string> = {
+  manual: "added by hand",
+  staged_discovery: "from staged discovery",
+  published_history: "from published review history",
+};
+
 function watchMetaLine(watch: PublicationWatch): string {
   const checked = watch.lastCheckedAt
     ? `checked ${formatDateTime(watch.lastCheckedAt)}`
     : "not checked yet";
-  return `watching since ${formatDateTime(watch.createdAt)} · ${checked}`;
+  return `${sourceLabels[watch.source]} · watching since ${formatDateTime(watch.createdAt)} · ${checked}`;
 }
 
 // Same header/row anatomy as the dashboard's Recent reviews card, so the two
 // lists read as one surface rather than a second feature bolted underneath.
-export function PublicationMonitor() {
+export function PublicationMonitor({ reviews }: { reviews: ReadonlySignal<unknown> }) {
   const model = useModel(PublicationWatchesModel);
+  const lastReviews = useSignal(reviews.peek());
+  useSignalEffect(() => {
+    const next = reviews.value;
+    if (next === lastReviews.peek()) return;
+    lastReviews.value = next;
+    void model.refresh();
+  });
   // Only the row whose check is in flight relabels its button; the model's
   // single `busy` flag disables everything else.
   const checkingId = useSignal<string | null>(null);
@@ -93,6 +106,45 @@ export function PublicationMonitor() {
         {(message) => (
           <div class="px-5 pb-4">
             <Alert tone="critical">{message}</Alert>
+          </div>
+        )}
+      </Show>
+      <Show when={() => model.autoEnrollment.value.deferred || undefined}>
+        {(deferred) => (
+          <div class="px-5 pb-4">
+            <Alert tone="warn">
+              Automatic enrollment is deferred for {deferred} packages because this organization has
+              reached its 20-package monitoring limit.
+            </Alert>
+          </div>
+        )}
+      </Show>
+      <Show<Array<{ packageName: string }> | null>
+        when={() =>
+          model.autoEnrollment.value.suggestions.length
+            ? model.autoEnrollment.value.suggestions
+            : null
+        }
+      >
+        {(suggestions) => (
+          <div class="border-t border-border px-5 py-3.5 flex flex-col gap-2">
+            <p class="m-0 text-[13px] text-ink-muted">
+              These workflow-gate packages need an explicit choice to monitor their public npm
+              releases.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              {suggestions.map((suggestion) => (
+                <Button
+                  key={suggestion.packageName}
+                  variant="secondary"
+                  size="sm"
+                  disabled={model.busy}
+                  onClick={() => void model.enroll(suggestion.packageName)}
+                >
+                  Watch {suggestion.packageName}
+                </Button>
+              ))}
+            </div>
           </div>
         )}
       </Show>

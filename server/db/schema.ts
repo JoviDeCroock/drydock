@@ -621,6 +621,9 @@ export const publicationWatches = sqliteTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     packageName: text("package_name").notNull(),
+    source: text("source", { enum: ["manual", "staged_discovery", "published_history"] })
+      .notNull()
+      .default("manual"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     lastCheckedAt: integer("last_checked_at", { mode: "timestamp_ms" }),
     lastError: text("last_error"),
@@ -665,6 +668,33 @@ export const publicationObservations = sqliteTable(
       table.organizationId,
       table.watchId,
       table.firstSeenAt,
+    ),
+  ],
+);
+
+export const publicationWatchCandidates = sqliteTable(
+  "publication_watch_candidates",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    source: text("source", {
+      enum: ["manual", "staged_discovery", "published_history", "workflow_gate"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    stoppedAt: integer("stopped_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("publication_watch_candidates_org_package").on(
+      table.organizationId,
+      table.packageName,
+    ),
+    index("publication_watch_candidates_pending").on(
+      table.stoppedAt,
+      table.source,
+      table.createdAt,
     ),
   ],
 );

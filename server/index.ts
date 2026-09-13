@@ -25,6 +25,8 @@ import { slackRoutes } from "./routes/slack";
 import { packagesRoutes } from "./routes/packages";
 import { publicationWatchRoutes } from "./routes/publication-watches";
 import { sweepNpmPublicationWatches } from "./lib/ecosystems/npm/publication-monitor";
+import { backfillNpmPublicationWatches } from "./lib/ecosystems/npm/publication-auto-enrollment";
+import { npmPublicationRegistry } from "./lib/ecosystems/npm/publication-registry";
 import { scansRoutes } from "./routes/scans";
 import { stagedPublishesRoutes } from "./routes/staged-publishes";
 import { queue } from "./queue";

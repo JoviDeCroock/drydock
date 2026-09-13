@@ -14,6 +14,8 @@ import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
 import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
+import { registerStagedPublicationCandidates } from "./publication-auto-enrollment";
+import { npmPublicationRegistry } from "./publication-registry";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -235,6 +237,19 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
+  const publicationRegistry = npmPublicationRegistry(env);
+  if (connection.registryUrl.replace(/\/$/, "") === publicationRegistry) {
+    try {
+      await registerStagedPublicationCandidates(
+        db,
+        organizationId,
+        stagedItems,
+        publicationRegistry,
+      );
+    } catch {
+      emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", { organizationId });
+    }
+  }
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
