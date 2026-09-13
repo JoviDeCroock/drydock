@@ -137,6 +137,13 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   evidencePathAliases?(findings: Finding[], details: StagedDetails): Record<string, string>;
 
   /**
+   * SHA-256 of the staged artifact's complete wire bytes, when the adapter
+   * computed one. The pipeline uses it to bind a registry-staged review to the
+   * organization's workflow-gate review of the same bytes (gate continuity).
+   */
+  stagedArtifactSha256?(details: StagedDetails): string | null;
+
+  /**
    * Ask the registry what became of a staged release whose bytes could not be
    * acquired, so the failure is not blamed on the credential when the release
    * itself moved on. Advisory: `null` leaves the classification untouched.

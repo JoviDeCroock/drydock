@@ -435,6 +435,58 @@ describe("scan report JSON export", () => {
     expect(body.provenance).toBeNull();
   });
 
+  test("exports a validated gate-continuity record and drops a malformed one", async () => {
+    const owner = await seedUser();
+    const db = createDb(env.DB);
+    const record = {
+      status: "matched",
+      algorithm: "sha256",
+      stagedDigest: "e".repeat(64),
+      review: {
+        scanId: "scan_gate",
+        gateId: "gate_1",
+        repository: "octo/pkg",
+        environment: "production",
+        runId: 7,
+        status: "approved",
+        decision: "approved",
+        decidedAt: "2026-09-01T01:00:00.000Z",
+        sha256: "e".repeat(64),
+      },
+    };
+    const seed = async (gateContinuity: unknown) => {
+      const scanId = `scan_${crypto.randomUUID()}`;
+      const stageId = `stage-${scanId.slice(-12)}`;
+      await createScanJob(db, {
+        id: scanId,
+        stageId,
+        organizationId: owner.organizationId,
+        ownerUserId: owner.userId,
+      });
+      await persistScanWithArtifacts(db, {
+        id: scanId,
+        stageId,
+        organizationId: owner.organizationId,
+        ownerUserId: owner.userId,
+        packageJson: { name: "@org/pkg", version: "1.1.0" },
+        risk: "low",
+        status: "complete",
+        summary: { gateContinuity },
+        ai: null,
+        files: [],
+        diff: [],
+        findings: [],
+        report: { version: 1, digest: "abc123" },
+      });
+      const res = await getReport(buildTestApp(owner), scanId);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { gateContinuity: unknown }).gateContinuity;
+    };
+
+    expect(await seed(record)).toEqual(record);
+    expect(await seed({ status: "matched", review: null })).toBeNull();
+  });
+
   test("omits an internally inconsistent staged-tarball verdict", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
