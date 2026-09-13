@@ -1,15 +1,17 @@
-import { useModel } from "@preact/signals";
+import { useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
-import { Muted, SectionLabel } from "../../components/Typography";
+import { Menu, MenuItem } from "../../components/Menu";
+import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
 import { formatDateTime } from "../../lib/format";
 import {
   PublicationWatchesModel,
   type PublicationObservation,
+  type PublicationWatch,
 } from "../../models/publication-watches";
 
 const statusLabels: Record<PublicationObservation["status"], string> = {
@@ -29,29 +31,51 @@ const checkErrors: Record<string, string> = {
     "Some registry versions have invalid metadata and could not be checked. Coverage is incomplete.",
 };
 
+function watchMetaLine(watch: PublicationWatch): string {
+  const checked = watch.lastCheckedAt
+    ? `checked ${formatDateTime(watch.lastCheckedAt)}`
+    : "not checked yet";
+  return `watching since ${formatDateTime(watch.createdAt)} · ${checked}`;
+}
+
+// Same header/row anatomy as the dashboard's Recent reviews card, so the two
+// lists read as one surface rather than a second feature bolted underneath.
 export function PublicationMonitor() {
   const model = useModel(PublicationWatchesModel);
+  // Only the row whose check is in flight relabels its button; the model's
+  // single `busy` flag disables everything else.
+  const checkingId = useSignal<string | null>(null);
+
+  async function check(id: string) {
+    checkingId.value = id;
+    try {
+      await model.show(id, true);
+    } finally {
+      checkingId.value = null;
+    }
+  }
+
   return (
-    <Card padding="compact" class="flex flex-col gap-4">
-      <SectionLabel as="h2" aside="advisory · after publication">
-        Publication monitor
-      </SectionLabel>
-      <Muted class="m-0 text-[13px]">
-        Watch public npm packages for releases that bypass prior approval, including packages with
-        no review history. Monitoring starts when enrolled; it does not block publication or judge
-        malware. Private packages and custom registries are not supported.
-      </Muted>
-      <form
-        class="flex flex-wrap items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void model.enroll();
-        }}
-      >
-        <label class="flex-1 min-w-48 text-[13px] text-ink-muted">
-          Public npm package
+    <Card as="section" padding="none" class="overflow-hidden">
+      <div class="px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center">
+        <div class="flex-1 min-w-0 flex flex-col gap-1">
+          <SectionLabel as="h2" class="after:hidden">
+            Publication monitor
+          </SectionLabel>
+          <p class="m-0 font-mono text-[11px] text-ink-subtle">
+            advisory · public npm only · checks releases after they publish
+          </p>
+        </div>
+        <form
+          class="flex items-center gap-2 shrink-0"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void model.enroll();
+          }}
+        >
           <Input
-            class="mt-1"
+            class="flex-1 min-w-0 md:flex-none md:w-64"
+            aria-label="Public npm package"
             value={model.packageName}
             onInput={(event) => {
               model.packageName.value = event.currentTarget.value;
@@ -60,127 +84,140 @@ export function PublicationMonitor() {
             required
             disabled={model.busy}
           />
-        </label>
-        <Button type="submit" disabled={model.busy}>
-          Watch package
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={model.busy}
-          onClick={() => void model.refresh()}
-        >
-          Refresh list
-        </Button>
-      </form>
-      <Show when={() => model.busy.value && model.loaded.value}>
-        <Muted class="m-0 text-[13px]">Updating publication watches…</Muted>
-      </Show>
-      <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
-      <Show when={() => !model.loaded.value}>
-        <Muted class="m-0 text-[13px]">Loading publication watches…</Muted>
-      </Show>
-      <Show
-        when={() => model.loaded.value && model.watches.value.length === 0 && !model.error.value}
-      >
-        <Muted class="m-0 text-[13px]">No packages watched yet.</Muted>
-      </Show>
-      <ul class="list-none p-0 m-0 divide-y divide-border">
-        {model.watches.value.map((watch) => (
-          <li key={watch.id} class="py-3 flex flex-col gap-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="min-w-0">
-                <p class="m-0 font-mono text-[13px] break-all">{watch.packageName}</p>
-                <p class="m-0 mt-1 font-mono text-[11px] text-ink-subtle">
-                  Monitoring since {formatDateTime(watch.createdAt)} ·{" "}
-                  {watch.lastCheckedAt
-                    ? `checked ${formatDateTime(watch.lastCheckedAt)}`
-                    : "not checked yet"}
-                </p>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={model.busy}
-                  onClick={() => void model.show(watch.id)}
-                >
-                  View releases
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={model.busy}
-                  onClick={() => void model.show(watch.id, true)}
-                >
-                  Check npm
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={model.busy}
-                  onClick={() => void model.remove(watch.id)}
-                >
-                  Stop watching
-                </Button>
-              </div>
-            </div>
-            {watch.lastError ? (
-              <Alert tone="warn">
-                {checkErrors[watch.lastError] ??
-                  "Latest check incomplete. Coverage is unknown until a successful check."}
-              </Alert>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      <Show when={model.detail}>
-        {(detail) => (
-          <div class="flex flex-col gap-3">
-            <SectionLabel as="h3">
-              Latest observed releases · {detail.watch.packageName}
-            </SectionLabel>
-            <Muted class="m-0 text-[13px]">Showing up to 100 observations since enrollment.</Muted>
-            {detail.observations.length === 0 ? (
-              <Muted class="m-0 text-[13px]">
-                No releases observed since enrollment. This is not evidence of complete coverage.
-              </Muted>
-            ) : (
-              <ul class="list-none p-0 m-0 flex flex-col gap-3">
-                {detail.observations.map((observation) => (
-                  <li
-                    key={observation.version}
-                    class="flex flex-wrap items-center gap-2 text-[13px]"
-                  >
-                    <span class="font-mono break-all">{observation.version}</span>
-                    <Badge
-                      tone={
-                        observation.status === "approved_match"
-                          ? "ok"
-                          : observation.status === "unknown"
-                            ? "neutral"
-                            : "critical"
-                      }
-                    >
-                      {statusLabels[observation.status]}
-                    </Badge>
-                    <span class="text-ink-muted">
-                      {observation.publishedAt
-                        ? `published ${formatDateTime(observation.publishedAt)}`
-                        : "publication time unknown"}
-                    </span>
-                    {observation.scanId ? (
-                      <a href={`/dashboard/scans/${encodeURIComponent(observation.scanId)}`}>
-                        Open review
-                      </a>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <Button type="submit" size="sm" class="whitespace-nowrap" disabled={model.busy}>
+            Watch package
+          </Button>
+        </form>
+      </div>
+      <Show when={model.error}>
+        {(message) => (
+          <div class="px-5 pb-4">
+            <Alert tone="critical">{message}</Alert>
           </div>
         )}
       </Show>
+      <div class="border-t border-border">
+        <Show when={() => !model.loaded.value}>
+          <div class="p-5">
+            <LoadingLine>Loading watched packages</LoadingLine>
+          </div>
+        </Show>
+        <Show when={() => model.loaded.value && model.watches.value.length === 0}>
+          <div class="p-5">
+            <EmptyLine>
+              No packages watched yet. Add a public npm package to be told when a release lands
+              without a prior approval.
+            </EmptyLine>
+          </div>
+        </Show>
+        <ul class="list-none p-0 m-0">
+          {model.watches.value.map((watch) => {
+            const detail = model.detail.value;
+            const expanded = detail?.watch.id === watch.id ? detail : null;
+            const checking = checkingId.value === watch.id;
+            return (
+              <li key={watch.id} class="border-b border-border last:border-b-0">
+                <div class="px-5 py-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 transition-colors duration-150 hover:bg-surface-2">
+                  <div class="flex min-w-0 flex-col gap-1.5">
+                    <span class="min-w-0 truncate text-[14px] font-medium">
+                      {watch.packageName}
+                    </span>
+                    <p class="m-0 font-mono text-[11px] text-ink-subtle">{watchMetaLine(watch)}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={model.busy}
+                      onClick={() => void check(watch.id)}
+                      title="Fetch the latest releases from npm and compare them with recorded approvals"
+                    >
+                      {checking ? "Checking npm…" : "Check npm"}
+                    </Button>
+                    <Menu
+                      align="end"
+                      triggerAriaLabel={`More actions for ${watch.packageName}`}
+                      triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
+                      trigger={() => (
+                        <span aria-hidden="true" class="text-[13px] leading-none">
+                          ⋯
+                        </span>
+                      )}
+                    >
+                      <MenuItem
+                        disabled={model.busy}
+                        onSelect={() => {
+                          if (expanded) model.detail.value = null;
+                          else void model.show(watch.id);
+                        }}
+                      >
+                        {expanded ? "Hide releases" : "Show releases"}
+                      </MenuItem>
+                      <MenuItem
+                        tone="danger"
+                        disabled={model.busy}
+                        onSelect={() => void model.remove(watch.id)}
+                      >
+                        Stop watching
+                      </MenuItem>
+                    </Menu>
+                  </div>
+                </div>
+                {watch.lastError ? (
+                  <div class="px-5 pb-3.5">
+                    <Alert tone="warn">
+                      {checkErrors[watch.lastError] ??
+                        "Latest check incomplete. Coverage is unknown until a successful check."}
+                    </Alert>
+                  </div>
+                ) : null}
+                {expanded ? <ObservationList observations={expanded.observations} /> : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </Card>
+  );
+}
+
+function observationTone(status: PublicationObservation["status"]) {
+  if (status === "approved_match") return "ok";
+  if (status === "unknown") return "neutral";
+  return "critical";
+}
+
+function ObservationList({ observations }: { observations: PublicationObservation[] }) {
+  if (observations.length === 0) {
+    return (
+      <div class="border-t border-border px-5 py-3.5">
+        <EmptyLine>No releases since enrollment. Earlier releases are not checked.</EmptyLine>
+      </div>
+    );
+  }
+  return (
+    <ul class="list-none m-0 border-t border-border px-5 py-3.5 flex flex-col gap-2">
+      {observations.map((observation) => (
+        <li key={observation.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span class="font-mono text-[13px] font-medium break-all">{observation.version}</span>
+          <Badge tone={observationTone(observation.status)}>
+            {statusLabels[observation.status]}
+          </Badge>
+          <span class="font-mono text-[11px] text-ink-subtle">
+            {observation.publishedAt
+              ? `published ${formatDateTime(observation.publishedAt)}`
+              : "publication time unknown"}
+          </span>
+          {observation.scanId ? (
+            <a
+              href={`/dashboard/scans/${encodeURIComponent(observation.scanId)}`}
+              class="text-[13px]"
+            >
+              Open review
+            </a>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
