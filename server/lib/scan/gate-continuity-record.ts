@@ -85,21 +85,24 @@ export function evaluateGateContinuity(
       review: reviews[0] ?? null,
     };
   }
-  const sameBytes = comparable.filter((review) => review.sha256 === staged);
-  const approved = sameBytes.find((review) => review.decision === "approved");
-  if (approved)
-    return { status: "matched", algorithm: "sha256", stagedDigest: staged, review: approved };
-  if (sameBytes.length > 0) {
+  // Reviews arrive newest first, and the gate's most recent decision on these
+  // exact bytes wins: a maintainer who re-ran the gate and rejected what they
+  // had approved earlier has changed their mind, and the stage must not hide
+  // that behind the older approval.
+  const latest = comparable.find((review) => review.sha256 === staged);
+  if (latest) {
+    if (latest.decision === "approved") {
+      return { status: "matched", algorithm: "sha256", stagedDigest: staged, review: latest };
+    }
     // The gate saw exactly these bytes and did not let them through; they were
     // staged anyway. Stronger evidence of a bypass than a mismatch — unless the
     // gate row itself is gone, in which case the decision is unknown rather
     // than negative.
-    const decided = sameBytes.find((review) => review.gateId !== null);
     return {
-      status: decided ? "gate-not-approved" : "unverified",
+      status: latest.gateId !== null ? "gate-not-approved" : "unverified",
       algorithm: "sha256",
       stagedDigest: staged,
-      review: decided ?? sameBytes[0] ?? null,
+      review: latest,
     };
   }
   return {

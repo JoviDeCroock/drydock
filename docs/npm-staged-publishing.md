@@ -147,7 +147,7 @@ What this buys:
 
 | Gate continuity     | Meaning                                                                                                                                                                                           |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `matched`           | npm holds the tarball the gate reviewed **and approved**; approving on npm publishes the gated bytes. Links the gate review.                                                                      |
+| `matched`           | npm holds the tarball the gate reviewed **and approved** (the gate's latest decision on these bytes wins); approving on npm publishes the gated bytes. Links the gate review.                     |
 | `gate-not-approved` | The gate reviewed exactly these bytes and rejected them (or has not decided), yet they were staged anyway. Reject on npm.                                                                         |
 | `digest-mismatch`   | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw.                                                                             |
 | `unverified`        | The gate reviewed this version, but one of the two digests is unavailable (uncomputed stage digest, a gate review with no single-tarball provenance, or a deleted gate row), so nothing is bound. |
