@@ -67,8 +67,9 @@ risk, and a structured decision with decision time and the authenticated Drydock
   workflow-gate review of the same bytes, when the organization gates the
   package: `complete` when the staged SHA-256 matches a gate review's
   provenance digest (the validated record names that gate scan, gate identity,
-  and decision), `conflicting` on a digest mismatch, `partial` when the stage
-  is `ungated` or `unverified`, and `not_applicable` for gate receipts and for
+  and decision), `conflicting` on a digest mismatch or when the gate saw
+  exactly these bytes and did not approve them, `partial` when the stage is
+  `ungated` or `unverified`, and `not_applicable` for gate receipts and for
   packages the organization never gated. It carries the gate's evidence
   second-hand; the receipt's control classification stays `advisory`.
 - `registryOutcome` records the registry status and observation time only when a

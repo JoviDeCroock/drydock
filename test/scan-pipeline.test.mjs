@@ -794,6 +794,14 @@ describe("scan pipeline baseline selection", () => {
       source: "semver-predecessor",
     });
     expect(result.package.name).toBe("@scope/pkg");
+    // The gate-continuity lookup is keyed on npm's stage record, never on the
+    // package-controlled manifest: a hostile tarball cannot rename itself out
+    // of its package's gate history.
+    expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org_1",
+      packageName: "@other/pkg",
+      version: "2.0.0-beta.3",
+    });
     expect(result.packageJson?.scripts?.install).toBeUndefined();
     expect(result.ruleFindings).toEqual(
       expect.arrayContaining([

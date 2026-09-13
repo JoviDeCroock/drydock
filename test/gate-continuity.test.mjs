@@ -5,8 +5,9 @@ const dbMock = vi.hoisted(() => ({
 }));
 vi.mock("../server/db/scans.ts", () => dbMock);
 
-const { evaluateGateContinuity, normalizeGateContinuity, resolveGateContinuity } =
-  await import("../server/lib/scan/gate-continuity");
+const { evaluateGateContinuity, normalizeGateContinuity } =
+  await import("../server/lib/scan/gate-continuity-record");
+const { resolveGateContinuity } = await import("../server/lib/scan/gate-continuity");
 
 const GATED = "a".repeat(64);
 const OTHER = "b".repeat(64);
@@ -105,6 +106,34 @@ describe("evaluateGateContinuity", () => {
     expect(continuity).toMatchObject({ status: "unverified", stagedDigest: null });
   });
 
+  test("reports the gate seeing exactly these bytes and not approving them", () => {
+    const rejected = gateRow(GATED, {
+      scanId: "scan_rejected",
+      gate: { ...gateRow(GATED).gate, status: "rejected", decision: "rejected" },
+    });
+    const pending = gateRow(GATED, {
+      scanId: "scan_pending",
+      gate: { ...gateRow(GATED).gate, status: "pending", decision: null, decidedAt: null },
+    });
+    for (const row of [rejected, pending]) {
+      const continuity = evaluateGateContinuity(
+        { forVersion: [row], packageHasGateHistory: true },
+        GATED,
+      );
+      expect(continuity).toMatchObject({
+        status: "gate-not-approved",
+        review: { scanId: row.scanId, sha256: GATED },
+      });
+    }
+    // An approved re-run of the same bytes outranks an earlier rejection.
+    const continuity = evaluateGateContinuity(
+      { forVersion: [rejected, gateRow(GATED)], packageHasGateHistory: true },
+      GATED,
+    );
+    expect(continuity?.status).toBe("matched");
+    expect(continuity?.review?.scanId).toBe("scan_gate");
+  });
+
   test("never matches against a multi-artifact or malformed gate provenance", () => {
     const multi = gateRow(GATED);
     multi.summaryJson.stagedPublish.provenance.artifacts.push({
@@ -113,23 +142,25 @@ describe("evaluateGateContinuity", () => {
       sha256: GATED,
     });
     const malformed = gateRow(GATED, { summaryJson: { stagedPublish: { provenance: "nope" } } });
+    // With no comparable gate digest there is nothing to accuse the stage
+    // with: one digest is not a mismatch.
     for (const row of [multi, malformed]) {
       const continuity = evaluateGateContinuity(
         { forVersion: [row], packageHasGateHistory: true },
         GATED,
       );
-      expect(continuity?.status).toBe("digest-mismatch");
+      expect(continuity?.status).toBe("unverified");
       expect(continuity?.review?.sha256).toBeNull();
     }
   });
 
-  test("survives a gate row that was deleted out from under the scan", () => {
+  test("reads a deleted gate row as an unknown decision, not a negative one", () => {
     const continuity = evaluateGateContinuity(
       { forVersion: [gateRow(GATED, { gate: null })], packageHasGateHistory: true },
       GATED,
     );
     expect(continuity).toMatchObject({
-      status: "matched",
+      status: "unverified",
       review: { scanId: "scan_gate", gateId: null, repository: null, decision: null },
     });
   });
@@ -144,8 +175,20 @@ describe("resolveGateContinuity", () => {
       db: {},
       identity,
       source,
-      packageName: "pkg",
-      version: "2.0.0",
+      registryIdentity: { packageName: "pkg", version: "2.0.0" },
+      stagedDigest: GATED,
+    });
+    expect(continuity).toBeNull();
+    expect(dbMock.loadGateReviewHistory).not.toHaveBeenCalled();
+  });
+
+  test("does not look anything up without the registry's own stage coordinates", async () => {
+    dbMock.loadGateReviewHistory.mockClear();
+    const continuity = await resolveGateContinuity({
+      db: {},
+      identity,
+      source: "manual",
+      registryIdentity: null,
       stagedDigest: GATED,
     });
     expect(continuity).toBeNull();
@@ -161,8 +204,7 @@ describe("resolveGateContinuity", () => {
       db: {},
       identity,
       source: "auto_discovery",
-      packageName: "pkg",
-      version: "2.0.0",
+      registryIdentity: { packageName: "pkg", version: "2.0.0" },
       stagedDigest: GATED,
     });
     expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(
@@ -179,8 +221,7 @@ describe("resolveGateContinuity", () => {
         db: {},
         identity,
         source: "manual",
-        packageName: "pkg",
-        version: "2.0.0",
+        registryIdentity: { packageName: "pkg", version: "2.0.0" },
         stagedDigest: GATED,
       }),
     ).resolves.toBeNull();

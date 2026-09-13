@@ -179,7 +179,7 @@ function buildGateContinuity(
   const status: EvidenceStatus =
     record.status === "matched"
       ? "complete"
-      : record.status === "digest-mismatch"
+      : record.status === "digest-mismatch" || record.status === "gate-not-approved"
         ? "conflicting"
         : "partial";
   return { status, record };
