@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerFirstRoutes } from "./worker-routes.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
@@ -19,25 +20,6 @@ const outputConfigDir = resolveOptionalRepoPath(process.env.E2E_CONFIG_DIR) ?? c
 const persistRoot = path.join(outputConfigDir, "state");
 const wranglerConfigPath = path.join(outputConfigDir, "wrangler.jsonc");
 const seedAfterStart = process.argv.includes("--seed") || process.env.E2E_SEED === "1";
-
-// Keep in sync with SERVER_OWNED_PATH_PREFIXES in server/index.ts; pinned by
-// test/dev-server-route-parity.test.mjs.
-const SERVER_OWNED_PATH_PREFIXES = ["/api", "/webhooks", "/og", "/public"];
-
-/**
- * Production sends every request to the Worker (`run_worker_first: true`) and
- * reaches the asset binding from inside it. Locally the Worker must not own
- * Vite's module graph and HMR requests, so the harness names the Worker-owned
- * prefixes instead — the same ones `server/index.ts` answers `404` for rather
- * than serving the SPA shell.
- *
- * A prefix missing here does not fail: Vite's SPA fallback answers `200` with
- * the app shell, so `/public/reports/:token` and `/og/*` looked like working
- * pages while never reaching their handler.
- */
-function workerFirstRoutes() {
-  return SERVER_OWNED_PATH_PREFIXES.flatMap((prefix) => [prefix, `${prefix}/*`]);
-}
 
 let shuttingDown = false;
 

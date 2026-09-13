@@ -195,8 +195,13 @@ test("a shared review is readable as an anonymous public report", async ({ brows
   const anonymous = await browser.newContext({ baseURL });
   try {
     const report = await anonymous.request.get(`/public/reports/${token}`);
-    expect(report.status(), "the Worker answers, not Vite's SPA fallback").toBe(200);
-    expect(report.headers()["content-type"]).toContain("application/json");
+    expect(report.status()).toBe(200);
+    // Vite's SPA fallback answers 200 too, so the content type is what tells a
+    // served report apart from the app shell standing in for one.
+    expect(
+      report.headers()["content-type"],
+      "the Worker answers, not Vite's SPA fallback",
+    ).toContain("application/json");
     expect(report.headers()["x-drydock-share-includes-files"]).toBe("1");
     const body = (await report.json()) as {
       schema: string;
@@ -204,13 +209,23 @@ test("a shared review is readable as an anonymous public report", async ({ brows
     };
     expect(body.schema).toBe("drydock.report.v2");
 
-    const changed = body.diff.find((file) => file.status !== "removed");
-    expect(changed, "the shared release carries a staged file to sample").toBeTruthy();
+    // A named fixture file, not whichever diff entry sorts first: the diff comes
+    // from the summary while the sample comes from the persisted files artifact,
+    // so an entry with no retained sample would fail this as a missing route.
+    const sampledPath = "binding.gyp";
+    expect(
+      body.diff.map((file) => file.path),
+      "the fixture still ships the file this asserts on",
+    ).toContain(sampledPath);
     const sampled = await anonymous.request.get(
-      `/public/reports/${token}/file?path=${encodeURIComponent(changed!.path)}`,
+      `/public/reports/${token}/file?path=${encodeURIComponent(sampledPath)}`,
     );
     expect(sampled.status(), "redacted file sample served").toBe(200);
-    expect(((await sampled.json()) as { file: { path: string } }).file.path).toBe(changed!.path);
+    const sample = (await sampled.json()) as { file: { path: string; textSample: string } };
+    expect(sample.file.path).toBe(sampledPath);
+    expect(sample.file.textSample, "the sample carries the reviewed bytes").toContain(
+      "target_name",
+    );
 
     // Uniform not-found: an unknown token and a path this review does not
     // contain are one indistinguishable answer, so neither route is an oracle
@@ -225,6 +240,9 @@ test("a shared review is readable as an anonymous public report", async ({ brows
     }
 
     // The URL a maintainer actually pastes around renders from those responses.
+    // Locally the document itself is Vite's shell rather than the prerendered
+    // one `assetFallbackRequest` serves in production; what this covers is the
+    // page driving the real public endpoints with no session.
     const reader = await anonymous.newPage();
     await reader.goto(`/reports/${token}`);
     await expect(reader.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({

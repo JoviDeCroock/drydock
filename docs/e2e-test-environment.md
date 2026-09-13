@@ -50,25 +50,6 @@ already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
 fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
 arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
 
-## Worker-owned routes in local development
-
-Production puts the Worker in front of every request (`run_worker_first: true`)
-and reaches static assets from inside it. The harness cannot: the Worker would
-then own Vite's module graph and HMR requests. It names the Worker-owned
-prefixes instead — the same `SERVER_OWNED_PATH_PREFIXES` that `server/index.ts`
-answers `404` for rather than serving the SPA shell, so `/api/*`, `/webhooks/*`,
-`/og/*`, and `/public/*` run their real handlers locally.
-
-A prefix missing from that list does not fail visibly: Vite's SPA fallback
-answers `200` with the app shell, so the route looks alive in a browser and its
-handler never runs. `test/dev-server-route-parity.test.mjs` pins the two lists
-together.
-
-The generated config also carries a throwaway Ed25519
-`ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start rather than committed,
-so a shared report's attestation and published key verify locally instead of
-degrading to the no-key `503`.
-
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
 
 `pnpm run agent:tour` is the portable product walkthrough for agents and manual
@@ -77,6 +58,39 @@ narrative report, screenshots, exported JSON, trace, and video under the tour
 output directory. See [`agent-tour.md`](./agent-tour.md).
 
 Vite ignores `.context/**` in its file watcher. The E2E runner writes registry state, Worker state, traces, screenshots, and reports there while the app is open; watching those files can cause hot-reload loops that interrupt browser interactions in CI.
+
+## Worker-owned routes in local development
+
+Production puts the Worker in front of every request (`run_worker_first: true`)
+and reaches static assets from inside it through the `ASSETS` binding. The
+harness routes only the Worker-owned prefixes — `test/e2e/worker-routes.mjs`,
+kept equal to `SERVER_OWNED_PATH_PREFIXES` in `server/index.ts` — so `/api/*`,
+`/webhooks/*`, `/og/*`, and `/public/*` reach their real handlers while
+documents come from Vite.
+
+A prefix missing from that list does not fail visibly: Vite's SPA fallback
+answers `200` with the app shell, so the route looks alive in a browser and its
+handler never runs. `test/dev-server-route-parity.test.mjs` pins the two lists
+together.
+
+Routing documents through the Worker as well would need the generated config to
+declare the `ASSETS` binding (the Vite plugin wires it back into the dev server
+only when one is named) and the production security headers turned off: their
+`style-src-elem 'self'` blocks the inline styles Vite injects, and their
+`Strict-Transport-Security` pins `http://127.0.0.1` to HTTPS for every other
+local server on the machine. That trade would cost the header coverage `/api/*`
+and `/public/*` responses have today, so the harness keeps documents on Vite and
+`assetFallbackRequest`'s `/reports/`, `/diff/`, and `/dashboard/` rewrites stay
+unexercised locally.
+
+Reaching a handler is not the same as exercising it: `/og/*` is killswitched
+whenever `NPM_REGISTRY` is not the public npm registry, which it never is here,
+so OG cards answer `404` locally by design.
+
+The generated config also carries a throwaway Ed25519
+`ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start rather than committed,
+so a shared report's attestation and published key verify locally instead of
+degrading to the no-key `503`.
 
 ## CI
 

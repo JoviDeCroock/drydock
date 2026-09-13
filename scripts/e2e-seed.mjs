@@ -136,10 +136,10 @@ async function runScan(cookie, stageId) {
 }
 
 /**
- * Mint the scan's public share token. Sharing is idempotent and owner/admin
- * only; the seeded account owns the organization it just created. A failure is
- * reported and skipped rather than thrown — the scans are the seed's product
- * and are still usable without a share link.
+ * Mint the scan's public share token. Sharing is owner/admin only and never
+ * rotates an existing token; the seeded account owns the organization it just
+ * created. A failure is reported and skipped rather than thrown — the scans are
+ * the seed's product and are still usable without a share link.
  */
 async function sharePublicly(cookie, scanId) {
   const shared = await api(cookie, "POST", `/api/v1/scans/${encodeURIComponent(scanId)}/share`, {});
