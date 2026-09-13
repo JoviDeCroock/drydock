@@ -5,7 +5,7 @@ import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
 import { toIsoOrNull } from "./iso-time";
-import { normalizeGateContinuity } from "./gate-continuity";
+import { normalizeGateContinuity } from "./gate-continuity-record";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
