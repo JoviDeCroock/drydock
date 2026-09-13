@@ -4,6 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
+import { normalizeGateContinuity } from "./gate-continuity";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -74,6 +75,10 @@ export function buildReportExport(detail: ScanDetail) {
     // Staged-artifact byte-verification verdict. Null for workflow gates,
     // legacy scans, and malformed persisted data.
     artifactIntegrity: extractArtifactIntegrity(summary.stagedPublish),
+    // Advisory binding of a registry stage to the organization's workflow-gate
+    // review of the same bytes. Additive and optional: null for gate scans,
+    // packages the organization never gated, legacy scans, and malformed data.
+    gateContinuity: normalizeGateContinuity(summary.gateContinuity),
     aiReview: extractAiReview(scan.aiJson),
     riskSummary: detail.riskSummary ?? null,
     // Advisory release-memory signal. Additive + optional: scans that predate
