@@ -16,7 +16,7 @@ import {
   normalizeRepositoryUrl,
   type IntentEnvelope,
 } from "../intent-envelope";
-import type { GateContinuity } from "./gate-continuity";
+import type { GateContinuity } from "./gate-continuity-record";
 import {
   describeOperationalError,
   durationMsSince,

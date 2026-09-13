@@ -305,6 +305,8 @@ describe("canonical release receipt v1", () => {
 
   test.each([
     ["digest-mismatch", "conflicting", "conflicting"],
+    ["gate-not-approved", "conflicting", "conflicting"],
+    ["unverified", "partial", "partial"],
     ["ungated", "partial", "partial"],
   ])(
     "a %s stage of a gated package is %s continuity evidence",

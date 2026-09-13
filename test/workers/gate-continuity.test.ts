@@ -4,7 +4,7 @@ import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, loadGateReviewHistory } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
-import { evaluateGateContinuity } from "../../server/lib/scan/gate-continuity";
+import { evaluateGateContinuity } from "../../server/lib/scan/gate-continuity-record";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
 interface Owner {
