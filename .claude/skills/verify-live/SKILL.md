@@ -9,7 +9,7 @@ Choose browser targets from the requested behavior and actual branch/working-tre
 
 ## Local environment
 
-Run `pnpm run e2e:dev:seed` in the background, or reuse a known suitable local harness. The seed summary prints the app URL, throwaway login, and a completed implicit `node-gyp` fixture scan. Use only fake registry credentials and local D1 state. Keep servers available during verification; stop the processes you started when done.
+Run `pnpm run e2e:dev:seed` in the background, or reuse a known suitable local harness. The seed summary prints the app URL, throwaway login, a completed implicit `node-gyp` fixture scan, and its anonymous public report link. Use only fake registry credentials and local D1 state. Keep servers available during verification; stop the processes you started when done.
 
 Ports use `CONDUCTOR_PORT` and the next port, falling back to 5173/5174. A conflict fails rather than selecting another port; use `E2E_APP_PORT`/`E2E_REGISTRY_PORT` if needed.
 

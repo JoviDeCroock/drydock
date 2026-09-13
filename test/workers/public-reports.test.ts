@@ -824,6 +824,43 @@ describe("public report attestations", () => {
     ).toBe(503);
   });
 
+  // docs/public-reports.md hands operators a `node -e` snippet to generate the
+  // key, and Node's WebCrypto labels the export `alg: "Ed25519"` where workerd
+  // accepts only RFC 8037's `EdDSA`. Importing that key verbatim throws, which
+  // this route turns into "attestations are not configured" — a silently
+  // degraded deployment whose operator did everything right.
+  test("a signing key exported by Node's WebCrypto loads", async () => {
+    const owner = await seedUser();
+    const scanId = await seedCompletedScan(owner);
+    const app = buildTestApp(owner);
+    const { share } = (await (await enableShare(app, scanId)).json()) as {
+      share: { token: string };
+    };
+
+    const signer = await signingEnv();
+    const jwk = JSON.parse(signer.ATTESTATION_SIGNING_KEY_JWK as string) as JsonWebKey;
+    const nodeShaped = {
+      ...env,
+      ATTESTATION_SIGNING_KEY_JWK: JSON.stringify({ ...jwk, alg: "Ed25519" }),
+    } as typeof env;
+
+    expect(
+      (await request(app, `/public/reports/${share.token}/attestation`, {}, nodeShaped)).status,
+    ).toBe(200);
+
+    // The label is not key material: the same curve point must still produce
+    // the same published key id, or rotating the spelling would silently
+    // invalidate every envelope pinned to the old one.
+    const keyRes = await request(app, `/public/attestation-key`, {}, nodeShaped);
+    expect(keyRes.status).toBe(200);
+    const labelled = (await keyRes.json()) as { keyId: string; jwk: JsonWebKey };
+    const canonical = (await (
+      await request(app, `/public/attestation-key`, {}, signer)
+    ).json()) as { keyId: string; jwk: JsonWebKey };
+    expect(labelled.keyId).toBe(canonical.keyId);
+    expect(labelled.jwk).toEqual(canonical.jwk);
+  });
+
   test("attestations die with the share link", async () => {
     const owner = await seedUser();
     const scanId = await seedCompletedScan(owner);

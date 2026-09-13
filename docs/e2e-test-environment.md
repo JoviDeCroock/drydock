@@ -42,12 +42,32 @@ E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 
 `pnpm run e2e:dev:seed` is the one-command seeded path for UI iteration: it
 starts the same harness and then runs `scripts/e2e-seed.mjs`, which signs up a
-throwaway account, connects the fake registry, and runs the implicit node-gyp
-fixture through a full scan — all over the app's own HTTP API, with no real
-credentials. It prints the login email/password and the scan URL. Against an
+throwaway account, connects the fake registry, runs the implicit node-gyp
+fixture through a full scan, and shares the completed review — all over the
+app's own HTTP API, with no real credentials. It prints the login
+email/password, the scan URL, and the public report URL. Against an
 already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
 fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
 arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
+
+## Worker-owned routes in local development
+
+Production puts the Worker in front of every request (`run_worker_first: true`)
+and reaches static assets from inside it. The harness cannot: the Worker would
+then own Vite's module graph and HMR requests. It names the Worker-owned
+prefixes instead — the same `SERVER_OWNED_PATH_PREFIXES` that `server/index.ts`
+answers `404` for rather than serving the SPA shell, so `/api/*`, `/webhooks/*`,
+`/og/*`, and `/public/*` run their real handlers locally.
+
+A prefix missing from that list does not fail visibly: Vite's SPA fallback
+answers `200` with the app shell, so the route looks alive in a browser and its
+handler never runs. `test/dev-server-route-parity.test.mjs` pins the two lists
+together.
+
+The generated config also carries a throwaway Ed25519
+`ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start rather than committed,
+so a shared report's attestation and published key verify locally instead of
+degrading to the no-key `503`.
 
 Playwright artifacts are written under `.context/e2e-artifacts/`, including traces on failure and `implicit-node-gyp-report.png` on a successful smoke run.
 

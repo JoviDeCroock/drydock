@@ -48,6 +48,9 @@ interface ScanDetailBody {
 
 const scenarios = readScenarioDefinitions();
 
+/** Set by the UI smoke test; the public-report test shares the review it made. */
+let reviewedScanId: string | null = null;
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser, baseURL }) => {
@@ -77,6 +80,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     const scanId = created.body?.scan?.id;
     expect(scanId, "scan id present in create-scan response").toBeTruthy();
     expect(typeof created.body?.queued, "queued flag present").toBe("boolean");
+    reviewedScanId = String(scanId);
 
     const detail = await pollScanUntilTerminal(page, String(scanId));
     expect(detail.scan.status, "implicit-node-gyp scan completed").toBe("complete");
@@ -152,6 +156,83 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     });
   } finally {
     await context.close();
+  }
+});
+
+// The public report is the only review surface with no session and no npm
+// credentials. Local development served the SPA shell for `/public/*` until
+// #666, so this path could only be exercised with route mocks: the page
+// rendered and the Worker route never ran. Drive the real one — share the
+// reviewed release, then read it back from a context carrying no cookies.
+test("a shared review is readable as an anonymous public report", async ({ browser, baseURL }) => {
+  expect(reviewedScanId, "the UI smoke test recorded the review it decided").toBeTruthy();
+
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  let token = "";
+  try {
+    await page.goto("/dashboard");
+    const shared = await evaluateOnStablePage(
+      page,
+      async (id) => {
+        const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}/share`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        return { status: response.status, body: await response.json().catch(() => null) };
+      },
+      String(reviewedScanId),
+    );
+    expect(shared.status, "share link created").toBe(200);
+    token = String(shared.body?.share?.token ?? "");
+    expect(token, "share token minted").not.toHaveLength(0);
+    expect(shared.body?.share?.includesFiles, "a new share discloses file samples").toBe(true);
+  } finally {
+    await context.close();
+  }
+
+  const anonymous = await browser.newContext({ baseURL });
+  try {
+    const report = await anonymous.request.get(`/public/reports/${token}`);
+    expect(report.status(), "the Worker answers, not Vite's SPA fallback").toBe(200);
+    expect(report.headers()["content-type"]).toContain("application/json");
+    expect(report.headers()["x-drydock-share-includes-files"]).toBe("1");
+    const body = (await report.json()) as {
+      schema: string;
+      diff: Array<{ path: string; status: string }>;
+    };
+    expect(body.schema).toBe("drydock.report.v2");
+
+    const changed = body.diff.find((file) => file.status !== "removed");
+    expect(changed, "the shared release carries a staged file to sample").toBeTruthy();
+    const sampled = await anonymous.request.get(
+      `/public/reports/${token}/file?path=${encodeURIComponent(changed!.path)}`,
+    );
+    expect(sampled.status(), "redacted file sample served").toBe(200);
+    expect(((await sampled.json()) as { file: { path: string } }).file.path).toBe(changed!.path);
+
+    // Uniform not-found: an unknown token and a path this review does not
+    // contain are one indistinguishable answer, so neither route is an oracle
+    // for the token space or for a package's file list.
+    for (const missingUrl of [
+      `/public/reports/${"z".repeat(43)}`,
+      `/public/reports/${token}/file?path=no/such/file.txt`,
+    ]) {
+      const missing = await anonymous.request.get(missingUrl);
+      expect(missing.status(), missingUrl).toBe(404);
+      expect(await missing.json(), missingUrl).toEqual({ error: "not found" });
+    }
+
+    // The URL a maintainer actually pastes around renders from those responses.
+    const reader = await anonymous.newPage();
+    await reader.goto(`/reports/${token}`);
+    await expect(reader.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(reader.getByRole("heading", { name: "File diff" })).toBeVisible();
+    await expect(reader.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+  } finally {
+    await anonymous.close();
   }
 });
 
