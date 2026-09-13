@@ -118,6 +118,10 @@ export async function getScanStatus(db: AppDb, id: string, organizationId: strin
       gateId: scans.gateId,
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
+      // The release timeline's first row. A still-queued review has no summary
+      // to fall back on, and the poll replaces the client's scan object
+      // wholesale, so dropping it here would blank the row after one tick.
+      stagedCreatedAt: scans.stagedCreatedAt,
       previousVersion: scans.previousVersion,
       risk: scans.risk,
       status: scans.status,
