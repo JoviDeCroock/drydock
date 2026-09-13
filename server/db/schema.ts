@@ -684,3 +684,28 @@ export const publicationWatchCandidates = sqliteTable(
     ),
   ],
 );
+
+export const publicationAlerts = sqliteTable(
+  "publication_alerts",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    packageName: text("package_name").notNull(),
+    version: text("version").notNull(),
+    status: text("status", {
+      enum: ["published_without_approval", "published_despite_rejection", "artifact_mismatch"],
+    }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
+    acknowledgedBy: text("acknowledged_by").references(() => user.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    uniqueIndex("publication_alerts_org_release").on(
+      table.organizationId,
+      table.packageName,
+      table.version,
+    ),
+  ],
+);

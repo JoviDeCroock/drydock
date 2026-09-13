@@ -175,6 +175,14 @@ export function PublicationMonitor({ reviews }: { reviews: ReadonlySignal<unknow
                       {watch.packageName}
                     </span>
                     <p class="m-0 font-mono text-[11px] text-ink-subtle">{watchMetaLine(watch)}</p>
+                    {watch.unresolvedAlertCount > 0 ? (
+                      <div>
+                        <Badge tone="critical">
+                          {watch.unresolvedAlertCount} unacknowledged{" "}
+                          {watch.unresolvedAlertCount === 1 ? "alert" : "alerts"}
+                        </Badge>
+                      </div>
+                    ) : null}
                   </div>
                   <div class="flex items-center gap-2">
                     <Button
@@ -223,7 +231,13 @@ export function PublicationMonitor({ reviews }: { reviews: ReadonlySignal<unknow
                     </Alert>
                   </div>
                 ) : null}
-                {expanded ? <ObservationList observations={expanded.observations} /> : null}
+                {expanded ? (
+                  <ObservationList
+                    observations={expanded.observations}
+                    busy={model.busy}
+                    acknowledge={(observationId) => void model.acknowledge(watch.id, observationId)}
+                  />
+                ) : null}
               </li>
             );
           })}
@@ -239,7 +253,15 @@ function observationTone(status: PublicationObservation["status"]) {
   return "critical";
 }
 
-function ObservationList({ observations }: { observations: PublicationObservation[] }) {
+function ObservationList({
+  observations,
+  busy,
+  acknowledge,
+}: {
+  observations: PublicationObservation[];
+  busy: ReadonlySignal<boolean>;
+  acknowledge: (observationId: string) => void;
+}) {
   if (observations.length === 0) {
     return (
       <div class="border-t border-border px-5 py-3.5">
@@ -260,6 +282,23 @@ function ObservationList({ observations }: { observations: PublicationObservatio
               ? `published ${formatDateTime(observation.publishedAt)}`
               : "publication time unknown"}
           </span>
+          {observation.acknowledgedAt ? (
+            <span class="font-mono text-[11px] text-ink-subtle">
+              Acknowledged {formatDateTime(observation.acknowledgedAt)}
+            </span>
+          ) : observation.status === "published_without_approval" ||
+            observation.status === "published_despite_rejection" ||
+            observation.status === "artifact_mismatch" ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={() => acknowledge(observation.id)}
+              title="Mark this publication alert as seen. Its evidence and approval status stay unchanged."
+            >
+              Acknowledge
+            </Button>
+          ) : null}
           {observation.scanId ? (
             <a
               href={`/dashboard/scans/${encodeURIComponent(observation.scanId)}`}

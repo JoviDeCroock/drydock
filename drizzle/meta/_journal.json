@@ -232,6 +232,13 @@
       "when": 1789314078249,
       "tag": "0031_dry_screwball",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1789316778703,
+      "tag": "0032_true_jack_flag",
+      "breakpoints": true
     }
   ]
 }

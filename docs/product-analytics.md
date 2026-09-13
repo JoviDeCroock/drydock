@@ -225,3 +225,8 @@ when it is absent, and a write failure degrades to a `analytics.write_failed`
 warn log — analytics is the least important thing happening in any request that
 emits one. Local dev, the test suite, and self-hosted deployments that omit the
 block in `docs/examples/wrangler.self-host.jsonc` behave exactly as they did before.
+
+`publication.discrepancy` counts first-created publication alerts. Its positional
+payload is organization, ecosystem, discrepancy status, and zero duration; it contains
+no package name, tarball content, or credentials. Rechecks and acknowledgments do not
+increment it.

@@ -33,6 +33,18 @@ function summarizePackageVersion(m: Record<string, unknown>): string | null {
 }
 
 const REGISTRY: Record<string, AuditEventDef> = {
+  "publication.discrepancy": {
+    category: "security",
+    label: "Published release differs from prior approval",
+    severity: "security",
+    summarize: summarizePackageVersion,
+  },
+  "publication.acknowledged": {
+    category: "security",
+    label: "Publication alert acknowledged",
+    severity: "notice",
+    summarize: summarizePackageVersion,
+  },
   // ── Release decisions ────────────────────────────────────────────────────
   "scan.decided": {
     category: "release_decision",

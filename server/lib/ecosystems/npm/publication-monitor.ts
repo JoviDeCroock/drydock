@@ -1,3 +1,6 @@
+import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
+import { notifyPublicationDiscrepancy } from "../../notify";
+import { recordProductEvent } from "../../platform/analytics";
 import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
@@ -228,6 +231,14 @@ export async function checkNpmPublicationWatch(
   env: Cloudflare.Env,
   watch: PublicationWatch,
 ) {
+  if (
+    env.FLAGS &&
+    !(await env.FLAGS.getBooleanValue("out-of-band-watch", true, {
+      targetingKey: watch.organizationId,
+      organizationId: watch.organizationId,
+    }))
+  )
+    return watch;
   const registry = npmPublicationRegistry(env);
   const now = new Date();
   // A lease also makes manual checks and overlapping cron invocations share the bound.
@@ -347,20 +358,31 @@ export async function checkNpmPublicationWatch(
         sha1: digests?.sha1 ?? null,
         sha256: digests?.sha256 ?? null,
       };
-      await db
-        .insert(publicationObservations)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [publicationObservations.watchId, publicationObservations.version],
-          set: {
-            publishedAt: values.publishedAt,
-            checkedAt: now,
-            ...verdict,
-            sha1: values.sha1,
-            sha256: values.sha256,
-          },
-          setWhere: eq(publicationObservations.status, "unknown"),
-        });
+      const createdAlert = await savePublicationObservation(db, values, watch.packageName);
+      if (isPublicationAlert(verdict.status)) {
+        const alert = {
+          organizationId: watch.organizationId,
+          packageName: watch.packageName,
+          version: item.version,
+          status: verdict.status,
+        };
+        if (createdAlert) {
+          recordProductEvent(env, {
+            name: "publication.discrepancy",
+            organizationId: watch.organizationId,
+            ecosystem: "npm",
+            status: verdict.status,
+          });
+          try {
+            await notifyPublicationDiscrepancy({ env, db, ...alert });
+          } catch {
+            emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", {
+              organizationId: watch.organizationId,
+              watchId: watch.id,
+            });
+          }
+        }
+      }
     }
   } catch {
     lastError = historyLimit ? "publication_history_limit" : "registry_evidence_unavailable";
