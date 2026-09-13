@@ -44,9 +44,9 @@ describe("getting-started done state", () => {
     setActiveOrganizationId("org-a");
     openGettingStartedPanel("org-a");
 
-    // Recording the decision can happen on the separate scan-detail route.
-    // Completion prevents future opens, but the existing latch survives until
-    // the returning dashboard renders the final tick and the reader closes it.
+    // Finishing and closing are separate operations: the dashboard closes an
+    // open panel itself when the first review appears, and dismiss does both.
+    // Marking done alone must not touch the latch.
     markGettingStartedDone();
 
     expect(gettingStartedPanelOpen.value).toBe(true);

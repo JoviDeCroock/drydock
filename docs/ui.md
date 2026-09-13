@@ -95,24 +95,20 @@ are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`.
 
 ## Dashboard onboarding funnel
 
-`src/pages/Dashboard/GettingStarted.tsx` tracks three steps: npm connected, a
-first release reaching Drydock for review, a first decision recorded. `DashboardOnboarding`
-in `src/pages/Dashboard/index.tsx` decides when it opens and latches that
-against the organization it opened for in `src/models/getting-started.ts`; the
-session-scoped latch survives a visit to the scan detail route, and nothing but
-the reader's dismiss control (or an organization switch) closes it. That latch
-is what lets the third step be seen ticking — a panel that unmounted the moment
-the funnel completed would take the tick with it. Only the first two steps are
-free: the list defaults to the
-`undecided` filter, so `ScanListModel.hasAnyDecision` stays `null` until
-`resolveHasAnyDecision()` runs two one-row probes, and the dashboard asks only
-while the panel could still open. Completion and dismissal are both recorded per
-organization in `src/models/getting-started.ts` (localStorage) as "do not open
-again", which is also what stops the probe from repeating on later visits. An
-unresolved (`null`) answer opens nothing — neither onboarding surface appears on
-a guess. Switching organizations immediately resets both progress answers to
-`null`, so the new organization cannot inherit a panel latch or completion tick
-from the previous one while its list request is in flight.
+`src/pages/Dashboard/GettingStarted.tsx` lists three steps — a first release
+reaching Drydock for review, npm connected, review and decide — but only the
+first is the funnel's exit. `DashboardOnboarding` in `src/pages/Dashboard/index.tsx`
+opens the panel when `ScanListModel.hasAnyScan` resolves `false` and latches
+that against the organization it opened for in `src/models/getting-started.ts`,
+so a visit to the scan detail route does not reset it. The moment `hasAnyScan`
+is `true` the dashboard marks the organization done and closes the panel; the
+remaining steps are optional and explained where they happen. Done (by first
+review or by dismiss) is recorded per organization in localStorage as "do not
+open again". An unresolved (`null`) answer opens nothing — neither onboarding
+surface appears on a guess. Switching organizations immediately resets
+`hasAnyScan` to `null`, so the new organization cannot inherit a panel latch
+from the previous one while its list request is in flight. Deleting an
+organization's only (failed) scan re-probes and can bring the panel back.
 
 ## Package release view
 
