@@ -358,7 +358,10 @@ test("publication monitor observes an unreviewed public release", async ({ brows
       path: path.join(artifactsDir, "publication-monitor.png"),
       fullPage: true,
     });
-    await monitor.getByRole("button", { name: "Stop watching", exact: true }).click();
+    await monitor
+      .getByRole("button", { name: "More actions for @drydock/e2e-publication" })
+      .click();
+    await page.getByRole("menuitem", { name: "Stop watching", exact: true }).click();
     await expect(monitor.getByText("No packages watched yet.")).toBeVisible();
     expect(browserErrors).toEqual([]);
     const publicRequests = (await readJournal()).filter((entry) =>
