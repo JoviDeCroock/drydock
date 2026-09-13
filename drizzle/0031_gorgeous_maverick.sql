@@ -1,0 +1,1 @@
+ALTER TABLE `scans` ADD `staged_created_at` integer;

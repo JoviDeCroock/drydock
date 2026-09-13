@@ -139,6 +139,12 @@ export const scans = sqliteTable(
     }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
+    // When the registry says the staged artifact was created, captured while
+    // the review row is written. The completed report carries the same stamp
+    // inside its staged details, but a review that fails or is still queued
+    // never writes one, and the release timeline still has to show when the
+    // release reached the registry.
+    stagedCreatedAt: integer("staged_created_at", { mode: "timestamp_ms" }),
     // Registry base URL captured when this staged release was discovered. npm
     // package coordinates are registry-local, so later connection edits must
     // never make an old scan query a different registry for the same name and

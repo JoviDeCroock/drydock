@@ -205,8 +205,11 @@ sweep.
 ## Release timeline
 
 The scan detail page lists every dated event the persisted review knows about,
-oldest first, with the gap to the previous row: staged on npm (the stage's
-`createdAt` under `summary.stagedPublish`), review queued/started/completed,
+oldest first, with the gap to the previous row: staged on npm (`staged_created_at`,
+captured from the registry's stage record when the review row is created, so a
+queued or failed review still carries it; reviews that completed before that
+column existed fall back to the stage's `createdAt` under
+`summary.stagedPublish`), review queued/started/completed,
 npm status last observed (`registry_version_status_at`, phrased with the same
 vocabulary as the dashboard badge — "validating", "awaiting approval",
 "published", "blocked", "removed" — from `registryStatusPhrase` in

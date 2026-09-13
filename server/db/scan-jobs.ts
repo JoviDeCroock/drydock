@@ -30,6 +30,12 @@ export interface CreateScanJobInput {
    */
   packageName?: string | null;
   stagedVersion?: string | null;
+  /**
+   * Registry-reported creation time of the staged artifact, when the caller
+   * already has the stage record. Persisted up front so a review that fails
+   * before it can write a report still knows when the release was staged.
+   */
+  stagedCreatedAt?: string | number | Date | null;
   /** Registry base URL whose namespace the package coordinates belong to. */
   registryUrl?: string | null;
 }
@@ -39,6 +45,16 @@ export interface CreateScanJobInput {
 // status/supersession machinery below, which only tracks staged npm releases.
 export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate", "published"] as const;
 export type ScanSource = (typeof SCAN_SOURCES)[number];
+
+/**
+ * Registry-supplied timestamps are untrusted strings; an unparseable one is
+ * dropped rather than stored as an invalid date.
+ */
+function timestampOrNull(value: string | number | Date | null | undefined): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
   const now = new Date();
@@ -51,6 +67,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     gateId: input.gateId ?? null,
     packageName: input.packageName ?? null,
     stagedVersion: input.stagedVersion ?? null,
+    stagedCreatedAt: timestampOrNull(input.stagedCreatedAt),
     registryUrl: input.registryUrl ?? null,
     registryPackageName:
       source !== "workflow_gate" && input.registryUrl ? (input.packageName ?? null) : null,

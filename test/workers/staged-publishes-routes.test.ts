@@ -1,4 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
@@ -133,5 +134,12 @@ describe("staged publishes route", () => {
       packageName: "@org/new",
       stagedVersion: "1.1.0",
     });
+    const [created] = await db
+      .select({ stagedCreatedAt: schema.scans.stagedCreatedAt })
+      .from(schema.scans)
+      .where(eq(schema.scans.stageId, "stage-new-123"));
+    // The listing's stage timestamp is persisted on the row, so the release
+    // timeline has it even for a review that never completes.
+    expect(created?.stagedCreatedAt?.toISOString()).toBe("2026-05-22T12:00:00.000Z");
   });
 });
