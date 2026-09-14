@@ -17,8 +17,7 @@ import { SERVER_OWNED_PATH_PREFIXES, workerFirstRoutes } from "./e2e/worker-rout
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const SERVER_INDEX = "server/index.ts";
-const PRODUCTION = "wrangler.jsonc";
-const SELF_HOST = "docs/examples/wrangler.self-host.jsonc";
+const DEV_SERVER = "test/e2e/dev-server.mjs";
 
 function read(file) {
   return readFileSync(`${repoRoot}/${file}`, "utf8");
@@ -64,12 +63,14 @@ describe("worker-owned path parity", () => {
     }
   });
 
-  test.each([PRODUCTION, SELF_HOST])("%s keeps the Worker in front of every path", (file) => {
-    expect(
-      /"run_worker_first":\s*true/.test(read(file)),
-      `${file} must keep \`run_worker_first: true\`: the deployed Worker is the authority for ` +
-        "these routes, and the local harness only approximates it.",
-    ).toBe(true);
+  // Importing the module proves what it returns, not that anything uses it: the
+  // harness could go back to a hardcoded array and every assertion above would
+  // still pass. Read the generator the way test/wrangler-config.test.mjs reads
+  // this same file.
+  test("the harness builds its routing rules from that list", () => {
+    const source = read(DEV_SERVER);
+    expect(source).toContain('from "./worker-routes.mjs"');
+    expect(source).toContain("run_worker_first: workerFirstRoutes()");
   });
 
   test("reads a prefix list across line breaks", () => {

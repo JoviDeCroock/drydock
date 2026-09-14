@@ -135,7 +135,7 @@ set, `GET /api/v1/slack` reports `configured: false` and the UI explains that
 Slack is not configured on this instance.
 
 Because the Worker also serves the Preact app with static-asset SPA fallback,
-`wrangler.jsonc` must keep `/api` and `/api/*` in `assets.run_worker_first`.
+`wrangler.jsonc` must keep `assets.run_worker_first` covering `/api`.
 Otherwise Slack's top-level browser redirect can be claimed by `index.html` and
 shown as the client 404 instead of reaching `GET /api/v1/slack/callback`.
 

@@ -3,13 +3,13 @@
  *
  * Production routes *every* request to the Worker (`run_worker_first: true`)
  * and reaches static assets from inside it through the `ASSETS` binding. The
- * harness deliberately does not: the Vite plugin only wires that binding back
- * into the dev server when the generated config declares one, and with the
- * Worker in front of documents its production security headers reach Vite's
- * dev client — `style-src-elem 'self'` blocks the inline styles Vite injects,
- * and `Strict-Transport-Security` pins `http://127.0.0.1` to HTTPS for every
- * other local server on the machine. Turning those headers off to buy document
- * routing would cost the header coverage the API and public routes have today.
+ * harness deliberately does not: the Vite plugin wires that binding back into
+ * the dev server only when the generated config declares one, and once the
+ * Worker is in front of documents it attaches `DOCUMENT_CSP` to them, whose
+ * `style-src-elem 'self'` blocks the styles Vite injects at runtime (observed
+ * in the browser console on a harness configured that way). Buying document
+ * routing means setting `DISABLE_SECURITY_HEADERS`, which drops the headers
+ * from the API and public responses that carry them locally today.
  *
  * So the harness names the Worker-owned prefixes instead. The cost is that
  * `assetFallbackRequest` in `server/index.ts` — the `/reports/`, `/diff/`, and

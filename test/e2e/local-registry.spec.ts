@@ -48,6 +48,13 @@ interface ScanDetailBody {
 
 const scenarios = readScenarioDefinitions();
 
+/**
+ * The scan the UI smoke test reviews, handed to the public-report test below.
+ * Serial mode makes the order a guarantee; the scan cap is why it is reused
+ * rather than remade.
+ */
+let reviewedScanId: string | null = null;
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser, baseURL }) => {
@@ -77,6 +84,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     const scanId = created.body?.scan?.id;
     expect(scanId, "scan id present in create-scan response").toBeTruthy();
     expect(typeof created.body?.queued, "queued flag present").toBe("boolean");
+    reviewedScanId = String(scanId);
 
     const detail = await pollScanUntilTerminal(page, String(scanId));
     expect(detail.scan.status, "implicit-node-gyp scan completed").toBe("complete");
@@ -159,19 +167,26 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
 // credentials. Local development served the SPA shell for `/public/*` until
 // #666, so this path could only be exercised with route mocks: the page
 // rendered and the Worker route never ran. Drive the real one — share the
-// reviewed release, then read it back from a context carrying no cookies.
+// release the smoke test just reviewed, then read it back from a context
+// carrying no cookies.
+//
+// It shares that scan rather than making one of its own because the suite has
+// no budget for another: scans are capped at ORGANIZATION_SCAN_LIMIT per
+// organization per hour, and the smoke test plus one scan per scenario already
+// spend exactly that. A fresh organization would cost a sign-up instead, and
+// that cap (5 per IP per hour) is tighter still — two suite runs in an hour
+// would stop registering. Serial mode makes the ordering a guarantee.
 test("a shared review is readable as an anonymous public report", async ({ browser, baseURL }) => {
+  expect(
+    reviewedScanId,
+    "no reviewed scan — this test shares the one the UI smoke test creates, so it cannot run " +
+      "on its own (a --grep that excludes the smoke test lands here)",
+  ).toBeTruthy();
+
   const { context, page } = await openAuthenticatedPage(browser, baseURL);
   let token = "";
   try {
     await page.goto("/dashboard");
-    // Its own scan rather than the UI smoke test's: a test that reads state
-    // another test left behind cannot be run on its own to reproduce a failure.
-    const created = await createScan(page, uiStageId);
-    expect(created.status, "scan accepted").toBe(202);
-    const detail = await pollScanUntilTerminal(page, String(created.body?.scan?.id));
-    expect(detail.scan.status, "scan completed").toBe("complete");
-
     const shared = await evaluateOnStablePage(
       page,
       async (id) => {
@@ -182,7 +197,7 @@ test("a shared review is readable as an anonymous public report", async ({ brows
         });
         return { status: response.status, body: await response.json().catch(() => null) };
       },
-      String(created.body?.scan?.id),
+      String(reviewedScanId),
     );
     expect(shared.status, "share link created").toBe(200);
     token = String(shared.body?.share?.token ?? "");

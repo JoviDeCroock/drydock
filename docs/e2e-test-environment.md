@@ -75,13 +75,13 @@ together.
 
 Routing documents through the Worker as well would need the generated config to
 declare the `ASSETS` binding (the Vite plugin wires it back into the dev server
-only when one is named) and the production security headers turned off: their
-`style-src-elem 'self'` blocks the inline styles Vite injects, and their
-`Strict-Transport-Security` pins `http://127.0.0.1` to HTTPS for every other
-local server on the machine. That trade would cost the header coverage `/api/*`
-and `/public/*` responses have today, so the harness keeps documents on Vite and
-`assetFallbackRequest`'s `/reports/`, `/diff/`, and `/dashboard/` rewrites stay
-unexercised locally.
+only when one is named) and `DISABLE_SECURITY_HEADERS` set: the document CSP's
+`style-src-elem 'self'` blocks the styles Vite injects at runtime. That flag is
+all-or-nothing, so it would also drop the headers from the `/api/*` and
+`/public/*` responses that carry them locally today. The harness therefore keeps
+documents on Vite, and `assetFallbackRequest`'s `/reports/`, `/diff/`, and
+`/dashboard/` rewrites stay unexercised locally — they are covered by
+`test/workers/` instead.
 
 Reaching a handler is not the same as exercising it: `/og/*` is killswitched
 whenever `NPM_REGISTRY` is not the public npm registry, which it never is here,
