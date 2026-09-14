@@ -48,6 +48,13 @@ interface ScanDetailBody {
 
 const scenarios = readScenarioDefinitions();
 
+/**
+ * The scan the UI smoke test reviews, handed to the public-report test below.
+ * Serial mode makes the order a guarantee; the scan cap is why it is reused
+ * rather than remade.
+ */
+let reviewedScanId: string | null = null;
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async ({ browser, baseURL }) => {
@@ -77,6 +84,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     const scanId = created.body?.scan?.id;
     expect(scanId, "scan id present in create-scan response").toBeTruthy();
     expect(typeof created.body?.queued, "queued flag present").toBe("boolean");
+    reviewedScanId = String(scanId);
 
     const detail = await pollScanUntilTerminal(page, String(scanId));
     expect(detail.scan.status, "implicit-node-gyp scan completed").toBe("complete");
@@ -152,6 +160,113 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     });
   } finally {
     await context.close();
+  }
+});
+
+// The public report is the only review surface with no session and no npm
+// credentials. Local development served the SPA shell for `/public/*` until
+// #666, so this path could only be exercised with route mocks: the page
+// rendered and the Worker route never ran. Drive the real one — share the
+// release the smoke test just reviewed, then read it back from a context
+// carrying no cookies.
+//
+// It shares that scan rather than making one of its own because the suite has
+// no budget for another: scans are capped at ORGANIZATION_SCAN_LIMIT per
+// organization per hour, and the smoke test plus one scan per scenario already
+// spend exactly that. A fresh organization would cost a sign-up instead, and
+// that cap (5 per IP per hour) is tighter still — two suite runs in an hour
+// would stop registering. Serial mode makes the ordering a guarantee.
+test("a shared review is readable as an anonymous public report", async ({ browser, baseURL }) => {
+  expect(
+    reviewedScanId,
+    "no reviewed scan — this test shares the one the UI smoke test creates, so it cannot run " +
+      "on its own (a --grep that excludes the smoke test lands here)",
+  ).toBeTruthy();
+
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
+  let token = "";
+  try {
+    await page.goto("/dashboard");
+    const shared = await evaluateOnStablePage(
+      page,
+      async (id) => {
+        const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}/share`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        return { status: response.status, body: await response.json().catch(() => null) };
+      },
+      String(reviewedScanId),
+    );
+    expect(shared.status, "share link created").toBe(200);
+    token = String(shared.body?.share?.token ?? "");
+    expect(token, "share token minted").not.toHaveLength(0);
+    expect(shared.body?.share?.includesFiles, "a new share discloses file samples").toBe(true);
+  } finally {
+    await context.close();
+  }
+
+  const anonymous = await browser.newContext({ baseURL });
+  try {
+    const report = await anonymous.request.get(`/public/reports/${token}`);
+    expect(report.status()).toBe(200);
+    // Vite's SPA fallback answers 200 too, so the content type is what tells a
+    // served report apart from the app shell standing in for one.
+    expect(
+      report.headers()["content-type"],
+      "the Worker answers, not Vite's SPA fallback",
+    ).toContain("application/json");
+    expect(report.headers()["x-drydock-share-includes-files"]).toBe("1");
+    const body = (await report.json()) as {
+      schema: string;
+      diff: Array<{ path: string; status: string }>;
+    };
+    expect(body.schema).toBe("drydock.report.v2");
+
+    // A named fixture file, not whichever diff entry sorts first: the diff comes
+    // from the summary while the sample comes from the persisted files artifact,
+    // so an entry with no retained sample would fail this as a missing route.
+    const sampledPath = "binding.gyp";
+    expect(
+      body.diff.map((file) => file.path),
+      "the fixture still ships the file this asserts on",
+    ).toContain(sampledPath);
+    const sampled = await anonymous.request.get(
+      `/public/reports/${token}/file?path=${encodeURIComponent(sampledPath)}`,
+    );
+    expect(sampled.status(), "redacted file sample served").toBe(200);
+    const sample = (await sampled.json()) as { file: { path: string; textSample: string } };
+    expect(sample.file.path).toBe(sampledPath);
+    expect(sample.file.textSample, "the sample carries the reviewed bytes").toContain(
+      "target_name",
+    );
+
+    // Uniform not-found: an unknown token and a path this review does not
+    // contain are one indistinguishable answer, so neither route is an oracle
+    // for the token space or for a package's file list.
+    for (const missingUrl of [
+      `/public/reports/${"z".repeat(43)}`,
+      `/public/reports/${token}/file?path=no/such/file.txt`,
+    ]) {
+      const missing = await anonymous.request.get(missingUrl);
+      expect(missing.status(), missingUrl).toBe(404);
+      expect(await missing.json(), missingUrl).toEqual({ error: "not found" });
+    }
+
+    // The URL a maintainer actually pastes around renders from those responses.
+    // Locally the document itself is Vite's shell rather than the prerendered
+    // one `assetFallbackRequest` serves in production; what this covers is the
+    // page driving the real public endpoints with no session.
+    const reader = await anonymous.newPage();
+    await reader.goto(`/reports/${token}`);
+    await expect(reader.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(reader.getByRole("heading", { name: "File diff" })).toBeVisible();
+    await expect(reader.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+  } finally {
+    await anonymous.close();
   }
 });
 

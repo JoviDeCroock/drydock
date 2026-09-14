@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerFirstRoutes } from "./worker-routes.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
@@ -19,6 +20,7 @@ const outputConfigDir = resolveOptionalRepoPath(process.env.E2E_CONFIG_DIR) ?? c
 const persistRoot = path.join(outputConfigDir, "state");
 const wranglerConfigPath = path.join(outputConfigDir, "wrangler.jsonc");
 const seedAfterStart = process.argv.includes("--seed") || process.env.E2E_SEED === "1";
+
 let shuttingDown = false;
 
 await mkdir(outputConfigDir, { recursive: true });
@@ -117,6 +119,18 @@ function configRelativePath(...segments) {
   return path.relative(outputConfigDir, path.join(repoRoot, ...segments));
 }
 
+/**
+ * A throwaway attestation signing key, so a shared report's attestation and
+ * published key are verifiable locally instead of degrading to the `503` path.
+ * Generated per run rather than committed, for the reason test/config/wrangler.jsonc
+ * gives: a real private JWK in the repo is a permanent secret-scanning false
+ * positive. It signs nothing anyone should trust.
+ */
+async function generateSigningKeyJwk() {
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  return JSON.stringify(await crypto.subtle.exportKey("jwk", pair.privateKey));
+}
+
 async function writeWranglerConfig() {
   const config = {
     $schema: configRelativePath("node_modules/wrangler/config-schema.json"),
@@ -126,7 +140,7 @@ async function writeWranglerConfig() {
     compatibility_flags: ["nodejs_compat"],
     assets: {
       not_found_handling: "single-page-application",
-      run_worker_first: ["/api", "/api/*", "/webhooks/*"],
+      run_worker_first: workerFirstRoutes(),
     },
     worker_loaders: [{ binding: "LOADER" }],
     d1_databases: [
@@ -180,6 +194,7 @@ async function writeWranglerConfig() {
       NPM_REGISTRY: registryUrl,
       ALLOW_INSECURE_LOCAL_REGISTRY: "true",
       AI_CACHE_AFFINITY: "staged-publish-review-e2e",
+      ATTESTATION_SIGNING_KEY_JWK: await generateSigningKeyJwk(),
     },
   };
   await writeFile(wranglerConfigPath, `${JSON.stringify(config, null, 2)}\n`);

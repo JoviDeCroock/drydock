@@ -327,6 +327,12 @@ regexes via the non-executing JS lexer before scanning (see
   `cf-typegen` output); the self-host template declares exactly the production set;
   and every required `Env` member is a production binding, var, or listed secret. A
   binding added to one file and forgotten in another fails `verify` and names the file.
+- `test/dev-server-route-parity.test.mjs` — the e2e dev server (`test/e2e/worker-routes.mjs`)
+  routes every prefix `SERVER_OWNED_PATH_PREFIXES` (`server/index.ts`) claims, each with
+  its wildcard, and `wrangler.jsonc` and the self-host template keep
+  `run_worker_first: true`. A prefix added to the Worker but not the harness is answered
+  locally by Vite's SPA fallback with a `200` HTML document, so the route looks alive in a
+  browser and its handler never runs.
 - `test/prose-command-references.test.mjs` — the command-shaped sibling: every
   `pnpm <script>` or `pnpm run <script>` in markdown or a source comment must be a
   `package.json` script, and every script must have a row in the table above, so a

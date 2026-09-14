@@ -370,8 +370,10 @@ Ed25519 JWK (`kty: OKP`). Generate one with:
 node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then(async k=>console.log(JSON.stringify(await crypto.subtle.exportKey('jwk',k.privateKey))))"
 ```
 
-When the secret is absent or malformed the attestation endpoints return `503`;
-report sharing itself keeps working. Rotating the key changes the published
+The JWK's `alg` label may read either `EdDSA` (RFC 8037) or `Ed25519` (what
+Node's WebCrypto exports, and what the snippet above emits); both name this
+curve and both load. When the secret is absent or malformed the attestation
+endpoints return `503`; report sharing itself keeps working. Rotating the key changes the published
 `keyId`; envelopes issued under the old key stop verifying against the new
 published key, so consumers should pin envelopes to the `keyid` they were
 issued with.
@@ -403,3 +405,12 @@ issued with.
 - Tests: `test/workers/public-reports.test.ts` (routes, roles, revocation,
   redaction, rate limit, CORS on failures, concurrent enables, signature
   verification, degraded/malformed key handling).
+
+## Verifying a share link locally
+
+`pnpm run e2e:dev:seed` scans a fixture release, shares it, and prints the
+`/reports/:token` URL. The local harness routes `/public/*` to the Worker and
+configures a throwaway signing key, so the report, its file samples, and its
+attestation are the real responses rather than the SPA shell — see
+[`e2e-test-environment.md`](./e2e-test-environment.md). The anonymous read path
+is covered end to end by `test/e2e/local-registry.spec.ts`.

@@ -2,11 +2,12 @@
 // Seeds a running local e2e dev server (`pnpm run e2e:dev`) with realistic scan
 // data — no credentials or network access beyond localhost. It drives the same
 // HTTP surface the browser uses: sign up a throwaway account, connect the fake
-// npm staging registry, and run one fixture stage through a full scan.
+// npm staging registry, run one fixture stage through a full scan, and share
+// the completed review so its anonymous public report is reachable too.
 //
 // Usage:
 //   pnpm run e2e:dev            # in one terminal
-//   pnpm run e2e:seed           # in another; prints login + scan URL
+//   pnpm run e2e:seed           # in another; prints login, scan and report URLs
 //   pnpm run e2e:dev:seed       # one command: server up + seeded scan
 //
 // Extra stage ids can be passed as arguments (see test/e2e-fixtures/scenarios/
@@ -30,7 +31,10 @@ await connectRegistry(cookie);
 
 const results = [];
 for (const stageId of stageIds) {
-  results.push(await runScan(cookie, stageId));
+  const result = await runScan(cookie, stageId);
+  result.shareToken =
+    result.status === "complete" ? await sharePublicly(cookie, result.scanId) : null;
+  results.push(result);
 }
 
 console.log("");
@@ -42,6 +46,12 @@ for (const result of results) {
   console.log(
     `  scan:     ${appUrl}/dashboard/scans/${result.scanId} (${result.stageId} → ${result.status})`,
   );
+  // The public report is the one review surface with no session at all, so the
+  // seed mints its capability too — otherwise verifying it locally means
+  // hand-rolling a share request against a token nobody printed.
+  if (result.shareToken) {
+    console.log(`  report:   ${appUrl}/reports/${result.shareToken} (public, no sign-in)`);
+  }
 }
 console.log("");
 console.log("Sign in at " + appUrl + "/login with the credentials above.");
@@ -123,6 +133,22 @@ async function runScan(cookie, stageId) {
     if (Date.now() > deadline) return { stageId, scanId, status: status ?? "unknown" };
     await sleep(1_000);
   }
+}
+
+/**
+ * Mint the scan's public share token. Sharing is owner/admin only and never
+ * rotates an existing token; the seeded account owns the organization it just
+ * created. A failure is reported and skipped rather than thrown — the scans are
+ * the seed's product and are still usable without a share link.
+ */
+async function sharePublicly(cookie, scanId) {
+  const shared = await api(cookie, "POST", `/api/v1/scans/${encodeURIComponent(scanId)}/share`, {});
+  const token = shared.body?.share?.token;
+  if (!shared.ok || typeof token !== "string") {
+    console.error(`seed: share link for ${scanId} failed (${shared.status}): ${shared.text}`);
+    return null;
+  }
+  return token;
 }
 
 async function api(cookie, method, pathname, body) {

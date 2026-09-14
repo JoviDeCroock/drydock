@@ -42,9 +42,10 @@ E2E_APP_PORT=5200 E2E_REGISTRY_PORT=5201 pnpm run test:e2e
 
 `pnpm run e2e:dev:seed` is the one-command seeded path for UI iteration: it
 starts the same harness and then runs `scripts/e2e-seed.mjs`, which signs up a
-throwaway account, connects the fake registry, and runs the implicit node-gyp
-fixture through a full scan — all over the app's own HTTP API, with no real
-credentials. It prints the login email/password and the scan URL. Against an
+throwaway account, connects the fake registry, runs the implicit node-gyp
+fixture through a full scan, and shares the completed review — all over the
+app's own HTTP API, with no real credentials. It prints the login
+email/password, the scan URL, and the public report URL. Against an
 already-running `pnpm run e2e:dev`, run `pnpm run e2e:seed` instead; extra
 fixture stage ids from `test/e2e-fixtures/scenarios/` can be passed as
 arguments (`pnpm run e2e:seed -- stage-benign-diff-000001`).
@@ -57,6 +58,39 @@ narrative report, screenshots, exported JSON, trace, and video under the tour
 output directory. See [`agent-tour.md`](./agent-tour.md).
 
 Vite ignores `.context/**` in its file watcher. The E2E runner writes registry state, Worker state, traces, screenshots, and reports there while the app is open; watching those files can cause hot-reload loops that interrupt browser interactions in CI.
+
+## Worker-owned routes in local development
+
+Production puts the Worker in front of every request (`run_worker_first: true`)
+and reaches static assets from inside it through the `ASSETS` binding. The
+harness routes only the Worker-owned prefixes — `test/e2e/worker-routes.mjs`,
+kept equal to `SERVER_OWNED_PATH_PREFIXES` in `server/index.ts` — so `/api/*`,
+`/webhooks/*`, `/og/*`, and `/public/*` reach their real handlers while
+documents come from Vite.
+
+A prefix missing from that list does not fail visibly: Vite's SPA fallback
+answers `200` with the app shell, so the route looks alive in a browser and its
+handler never runs. `test/dev-server-route-parity.test.mjs` pins the two lists
+together.
+
+Routing documents through the Worker as well would need the generated config to
+declare the `ASSETS` binding (the Vite plugin wires it back into the dev server
+only when one is named) and `DISABLE_SECURITY_HEADERS` set: the document CSP's
+`style-src-elem 'self'` blocks the styles Vite injects at runtime. That flag is
+all-or-nothing, so it would also drop the headers from the `/api/*` and
+`/public/*` responses that carry them locally today. The harness therefore keeps
+documents on Vite, and `assetFallbackRequest`'s `/reports/`, `/diff/`, and
+`/dashboard/` rewrites stay unexercised locally — they are covered by
+`test/workers/` instead.
+
+Reaching a handler is not the same as exercising it: `/og/*` is killswitched
+whenever `NPM_REGISTRY` is not the public npm registry, which it never is here,
+so OG cards answer `404` locally by design.
+
+The generated config also carries a throwaway Ed25519
+`ATTESTATION_SIGNING_KEY_JWK`, regenerated on every start rather than committed,
+so a shared report's attestation and published key verify locally instead of
+degrading to the no-key `503`.
 
 ## CI
 
