@@ -29,13 +29,14 @@ describe("dashboard onboarding contracts", () => {
 
   test("does not treat a recorded decision as proof that npm published the release", () => {
     expect(gettingStartedSource).not.toContain("published on your terms");
-    expect(gettingStartedSource).toContain("with the decision still in your hands");
-    expect(gettingStartedSource).toContain("An npm approval still needs your own");
+    expect(gettingStartedSource).toContain("approve the publish in npm with your own 2FA");
   });
 
-  test("does not treat every created scan as a completed review", () => {
-    expect(gettingStartedSource).not.toContain("has been reviewed for this organization");
-    expect(gettingStartedSource).toContain("has reached Drydock for review");
+  test("closes on the first review and never waits for a decision", () => {
+    expect(dashboardSource).not.toContain("hasAnyDecision");
+    expect(dashboardSource).not.toContain("resolveHasAnyDecision");
+    expect(dashboardSource).toContain("if (scans.hasAnyScan.value !== true) return;");
+    expect(dashboardSource).toContain("closeGettingStartedPanel();");
   });
 
   test("leads with the step that needs no token and no staged release", () => {

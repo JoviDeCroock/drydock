@@ -191,15 +191,16 @@ export default function DashboardPage() {
 // Which of the two onboarding surfaces an organization sees, if either.
 //
 // The getting-started panel supersedes the bare "npm not connected" callout
-// while the funnel is unfinished: it says the same thing as step 1 and then
-// explains what comes after it. Neither opens on a guess — an unresolved (null)
-// answer shows nothing rather than telling a maintainer with a hundred reviews
-// to get their first one.
+// until the organization has its first review: it says the same thing as step
+// 2 and explains what comes before and after it. Neither opens on a guess — an
+// unresolved (null) answer shows nothing rather than telling a maintainer with
+// a hundred reviews to get their first one.
 //
-// Opening is latched per organization, which is what lets the last step be seen
-// ticking: recording a first decision finishes the funnel, and a panel that
-// vanished at that moment would take the tick with it. Once open it stays until
-// the reader dismisses it; "finished" only means it will not open again.
+// The first review is the funnel's exit. The panel closes as soon as one exists
+// and does not open again for that organization; the later steps are optional
+// and explained where they happen (settings, the review itself). Opening is
+// latched per organization so a visit to the scan detail route does not reset
+// it while the first review is still being started.
 function DashboardOnboarding({
   scans,
   npm,
@@ -207,31 +208,19 @@ function DashboardOnboarding({
   scans: ReturnType<typeof useModel<typeof ScanListModel.prototype>>;
   npm: ReturnType<typeof useModel<typeof NpmConnectionModel.prototype>>;
 }) {
-  // Step 3 is the only step whose answer costs a request, so it is asked for
-  // only while the panel could still open — never for an organization that has
-  // dismissed it or already finished.
+  // A first review finishes the funnel: record it so the panel never opens
+  // again for this organization in this browser, and take an open panel away
+  // with it — the review the reader just started is the thing to look at now.
   useSignalEffect(() => {
-    if (gettingStartedDone.value) return;
-    if (!scans.loaded.value) return;
-    if (scans.refreshing.value) return;
     if (scans.hasAnyScan.value !== true) return;
-    if (scans.hasAnyDecision.value !== null) return;
-    void scans.resolveHasAnyDecision();
-  });
-
-  // A completed funnel is recorded as finished, which is what keeps the probe
-  // above from running again on every later dashboard load in this browser. It
-  // deliberately does not close a panel that is already open.
-  useSignalEffect(() => {
-    if (scans.hasAnyDecision.value === true) markGettingStartedDone();
+    markGettingStartedDone();
+    closeGettingStartedPanel();
   });
 
   useSignalEffect(() => {
     const organizationId = activeOrganizationId.value;
     if (gettingStartedDone.value) return;
-    if (scans.hasAnyScan.value === false || scans.hasAnyDecision.value === false) {
-      openGettingStartedPanel(organizationId);
-    }
+    if (scans.hasAnyScan.value === false) openGettingStartedPanel(organizationId);
   });
 
   const dismiss = () => {
@@ -244,8 +233,6 @@ function DashboardOnboarding({
       <GettingStarted
         npmConnected={Boolean(npm.connection.value)}
         npmScope={npmConnectionScope(npm.connection.value)}
-        hasAnyScan={scans.hasAnyScan.value === true}
-        hasAnyDecision={scans.hasAnyDecision.value === true}
         onDismiss={dismiss}
       />
     );

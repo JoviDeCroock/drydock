@@ -23,35 +23,26 @@ const STAGE_COMMAND = "npm stage publish";
  * the dashboard offered a disabled "Check npm" button, never linked to the docs,
  * and the `npm stage publish` instruction lived only on /docs.
  *
- * Each step ticks on its own, including the last one: the panel is opened by
- * `DashboardOnboarding` and closed only by the reader, so recording a first
- * decision ticks step 3 in place instead of taking the whole panel away at the
- * moment it completes. The earlier version disappeared at the first scan, which
- * meant steps 2 and 3 could never be seen ticking at all — it claimed to track
- * a funnel it structurally could not follow.
+ * The panel is shown only while the organization has no review at all, so the
+ * first step is always still open here. `DashboardOnboarding` closes it the
+ * moment a first review exists: the report is the thing to look at then, and
+ * the later steps are optional and explained where they happen. The npm step
+ * can already be ticked (a token connected before any review), which is why it
+ * still carries a done state.
  *
- * While the wait for a staged release lasts, the panel offers the one thing
- * that needs no token: a public npm package diff.
+ * The first step is the one thing that needs no token and nothing to wait for:
+ * a persisted review of a package that is already public.
  */
 export function GettingStarted({
   npmConnected,
   npmScope,
-  hasAnyScan,
-  hasAnyDecision,
   onDismiss,
 }: {
   npmConnected: boolean;
   /** The connection's own npm scope, when there is one, to prefill step 1. */
   npmScope: string | null;
-  hasAnyScan: boolean;
-  hasAnyDecision: boolean;
   onDismiss: () => void;
 }) {
-  // The funnel's own endpoint: a release was reviewed and decided. Step 1 can
-  // still be open at this point — a workflow gate reaches a first decision
-  // without an npm token — so the step list stays honest either way.
-  const complete = hasAnyScan && hasAnyDecision;
-
   return (
     <Card as="section" class="p-5 flex flex-col gap-4">
       <div class="flex flex-col gap-1.5">
@@ -59,24 +50,15 @@ export function GettingStarted({
           as="h2"
           aside={
             <Button variant="ghost" size="sm" onClick={onDismiss} title="Hide this panel">
-              {complete ? "Done" : "Dismiss"}
+              Dismiss
             </Button>
           }
         >
-          {complete ? "That is the whole loop" : "Get your first review"}
+          Get your first review
         </SectionLabel>
         <Muted class="text-[13px] m-0">
-          {complete ? (
-            <>
-              Reviewed before it shipped, with the decision still in your hands. Every staged
-              release and gated run lands here from now on — close this when you are ready.
-            </>
-          ) : (
-            <>
-              Start with a package you already publish: the first review needs no token and nothing
-              to wait for. Staged and gated releases land here the same way afterwards.
-            </>
-          )}
+          Start with a package you already publish: the first review needs no token and nothing to
+          wait for. Staged and gated releases land here the same way afterwards.
         </Muted>
       </div>
 
@@ -84,18 +66,11 @@ export function GettingStarted({
         <Step
           index={1}
           title="Review one of your published packages"
-          done={hasAnyScan}
-          action={hasAnyScan ? null : <PublishedReviewForm npmScope={npmScope} />}
+          action={<PublishedReviewForm npmScope={npmScope} />}
         >
-          {hasAnyScan ? (
-            <>A release has reached Drydock for review in this organization.</>
-          ) : (
-            <>
-              Name a package you publish. Drydock reviews its latest release against the one before
-              it — the full report, kept in this organization, with nothing to install and no token
-              to create.
-            </>
-          )}
+          Name a package you publish. Drydock reviews its latest release against the one before it —
+          the full report, kept in this organization, with nothing to install and no token to
+          create.
         </Step>
         <Step
           index={2}
@@ -135,18 +110,8 @@ export function GettingStarted({
             </>
           )}
         </Step>
-        <Step index={3} title="Review and decide" done={hasAnyDecision}>
-          {hasAnyDecision ? (
-            <>
-              A decision is recorded for this organization. An npm approval still needs your own 2FA
-              — Drydock never publishes.
-            </>
-          ) : (
-            <>
-              Read the diff, then approve the publish in npm with your own 2FA. Drydock never
-              publishes.
-            </>
-          )}
+        <Step index={3} title="Review and decide">
+          Read the diff, then approve the publish in npm with your own 2FA. Drydock never publishes.
         </Step>
       </ol>
 
