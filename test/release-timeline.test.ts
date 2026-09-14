@@ -12,6 +12,7 @@ function scan(overrides: Partial<Parameters<typeof buildReleaseTimeline>[0]> = {
   return {
     status: "complete",
     createdAt: T0 + minutes(1),
+    stagedCreatedAt: null,
     startedAt: null,
     completedAt: null,
     decision: null,
@@ -137,6 +138,32 @@ describe("buildReleaseTimeline", () => {
       stagedPublish: { createdAt: 12345 as unknown as string },
     });
     expect(events.map((event) => event.key)).toEqual(["queued"]);
+  });
+
+  test("a failed review still shows when npm staged the release", () => {
+    const events = buildReleaseTimeline(
+      // A review that failed before it could write a report has no summary at
+      // all; the stage timestamp persisted on the row is the only source.
+      scan({ status: "failed", stagedCreatedAt: T0, completedAt: T0 + minutes(4) }),
+      {},
+    );
+    expect(events.map((event) => event.key)).toEqual(["staged", "queued", "completed"]);
+    expect(events[0]?.at).toBe(T0);
+  });
+
+  test("a review completed before the stage timestamp was persisted falls back to its report", () => {
+    const events = buildReleaseTimeline(scan({ stagedCreatedAt: null }), {
+      stagedPublish: { createdAt: new Date(T0).toISOString() },
+    });
+    expect(events.map((event) => event.key)).toEqual(["staged", "queued"]);
+    expect(events[0]?.at).toBe(T0);
+  });
+
+  test("an unparseable persisted stage timestamp falls back to the report copy", () => {
+    const events = buildReleaseTimeline(scan({ stagedCreatedAt: "not a date" }), {
+      stagedPublish: { createdAt: new Date(T0).toISOString() },
+    });
+    expect(events[0]).toMatchObject({ key: "staged", at: T0 });
   });
 
   test("a failed review names its terminal stamp as a failure, not a completion", () => {

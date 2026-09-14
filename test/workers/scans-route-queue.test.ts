@@ -87,6 +87,7 @@ describe("scans route queue behavior", () => {
           id: "stage-route-queue-000001",
           packageName: "@org/queued",
           version: "2.0.0",
+          createdAt: "2026-05-22T12:00:00.000Z",
         });
       }),
     );
@@ -132,6 +133,9 @@ describe("scans route queue behavior", () => {
     const scans = await db.select().from(schema.scans).where(eq(schema.scans.id, body.scan.id));
     expect(scans).toHaveLength(1);
     expect(scans[0]?.organizationId).toBe(owner.organizationId);
+    // Stamped before the review runs, so a review that fails can still say when
+    // npm created the stage.
+    expect(scans[0]?.stagedCreatedAt?.toISOString()).toBe("2026-05-22T12:00:00.000Z");
   });
 
   test("POST /scans rejects stage ids the organization token cannot access before persisting", async () => {

@@ -23,6 +23,7 @@ type TimelineScan = Pick<
   PersistedScanDetail["scan"],
   | "status"
   | "createdAt"
+  | "stagedCreatedAt"
   | "startedAt"
   | "completedAt"
   | "decision"
@@ -50,7 +51,13 @@ export function buildReleaseTimeline(
   summary: Pick<PersistedSummary, "stagedPublish">,
 ): ReleaseTimelineEvent[] {
   const superseded = scan.registryStatusSupersededAt != null;
-  const stagedAt = summary.stagedPublish?.createdAt;
+  // The scan row carries the stage's own creation time from the moment the
+  // review is queued, so a queued or failed review still shows it. The summary
+  // copy is the fallback for reviews completed before that column existed.
+  const summaryStagedAt = summary.stagedPublish?.createdAt;
+  const stagedAt =
+    epoch(scan.stagedCreatedAt) ??
+    epoch(typeof summaryStagedAt === "string" ? summaryStagedAt : null);
   const decision =
     scan.decision === "publish"
       ? "publish"
@@ -71,7 +78,7 @@ export function buildReleaseTimeline(
       key: "staged",
       label: "Staged on npm",
       detail: null,
-      at: epoch(typeof stagedAt === "string" ? stagedAt : null),
+      at: stagedAt,
     },
     { key: "queued", label: "Review queued", detail: null, at: epoch(scan.createdAt) },
     { key: "started", label: "Review started", detail: null, at: epoch(scan.startedAt) },

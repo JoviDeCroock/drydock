@@ -79,6 +79,7 @@ scanLifecycleRoutes.post("/", async (c) => {
       source: prepared.source,
       packageName: prepared.packageName,
       stagedVersion: prepared.version,
+      stagedCreatedAt: prepared.stagedCreatedAt,
       registryUrl: prepared.registryUrl,
     });
     if (!detail) return c.json({ error: "failed to create scan" }, 500);
@@ -127,6 +128,11 @@ interface PreparedScan {
   ecosystem: string;
   packageName: string | null;
   version: string | null;
+  /**
+   * Registry-reported stage creation time. Only a staged npm scan has one; a
+   * published-pair review was never staged.
+   */
+  stagedCreatedAt: string | null;
   /**
    * Only a staged npm scan captures one. A published-pair review must leave it
    * null: `createScanJob` uses it to claim the registry coordinates a staged
@@ -186,6 +192,7 @@ async function prepareStagedScan(
     ecosystem: "npm",
     packageName: staged?.packageName ?? null,
     version: staged?.version ?? null,
+    stagedCreatedAt: staged?.createdAt ?? null,
     registryUrl: npmConnection.registryUrl,
   };
 }
@@ -230,6 +237,7 @@ async function preparePublishedScan(
     ecosystem: pair.ecosystem,
     packageName: pair.packageName,
     version: pair.version,
+    stagedCreatedAt: null,
     registryUrl: null,
   };
 }

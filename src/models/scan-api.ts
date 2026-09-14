@@ -112,6 +112,12 @@ export interface PersistedScanDetail {
     publicShareIncludesFiles?: boolean;
     startedAt?: string | number | Date | null;
     completedAt?: string | number | Date | null;
+    /**
+     * Registry-reported stage creation time, persisted when the review row was
+     * created. Null for gate/published reviews and for rows created before the
+     * column existed, which only carry it inside a completed report.
+     */
+    stagedCreatedAt?: string | number | Date | null;
     /** Display name of the member who recorded the decision, when known. */
     decidedByName?: string | null;
   };

@@ -398,6 +398,31 @@ describe("scan status poll route", () => {
     );
   });
 
+  test("keeps a queued review's stage timestamp, which has no summary to fall back on", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const db = createDb(env.DB);
+    const scanId = `scan_${crypto.randomUUID()}`;
+    await createScanJob(db, {
+      id: scanId,
+      stageId: "stage-queued-timeline-000001",
+      organizationId: owner.organizationId,
+      ownerUserId: owner.userId,
+      packageName: "@org/queued",
+      stagedVersion: "1.0.0",
+      stagedCreatedAt: "2026-05-22T12:00:00.000Z",
+      registryUrl: "https://registry.npmjs.org",
+    });
+
+    const res = await fetchJsonWithSession(app, `/api/v1/scans/${scanId}/status`, {
+      method: "GET",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { scan: { status: string; stagedCreatedAt: string | null } };
+    expect(body.scan.status).toBe("pending");
+    expect(body.scan.stagedCreatedAt).toBe("2026-05-22T12:00:00.000Z");
+  });
+
   test("is organization-scoped", async () => {
     const owner = await seedUser();
     const other = await seedUser();
