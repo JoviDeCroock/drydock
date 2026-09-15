@@ -506,8 +506,8 @@ export default function DocsPage() {
                     Approve on npm with 2FA as before. The staged review now carries a Gate
                     continuity section: <InlineCode>matched</InlineCode> means npm holds the tarball
                     the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> or{" "}
-                    <InlineCode>ungated</InlineCode> means bytes the gate rejected, or a stage that
-                    never went through the gate — reject it on npm.
+                    <InlineCode>ungated</InlineCode> means bytes the gate did not approve, or a
+                    stage that never went through the gate — reject it on npm.
                   </>,
                 ]}
               />
