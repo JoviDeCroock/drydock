@@ -121,6 +121,14 @@ export function ReleaseVerdictStrip({
         {ai?.model != null && ai.kind === "complete" && ai.requiresManualReview ? (
           <Badge tone="medium">manual review</Badge>
         ) : null}
+        {/* The model reports the assessment and the manual-review flag
+            independently, so a suspicious assessment without the flag must
+            still surface here; only the clean reading stays quiet. */}
+        {ai?.model != null &&
+        ai.kind === "complete" &&
+        ai.releaseAssessment !== "nothing_unusual" ? (
+          <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+        ) : null}
         {ai?.model != null && ai.kind === "unavailable" ? (
           <Badge tone="neutral">assistant unavailable</Badge>
         ) : null}
