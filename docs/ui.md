@@ -55,18 +55,20 @@ move it into `src/features/` instead.
 
 Both review pages lead with the diff:
 
-- **Scan detail** — a one-row verdict strip (recommendation, only action-relevant
-  qualifiers, the version picker, and the decision button), then the workbench,
-  then a `CollapsibleCard` of review notes (why the verdict reads that way, the
-  AI reviewer's summary, release memory, source binding), then the risk index
-  and the manifest sections. The notes open themselves when any of those has
-  something to say and stay shut when the release is clean; the disclosure
-  header does not repeat the nested section names. The header badge carries
-  npm's observation time for every state; quiet terminal states (published,
-  removed) get no separate notice row. The page header labels the persisted
-  comparison as the `default baseline`, while the picker owns the active
-  comparison. The decision button lives in the strip on a completed review and
-  in the page header otherwise, since a failed gate review renders no strip.
+- **Scan detail** — a one-row verdict strip (recommendation, only
+  action-relevant qualifiers, the version picker, and the decision button;
+  below `sm` the decision stays beside the verdict and the picker takes its own
+  row), then the workbench, then a `CollapsibleCard` of review notes (why the
+  verdict reads that way, the AI reviewer's summary, release memory, source
+  binding), then the risk index and the manifest sections. The notes open
+  themselves when any of those has something to say and stay shut when the
+  release is clean; the disclosure header does not repeat the nested section
+  names. The header badge carries npm's observation time for every state; quiet
+  terminal states (published, removed) get no separate notice row. The page
+  header labels the persisted comparison as the `default baseline`, while the
+  picker owns the active comparison. The decision button lives in the strip on
+  a completed review and in the page header otherwise, since a failed gate
+  review renders no strip.
 - **Public report** — verdict card, then the same workbench, then the risk
   index. Its diff is single-sided: a share token buys the staged artifact's
   redacted samples (`GET /public/reports/:token/file`) and never a baseline,

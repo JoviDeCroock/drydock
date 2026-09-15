@@ -93,23 +93,27 @@ export function buildReleaseVerdict({
  * The verdict line the page opens on, above the diff.
  *
  * Deliberately one row: the recommendation, the risk badges that qualify it,
- * and — through `actions` — the version picker and the decision button. The
+ * the comparison picker, and the decision button. Below `sm` the decision
+ * stays beside the verdict and the picker drops to its own full-width row,
+ * so the primary action never trails the control it does not depend on. The
  * evidence behind the verdict moves below the workbench into the review notes,
  * because a reviewer reads the diff first and the reasoning second.
  */
 export function ReleaseVerdictStrip({
   verdict,
   ai,
-  actions,
+  comparison,
+  decision,
 }: {
   verdict: ReleaseVerdict;
   ai: DisplayedAiResult | null;
-  actions?: ComponentChildren;
+  comparison?: ComponentChildren;
+  decision?: ComponentChildren;
 }) {
   const { recommendation, artifactRisk, releaseRisk } = verdict;
   return (
-    <section class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
+    <section class="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0 order-1">
         <h2
           class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
         >
@@ -133,7 +137,10 @@ export function ReleaseVerdictStrip({
           <Badge tone="neutral">assistant unavailable</Badge>
         ) : null}
       </div>
-      {actions ? <div class="flex flex-wrap items-center gap-3">{actions}</div> : null}
+      {comparison ? (
+        <div class="order-3 basis-full sm:order-2 sm:basis-auto sm:ml-auto">{comparison}</div>
+      ) : null}
+      {decision ? <div class="order-2 ml-auto sm:order-3 sm:ml-0">{decision}</div> : null}
     </section>
   );
 }
