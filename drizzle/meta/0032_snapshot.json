@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cec1324a-f335-4761-9d7c-4faac4aedc67",
-  "prevId": "6b45d80d-0d3f-442c-af12-69a9308b20cd",
+  "id": "f4200289-7267-4b87-b48f-50ca2fdda9bc",
+  "prevId": "aa9b4f11-4f9f-43fc-b5a0-c1ed396ac7e8",
   "tables": {
     "account": {
       "name": "account",
@@ -2049,6 +2049,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "staged_created_at": {
+          "name": "staged_created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "registry_url": {
           "name": "registry_url",
           "type": "text",
@@ -2307,6 +2314,13 @@
         },
         "registry_publish_reminder_at": {
           "name": "registry_publish_reminder_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "registry_approvable_notified_at": {
+          "name": "registry_approvable_notified_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
