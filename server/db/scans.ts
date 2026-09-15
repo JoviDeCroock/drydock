@@ -19,6 +19,7 @@ export {
   backfillScanRegistryReleaseIdentity,
   getScanReleaseIdentity,
   listScansAwaitingRegistryStatus,
+  markRegistryApprovableNotified,
   markRegistryPublishReminderSent,
   recordRegistryVersionStatus,
   supersedeRegistryReleaseIncarnations,

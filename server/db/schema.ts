@@ -139,6 +139,12 @@ export const scans = sqliteTable(
     }),
     packageName: text("package_name"),
     stagedVersion: text("staged_version"),
+    // When the registry says the staged artifact was created, captured while
+    // the review row is written. The completed report carries the same stamp
+    // inside its staged details, but a review that fails or is still queued
+    // never writes one, and the release timeline still has to show when the
+    // release reached the registry.
+    stagedCreatedAt: integer("staged_created_at", { mode: "timestamp_ms" }),
     // Registry base URL captured when this staged release was discovered. npm
     // package coordinates are registry-local, so later connection edits must
     // never make an old scan query a different registry for the same name and
@@ -229,6 +235,12 @@ export const scans = sqliteTable(
     // A separate column rather than an event lookup because the sweep decides
     // whether to send while holding only this row.
     registryPublishReminderAt: integer("registry_publish_reminder_at", { mode: "timestamp_ms" }),
+    // Send-once stamp for the "npm finished validating, you can approve now"
+    // notice. Claimed conditionally on the observation that triggered it, so
+    // overlapping sweeps observing the same transition cannot both send.
+    registryApprovableNotifiedAt: integer("registry_approvable_notified_at", {
+      mode: "timestamp_ms",
+    }),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

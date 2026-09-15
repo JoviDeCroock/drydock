@@ -1,0 +1,1 @@
+ALTER TABLE `scans` ADD `registry_approvable_notified_at` integer;

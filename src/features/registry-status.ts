@@ -40,12 +40,34 @@ export function registryStatusVariant(scan: RegistryStatusScan): RegistryStatusV
   }
 }
 
+/**
+ * One vocabulary for npm's documented per-version statuses, shared by the
+ * dashboard badge and the scan-detail timeline so the same state never reads
+ * two ways on one page. `staged` is "awaiting approval": npm allows the
+ * approval, and whether Drydock recommended it is the decision row's job.
+ * Undocumented statuses have no phrase and render nothing.
+ */
+const REGISTRY_STATUS_PHRASE: Readonly<Record<string, string>> = {
+  validating: "validating",
+  staged: "awaiting approval",
+  published: "published",
+  blocked: "blocked",
+  deleted: "removed",
+};
+
+export function registryStatusPhrase(status: string | null | undefined): string | null {
+  // Registry-supplied string; hasOwn keeps prototype keys from phrasing.
+  return status && Object.hasOwn(REGISTRY_STATUS_PHRASE, status)
+    ? REGISTRY_STATUS_PHRASE[status]
+    : null;
+}
+
 const BADGE_LABELS: Record<RegistryStatusVariant, { label: string; tone: BadgeTone }> = {
-  blocked: { label: "npm blocked", tone: "critical" },
-  awaiting_approval: { label: "npm awaiting approval", tone: "medium" },
-  validating: { label: "npm validating", tone: "info" },
-  published: { label: "npm published", tone: "ok" },
-  deleted: { label: "npm removed", tone: "unchanged" },
+  blocked: { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" },
+  awaiting_approval: { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" },
+  validating: { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: "info" },
+  published: { label: `npm ${REGISTRY_STATUS_PHRASE.published}`, tone: "ok" },
+  deleted: { label: `npm ${REGISTRY_STATUS_PHRASE.deleted}`, tone: "unchanged" },
 };
 
 export function registryStatusBadge(

@@ -296,6 +296,9 @@ for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
         await expect(page.getByRole("heading", { name: scenario.packageName })).toBeVisible({
           timeout: 30_000,
         });
+        // A review that failed never wrote a report, so its timeline can only
+        // know the stage's creation time from the scan row.
+        await expect(page.getByText("Staged on npm")).toBeVisible();
         await page.getByRole("button", { name: "Delete review" }).click();
         const dialog = page.getByRole("dialog");
         await expect(dialog.getByRole("heading", { name: "Delete failed review?" })).toBeVisible();
