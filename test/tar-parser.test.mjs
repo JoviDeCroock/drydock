@@ -1359,13 +1359,12 @@ describe("readTar limits and malformed archives", () => {
     ]);
     const { files, suspicious } = await parseFull(tar);
     expect(files.map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
-    expect(suspicious).toContainEqual(
-      expect.objectContaining({
-        kind: "parser-differential",
-        path: "<archive>",
-        detail: expect.stringContaining("1 entry follows"),
-      }),
-    );
+    expect(suspicious).toContainEqual({
+      kind: "parser-differential",
+      path: "<archive>",
+      detail:
+        "1 entry follows a node-tar null block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first null block never sees them",
+    });
   });
 
   test("consumes the body of an entry whose PAX path is empty under a ustar prefix, like npm's reader", async () => {
@@ -1587,7 +1586,7 @@ describe("readTar limits and malformed archives", () => {
       kind: "parser-differential",
       path: "<archive>",
       detail:
-        "1 entry follows an all-zero block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first all-zero block never sees them",
+        "1 entry follows a node-tar null block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first null block never sees them",
     });
   });
 

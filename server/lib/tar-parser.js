@@ -936,8 +936,8 @@ export async function readTarStream(
   let demotedByTier = 0;
   let budgetNotice = null;
   let tierNotice = null;
-  // An all-zero block only ends the archive when the block after it is all-zero
-  // too, so the first one is held pending rather than acted on.
+  // A node-tar null block only ends the archive when the block after it is also
+  // null, so the first one is held pending rather than acted on.
   let pendingNullBlock = false;
   let entriesAfterNullBlock = 0;
   let nullBlockNotice = null;
@@ -1411,7 +1411,7 @@ export async function readTarStream(
       rejectedNotice.detail = `${rejectedBlocks} header ${rejectedBlocks === 1 ? "block is one npm's reader rejects" : "blocks are ones npm's reader rejects"} (checksum mismatch, a base-256 numeric field it cannot decode, missing path, or a linkname the entry type does not allow); each was skipped without consuming the body it declared, as npm's reader does, so the entries after it are the ones npm extracts`;
     }
     if (nullBlockNotice) {
-      nullBlockNotice.detail = `${entriesAfterNullBlock} ${entriesAfterNullBlock === 1 ? "entry follows" : "entries follow"} an all-zero block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first all-zero block never sees them`;
+      nullBlockNotice.detail = `${entriesAfterNullBlock} ${entriesAfterNullBlock === 1 ? "entry follows" : "entries follow"} a node-tar null block that is not part of the two-block end-of-archive marker; a reader that ends the archive at the first null block never sees them`;
     }
     return { files, suspicious };
   } finally {
