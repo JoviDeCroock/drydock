@@ -427,7 +427,7 @@ function DiffControls({
         <>
           <DiffOptionToggle
             label="Word differences"
-            description="Highlight changed words"
+            description="Highlight word differences within changed lines"
             checked={wordDiff.value}
             onChange={(next) => (wordDiff.value = next)}
           />
