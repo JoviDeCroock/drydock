@@ -25,7 +25,7 @@ interface GateReviewRow {
 }
 
 export interface GateReviewHistory {
-  /** Completed gate reviews of exactly this package version, newest first. */
+  /** Completed gate reviews of exactly this package version, newest decision first. */
   forVersion: GateReviewRow[];
   /** Whether the organization has ever gated any version of this package. */
   packageHasGateHistory: boolean;
@@ -74,7 +74,9 @@ export async function loadGateReviewHistory(
         ),
       )
       .where(and(scope, eq(scans.stagedVersion, input.version)))
-      .orderBy(desc(scans.completedAt), desc(scans.createdAt))
+      // An explicit gate decision supersedes scan chronology. Undecided or
+      // deleted gate rows fall back to the newest completed scan.
+      .orderBy(desc(githubWorkflowGates.decidedAt), desc(scans.completedAt), desc(scans.createdAt))
       .limit(GATE_REVIEW_LIMIT),
     db.select({ id: scans.id }).from(scans).where(scope).limit(1),
   ]);
