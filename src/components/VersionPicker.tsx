@@ -34,28 +34,30 @@ export function VersionPicker({
       >
         Compare against
       </label>
-      <Select
-        id={selectId}
-        value={selected ?? ""}
-        onChange={(value) => {
-          if (value) onChange(value);
-        }}
-        disabled={disabled || options.length === 0}
-        class="font-mono min-w-[200px]"
-      >
-        {!options.length ? <option value="">no published versions</option> : null}
-        {options.map((option) => {
-          const tagSuffix = option.distTags.length ? ` [${option.distTags.join(", ")}]` : "";
-          const defaultSuffix = option.version === defaultVersion ? " (default)" : "";
-          return (
-            <option key={option.version} value={option.version}>
-              {option.version}
-              {tagSuffix}
-              {defaultSuffix}
-            </option>
-          );
-        })}
-      </Select>
+      <div class="w-full sm:w-auto sm:min-w-[200px]">
+        <Select
+          id={selectId}
+          value={selected ?? ""}
+          onChange={(value) => {
+            if (value) onChange(value);
+          }}
+          disabled={disabled || options.length === 0}
+          class="font-mono"
+        >
+          {!options.length ? <option value="">no published versions</option> : null}
+          {options.map((option) => {
+            const tagSuffix = option.distTags.length ? ` [${option.distTags.join(", ")}]` : "";
+            const defaultSuffix = option.version === defaultVersion ? " (default)" : "";
+            return (
+              <option key={option.version} value={option.version}>
+                {option.version}
+                {tagSuffix}
+                {defaultSuffix}
+              </option>
+            );
+          })}
+        </Select>
+      </div>
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
       {tagsForSelected.map((tag) => (
         <Badge key={tag} tone="info">
