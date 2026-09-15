@@ -49,6 +49,10 @@ export function ScanDetailHeader({
   // "npm blocked" as Drydock's finding, or a clean release risk as proof the
   // version shipped.
   const registryBadge = detail ? registryStatusBadge(detail.scan) : null;
+  const registryObservedAt =
+    registryBadge && detail?.scan.registryVersionStatusAt
+      ? formatDateTime(detail.scan.registryVersionStatusAt)
+      : null;
   const dashboardHref = getDashboardReturnUrl();
   const packageHref = detail?.scan.packageName
     ? packageReleasesPath(
@@ -80,6 +84,9 @@ export function ScanDetailHeader({
                 <Badge key="registry" tone={registryBadge.tone}>
                   {registryBadge.label}
                 </Badge>
+              ) : null,
+              registryObservedAt ? (
+                <span key="registry-observed">checked {registryObservedAt}</span>
               ) : null,
               packageHref && !sameLocation(packageHref, dashboardHref) ? (
                 <a key="package" href={packageHref} class="text-ink-muted hover:text-ink">

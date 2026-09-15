@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { registryStatusBadge, registryStatusVariant } from "../src/features/registry-status";
+import {
+  registryStatusBadge,
+  registryStatusNoticeVariant,
+  registryStatusVariant,
+} from "../src/features/registry-status";
 
 describe("registry status variant", () => {
   test("npm blocking a version is its own signal, whatever we decided", () => {
@@ -69,5 +73,20 @@ describe("registry status badge", () => {
 
   test("describes deleted versions as removed rather than pre-publication withdrawals", () => {
     expect(registryStatusBadge({ registryVersionStatus: "deleted" })?.label).toBe("npm removed");
+  });
+});
+
+describe("registry status notice", () => {
+  test("reserves a separate row for states with actionable context", () => {
+    expect(registryStatusNoticeVariant({ registryVersionStatus: "blocked" })).toBe("blocked");
+    expect(registryStatusNoticeVariant({ registryVersionStatus: "validating" })).toBe("validating");
+    expect(
+      registryStatusNoticeVariant({ registryVersionStatus: "staged", decision: "publish" }),
+    ).toBe("awaiting_approval");
+  });
+
+  test("keeps quiet terminal outcomes in header metadata only", () => {
+    expect(registryStatusNoticeVariant({ registryVersionStatus: "published" })).toBe(null);
+    expect(registryStatusNoticeVariant({ registryVersionStatus: "deleted" })).toBe(null);
   });
 });
