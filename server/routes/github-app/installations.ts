@@ -7,16 +7,16 @@
  * behalf of a browser.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
+import { readJsonObject } from "../../lib/platform/http";
+import { guardRateLimit } from "../../lib/rate-limit";
 import { recordScanEvent } from "../../db/events";
-import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
   requireActiveOrganizationContext,
+  requireOrganizationRole,
 } from "../../lib/auth/active-organization";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
-import { rateLimitResponse } from "../../lib/platform/http";
 import { recordProductEvent } from "../../lib/platform/analytics";
 import {
   fetchInstallationMetadata,
@@ -65,29 +65,15 @@ installationRoutes.post("/install", async (c) => {
   } catch (err) {
     return configErrorResponse(c, err);
   }
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-  try {
-    await enforceRateLimit(c.env, {
-      key: `github-app:install:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "install rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+  const limited = await guardRateLimit(
+    c,
+    { key: `github-app:install:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+    "install rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const state = await signOAuthState(config.stateSecret, {
     organizationId,
@@ -107,12 +93,12 @@ installationRoutes.post("/install/callback", async (c) => {
     return configErrorResponse(c, err);
   }
 
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = await readJsonObject<{
     state?: unknown;
     code?: unknown;
     installationId?: unknown;
     setupAction?: unknown;
-  };
+  }>(c);
   const state = typeof body.state === "string" ? body.state.trim() : "";
   const code = typeof body.code === "string" ? body.code.trim() : "";
   const installationId = typeof body.installationId === "string" ? body.installationId.trim() : "";
@@ -135,7 +121,7 @@ installationRoutes.post("/install/callback", async (c) => {
     return c.json({ error: "state token does not belong to this user" }, 403);
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   // Confirm the caller still has access to the org the state was issued for.
   const { organizationId, role } = await requireActiveOrganizationContext(c, db);
   if (organizationId !== claims.organizationId) {
@@ -182,7 +168,7 @@ installationRoutes.post("/install/callback", async (c) => {
 });
 
 installationRoutes.get("/installations", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const installations = await listInstallationsForOrganization(db, organizationId);
   return c.json({ installations: installations.map(publicInstallation) });
@@ -195,23 +181,21 @@ installationRoutes.get("/installations/:installationRowId/repositories", async (
   } catch (err) {
     return configErrorResponse(c, err);
   }
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const installationRowId = c.req.param("installationRowId");
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
-    try {
-      await enforceRateLimit(c.env, {
+    const limited = await guardRateLimit(
+      c,
+      {
         key: `github-app:repositories:${organizationId}:${installation.id}`,
         limit: GITHUB_APP_PROXY_LIMIT,
         windowMs: GITHUB_APP_PROXY_WINDOW_MS,
-      });
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        return rateLimitResponse(c, "GitHub repository lookup rate limit exceeded", err);
-      }
-      throw err;
-    }
+      },
+      "GitHub repository lookup rate limit exceeded",
+    );
+    if (limited) return limited;
     const repositories = await listInstallationRepositories(config, installation.installationId);
     return c.json({
       repositories: repositories.map((repo) => ({
@@ -234,7 +218,7 @@ installationRoutes.get(
     } catch (err) {
       return configErrorResponse(c, err);
     }
-    const db = createDb(c.env.DB);
+    const db = c.var.db;
     const organizationId = await requireActiveOrganization(c, db);
     const installationRowId = c.req.param("installationRowId");
     const owner = c.req.param("owner");
@@ -244,18 +228,16 @@ installationRoutes.get(
     }
     try {
       const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
-      try {
-        await enforceRateLimit(c.env, {
+      const limited = await guardRateLimit(
+        c,
+        {
           key: `github-app:environments:${organizationId}:${installation.id}:${owner}/${repo}`,
           limit: GITHUB_APP_PROXY_LIMIT,
           windowMs: GITHUB_APP_PROXY_WINDOW_MS,
-        });
-      } catch (err) {
-        if (err instanceof RateLimitError) {
-          return rateLimitResponse(c, "GitHub environment lookup rate limit exceeded", err);
-        }
-        throw err;
-      }
+        },
+        "GitHub environment lookup rate limit exceeded",
+      );
+      if (limited) return limited;
       const environments = await listRepositoryEnvironments(
         config,
         installation.installationId,

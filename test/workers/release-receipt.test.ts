@@ -9,6 +9,7 @@ import * as schema from "../../server/db/schema";
 import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
 import { scansRoutes } from "../../server/routes/scans";
+import { attachDb } from "../../server/middleware/db";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
@@ -34,6 +35,7 @@ async function seedOwner(): Promise<Owner> {
 
 function appFor(owner: Owner) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+  app.use("*", attachDb);
   app.use("*", async (c, next) => {
     c.set("authSession", { userId: owner.userId });
     await next();

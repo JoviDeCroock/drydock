@@ -200,7 +200,7 @@ never hand-written.
 
 ## Rate limiting
 
-The verify endpoints are brute-force targets, so `authIpLimit()` in `server/index.ts` adds a
+The verify endpoints are brute-force targets, so `authIpLimit()` in `server/middleware/auth-rate-limit.ts` adds a
 dedicated bucket for everything under `/api/auth/two-factor`:
 
 ```

@@ -1,4 +1,5 @@
 import type { ReadonlySignal } from "@preact/signals";
+import type { ScanErrorCode } from "../../../../server/lib/scan/errors";
 import { dashboardReturnLabel, getDashboardReturnUrl } from "../../../lib/query-state";
 import { packageReleasesPath } from "../../../lib/package-releases-path";
 import { scanEcosystem } from "../../../../server/lib/public-feed";
@@ -209,7 +210,7 @@ export function VersionPickerSkeleton({ stagedVersion }: { stagedVersion: string
 // Token-scope failures are an onboarding dead end without a pointer to the fix:
 // connect-time validation only checks whoami + stage listing, so a granular token
 // can validate fine and still 403 on a specific package's tarball.
-const FAILURE_GUIDANCE: Record<string, { hint: string; action: string }> = {
+const FAILURE_GUIDANCE: Partial<Record<ScanErrorCode, { hint: string; action: string }>> = {
   staged_tarball_unavailable: {
     hint: "The npm token may have expired, or its scope may not cover this package.",
     action: "Validate or rotate the token under Settings → npm access.",
@@ -221,7 +222,8 @@ export function ScanFailureAlert({ errorJson }: { errorJson: unknown }) {
     errorJson && typeof errorJson === "object"
       ? (errorJson as { message?: unknown; code?: unknown })
       : null;
-  const guidance = typeof error?.code === "string" ? FAILURE_GUIDANCE[error.code] : undefined;
+  const guidance =
+    typeof error?.code === "string" ? FAILURE_GUIDANCE[error.code as ScanErrorCode] : undefined;
   return (
     <Alert tone="critical">
       <div class="flex flex-col gap-1">

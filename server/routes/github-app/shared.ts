@@ -6,6 +6,7 @@
  * row is only ever reachable by the organization that connected it.
  */
 import type { Context } from "hono";
+import type { AppDb } from "../../db/client";
 import {
   GithubAppConfigError,
   type GithubAppValidationCode,
@@ -13,13 +14,12 @@ import {
 } from "../../lib/github-app/config";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, Variables } from "../../types";
-import { createDb } from "../../db/client";
 import { listInstallationsForOrganization } from "../../lib/github-app/persistence";
 
 export type RouteContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 export async function ensureInstallationOwnedBy(
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
   organizationId: string,
   installationRowId: string,
 ) {

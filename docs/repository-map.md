@@ -4,7 +4,10 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 ## Server
 
-- `server/index.ts` mounts the Hono Worker routes under `/api/*` and is the deploy target in `wrangler.jsonc`.
+- `server/index.ts` mounts the Hono Worker routes under `/api/*`, owns the session guard and the anonymous-mount order, and is the deploy target in `wrangler.jsonc`; it re-exports the `scheduled` and `queue` handlers.
+- `server/middleware/` holds the request middleware `server/index.ts` composes: security headers, canonical host and static-asset fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin check, auth IP rate limit, and the per-request `c.var.db` handle.
+- `server/scheduled.ts` is the cron handler (staged-publish discovery sweep plus audit, auth-row, and rate-limit pruning); `server/queue.ts` is the `SCAN_QUEUE` consumer for scan and workflow-gate messages.
+- `server/lib/rate-limit.ts` composes the domain-free limiter in `server/lib/platform/rate-limit.ts` with the D1 fallback (`server/db/rate-limits.ts`); routes call its `enforceRateLimit`/`guardRateLimit`.
 - `server/routes/scans/` owns scan HTTP behavior, split by caller intent into `lifecycle`, `decisions`, `sharing`, and `compare` and mounted by its `index.ts`.
 - `server/routes/github-webhooks.ts` is the signed GitHub App webhook. It persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `workflow-gates.md` and the npm, PyPI, and VS Code gate docs.
 - `server/lib/sandbox.ts` is the Dynamic Worker that downloads and parses package artifacts. `NpmStageGateway` is the only npm-token egress.

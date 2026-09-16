@@ -1,4 +1,5 @@
 import type { Auth, AuthSession } from "./lib/auth";
+import type { AppDb } from "./db/client";
 import type { BaselineInfo } from "./lib/ecosystems/package-adapter";
 import type { PublishedPairRef } from "./lib/ecosystems/published-pair";
 
@@ -24,6 +25,8 @@ export type Bindings = Cloudflare.Env;
 export type Variables = {
   auth: Auth;
   authSession: AuthSession;
+  /** One Drizzle handle per request, attached by `server/middleware/db.ts`. */
+  db: AppDb;
 };
 
 export interface ScanInput {

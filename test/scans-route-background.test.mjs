@@ -62,6 +62,8 @@ function buildScansApp() {
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("authSession", { userId: "user_route" });
+    // Production attaches the handle in server/index.ts (server/middleware/db.ts).
+    c.set("db", dbMock.createDb());
     await next();
   });
   app.route("/api/v1/scans", scansRoutes);

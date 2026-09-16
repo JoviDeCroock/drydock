@@ -1,6 +1,8 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { Hono } from "hono";
 import { ACTIVE_ORG_HEADER } from "../../../server/lib/auth/active-organization";
+import { attachDb } from "../../../server/middleware/db";
+import { handleAppError } from "../../../server/middleware/errors";
 import type { Bindings, Variables } from "../../../server/types";
 
 export type TestApp = Hono<{ Bindings: Bindings; Variables: Variables }>;
@@ -19,6 +21,8 @@ export function buildTestApp(
   options: { authPath?: string } = {},
 ): TestApp {
   const app: TestApp = new Hono();
+  // Production attaches the handle in server/index.ts; routers read `c.var.db`.
+  app.use("*", attachDb);
   if (session) {
     app.use(options.authPath ?? "*", async (c, next) => {
       c.set("authSession", { ...session });
@@ -26,6 +30,9 @@ export function buildTestApp(
     });
   }
   mount(app);
+  // Same error mapping as server/index.ts, so thrown Forbidden/Unauthorized
+  // errors reach assertions as the 403/401 the deployed app returns.
+  app.onError(handleAppError);
   return app;
 }
 
