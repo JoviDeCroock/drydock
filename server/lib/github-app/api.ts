@@ -2,6 +2,7 @@ import { GithubAppValidationError, type GithubAppConfig } from "./config";
 import { githubHeaders, paginate } from "./client";
 import { generateGithubAppJwt } from "./jwt";
 import { parseRepositoryFullName } from "./validation";
+import { emitOperationalEvent } from "../platform/observability";
 import { reliableFetch } from "../platform/reliable-fetch";
 
 export interface GithubInstallationMetadata {
@@ -143,7 +144,7 @@ export async function listInstallationRepositories(
   // 50 pages × 100 = 5,000 repositories. An installation is one account, and a
   // picker listing more than that is unusable anyway; the cap exists so a
   // pathological account cannot pin a Worker invocation on pagination.
-  await paginate(
+  const { complete } = await paginate(
     "https://api.github.com/installation/repositories?per_page=100",
     { headers: githubHeaders(token), maxPages: 50 },
     async (response) => {
@@ -172,6 +173,14 @@ export async function listInstallationRepositories(
     },
   );
 
+  if (!complete) {
+    // The picker shows a partial list rather than failing; the event makes a
+    // silently-short list diagnosable.
+    emitOperationalEvent("warn", "github_app.repository_listing_truncated", {
+      installationId,
+      repositories: repositories.length,
+    });
+  }
   repositories.sort((a, b) => a.fullName.localeCompare(b.fullName));
   return repositories;
 }

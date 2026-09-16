@@ -26,6 +26,9 @@ function stubRunArtifacts(runId: number, artifactPaths: string[]) {
   stubGithubFetch({
     runId,
     installationToken: true,
+    // The inline stub this replaced sent no content-length, so the gate path
+    // keeps exercising the undeclared-length download branch.
+    contentLength: null,
     artifacts: [
       {
         id: 4242,

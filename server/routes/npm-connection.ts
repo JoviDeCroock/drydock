@@ -24,7 +24,7 @@ import {
   validateNpmCredential,
 } from "../lib/ecosystems/npm/connection";
 import { isValidStageId } from "../lib/ecosystems/npm/stage-id";
-import { errorMessage, UnauthorizedError } from "../lib/platform/errors";
+import { errorMessage, ForbiddenError, UnauthorizedError } from "../lib/platform/errors";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
@@ -97,7 +97,9 @@ npmConnectionRoutes.post("/", async (c) => {
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
-    if (err instanceof UnauthorizedError) throw err;
+    // Auth denials are the caller's answer (401/403), not a storage failure to
+    // log and mask as 500.
+    if (err instanceof UnauthorizedError || err instanceof ForbiddenError) throw err;
     emitOperationalEvent("error", "npm_connection.upsert_failed", {
       error: describeOperationalError(err),
     });
@@ -172,7 +174,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
-    if (err instanceof UnauthorizedError) throw err;
+    // Auth denials are the caller's answer (401/403), not a storage failure to
+    // log and mask as 500.
+    if (err instanceof UnauthorizedError || err instanceof ForbiddenError) throw err;
     emitOperationalEvent("error", "npm_connection.validation_failed", {
       error: describeOperationalError(err),
     });

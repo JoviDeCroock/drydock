@@ -47,7 +47,6 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
     async fetchExtensionVersions(extensionId: string): Promise<VscodeMarketplaceVersion[] | null> {
       const [publisher, extensionName] = extensionId.split(".");
       if (!publisher || !extensionName) return null;
-      const deadlineMs = Date.now() + MARKETPLACE_QUERY_TIMEOUT_MS;
       try {
         // A query POST is idempotent but `reliableFetch` only retries GET/HEAD
         // by default; keep the single attempt and use it for the timeout.
@@ -71,6 +70,10 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
           await res.body?.cancel().catch(() => undefined);
           return null;
         }
+        // Budget the body read from when headers arrived, not from before
+        // reliableFetch started: a retried request must not inherit a deadline
+        // the first attempt already spent.
+        const deadlineMs = Date.now() + MARKETPLACE_QUERY_TIMEOUT_MS;
         const data = await readBoundedJson(res, {
           maxBytes: MAX_MARKETPLACE_RESPONSE_BYTES,
           deadlineMs,
