@@ -55,15 +55,18 @@ export async function paginate(
   firstUrl: string,
   options: PaginateOptions,
   readPage: (response: Response) => Promise<void>,
-): Promise<void> {
+): Promise<{ complete: boolean }> {
   const seen = new Set<string>();
   let url = firstUrl;
   for (let page = 0; page < options.maxPages && url; page += 1) {
-    if (seen.has(url)) return;
+    if (seen.has(url)) return { complete: false };
     seen.add(url);
     const response = await reliableFetch(url, { headers: options.headers });
     await readPage(response);
     const next = nextLink(response.headers.get("link"));
     url = next && (options.followNext?.(next) ?? true) ? next : "";
   }
+  // A remaining `next` after the cap means the listing was cut short; callers
+  // decide whether that is a log line (a picker) or a failure (a decision).
+  return { complete: url === "" };
 }

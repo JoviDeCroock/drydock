@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
@@ -175,5 +176,35 @@ describe("npm-connection routes enforce organization boundaries", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("npm-connection routes answer role denials as 403", () => {
+  // Regression: requireOrganizationRole throws inside the handlers' try blocks,
+  // and the catch used to rethrow only UnauthorizedError, so a member's denial
+  // was logged as a storage failure and answered 500.
+  test("a member cannot store or validate the shared organization's token", async () => {
+    const owner = await seedUser();
+    const member = await seedUser();
+    await addOrganizationMember(createDb(env.DB), {
+      organizationId: owner.organizationId,
+      userId: member.userId,
+      role: "member",
+    });
+    const app = buildTestApp(mountNpmConnection, member);
+
+    const upsert = await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: INTRUDER_TOKEN },
+      activeOrganizationId: owner.organizationId,
+    });
+    expect(upsert.status).toBe(403);
+    expect(await upsert.json()).toEqual({ error: "forbidden" });
+
+    const validate = await call(app, "POST", "/api/v1/npm-connection/validate", {
+      body: {},
+      activeOrganizationId: owner.organizationId,
+    });
+    expect(validate.status).toBe(403);
+    expect(await validate.json()).toEqual({ error: "forbidden" });
   });
 });

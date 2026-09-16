@@ -134,6 +134,9 @@ function isValueImport(clause) {
 function ecosystemImportViolations(ids) {
   const ecosystemsRoot = path.join(SERVER_DIR, "lib/ecosystems");
   const importStatement = /\b(import|export)\s+([^;]*?)\s+from\s*(["'])([^"']+)\3/g;
+  // Side-effect imports and literal dynamic imports carry no clause but still
+  // load the module; treat them as value imports.
+  const bareImport = /\bimport\s*(?:\(\s*)?(["'])([^"']+)\1/g;
   const keepImportSpecifiers = (value) => value.includes("ecosystems/");
 
   const violations = [];
@@ -142,8 +145,11 @@ function ecosystemImportViolations(ids) {
     const relative = path.relative(SERVER_DIR, file).replaceAll(path.sep, "/");
     const source = readFileSync(file, "utf8");
     const sanitized = sanitizeJsSource(source, keepImportSpecifiers);
-    for (const match of sanitized.matchAll(importStatement)) {
-      const [, , clause, , specifier] = match;
+    const candidates = [
+      ...[...sanitized.matchAll(importStatement)].map((m) => ({ clause: m[2], specifier: m[4] })),
+      ...[...sanitized.matchAll(bareImport)].map((m) => ({ clause: "bare", specifier: m[2] })),
+    ];
+    for (const { clause, specifier } of candidates) {
       if (!specifier.startsWith(".") || !isValueImport(clause)) continue;
       const resolved = path
         .relative(ecosystemsRoot, path.resolve(path.dirname(file), specifier))

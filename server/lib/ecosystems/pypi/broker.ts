@@ -46,7 +46,6 @@ const MAX_PYPI_METADATA_BYTES = 16 * 1024 * 1024;
 export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef): PyPiBroker {
   return {
     async fetchProjectMetadata(projectName: string): Promise<PyPiProjectMetadata | null> {
-      const deadlineMs = Date.now() + PYPI_METADATA_TIMEOUT_MS;
       try {
         const res = await reliableFetch(
           `${PYPI_METADATA_REGISTRY}/${encodeURIComponent(projectName)}/json`,
@@ -56,6 +55,10 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
           await res.body?.cancel().catch(() => undefined);
           return null;
         }
+        // Budget the body read from when headers arrived, not from before
+        // reliableFetch started: a retried request must not inherit a deadline
+        // the first attempt already spent.
+        const deadlineMs = Date.now() + PYPI_METADATA_TIMEOUT_MS;
         return await readBoundedJson<PyPiProjectMetadata>(res, {
           maxBytes: MAX_PYPI_METADATA_BYTES,
           deadlineMs,

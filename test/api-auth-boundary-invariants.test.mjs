@@ -379,7 +379,7 @@ const ORGANIZATION_RESOLVER_EXEMPT = {
 // is the report-export override, which checks membership on the requested
 // organization before using it.
 const DIRECT_ORGANIZATION_INPUT =
-  /\b(?:ACTIVE_ORG_HEADER|x-organization-id)\b|\.(?:query|param)\(\s*["']organizationId["']\s*\)|\bbody\.organizationId\b/;
+  /\b(?:ACTIVE_ORG_HEADER|x-organization-id)\b|\.(?:query|param)\(\s*["']organizationId["']\s*\)|\bbody\.organizationId\b/i;
 const DIRECT_ORGANIZATION_INPUT_ALLOWED = new Set(["server/routes/scans/sharing.ts"]);
 
 function routeSources() {
