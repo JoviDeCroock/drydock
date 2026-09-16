@@ -21,6 +21,12 @@ overrides:
   # attacker-controlled isBuffer denial of service (GHSA-x5fp-wj9c-mxmx,
   # GHSA-4mjr-xmp4-gh2g); keep the transitive parser on the patched line.
   qs: ^6.16.0
+  # Express permits proxy-addr releases that match an IPv4 peer against an
+  # IPv4-mapped IPv6 trust subnet carrying an IPv4-sized prefix, turning a
+  # misconfigured `trust proxy` into "trust every client" (CVE-2026-90711,
+  # GHSA-jqcg-44mw-7w3h). Drydock never mounts Express, but keep the transitive
+  # resolver on the patched line.
+  proxy-addr: ^2.0.8
   # AI SDK 6 permits vulnerable Undici 7 releases; keep the patched cache,
   # retry, cookie, and header handling until its dependency floor catches up.
   undici: ^7.29.0
