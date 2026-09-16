@@ -1,16 +1,11 @@
-import { enforceD1RateLimit } from "../../db/rate-limits";
 import { RateLimitError, type RateLimitFallback, type RateLimitInput } from "./rate-limit-contract";
 import { emitOperationalEvent } from "./observability";
 
-// The D1 table lives behind `db/rate-limits.ts`; this module only decides
-// native-vs-fallback. `server/index.ts` still imports the prune job from here.
-export { pruneExpiredRateLimitBuckets } from "../../db/rate-limits";
-
-export { RateLimitError, type RateLimitInput } from "./rate-limit-contract";
-
+// This module only decides native-vs-fallback and stays free of persistence:
+// `server/lib/rate-limit.ts` composes it with the D1 bucket table for the app.
 export interface RateLimitOptions {
-  /** Defaults to the D1 bucket table; tests inject a double. */
-  fallback?: RateLimitFallback;
+  /** Enforces windows no native tier can express. */
+  fallback: RateLimitFallback;
 }
 
 export const ORGANIZATION_SCAN_LIMIT = 10;
@@ -55,7 +50,7 @@ function retryAfterSecondsFor(windowMs: number, nowMs: number): number {
 export async function enforceRateLimit(
   env: Cloudflare.Env,
   input: RateLimitInput,
-  options: RateLimitOptions = {},
+  options: RateLimitOptions,
 ): Promise<void> {
   const nowMs = Date.now();
 
@@ -78,7 +73,7 @@ export async function enforceRateLimit(
     }
   }
 
-  await (options.fallback ?? enforceD1RateLimit)(env, input, nowMs);
+  await options.fallback(env, input, nowMs);
 }
 
 function warnMissingTier(input: RateLimitInput): void {

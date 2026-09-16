@@ -3,14 +3,18 @@
  */
 import { Hono } from "hono";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
-import { createDb } from "../../db/client";
-import { SCAN_DECISIONS, type ScanDecision, getScan, recordScanDecision } from "../../db/scans";
+import {
+  SCAN_DECISIONS,
+  type ScanDecision,
+  badgeLookupKey,
+  getScan,
+  recordScanDecision,
+} from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
-import { canonicalOrigin } from "../../lib/platform/http";
+import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
 import { purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
-import { badgeLookupKey } from "../../db/scan-share";
 import type { Bindings, Variables } from "../../types";
 
 export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -21,10 +25,10 @@ const DECISION_SET = new Set<ScanDecision>(SCAN_DECISIONS);
 scanDecisionRoutes.post("/:id/decision", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+  const body = await readJsonObject<{
     decision: string;
     reason: string;
-  }>;
+  }>(c);
   if (!DECISION_SET.has(body.decision as ScanDecision)) {
     return c.json({ error: "decision must be 'publish' or 'no_publish'" }, 400);
   }
@@ -33,7 +37,7 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     return c.json({ error: `reason must be <= ${DECISION_REASON_MAX} characters` }, 400);
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 

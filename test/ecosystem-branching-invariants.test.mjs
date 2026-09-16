@@ -22,11 +22,12 @@ const ALLOWED_BRANCHES = [];
 // audit item names the fix. Entries may only be removed, never added: a new
 // consumer goes through the registry or an adapter hook instead.
 const ALLOWED_ECOSYSTEM_IMPORTS = [
-  // C1: Worker entrypoint must export the npm broker class and wire the npm
-  // discovery cron; both need a registry-level "staged discovery" capability.
+  // C1: Worker entrypoint must export the npm broker class, and the cron
+  // handler wires npm discovery; both need a registry-level "staged discovery"
+  // capability.
   "index.ts: ./lib/ecosystems/npm",
-  "index.ts: ./lib/ecosystems/npm/connection",
-  "index.ts: ./lib/ecosystems/npm/staged-publishes-discovery",
+  "scheduled.ts: ./lib/ecosystems/npm/connection",
+  "scheduled.ts: ./lib/ecosystems/npm/staged-publishes-discovery",
   // C1: compare-cache downloads published npm tarballs directly instead of
   // through the published-pair adapter.
   "lib/compare-cache.ts: ./ecosystems/npm/published-tarball",

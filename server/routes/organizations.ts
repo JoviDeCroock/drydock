@@ -1,5 +1,7 @@
 import { Hono } from "hono";
-import { createDb } from "../db/client";
+import { readJsonObject } from "../lib/platform/http";
+import { guardRateLimit } from "../lib/rate-limit";
+import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { recordProductEvent } from "../lib/platform/analytics";
 import { getOrganizationRole } from "../db/invitations";
@@ -17,10 +19,8 @@ import {
   renameOrganization,
   setRequireTwoFactorForReleaseDecisions,
 } from "../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { userHasTwoFactor, verifyTotpStepUp } from "../lib/auth";
 import { sanitizeAddress } from "../lib/notify/email";
-import { rateLimitResponse } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import { personalOrganizationId } from "../lib/auth/ownership";
 import { roleCanManageIntegrations, type OrganizationRole } from "../lib/auth/roles";
@@ -34,7 +34,7 @@ const MAX_NOTIFICATION_RECIPIENTS = 5;
 export const organizationsRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 organizationsRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   if (!(await ensurePersonalOrganization(db, session))) {
     return c.json({ error: "unauthorized" }, 401);
@@ -44,22 +44,23 @@ organizationsRoutes.get("/", async (c) => {
 });
 
 organizationsRoutes.post("/", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+  const body = await readJsonObject<{ name?: unknown }>(c);
   const parsed = parseOrganizationName(body.name);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const { name } = parsed;
 
   try {
-    const db = createDb(c.env.DB);
+    const db = c.var.db;
     const session = c.get("authSession");
     if (!(await getUserContact(db, session.userId))) {
       return c.json({ error: "unauthorized" }, 401);
     }
-    await enforceRateLimit(c.env, {
-      key: `organizations:create:${session.userId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
+    const limited = await guardRateLimit(
+      c,
+      { key: `organizations:create:${session.userId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+      "organization create rate limit exceeded",
+    );
+    if (limited) return limited;
     const id = await createOrganization(db, { ownerUserId: session.userId, name });
     await recordScanEvent(db, {
       organizationId: id,
@@ -74,9 +75,6 @@ organizationsRoutes.post("/", async (c) => {
     recordProductEvent(c.env, { name: "organization.created", organizationId: id });
     return c.json({ organization: { id, name } }, 201);
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization create rate limit exceeded", err);
-    }
     emitOperationalEvent("error", "organization.create_failed", {
       error: describeOperationalError(err),
     });
@@ -85,12 +83,12 @@ organizationsRoutes.post("/", async (c) => {
 });
 
 organizationsRoutes.patch("/:id", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+  const body = await readJsonObject<{ name?: unknown }>(c);
   const parsed = parseOrganizationName(body.name);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const { name } = parsed;
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const owner = await isOrganizationOwner(db, organizationId, session.userId);
@@ -119,33 +117,31 @@ organizationsRoutes.patch("/:id", async (c) => {
 // hardens, so enrollment alone is enough there; disabling additionally needs a
 // fresh `totpCode`.
 organizationsRoutes.put("/:id/release-two-factor", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = await readJsonObject<{
     enabled?: unknown;
     totpCode?: unknown;
-  };
+  }>(c);
   if (typeof body.enabled !== "boolean") {
     return c.json({ error: "enabled must be a boolean" }, 400);
   }
   const enabled = body.enabled;
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const owner = await isOrganizationOwner(db, organizationId, session.userId);
   if (!owner) return c.json({ error: "not found" }, 404);
 
-  try {
-    await enforceRateLimit(c.env, {
+  const limited = await guardRateLimit(
+    c,
+    {
       key: `organizations:release-two-factor:${session.userId}`,
       limit: 30,
       windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "release two-factor rate limit exceeded", err);
-    }
-    throw err;
-  }
+    },
+    "release two-factor rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const ownerEnrolledInTwoFactor = await userHasTwoFactor(db, session.userId);
   if (!ownerEnrolledInTwoFactor) {
@@ -190,7 +186,7 @@ organizationsRoutes.put("/:id/release-two-factor", async (c) => {
 });
 
 organizationsRoutes.delete("/:id", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
 
@@ -200,18 +196,12 @@ organizationsRoutes.delete("/:id", async (c) => {
     return c.json({ error: "personal workspaces cannot be deleted" }, 400);
   }
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `organizations:delete:${session.userId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization delete rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `organizations:delete:${session.userId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "organization delete rate limit exceeded",
+  );
+  if (limited) return limited;
 
   // No scan_event is recorded: the org and its scan_events are removed together,
   // so the audit row would be deleted in the same breath. ARTIFACTS is passed so
@@ -221,7 +211,7 @@ organizationsRoutes.delete("/:id", async (c) => {
 });
 
 organizationsRoutes.get("/:id/notification-recipients", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const role = await requireOrganizationMember(db, organizationId, session.userId);
@@ -231,29 +221,23 @@ organizationsRoutes.get("/:id/notification-recipients", async (c) => {
 });
 
 organizationsRoutes.post("/:id/notification-recipients", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { email?: unknown };
+  const body = await readJsonObject<{ email?: unknown }>(c);
   const email = sanitizeAddress(body.email);
   if (!email) return c.json({ error: "a valid email address is required" }, 400);
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const role = await requireOrganizationMember(db, organizationId, session.userId);
   if (!role) return c.json({ error: "not found" }, 404);
   if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `organizations:recipients:add:${session.userId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "notification recipient rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `organizations:recipients:add:${session.userId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "notification recipient rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const existingRecipients = await listNotificationRecipients(db, organizationId);
   const existingRecipient = existingRecipients.find(
@@ -287,7 +271,7 @@ organizationsRoutes.post("/:id/notification-recipients", async (c) => {
 });
 
 organizationsRoutes.delete("/:id/notification-recipients/:recipientId", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = c.req.param("id");
   const recipientId = c.req.param("recipientId");
@@ -315,7 +299,7 @@ function publicRecipient(recipient: NotificationRecipient) {
 }
 
 function requireOrganizationMember(
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
   organizationId: string,
   userId: string,
 ): Promise<OrganizationRole | null> {

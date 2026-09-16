@@ -2,12 +2,9 @@ import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
-import {
-  NATIVE_TIERS,
-  RateLimitError,
-  enforceRateLimit,
-  pruneExpiredRateLimitBuckets,
-} from "../../server/lib/platform/rate-limit";
+import { pruneExpiredRateLimitBuckets } from "../../server/db/rate-limits";
+import { NATIVE_TIERS } from "../../server/lib/platform/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../../server/lib/rate-limit";
 import {
   exhaustedRateLimitBindings,
   rateLimitBindingOverrides,

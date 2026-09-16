@@ -22,6 +22,7 @@ import {
 import { computeRisk, type DiffEntry, type FileRecord } from "../review";
 import { nativeFormatLabel } from "../review/rules/binaries";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "../review/rules/patterns";
+import { parseJsonObject } from "../scan/json";
 import type { SelectiveAiReviewOptions } from "./types";
 
 interface EvidenceIndex {
@@ -868,9 +869,8 @@ function collectPackageJsonPaths(text: string, mode: "entrypoints" | "scripts"):
   const paths = new Set<string>();
   if (!text) return paths;
 
-  const parsed = safeJson(text);
-  if (!parsed || typeof parsed !== "object") return paths;
-  const pkg = parsed as Record<string, unknown>;
+  const pkg = parseJsonObject(text);
+  if (!pkg) return paths;
 
   if (mode === "entrypoints") {
     addStringPath(paths, pkg.main);
@@ -952,14 +952,6 @@ function looksLikePackageFileReference(path: string): boolean {
 
 function isNativeOrExecutablePath(path: string): boolean {
   return /\.(?:node|wasm|dll|so|dylib|exe)$/i.test(path);
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 function isString(value: unknown): value is string {

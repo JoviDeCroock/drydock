@@ -64,7 +64,7 @@ Vite ignores `.context/**` in its file watcher. The E2E runner writes registry s
 Production puts the Worker in front of every request (`run_worker_first: true`)
 and reaches static assets from inside it through the `ASSETS` binding. The
 harness routes only the Worker-owned prefixes — `test/e2e/worker-routes.mjs`,
-kept equal to `SERVER_OWNED_PATH_PREFIXES` in `server/index.ts` — so `/api/*`,
+kept equal to `SERVER_OWNED_PATH_PREFIXES` in `server/middleware/canonical-host.ts` — so `/api/*`,
 `/webhooks/*`, `/og/*`, and `/public/*` reach their real handlers while
 documents come from Vite.
 

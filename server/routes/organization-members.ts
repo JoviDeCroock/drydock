@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { readJsonObject } from "../lib/platform/http";
+import { guardRateLimit } from "../lib/rate-limit";
 import { requireVerifiedEmail } from "../lib/auth/email-verification";
-import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import {
   type InvitationRecord,
@@ -22,13 +23,11 @@ import {
   getOrganizationOwnerUserId,
   getUserContact,
 } from "../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
-  requireActiveOrganizationContext,
+  requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { sanitizeAddress } from "../lib/notify/email";
-import { rateLimitResponse } from "../lib/platform/http";
 import { generateInvitationToken, hashInvitationToken } from "../lib/auth/invitation-token";
 import { notifyOrganizationInvite } from "../lib/notify";
 import { isInvitableRole, roleCanManageMembers, type OrganizationRole } from "../lib/auth/roles";
@@ -39,17 +38,16 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const organizationMembersRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 organizationMembersRoutes.get("/members", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const members = await listOrganizationMembers(db, organizationId);
   return c.json({ members: members.map(publicMember) });
 });
 
 organizationMembersRoutes.delete("/members/:userId", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageMembers(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageMembers);
 
   const targetUserId = c.req.param("userId");
   const ownerUserId = await getOrganizationOwnerUserId(db, organizationId);
@@ -70,9 +68,8 @@ organizationMembersRoutes.delete("/members/:userId", async (c) => {
 });
 
 organizationMembersRoutes.get("/invitations", async (c) => {
-  const db = createDb(c.env.DB);
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageMembers(role)) return c.json({ error: "forbidden" }, 403);
+  const db = c.var.db;
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageMembers);
   const invitations = await listPendingInvitations(db, organizationId);
   return c.json({ invitations: invitations.map(publicInvitation) });
 });
@@ -80,29 +77,22 @@ organizationMembersRoutes.get("/invitations", async (c) => {
 organizationMembersRoutes.post("/invitations", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = (await c.req.json().catch(() => ({}))) as { email?: unknown; role?: unknown };
+  const body = await readJsonObject<{ email?: unknown; role?: unknown }>(c);
   const email = sanitizeAddress(body.email);
   if (!email) return c.json({ error: "a valid email is required" }, 400);
   const normalizedEmail = normalizeEmail(email);
   const role: OrganizationRole = isInvitableRole(body.role) ? body.role : "member";
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role: actorRole } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageMembers(actorRole)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageMembers);
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `organizations:invite:${organizationId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "organization invite rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `organizations:invite:${organizationId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "organization invite rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const existingUser = await findUserByEmail(db, normalizedEmail);
   if (existingUser) {
@@ -142,10 +132,9 @@ organizationMembersRoutes.post("/invitations", async (c) => {
 });
 
 organizationMembersRoutes.delete("/invitations/:invitationId", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageMembers(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageMembers);
 
   const invitationId = c.req.param("invitationId");
   const revoked = await revokeInvitation(db, organizationId, invitationId);
@@ -166,11 +155,11 @@ organizationMembersRoutes.delete("/invitations/:invitationId", async (c) => {
 // ownership of the invited email address, so a leaked link cannot enroll a third
 // party.
 organizationMembersRoutes.post("/invitations/accept", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { token?: unknown };
+  const body = await readJsonObject<{ token?: unknown }>(c);
   const token = typeof body.token === "string" ? body.token.trim() : "";
   if (!token) return c.json({ error: "token is required" }, 400);
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
 
   const invitation = await getInvitationByTokenHash(db, await hashInvitationToken(token));

@@ -41,3 +41,18 @@ export { listPackageReleases } from "./scan-package-releases";
 export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
 export { recordGatePackageDecision, recordScanDecision } from "./scan-decisions";
+
+export {
+  badgeLookupKey,
+  enablePublicShare,
+  encodeThreatFeedCursor,
+  listBadgeCandidateScans,
+  listThreatFeedScans,
+  parseThreatFeedCursor,
+  readPublicShare,
+  resolvePublicShareToken,
+  revokePublicShare,
+  setThreatFeedListing,
+  threatFeedNextCursor,
+  THREAT_FEED_MAX_ENTRIES,
+} from "./scan-share";

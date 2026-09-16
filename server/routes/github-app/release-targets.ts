@@ -2,12 +2,12 @@
  * Release targets: the repo/environment pairs Drydock gates.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
+import { readJsonObject } from "../../lib/platform/http";
+import { guardRateLimit } from "../../lib/rate-limit";
 import { recordScanEvent } from "../../db/events";
-import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
-  requireActiveOrganizationContext,
+  requireOrganizationRole,
 } from "../../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { fetchRepository } from "../../lib/github-app/api";
@@ -29,7 +29,7 @@ import { ensureInstallationOwnedBy, configErrorResponse, validationErrorResponse
 export const releaseTargetRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 releaseTargetRoutes.get("/release-targets", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const targets = await listReleaseTargetsForOrganization(db, organizationId);
   return c.json({ releaseTargets: targets.map(publicReleaseTarget) });
@@ -43,13 +43,13 @@ releaseTargetRoutes.post("/release-targets", async (c) => {
     return configErrorResponse(c, err);
   }
 
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = await readJsonObject<{
     installationRowId?: unknown;
     ecosystem?: unknown;
     artifactName?: unknown;
     repositoryFullName?: unknown;
     environment?: unknown;
-  };
+  }>(c);
 
   const installationRowId =
     typeof body.installationRowId === "string" ? body.installationRowId.trim() : "";
@@ -74,29 +74,15 @@ releaseTargetRoutes.post("/release-targets", async (c) => {
     return c.json({ error: `unsupported ecosystem: ${ecosystem}` }, 400);
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-  try {
-    await enforceRateLimit(c.env, {
-      key: `github-app:release-target:${organizationId}`,
-      limit: 30,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return c.json(
-        {
-          error: "release target rate limit exceeded",
-          retryAfterSeconds: err.retryAfterSeconds,
-        },
-        429,
-        { "retry-after": String(err.retryAfterSeconds) },
-      );
-    }
-    throw err;
-  }
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+  const limited = await guardRateLimit(
+    c,
+    { key: `github-app:release-target:${organizationId}`, limit: 30, windowMs: 60 * 60 * 1000 },
+    "release target rate limit exceeded",
+  );
+  if (limited) return limited;
 
   try {
     const installation = await ensureInstallationOwnedBy(db, organizationId, installationRowId);
@@ -130,10 +116,9 @@ releaseTargetRoutes.post("/release-targets", async (c) => {
 });
 
 releaseTargetRoutes.delete("/release-targets/:id", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
   const id = c.req.param("id");
   const removed = await deleteReleaseTarget(db, organizationId, id);
   if (!removed) return c.json({ error: "not found" }, 404);

@@ -1,9 +1,9 @@
 import { Hono, type Context } from "hono";
+import { guardRateLimit } from "../lib/rate-limit";
 import { escapeHtmlText } from "../lib/platform/html-escape";
-import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
-import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
 import { recordProductEvent } from "../lib/platform/analytics";
@@ -73,19 +73,11 @@ async function enforcePublicRateLimit(
   bucket: string,
   limit: number,
 ): Promise<Response | null> {
-  try {
-    await enforceRateLimit(c.env, {
-      key: `public-diff:${bucket}:${clientIp(c)}`,
-      limit,
-      windowMs: 60 * 1000,
-    });
-    return null;
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "rate limit exceeded", err);
-    }
-    throw err;
-  }
+  return guardRateLimit(
+    c,
+    { key: `public-diff:${bucket}:${clientIp(c)}`, limit, windowMs: 60 * 1000 },
+    "rate limit exceeded",
+  );
 }
 
 // The ecosystem registry is the authority on which ecosystems /diff serves: an

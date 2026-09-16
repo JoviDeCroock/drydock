@@ -7,16 +7,15 @@
  * group that can require a TOTP step-up before it will act.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
+import { guardRateLimit } from "../../lib/rate-limit";
+import type { AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { organizationRequiresTwoFactorForReleaseDecisions } from "../../db/organizations";
-import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
-import { getScan, recordGatePackageDecision } from "../../db/scans";
-import { badgeLookupKey } from "../../db/scan-share";
+import { badgeLookupKey, getScan, recordGatePackageDecision } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../../lib/auth";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
-import { canonicalOrigin, rateLimitResponse } from "../../lib/platform/http";
+import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import {
   optionalWorkerExecutionContext,
   workerExecutionContext,
@@ -30,6 +29,8 @@ import {
   buildReportUrl,
   executeWorkflowGateJob,
 } from "../../lib/workflow-gate-job";
+import { redeliverGateDecision } from "../../lib/workflow-gates/decision-delivery";
+import { type GithubAppConfig, readGithubAppConfig } from "../../lib/github-app/config";
 import {
   type GatePackageScan,
   type WorkflowGateRecord,
@@ -50,7 +51,7 @@ const GATE_DECISION_SET = new Set<GateDecision>(GATE_DECISIONS);
 const GATE_DECISION_COMMENT_MAX = 500;
 
 workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const scanId = c.req.param("scanId");
   const gate = await getGateByScanId(db, organizationId, scanId);
@@ -80,12 +81,12 @@ workflowGateRoutes.get("/workflow-gates/by-scan/:scanId", async (c) => {
 workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = (await c.req.json().catch(() => ({}))) as Partial<{
+  const body = await readJsonObject<{
     decision: string;
     comment: string;
     totpCode: string;
     scanId: string;
-  }>;
+  }>(c);
   if (!GATE_DECISION_SET.has(body.decision as GateDecision)) {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
   }
@@ -99,21 +100,15 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     return c.json({ error: `comment must be <= ${GATE_DECISION_COMMENT_MAX} characters` }, 400);
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  try {
-    await enforceRateLimit(c.env, {
-      key: `github-app:gate-decision:${organizationId}`,
-      limit: 60,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "gate decision rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `github-app:gate-decision:${organizationId}`, limit: 60, windowMs: 60 * 1000 },
+    "gate decision rate limit exceeded",
+  );
+  if (limited) return limited;
 
   // Org-wide policy: when on, the step-up below is mandatory for every member
   // and an unenrolled member cannot decide at all. Looked up once so every gate
@@ -184,18 +179,16 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     );
   }
   if (orgRequiresTwoFactor || userEnrolledInTwoFactor) {
-    try {
-      await enforceRateLimit(c.env, {
+    const limited = await guardRateLimit(
+      c,
+      {
         key: `github-app:gate-decision-2fa:${session.userId}`,
         limit: 10,
         windowMs: 15 * 60 * 1000,
-      });
-    } catch (err) {
-      if (err instanceof RateLimitError) {
-        return rateLimitResponse(c, "too many two-factor attempts", err);
-      }
-      throw err;
-    }
+      },
+      "too many two-factor attempts",
+    );
+    if (limited) return limited;
     const totpCode = typeof body.totpCode === "string" ? body.totpCode.trim() : "";
     if (!totpCode) {
       return c.json(
@@ -303,8 +296,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
   // Schedule delivery immediately after the CAS. Everything below is
   // bookkeeping; if it throws, the durable gate decision still has a path to
   // GitHub instead of getting stuck behind a future 409.
-  const message = { kind: "workflow_gate" as const, organizationId, gateId };
-  c.executionCtx.waitUntil(deliverGateDecisionJob(c, db, message));
+  c.executionCtx.waitUntil(deliverDecidedGate(c, db, decided));
 
   // Counted separately from the automatic block below, so approval rate stays
   // measurable against reviews instead of being diluted by auto-rejections.
@@ -351,21 +343,15 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
 // to pending gates whose package scans have no recorded decisions: once a human
 // has accepted or rejected a package, retrying must not replace that decision.
 workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
-  try {
-    await enforceRateLimit(c.env, {
-      key: `github-app:gate-retry:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "gate retry rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `github-app:gate-retry:${organizationId}`, limit: 20, windowMs: 60 * 1000 },
+    "gate retry rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const gateId = c.req.param("gateId");
   const existing = await getGateForOrganization(db, organizationId, gateId);
@@ -411,17 +397,45 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   );
 });
 
-async function deliverGateDecisionJob(
-  c: RouteContext,
-  db: ReturnType<typeof createDb>,
-  message: { kind: "workflow_gate"; organizationId: string; gateId: string },
-) {
-  await runWorkflowGateJob(c, db, message);
+// The decision is already durable on the gate row; post it to GitHub now and
+// only fall back to the queue (which re-runs the job's redelivery branch with
+// retries) when the callback fails. The old path enqueued the whole job for
+// every decision, so a healthy callback still waited on a queue hop.
+async function deliverDecidedGate(c: RouteContext, db: AppDb, gate: WorkflowGateRecord) {
+  let config: GithubAppConfig;
+  try {
+    config = readGithubAppConfig(c.env);
+  } catch (err) {
+    emitOperationalEvent("error", "github_workflow_gate.config_error", {
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+      error: describeOperationalError(err),
+    });
+    return;
+  }
+  try {
+    await redeliverGateDecision(config, db, gate);
+  } catch {
+    // Already logged by redeliverGateDecision. Without a queue there is no
+    // retry path beyond the next human or cron touch of this gate.
+    if (!c.env.SCAN_QUEUE) return;
+    await c.env.SCAN_QUEUE.send({
+      kind: "workflow_gate" as const,
+      organizationId: gate.organizationId,
+      gateId: gate.id,
+    }).catch((err: unknown) => {
+      emitOperationalEvent("error", "github_workflow_gate.redelivery_enqueue_failed", {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+        error: describeOperationalError(err),
+      });
+    });
+  }
 }
 
 async function runWorkflowGateJob(
   c: RouteContext,
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
   message: { kind: "workflow_gate"; organizationId: string; gateId: string },
 ) {
   if (c.env.SCAN_QUEUE) {
