@@ -55,8 +55,8 @@ move it into `src/features/` instead.
 
 Both review pages lead with the diff:
 
-- **Scan detail** — a one-row verdict strip (recommendation, qualifying risk
-  badges, the version picker, and the decision button), then the workbench,
+- **Scan detail** — a one-row verdict strip (recommendation, only action-relevant
+  qualifiers, the version picker, and the decision button), then the workbench,
   then a `CollapsibleCard` of review notes (why the verdict reads that way, the
   AI reviewer's summary, release memory, source binding), then the risk index
   and the manifest sections. The notes open themselves when any of those has

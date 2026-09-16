@@ -118,17 +118,20 @@ export function ReleaseVerdictStrip({
         {artifactRisk !== releaseRisk ? (
           <Badge tone="neutral">artifact {artifactRisk}</Badge>
         ) : null}
+        {ai?.model != null && ai.kind === "complete" && ai.requiresManualReview ? (
+          <Badge tone="medium">manual review</Badge>
+        ) : null}
+        {/* The model reports the assessment and the manual-review flag
+            independently, so a suspicious assessment without the flag must
+            still surface here; only the clean reading stays quiet. */}
         {ai?.model != null &&
-          (ai.kind === "complete" ? (
-            <>
-              <Badge tone={ai.requiresManualReview ? "medium" : "ok"}>
-                {ai.requiresManualReview ? "manual review" : "no extra review"}
-              </Badge>
-              <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-            </>
-          ) : (
-            <Badge tone="neutral">assistant unavailable</Badge>
-          ))}
+        ai.kind === "complete" &&
+        ai.releaseAssessment !== "nothing_unusual" ? (
+          <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
+        ) : null}
+        {ai?.model != null && ai.kind === "unavailable" ? (
+          <Badge tone="neutral">assistant unavailable</Badge>
+        ) : null}
       </div>
       {actions ? <div class="flex flex-wrap items-center gap-3">{actions}</div> : null}
     </section>
