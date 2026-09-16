@@ -1,8 +1,5 @@
+import { type SeverityCounts, type SeverityKey } from "../lib/findings";
 import { cn } from "./cn";
-
-export type SeverityKey = "critical" | "high" | "medium" | "low" | "info" | "ok";
-
-export type SeverityCounts = Partial<Record<SeverityKey, number>>;
 
 interface Segment {
   key: SeverityKey;

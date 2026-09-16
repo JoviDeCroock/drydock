@@ -11,6 +11,7 @@ import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { Dialog } from "../../../components/Dialog";
+import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { LoadingLine, MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
@@ -222,20 +223,23 @@ export function GateDecisionDialog({
   status,
   error,
   canApprove,
-  requireTwoFactor,
+  requireTwoFactor: requireTwoFactorProp,
   reviewFailed,
   onSubmit,
 }: {
-  open: boolean;
+  // Signals are read inside the dialog so the decision round-trip re-renders
+  // it alone, not the review page with its per-finding risk index.
+  open: SignalOrValue<boolean>;
   onClose: () => void;
   gate: PublicWorkflowGate;
   packageName: string | null;
   /** This package's recorded decision, if it has already been decided. */
   packageDecision: GatePackageDecision | null;
-  status: DecisionStatus;
-  error: string | null;
+  status: SignalOrValue<DecisionStatus>;
+  error: SignalOrValue<string | null>;
   canApprove: boolean;
-  requireTwoFactor: boolean;
+  /** Whether this member enrolled in 2FA, which decides if a step-up code is asked for. */
+  requireTwoFactor: SignalOrValue<boolean>;
   reviewFailed?: boolean;
   onSubmit: (
     decision: WorkflowGateDecision,
@@ -245,7 +249,10 @@ export function GateDecisionDialog({
 }) {
   const commentDraft = useSignal("");
   const codeDraft = useSignal("");
-  const saving = status === "saving";
+  const isOpen = readSignalProp(open);
+  const saving = readSignalProp(status) === "saving";
+  const message = readSignalProp(error);
+  const requireTwoFactor = readSignalProp(requireTwoFactorProp);
   const gateDecided = gate.status === "approved" || gate.status === "rejected";
   const packageAlreadyDecided = packageDecision !== null;
   const packages = gate.packages;
@@ -266,11 +273,11 @@ export function GateDecisionDialog({
     !packageAlreadyDecided;
 
   useEffect(() => {
-    if (open) {
+    if (isOpen) {
       commentDraft.value = "";
       codeDraft.value = "";
     }
-  }, [open]);
+  }, [isOpen]);
 
   const submit = (next: WorkflowGateDecision) => {
     if (saving || gateDecided || packageAlreadyDecided || blockedOnCode || mustEnroll) return;
@@ -413,7 +420,7 @@ export function GateDecisionDialog({
           GitHub job.
         </Muted>
       ) : null}
-      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {message ? <Alert tone="critical">{message}</Alert> : null}
     </Dialog>
   );
 }

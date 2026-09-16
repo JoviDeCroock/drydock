@@ -5,7 +5,8 @@ import { useLocation } from "preact-iso";
 import type { DiffEntry } from "../../../server/lib/review";
 import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
-import { compareSeverity, countSeverities } from "../../lib/findings";
+import { countSeverities } from "../../lib/findings";
+import { useQuerySignal } from "../../lib/query-state";
 import { packageDiffIndexSeo, packageDiffSeo, PageSeo } from "../../lib/seo";
 import {
   getPublicDiffVersions,
@@ -18,15 +19,14 @@ import { AikidoPartnerStrip } from "../../components/AikidoPartner";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { Button, LinkButton } from "../../components/Button";
-import { Card } from "../../components/Card";
 import { type DiffFinding, DiffView } from "../../components/DiffView";
-import { FileTree } from "../../components/FileTree";
 import { Input } from "../../components/Input";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { hasManifestChanges, PackageJsonDiffView } from "../../components/PackageJsonDiffView";
 import { Select } from "../../components/Select";
 import { SeverityBar } from "../../components/SeverityBar";
+import { VersionPairPicker } from "../../components/VersionPicker";
 import {
   EmptyLine,
   LoadingLine,
@@ -47,9 +47,11 @@ import { isAtpmStagedVersion } from "../../../server/lib/ecosystems/atpm/stage-r
 import { ecosystemLabel } from "../../../server/lib/ecosystems/labels";
 import { IncidentDiffCards } from "../../features/incident-diffs/IncidentDiffCards";
 import { DependencyPrIntegrations } from "../../features/dependency-pr-integrations/DependencyPrIntegrations";
-import { filterDiffEntries, findingCountsByPath } from "../../features/review/diff-entries";
+import { findingCountsByPath } from "../../features/review/diff-entries";
+import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import type { FindingWithDiffStatus } from "../../features/review/types";
+import { useSelectedDiffFile } from "../../features/review/useSelectedDiffFile";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
@@ -368,35 +370,24 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
     void model.load();
   }, []);
 
+  // Deep-linkable tree state, as the scan detail and public report bind it.
+  useQuerySignal(fileFilter, {
+    name: "file",
+    parse: (raw) => raw ?? "",
+    serialize: (value) => value || null,
+    debounceMs: 250,
+  });
+  useQuerySignal(changedFilesOnly, {
+    name: "changedOnly",
+    parse: (raw) => raw !== "0",
+    serialize: (value) => (value ? null : "0"),
+  });
+
+  const diffEntries = useComputed<DiffEntry[]>(() => model.diff.value?.diff ?? []);
   const findingItems = useComputed<FindingWithDiffStatus[]>(() => adaptFindings(model.diff.value));
   const findingCounts = useComputed(() => findingCountsByPath(findingItems.value));
   const severityCounts = useComputed(() => countSeverities(model.diff.value?.findings ?? []));
-  const visibleEntries = useComputed(() =>
-    filterDiffEntries(model.diff.value?.diff ?? [], fileFilter.value, changedFilesOnly.value),
-  );
-  const selectedEntry = useComputed<DiffEntry | null>(() => {
-    const path = model.selectedPath.value;
-    const entries = model.diff.value?.diff ?? [];
-    if (!path) return null;
-    return entries.find((entry) => entry.path === path) ?? null;
-  });
-  const selectedFindings = useComputed<DiffFinding[]>(() => {
-    const path = model.selectedPath.value;
-    const items = findingItems.value;
-    if (!path) return [];
-    return items
-      .filter((item) => item.finding.file === path)
-      .slice()
-      .sort((a, b) => compareSeverity(a.finding.severity, b.finding.severity))
-      .map((item) => ({
-        id: item.finding.id,
-        severity: item.finding.severity,
-        line: item.finding.line,
-        ruleId: item.finding.ruleId,
-        reason: item.finding.reason,
-        evidence: item.finding.evidence,
-      }));
-  });
+  const selected = useSelectedDiffFile(diffEntries, model.selectedPath, findingItems);
 
   const diff = model.diff.value;
   const loading = model.loading.value;
@@ -516,57 +507,22 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           {diff.provenance?.length || diff.attestation ? (
             <TrustEvidence provenance={diff.provenance ?? []} attestation={diff.attestation} />
           ) : null}
-          <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
-            <Card
-              as="aside"
-              padding="compact"
-              class="flex flex-col gap-3 lg:max-h-[720px] overflow-hidden"
-            >
-              <SectionLabel as="h2">Release tree</SectionLabel>
-              <Input
-                type="search"
-                value={fileFilter}
-                placeholder="Filter files"
-                onInput={(e) => (fileFilter.value = (e.target as HTMLInputElement).value)}
-                autoComplete="off"
-                spellcheck={false}
-              />
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <label class="flex items-center gap-2 text-[13px] text-ink-muted">
-                  <input
-                    type="checkbox"
-                    checked={changedFilesOnly.value}
-                    onChange={(e) =>
-                      (changedFilesOnly.value = (e.target as HTMLInputElement).checked)
-                    }
-                  />
-                  Changed files only
-                </label>
-                <span class="font-mono text-[11px] text-ink-subtle">
-                  {visibleEntries.value.length} / {diff.diff.length}
-                </span>
-              </div>
-              <div class="flex flex-col overflow-y-auto flex-1 min-h-0 border-t border-border pt-2">
-                <FileTree
-                  entries={visibleEntries.value}
-                  selectedPath={model.selectedPath.value}
-                  onSelect={(path) => void model.selectPath(path)}
-                  findingCounts={findingCounts.value}
-                />
-              </div>
-            </Card>
-
-            <Card padding="compact" class="flex flex-col gap-3">
-              <SectionLabel as="h2">File diff</SectionLabel>
-              <PublicDiffWorkbench
-                entry={selectedEntry.value}
-                model={model}
-                fromVersion={fromLabel}
-                toVersion={toLabel}
-                findings={selectedFindings.value}
-              />
-            </Card>
-          </section>
+          <ReviewWorkbench
+            entries={diffEntries}
+            fileFilter={fileFilter}
+            changedFilesOnly={changedFilesOnly}
+            selectedPath={model.selectedPath}
+            findingCounts={findingCounts}
+            onSelect={(path) => void model.selectPath(path)}
+          >
+            <PublicDiffWorkbench
+              entry={selected.entry.value}
+              model={model}
+              fromVersion={fromLabel}
+              toVersion={toLabel}
+              findings={selected.findings.value}
+            />
+          </ReviewWorkbench>
 
           {hasManifestChanges(diff.packageJsonDiff) ? (
             <section class="flex flex-col gap-3">
@@ -670,87 +626,6 @@ function PublicDiffWorkbench({
       afterLabel={toVersion}
       findings={findings}
     />
-  );
-}
-
-interface VersionOption {
-  version: string;
-  distTags: string[];
-  /** Display override for preview entries whose value is a pkg.pr.new URL. */
-  label?: string;
-}
-
-function VersionPairPicker({
-  versions,
-  fromVersion,
-  toVersion,
-  onChange,
-}: {
-  versions: VersionOption[];
-  fromVersion: string;
-  toVersion: string;
-  onChange: (fromVersion: string, toVersion: string) => void;
-}) {
-  return (
-    <div class="flex flex-wrap items-center gap-3">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">Compare</span>
-      <VersionSelect
-        label="From version"
-        versions={versions}
-        selected={fromVersion}
-        disabledVersion={toVersion}
-        onChange={(version) => onChange(version, toVersion)}
-      />
-      <span class="font-mono text-[11px] text-ink-muted" aria-hidden>
-        →
-      </span>
-      <VersionSelect
-        label="To version"
-        versions={versions}
-        selected={toVersion}
-        disabledVersion={fromVersion}
-        onChange={(version) => onChange(fromVersion, version)}
-      />
-    </div>
-  );
-}
-
-function VersionSelect({
-  label,
-  versions,
-  selected,
-  disabledVersion,
-  onChange,
-}: {
-  label: string;
-  versions: VersionOption[];
-  selected: string;
-  disabledVersion: string;
-  onChange: (version: string) => void;
-}) {
-  return (
-    <div class="inline-block w-auto min-w-[160px]">
-      <Select
-        value={selected}
-        size="sm"
-        mono
-        aria-label={label}
-        onChange={(value) => {
-          if (value && value !== selected) onChange(value);
-        }}
-      >
-        {versions.map((option) => (
-          <option
-            key={option.version}
-            value={option.version}
-            disabled={option.version === disabledVersion}
-          >
-            {option.label ?? option.version}
-            {option.distTags.length ? ` [${option.distTags.join(", ")}]` : ""}
-          </option>
-        ))}
-      </Select>
-    </div>
   );
 }
 

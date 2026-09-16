@@ -18,10 +18,6 @@ export type DiffWorkbenchState =
   | { kind: "processing"; title: string; detail: string }
   | { kind: "diff" };
 
-export function hasNoLoadableBodyFlags(flags: readonly unknown[]): boolean {
-  return flags.includes("binary") || flags.includes("content-skipped");
-}
-
 // Decides what the diff panel should show for the selected file. Extracted so
 // the loading/empty/diff guards are testable: the previous version is fetched
 // through the sandbox after the file tree already renders, and during that

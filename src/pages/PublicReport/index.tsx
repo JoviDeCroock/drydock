@@ -5,11 +5,7 @@ import { useRoute } from "preact-iso";
 import { formatDateTime } from "../../lib/format";
 import { sortFindingsBySeverity } from "../../lib/findings";
 import { useQuerySignal } from "../../lib/query-state";
-import {
-  hasNoLoadableBody,
-  PublicReportModel,
-  type PublicReport,
-} from "../../models/public-report";
+import { PublicReportModel, type PublicReport } from "../../models/public-report";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone, statusTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
@@ -18,6 +14,7 @@ import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { hasNoLoadableBody } from "../../features/review/diff-entries";
 import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import { verdictTextClass } from "../../features/review/verdict";
@@ -105,14 +102,12 @@ export default function PublicReportPage() {
     void model.loadFile(entry.path);
   });
 
-  useEffect(() => {
+  useSignalEffect(() => {
     const data = model.report.value;
     if (data?.package.name) {
       document.title = `${data.package.name} ${data.package.stagedVersion ?? ""} · Drydock review`;
     }
-    // report is a signal; this effect re-runs via the render below, which is
-    // enough for a one-shot title update after load.
-  }, [model.report.value]);
+  });
 
   if (!tokenPresent) {
     if (!mounted.value) {

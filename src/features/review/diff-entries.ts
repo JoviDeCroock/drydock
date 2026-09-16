@@ -1,6 +1,7 @@
 import type { DiffEntry } from "../../../server/lib/review";
 import { maxSeverity } from "../../components/diff-annotations";
-import type { FindingWithDiffStatus } from "./types";
+import { sortFindingsBySeverity } from "../../lib/findings";
+import type { FindingWithDiffStatus, ReviewFinding } from "./types";
 
 export interface FindingCount {
   count: number;
@@ -52,4 +53,33 @@ export function filterDiffEntries(
       const status = DIFF_STATUS_RANK[a.status] - DIFF_STATUS_RANK[b.status];
       return status || a.path.localeCompare(b.path);
     });
+}
+
+/**
+ * A file whose body the scanner never captured as text: binary payloads and
+ * content-skipped (oversized) entries are metadata only. Neither can be lazily
+ * fetched, so the panel shows the metadata placeholder instead of spinning on
+ * a load that would never resolve.
+ */
+// Takes `unknown` because persisted rows carry the flags as untyped JSON.
+export function hasNoLoadableBody(flags: unknown): boolean {
+  return Array.isArray(flags) && (flags.includes("binary") || flags.includes("content-skipped"));
+}
+
+export function findDiffEntry(entries: DiffEntry[], path: string | null): DiffEntry | null {
+  if (!path) return null;
+  return entries.find((entry) => entry.path === path) ?? null;
+}
+
+// Deterministic findings for the file open in the workbench, pinned to their
+// staged line inside DiffView. The diff is the headline; findings ride the
+// hunk that triggered them rather than a separate list (diff-first direction).
+export function findingsForPath(
+  items: FindingWithDiffStatus[],
+  path: string | null,
+): ReviewFinding[] {
+  if (!path) return [];
+  return sortFindingsBySeverity(
+    items.filter((item) => item.finding.file === path).map((item) => item.finding),
+  );
 }

@@ -1,7 +1,9 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useRef } from "preact/hooks";
+import { Button } from "./Button";
 import { CloseButton } from "./CloseButton";
 import { cn } from "./cn";
+import { readSignalProp, type SignalOrValue } from "./signal-props";
 
 /**
  * `sm` fits the prose-and-buttons default. `md` is for dialogs whose body
@@ -16,7 +18,9 @@ const SIZE_CLASS: Record<DialogSize, string> = {
 };
 
 interface DialogProps {
-  open: boolean;
+  // A signal here makes the dialog its own subscriber, so opening it does not
+  // re-render the page that mounts it.
+  open: SignalOrValue<boolean>;
   onClose: () => void;
   title: string;
   description?: string;
@@ -27,7 +31,7 @@ interface DialogProps {
 }
 
 export function Dialog({
-  open,
+  open: openProp,
   onClose,
   title,
   description,
@@ -39,6 +43,7 @@ export function Dialog({
   const ref = useRef<HTMLDialogElement | null>(null);
   const titleId = useId();
   const descriptionId = useId();
+  const open = readSignalProp(openProp);
 
   useEffect(() => {
     const node = ref.current;
@@ -103,5 +108,69 @@ export function Dialog({
         <CloseButton onClick={onClose} variant="icon" class="absolute top-3 right-3 text-[14px]" />
       </div>
     </dialog>
+  );
+}
+
+/**
+ * A destructive confirmation: prose, an optional body (a typed-name field, an
+ * error line), and a Cancel / danger pair in the footer. When `form` names a
+ * form id in the body, the danger button submits it; otherwise it calls
+ * `onConfirm`. Both buttons lock while `busy`.
+ */
+export function ConfirmDialog({
+  open,
+  onClose,
+  title,
+  description,
+  busy,
+  busyLabel,
+  confirmLabel,
+  confirmDisabled = false,
+  form,
+  onConfirm,
+  children,
+}: {
+  open: SignalOrValue<boolean>;
+  onClose: () => void;
+  title: string;
+  description: string;
+  busy: SignalOrValue<boolean>;
+  busyLabel: string;
+  confirmLabel: string;
+  confirmDisabled?: SignalOrValue<boolean>;
+  form?: string;
+  onConfirm?: () => void;
+  children?: ComponentChildren;
+}) {
+  const isBusy = readSignalProp(busy);
+  const handleClose = () => {
+    if (!isBusy) onClose();
+  };
+  return (
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title={title}
+      description={description}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={handleClose} disabled={isBusy}>
+            Cancel
+          </Button>
+          <Button
+            type={form ? "submit" : "button"}
+            form={form}
+            variant="danger"
+            size="sm"
+            onClick={form ? undefined : onConfirm}
+            disabled={isBusy || readSignalProp(confirmDisabled)}
+          >
+            {isBusy ? busyLabel : confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      {children}
+    </Dialog>
   );
 }

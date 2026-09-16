@@ -1,6 +1,7 @@
 import { useComputed, useSignalEffect, type ReadonlySignal } from "@preact/signals";
 import type { FileRecord } from "../../../../../server/lib/review";
 import type { PersistedScanDetail, ScanDetailModelInstance } from "../../../../models/scan";
+import { hasNoLoadableBody } from "../../../../features/review/diff-entries";
 
 type PersistedScanFile = PersistedScanDetail["files"][number];
 
@@ -30,7 +31,7 @@ export function useScanFileContent(
     const cache = model.stagedFileContentCache.value;
     const meta = stagedFileMeta.value;
     if (!path) return null;
-    return cache[path] ?? (meta?.textSample || hasNoLoadableBody(meta) ? meta : null);
+    return cache[path] ?? (meta?.textSample || hasNoLoadableBody(meta?.flagsJson) ? meta : null);
   });
 
   const previousFileMeta = useComputed(() => {
@@ -47,7 +48,7 @@ export function useScanFileContent(
     if (!path) return;
     if (cache[path]) return;
     if (!meta) return;
-    if (meta.textSample || hasNoLoadableBody(meta)) return;
+    if (meta.textSample || hasNoLoadableBody(meta.flagsJson)) return;
     void model.loadStagedFile(path);
   });
 
@@ -72,20 +73,10 @@ export function useScanFileContent(
     if (!key) return;
     if (cache[key]) return;
     if (!meta) return;
-    if (meta.flags?.includes("binary") || meta.flags?.includes("content-skipped")) return;
+    if (hasNoLoadableBody(meta.flags)) return;
     if (!version || !path) return;
     void model.loadPreviousFile(version, path);
   });
 
   return { stagedFileMeta, stagedFile, previousFileMeta, previousFile };
-}
-
-// A file whose body the scanner never captured as text: binary payloads (bytes
-// but no text sample) and content-skipped entries (oversized bodies recorded as
-// metadata only). Neither can be lazily fetched, so the UI shows the metadata
-// placeholder instead of spinning on a load that would never resolve.
-function hasNoLoadableBody(file: PersistedScanFile | null): boolean {
-  if (!Array.isArray(file?.flagsJson)) return false;
-  const flags = file.flagsJson as unknown[];
-  return flags.includes("binary") || flags.includes("content-skipped");
 }

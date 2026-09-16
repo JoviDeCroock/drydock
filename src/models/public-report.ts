@@ -10,9 +10,11 @@
  */
 import { batch, computed, createModel, signal } from "@preact/signals";
 import { normalizeFindingDiffStatus, type DiffEntry } from "../../server/lib/review";
-import { sortFindingsBySeverity } from "../lib/findings";
-import type { DiffFinding } from "../components/diff-annotations";
-import { findingCountsByPath } from "../features/review/diff-entries";
+import {
+  findDiffEntry,
+  findingCountsByPath,
+  findingsForPath,
+} from "../features/review/diff-entries";
 import type { FindingWithDiffStatus } from "../features/review/types";
 
 // The canonical report export served at /public/reports/:token — the same
@@ -134,15 +136,6 @@ export function publicReportFindingItems(findings: PublicReportFinding[]): Findi
   }));
 }
 
-/**
- * A file whose body the scanner never captured as text. Neither can be fetched,
- * so the panel shows the metadata placeholder rather than spinning on a request
- * that would only 404.
- */
-export function hasNoLoadableBody(flags: readonly string[]): boolean {
-  return flags.includes("binary") || flags.includes("content-skipped");
-}
-
 export const PublicReportModel = createModel(() => {
   // Held as a signal rather than closed over, so routing between two report
   // links reuses the model instead of stranding it on the first token.
@@ -162,12 +155,7 @@ export const PublicReportModel = createModel(() => {
   const findingItems = computed(() => publicReportFindingItems(report.value?.findings ?? []));
   const findingCounts = computed(() => findingCountsByPath(findingItems.value));
 
-  const selectedEntry = computed(() => {
-    const path = selectedPath.value;
-    const entries = diffEntries.value;
-    if (!path) return null;
-    return entries.find((entry) => entry.path === path) ?? null;
-  });
+  const selectedEntry = computed(() => findDiffEntry(diffEntries.value, selectedPath.value));
 
   const selectedFile = computed(() => {
     const path = selectedPath.value;
@@ -175,16 +163,7 @@ export const PublicReportModel = createModel(() => {
     return path ? (cache[path] ?? null) : null;
   });
 
-  // Deterministic findings for the open file, pinned to their staged line
-  // inside DiffView rather than listed separately (diff-first direction).
-  const selectedFindings = computed<DiffFinding[]>(() => {
-    const path = selectedPath.value;
-    const items = findingItems.value;
-    if (!path) return [];
-    return sortFindingsBySeverity(
-      items.filter((item) => item.finding.file === path).map((item) => item.finding),
-    );
-  });
+  const selectedFindings = computed(() => findingsForPath(findingItems.value, selectedPath.value));
 
   async function load(nextToken: string) {
     batch(() => {
