@@ -1,49 +1,21 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { stagedPublishesRoutes } from "../../server/routes/staged-publishes";
-import type { Bindings, Variables } from "../../server/types";
+import type { Bindings } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
+const mountStagedPublishes = (app: TestApp) =>
   app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
-  return app;
-}
 
 describe("staged publishes route", () => {
   afterEach(() => {
@@ -99,7 +71,7 @@ describe("staged publishes route", () => {
       }),
     );
     const queue = { send: vi.fn(async () => undefined) };
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountStagedPublishes, owner);
     const ctx = createExecutionContext();
     const res = await app.fetch(
       new Request("http://test.local/api/v1/staged-publishes/scan", { method: "POST" }),

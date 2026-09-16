@@ -9,7 +9,7 @@ import {
   readZipStream,
   sha256Hex,
 } from "../server/lib/tar-parser.js";
-import { buildZip, encoder } from "./helpers/archive-fixtures.mjs";
+import { buildZip, encoder } from "./helpers/archive-fixtures";
 
 const LIMITS = {
   maxFiles: 2_500,

@@ -1,9 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { GithubAppValidationError } from "../../server/lib/github-app/config";
@@ -20,8 +18,12 @@ import {
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
-import type { Bindings, Variables } from "../../server/types";
+import type { Bindings } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+
+const mountGithubApp = (app: TestApp) => app.route("/api/v1/github-app", githubAppRoutes);
 
 const originalFetch = globalThis.fetch;
 
@@ -47,22 +49,6 @@ async function getTestPrivateKeyPem(): Promise<string> {
   return testPrivateKeyPem;
 }
 
-async function seedUser(): Promise<{ userId: string; organizationId: string }> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
 async function seedInstallation(
   organizationId: string,
   overrides: { installationId?: string; status?: "active" | "suspended" | "uninstalled" } = {},
@@ -79,18 +65,8 @@ async function seedInstallation(
   });
 }
 
-function buildTestApp(userId: string) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId });
-    await next();
-  });
-  app.route("/api/v1/github-app", githubAppRoutes);
-  return app;
-}
-
 async function callGithubAppRoute(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  app: TestApp,
   method: string,
   path: string,
   body?: unknown,
@@ -265,7 +241,7 @@ describe("github-app routes", () => {
   test("POST /release-targets requires a repository full name", async () => {
     const { userId } = await seedUser();
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       "/api/v1/github-app/release-targets",
       {
@@ -284,14 +260,14 @@ describe("github-app routes", () => {
   test("POST /install/callback requires the GitHub user OAuth code", async () => {
     const { userId } = await seedUser();
     const installRes = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       "/api/v1/github-app/install",
     );
     const { state } = (await installRes.json()) as { state: string };
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       "/api/v1/github-app/install/callback",
       {
@@ -321,7 +297,7 @@ describe("github-app routes", () => {
       );
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories`,
     );
@@ -360,7 +336,7 @@ describe("github-app routes", () => {
       );
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories`,
     );
@@ -387,7 +363,7 @@ describe("github-app routes", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories`,
     );
@@ -407,7 +383,7 @@ describe("github-app routes", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories`,
       undefined,
@@ -435,7 +411,7 @@ describe("github-app routes", () => {
       );
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
     );
@@ -461,7 +437,7 @@ describe("github-app routes", () => {
       .mockResolvedValueOnce(new Response("not found", { status: 404 }));
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories/octo/gone/environments`,
     );
@@ -477,7 +453,7 @@ describe("github-app routes", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/installations/${installation.id}/repositories/octo/alpha/environments`,
       undefined,
@@ -498,7 +474,7 @@ describe("github-app routes", () => {
   test("POST /install/callback refuses installation ids the GitHub user cannot access", async () => {
     const { userId, organizationId } = await seedUser();
     const installRes = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       "/api/v1/github-app/install",
     );
@@ -513,7 +489,7 @@ describe("github-app routes", () => {
       );
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       "/api/v1/github-app/install/callback",
       {
@@ -827,7 +803,7 @@ describe("github-app workflow-gate decision route", () => {
     const { gateId } = await seedGate(organizationId);
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "maybe" },
@@ -844,7 +820,7 @@ describe("github-app workflow-gate decision route", () => {
     const { gateId } = await seedGate(organizationId);
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: "scan_x", comment: "x".repeat(501) },
@@ -861,7 +837,7 @@ describe("github-app workflow-gate decision route", () => {
     const { gateId } = await seedGate(organizationId);
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved" },
@@ -880,7 +856,7 @@ describe("github-app workflow-gate decision route", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(caller.userId),
+      buildTestApp(mountGithubApp, { userId: caller.userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: "scan_x" },
@@ -897,7 +873,7 @@ describe("github-app workflow-gate decision route", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: `scan_${crypto.randomUUID()}` },
@@ -933,7 +909,7 @@ describe("github-app workflow-gate decision route", () => {
     });
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: scanId! },
@@ -961,7 +937,7 @@ describe("github-app workflow-gate decision route", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: scanId! },
@@ -1000,7 +976,7 @@ describe("github-app workflow-gate decision route", () => {
     globalThis.fetch = vi.fn();
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: completeScanId },
@@ -1048,7 +1024,7 @@ describe("github-app workflow-gate decision route", () => {
     });
 
     const first = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: scanId!, comment: "ship it" },
@@ -1064,7 +1040,7 @@ describe("github-app workflow-gate decision route", () => {
     expect(decisionCalls[0].state).toBe("approved");
 
     const second = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "rejected", scanId: scanId! },
@@ -1109,7 +1085,7 @@ describe("github-app workflow-gate decision route", () => {
 
     // Approving only the first package keeps the gate pending: no callback yet.
     const partial = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: scanId! },
@@ -1125,7 +1101,7 @@ describe("github-app workflow-gate decision route", () => {
     // The package decision is final while the gate is pending; a stale second
     // submit must not overwrite it before the aggregate gate decision happens.
     const staleOverwrite = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "rejected", scanId: scanId! },
@@ -1138,7 +1114,7 @@ describe("github-app workflow-gate decision route", () => {
 
     // Approving the last package finalizes the gate and posts the release.
     const finalRes = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "approved", scanId: secondScanId },
@@ -1187,7 +1163,7 @@ describe("github-app workflow-gate decision route", () => {
     });
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/decision`,
       { decision: "rejected", scanId: scanId! },
@@ -1214,7 +1190,7 @@ describe("github-app workflow-gate decision route", () => {
     const queueSend = vi.fn(async () => undefined);
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "POST",
       `/api/v1/github-app/workflow-gates/${gateId}/retry`,
       {},
@@ -1237,7 +1213,7 @@ describe("github-app workflow-gate by-scan route", () => {
   test("returns 404 when no gate references the scan", async () => {
     const { userId } = await seedUser();
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/workflow-gates/by-scan/scan_${crypto.randomUUID()}`,
     );
@@ -1252,7 +1228,7 @@ describe("github-app workflow-gate by-scan route", () => {
     });
 
     const res = await callGithubAppRoute(
-      buildTestApp(userId),
+      buildTestApp(mountGithubApp, { userId }),
       "GET",
       `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
     );
@@ -1272,7 +1248,7 @@ describe("github-app workflow-gate by-scan route", () => {
     });
 
     const res = await callGithubAppRoute(
-      buildTestApp(caller.userId),
+      buildTestApp(mountGithubApp, { userId: caller.userId }),
       "GET",
       `/api/v1/github-app/workflow-gates/by-scan/${scanId}`,
     );

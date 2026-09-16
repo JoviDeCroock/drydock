@@ -12,10 +12,14 @@ import {
   supportedStagedEcosystems,
   supportedWorkflowGateEcosystems,
   UnsupportedEcosystemError,
-} from "../../server/lib/ecosystems";
-import { publicDiffVersionCacheControl } from "../../server/routes/public-diff";
-import { ATPM_RECORD_CACHE_SCOPE } from "../../server/lib/ecosystems/atpm/public-diff";
-import { PUBLISHED_REVIEW_ECOSYSTEMS } from "../../src/lib/published-review-ecosystems";
+} from "../server/lib/ecosystems";
+import { publicDiffVersionCacheControl } from "../server/routes/public-diff";
+import { ATPM_RECORD_CACHE_SCOPE } from "../server/lib/ecosystems/atpm/public-diff";
+
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {},
+}));
+import { PUBLISHED_REVIEW_ECOSYSTEMS } from "../src/lib/published-review-ecosystems";
 
 // The registry is the single answer to "how can a release of this kind reach
 // Drydock?". These assertions pin the capability matrix so adding or removing a

@@ -1,32 +1,16 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { loadReleaseFingerprintHistory } from "../../server/db/release-fingerprint";
 import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import type { PackageAdapter } from "../../server/lib/ecosystems/package-adapter";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../server/lib/release-fingerprint";
 import { runScanPipeline } from "../../server/lib/scan/pipeline";
+import { seedUser } from "./helpers/seed";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-
-async function seedUserAndOrg() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { db, userId, organizationId };
-}
 
 interface SeedScanOptions {
   organizationId: string;
@@ -206,7 +190,7 @@ describe("release-process fingerprint (workers)", () => {
     // Regression guard for the removed `release.burst-anomaly` rule: staging
     // many distinct packages inside one window is a normal release train, and
     // must never raise release risk (which would reject a workflow gate).
-    const { db, userId, organizationId } = await seedUserAndOrg();
+    const { db, userId, organizationId } = await seedUser();
     const now = new Date();
     for (let index = 0; index < 8; index += 1) {
       await seedScan(db, {
@@ -233,7 +217,7 @@ describe("release-process fingerprint (workers)", () => {
   });
 
   test("gate-to-manual source drift fires high with the gate repo/env from the join", async () => {
-    const { db, userId, organizationId } = await seedUserAndOrg();
+    const { db, userId, organizationId } = await seedUser();
     const now = new Date();
     const gateId = await seedGateChain(db, organizationId, "octo/release-repo", "release");
     for (let index = 0; index < 3; index += 1) {
@@ -268,7 +252,7 @@ describe("release-process fingerprint (workers)", () => {
   });
 
   test("mixed release-path history stays silent", async () => {
-    const { db, userId, organizationId } = await seedUserAndOrg();
+    const { db, userId, organizationId } = await seedUser();
     const now = new Date();
     const gateId = await seedGateChain(db, organizationId, "octo/release-repo", "release");
     for (let index = 0; index < 2; index += 1) {
@@ -302,8 +286,8 @@ describe("release-process fingerprint (workers)", () => {
   });
 
   test("history helper scopes every query to the organization", async () => {
-    const orgA = await seedUserAndOrg();
-    const orgB = await seedUserAndOrg();
+    const orgA = await seedUser();
+    const orgB = await seedUser();
     const now = new Date();
     const gateId = await seedGateChain(orgB.db, orgB.organizationId, "octo/other", "release");
     await seedScan(orgB.db, {

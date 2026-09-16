@@ -1,4 +1,4 @@
-import { createExecutionContext, env } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import {
   downloadInSandbox,
@@ -7,6 +7,7 @@ import {
   SandboxError,
 } from "../../server/lib/sandbox";
 import { BASELINE_TEXT_SAMPLE_LIMIT } from "../../server/lib/sample-retention";
+import { buildCtxWithGateway } from "./helpers/gate";
 
 interface LoaderRecord {
   globalOutboundProps: unknown;
@@ -42,21 +43,6 @@ function buildLoader(record: LoaderRecord) {
   };
 }
 
-function buildCtxWithGateway(record: LoaderRecord) {
-  const ctx = createExecutionContext() as ExecutionContext & {
-    exports: {
-      NpmStageGateway(options: { props: unknown }): Fetcher;
-    };
-  };
-  ctx.exports = {
-    NpmStageGateway: vi.fn((options: { props: unknown }) => {
-      record.globalOutboundProps = options.props;
-      return { fetch: vi.fn() } as unknown as Fetcher;
-    }),
-  };
-  return ctx;
-}
-
 describe("downloadInSandboxInline", () => {
   test("constructs the gateway with empty props so no npm credentials enter the sandbox", async () => {
     const record: LoaderRecord = {
@@ -66,7 +52,11 @@ describe("downloadInSandboxInline", () => {
       receivedBody: null,
     };
     const loader = buildLoader(record);
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = { ...env, LOADER: loader as unknown as WorkerLoader } as Cloudflare.Env;
 
     const archive = new TextEncoder().encode("not-really-a-zip-but-fine-for-the-stub");
@@ -90,7 +80,11 @@ describe("downloadInSandboxInline", () => {
       receivedHeaders: null,
       receivedBody: null,
     };
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = {
       ...env,
       LOADER: buildLoader(record) as unknown as WorkerLoader,
@@ -112,7 +106,11 @@ describe("downloadInSandboxInline", () => {
       receivedBody: null,
     };
     const loader = buildLoader(record);
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = { ...env, LOADER: loader as unknown as WorkerLoader } as Cloudflare.Env;
     const big = new Uint8Array(25 * 1024 * 1024 + 1);
 
@@ -132,7 +130,11 @@ describe("downloadInSandbox", () => {
       receivedBody: null,
     };
     const loader = buildLoader(record);
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = { ...env, LOADER: loader as unknown as WorkerLoader } as Cloudflare.Env;
     const tarballUrl = "https://artifacts.example.com/package.tgz";
 
@@ -155,7 +157,11 @@ describe("downloadInSandboxStream", () => {
       receivedBody: null,
     };
     const loader = buildLoader(record);
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = { ...env, LOADER: loader as unknown as WorkerLoader } as Cloudflare.Env;
 
     const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])];
@@ -188,7 +194,11 @@ describe("sandbox retention caps", () => {
 
   test("defaults the per-file text-sample cap to 0 (unbounded) and carries no credentials", async () => {
     const record = emptyRecord();
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = {
       ...env,
       LOADER: buildLoader(record) as unknown as WorkerLoader,
@@ -211,7 +221,11 @@ describe("sandbox retention caps", () => {
 
   test("passes an opted-in baseline cap through to the sandbox env", async () => {
     const record = emptyRecord();
-    const ctx = buildCtxWithGateway(record);
+    const ctx = buildCtxWithGateway({
+      onGateway: (props) => {
+        record.globalOutboundProps = props;
+      },
+    });
     const sandboxEnv = {
       ...env,
       LOADER: buildLoader(record) as unknown as WorkerLoader,
@@ -235,7 +249,11 @@ describe("sandbox retention caps", () => {
   test("normalizes a nonsense cap to unbounded rather than a tiny window", async () => {
     for (const requested of [-1, 0, Number.NaN, Number.POSITIVE_INFINITY]) {
       const record = emptyRecord();
-      const ctx = buildCtxWithGateway(record);
+      const ctx = buildCtxWithGateway({
+        onGateway: (props) => {
+          record.globalOutboundProps = props;
+        },
+      });
       const sandboxEnv = {
         ...env,
         LOADER: buildLoader(record) as unknown as WorkerLoader,

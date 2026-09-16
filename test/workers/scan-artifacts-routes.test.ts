@@ -1,9 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, getScan, getScanCompareData, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
@@ -13,53 +11,19 @@ import {
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
-import {
-  SCAN_ARTIFACT_WRITE_ATTEMPTS,
-  writeScanArtifactsWithRetry,
-  writeScanArtifacts,
-} from "../../server/lib/scan/artifacts";
+import { writeScanArtifactsWithRetry } from "../../server/lib/scan/artifacts";
+import { SCAN_ARTIFACT_WRITE_ATTEMPTS } from "../../server/lib/scan/artifacts/types";
+import { writeScanArtifacts } from "../../server/lib/scan/artifacts/write";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../server/lib/platform/stable-json";
+import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { parsePackageJson } from "../../server/lib/tar-parser.js";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Artifact Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
-
-async function fetchJsonWithSession(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-  options: RequestInit = {},
-) {
+async function fetchJsonWithSession(app: TestApp, path: string, options: RequestInit = {}) {
   const ctx = createExecutionContext();
   const headers = new Headers(options.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
@@ -188,7 +152,7 @@ async function buildArtifactWriteInput(owner: SeededUser) {
     },
     safety,
   };
-  const reportJson = stableJson(reportPayload);
+  const reportJson = canonicalJson(reportPayload);
   return {
     organizationId: owner.organizationId,
     scanId,
@@ -294,7 +258,7 @@ async function seedArtifactBackedScan(owner: SeededUser) {
     risk,
     safety,
   };
-  const reportJson = stableJson(reportPayload);
+  const reportJson = canonicalJson(reportPayload);
   const digest = await sha256Hex(reportJson);
   const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
     organizationId: owner.organizationId,
@@ -349,7 +313,7 @@ async function seedArtifactBackedScan(owner: SeededUser) {
 describe("scan status poll route", () => {
   test("returns the polling fields without the heavy JSON blobs", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, owner);
     const { db, scanId } = await seedArtifactBackedScan(owner);
 
     // The row this poll reads really does carry a large summary blob.
@@ -400,7 +364,7 @@ describe("scan status poll route", () => {
 
   test("keeps a queued review's stage timestamp, which has no summary to fall back on", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, owner);
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     await createScanJob(db, {
@@ -428,9 +392,13 @@ describe("scan status poll route", () => {
     const other = await seedUser();
     const { scanId } = await seedArtifactBackedScan(owner);
 
-    const res = await fetchJsonWithSession(buildTestApp(other), `/api/v1/scans/${scanId}/status`, {
-      method: "GET",
-    });
+    const res = await fetchJsonWithSession(
+      buildTestApp(mountScans, other),
+      `/api/v1/scans/${scanId}/status`,
+      {
+        method: "GET",
+      },
+    );
 
     expect(res.status).toBe(404);
   });
@@ -485,7 +453,7 @@ describe("scan artifact writes and reads", () => {
 
   test("completed scans serve metadata from report artifacts and file bodies from R2", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, owner);
     const { db, scanId } = await seedArtifactBackedScan(owner);
 
     const withoutBucket = await getScan(db, scanId, owner.organizationId);

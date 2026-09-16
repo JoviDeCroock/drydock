@@ -9,7 +9,7 @@ import {
   encoder,
   sealTarHeader,
   tarEntriesOnly,
-} from "./helpers/archive-fixtures.mjs";
+} from "./helpers/archive-fixtures";
 
 const {
   canonicalizePath,
