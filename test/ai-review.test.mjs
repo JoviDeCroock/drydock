@@ -1062,6 +1062,105 @@ describe("ai review orchestration", () => {
     expect(computeScanRisk([], ai)).toBe("high");
   });
 
+  test("an early submit_review is refused until required evidence is read", async () => {
+    const packageJson = JSON.stringify({
+      name: "fixture",
+      version: "1.0.1",
+      scripts: { postinstall: "node scripts/install.js" },
+    });
+    const files = [
+      { path: "package.json", size: 1, sha256: "a", flags: [], textSample: packageJson },
+      { path: "scripts/install.js", size: 1, sha256: "b", flags: [], textSample: "run()\n" },
+    ];
+    const options = {
+      ...BASE_OPTIONS,
+      files,
+      previousFiles: files,
+      diff: [
+        { path: "package.json", status: "modified", flags: [] },
+        { path: "scripts/install.js", status: "unchanged", flags: [] },
+      ],
+      packageJsonDiff: {
+        ...EMPTY_PACKAGE_JSON_DIFF,
+        scripts: [{ key: "postinstall", status: "added", staged: "node scripts/install.js" }],
+      },
+    };
+    const prompts = [];
+    let calls = 0;
+    const eagerModel = mockModel(async ({ prompt }) => {
+      calls += 1;
+      prompts.push(prompt);
+      const input =
+        calls === 2
+          ? { toolName: "read", input: { paths: ["package.json", "scripts/install.js"] } }
+          : { toolName: "submit_review", input: VALID_REVIEW };
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: `call-${calls}`,
+            ...input,
+            input: JSON.stringify(input.input),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+
+    const { review: ai, usage } = await analyzeWithAi({}, "mock-reviewer", options, eagerModel);
+
+    expect(calls).toBe(3);
+    expect(usage.steps).toBe(3);
+    expect(ai.status).toBe("complete");
+    // The refusal reached the model as a tool result naming the unread paths.
+    const refusal = JSON.stringify(prompts[1]);
+    expect(refusal).toContain("unreadRequiredPaths");
+    expect(refusal).toContain("scripts/install.js");
+  });
+
+  test("the coverage gate lifts when too few steps remain for a read and a re-submit", async () => {
+    const files = [
+      { path: "package.json", size: 1, sha256: "a", flags: [], textSample: "{}" },
+      { path: "noise.js", size: 1, sha256: "n", flags: [], textSample: "1\n" },
+    ];
+    const options = {
+      ...BASE_OPTIONS,
+      files,
+      previousFiles: [],
+      diff: [
+        { path: "package.json", status: "modified", flags: [] },
+        { path: "noise.js", status: "added", flags: [] },
+      ],
+    };
+    // Reads a non-required file until `submitAt`, then submits with package.json
+    // still unread; afterwards keeps reading so a refusal is observable as the
+    // loop continuing past `submitAt`.
+    const run = async (submitAt) => {
+      let calls = 0;
+      const model = mockModel(async () => {
+        calls += 1;
+        const submit = calls === submitAt || calls === MAX_AGENT_STEPS;
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: `c-${calls}`,
+              toolName: submit ? "submit_review" : "read",
+              input: JSON.stringify(submit ? VALID_REVIEW : { paths: ["noise.js"] }),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+      const { usage } = await analyzeWithAi({}, "mock-reviewer", options, model);
+      return usage.steps;
+    };
+    // Step index 17 (call 18) is the last where a refusal still leaves a read
+    // and the forced final submit; step index 18 (call 19) must be accepted.
+    expect(await run(MAX_AGENT_STEPS - 2)).toBe(MAX_AGENT_STEPS);
+    expect(await run(MAX_AGENT_STEPS - 1)).toBe(MAX_AGENT_STEPS - 1);
+  });
+
   test("the final step of the budget restricts the toolset and forces submit_review", async () => {
     // A model that keeps gathering evidence forever. Without the forced final
     // step the whole run's spend would degrade to an `invalid` fallback.

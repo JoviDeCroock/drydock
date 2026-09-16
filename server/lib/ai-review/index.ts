@@ -136,6 +136,9 @@ export async function analyzeWithAi(
       // Declared per attempt: a retried run starts the agentic loop from scratch,
       // so a submission recorded by a prior (failed) attempt must not leak across.
       let submittedReview: AiReviewSubmission | null = null;
+      // Steps finished so far in this attempt; the tool policy reads it to know
+      // whether refusing a submit still leaves room for a read and a re-submit.
+      let completedSteps = 0;
       try {
         const reasoningEffort = aiReviewReasoningEffort(candidateModel);
         const languageModel =
@@ -153,6 +156,12 @@ export async function analyzeWithAi(
             submittedReview = review;
           },
           index,
+          {
+            // The gate needs two more steps after the refused one (a read, then
+            // the re-submit) before the forced final step; past that point a
+            // refusal could only end the run as `invalid`.
+            enforceCoverage: () => completedSteps < MAX_AGENT_STEPS - 2,
+          },
         );
 
         const result = await tracedAi.generateText({
@@ -198,6 +207,7 @@ export async function analyzeWithAi(
           // would be invisible to `ai_review.attempted` and multiply spend.
           maxRetries: 0,
           onStepEnd: ({ usage: stepUsage }) => {
+            completedSteps += 1;
             completedStepUsage = addAiReviewUsage(completedStepUsage, toUsage(stepUsage, 1));
           },
         });

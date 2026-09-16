@@ -31,6 +31,39 @@ trailing ellipsis on a path reads as part of the filename. The prompt states
 the summary budget so the model finishes its verdict inside it instead of
 relying on the clamp.
 
+## Evidence coverage
+
+The loop does not rely on the model volunteering reads. `buildEvidenceIndex`
+computes a priority-ordered required-evidence set: a changed manifest, targets
+of consumer-install lifecycle entries (preinstall/install/postinstall) this
+release added or modified (even when the target file itself is unchanged), files
+with deterministic findings, changed native or executable payloads, and changed
+entrypoints (or all entrypoints when the manifest's entrypoints changed). The
+set is capped at `MAX_REQUIRED_EVIDENCE_PATHS` so two batched read calls cover
+it, and the cap is filled round-robin across those tiers so a hostile lifecycle
+hook naming many benign files cannot evict the changed entrypoint or payload.
+Only npm's manifest summary carries `scripts`; PyPI and VS Code releases get
+the same gate from the remaining tiers. The set ships as `requiredEvidencePaths` in the
+task and every tool response reports `unreadRequiredPaths`.
+
+`submit_review` refuses a submission while required paths remain unread, with
+three release valves so the gate can only delay a verdict, never lose one: it
+stops refusing after `MAX_COVERAGE_REJECTIONS`, once the shared evidence budget
+is exhausted, and when fewer than two steps remain before the forced final
+submit. A path counts as read from its head (offset 0, whatever came back, so a binary
+payload or an empty post-budget read satisfies it) or when a continuation
+returned text; `offset` is only accepted with a single path, so a batch cannot
+satisfy the gate with empty windows.
+
+The changed-file manifest, `list_files`, and `search_files` all walk paths in
+evidence-priority order rather than alphabetically, so the 300-entry manifest
+cap on a large dist rebuild drops chunks rather than the lifecycle script, and
+a docs file with many hits cannot crowd the script out of a search result
+(`MAX_SEARCH_MATCHES_PER_FILE` also caps hits per file). Search matches carry a
+1-based `line`, and `read` accepts `offset` and returns `nextOffset` so the
+model can walk a file longer than one call's share instead of only ever seeing
+its head. Any change to this contract bumps `AI_REVIEWER_VERSION`.
+
 ## Agent Traces
 
 The AI SDK is wrapped with Cloudflare's Agent Traces integration. Production
