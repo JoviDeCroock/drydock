@@ -21,7 +21,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 import {
   computeReleaseConsistency,
   noneReleaseConsistency,

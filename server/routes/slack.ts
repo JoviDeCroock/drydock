@@ -16,7 +16,7 @@ import {
   requireActiveOrganization,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/platform/secret-box";
 import {

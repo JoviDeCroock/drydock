@@ -124,7 +124,6 @@ describe("GET /api/v1/slack", () => {
     await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
-      canListChannels: true,
     });
 
     const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack");
@@ -137,6 +136,7 @@ describe("GET /api/v1/slack", () => {
       channelId: "C0RELEASE",
       channelName: "releases",
       enabled: true,
+      canListChannels: true,
     });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain(BOT_TOKEN);

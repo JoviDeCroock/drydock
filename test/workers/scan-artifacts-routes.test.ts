@@ -11,6 +11,7 @@ import {
   summarizePackageJsonDiff,
 } from "../../server/lib/review";
 import type { ScanRiskBreakdown } from "../../server/lib/review/risk";
+import type { PackageJsonSummary } from "../../server/lib/review/serialize";
 import { writeScanArtifactsWithRetry } from "../../server/lib/scan/artifacts";
 import { SCAN_ARTIFACT_WRITE_ATTEMPTS } from "../../server/lib/scan/artifacts/types";
 import { writeScanArtifacts } from "../../server/lib/scan/artifacts/write";
@@ -199,7 +200,9 @@ async function seedArtifactBackedScan(owner: SeededUser) {
       textSample: "console.log(process.env.npm_config_user_agent);\n",
     },
   ];
-  const packageJson = redactJson(parsePackageJson(files)!);
+  // The sandbox hands the parsed manifest across its JSON boundary as a
+  // PackageJsonSummary (see server/lib/sandbox.ts); the fixture crosses it here.
+  const packageJson = redactJson(parsePackageJson(files) as PackageJsonSummary);
   const diff = createPackageDiff([], files);
   const packageJsonDiff = redactJson(summarizePackageJsonDiff(null, packageJson));
   const stagedPublish = {
@@ -233,6 +236,7 @@ async function seedArtifactBackedScan(owner: SeededUser) {
     contextRisk: "low",
     releaseFindingCount: 1,
     contextFindingCount: 0,
+    priorApprovedContextFindingCount: 0,
     unknownFindingCount: 0,
   };
   const reportPayload = {

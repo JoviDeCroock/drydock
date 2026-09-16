@@ -10,7 +10,7 @@ import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp } from "./helpers/app";
-import { type SeededUser, seedUser } from "./helpers/seed";
+import { seedUser } from "./helpers/seed";
 import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
 function seedReportScan(owner: ScanOwner, options: { withAiReview?: boolean } = {}) {
@@ -43,7 +43,7 @@ function seedReportScan(owner: ScanOwner, options: { withAiReview?: boolean } = 
 }
 
 // Anonymous `/public` is always mounted; the session (and the scans API) only when signed in.
-const publicApp = (session: SeededUser | null) =>
+const publicApp = (session: ScanOwner | null) =>
   buildTestApp(
     (app) => {
       app.route("/public", publicReportsRoutes);
@@ -73,7 +73,7 @@ function signingEnv(): Promise<typeof env> {
 // Strict standard-base64 decode: rejects the base64url alphabet outright, so a
 // regression away from what sigstore/in-toto verifiers expect fails here rather
 // than sliding through on a payload that happens to contain no `-` or `_`.
-function strictBase64Decode(value: string): Uint8Array {
+function strictBase64Decode(value: string): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 !== 0) {
     throw new Error(`not standard base64: ${value.slice(0, 32)}…`);
   }
@@ -81,7 +81,7 @@ function strictBase64Decode(value: string): Uint8Array {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-async function seedMember(organizationId: string, role: "admin" | "member"): Promise<SeededUser> {
+async function seedMember(organizationId: string, role: "admin" | "member"): Promise<ScanOwner> {
   const db = createDb(env.DB);
   const member = await seedUser();
   const now = new Date();
@@ -630,6 +630,8 @@ describe("public report attestations", () => {
       signatures: Array<{ keyid: string; sig: string }>;
     };
     expect(envelope.payloadType).toBe("application/vnd.in-toto+json");
+    const [signature] = envelope.signatures;
+    if (!signature) throw new Error("envelope carries no signature");
     expect(envelope.signatures).toHaveLength(1);
 
     const keyRes = await request(app, `/public/attestation-key`, {}, signer);
@@ -686,7 +688,7 @@ describe("public report attestations", () => {
     const valid = await crypto.subtle.verify(
       "Ed25519",
       publicKey,
-      strictBase64Decode(envelope.signatures[0].sig),
+      strictBase64Decode(signature.sig),
       pae,
     );
     expect(valid).toBe(true);

@@ -2,9 +2,8 @@ import { env } from "cloudflare:test";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { type GithubAppEnv, readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { validateReleaseTargetShape } from "../../server/lib/github-app/validation";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
@@ -22,6 +21,7 @@ import {
 } from "../../server/lib/github-app/artifacts";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock, stubGithubFetch } from "./helpers/gate";
+import { seedPersonalOrganization } from "./helpers/seed";
 
 function stubRunArtifacts(runId: number, artifactPaths: string[]) {
   stubGithubFetch({
@@ -395,7 +395,7 @@ const buildFormatLoaderMock = (resultsByFormat: Record<string, SandboxResult>) =
     },
   });
 
-function configBindings(): Record<string, string> {
+function configBindings(): GithubAppEnv {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   return {
@@ -427,7 +427,7 @@ async function seedAutoDetectGate(opts: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: opts.installationExternalId,

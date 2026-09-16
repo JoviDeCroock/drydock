@@ -21,7 +21,7 @@ const ORIGIN = "http://example.com";
 const PASSWORD = "correct horse battery staple";
 const WORKER_AUTH_TIMEOUT_MS = 15_000;
 
-// Positional blob layout from lib/platform/analytics.ts. blob5 onwards are
+// Positional blob layout from lib/analytics.ts. blob5 onwards are
 // event-specific dimensions in declaration order.
 const BLOB = { schema: 0, name: 1, organizationId: 2, ecosystem: 3, dim1: 4, dim2: 5 } as const;
 

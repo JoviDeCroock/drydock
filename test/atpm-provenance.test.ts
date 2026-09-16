@@ -32,7 +32,42 @@ import { decodeBase64, parseX509, pemToDer } from "../server/lib/platform/x509";
  */
 const BUNDLE = JSON.parse(
   readFileSync(new URL("./fixtures/atpm/sigstore-3.0.0.provenance.json", import.meta.url), "utf8"),
-) as Record<string, unknown>;
+) as SigstoreBundleFixture;
+
+// The parts of the bundle these tests read or tamper with. The fields a test
+// deletes are optional; the verifier itself takes the bundle as `unknown`.
+type SigstoreBundleFixture = {
+  mediaType: string;
+  verificationMaterial: {
+    x509CertificateChain?: { certificates: Array<{ rawBytes: string }> };
+    tlogEntries?: Array<Record<string, unknown>>;
+    publicKey?: { hint: string };
+    [key: string]: unknown;
+  };
+  dsseEnvelope: {
+    payload: string;
+    payloadType: string;
+    signatures: Array<{ sig: string; keyid: string }>;
+  };
+  [key: string]: unknown;
+};
+
+type ProvenanceStatement = {
+  subject: Array<{ name: string; digest: Record<string, string> }>;
+  [key: string]: unknown;
+};
+
+function certificates(bundle: SigstoreBundleFixture): Array<{ rawBytes: string }> {
+  const chain = bundle.verificationMaterial.x509CertificateChain;
+  if (!chain) throw new Error("fixture bundle carries no certificate chain");
+  return chain.certificates;
+}
+
+function tlogEntries(bundle: SigstoreBundleFixture): Array<Record<string, unknown>> {
+  const entries = bundle.verificationMaterial.tlogEntries;
+  if (!entries) throw new Error("fixture bundle carries no transparency-log entries");
+  return entries;
+}
 
 const SUBJECT_SHA512 =
   "3c73227e187710de25a0c7070b3ea5deffe5bb3813df36bef5ff2cb9b1a078c3636c98f31f8223fd8a17dc6beefa46a8b894489557531c70911000d87fe66d78";
@@ -42,9 +77,9 @@ function clone<T>(value: T): T {
 }
 
 /** A bundle whose DSSE payload has been rewritten, leaving the signature stale. */
-function withPayload(mutate: (statement: Record<string, any>) => void): Record<string, unknown> {
-  const bundle = clone(BUNDLE) as any;
-  const statement = JSON.parse(atob(bundle.dsseEnvelope.payload));
+function withPayload(mutate: (statement: ProvenanceStatement) => void): SigstoreBundleFixture {
+  const bundle = clone(BUNDLE);
+  const statement = JSON.parse(atob(bundle.dsseEnvelope.payload)) as ProvenanceStatement;
   mutate(statement);
   bundle.dsseEnvelope.payload = btoa(JSON.stringify(statement));
   return bundle;
@@ -86,7 +121,7 @@ const PDS = "https://shiitake.us-east.host.bsky.network";
 const CID = "bafkreibrz4xmz6sbraw6h2mtchh5xq7jqghrjhr3yyyub3wbyrvmyjg2bm";
 
 /** A package record whose one version carries the real bundle above. */
-function recordWithAttestation(attestation: unknown) {
+function recordWithAttestation(attestation?: unknown) {
   return {
     $type: "dev.atpm.alpha.package",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -102,7 +137,7 @@ function recordWithAttestation(attestation: unknown) {
           version: "3.0.0",
           dist: {
             tarball: `${PDS}/xrpc/com.atproto.sync.getBlob?did=${DID}&cid=${CID}`,
-            attestations: { provenance: attestation },
+            ...(attestation === undefined ? {} : { attestations: { provenance: attestation } }),
           },
         },
       },
@@ -121,7 +156,7 @@ describe("record provenance", () => {
     // The bundle is the largest thing in a real record and is exchanged for a
     // verdict before anything is cached, so no caller can carry one further.
     const serialized = JSON.stringify(parsed);
-    expect(serialized).not.toContain((BUNDLE as any).dsseEnvelope.payload.slice(0, 64));
+    expect(serialized).not.toContain(BUNDLE.dsseEnvelope.payload.slice(0, 64));
     expect(serialized.length).toBeLessThan(1024);
   });
 
@@ -134,12 +169,11 @@ describe("record provenance", () => {
       "counter",
     );
     expect(pkg.versions[0].provenance.status).toBe("verified");
-    expect(JSON.stringify(pkg)).not.toContain((BUNDLE as any).dsseEnvelope.payload.slice(0, 64));
+    expect(JSON.stringify(pkg)).not.toContain(BUNDLE.dsseEnvelope.payload.slice(0, 64));
   });
 
   test("a version with no attestation reads as absent rather than unevaluated", async () => {
-    const record = recordWithAttestation(BUNDLE) as any;
-    delete record.versions[0].meta.dist.attestations;
+    const record = recordWithAttestation();
     vi.stubGlobal("fetch", () => Promise.resolve(Response.json({ value: record })));
     const pkg = await fetchAtpmPackageRecord(
       { did: DID, pds: PDS, handle: null, handleMethod: null },
@@ -167,7 +201,7 @@ describe("record provenance", () => {
 
 describe("x509 reader", () => {
   test("reads the pinned Fulcio root's fields", () => {
-    const chain = (BUNDLE as any).verificationMaterial.x509CertificateChain.certificates;
+    const chain = certificates(BUNDLE);
     const leaf = parseX509(decodeBase64(chain[0].rawBytes));
     expect(leaf.namedCurve).toBe("P-256");
     // ecdsa-with-SHA384: Fulcio's intermediate signs leaves with its P-384 key.
@@ -177,7 +211,7 @@ describe("x509 reader", () => {
   });
 
   test("rejects trailing bytes after the certificate", () => {
-    const chain = (BUNDLE as any).verificationMaterial.x509CertificateChain.certificates;
+    const chain = certificates(BUNDLE);
     const der = decodeBase64(chain[0].rawBytes);
     const padded = new Uint8Array(der.length + 1);
     padded.set(der);
@@ -189,7 +223,7 @@ describe("x509 reader", () => {
   });
 
   test("requires the authenticated signing time to fall inside every chain certificate", () => {
-    const chain = (BUNDLE as any).verificationMaterial.x509CertificateChain.certificates;
+    const chain = certificates(BUNDLE);
     const leaf = parseX509(decodeBase64(chain[0].rawBytes));
     const intermediate = parseX509(pemToDer(FULCIO_INTERMEDIATE_PEM));
     const afterIntermediateExpiry = new Date(intermediate.notAfter.getTime() + 1);
@@ -254,15 +288,15 @@ describe("verifyAtpmProvenance", () => {
 
   test("rejects transparency-log metadata that no longer matches Rekor's signed promise", async () => {
     for (const mutate of [
-      (entry: Record<string, any>) => {
+      (entry: Record<string, unknown>) => {
         entry.integratedTime = "1728922426";
       },
-      (entry: Record<string, any>) => {
+      (entry: Record<string, unknown>) => {
         entry.logIndex = "139985225";
       },
     ]) {
-      const bundle = clone(BUNDLE) as any;
-      mutate(bundle.verificationMaterial.tlogEntries[0]);
+      const bundle = clone(BUNDLE);
+      mutate(tlogEntries(bundle)[0]);
       expect(await verifyAtpmProvenance(bundle)).toEqual({
         status: "invalid",
         reason: "transparency-log inclusion promise does not verify",
@@ -271,7 +305,7 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("rejects a bundle with no authenticated transparency-log entry", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     delete bundle.verificationMaterial.tlogEntries;
     expect(await verifyAtpmProvenance(bundle)).toEqual({
       status: "invalid",
@@ -280,8 +314,8 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("accepts a trusted transparency-log entry after an unsupported entry", async () => {
-    const bundle = clone(BUNDLE) as any;
-    bundle.verificationMaterial.tlogEntries.unshift({
+    const bundle = clone(BUNDLE);
+    tlogEntries(bundle).unshift({
       logId: { keyId: "not-a-trusted-log" },
     });
 
@@ -289,7 +323,7 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("bounds the number of transparency-log entries it will inspect", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     bundle.verificationMaterial.tlogEntries = Array.from({ length: 33 }, () => ({}));
 
     expect(await verifyAtpmProvenance(bundle)).toEqual({
@@ -299,10 +333,10 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("binds a Rekor dsse v0.0.1 entry to the bundle's signing certificate", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     const envelope = bundle.dsseEnvelope;
-    const originalEntry = bundle.verificationMaterial.tlogEntries[0];
-    const originalBody = JSON.parse(atob(originalEntry.canonicalizedBody));
+    const originalEntry = tlogEntries(bundle)[0];
+    const originalBody = JSON.parse(atob(String(originalEntry.canonicalizedBody)));
     const certificatePem = atob(originalBody.spec.content.envelope.signatures[0].publicKey);
     const payload = Uint8Array.from(atob(envelope.payload), (character) => character.charCodeAt(0));
     const payloadDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
@@ -324,8 +358,7 @@ describe("verifyAtpmProvenance", () => {
     };
     const entry = { kindVersion: { kind: "dsse", version: "0.0.1" } };
     const bodyBytes = new TextEncoder().encode(JSON.stringify(body));
-    const certificateBase64 =
-      bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes;
+    const certificateBase64 = certificates(bundle)[0].rawBytes;
 
     await expect(
       transparencyLogBodyMatches(entry, bodyBytes, envelope, certificateBase64),
@@ -343,9 +376,11 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("binds a Rekor v2 hashedrekord entry to the DSSE signed bytes", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     const envelope = bundle.dsseEnvelope;
-    const payload = decodeBase64(envelope.payload);
+    // Copied into a plain ArrayBuffer-backed view: subtle.digest rejects the
+    // ArrayBufferLike-typed bytes decodeBase64 returns.
+    const payload = new Uint8Array(decodeBase64(envelope.payload));
     const prefix = new TextEncoder().encode(
       `DSSEv1 ${envelope.payloadType.length} ${envelope.payloadType} ${payload.length} `,
     );
@@ -353,8 +388,7 @@ describe("verifyAtpmProvenance", () => {
     signedBytes.set(prefix);
     signedBytes.set(payload, prefix.length);
     const signedDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", signedBytes));
-    const certificateBase64 =
-      bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes;
+    const certificateBase64 = certificates(bundle)[0].rawBytes;
     const body = {
       kind: "hashedrekord",
       apiVersion: "0.0.2",
@@ -395,13 +429,13 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("refuses a self-signed certificate that does not chain to Fulcio", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     // Swap the leaf for the pinned intermediate: a real, well-formed certificate
     // that simply was not issued by an accepted Fulcio intermediate.
-    bundle.verificationMaterial.x509CertificateChain.certificates = [
-      { rawBytes: bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes },
-    ];
-    bundle.verificationMaterial.x509CertificateChain.certificates[0].rawBytes = btoa(
+    bundle.verificationMaterial.x509CertificateChain = {
+      certificates: [{ rawBytes: certificates(bundle)[0].rawBytes }],
+    };
+    certificates(bundle)[0].rawBytes = btoa(
       String.fromCharCode(...pemToDer(FULCIO_INTERMEDIATE_PEM)),
     );
     expect(await verifyAtpmProvenance(bundle)).toEqual({
@@ -411,7 +445,7 @@ describe("verifyAtpmProvenance", () => {
   });
 
   test("rejects an unsupported bundle media type", async () => {
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     bundle.mediaType = "application/json";
     expect((await verifyAtpmProvenance(bundle)).status).toBe("invalid");
   });
@@ -426,7 +460,7 @@ describe("verifyAtpmProvenance", () => {
   test("treats a bundle signed by a bare public key as unverifiable", async () => {
     // npm's own publish attestation is signed with a registry key rather than a
     // Fulcio certificate; nothing here can read an identity out of it.
-    const bundle = clone(BUNDLE) as any;
+    const bundle = clone(BUNDLE);
     delete bundle.verificationMaterial.x509CertificateChain;
     bundle.verificationMaterial.publicKey = { hint: "npm" };
     expect(await verifyAtpmProvenance(bundle)).toEqual({
@@ -589,7 +623,7 @@ describe("matchTrustedPublisher", () => {
 
 describe("provenance findings", () => {
   const base = {
-    manifest: { name: "@ebey.dev/counter", version: "3.0.0" } as any,
+    manifest: { name: "@ebey.dev/counter", version: "3.0.0" },
     archiveSha1: null,
     recordName: "counter",
   };

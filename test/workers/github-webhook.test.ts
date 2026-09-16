@@ -543,10 +543,12 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
   test("posts to the callback URL with installation token + structured body", async () => {
     const { postDeploymentProtectionDecision } =
       await import("../../server/lib/github-app/webhook");
-    const tokenFetch = vi.fn(async () =>
+    const tokenFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" }),
     );
-    const callbackFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    const callbackFetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }),
+    );
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/access_tokens")) return tokenFetch(input, init);

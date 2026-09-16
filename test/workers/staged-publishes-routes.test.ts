@@ -9,6 +9,7 @@ import {
 import { createScanJob, listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import type { QueueMessage } from "../../server/lib/scan/job";
 import { stagedPublishesRoutes } from "../../server/routes/staged-publishes";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, type TestApp } from "./helpers/app";
@@ -70,7 +71,7 @@ describe("staged publishes route", () => {
         });
       }),
     );
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
     const app = buildTestApp(mountStagedPublishes, owner);
     const ctx = createExecutionContext();
     const res = await app.fetch(

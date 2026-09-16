@@ -2,7 +2,6 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
@@ -22,6 +21,8 @@ import {
 import worker from "../../server";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
+import type { GithubAppEnv } from "../../server/lib/github-app/config";
+import { seedPersonalOrganization } from "./helpers/seed";
 
 function buildPypiLoader(opts: LoaderMockOptions = {}) {
   const metadataName = opts.metadataName ?? "demo-package";
@@ -100,7 +101,7 @@ async function seedGateForTest(opts: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: opts.installationExternalId,
@@ -153,7 +154,7 @@ interface LoaderMockOptions {
   recordText?: string;
 }
 
-function buildConfigBindings(): Record<string, string> {
+function buildConfigBindings(): GithubAppEnv {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   return {
@@ -242,7 +243,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
       );
     }
     if (request.url.includes("/actions/artifacts/")) {
-      return new Response(bundleZip, {
+      return new Response(new Uint8Array(bundleZip), {
         status: 200,
         headers: { "content-type": "application/zip" },
       });
@@ -255,7 +256,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
   return { fetchSpy, decisionCalls, wheelPath, declaredSha };
 }
 
-function buildEnv(bindings: Record<string, string>, loaderBinding: unknown): Cloudflare.Env {
+function buildEnv(bindings: GithubAppEnv, loaderBinding: unknown): Cloudflare.Env {
   return {
     ...env,
     ...bindings,
@@ -265,7 +266,7 @@ function buildEnv(bindings: Record<string, string>, loaderBinding: unknown): Clo
 }
 
 function buildEnvWithEmail(
-  bindings: Record<string, string>,
+  bindings: GithubAppEnv,
   loaderBinding: unknown,
   sendEmail: SendEmailBinding,
 ): Cloudflare.Env {
@@ -635,14 +636,17 @@ describe("executeWorkflowGateJob", () => {
     const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
-    const sandboxEnv = {
+    // The job only calls `getBooleanValue`; the rest of the Flagship binding
+    // is deliberately absent so any other call fails loudly.
+    const flags: Pick<Flagship, "getBooleanValue"> = {
+      getBooleanValue: vi.fn(async () => {
+        throw new Error("flag service unavailable");
+      }),
+    };
+    const sandboxEnv: Cloudflare.Env = {
       ...buildEnv(bindings, loaderMock.binding),
-      FLAGS: {
-        getBooleanValue: vi.fn(async () => {
-          throw new Error("flag service unavailable");
-        }),
-      },
-    } as Cloudflare.Env;
+      FLAGS: flags as Flagship,
+    };
     const db = createDb(env.DB);
 
     await executeWorkflowGateJob(

@@ -7,6 +7,7 @@ import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
+import type { RiskLevel } from "../../server/lib/review/types";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp } from "./helpers/app";
@@ -18,10 +19,10 @@ function seedBadgeScan(
   options: {
     packageName?: string;
     version?: string;
-    risk?: string;
-    releaseRisk?: string;
+    risk?: RiskLevel;
+    releaseRisk?: RiskLevel;
     ecosystem?: "npm" | "pypi" | "vscode";
-    source?: "manual" | "workflow_gate" | "published";
+    source?: "manual" | "auto_discovery" | "workflow_gate" | "published";
     registryUrl?: string;
     // The dist-tag the release was staged under. Only npm staged-publish scans
     // carry one; omitted means a review that was never staged under a tag.
@@ -109,6 +110,7 @@ function seedBadgeScan(
         releaseFindingCount: 0,
         contextFindingCount: 0,
         unknownFindingCount: 0,
+        priorApprovedContextFindingCount: 0,
       },
     },
   });

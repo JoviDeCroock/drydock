@@ -3,7 +3,7 @@ import { readJsonObject } from "../lib/platform/http";
 import { guardRateLimit } from "../lib/rate-limit";
 import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import { getOrganizationRole } from "../db/invitations";
 import {
   type NotificationRecipient,

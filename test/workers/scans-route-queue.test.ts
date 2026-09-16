@@ -8,6 +8,7 @@ import {
 } from "../../server/db/npm-connections";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import type { QueueMessage } from "../../server/lib/scan/job";
 import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, type TestApp } from "./helpers/app";
@@ -41,7 +42,7 @@ describe("scans route queue behavior", () => {
     const owner = await seedUser();
     const token = "npm_route_queue_secret_0123456789";
     await connectValidNpmToken(owner, token);
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
     const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
     vi.stubGlobal(
@@ -112,7 +113,7 @@ describe("scans route queue behavior", () => {
   test("POST /scans rejects stage ids the organization token cannot access before persisting", async () => {
     const owner = await seedUser();
     await connectValidNpmToken(owner, "npm_route_denied_secret_0123456789");
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
     const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
     vi.stubGlobal(
@@ -144,7 +145,7 @@ describe("scans route queue behavior", () => {
   test("POST /scans rejects client-controlled scan limits before queueing", async () => {
     const owner = await seedUser();
     await connectValidNpmToken(owner, "npm_route_limit_secret_0123456789");
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
     const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
 

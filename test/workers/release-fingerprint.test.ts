@@ -1,6 +1,7 @@
 import { createExecutionContext, env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
+import type { ScanSource, ScanStatus } from "../../server/db/enums";
 import { loadReleaseFingerprintHistory } from "../../server/db/release-fingerprint";
 import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
@@ -17,8 +18,8 @@ interface SeedScanOptions {
   ownerUserId: string;
   packageName: string;
   createdAt: Date;
-  status?: string;
-  source?: string;
+  status?: ScanStatus;
+  source?: ScanSource;
   gateId?: string | null;
 }
 

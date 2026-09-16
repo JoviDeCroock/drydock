@@ -14,7 +14,7 @@ import {
   selectPublicPyPiDiffArtifacts,
   type PublicPyPiArtifactDownload,
 } from "../server/lib/ecosystems/pypi/public-diff";
-import { createPackageDiff, type FileRecord } from "../server/lib/review";
+import { createPackageDiff, summarizePackageJsonDiff, type FileRecord } from "../server/lib/review";
 
 vi.mock("cloudflare:workers", () => ({
   WorkerEntrypoint: class {},
@@ -238,7 +238,10 @@ describe("buildPublicPyPiDiffSources", () => {
     expect(sources.from.packageJson).toEqual({ name: "demo-pkg", version: "1.0.0" });
 
     const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
-    const findings = sources.buildFindings(fileDiff, {});
+    const findings = sources.buildFindings(
+      fileDiff,
+      summarizePackageJsonDiff(sources.from.packageJson, sources.to.packageJson),
+    );
     const pth = findings.find((finding) => finding.ruleId === "pypi.pth-execution");
     expect(pth).toBeDefined();
     // The finding must reference the flattened diff path, not the artifact
@@ -295,7 +298,10 @@ describe("buildPublicPyPiDiffSources", () => {
     expect(sources.to.files.map((file) => file.path)).toEqual(["sdist/PKG-INFO", "sdist/setup.py"]);
 
     const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
-    const findings = sources.buildFindings(fileDiff, {});
+    const findings = sources.buildFindings(
+      fileDiff,
+      summarizePackageJsonDiff(sources.from.packageJson, sources.to.packageJson),
+    );
     const setup = findings.find((finding) => finding.ruleId === "pypi.setup-install-command");
     expect(setup?.file).toBe("sdist/setup.py");
     const suspicious = findings.find((finding) => finding.ruleId === "tar.suspicious-entry");

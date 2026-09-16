@@ -17,6 +17,7 @@ function target(repositoryId: number): PublicReleaseTarget {
     organizationId: "org_1",
     installationRowId: "inst_1",
     ecosystem: "pypi",
+    artifactName: null,
     repositoryId,
     repositoryFullName: "octo/whatever",
     environment: "pypi-release",

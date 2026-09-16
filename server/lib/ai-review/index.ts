@@ -20,7 +20,7 @@ import type {
   SelectiveAiReviewOptions,
 } from "./types";
 import { errorMessage } from "../platform/errors";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 import { durationMsSince } from "../platform/observability";
 
 export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types";

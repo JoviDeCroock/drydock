@@ -157,7 +157,7 @@ function u32(view: DataView, offset: number, value: number): void {
   view.setUint32(offset, value, true);
 }
 
-function concat(parts: Uint8Array[]): Uint8Array {
+function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -228,7 +228,7 @@ function zipEntry(
   return { local, central };
 }
 
-export function buildZip(entries: ZipEntry[]): Uint8Array {
+export function buildZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
   let localOffset = 0;

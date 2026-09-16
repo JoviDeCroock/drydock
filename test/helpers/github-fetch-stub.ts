@@ -3,7 +3,7 @@ import { vi } from "vitest";
 interface GithubArtifactStub {
   id: number;
   name: string;
-  bundleZip?: Uint8Array;
+  bundleZip?: Uint8Array<ArrayBuffer>;
   expired?: boolean;
 }
 

@@ -11,7 +11,7 @@ import {
 import { decryptNpmToken, validateNpmCredential, type NpmCredentialValidation } from "./connection";
 import { notifyNpmConnectionExpired } from "../../notify";
 import { executeScanJob, type ScanQueueMessage } from "../../scan/job";
-import { recordProductEvent } from "../../platform/analytics";
+import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import {

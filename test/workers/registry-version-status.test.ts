@@ -21,6 +21,7 @@ import {
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { resolveNpmReleaseOutcomes } from "../../server/lib/ecosystems/npm/release-outcome";
+import type { SafeScanError } from "../../server/lib/scan/errors";
 import { refineStagedFailure } from "../../server/lib/scan/job";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { seedCompletedScan } from "./helpers/seed";
@@ -90,6 +91,7 @@ async function seedOrg(): Promise<Seeded> {
     updatedAt: now,
   });
   const organizationId = await ensurePersonalOrganization(db, { userId });
+  if (!organizationId) throw new Error(`no personal organization for ${userId}`);
   const encrypted = await encryptNpmToken(env, TOKEN);
   await upsertNpmConnection(db, {
     organizationId,
@@ -1667,7 +1669,7 @@ describe("registry version status resolution", () => {
 });
 
 describe("staged failure refinement", () => {
-  const unavailable = {
+  const unavailable: SafeScanError = {
     code: "staged_tarball_unavailable",
     message: "The staged tarball could not be accessed with this organization's npm token.",
     retryable: false,
@@ -1841,7 +1843,11 @@ describe("staged failure refinement", () => {
     const org = await seedOrg();
     const { scanId, stageId } = await seedRegistryScan(org);
     const fetchMock = stubRegistry(() => statusResponse("published"));
-    const other = { code: "archive_too_large", message: "too big", retryable: false };
+    const other: SafeScanError = {
+      code: "archive_too_large",
+      message: "too big",
+      retryable: false,
+    };
 
     const refined = await refineStagedFailure(
       env,

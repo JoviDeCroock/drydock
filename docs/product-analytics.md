@@ -10,7 +10,7 @@ successful public diff reads. Marketing page views and channel attribution were
 removed — they measured traffic rather than work done, and every event they
 produced sat in the hot path of serving a static document.
 
-Implementation: `server/lib/platform/analytics.ts`. Binding: `PRODUCT_ANALYTICS`
+Implementation: `server/lib/analytics.ts`. Binding: `PRODUCT_ANALYTICS`
 (Cloudflare Analytics Engine, dataset `drydock_product_events`).
 
 ## Why this exists

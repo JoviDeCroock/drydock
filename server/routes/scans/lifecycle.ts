@@ -42,7 +42,7 @@ import { PublicDiffError } from "../../lib/public-diff/error";
 import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
 import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list-cursor";
-import { recordProductEvent } from "../../lib/platform/analytics";
+import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
 

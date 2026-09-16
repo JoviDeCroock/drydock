@@ -163,7 +163,11 @@ async function connectNpmThroughSettings(page: Page) {
   await expect(page.getByText("valid", { exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
-async function createScan(page: Page, stageId: string): Promise<{ scan: { id: string } }> {
+interface CreateScanBody {
+  scan: { id: string };
+}
+
+async function createScan(page: Page, stageId: string): Promise<CreateScanBody> {
   const { status, body } = await evaluateOnStablePage(
     page,
     async (inputStageId) => {
@@ -172,12 +176,13 @@ async function createScan(page: Page, stageId: string): Promise<{ scan: { id: st
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ stageId: inputStageId }),
       });
-      return { status: response.status, body: await response.json().catch(() => null) };
+      const body = (await response.json().catch(() => null)) as CreateScanBody | null;
+      return { status: response.status, body };
     },
     stageId,
   );
   expect(status, `${stageId} accepted`).toBe(202);
-  expect(body?.scan?.id, `${stageId} scan id`).toBeTruthy();
+  if (!body?.scan?.id) throw new Error(`${stageId} was accepted without a scan id`);
   return body;
 }
 
@@ -210,9 +215,11 @@ async function pollScanUntilTerminal(
   }
 }
 
+// Playwright does not export PageFunction, so the callback type is read off
+// the two-type-parameter `evaluate` overload via an instantiation expression.
 async function evaluateOnStablePage<Arg, Result>(
   page: Page,
-  pageFunction: (arg: Arg) => Promise<Result>,
+  pageFunction: Parameters<typeof page.evaluate<Result, Arg>>[0],
   arg: Arg,
 ): Promise<Result> {
   for (let attempt = 0; attempt < 3; attempt++) {

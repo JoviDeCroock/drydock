@@ -10,7 +10,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { parsePersistedAiReview } from "../lib/ai-review/contract";
 import { normalizeScanRiskBreakdown } from "../lib/review/risk";
 import { scanEcosystem } from "../lib/public-feed";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import { getScan } from "./scan-detail";
