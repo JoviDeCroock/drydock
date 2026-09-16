@@ -1,9 +1,10 @@
 import { readStreamBounded } from "../tar-parser.js";
+import { parseContentLength } from "../platform/bounded-body";
 import { sha256Hex } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { getInstallationAccessToken } from "./api";
 import type { GithubAppConfig } from "./config";
-import { githubInstallationHeaders, nextLink } from "./http";
+import { GITHUB_USER_AGENT, githubHeaders, paginate } from "./client";
 import { extractOuterZipEntries } from "./artifacts-zip";
 
 // ── Public surface ───────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ export const MAX_OUTER_ZIP_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_ARTIFACT_ZIP_BYTES = 50 * 1024 * 1024;
 // Production consumes large releases one shard at a time. The whole release
 // still has a work budget, but it no longer needs to fit in the parent Worker's
-// heap the way the legacy raw-byte collector does.
+// heap the way the raw-byte collector (`fetchReleaseBundleWithToken`) does.
 const MAX_STREAMED_TOTAL_ARTIFACT_ZIP_BYTES = 768 * 1024 * 1024;
 export const MAX_OUTER_ZIP_ENTRIES = 256;
 export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
@@ -349,59 +350,63 @@ async function listRunArtifacts(
   artifactNamePrefix?: string,
 ): Promise<RunArtifactRef[]> {
   const [owner, repo] = repositoryFullName.split("/");
-  let url: string | null =
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
-    `/actions/runs/${runId}/artifacts?per_page=100`;
   const found: RunArtifactRef[] = [];
-  for (let page = 0; page < MAX_LIST_PAGES && url; page += 1) {
-    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
-    if (response.status === 404) {
-      throw new WorkflowArtifactError(
-        "bundle_unavailable",
-        `workflow run ${runId} not found in ${repositoryFullName}`,
-      );
-    }
-    if (!response.ok) {
-      throw new WorkflowArtifactError(
-        "bundle_unavailable",
-        `list artifacts failed (${response.status})`,
-      );
-    }
-    const data = (await response.json()) as {
-      artifacts?: Array<{
-        id?: number;
-        name?: string;
-        size_in_bytes?: number;
-        expired?: boolean;
-      }>;
-    };
-    for (const candidate of data.artifacts ?? []) {
-      if (
-        typeof candidate.id === "number" &&
-        candidate.id > 0 &&
-        typeof candidate.name === "string" &&
-        matchesArtifactName(candidate.name, artifactName, artifactNamePrefix) &&
-        candidate.expired !== true
-      ) {
-        found.push({
-          id: candidate.id,
-          name: candidate.name,
-          sizeInBytes: typeof candidate.size_in_bytes === "number" ? candidate.size_in_bytes : null,
-          expired: false,
-        });
-        if (found.length > MAX_RUN_ARTIFACTS) {
-          throw new WorkflowArtifactError(
-            "bundle_too_large",
-            `workflow run has more than ${MAX_RUN_ARTIFACTS} matching artifacts`,
-          );
+  await paginate(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
+      `/actions/runs/${runId}/artifacts?per_page=100`,
+    {
+      headers: githubHeaders(token),
+      maxPages: MAX_LIST_PAGES,
+      // Only follow pagination that stays on the credentialed GitHub API host so
+      // a forged `Link` header cannot redirect the token-bearing listing call.
+      followNext: (next) => evaluateGithubArtifactEgress(next).host === "api.github.com",
+    },
+    async (response) => {
+      if (response.status === 404) {
+        throw new WorkflowArtifactError(
+          "bundle_unavailable",
+          `workflow run ${runId} not found in ${repositoryFullName}`,
+        );
+      }
+      if (!response.ok) {
+        throw new WorkflowArtifactError(
+          "bundle_unavailable",
+          `list artifacts failed (${response.status})`,
+        );
+      }
+      const data = (await response.json()) as {
+        artifacts?: Array<{
+          id?: number;
+          name?: string;
+          size_in_bytes?: number;
+          expired?: boolean;
+        }>;
+      };
+      for (const candidate of data.artifacts ?? []) {
+        if (
+          typeof candidate.id === "number" &&
+          candidate.id > 0 &&
+          typeof candidate.name === "string" &&
+          matchesArtifactName(candidate.name, artifactName, artifactNamePrefix) &&
+          candidate.expired !== true
+        ) {
+          found.push({
+            id: candidate.id,
+            name: candidate.name,
+            sizeInBytes:
+              typeof candidate.size_in_bytes === "number" ? candidate.size_in_bytes : null,
+            expired: false,
+          });
+          if (found.length > MAX_RUN_ARTIFACTS) {
+            throw new WorkflowArtifactError(
+              "bundle_too_large",
+              `workflow run has more than ${MAX_RUN_ARTIFACTS} matching artifacts`,
+            );
+          }
         }
       }
-    }
-    const next = nextLink(response.headers.get("link"));
-    // Only follow pagination that stays on the credentialed GitHub API host so
-    // a forged `Link` header cannot redirect the token-bearing listing call.
-    url = next && evaluateGithubArtifactEgress(next).host === "api.github.com" ? next : null;
-  }
+    },
+  );
   if (found.length > 0) {
     return found.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
   }
@@ -448,12 +453,9 @@ async function downloadArtifactZip(
         "artifact download target is not on the egress allowlist",
       );
     }
-    const headers: Record<string, string> = { "User-Agent": "drydock-app" };
-    if (policy.credentialed) {
-      headers.Authorization = `Bearer ${token}`;
-      headers.Accept = "application/vnd.github+json";
-      headers["X-GitHub-Api-Version"] = "2022-11-28";
-    }
+    const headers = policy.credentialed
+      ? githubHeaders(token)
+      : { "User-Agent": GITHUB_USER_AGENT };
     const hopResponse = await reliableFetch(target, {
       headers,
       redirect: "manual",
@@ -509,14 +511,4 @@ async function downloadArtifactZip(
     }
     throw err;
   }
-}
-
-// ── Shared helpers ───────────────────────────────────────────────────────────
-
-function parseContentLength(value: string | null): number | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) return null;
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isSafeInteger(parsed) ? parsed : null;
 }

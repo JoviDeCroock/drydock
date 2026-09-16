@@ -1,9 +1,5 @@
-import {
-  assertPublicHttpsUrl,
-  readBoundedJson,
-  reliablePublicHttpsFetch,
-  type AtpmRepoIdentity,
-} from "./identity";
+import { assertPublicHttpsUrl, reliablePublicHttpsFetch, type AtpmRepoIdentity } from "./identity";
+import { readBoundedJson } from "../../platform/bounded-body";
 import type { AtpmProvenance } from "./provenance";
 import { PublicDiffError } from "../../public-diff/error";
 
@@ -53,10 +49,9 @@ export async function fetchAtpmTrustPublisher(
     throw new PublicDiffError("trusted publisher record fetch failed", 502);
   }
 
-  const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(
-    response,
-    MAX_TRUST_PUBLISHER_BYTES,
-  );
+  const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(response, {
+    maxBytes: MAX_TRUST_PUBLISHER_BYTES,
+  });
   if (body?.error === "RecordNotFound" || response.status === 404) return null;
   if (!response.ok || !body) {
     throw new PublicDiffError("trusted publisher record fetch failed", 502);

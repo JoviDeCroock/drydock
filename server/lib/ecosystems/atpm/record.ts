@@ -3,10 +3,10 @@ import { isRecord } from "../../platform/guards";
 import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
-  readBoundedJson,
   reliablePublicHttpsFetch,
   type AtpmRepoIdentity,
 } from "./identity";
+import { readBoundedJson } from "../../platform/bounded-body";
 import {
   readAtpmAttestation,
   verifyAtpmProvenance,
@@ -134,10 +134,9 @@ export async function fetchAtpmPackageRecord(
     throw new PublicDiffError("package record fetch failed", 502);
   }
 
-  const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(
-    response,
-    MAX_RECORD_BYTES,
-  );
+  const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(response, {
+    maxBytes: MAX_RECORD_BYTES,
+  });
   // A PDS answers "no such record" with 400 RecordNotFound, not 404, so the
   // status alone cannot distinguish a missing package from a broken request.
   if (body?.error === "RecordNotFound" || response.status === 404) {

@@ -1,5 +1,5 @@
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
-import { githubAppHeaders, githubInstallationHeaders, nextLink } from "./http";
+import { githubHeaders, paginate } from "./client";
 import { generateGithubAppJwt } from "./jwt";
 import { parseRepositoryFullName } from "./validation";
 import { reliableFetch } from "../platform/reliable-fetch";
@@ -20,7 +20,7 @@ export async function fetchInstallationMetadata(
   const response = await reliableFetch(
     `https://api.github.com/app/installations/${installationId}`,
     {
-      headers: githubAppHeaders(jwt),
+      headers: githubHeaders(jwt),
     },
   );
   if (!response.ok) {
@@ -63,7 +63,7 @@ export async function getInstallationAccessToken(
     `https://api.github.com/app/installations/${installationId}/access_tokens`,
     {
       method: "POST",
-      headers: githubAppHeaders(jwt),
+      headers: githubHeaders(jwt),
       retryMethods: ["POST"],
     },
   );
@@ -105,7 +105,7 @@ export async function fetchRepository(
   const token = await getInstallationAccessToken(config, installationId);
   const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
   const response = await reliableFetch(`https://api.github.com/repos/${repositoryPath}`, {
-    headers: githubInstallationHeaders(token),
+    headers: githubHeaders(token),
   });
   if (response.status === 404) {
     throw new GithubAppValidationError(
@@ -140,42 +140,37 @@ export async function listInstallationRepositories(
 ): Promise<GithubRepositoryRef[]> {
   const token = await getInstallationAccessToken(config, installationId);
   const repositories: GithubRepositoryRef[] = [];
-  let url = "https://api.github.com/installation/repositories?per_page=100";
-
-  const seenUrls = new Set<string>();
-  while (url) {
-    if (seenUrls.has(url)) {
-      throw new GithubAppValidationError(
-        "repository_not_accessible",
-        "installation repositories lookup returned a repeated pagination link",
-      );
-    }
-    seenUrls.add(url);
-    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new GithubAppValidationError(
-        "repository_not_accessible",
-        `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
-      );
-    }
-    const data = (await response.json()) as {
-      repositories?: {
-        id?: number;
-        full_name?: string;
-        default_branch?: string;
-      }[];
-    };
-    for (const repo of data.repositories ?? []) {
-      if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
-      repositories.push({
-        id: repo.id,
-        fullName: repo.full_name,
-        defaultBranch: typeof repo.default_branch === "string" ? repo.default_branch : undefined,
-      });
-    }
-    url = nextLink(response.headers.get("link"));
-  }
+  // 50 pages × 100 = 5,000 repositories. An installation is one account, and a
+  // picker listing more than that is unusable anyway; the cap exists so a
+  // pathological account cannot pin a Worker invocation on pagination.
+  await paginate(
+    "https://api.github.com/installation/repositories?per_page=100",
+    { headers: githubHeaders(token), maxPages: 50 },
+    async (response) => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `installation repositories lookup failed (${response.status}): ${text.slice(0, 200)}`,
+        );
+      }
+      const data = (await response.json()) as {
+        repositories?: {
+          id?: number;
+          full_name?: string;
+          default_branch?: string;
+        }[];
+      };
+      for (const repo of data.repositories ?? []) {
+        if (typeof repo.id !== "number" || typeof repo.full_name !== "string") continue;
+        repositories.push({
+          id: repo.id,
+          fullName: repo.full_name,
+          defaultBranch: typeof repo.default_branch === "string" ? repo.default_branch : undefined,
+        });
+      }
+    },
+  );
 
   repositories.sort((a, b) => a.fullName.localeCompare(b.fullName));
   return repositories;
@@ -200,33 +195,33 @@ export async function listRepositoryEnvironments(
   const token = await getInstallationAccessToken(config, installationId);
   const repositoryPath = `${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
   const environments: GithubEnvironmentRef[] = [];
-  let url = `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`;
-
-  for (let page = 0; page < 10 && url; page += 1) {
-    const response = await reliableFetch(url, { headers: githubInstallationHeaders(token) });
-    if (response.status === 404) {
-      throw new GithubAppValidationError(
-        "repository_not_accessible",
-        `repository ${fullName} is not accessible to installation ${installationId}`,
-      );
-    }
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new GithubAppValidationError(
-        "repository_not_accessible",
-        `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
-      );
-    }
-    const data = (await response.json()) as {
-      environments?: { name?: string }[];
-    };
-    for (const environment of data.environments ?? []) {
-      if (typeof environment.name === "string" && environment.name) {
-        environments.push({ name: environment.name });
+  await paginate(
+    `https://api.github.com/repos/${repositoryPath}/environments?per_page=100`,
+    { headers: githubHeaders(token), maxPages: 10 },
+    async (response) => {
+      if (response.status === 404) {
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `repository ${fullName} is not accessible to installation ${installationId}`,
+        );
       }
-    }
-    url = nextLink(response.headers.get("link"));
-  }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new GithubAppValidationError(
+          "repository_not_accessible",
+          `environments lookup for ${fullName} failed (${response.status}): ${text.slice(0, 200)}`,
+        );
+      }
+      const data = (await response.json()) as {
+        environments?: { name?: string }[];
+      };
+      for (const environment of data.environments ?? []) {
+        if (typeof environment.name === "string" && environment.name) {
+          environments.push({ name: environment.name });
+        }
+      }
+    },
+  );
 
   return environments;
 }

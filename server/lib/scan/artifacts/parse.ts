@@ -23,6 +23,7 @@ import {
 } from "../../review";
 import { parsePersistedAiReview } from "../../ai-review/contract";
 import { displayedAiResult, type AiReview } from "../../ai-review/types";
+import { parseJsonObject } from "../json";
 
 export function parseManifest(text: string): ScanArtifactsManifest | null {
   const parsed = parseJsonObject(text);
@@ -279,13 +280,4 @@ export function projectAiReviewFindings(review: AiReview | null | undefined): Fi
 
 function aiFindingRowsFromReport(value: unknown): Finding[] {
   return projectAiReviewFindings(parsePersistedAiReview(value));
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }

@@ -1,17 +1,14 @@
-import { and, eq } from "drizzle-orm";
 import { mapWithConcurrency } from "./platform/concurrency";
 import { type AppDb, createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationOwnerUserId } from "../db/organizations";
 import { createScanJob, discardGateScans, markScanFailed } from "../db/scans";
-import { githubAppInstallations } from "../db/schema";
 import { WorkflowArtifactError } from "./github-app/artifacts";
 import {
   type GithubAppConfig,
   GithubAppConfigError,
   readGithubAppConfig,
 } from "./github-app/config";
-import { postDeploymentProtectionDecision } from "./github-app/webhook";
 import {
   type WorkflowGateRecord,
   attachScanToGate,
@@ -27,6 +24,7 @@ import {
   emitOperationalEvent,
 } from "./platform/observability";
 import { recordProductEvent } from "./platform/analytics";
+import { deliverGateDecision, redeliverGateDecision } from "./workflow-gates/decision-delivery";
 import {
   type PreparedGatePackage,
   type PreparedGateRelease,
@@ -571,77 +569,6 @@ async function rejectGateForArtifactError(
     type: "github_workflow_gate.rejected",
     metadata: { gateId: gate.id, reason: error.code },
   });
-}
-
-/**
- * Re-delivery of a gate that a previous delivery already decided. Callback
- * errors are rethrown so the queue can retry until GitHub receives the durable
- * decision.
- */
-async function redeliverGateDecision(
-  config: GithubAppConfig,
-  db: AppDb,
-  gate: WorkflowGateRecord,
-): Promise<void> {
-  try {
-    await deliverGateDecision(config, db, gate);
-    emitOperationalEvent("info", "github_workflow_gate.decision_redelivered", {
-      organizationId: gate.organizationId,
-      gateId: gate.id,
-      decision: gate.decision,
-    });
-  } catch (err) {
-    emitOperationalEvent("warn", "github_workflow_gate.redelivery_failed", {
-      organizationId: gate.organizationId,
-      gateId: gate.id,
-      error: describeOperationalError(err),
-    });
-    throw err;
-  }
-}
-
-async function deliverGateDecision(
-  config: GithubAppConfig,
-  db: AppDb,
-  gate: WorkflowGateRecord,
-): Promise<void> {
-  if (gate.decision !== "approved" && gate.decision !== "rejected") {
-    throw new Error(`gate ${gate.id} has no decision to deliver`);
-  }
-  const installationExternalId = await getInstallationExternalId(
-    db,
-    gate.installationRowId,
-    gate.organizationId,
-  );
-  if (!installationExternalId) {
-    throw new Error(`installation row ${gate.installationRowId} missing for gate ${gate.id}`);
-  }
-  await postDeploymentProtectionDecision({
-    config,
-    installationExternalId,
-    callbackUrl: gate.deploymentCallbackUrl,
-    environment: gate.environment,
-    state: gate.decision,
-    comment: gate.decisionComment ?? "",
-  });
-}
-
-async function getInstallationExternalId(
-  db: AppDb,
-  installationRowId: string,
-  organizationId: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({ installationId: githubAppInstallations.installationId })
-    .from(githubAppInstallations)
-    .where(
-      and(
-        eq(githubAppInstallations.id, installationRowId),
-        eq(githubAppInstallations.organizationId, organizationId),
-      ),
-    )
-    .limit(1);
-  return row?.installationId ?? null;
 }
 
 export function buildReportUrl(env: Cloudflare.Env, scanId: string | null): string | null {

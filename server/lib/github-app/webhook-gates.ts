@@ -438,31 +438,7 @@ export async function markGateErrored(
   return row ? readGateRow(row) : null;
 }
 
-function readGateRow(row: {
-  id: string;
-  organizationId: string;
-  installationRowId: string;
-  releaseTargetId: string;
-  deliveryId: string;
-  repositoryId: number;
-  repositoryFullName: string;
-  environment: string;
-  runId: number;
-  deploymentId: number | null;
-  deploymentCallbackUrl: string;
-  eventAction: string;
-  status: string;
-  decision: string | null;
-  decisionComment: string | null;
-  reportUrl: string | null;
-  scanId: string | null;
-  reviewStartedAt: Date | string | number | null;
-  failureReason: string | null;
-  requestedAt: Date | string | number;
-  decidedAt: Date | string | number | null;
-  createdAt: Date | string | number;
-  updatedAt: Date | string | number;
-}): WorkflowGateRecord {
+function readGateRow(row: typeof githubWorkflowGates.$inferSelect): WorkflowGateRecord {
   return {
     id: row.id,
     organizationId: row.organizationId,

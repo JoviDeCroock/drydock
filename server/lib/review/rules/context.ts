@@ -1,6 +1,8 @@
 import { isRootGypPath, normalizeStringRecord } from "../../tar-parser.js";
 import { diffLines } from "diff";
-import type { CodePatternSet, DiffEntry, FileRecord, PackageJsonSummary } from "..";
+import type { DiffEntry } from "../diff";
+import type { PackageJsonSummary } from "../serialize";
+import type { CodePatternSet, FileRecord } from "../types";
 import { codePatternsFor, type JS_PATTERN_SET } from "./patterns";
 import {
   consumerReachablePaths,

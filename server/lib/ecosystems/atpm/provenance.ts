@@ -12,7 +12,8 @@ import {
   OID_SOURCE_REPO_VISIBILITY,
   REKOR_LOG_KEYS,
 } from "./trust-roots";
-import { hexEncode } from "../../platform/crypto-utils";
+import { hexDecode, hexEncode, timingSafeEqual } from "../../platform/crypto-utils";
+import { isRecord } from "../../platform/guards";
 import {
   decodeBase64,
   decodeDerString,
@@ -664,9 +665,9 @@ export async function transparencyLogBodyMatches(
       const encodedSignature = decodeBase64Text(bodySignature.sig);
       const certificatePem = decodeBase64Text(bodySignature.publicKey);
       return (
-        bytesEqual(signature, decodeBase64(encodedSignature)) &&
-        bytesEqual(payloadDigest, hexToBytes(payloadHash.value)) &&
-        bytesEqual(certificate, pemToDer(certificatePem))
+        timingSafeEqual(signature, decodeBase64(encodedSignature)) &&
+        timingSafeEqual(payloadDigest, sha256HexToBytes(payloadHash.value)) &&
+        timingSafeEqual(certificate, pemToDer(certificatePem))
       );
     } catch {
       return false;
@@ -689,8 +690,8 @@ export async function transparencyLogBodyMatches(
     }
     try {
       return (
-        bytesEqual(signature, decodeBase64(bodySignature.signature)) &&
-        bytesEqual(payloadDigest, hexToBytes(payloadHash.value)) &&
+        timingSafeEqual(signature, decodeBase64(bodySignature.signature)) &&
+        timingSafeEqual(payloadDigest, sha256HexToBytes(payloadHash.value)) &&
         rekorVerifierMatchesCertificate(bodySignature.verifier, certificate)
       );
     } catch {
@@ -716,9 +717,9 @@ export async function transparencyLogBodyMatches(
     }
     try {
       return (
-        bytesEqual(signature, decodeBase64(bodySignature.content)) &&
-        bytesEqual(payloadDigest, decodeBase64(payloadHash.digest)) &&
-        bytesEqual(certificate, decodeBase64(x509Certificate.rawBytes))
+        timingSafeEqual(signature, decodeBase64(bodySignature.content)) &&
+        timingSafeEqual(payloadDigest, decodeBase64(payloadHash.digest)) &&
+        timingSafeEqual(certificate, decodeBase64(x509Certificate.rawBytes))
       );
     } catch {
       return false;
@@ -746,9 +747,9 @@ export async function transparencyLogBodyMatches(
       signedDigestInput.set(signedBytes);
       const signedDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", signedDigestInput));
       return (
-        bytesEqual(signature, decodeBase64(bodySignature.content)) &&
-        bytesEqual(signedDigest, decodeBase64(data.digest)) &&
-        bytesEqual(certificate, decodeBase64(x509Certificate.rawBytes))
+        timingSafeEqual(signature, decodeBase64(bodySignature.content)) &&
+        timingSafeEqual(signedDigest, decodeBase64(data.digest)) &&
+        timingSafeEqual(certificate, decodeBase64(x509Certificate.rawBytes))
       );
     } catch {
       return false;
@@ -765,11 +766,11 @@ function rekorVerifierMatchesCertificate(verifierBase64: string, certificate: Ui
   } catch {
     return false;
   }
-  if (bytesEqual(verifier, certificate)) return true;
+  if (timingSafeEqual(verifier, certificate)) return true;
 
   try {
     const verifierPem = new TextDecoder("utf-8", { fatal: true }).decode(verifier);
-    return bytesEqual(pemToDer(verifierPem), certificate);
+    return timingSafeEqual(pemToDer(verifierPem), certificate);
   } catch {
     return false;
   }
@@ -779,23 +780,14 @@ function decodeBase64Text(value: string): string {
   return new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64(value));
 }
 
-function hexToBytes(value: string): Uint8Array {
-  if (!/^[0-9a-fA-F]{64}$/.test(value)) throw new Error("invalid SHA-256 digest");
-  const bytes = new Uint8Array(32);
-  for (let i = 0; i < bytes.length; i++)
-    bytes[i] = Number.parseInt(value.slice(i * 2, i * 2 + 2), 16);
+// Rekor bodies carry SHA-256 digests as hex; anything else is a malformed
+// entry, and callers turn the throw into a failed verification.
+function sha256HexToBytes(value: string): Uint8Array {
+  const bytes = hexDecode(value);
+  if (!bytes || bytes.length !== 32) throw new Error("invalid SHA-256 digest");
   return bytes;
 }
 
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let i = 0; i < left.length; i++) difference |= left[i] ^ right[i];
-  return difference === 0;
-}
-
 function asObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return isRecord(value) ? value : null;
 }

@@ -17,7 +17,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.
-- `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, and `scan-risk`.
+- `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, `scan-registry-status`, `scan-overview`, `scan-package-releases`, and `scan-risk`; `scan-share` (public share and threat-feed reads) is imported directly; `enums.ts`, `scan-status.ts`, and `scan-query.ts` are the leaves those modules share instead of importing each other.
 
 ## UI, migrations, and tests
 
@@ -25,6 +25,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `drizzle/` contains migrations generated from `server/db/schema.ts`.
 - `test/` contains Vitest logic/Worker suites and Playwright fake-registry fixtures.
 - Routes, auth, organization scoping, rate limits, D1, queues, and scan lifecycle belong in `test/workers/`.
+- New tests are `.test.ts` (existing `.test.mjs` files stay; no mass rename). Pure-logic suites go in `test/` even when they exercise `server/`; only suites that need Miniflare bindings belong in `test/workers/`. Worker fixtures come from `test/workers/helpers/` (`seed.ts`, `app.ts`, `auth-http.ts`, `gate.ts`) and archive/fetch doubles from `test/helpers/`; `test/test-helper-invariants.test.mjs` rejects local copies.
 - Sandbox/archive parsing, npm forwarding, redaction, and deterministic rules use invariant or regression tests.
 - Registry behavior, staged discovery, workflow gates, and browser-visible scan flows use `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
 

@@ -1,4 +1,4 @@
-import type { AdapterBroker, PackageAdapter } from "../ecosystems/package-adapter";
+import type { AnyPackageAdapter } from "../ecosystems/package-adapter";
 import type { FileRecord, PackageJsonSummary } from "../review";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 
@@ -30,11 +30,15 @@ export interface WorkflowGateAdapter {
   readonly artifactName: string;
 
   readonly shardedArtifactNames?: boolean;
-  readonly packageAdapter: PackageAdapter<unknown, AdapterBroker>;
+  readonly packageAdapter: AnyPackageAdapter;
 
   classifyArtifact(path: string): WorkflowArtifactKind | null;
 
-  detectArtifact(contents: ArchiveContents): WorkflowArtifactKind | null;
+  /**
+   * Claim an extension-ambiguous archive (`.tgz` is both npm and sdist) by
+   * content. Ecosystems whose artifacts have an unambiguous extension omit it.
+   */
+  detectArtifact?(contents: ArchiveContents): WorkflowArtifactKind | null;
 
   // Artifacts contain parsed evidence only; no installation token reaches adapters.
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[];

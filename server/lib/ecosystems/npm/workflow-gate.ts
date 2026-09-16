@@ -1,6 +1,7 @@
 import { buildNpmReleaseManifest, npmGateAdapter } from "./gate-review";
-import type { AdapterBroker, PackageAdapter } from "../package-adapter";
+import { erasePackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
+import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import type {
   ArchiveContents,
   ParsedGateArtifact,
@@ -29,7 +30,7 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
   // Matches the `actions/upload-artifact` name in the documented release flow,
   // but discovery does not require it — auto-detect inspects every upload.
   artifactName: "npm-release-candidates",
-  packageAdapter: npmGateAdapter as unknown as PackageAdapter<unknown, AdapterBroker>,
+  packageAdapter: erasePackageAdapter(npmGateAdapter),
 
   classifyArtifact(path: string): WorkflowArtifactKind | null {
     const lower = path.toLowerCase();
@@ -42,89 +43,49 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
     return contents.packageJson?.name ? "tarball" : null;
   },
 
+  // Tarballs are grouped by `package.json` name (a monorepo's `npm run
+  // pack:all` → `dist/*.tgz`). A single npm package version is exactly one
+  // tarball, so a second tarball claiming the same name is rejected.
   prepareReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
-    return deriveNpmReleaseCandidates(artifacts);
+    return groupReleaseCandidates(artifacts, {
+      identity(artifact) {
+        const name = artifact.packageJson?.name;
+        const version = artifact.packageJson?.version;
+        if (!name || !version) {
+          throw new WorkflowArtifactError(
+            "artifact_identity_missing",
+            `${artifact.path} does not expose a package.json name/version`,
+          );
+        }
+        return { key: name, name, version };
+      },
+      allowMultiplePerGroup: false,
+      duplicateMessage: (identity) =>
+        `package ${identity.name} has more than one tarball in this release`,
+      buildManifest: (identity, [artifact]) =>
+        buildManifestOrFail(
+          () =>
+            buildNpmReleaseManifest(identity.name, identity.version, [
+              { path: artifact.path, sha256: artifact.sha256 },
+            ]),
+          "derived release identity is not valid",
+        ),
+      candidate: (manifest, [artifact]) => ({
+        ecosystem: "npm",
+        pipelineInput: {
+          manifest,
+          artifact: {
+            path: artifact.path,
+            sha256: artifact.sha256,
+            files: artifact.files,
+            packageJson: artifact.packageJson,
+            ...(artifact.suspiciousEntries
+              ? { suspiciousEntries: artifact.suspiciousEntries }
+              : {}),
+          },
+        },
+        package: { name: manifest.package, version: manifest.version },
+      }),
+    });
   },
 };
-
-interface NpmGroup {
-  name: string;
-  version: string;
-  artifacts: ParsedGateArtifact[];
-}
-
-/**
- * Split the bundle's npm tarballs into one candidate per distinct package.
- *
- * A monorepo publishes several packages from one release (e.g. `npm run
- * pack:all` → `dist/*.tgz`), so tarballs are grouped by their `package.json`
- * name and each group becomes its own candidate → its own scan against its own
- * baseline. Every tarball must expose a `name`/`version`; tarballs sharing a
- * name must agree on the version (and a single npm package version is exactly
- * one tarball), so a smuggled or version-skewed tarball is rejected rather than
- * silently shipped.
- */
-function deriveNpmReleaseCandidates(artifacts: ParsedGateArtifact[]): PreparedReleaseCandidate[] {
-  const groups = new Map<string, NpmGroup>();
-  for (const artifact of artifacts) {
-    const name = artifact.packageJson?.name;
-    const version = artifact.packageJson?.version;
-    if (!name || !version) {
-      throw new WorkflowArtifactError(
-        "artifact_identity_missing",
-        `${artifact.path} does not expose a package.json name/version`,
-      );
-    }
-    const group = groups.get(name);
-    if (!group) {
-      groups.set(name, { name, version, artifacts: [artifact] });
-      continue;
-    }
-    if (version !== group.version) {
-      throw new WorkflowArtifactError(
-        "artifact_identity_inconsistent",
-        `${artifact.path} version ${version} disagrees with ${group.version} for ${name}`,
-      );
-    }
-    // A single published npm version maps to exactly one tarball; two tarballs
-    // claiming the same name+version is ambiguous and must not ship.
-    throw new WorkflowArtifactError(
-      "artifact_identity_inconsistent",
-      `package ${name} has more than one tarball in this release`,
-    );
-  }
-
-  // `artifacts` is non-empty: the resolver throws `bundle_empty` for a bundle
-  // with no reviewable artifacts, so `groups` always has at least one package.
-  return [...groups.values()].map((group) => {
-    const artifact = group.artifacts[0];
-    const manifest = buildManifest(group.name, group.version, artifact);
-    return {
-      ecosystem: "npm",
-      pipelineInput: {
-        manifest,
-        artifact: {
-          path: artifact.path,
-          sha256: artifact.sha256,
-          files: artifact.files,
-          packageJson: artifact.packageJson,
-          ...(artifact.suspiciousEntries ? { suspiciousEntries: artifact.suspiciousEntries } : {}),
-        },
-      },
-      package: { name: manifest.package, version: manifest.version },
-    };
-  });
-}
-
-function buildManifest(name: string, version: string, artifact: ParsedGateArtifact) {
-  try {
-    return buildNpmReleaseManifest(name, version, [
-      { path: artifact.path, sha256: artifact.sha256 },
-    ]);
-  } catch (err) {
-    throw new WorkflowArtifactError(
-      "artifact_identity_missing",
-      err instanceof Error ? err.message : "derived release identity is not valid",
-    );
-  }
-}

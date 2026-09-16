@@ -5,7 +5,7 @@ import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
 import { pypiPublicDiff } from "./pypi/public-diff";
 import { pypiWorkflowGateAdapter } from "./pypi/workflow-gate";
 import { vscodeWorkflowGateAdapter } from "./vscode/workflow-gate";
-import type { AdapterBroker, PackageAdapter } from "./package-adapter";
+import { type AnyPackageAdapter, erasePackageAdapter } from "./package-adapter";
 import { publishedPairAdapter, type PublishedPairAdapter } from "./published-pair";
 import { ECOSYSTEM_LABELS } from "./labels";
 import type { EcosystemId, EcosystemModule } from "./types";
@@ -16,7 +16,7 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
   npm: {
     id: "npm",
     label: ECOSYSTEM_LABELS.npm,
-    staged: npmAdapter as unknown as PackageAdapter<never, AdapterBroker>,
+    staged: erasePackageAdapter(npmAdapter),
     gate: npmWorkflowGateAdapter,
     publicDiff: npmPublicDiff,
     published: publishedPairAdapter(npmPublicDiff),
@@ -69,7 +69,7 @@ export function getPublishedAdapter(ecosystem: string): PublishedPairAdapter | u
   return getEcosystem(ecosystem)?.published;
 }
 
-export function getStagedAdapter(ecosystem: string): PackageAdapter<never, AdapterBroker> {
+export function getStagedAdapter(ecosystem: string): AnyPackageAdapter {
   const adapter = getEcosystem(ecosystem)?.staged;
   if (!adapter) throw new UnsupportedEcosystemError(ecosystem);
   return adapter;
@@ -112,7 +112,9 @@ export function detectArchiveEcosystems(
 ): { ecosystem: string; kind: string }[] {
   const claims: { ecosystem: string; kind: string }[] = [];
   for (const adapter of gateAdapters()) {
-    const kind = adapter.detectArtifact(contents);
+    // An adapter without content detection only claims by extension (VSIX),
+    // so it never competes for an extension-ambiguous archive.
+    const kind = adapter.detectArtifact?.(contents);
     if (kind) claims.push({ ecosystem: adapter.ecosystem, kind });
   }
   return claims;

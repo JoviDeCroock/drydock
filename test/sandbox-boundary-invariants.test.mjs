@@ -62,12 +62,13 @@ describe("sandbox credential invariants", () => {
   });
 
   test("every env block handed to the sandbox loader carries only allowlisted keys", () => {
-    // The provisioning side of the same boundary: each `env: { … }` object in
-    // the LOADER.load calls must stay within the allowlist, so a token can not
-    // be handed to the sandbox under a fresh name either.
+    // The provisioning side of the same boundary: the `env: { … }` object in
+    // the LOADER.load call (one site, `loadSandbox`, serves both the inline and
+    // URL paths) must stay within the allowlist, so a token can not be handed
+    // to the sandbox under a fresh name either.
     const source = readFileSync(path.join(SERVER_DIR, "lib/sandbox.ts"), "utf8");
     const blocks = [...source.matchAll(/\benv:\s*\{([^}]*)\}/g)];
-    expect(blocks.length).toBeGreaterThanOrEqual(2);
+    expect(blocks.length).toBe(1);
     for (const [, block] of blocks) {
       const keys = [...block.matchAll(/(?:^|\n)\s*([A-Za-z_$][\w$]*)\s*:/g)].map(
         (match) => match[1],

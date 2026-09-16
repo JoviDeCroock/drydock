@@ -1,5 +1,5 @@
-import { SECRET_PATTERNS } from "./rules";
-import type { FileRecord, Finding } from "./";
+import { SECRET_PATTERNS } from "./rules/patterns";
+import type { FileRecord, Finding } from "./types";
 
 export function redactText(text: string): string {
   return SECRET_PATTERNS.reduce(

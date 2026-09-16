@@ -10,7 +10,8 @@ import {
 import type { ScanRiskBreakdown } from "../lib/review/risk";
 import type { ScanArtifactMetadata } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
-import { NON_TERMINAL_STATUSES } from "./scan-jobs";
+import type { ScanStatus } from "./enums";
+import { NON_TERMINAL_STATUSES } from "./scan-status";
 import {
   computeRiskSummary,
   countChangedFileEntries,
@@ -26,7 +27,7 @@ export interface PersistedScanInput {
   packageJson?: PackageJsonSummary | null;
   previousPackageJson?: PackageJsonSummary | null;
   risk: string;
-  status: string;
+  status: ScanStatus;
   summary: unknown;
   ai: unknown;
   files: FileRecord[];

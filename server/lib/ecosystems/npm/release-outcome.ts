@@ -13,6 +13,7 @@ import { notifyStagedReleaseApprovable, notifyStagedReleaseAwaitingApproval } fr
 import { allowInsecureLocalRegistry, decryptNpmToken } from "./connection";
 import { mapWithConcurrency } from "../../platform/concurrency";
 import { emitOperationalEvent } from "../../platform/observability";
+import type { ScanErrorCode } from "../../scan/errors";
 import {
   fetchNpmVersionStatus,
   NPM_RELEASE_OUTCOME_FAILURE_CODES,
@@ -224,7 +225,7 @@ const RELEASE_OUTCOME_FAILURES: Partial<Record<NpmVersionStatus, StagedReleaseFa
 };
 
 interface StagedReleaseFailure {
-  code: string;
+  code: ScanErrorCode;
   message: string;
 }
 

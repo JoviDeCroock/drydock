@@ -4,10 +4,10 @@ import { sha256 } from "multiformats/hashes/sha2";
 import {
   assertPublicHttpsUrl,
   BLOB_CID_RE,
-  readBoundedJson,
   reliablePublicHttpsFetch,
   type AtpmRepoIdentity,
 } from "./identity";
+import { readBoundedJson } from "../../platform/bounded-body";
 import {
   ATPM_PROVENANCE_ABSENT,
   ATPM_PROVENANCE_NOT_EVALUATED,
@@ -97,10 +97,9 @@ export async function fetchAtpmStagedVersion(
     throw new PublicDiffError("staged record fetch failed", 502);
   }
 
-  const body = await readBoundedJson<RawStageRecord & { error?: unknown }>(
-    response,
-    MAX_STAGE_RECORD_BYTES,
-  );
+  const body = await readBoundedJson<RawStageRecord & { error?: unknown }>(response, {
+    maxBytes: MAX_STAGE_RECORD_BYTES,
+  });
   if (body?.error === "RecordNotFound" || response.status === 404) {
     // An approved or rejected candidate has had its record deleted, which is
     // indistinguishable from one that never existed and reads the same way.
