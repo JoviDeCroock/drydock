@@ -426,14 +426,14 @@ function DiffControls({
       {showDiffToggles ? (
         <>
           <DiffOptionToggle
-            label="Toggle word diff"
-            description="Highlight changed words"
+            label="Word differences"
+            description="Highlight word differences within changed lines"
             checked={wordDiff.value}
             onChange={(next) => (wordDiff.value = next)}
           />
           <DiffOptionToggle
-            label="Toggle whitespace"
-            description="Ignore whitespace"
+            label="Ignore whitespace"
+            description="Ignore whitespace-only changes"
             checked={ignoreWhitespace.value}
             onChange={(next) => (ignoreWhitespace.value = next)}
           />
