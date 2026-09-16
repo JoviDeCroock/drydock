@@ -230,13 +230,13 @@ export default function ScanDetailPage() {
         })
       : null;
 
-  // The advisory sections below the workbench, named so the collapsed group
-  // still says what is inside it and opens itself when that is worth reading.
-  const reviewNotes = [
-    reviewerSummaryVisible(ai.value) ? "reviewer" : null,
-    hasReleaseConsistencyNote(summary.value.releaseConsistency) ? "release memory" : null,
-    envelope ? "source binding" : null,
-  ].filter((label): label is string => label !== null);
+  // Open the advisory group when it carries context worth reading. Its title
+  // stays quiet; repeating every nested section name in the summary made the
+  // report header harder to scan than its contents.
+  const hasReviewNotes =
+    reviewerSummaryVisible(ai.value) ||
+    hasReleaseConsistencyNote(summary.value.releaseConsistency) ||
+    Boolean(envelope);
 
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
@@ -415,8 +415,7 @@ export default function ScanDetailPage() {
 
             <CollapsibleCard
               title="Review notes"
-              aside={reviewNotes.length ? reviewNotes.join(" · ") : "nothing flagged"}
-              defaultOpen={reviewNotes.length > 0 || verdict.hasSignals}
+              defaultOpen={hasReviewNotes || verdict.hasSignals}
             >
               <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
                 <ReleaseVerdictEvidence verdict={verdict} />

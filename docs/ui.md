@@ -60,7 +60,8 @@ Both review pages lead with the diff:
   then a `CollapsibleCard` of review notes (why the verdict reads that way, the
   AI reviewer's summary, release memory, source binding), then the risk index
   and the manifest sections. The notes open themselves when any of those has
-  something to say and stay shut when the release is clean. The decision button
+  something to say and stay shut when the release is clean; the disclosure
+  header does not repeat the nested section names. The decision button
   lives in the strip on a completed review and in the page header otherwise,
   since a failed gate review renders no strip.
 - **Public report** — verdict card, then the same workbench, then the risk
