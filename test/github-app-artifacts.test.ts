@@ -90,7 +90,7 @@ async function buildFixture(opts?: {
 }): Promise<{
   wheel: FakeWheel;
   wheelSha: string;
-  bundleZip: Uint8Array;
+  bundleZip: Uint8Array<ArrayBuffer>;
 }> {
   const wheel = makeWheelBytes("demo-package", "1.2.0");
   const wheelBytes = opts?.mutateWheel ? opts.mutateWheel(wheel.bytes) : wheel.bytes;
@@ -108,11 +108,11 @@ async function buildFixture(opts?: {
 // ── Fetch stub ───────────────────────────────────────────────────────────────
 
 interface StubOptions {
-  bundleZip: Uint8Array | null;
+  bundleZip: Uint8Array<ArrayBuffer> | null;
   artifacts?: Array<{
     id: number;
     name: string;
-    bundleZip: Uint8Array | null;
+    bundleZip: Uint8Array<ArrayBuffer> | null;
     expired?: boolean;
   }>;
   artifactsResponse?: () => Response;

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("OrgSwitcher trigger updates after organizations load", async ({ page }) => {
-  let releaseOrganizations: (() => void) | null = null;
+  const organizationsGate: { release: (() => void) | null } = { release: null };
 
   await page.route("**/api/auth/get-session", async (route) => {
     await route.fulfill({
@@ -20,7 +20,7 @@ test("OrgSwitcher trigger updates after organizations load", async ({ page }) =>
 
   await page.route("**/api/v1/organizations", async (route) => {
     await new Promise<void>((resolve) => {
-      releaseOrganizations = resolve;
+      organizationsGate.release = resolve;
     });
     await route.fulfill({
       status: 200,
@@ -125,7 +125,7 @@ test("OrgSwitcher trigger updates after organizations load", async ({ page }) =>
   await expect(switcher).toBeVisible();
   await expect(switcher).toContainText("no organizations");
 
-  releaseOrganizations?.();
+  organizationsGate.release?.();
 
   await expect(switcher).toContainText("Acme Widgets");
   await switcher.click();

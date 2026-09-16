@@ -9,10 +9,7 @@ import {
   computeReleaseConsistency,
   type ReleaseConsistency,
 } from "../../server/lib/scan/release-memory";
-import { writeScanArtifacts } from "../../server/lib/scan/artifacts/write";
 import { resolveReleaseConsistency } from "../../server/lib/scan/pipeline-phases";
-import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import type { Finding } from "../../server/lib/review";
 import { scansRoutes } from "../../server/routes/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
@@ -224,23 +221,6 @@ describe("release memory (prior-release consistency)", () => {
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
     const ruleFindings = [spawnFinding("test/spawn.js")];
-    const reportPayload = {
-      version: 1,
-      stageId,
-      ruleFindings,
-      findingAnnotations: [{ findingIndex: 0, diffStatus: "modified", releaseDelta: true }],
-    };
-    const reportJson = canonicalJson(reportPayload);
-    const reportDigest = await sha256Hex(reportJson);
-    const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
-      organizationId: owner.organizationId,
-      scanId,
-      reportJson,
-      reportDigest,
-      files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
-      diff: [{ path: "index.js", status: "modified", flags: [] }],
-      generatedAt: "2026-07-01T00:00:00.000Z",
-    });
     await createScanJob(db, {
       id: scanId,
       stageId,
@@ -260,8 +240,6 @@ describe("release memory (prior-release consistency)", () => {
       files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
       diff: [{ path: "index.js", status: "modified", flags: [] }],
       findings: ruleFindings,
-      report: { version: 1, digest: reportDigest },
-      artifacts,
     });
     await recordScanDecision(db, {
       scanId,

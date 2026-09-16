@@ -2,14 +2,18 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { describe, expect, test } from "vitest";
 import worker from "../../server";
 
+// The worker only ever calls `fetch` on the asset binding; the double leaves
+// `connect` out, so the cast covers that one Fetcher method.
+function assetsBinding(fetch: (request: Request) => Promise<Response>): Fetcher {
+  return { fetch } as Fetcher;
+}
+
 const assetEnv = {
   ...env,
-  ASSETS: {
-    fetch: async (request: Request) => {
-      const url = new URL(request.url);
-      return new Response(`asset:${url.pathname}${url.search}`);
-    },
-  },
+  ASSETS: assetsBinding(async (request) => {
+    const url = new URL(request.url);
+    return new Response(`asset:${url.pathname}${url.search}`);
+  }),
 } satisfies Cloudflare.Env;
 
 const diffShellHtml = `<!doctype html>
@@ -33,15 +37,13 @@ const diffShellHtml = `<!doctype html>
 const diffAssetRequests: string[] = [];
 const diffAssetEnv = {
   ...env,
-  ASSETS: {
-    fetch: async (request: Request) => {
-      const url = new URL(request.url);
-      diffAssetRequests.push(`${url.pathname}${url.search}`);
-      return new Response(diffShellHtml, {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    },
-  },
+  ASSETS: assetsBinding(async (request) => {
+    const url = new URL(request.url);
+    diffAssetRequests.push(`${url.pathname}${url.search}`);
+    return new Response(diffShellHtml, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }),
 } satisfies Cloudflare.Env;
 
 async function fetchWorker(url: string, requestEnv: Cloudflare.Env = env): Promise<Response> {

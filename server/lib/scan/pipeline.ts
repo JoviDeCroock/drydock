@@ -14,7 +14,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 import { ScanPreconditionError } from "./errors";
 import { releaseFingerprintFindings } from "../release-fingerprint";
 import type { Finding } from "../review";

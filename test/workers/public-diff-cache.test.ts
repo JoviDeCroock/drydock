@@ -16,6 +16,7 @@ import {
   type PublicPackageDiff,
 } from "../../server/lib/public-diff";
 import { PYPI_RULES_VERSION } from "../../server/lib/ecosystems/pypi/types";
+import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
 import {
   readPublicDiffDisplayName,
   writePublicDiffDisplayName,
@@ -37,13 +38,16 @@ function payload(textSample = "export const value = 1;\n"): PublicPackageDiff {
       { path: "index.js", size: textSample.length, sha256: "after", flags: [], textSample },
     ],
     diff: [{ path: "index.js", status: "modified", flags: [] }],
-    packageJsonDiff: {},
+    packageJsonDiff: summarizePackageJsonDiff(null, null),
     findings: [],
     risk: {
       artifactRisk: "low",
       releaseRisk: "low",
       contextRisk: "low",
-      aiRisk: "low",
+      releaseFindingCount: 0,
+      contextFindingCount: 0,
+      unknownFindingCount: 0,
+      priorApprovedContextFindingCount: 0,
     },
     cachedAt: "2026-07-15T00:00:00.000Z",
   };

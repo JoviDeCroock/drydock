@@ -78,9 +78,9 @@ describe("scans routes enforce organization boundaries", () => {
         { path: "README.md", size: 20, sha256: "b", flags: [], textSample: "docs" },
       ],
       diff: [
-        { path: "package.json", status: "modified" },
-        { path: "README.md", status: "unchanged" },
-        { path: "OLD.md", status: "removed" },
+        { path: "package.json", status: "modified", flags: [] },
+        { path: "README.md", status: "unchanged", flags: [] },
+        { path: "OLD.md", status: "removed", flags: [] },
       ],
       findings: [
         {
@@ -90,7 +90,6 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "install lifecycle hook changed",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
     const res = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans");
@@ -122,7 +121,7 @@ describe("scans routes enforce organization boundaries", () => {
       risk: "high",
       status: "complete",
       summary: {
-        diff: [{ path: "src/server.ts", status: "modified" }],
+        diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       },
       ai: null,
       files: [
@@ -143,7 +142,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
         },
       ],
-      diff: [{ path: "src/server.ts", status: "modified" }],
+      diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -160,7 +159,6 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "changed release line",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
     const res = await fetchWithSession(buildTestApp(mountScans, owner), `/api/v1/scans/${scanId}`);
@@ -217,7 +215,7 @@ describe("scans routes enforce organization boundaries", () => {
       risk: "high",
       status: "complete",
       summary: {
-        diff: [{ path: "src/server.ts", status: "modified" }],
+        diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
         risk: {
           artifactRisk: "high",
           releaseRisk: "low",
@@ -246,7 +244,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
         },
       ],
-      diff: [{ path: "src/server.ts", status: "modified" }],
+      diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -256,7 +254,6 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "existing network path",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
     const res = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans?filter=all");
@@ -563,7 +560,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: '{"name":"@org/with-files"}',
         },
       ],
-      diff: [{ path: "package.json", status: "added" }],
+      diff: [{ path: "package.json", status: "added", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -573,7 +570,6 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "lifecycle script touches network",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
     const ownerRes = await fetchWithSession(

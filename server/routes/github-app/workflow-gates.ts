@@ -21,7 +21,7 @@ import {
   workerExecutionContext,
 } from "../../lib/platform/execution-context";
 import { purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
-import { recordProductEvent } from "../../lib/platform/analytics";
+import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import {

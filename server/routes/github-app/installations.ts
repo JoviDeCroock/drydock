@@ -17,7 +17,7 @@ import {
 } from "../../lib/auth/active-organization";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
-import { recordProductEvent } from "../../lib/platform/analytics";
+import { recordProductEvent } from "../../lib/analytics";
 import {
   fetchInstallationMetadata,
   listInstallationRepositories,

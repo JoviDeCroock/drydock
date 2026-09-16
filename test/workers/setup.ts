@@ -1,11 +1,14 @@
-import { applyD1Migrations, env } from "cloudflare:test";
+import { applyD1Migrations, type D1Migration, env } from "cloudflare:test";
 import { beforeAll } from "vitest";
 
-declare module "cloudflare:test" {
-  interface ProvidedEnv {
-    DB: D1Database;
-    ARTIFACTS: R2Bucket;
-    TEST_MIGRATIONS: D1Migration[];
+// `cloudflare:test` types `env` as `Cloudflare.Env` (server/env.d.ts); the
+// migrations binding is injected only by vitest.config.ts, so it is declared
+// here rather than next to the deployed bindings.
+declare global {
+  namespace Cloudflare {
+    interface Env {
+      TEST_MIGRATIONS: D1Migration[];
+    }
   }
 }
 

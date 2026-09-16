@@ -20,6 +20,14 @@ export interface SeedUserOptions {
   personalOrganization?: boolean;
 }
 
+// `ensurePersonalOrganization` returns null only when the user row is missing;
+// a seeded user always has one, so a null here is a fixture bug, not a case.
+export async function seedPersonalOrganization(db: AppDb, userId: string): Promise<string> {
+  const organizationId = await ensurePersonalOrganization(db, { userId });
+  if (!organizationId) throw new Error(`no personal organization for seeded user ${userId}`);
+  return organizationId;
+}
+
 export async function seedUser(options: SeedUserOptions = {}): Promise<SeededUser> {
   const db = createDb(env.DB);
   const now = new Date();
@@ -34,7 +42,7 @@ export async function seedUser(options: SeedUserOptions = {}): Promise<SeededUse
     updatedAt: now,
   });
   const organizationId =
-    options.personalOrganization === false ? "" : await ensurePersonalOrganization(db, { userId });
+    options.personalOrganization === false ? "" : await seedPersonalOrganization(db, userId);
   return { db, userId, email, organizationId };
 }
 

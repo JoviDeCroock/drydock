@@ -2,7 +2,6 @@ import { createExecutionContext, env } from "cloudflare:test";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { readGithubAppConfig } from "../../server/lib/github-app/config";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
@@ -14,6 +13,7 @@ import {
   getWorkflowGateAdapter,
   supportedWorkflowGateEcosystems,
 } from "../../server/lib/ecosystems";
+import { seedPersonalOrganization } from "./helpers/seed";
 
 // ── Pure adapter dispatch ────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ async function seedUnsupportedEcosystemGate(ecosystem: string) {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: "9200",

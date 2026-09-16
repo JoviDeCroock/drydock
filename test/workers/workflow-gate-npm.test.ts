@@ -2,9 +2,8 @@ import { createExecutionContext, env } from "cloudflare:test";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { type GithubAppEnv, readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { npmWorkflowGateAdapter } from "../../server/lib/ecosystems/npm/workflow-gate";
@@ -21,6 +20,7 @@ import { npmGateAdapter } from "../../server/lib/ecosystems/npm/gate-review";
 import type { NpmGateDetails } from "../../server/lib/ecosystems/npm/gate-review";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock, stubGithubFetch } from "./helpers/gate";
+import { seedPersonalOrganization } from "./helpers/seed";
 
 function stubRunArtifacts(runId: number, artifactPaths: string[]) {
   stubGithubFetch({
@@ -136,10 +136,12 @@ describe("npmWorkflowGateAdapter", () => {
     expect(npmWorkflowGateAdapter.classifyArtifact("a/b/pkg-1.0.0.tgz")).toBe("tarball");
     expect(npmWorkflowGateAdapter.classifyArtifact("a/b/pkg.tar.gz")).toBe("tarball");
     expect(npmWorkflowGateAdapter.classifyArtifact("a/b/pkg.whl")).toBeNull();
-    expect(npmWorkflowGateAdapter.detectArtifact({ files: [], packageJson: { name: "x" } })).toBe(
-      "tarball",
-    );
-    expect(npmWorkflowGateAdapter.detectArtifact({ files: [], packageJson: null })).toBeNull();
+    // `detectArtifact` is optional on the shared adapter contract; `.tgz` is
+    // extension-ambiguous, so npm must implement it.
+    const { detectArtifact } = npmWorkflowGateAdapter;
+    if (!detectArtifact) throw new Error("npm adapter must implement detectArtifact");
+    expect(detectArtifact({ files: [], packageJson: { name: "x" } })).toBe("tarball");
+    expect(detectArtifact({ files: [], packageJson: null })).toBeNull();
   });
 
   test("derives one candidate per distinct package (monorepo fan-out)", () => {
@@ -283,7 +285,7 @@ describe("npmGateAdapter", () => {
 
 // ── Integration: auto-detect npm bundle through the shared runner ─────────────
 
-function configBindings(): Record<string, string> {
+function configBindings(): GithubAppEnv {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   return {
@@ -315,7 +317,7 @@ async function seedAutoDetectGate(opts: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: opts.installationExternalId,

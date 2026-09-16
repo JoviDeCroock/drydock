@@ -29,7 +29,7 @@
 | `pnpm run build`                                  | Production build into `dist/`; also emits the Worker bundle and `dist/staged_publish_review/wrangler.json` that `deploy` reads.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `pnpm run preview`                                | Serve the last `build` locally.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `pnpm run deploy`                                 | `build` then `wrangler deploy` with the generated config. Needs Cloudflare credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `pnpm run typecheck`                              | `tsc --noEmit` over `src/`, `server/`, and `vite.config.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `pnpm run typecheck`                              | `tsc --noEmit` over `src/`, `server/`, and `vite.config.ts`, then `tsc -p test/tsconfig.json --noEmit` over `test/` (node, workers, e2e, agent-tour). Vitest only strips types, so this is where test files are typechecked.                                                                                                                                                                                                                                                                                                    |
 | `pnpm run knip`                                   | Unused files, exports, and dependencies (`tooling/knip.jsonc`). Part of `verify` and CI.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `pnpm run cf-typegen`                             | Regenerate `worker-configuration.d.ts` from `wrangler.jsonc` for reference only — typecheck uses the hand-maintained `server/env.d.ts`, so new bindings are declared there by hand.                                                                                                                                                                                                                                                                                                                                             |
 | `pnpm db:generate`                                | Generate a D1 migration under `drizzle/` from `server/db/schema.ts`. Never hand-write migration SQL.                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -184,6 +184,23 @@ executing code, so it is not checked. Fixture and test:
 `test/fixtures/oxlint-boundaries/` and `test/oxlint-cross-page-import.test.mjs`.
 
 The rule ships as `error` with no existing violations, so every infraction fails lint.
+
+### Local rule: `boundaries-local/no-platform-domain-import`
+
+The same plugin keeps `server/lib/platform/` domain-free: a platform module may import
+only other platform modules and packages. Any relative import, re-export, or literal
+`import("…")` that resolves outside the directory (`server/db/`, `server/routes/`,
+`server/lib/<domain>/`, `server/types.ts`) fails lint, including type-only imports,
+because a type dependency still couples the primitive's contract to the domain. Take
+the dependency as an argument (`platform/rate-limit.ts` receives its D1 fallback from
+`server/lib/rate-limit.ts`) or move the module out of platform (`server/lib/analytics.ts`
+owns the product event schema and its positional encoding). Fixture and test:
+`test/fixtures/oxlint-boundaries/server/` and `test/oxlint-platform-domain-import.test.mjs`.
+
+### `typescript/no-explicit-any`
+
+Enabled as `error` repo-wide. Source had no violations when it was turned on; tests were
+cleaned up in the same change. Use `unknown` and narrow, or a typed fixture builder.
 
 ### Logging boundary
 

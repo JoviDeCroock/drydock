@@ -5,7 +5,7 @@ import { createDb } from "../../server/db/client";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { ScanInput } from "../../server/types";
+import type { ScanQueueMessage } from "../../server/lib/scan/job";
 import { buildTestApp, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 
@@ -15,7 +15,7 @@ const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 // and the queue double stops the job (and therefore the tarball fetch) from
 // running at all.
 function stubPackument(packageName: string, versions: string[]) {
-  const fetchMock = vi.fn(async (url: string | URL | Request) => {
+  const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
     if (String(url) === `https://registry.npmjs.org/${packageName}`) {
       return new Response(
         JSON.stringify({
@@ -38,7 +38,7 @@ function stubPackument(packageName: string, versions: string[]) {
 
 async function postScan(
   app: ReturnType<typeof buildTestApp>,
-  queue: { send: unknown },
+  queue: { send: (message: ScanQueueMessage) => Promise<void> },
   body: unknown,
 ) {
   const ctx = createExecutionContext();
@@ -61,7 +61,7 @@ describe("published-pair scans", () => {
     const owner = await seedUser();
     const packageName = `pkg-${crypto.randomUUID()}`;
     const requests = stubPackument(packageName, ["1.0.0", "1.1.0"]);
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
 
     const res = await postScan(
       buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
@@ -100,7 +100,7 @@ describe("published-pair scans", () => {
 
     // Credential-free by construction: no request on this path may carry auth.
     for (const [, init] of requests.mock.calls) {
-      const headers = new Headers((init as RequestInit | undefined)?.headers);
+      const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBeNull();
     }
   });
@@ -109,7 +109,7 @@ describe("published-pair scans", () => {
     const owner = await seedUser();
     const packageName = `pkg-${crypto.randomUUID()}`;
     stubPackument(packageName, ["1.0.0", "1.1.0", "2.0.0"]);
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
 
     const res = await postScan(
       buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
@@ -123,9 +123,9 @@ describe("published-pair scans", () => {
 
     expect(res.status).toBe(202);
     expect(queue.send).toHaveBeenCalledTimes(1);
-    const message = queue.send.mock.calls[0][0] as ScanInput & { source: string };
-    expect(message.source).toBe("published");
-    expect(message.published).toEqual({
+    const message = queue.send.mock.calls[0]?.[0];
+    expect(message?.source).toBe("published");
+    expect(message?.published).toEqual({
       ecosystem: "npm",
       packageName,
       version: "1.1.0",
@@ -137,7 +137,7 @@ describe("published-pair scans", () => {
     const owner = await seedUser();
     const packageName = `pkg-${crypto.randomUUID()}`;
     stubPackument(packageName, ["1.0.0", "1.1.0", "2.0.0"]);
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
 
     const res = await postScan(
       buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
@@ -151,15 +151,15 @@ describe("published-pair scans", () => {
     );
 
     expect(res.status).toBe(202);
-    const message = queue.send.mock.calls[0][0] as ScanInput;
-    expect(message.published?.baselineVersion).toBe("1.0.0");
+    const message = queue.send.mock.calls[0]?.[0];
+    expect(message?.published?.baselineVersion).toBe("1.0.0");
   });
 
   test("rejects unpublished versions and malformed coordinates", async () => {
     const owner = await seedUser();
     const packageName = `pkg-${crypto.randomUUID()}`;
     stubPackument(packageName, ["1.0.0", "1.1.0"]);
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
     const app = buildTestApp(mountScans, { userId: owner.userId, emailVerified: true });
 
     const unknownVersion = await postScan(app, queue, {
@@ -200,7 +200,7 @@ describe("published-pair scans", () => {
 
   test("leaves the staged input path unchanged", async () => {
     const owner = await seedUser();
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: ScanQueueMessage) => undefined) };
 
     // No npm connection, so the staged path still refuses before any registry call.
     const res = await postScan(

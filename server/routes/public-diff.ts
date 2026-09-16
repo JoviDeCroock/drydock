@@ -6,7 +6,7 @@ import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
@@ -189,7 +189,7 @@ async function loadRequestedDiff(
 // The growth loop's only measurement. Anonymous by construction: the package
 // name is already public in the request URL, the cache key, and the page's own
 // Open Graph metadata, and nothing about the visitor is recorded — no IP, no
-// user agent, no session, no cookie. See server/lib/platform/analytics.ts.
+// user agent, no session, no cookie. See server/lib/analytics.ts.
 function recordPublicDiffView(
   c: PublicDiffContext,
   payload: PublicPackageDiff,

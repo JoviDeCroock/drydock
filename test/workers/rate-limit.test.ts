@@ -48,8 +48,9 @@ function envWithoutD1(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
 
 /** An env with no native Rate Limiting bindings at all. */
 function envWithoutNativeLimiters(): Cloudflare.Env {
-  const stripped: Record<string, unknown> = { ...env };
+  const stripped: Partial<Cloudflare.Env> = { ...env };
   for (const tier of NATIVE_TIERS) delete stripped[tier.binding];
+  // Only the optional limiter bindings were removed, so the rest is a full Env.
   return stripped as Cloudflare.Env;
 }
 

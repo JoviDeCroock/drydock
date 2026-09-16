@@ -65,7 +65,6 @@ async function seedRelease(owner: SeededUser, packageName: string, options: Seed
     files: [],
     diff: [],
     findings: [],
-    report: { version: 1, digest: "digest" },
   });
   const patch: Partial<typeof schema.scans.$inferInsert> = {};
   if (options.decision) {

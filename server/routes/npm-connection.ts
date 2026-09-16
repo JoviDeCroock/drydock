@@ -14,7 +14,7 @@ import {
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,

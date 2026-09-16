@@ -2,9 +2,8 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { type GithubAppEnv, readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import type { PyPiAdapterInput } from "../../server/lib/ecosystems/pypi";
@@ -12,6 +11,7 @@ import { acquireStagedPyPi } from "../../server/lib/ecosystems/pypi/acquire";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
 import { buildZip } from "../helpers/archive-fixtures";
 import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
+import { seedPersonalOrganization } from "./helpers/seed";
 
 // One sandbox result per file set; the last set repeats once exhausted.
 const buildFileSetLoader = (fileSets: SandboxFile[][]) =>
@@ -48,7 +48,7 @@ async function seedGateForTest(opts: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: opts.installationExternalId,
@@ -121,7 +121,7 @@ function sharedSourceFile(path = "demo_package/_core.py"): SandboxFile {
   };
 }
 
-function buildConfigBindings(): Record<string, string> {
+function buildConfigBindings(): GithubAppEnv {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   return {
@@ -189,7 +189,7 @@ async function buildScenario(
       const artifactId = match ? Number.parseInt(match[1], 10) : 88888;
       const zip = bundles.get(artifactId);
       if (!zip) return new Response("not found", { status: 404 });
-      return new Response(zip, {
+      return new Response(new Uint8Array(zip), {
         status: 200,
         headers: { "content-type": "application/zip" },
       });

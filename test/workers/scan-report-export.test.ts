@@ -171,7 +171,6 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
     const res = await getReport(buildTestApp(mountScans, owner), scanId);
@@ -322,7 +321,6 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
     const res = await getReport(buildTestApp(mountScans, owner), scanId);
@@ -370,7 +368,6 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
     const res = await getReport(buildTestApp(mountScans, owner), scanId);
@@ -412,7 +409,6 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
     const res = await getReport(buildTestApp(mountScans, owner), scanId);

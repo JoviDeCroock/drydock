@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import worker from "../../server/index";
 import { resetOgFontCacheForTests } from "../../server/lib/public-diff/card-render";
 import type { PublicPackageDiff } from "../../server/lib/public-diff";
+import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
 import {
   exhaustedRateLimitBindings,
   rateLimitBindingOverrides,
@@ -137,7 +138,7 @@ describe("package-diff share card route", () => {
       fromFiles: [],
       toFiles: [],
       diff: [],
-      packageJsonDiff: {},
+      packageJsonDiff: summarizePackageJsonDiff(null, null),
       findings: [],
       risk: {
         artifactRisk: "low",

@@ -16,7 +16,7 @@ import {
   parseGithubWebhookEvent,
   verifyGithubWebhookSignature,
 } from "../lib/github-app/webhook";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 

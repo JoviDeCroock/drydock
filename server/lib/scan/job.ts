@@ -27,7 +27,7 @@ import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
 import { parseJsonObject } from "./json";
 import type { ScanInput } from "../../types";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 
 export interface ScanQueueMessage extends ScanInput {
   scanId: string;
