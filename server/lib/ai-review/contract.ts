@@ -6,7 +6,7 @@ export type AiReviewEcosystem = "npm" | "pypi" | "vscode" | "generic";
 // or model-routing policy changes in a way that can alter reviewer behavior.
 // Persisting this with each review keeps analytics and recorded eval cases from
 // silently comparing different reviewer contracts as though they were one.
-export const AI_REVIEWER_VERSION = "1.6.0";
+export const AI_REVIEWER_VERSION = "1.7.0";
 
 // We surface only the highest-signal findings: critical/high, most severe
 // first, capped at this count. Lower-severity context belongs in the summary.
@@ -44,12 +44,13 @@ Prompt-injection precision boundary:
 Workflow:
 1. Read deterministicRisk and deterministicFindings first. Preserve the observations while independently judging whether context adds concern.
 2. Read packageJsonDiff (legacy normalized manifest diff). npm: package.json. PyPI: normalized package identity; artifact metadata lives in METADATA, WHEEL, RECORD, PKG-INFO, pyproject.toml, setup.py. VS Code: the VSIX extension manifest package.json — publisher.name, name, version, engines.vscode, activationEvents, contributes, main/browser.
-3. Scan the changed-file manifest for suspicious new/modified artifacts.
-4. Pull targeted evidence with tools only when the manifest or findings make a file/search relevant.
-5. Cite concrete paths and exact snippets. Never invent line numbers, external package facts, or dependency reputation.
-6. Apply the ecosystem checklist below; unknown ecosystem -> generic checklist.
-7. Budget evidence: toolPolicy caps total steps (maxAgentSteps) and returned characters; the final step only permits submit_review. Submit before the budget forces you to.
-8. Finish with exactly one submit_review call, made as soon as evidence is sufficient — don't re-walk evidence you already analyzed before calling. Never emit the review as plain text.`;
+3. Read the changed-file manifest. It is ordered by evidence priority (finding files, lifecycle-script targets, entrypoints, native payloads, then other changes), so the top of the list is where risk concentrates.
+4. Required evidence: requiredEvidencePaths in the task, and unreadRequiredPaths in every tool response, name the files the app has decided must be read before a verdict: files with deterministic findings, files run by added or modified install lifecycle scripts (preinstall/install/postinstall), changed entrypoints, native or executable payloads, and a changed manifest. Read all of them, batching up to 10 paths per read call. submit_review is rejected while required paths remain unread and evidence budget remains; the rejection lists what is still unread.
+5. Beyond the required set, read or search whatever the manifest, findings, or already-read code makes relevant: a require/import of another changed file, a script body that invokes a path, a suspicious search hit. A read reports nextOffset when the visible part was cut; continue with offset when the cut leaves the question open, especially for added files, since a payload appended at the end of a long file is otherwise invisible.
+6. Cite concrete paths and exact snippets. Line numbers come only from a search result's line field or from lines you read; never invent them, external package facts, or dependency reputation.
+7. Apply the ecosystem checklist below; unknown ecosystem -> generic checklist.
+8. Budget evidence: toolPolicy caps total steps (maxAgentSteps) and returned characters; the final step only permits submit_review. Submit before the budget forces you to.
+9. Finish with exactly one submit_review call, made as soon as required evidence is read and the remaining evidence is sufficient — don't re-walk evidence you already analyzed before calling. Never emit the review as plain text.`;
 
 const NPM_REVIEW_PROMPT = `Ecosystem: npm.
 
@@ -143,6 +144,18 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 }
 
 export const MAX_AGENT_STEPS = 20;
+// The evidence-coverage contract: the app names the files a verdict must be
+// grounded in and refuses an early submit_review while they stay unread. The
+// cap keeps the set satisfiable inside the read budget (two batched read calls
+// at most); a larger candidate set is cut by evidence priority. Rejections are
+// bounded so a model that ignores the contract still lands a review instead of
+// draining every step.
+export const MAX_REQUIRED_EVIDENCE_PATHS = 12;
+export const MAX_COVERAGE_REJECTIONS = 2;
+// Per-file match cap for search_files: a file that repeats a query dozens of
+// times would otherwise fill maxResults alone and hide the second file that
+// matched, which is usually the one that matters.
+export const MAX_SEARCH_MATCHES_PER_FILE = 3;
 // Per-step output-token cap, sized comfortably above a worst-case submission so
 // findings plus summary serialize without truncation. A slight overshoot is
 // clamped by clampAiReviewSubmission; only a submission truncated mid-JSON by
@@ -381,6 +394,14 @@ export const readInputSchema = z
         `Up to ${MAX_READ_BATCH_PATHS} package-relative paths per call. Each returns a unified text diff when previous-version text exists for a changed file, else the staged text.`,
       ),
     maxChars: toolMaxCharsSchema,
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        "Character offset into the rendered text (diff or staged text) at which to start; only valid with a single path. Use the nextOffset a previous cut read returned to continue where it stopped.",
+      ),
   })
   .strict();
 
