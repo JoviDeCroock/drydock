@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { effect } from "@preact/signals";
 import {
   canHighlight,
   ensureHighlighter,
@@ -9,13 +10,20 @@ import {
   tokenizeLines,
 } from "../src/components/highlight";
 
-async function whenReady(): Promise<void> {
+function whenReady(): Promise<void> {
   ensureHighlighter();
-  const start = Date.now();
-  while (!highlighterReady.value) {
-    if (Date.now() - start > 15000) throw new Error("highlighter did not load");
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
+  // Resolves on the readiness signal itself rather than polling it. The effect
+  // runs synchronously on creation, so it is disposed after settling, not inside.
+  let dispose = () => {};
+  const ready = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("highlighter did not load")), 15000);
+    dispose = effect(() => {
+      if (!highlighterReady.value) return;
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+  return ready.finally(() => dispose());
 }
 
 describe("langForPath", () => {

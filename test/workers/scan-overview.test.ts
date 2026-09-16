@@ -1,37 +1,17 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getScanOverview, type ScanSource } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
+
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
 const NOW = new Date("2026-09-04T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Overview Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
 
 interface SeedScan {
   source?: ScanSource;
@@ -231,16 +211,6 @@ describe("getScanOverview", () => {
 });
 
 describe("GET /api/v1/scans/overview", () => {
-  function buildTestApp(session: { userId: string }) {
-    const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-    app.use("*", async (c, next) => {
-      c.set("authSession", { userId: session.userId });
-      await next();
-    });
-    app.route("/api/v1/scans", scansRoutes);
-    return app;
-  }
-
   test("returns the active organization's overview", async () => {
     const owner = await seedUser();
     const other = await seedUser();
@@ -248,7 +218,7 @@ describe("GET /api/v1/scans/overview", () => {
     await seedScan(other, { registryVersionStatus: "validating" });
 
     const ctx = createExecutionContext();
-    const res = await buildTestApp(owner).fetch(
+    const res = await buildTestApp(mountScans, owner).fetch(
       new Request("http://test.local/api/v1/scans/overview"),
       env,
       ctx,

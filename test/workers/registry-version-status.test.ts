@@ -23,6 +23,49 @@ import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { resolveNpmReleaseOutcomes } from "../../server/lib/ecosystems/npm/release-outcome";
 import { refineStagedFailure } from "../../server/lib/scan/job";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { seedCompletedScan } from "./helpers/seed";
+
+async function seedRegistryScan(
+  org: Seeded,
+  overrides: {
+    scanId?: string;
+    stageId?: string;
+    version?: string;
+    createdAt?: Date;
+    source?: ScanSource;
+    registryUrl?: string | null;
+    registryVersionStatusAttemptedAt?: Date;
+  } = {},
+) {
+  const scanId = overrides.scanId ?? crypto.randomUUID();
+  const stageId = overrides.stageId ?? `stage-${scanId.slice(0, 8)}`;
+  await seedCompletedScan(org, {
+    scanId,
+    stageId,
+    job: {
+      source: overrides.source,
+      packageName: PACKAGE,
+      stagedVersion: overrides.version ?? VERSION,
+      registryUrl: overrides.registryUrl === undefined ? REGISTRY_URL : overrides.registryUrl,
+    },
+    packageJson: { name: PACKAGE, version: overrides.version ?? VERSION },
+    summary: { diff: [] },
+    files: [],
+    diff: [],
+  });
+  if (overrides.createdAt || overrides.registryVersionStatusAttemptedAt) {
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
+        ...(overrides.registryVersionStatusAttemptedAt
+          ? { registryVersionStatusAttemptedAt: overrides.registryVersionStatusAttemptedAt }
+          : {}),
+      })
+      .where(eq(schema.scans.id, scanId));
+  }
+  return { scanId, stageId };
+}
 
 const REGISTRY_URL = "https://registry.npmjs.org";
 const TOKEN = "npm_test_token_0123456789";
@@ -64,59 +107,6 @@ async function seedOrg(): Promise<Seeded> {
 }
 
 /** A completed review, which is the only kind the sweep asks npm about. */
-async function seedCompletedScan(
-  org: Seeded,
-  overrides: {
-    scanId?: string;
-    stageId?: string;
-    version?: string;
-    createdAt?: Date;
-    source?: ScanSource;
-    registryUrl?: string | null;
-    registryVersionStatusAttemptedAt?: Date;
-  } = {},
-) {
-  const db = createDb(env.DB);
-  const scanId = overrides.scanId ?? crypto.randomUUID();
-  const stageId = overrides.stageId ?? `stage-${scanId.slice(0, 8)}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: org.organizationId,
-    ownerUserId: org.userId,
-    source: overrides.source,
-    packageName: PACKAGE,
-    stagedVersion: overrides.version ?? VERSION,
-    registryUrl: overrides.registryUrl === undefined ? REGISTRY_URL : overrides.registryUrl,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: org.organizationId,
-    ownerUserId: org.userId,
-    packageJson: { name: PACKAGE, version: overrides.version ?? VERSION },
-    risk: "low",
-    status: "complete",
-    summary: { diff: [] },
-    ai: null,
-    files: [],
-    diff: [],
-    findings: [],
-  });
-  if (overrides.createdAt || overrides.registryVersionStatusAttemptedAt) {
-    await db
-      .update(schema.scans)
-      .set({
-        ...(overrides.createdAt ? { createdAt: overrides.createdAt } : {}),
-        ...(overrides.registryVersionStatusAttemptedAt
-          ? { registryVersionStatusAttemptedAt: overrides.registryVersionStatusAttemptedAt }
-          : {}),
-      })
-      .where(eq(schema.scans.id, scanId));
-  }
-  return { scanId, stageId };
-}
-
 async function readScan(scanId: string) {
   const rows = await createDb(env.DB)
     .select()
@@ -170,7 +160,7 @@ describe("registry version status resolution", () => {
   test("includes the captured registry in scan list summaries", async () => {
     const org = await seedOrg();
     const registryUrl = "https://registry.example.test";
-    const { scanId } = await seedCompletedScan(org, { registryUrl });
+    const { scanId } = await seedRegistryScan(org, { registryUrl });
 
     const result = await listScans(createDb(env.DB), org.organizationId, {
       decisionFilter: "all",
@@ -181,7 +171,7 @@ describe("registry version status resolution", () => {
 
   test("recovers missing registry coordinates and supersedes the prior owner", async () => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, {
+    const older = await seedRegistryScan(org, {
       createdAt: new Date("2026-08-20T10:00:00.000Z"),
     });
     await markScanPubliclyShared(older.scanId, org);
@@ -223,7 +213,7 @@ describe("registry version status resolution", () => {
     { packageName: null, stagedVersion: VERSION },
   ])("completes partially known registry coordinates", async ({ packageName, stagedVersion }) => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, {
+    const older = await seedRegistryScan(org, {
       createdAt: new Date("2026-08-20T10:00:00.000Z"),
     });
     const db = createDb(env.DB);
@@ -341,7 +331,7 @@ describe("registry version status resolution", () => {
     const org = await seedOrg();
     const db = createDb(env.DB);
     const createdAt = new Date("2026-08-20T10:00:00.000Z");
-    const older = await seedCompletedScan(org, { scanId: "scan-z", createdAt });
+    const older = await seedRegistryScan(org, { scanId: "scan-z", createdAt });
     const scanId = "scan-a";
     await createScanJob(db, {
       id: scanId,
@@ -381,7 +371,7 @@ describe("registry version status resolution", () => {
       .update(schema.scans)
       .set({ createdAt: new Date("2026-08-20T10:00:00.000Z") })
       .where(eq(schema.scans.id, olderId));
-    const newer = await seedCompletedScan(org, {
+    const newer = await seedRegistryScan(org, {
       createdAt: new Date("2026-08-21T10:00:00.000Z"),
     });
 
@@ -400,7 +390,7 @@ describe("registry version status resolution", () => {
 
   test("records npm's status against the reviewed release", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     stubRegistry(() => statusResponse("blocked"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -422,7 +412,7 @@ describe("registry version status resolution", () => {
     "keeps a %s release as decidable history but removes it from the undecided queue",
     async (status) => {
       const org = await seedOrg();
-      const { scanId } = await seedCompletedScan(org);
+      const { scanId } = await seedRegistryScan(org);
       const db = createDb(env.DB);
       stubRegistry(() => statusResponse(status));
 
@@ -464,9 +454,9 @@ describe("registry version status resolution", () => {
 
   test("keeps staged, validating, and unresolved releases in the undecided queue", async () => {
     const org = await seedOrg();
-    const staged = await seedCompletedScan(org, { version: "2.5.0" });
-    const validating = await seedCompletedScan(org, { version: "2.5.1" });
-    const unresolved = await seedCompletedScan(org, { version: "2.5.2" });
+    const staged = await seedRegistryScan(org, { version: "2.5.0" });
+    const validating = await seedRegistryScan(org, { version: "2.5.1" });
+    const unresolved = await seedRegistryScan(org, { version: "2.5.2" });
     const db = createDb(env.DB);
     stubRegistry((url) => {
       const version = decodeURIComponent(new URL(url).pathname.split("/").at(-2)!);
@@ -548,7 +538,7 @@ describe("registry version status resolution", () => {
 
   test("does not query an old scan through a replacement registry connection", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, {
+    const { scanId } = await seedRegistryScan(org, {
       registryUrl: "https://registry.example.test",
     });
     const fetchMock = stubRegistry(() => statusResponse("published"));
@@ -569,7 +559,7 @@ describe("registry version status resolution", () => {
   test("records lifecycle status only on the newest scan for a restaged version", async () => {
     const org = await seedOrg();
     const newerCreatedAt = new Date(Date.now() - 60 * 1000);
-    const older = await seedCompletedScan(org, {
+    const older = await seedRegistryScan(org, {
       stageId: "stage-original",
       createdAt: new Date(newerCreatedAt.getTime() - 60 * 1000),
     });
@@ -578,7 +568,7 @@ describe("registry version status resolution", () => {
       organizationId: org.organizationId,
       status: "staged",
     });
-    const newer = await seedCompletedScan(org, {
+    const newer = await seedRegistryScan(org, {
       stageId: "stage-restaged",
       createdAt: newerCreatedAt,
     });
@@ -603,8 +593,8 @@ describe("registry version status resolution", () => {
 
   test("keeps the first newest-first stage when the listing repeats release coordinates", async () => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, { stageId: "stage-original" });
-    const newer = await seedCompletedScan(org, { stageId: "stage-restaged" });
+    const older = await seedRegistryScan(org, { stageId: "stage-original" });
+    const newer = await seedRegistryScan(org, { stageId: "stage-restaged" });
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -629,7 +619,7 @@ describe("registry version status resolution", () => {
 
   test("keeps superseded reviews in history but out of the undecided queue", async () => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, { stageId: "stage-original" });
+    const older = await seedRegistryScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
     const replacementScanId = crypto.randomUUID();
     await createScanJob(db, {
@@ -662,7 +652,7 @@ describe("registry version status resolution", () => {
 
   test("clamps an invalid lookup concurrency instead of silently skipping candidates", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -739,7 +729,7 @@ describe("registry version status resolution", () => {
 
   test("does not revive a superseded stage after a newer failed scan is deleted", async () => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, { stageId: "stage-original" });
+    const older = await seedRegistryScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
     const newerScanId = crypto.randomUUID();
     await createScanJob(db, {
@@ -772,7 +762,7 @@ describe("registry version status resolution", () => {
 
   test("does not annotate history when discovery sees a different live stage id", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    const { scanId } = await seedRegistryScan(org, { stageId: "stage-original" });
     await markScanPubliclyShared(scanId, org);
     await recordRegistryVersionStatus(createDb(env.DB), {
       scanId,
@@ -813,10 +803,10 @@ describe("registry version status resolution", () => {
     const now = new Date();
     const minuteAgo = (minutes: number) => new Date(now.getTime() - minutes * 60 * 1000);
     const replaced = [
-      await seedCompletedScan(org, { version: "2.0.0", createdAt: minuteAgo(3) }),
-      await seedCompletedScan(org, { version: "2.0.1", createdAt: minuteAgo(2) }),
+      await seedRegistryScan(org, { version: "2.0.0", createdAt: minuteAgo(3) }),
+      await seedRegistryScan(org, { version: "2.0.1", createdAt: minuteAgo(2) }),
     ];
-    const live = await seedCompletedScan(org, { version: "2.0.2", createdAt: minuteAgo(1) });
+    const live = await seedRegistryScan(org, { version: "2.0.2", createdAt: minuteAgo(1) });
     const fetchMock = stubRegistry((url) => {
       const version = decodeURIComponent(new URL(url).pathname.split("/").at(-2)!);
       return statusResponse("published", PACKAGE, version);
@@ -851,7 +841,7 @@ describe("registry version status resolution", () => {
     // Recording either as a status would invent a verdict; not stamping the
     // attempt would re-ask on every sweep forever.
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     stubRegistry(() => new Response(JSON.stringify({ error: "not found" }), { status: 404 }));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -871,7 +861,7 @@ describe("registry version status resolution", () => {
 
   test("an unresolved recheck preserves the last status npm actually returned", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const firstCheckedAt = new Date();
     const secondCheckedAt = new Date(firstCheckedAt.getTime() + 20 * 60 * 1000);
     stubRegistry(() => statusResponse("validating"));
@@ -895,7 +885,7 @@ describe("registry version status resolution", () => {
 
   test("an older overlapping sweep cannot replace a newer registry result", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const db = createDb(env.DB);
     const older = new Date("2026-08-19T12:00:00.000Z");
     const newer = new Date("2026-08-19T12:01:00.000Z");
@@ -925,7 +915,7 @@ describe("registry version status resolution", () => {
 
   test("stops asking once npm's answer is terminal", async () => {
     const org = await seedOrg();
-    await seedCompletedScan(org);
+    await seedRegistryScan(org);
     const fetchMock = stubRegistry(() => statusResponse("blocked"));
     const args = {
       db: createDb(env.DB),
@@ -944,7 +934,7 @@ describe("registry version status resolution", () => {
 
   test("rechecks a published version and records a later removal", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const publishedAt = new Date("2026-08-19T12:00:00.000Z");
     const args = {
       db: createDb(env.DB),
@@ -975,7 +965,7 @@ describe("registry version status resolution", () => {
 
   test("keeps asking while npm is still validating", async () => {
     const org = await seedOrg();
-    await seedCompletedScan(org);
+    await seedRegistryScan(org);
     stubRegistry(() => statusResponse("validating"));
     const args = {
       db: createDb(env.DB),
@@ -1000,7 +990,7 @@ describe("registry version status resolution", () => {
   test("does not recheck attempted releases older than the age floor", async () => {
     const org = await seedOrg();
     const old = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       createdAt: old,
       registryVersionStatusAttemptedAt: old,
     });
@@ -1021,7 +1011,7 @@ describe("registry version status resolution", () => {
   test("gives a never-attempted old review one lookup, then stops", async () => {
     const org = await seedOrg();
     const now = new Date();
-    const { scanId } = await seedCompletedScan(org, {
+    const { scanId } = await seedRegistryScan(org, {
       createdAt: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
     });
     const fetchMock = stubRegistry(() => new Response(null, { status: 404 }));
@@ -1049,9 +1039,9 @@ describe("registry version status resolution", () => {
     const org = await seedOrg();
     const now = new Date();
     const oldCreatedAt = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    const oldOne = await seedCompletedScan(org, { version: "2.9.0", createdAt: oldCreatedAt });
-    const oldTwo = await seedCompletedScan(org, { version: "2.9.1", createdAt: oldCreatedAt });
-    const recent = await seedCompletedScan(org, { version: "3.0.0" });
+    const oldOne = await seedRegistryScan(org, { version: "2.9.0", createdAt: oldCreatedAt });
+    const oldTwo = await seedRegistryScan(org, { version: "2.9.1", createdAt: oldCreatedAt });
+    const recent = await seedRegistryScan(org, { version: "3.0.0" });
     const fetchMock = stubRegistry(() => new Response(null, { status: 404 }));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1080,7 +1070,7 @@ describe("registry version status resolution", () => {
 
   test("does not ask npm about workflow-gate scans from other ecosystems", async () => {
     const org = await seedOrg();
-    await seedCompletedScan(org, { source: "workflow_gate" });
+    await seedRegistryScan(org, { source: "workflow_gate" });
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1098,7 +1088,7 @@ describe("registry version status resolution", () => {
   test("drains rows beyond one sweep's lookup budget", async () => {
     const org = await seedOrg();
     const versions = Array.from({ length: 17 }, (_, index) => `2.0.${index}`);
-    for (const version of versions) await seedCompletedScan(org, { version });
+    for (const version of versions) await seedRegistryScan(org, { version });
     const seenVersions = new Set<string>();
     stubRegistry((url) => {
       const match = /\/version\/([^/]+)\/status$/.exec(new URL(url).pathname);
@@ -1128,19 +1118,19 @@ describe("registry version status resolution", () => {
   test("asks about the oldest never-attempted rows before continuous new arrivals", async () => {
     const org = await seedOrg();
     const now = new Date();
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.1.0",
       createdAt: new Date(now.getTime() - 4 * 60 * 1000),
     });
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.1.1",
       createdAt: new Date(now.getTime() - 3 * 60 * 1000),
     });
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.1.2",
       createdAt: new Date(now.getTime() - 2 * 60 * 1000),
     });
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.1.3",
       createdAt: new Date(now.getTime() - 60 * 1000),
     });
@@ -1168,7 +1158,7 @@ describe("registry version status resolution", () => {
   test("does not let new scans permanently preempt an older due recheck", async () => {
     const org = await seedOrg();
     const now = new Date();
-    const due = await seedCompletedScan(org, {
+    const due = await seedRegistryScan(org, {
       version: "2.2.0",
       createdAt: new Date(now.getTime() - 4 * 60 * 60 * 1000),
     });
@@ -1178,11 +1168,11 @@ describe("registry version status resolution", () => {
       status: "staged",
       checkedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
     });
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.2.1",
       createdAt: new Date(now.getTime() - 2 * 60 * 1000),
     });
-    await seedCompletedScan(org, {
+    await seedRegistryScan(org, {
       version: "2.2.2",
       createdAt: new Date(now.getTime() - 60 * 1000),
     });
@@ -1209,7 +1199,7 @@ describe("registry version status resolution", () => {
 
   test("nudges once when we approved a release npm is still holding", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, {
+    const { scanId } = await seedRegistryScan(org, {
       registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
     const db = createDb(env.DB);
@@ -1256,7 +1246,7 @@ describe("registry version status resolution", () => {
 
   test("sends one reminder across duplicate reviews of the same release", async () => {
     const org = await seedOrg();
-    const older = await seedCompletedScan(org, {
+    const older = await seedRegistryScan(org, {
       stageId: "stage-duplicate",
       createdAt: new Date(Date.now() - 2 * 60 * 1000),
       registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
@@ -1288,7 +1278,7 @@ describe("registry version status resolution", () => {
     const first = await resolveNpmReleaseOutcomes(args);
     expect(first.reminded).toBe(1);
 
-    const newer = await seedCompletedScan(org, {
+    const newer = await seedRegistryScan(org, {
       stageId: "stage-duplicate",
       createdAt: new Date(Date.now() - 60 * 1000),
     });
@@ -1312,7 +1302,7 @@ describe("registry version status resolution", () => {
 
   test("does not send a stale reminder after the approval changes in flight", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const db = createDb(env.DB);
     await recordScanDecision(db, {
       scanId,
@@ -1353,7 +1343,7 @@ describe("registry version status resolution", () => {
 
   test("does not persist or remind after a replacement scan supersedes an in-flight lookup", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    const { scanId } = await seedRegistryScan(org, { stageId: "stage-original" });
     const db = createDb(env.DB);
     await recordScanDecision(db, {
       scanId,
@@ -1400,7 +1390,7 @@ describe("registry version status resolution", () => {
 
   test("does not claim a reminder after a newer registry observation wins", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const db = createDb(env.DB);
     await recordScanDecision(db, {
       scanId,
@@ -1437,7 +1427,7 @@ describe("registry version status resolution", () => {
 
   test("does not nudge about a release we never approved", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     stubRegistry(() => statusResponse("staged"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1467,7 +1457,7 @@ describe("registry version status resolution", () => {
 
   test("tells the organization once when npm finishes validating a reviewed release", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const args = {
       db: createDb(env.DB),
       env,
@@ -1503,7 +1493,7 @@ describe("registry version status resolution", () => {
 
   test("notifies on the first lookup when the review completed after npm had already settled", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     stubRegistry(() => statusResponse("staged"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1520,7 +1510,7 @@ describe("registry version status resolution", () => {
 
   test("a staged recheck of a release already known as staged is not a transition", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, {
+    const { scanId } = await seedRegistryScan(org, {
       registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
     const db = createDb(env.DB);
@@ -1553,7 +1543,7 @@ describe("registry version status resolution", () => {
     const db = createDb(env.DB);
     for (const status of ["published", "blocked", "deleted"] as const) {
       await db.delete(schema.scans);
-      const { scanId } = await seedCompletedScan(org);
+      const { scanId } = await seedRegistryScan(org);
       stubRegistry(() => statusResponse(status));
 
       const result = await resolveNpmReleaseOutcomes({
@@ -1571,8 +1561,8 @@ describe("registry version status resolution", () => {
 
   test("never announces workflow-gate or published-pair reviews", async () => {
     const org = await seedOrg();
-    await seedCompletedScan(org, { source: "workflow_gate", version: "1.4.0" });
-    await seedCompletedScan(org, { source: "published", version: "1.4.1" });
+    await seedRegistryScan(org, { source: "workflow_gate", version: "1.4.0" });
+    await seedRegistryScan(org, { source: "published", version: "1.4.1" });
     const fetchMock = stubRegistry(() => statusResponse("staged"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1589,7 +1579,7 @@ describe("registry version status resolution", () => {
 
   test("the approvable notice stands in for a same-sweep forgotten-approval reminder", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org, {
+    const { scanId } = await seedRegistryScan(org, {
       registryVersionStatusAttemptedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
     const db = createDb(env.DB);
@@ -1631,7 +1621,7 @@ describe("registry version status resolution", () => {
 
   test("an older overlapping sweep cannot send a second approvable notice", async () => {
     const org = await seedOrg();
-    const { scanId } = await seedCompletedScan(org);
+    const { scanId } = await seedRegistryScan(org);
     const db = createDb(env.DB);
     const args = {
       db,
@@ -1660,7 +1650,7 @@ describe("registry version status resolution", () => {
 
   test("scopes lookups to the asking organization", async () => {
     const [mine, theirs] = await Promise.all([seedOrg(), seedOrg()]);
-    await seedCompletedScan(theirs);
+    await seedRegistryScan(theirs);
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const result = await resolveNpmReleaseOutcomes({
@@ -1709,7 +1699,7 @@ describe("staged failure refinement", () => {
     ["blocked", "staged_release_blocked"],
   ])("a %s release stops being blamed on the token", async (status, code) => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org);
+    const { scanId, stageId } = await seedRegistryScan(org);
     stubRegistry(() => statusResponse(status));
 
     const refined = await refine(org, scanId, stageId);
@@ -1768,7 +1758,7 @@ describe("staged failure refinement", () => {
     "a release npm still has (%s) really is a token problem",
     async (status) => {
       const org = await seedOrg();
-      const { scanId, stageId } = await seedCompletedScan(org);
+      const { scanId, stageId } = await seedRegistryScan(org);
       stubRegistry(() => statusResponse(status));
 
       const refined = await refine(org, scanId, stageId);
@@ -1780,7 +1770,7 @@ describe("staged failure refinement", () => {
 
   test("an unanswerable lookup leaves the original classification alone", async () => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org);
+    const { scanId, stageId } = await seedRegistryScan(org);
     stubRegistry(() => new Response(null, { status: 404 }));
 
     const refined = await refine(org, scanId, stageId);
@@ -1791,7 +1781,7 @@ describe("staged failure refinement", () => {
 
   test("does not attribute a replacement stage outcome to an older in-flight failure", async () => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org, { stageId: "stage-original" });
+    const { scanId, stageId } = await seedRegistryScan(org, { stageId: "stage-original" });
     let finishLookup: ((response: Response) => void) | undefined;
     const lookupResponse = new Promise<Response>((resolve) => {
       finishLookup = resolve;
@@ -1811,12 +1801,16 @@ describe("staged failure refinement", () => {
     });
     finishLookup?.(statusResponse("published"));
 
-    await expect(refining).resolves.toEqual({ error: unavailable, registryStatus: null });
+    await expect(refining).resolves.toEqual({
+      error: unavailable,
+      registryStatus: null,
+      registryStatusTerminal: false,
+    });
   });
 
   test("does not refine a failed scan through a replacement registry connection", async () => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org, {
+    const { scanId, stageId } = await seedRegistryScan(org, {
       registryUrl: "https://registry.example.test",
     });
     const fetchMock = stubRegistry(() => statusResponse("published"));
@@ -1830,7 +1824,7 @@ describe("staged failure refinement", () => {
 
   test("a registry outage cannot turn into a different failure", async () => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org);
+    const { scanId, stageId } = await seedRegistryScan(org);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -1845,7 +1839,7 @@ describe("staged failure refinement", () => {
 
   test("leaves every other failure code untouched without calling npm", async () => {
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org);
+    const { scanId, stageId } = await seedRegistryScan(org);
     const fetchMock = stubRegistry(() => statusResponse("published"));
     const other = { code: "archive_too_large", message: "too big", retryable: false };
 
@@ -1864,7 +1858,7 @@ describe("staged failure refinement", () => {
     // Gate reviews span three ecosystems; npm's stage lifecycle says nothing
     // about a PyPI or VS Code release.
     const org = await seedOrg();
-    const { scanId, stageId } = await seedCompletedScan(org);
+    const { scanId, stageId } = await seedRegistryScan(org);
     const fetchMock = stubRegistry(() => statusResponse("published"));
 
     const refined = await refineStagedFailure(

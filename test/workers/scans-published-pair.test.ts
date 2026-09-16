@@ -1,44 +1,15 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { getNpmConnection } from "../../server/db/npm-connections";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, ScanInput, Variables } from "../../server/types";
+import type { ScanInput } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId, emailVerified: true });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
 // Only the packument is served: the route resolves the pair before it queues,
 // and the queue double stops the job (and therefore the tarball fetch) from
@@ -92,11 +63,15 @@ describe("published-pair scans", () => {
     const requests = stubPackument(packageName, ["1.0.0", "1.1.0"]);
     const queue = { send: vi.fn(async () => undefined) };
 
-    const res = await postScan(buildTestApp(owner), queue, {
-      ecosystem: "npm",
-      packageName,
-      version: "1.1.0",
-    });
+    const res = await postScan(
+      buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
+      queue,
+      {
+        ecosystem: "npm",
+        packageName,
+        version: "1.1.0",
+      },
+    );
 
     expect(res.status).toBe(202);
     const body = (await res.json()) as { scan: { id: string } };
@@ -136,11 +111,15 @@ describe("published-pair scans", () => {
     stubPackument(packageName, ["1.0.0", "1.1.0", "2.0.0"]);
     const queue = { send: vi.fn(async () => undefined) };
 
-    const res = await postScan(buildTestApp(owner), queue, {
-      ecosystem: "npm",
-      packageName,
-      version: "1.1.0",
-    });
+    const res = await postScan(
+      buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
+      queue,
+      {
+        ecosystem: "npm",
+        packageName,
+        version: "1.1.0",
+      },
+    );
 
     expect(res.status).toBe(202);
     expect(queue.send).toHaveBeenCalledTimes(1);
@@ -160,12 +139,16 @@ describe("published-pair scans", () => {
     stubPackument(packageName, ["1.0.0", "1.1.0", "2.0.0"]);
     const queue = { send: vi.fn(async () => undefined) };
 
-    const res = await postScan(buildTestApp(owner), queue, {
-      ecosystem: "npm",
-      packageName,
-      version: "2.0.0",
-      baselineVersion: "1.0.0",
-    });
+    const res = await postScan(
+      buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
+      queue,
+      {
+        ecosystem: "npm",
+        packageName,
+        version: "2.0.0",
+        baselineVersion: "1.0.0",
+      },
+    );
 
     expect(res.status).toBe(202);
     const message = queue.send.mock.calls[0][0] as ScanInput;
@@ -177,7 +160,7 @@ describe("published-pair scans", () => {
     const packageName = `pkg-${crypto.randomUUID()}`;
     stubPackument(packageName, ["1.0.0", "1.1.0"]);
     const queue = { send: vi.fn(async () => undefined) };
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, { userId: owner.userId, emailVerified: true });
 
     const unknownVersion = await postScan(app, queue, {
       ecosystem: "npm",
@@ -220,7 +203,11 @@ describe("published-pair scans", () => {
     const queue = { send: vi.fn(async () => undefined) };
 
     // No npm connection, so the staged path still refuses before any registry call.
-    const res = await postScan(buildTestApp(owner), queue, { stageId: "stage-published-000001" });
+    const res = await postScan(
+      buildTestApp(mountScans, { userId: owner.userId, emailVerified: true }),
+      queue,
+      { stageId: "stage-published-000001" },
+    );
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({

@@ -1,22 +1,57 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
-import { createOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
+import { createOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
-import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
+function seedReportScan(owner: ScanOwner, options: { withAiReview?: boolean } = {}) {
+  return seedCompletedScan(owner, {
+    risk: "high",
+    summary: {
+      report: {
+        version: 1,
+        digest: "abc123",
+        digestAlgorithm: "sha256",
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        rulesVersion: "1.8.0",
+      },
+      baseline: { kind: "registry", version: "1.0.0" },
+      diff: [{ path: "package.json", status: "modified" }],
+    },
+    ai: options.withAiReview ? AI_REVIEW : null,
+    findings: [
+      {
+        severity: "high",
+        file: "package.json",
+        evidence: "postinstall: node install.js",
+        reason: "install lifecycle hooks execute on consumer machines",
+        ruleId: "install-script.lifecycle",
+        ruleVersion: "1.8.0",
+      },
+    ],
+    aiFindingRecords: options.withAiReview ? AI_REVIEW.findings : undefined,
+  });
 }
+
+// Anonymous `/public` is always mounted; the session (and the scans API) only when signed in.
+const publicApp = (session: SeededUser | null) =>
+  buildTestApp(
+    (app) => {
+      app.route("/public", publicReportsRoutes);
+      if (session) app.route("/api/v1/scans", scansRoutes);
+    },
+    session,
+    { authPath: "/api/*" },
+  );
 
 // The signing key is generated per run rather than committed to
 // wrangler.test.jsonc: a real private JWK in the repo is a permanent
@@ -46,22 +81,6 @@ function strictBase64Decode(value: string): Uint8Array {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
 async function seedMember(organizationId: string, role: "admin" | "member"): Promise<SeededUser> {
   const db = createDb(env.DB);
   const member = await seedUser();
@@ -77,23 +96,8 @@ async function seedMember(organizationId: string, role: "admin" | "member"): Pro
   return { userId: member.userId, organizationId };
 }
 
-// The public routes are mounted without the auth/session middleware — exactly
-// like server/index.ts mounts them ahead of the /api/* guards.
-function buildTestApp(session: { userId: string } | null) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.route("/public", publicReportsRoutes);
-  if (session) {
-    app.use("/api/*", async (c, next) => {
-      c.set("authSession", { userId: session.userId });
-      await next();
-    });
-    app.route("/api/v1/scans", scansRoutes);
-  }
-  return app;
-}
-
 async function request(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  app: TestApp,
   path: string,
   options: RequestInit & { organizationId?: string } = {},
   overrideEnv: typeof env = env,
@@ -109,61 +113,6 @@ async function request(
   );
   await waitOnExecutionContext(ctx);
   return res;
-}
-
-// `withAiReview` seeds a completed AI review alongside the rule finding. The
-// export routes AI findings through `aiReview.findings` and keeps them out of
-// `findings[]`, so this is the shape where a naive finding count disagrees with
-// the document it describes.
-async function seedCompletedScan(
-  owner: SeededUser,
-  options: { withAiReview?: boolean } = {},
-): Promise<string> {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = `stage-${scanId.slice(-12)}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    packageJson: { name: "@org/pkg", version: "1.1.0" },
-    risk: "high",
-    status: "complete",
-    summary: {
-      report: {
-        version: 1,
-        digest: "abc123",
-        digestAlgorithm: "sha256",
-        generatedAt: "2026-01-01T00:00:00.000Z",
-        rulesVersion: "1.8.0",
-      },
-      baseline: { kind: "registry", version: "1.0.0" },
-      diff: [{ path: "package.json", status: "modified" }],
-    },
-    ai: options.withAiReview ? AI_REVIEW : null,
-    files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
-    diff: [{ path: "package.json", status: "modified", flags: [] }],
-    findings: [
-      {
-        severity: "high",
-        file: "package.json",
-        evidence: "postinstall: node install.js",
-        reason: "install lifecycle hooks execute on consumer machines",
-        ruleId: "install-script.lifecycle",
-        ruleVersion: "1.8.0",
-      },
-    ],
-    aiFindingRecords: options.withAiReview ? AI_REVIEW.findings : undefined,
-    report: { version: 1, digest: "abc123" },
-  });
-  return scanId;
 }
 
 const AI_REVIEW = {
@@ -199,8 +148,8 @@ async function enableShare(app: ReturnType<typeof buildTestApp>, scanId: string)
 describe("public report sharing", () => {
   test("owner enables a share link, link serves the canonical report export", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
 
     const res = await enableShare(app, scanId);
     expect(res.status).toBe(200);
@@ -236,8 +185,8 @@ describe("public report sharing", () => {
 
   test("sharing is idempotent — the second call returns the same token", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
 
     const first = (await (await enableShare(app, scanId)).json()) as { share: { token: string } };
     const second = (await (await enableShare(app, scanId)).json()) as { share: { token: string } };
@@ -254,7 +203,7 @@ describe("public report sharing", () => {
       organizationId: owner.organizationId,
       ownerUserId: owner.userId,
     });
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
 
     expect((await enableShare(app, scanId)).status).toBe(409);
     expect((await enableShare(app, "scan_missing")).status).toBe(404);
@@ -267,25 +216,25 @@ describe("public report sharing", () => {
       ownerUserId: owner.userId,
       name: "Team workspace",
     });
-    const scanId = await seedCompletedScan({ ...owner, organizationId });
+    const scanId = await seedReportScan({ ...owner, organizationId });
     const admin = await seedMember(organizationId, "admin");
     const member = await seedMember(organizationId, "member");
 
-    const memberRes = await request(buildTestApp(member), `/api/v1/scans/${scanId}/share`, {
+    const memberRes = await request(publicApp(member), `/api/v1/scans/${scanId}/share`, {
       method: "POST",
       body: "{}",
       organizationId,
     });
     expect(memberRes.status).toBe(403);
 
-    const adminRes = await request(buildTestApp(admin), `/api/v1/scans/${scanId}/share`, {
+    const adminRes = await request(publicApp(admin), `/api/v1/scans/${scanId}/share`, {
       method: "POST",
       body: "{}",
       organizationId,
     });
     expect(adminRes.status).toBe(200);
 
-    const memberRevoke = await request(buildTestApp(member), `/api/v1/scans/${scanId}/share`, {
+    const memberRevoke = await request(publicApp(member), `/api/v1/scans/${scanId}/share`, {
       method: "DELETE",
       organizationId,
     });
@@ -294,9 +243,9 @@ describe("public report sharing", () => {
 
   test("another organization cannot share or revoke the scan", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
+    const scanId = await seedReportScan(owner);
     const outsider = await seedUser();
-    const app = buildTestApp(outsider);
+    const app = publicApp(outsider);
 
     expect((await enableShare(app, scanId)).status).toBe(404);
     const revoke = await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
@@ -305,8 +254,8 @@ describe("public report sharing", () => {
 
   test("revoking invalidates the public link immediately", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
 
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
@@ -324,8 +273,8 @@ describe("public report sharing", () => {
 
   test("share enable/revoke are audited as scan events", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     await enableShare(app, scanId);
     await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
 
@@ -354,8 +303,8 @@ describe("public report sharing", () => {
 
   test("revoke followed by re-share issues a fresh token and kills the old link", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
 
     const first = (await (await enableShare(app, scanId)).json()) as { share: { token: string } };
     await request(app, `/api/v1/scans/${scanId}/share`, { method: "DELETE" });
@@ -368,8 +317,8 @@ describe("public report sharing", () => {
 
   test("public responses carry CORS and uncacheable headers", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -401,7 +350,7 @@ describe("public report sharing", () => {
   });
 
   test("failure responses are readable cross-origin", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
 
     // A browser verifier following docs/public-reports.md has to be able to
     // tell "revoked" from "the service is down"; without CORS on the 404 both
@@ -412,8 +361,8 @@ describe("public report sharing", () => {
 
     // No signing key configured in the default test env.
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const ownerApp = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const ownerApp = publicApp(owner);
     const { share } = (await (await enableShare(ownerApp, scanId)).json()) as {
       share: { token: string };
     };
@@ -447,8 +396,8 @@ describe("public report sharing", () => {
 
   test("concurrent enables settle on a single token", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
 
     // The guarded UPDATE's whole point: the loser re-reads and returns the
     // winner's token instead of silently rotating a link already in flight.
@@ -464,7 +413,7 @@ describe("public report sharing", () => {
   test("the public export carries no prior-scan identifiers or decision times", async () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
-    const scanId = await seedCompletedScan(owner);
+    const scanId = await seedReportScan(owner);
     // Release memory recorded against a prior scan the org never shared.
     await db
       .update(schema.scans)
@@ -491,7 +440,7 @@ describe("public report sharing", () => {
       })
       .where(eq(schema.scans.id, scanId));
 
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -508,7 +457,7 @@ describe("public report sharing", () => {
   });
 
   test("unknown and malformed tokens return 404", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
     const wellFormed = "A".repeat(43);
     expect((await request(app, `/public/reports/${wellFormed}`)).status).toBe(404);
     expect((await request(app, `/public/reports/short`)).status).toBe(404);
@@ -516,7 +465,7 @@ describe("public report sharing", () => {
   });
 
   test("public reads are rate limited per IP", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
     let limited = false;
     // Same fixed wall-clock bucketing as the retry-after test below: a loop
     // that straddles the minute boundary spends its budget across two windows
@@ -543,8 +492,8 @@ describe("public report sharing", () => {
 describe("public report file samples", () => {
   test("legacy shares stay evidence-only until an owner deliberately re-shares", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const first = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string; includesFiles: boolean };
     };
@@ -578,8 +527,8 @@ describe("public report file samples", () => {
 
   test("a live token serves the same redacted sample as the authenticated route", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -597,8 +546,8 @@ describe("public report file samples", () => {
 
   test("a path outside the shared review is indistinguishable from a bad token", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -617,8 +566,8 @@ describe("public report file samples", () => {
 
   test("revoked, unknown, and malformed tokens all 404", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -637,7 +586,7 @@ describe("public report file samples", () => {
   });
 
   test("file reads spend the same per-IP budget as report reads", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
     let limited = false;
     // Same fixed wall-clock bucketing as the report rate-limit test: a loop that
     // straddles the minute boundary spends its budget across two windows and
@@ -663,8 +612,8 @@ describe("public report file samples", () => {
 describe("public report attestations", () => {
   test("attestation verifies against the served report bytes and published key", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -745,8 +694,8 @@ describe("public report attestations", () => {
 
   test("predicate findingCount matches the attested document, AI review included", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, { withAiReview: true });
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner, { withAiReview: true });
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -775,8 +724,8 @@ describe("public report attestations", () => {
 
   test("attestation endpoints return 503 when no signing key is configured", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -795,8 +744,8 @@ describe("public report attestations", () => {
 
   test("a malformed signing key degrades like an absent one", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -831,8 +780,8 @@ describe("public report attestations", () => {
   // degraded deployment whose operator did everything right.
   test("a signing key exported by Node's WebCrypto loads", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };
@@ -863,8 +812,8 @@ describe("public report attestations", () => {
 
   test("attestations die with the share link", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const app = buildTestApp(owner);
+    const scanId = await seedReportScan(owner);
+    const app = publicApp(owner);
     const { share } = (await (await enableShare(app, scanId)).json()) as {
       share: { token: string };
     };

@@ -9,7 +9,7 @@ import {
   vscodeAdapter,
   VSCODE_RULE_IDS,
 } from "../server/lib/ecosystems/vscode";
-import { buildZip } from "./helpers/archive-fixtures.mjs";
+import { buildZip } from "./helpers/archive-fixtures";
 
 const SHA = "ab".repeat(32);
 

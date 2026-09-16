@@ -1,8 +1,6 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import * as OTPAuth from "otpauth";
-import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import {
   ensurePersonalOrganization,
@@ -14,6 +12,7 @@ import { createReleaseTarget, upsertInstallation } from "../../server/lib/github
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { callWorker, type Jar, PASSWORD, signUpUserId, totpFor } from "./helpers/auth-http";
 
 // 2FA gate-decision step-up is the trust boundary in issue #162: a maintainer
 // who enrolled in two-factor auth must prove a *fresh* second factor before a
@@ -23,52 +22,7 @@ import { persistScanWithArtifacts } from "./helpers/persist-scan";
 // decision (`/api/v1/scans/:id/decision`) intentionally never requires this and
 // is covered separately.
 
-const ORIGIN = "http://example.com";
-const PASSWORD = "correct horse battery staple";
 const originalFetch = globalThis.fetch;
-
-type Jar = Map<string, string>;
-
-function mergeSetCookies(jar: Jar, res: Response) {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  for (const raw of cookies) {
-    const [pair] = raw.split(";");
-    const idx = pair.indexOf("=");
-    if (idx === -1) continue;
-    jar.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
-  }
-}
-
-function cookieHeader(jar: Jar): string {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-
-interface CallOptions {
-  body?: unknown;
-  jar?: Jar;
-  env?: typeof env;
-}
-
-async function call(method: string, path: string, opts: CallOptions = {}) {
-  const ctx = createExecutionContext();
-  const headers = new Headers();
-  if (opts.body !== undefined) headers.set("content-type", "application/json");
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
-  if (opts.jar && opts.jar.size) headers.set("cookie", cookieHeader(opts.jar));
-  const init: RequestInit = { method, headers };
-  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-  const res = await worker.fetch(new Request(`${ORIGIN}${path}`, init), opts.env ?? env, ctx);
-  await waitOnExecutionContext(ctx);
-  if (opts.jar) mergeSetCookies(opts.jar, res);
-  const text = await res.text();
-  let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  return { res, json: json as Record<string, unknown> | null, text };
-}
 
 let testPrivateKeyPem: string | null = null;
 async function getTestPrivateKeyPem(): Promise<string> {
@@ -108,35 +62,17 @@ async function githubEnv(): Promise<typeof env> {
   } as typeof env;
 }
 
-function totpFor(totpURI: string): string {
-  const parsed = OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP;
-  return parsed.generate();
-}
-
-async function signUp(jar: Jar): Promise<string> {
-  const email = `gate2fa-${crypto.randomUUID()}@example.test`;
-  const up = await call("POST", "/api/auth/sign-up/email", {
-    body: { name: "Gate Tester", email, password: PASSWORD },
-    jar,
-  });
-  expect(up.res.status).toBe(200);
-  const session = await call("GET", "/api/auth/get-session", { jar });
-  const userId = (session.json?.user as { id?: string } | undefined)?.id;
-  expect(typeof userId).toBe("string");
-  return userId as string;
-}
-
 // Enroll the signed-in user in TOTP 2FA and return the otpauth URI so the spec
 // can mint fresh codes at decision time.
 async function enrollTwoFactor(jar: Jar): Promise<string> {
-  const enable = await call("POST", "/api/auth/two-factor/enable", {
+  const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
     body: { password: PASSWORD },
     jar,
   });
   expect(enable.res.status).toBe(200);
   const totpURI = enable.json?.totpURI as string;
   expect(typeof totpURI).toBe("string");
-  const verify = await call("POST", "/api/auth/two-factor/verify-totp", {
+  const verify = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
     body: { code: totpFor(totpURI) },
     jar,
   });
@@ -258,7 +194,7 @@ describe("workflow-gate decision 2FA step-up", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -269,7 +205,7 @@ describe("workflow-gate decision 2FA step-up", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
@@ -290,7 +226,7 @@ describe("workflow-gate decision 2FA step-up", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -299,7 +235,7 @@ describe("workflow-gate decision 2FA step-up", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
@@ -319,7 +255,7 @@ describe("workflow-gate decision 2FA step-up", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -328,7 +264,7 @@ describe("workflow-gate decision 2FA step-up", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", totpCode: "000000", scanId },
         jar,
         env: await githubEnv(),
@@ -347,7 +283,7 @@ describe("workflow-gate decision 2FA step-up", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       const totpURI = await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -356,7 +292,7 @@ describe("workflow-gate decision 2FA step-up", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", totpCode: totpFor(totpURI), scanId },
         jar,
         env: await githubEnv(),
@@ -373,7 +309,7 @@ describe("workflow-gate decision 2FA step-up", () => {
 
   test("a maintainer without 2FA decides a gate without a code", { timeout: 30_000 }, async () => {
     const jar: Jar = new Map();
-    const userId = await signUp(jar);
+    const userId = await signUpUserId(jar);
     const organizationId = personalOrganizationId(userId);
     await ensurePersonalOrganization(createDb(env.DB), { userId });
     const { gateId, scanId } = await seedDecidableGate(organizationId, userId);
@@ -381,7 +317,7 @@ describe("workflow-gate decision 2FA step-up", () => {
     const decisionCalls: { state: string }[] = [];
     mockGithubDecisionFetch(decisionCalls);
 
-    const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+    const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
       body: { decision: "approved", scanId },
       jar,
       env: await githubEnv(),
@@ -403,7 +339,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
       await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
@@ -412,7 +348,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
@@ -433,7 +369,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -443,7 +379,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", scanId },
         jar,
         env: await githubEnv(),
@@ -462,7 +398,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
     { timeout: 30_000 },
     async () => {
       const jar: Jar = new Map();
-      const userId = await signUp(jar);
+      const userId = await signUpUserId(jar);
       const totpURI = await enrollTwoFactor(jar);
       const organizationId = personalOrganizationId(userId);
       await ensurePersonalOrganization(createDb(env.DB), { userId });
@@ -472,7 +408,7 @@ describe("workflow-gate decision org-enforced 2FA", () => {
       const decisionCalls: { state: string }[] = [];
       mockGithubDecisionFetch(decisionCalls);
 
-      const res = await call("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
+      const res = await callWorker("POST", `/api/v1/github-app/workflow-gates/${gateId}/decision`, {
         body: { decision: "approved", totpCode: totpFor(totpURI), scanId },
         jar,
         env: await githubEnv(),

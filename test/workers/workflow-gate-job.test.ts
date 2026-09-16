@@ -1,4 +1,4 @@
-import { createExecutionContext, env } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { createDb } from "../../server/db/client";
@@ -20,6 +20,51 @@ import {
   workflowGateCallbackWindowMs,
 } from "../../server/lib/workflow-gate-job";
 import worker from "../../server";
+import { buildZip } from "../helpers/archive-fixtures";
+import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
+
+function buildPypiLoader(opts: LoaderMockOptions = {}) {
+  const metadataName = opts.metadataName ?? "demo-package";
+  const recordText =
+    opts.recordText ??
+    "demo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n";
+  return buildLoaderMock({
+    respond: () => {
+      if (opts.fail) {
+        return new Response(JSON.stringify({ error: "archive invalid", status: 422 }), {
+          status: 422,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return Response.json({
+        files: [
+          {
+            path: "demo_package-1.2.0.dist-info/METADATA",
+            size: 40,
+            sha256: "00",
+            flags: [],
+            textSample: `Metadata-Version: 2.3\nName: ${metadataName}\nVersion: 1.2.0\n`,
+          },
+          {
+            path: "demo_package-1.2.0.dist-info/WHEEL",
+            size: 60,
+            sha256: "02",
+            flags: [],
+            textSample: "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+          },
+          {
+            path: "demo_package-1.2.0.dist-info/RECORD",
+            size: recordText.length,
+            sha256: "01",
+            flags: [],
+            textSample: recordText,
+          },
+        ],
+        packageJson: null,
+      });
+    },
+  });
+}
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 const REPORT_BASE_URL = "https://drydock.test";
@@ -97,79 +142,6 @@ async function seedGateForTest(opts: {
   return { organizationId, userId, installation, releaseTarget, gateId };
 }
 
-interface ZipEntry {
-  path: string;
-  body: Uint8Array | string;
-}
-
-function makeZip(entries: ZipEntry[]): Uint8Array {
-  const encoder = new TextEncoder();
-  const records: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const body = typeof entry.body === "string" ? encoder.encode(entry.body) : entry.body;
-    const nameBytes = encoder.encode(entry.path);
-    const crc = crc32(body);
-    const local = new Uint8Array(30 + nameBytes.length + body.length);
-    const lv = new DataView(local.buffer);
-    lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, 20, true);
-    lv.setUint16(8, 0, true);
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, body.length, true);
-    lv.setUint32(22, body.length, true);
-    lv.setUint16(26, nameBytes.length, true);
-    local.set(nameBytes, 30);
-    local.set(body, 30 + nameBytes.length);
-    records.push(local);
-
-    const c = new Uint8Array(46 + nameBytes.length);
-    const cv = new DataView(c.buffer);
-    cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true);
-    cv.setUint16(6, 20, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, body.length, true);
-    cv.setUint32(24, body.length, true);
-    cv.setUint16(28, nameBytes.length, true);
-    cv.setUint32(42, offset, true);
-    c.set(nameBytes, 46);
-    central.push(c);
-    offset += local.length;
-  }
-  const centralBytes = concat(central);
-  const eocd = new Uint8Array(22);
-  const ev = new DataView(eocd.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(8, entries.length, true);
-  ev.setUint16(10, entries.length, true);
-  ev.setUint32(12, centralBytes.length, true);
-  ev.setUint32(16, offset, true);
-  return concat([...records, centralBytes, eocd]);
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, p) => sum + p.length, 0);
-  const out = new Uint8Array(total);
-  let i = 0;
-  for (const part of parts) {
-    out.set(part, i);
-    i += part.length;
-  }
-  return out;
-}
-
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -179,74 +151,6 @@ interface LoaderMockOptions {
   fail?: boolean;
   metadataName?: string;
   recordText?: string;
-}
-
-function buildLoaderMock(opts: LoaderMockOptions = {}) {
-  const calls: { format: string | null; bodySize: number }[] = [];
-  const metadataName = opts.metadataName ?? "demo-package";
-  const recordText =
-    opts.recordText ??
-    "demo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n";
-  return {
-    calls,
-    binding: {
-      load: vi.fn(() => ({
-        getEntrypoint: () => ({
-          fetch: vi.fn(async (request: Request) => {
-            calls.push({
-              format: request.headers.get("x-archive-format"),
-              bodySize: (await request.arrayBuffer()).byteLength,
-            });
-            if (opts.fail) {
-              return new Response(JSON.stringify({ error: "archive invalid", status: 422 }), {
-                status: 422,
-                headers: { "content-type": "application/json" },
-              });
-            }
-            return new Response(
-              JSON.stringify({
-                files: [
-                  {
-                    path: "demo_package-1.2.0.dist-info/METADATA",
-                    size: 40,
-                    sha256: "00",
-                    flags: [],
-                    textSample: `Metadata-Version: 2.3\nName: ${metadataName}\nVersion: 1.2.0\n`,
-                  },
-                  {
-                    path: "demo_package-1.2.0.dist-info/WHEEL",
-                    size: 60,
-                    sha256: "02",
-                    flags: [],
-                    textSample: "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-                  },
-                  {
-                    path: "demo_package-1.2.0.dist-info/RECORD",
-                    size: recordText.length,
-                    sha256: "01",
-                    flags: [],
-                    textSample: recordText,
-                  },
-                ],
-                packageJson: null,
-              }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
-          }),
-        }),
-      })),
-    },
-  };
-}
-
-function buildCtxWithGateway() {
-  const ctx = createExecutionContext() as ExecutionContext & {
-    exports: { NpmStageGateway(options: { props: unknown }): Fetcher };
-  };
-  ctx.exports = {
-    NpmStageGateway: vi.fn(() => ({ fetch: vi.fn() }) as unknown as Fetcher),
-  };
-  return ctx;
 }
 
 function buildConfigBindings(): Record<string, string> {
@@ -281,7 +185,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
   const wheelPath = opts.digestMatches
     ? "dist/demo_package-1.2.0-py3-none-any.whl"
     : "../demo_package-1.2.0-py3-none-any.whl";
-  const wheelBytes = makeZip([
+  const wheelBytes = buildZip([
     {
       path: "demo_package-1.2.0.dist-info/METADATA",
       body: "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n",
@@ -303,7 +207,7 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
     version: "1.2.0",
     artifacts: [{ path: wheelPath, sha256: declaredSha }],
   });
-  const bundleZip = makeZip([
+  const bundleZip = buildZip([
     { path: "drydock-manifest.json", body: manifestRaw },
     { path: wheelPath, body: wheelBytes },
   ]);
@@ -493,7 +397,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 7777,
     });
     const scenario = await buildScenario(7777, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -539,7 +443,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 8888,
     });
     const scenario = await buildScenario(8888, { digestMatches: false });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -574,7 +478,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 16262,
     });
     const scenario = await buildScenario(16262, { digestMatches: false, decisionStatus: 500 });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -610,7 +514,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 12121,
     });
     const scenario = await buildScenario(12121, { digestMatches: true });
-    const loaderMock = buildLoaderMock({ recordText: "" });
+    const loaderMock = buildPypiLoader({ recordText: "" });
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -657,7 +561,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 16165,
     });
     const scenario = await buildScenario(16165, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -694,7 +598,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 9999,
     });
     const scenario = await buildScenario(9999, { digestMatches: true });
-    const loaderMock = buildLoaderMock({ fail: true });
+    const loaderMock = buildPypiLoader({ fail: true });
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -728,7 +632,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 14141,
     });
     const scenario = await buildScenario(14141, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = {
@@ -798,7 +702,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 13131,
     });
     const scenario = await buildScenario(13131, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -832,7 +736,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 10101,
     });
     const scenario = await buildScenario(10101, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -872,7 +776,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 11111,
     });
     const scenario = await buildScenario(11111, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -931,7 +835,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 11112,
     });
     const scenario = await buildScenario(11112, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const sandboxEnv = buildEnv(bindings, loaderMock.binding);
@@ -987,7 +891,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 17171,
     });
     await buildScenario(17171, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => undefined);
@@ -1024,7 +928,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 18181,
     });
     await buildScenario(18181, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => undefined);
@@ -1074,7 +978,7 @@ describe("executeWorkflowGateJob", () => {
           AND status = 'pending';
       END
     `).run();
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => undefined);
@@ -1118,7 +1022,7 @@ describe("executeWorkflowGateJob", () => {
       runId: 19191,
     });
     const scenario = await buildScenario(19191, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => {
@@ -1164,7 +1068,7 @@ describe("executeWorkflowGateJob", () => {
       requestedAt: new Date(Date.now() - 61_000),
     });
     const scenario = await buildScenario(21212, { digestMatches: true });
-    const loaderMock = buildLoaderMock();
+    const loaderMock = buildPypiLoader();
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const send = vi.fn(async () => undefined);

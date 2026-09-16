@@ -2,7 +2,6 @@ import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   chunkForD1,
   claimScanForRun,
@@ -14,22 +13,7 @@ import {
 import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
-
-async function seedUserAndOrg() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { db, userId, organizationId };
-}
+import { seedUser } from "./helpers/seed";
 
 async function readStatus(db: ReturnType<typeof createDb>, scanId: string) {
   const [row] = await db
@@ -52,7 +36,7 @@ const baseScan = {
 
 describe("scan persistence idempotency", () => {
   test("claimScanForRun transitions pending → running once and refuses terminal rows", async () => {
-    const { db, organizationId, userId } = await seedUserAndOrg();
+    const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await createScanJob(db, {
       id: scanId,
@@ -84,7 +68,7 @@ describe("scan persistence idempotency", () => {
   });
 
   test("markScanFailed refuses to overwrite a completed scan", async () => {
-    const { db, organizationId, userId } = await seedUserAndOrg();
+    const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await createScanJob(db, {
       id: scanId,
@@ -113,7 +97,7 @@ describe("scan persistence idempotency", () => {
   });
 
   test("persistScan is a no-op when the scan is already terminal", async () => {
-    const { db, organizationId, userId } = await seedUserAndOrg();
+    const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await createScanJob(db, {
       id: scanId,
@@ -156,7 +140,7 @@ describe("scan persistence idempotency", () => {
   });
 
   test("persistScan preserves Python pattern annotations for extensionless files", async () => {
-    const { db, organizationId, userId } = await seedUserAndOrg();
+    const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = "stage-python-patterns";
     const previousFiles = [
@@ -220,8 +204,8 @@ describe("scan persistence idempotency", () => {
   });
 
   test("listExistingScanStageIds only dedupes within the active organization", async () => {
-    const ownerA = await seedUserAndOrg();
-    const ownerB = await seedUserAndOrg();
+    const ownerA = await seedUser();
+    const ownerB = await seedUser();
     const sharedStageId = `stage-${crypto.randomUUID()}`;
     const inProgressStageId = `stage-${crypto.randomUUID()}`;
     const orgBOnlyStageId = `stage-${crypto.randomUUID()}`;
@@ -278,7 +262,7 @@ describe("scan persistence idempotency", () => {
   // D1 caps bound parameters at 100 per query. Before chunking, a sweep of
   // ~100 staged items threw "too many SQL variables" on every cron tick.
   test("listExistingScanStageIds handles more stage ids than D1's parameter cap", async () => {
-    const owner = await seedUserAndOrg();
+    const owner = await seedUser();
     const knownStageId = `stage-${crypto.randomUUID()}`;
     await createScanJob(owner.db, {
       id: `scan_${crypto.randomUUID()}`,
@@ -306,8 +290,8 @@ describe("scan persistence idempotency", () => {
   });
 
   test("cross-organization claims and mutations are rejected", async () => {
-    const ownerA = await seedUserAndOrg();
-    const ownerB = await seedUserAndOrg();
+    const ownerA = await seedUser();
+    const ownerB = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await createScanJob(ownerA.db, {
       id: scanId,

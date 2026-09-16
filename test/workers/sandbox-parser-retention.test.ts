@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { sandboxSource, SANDBOX_MAX_ENTRIES, SANDBOX_MAX_FILES } from "../../server/lib/sandbox";
 // @ts-expect-error -- plain-JS fixture writer shared with the parser suites
-import { buildTar } from "../helpers/archive-fixtures.mjs";
+import { buildTar } from "../helpers/archive-fixtures";
 
 // Executes the *rendered* sandbox module, the same string the Worker loader is
 // handed in production. The parser functions are unit-tested directly in

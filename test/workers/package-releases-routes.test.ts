@@ -1,35 +1,15 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, recordRegistryVersionStatus } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { packagesRoutes } from "../../server/routes/packages";
-import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(name = "Tester"): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name,
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
+const mountPackages = (app: TestApp) => app.route("/api/v1/packages", packagesRoutes);
 
 interface SeedReleaseOptions {
   version: string;
@@ -108,19 +88,9 @@ async function seedRelease(owner: SeededUser, packageName: string, options: Seed
   return scanId;
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/packages", packagesRoutes);
-  return app;
-}
-
 async function fetchReleases(owner: SeededUser, path: string) {
   const ctx = createExecutionContext();
-  const res = await buildTestApp(owner).fetch(
+  const res = await buildTestApp(mountPackages, owner).fetch(
     new Request(`http://test.local${path}`, { method: "GET" }),
     env,
     ctx,
@@ -191,7 +161,7 @@ describe("GET /api/v1/packages/:name/releases", () => {
   });
 
   test("carries channel, decision author, npm outcome, and the baseline rule per row", async () => {
-    const owner = await seedUser("Ada Reviewer");
+    const owner = await seedUser({ name: "Ada Reviewer" });
     const name = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     const beta = await seedRelease(owner, name, {
       version: "2.0.0-beta.2",
