@@ -1,23 +1,20 @@
-import { eq, lt, sql } from "drizzle-orm";
-import { type AppDb, createDb } from "../../db/client";
-import { rateLimits } from "../../db/schema";
+import { enforceD1RateLimit } from "../../db/rate-limits";
+import { RateLimitError, type RateLimitFallback, type RateLimitInput } from "./rate-limit-contract";
 import { emitOperationalEvent } from "./observability";
 
-export interface RateLimitInput {
-  key: string;
-  limit: number;
-  windowMs: number;
+// The D1 table lives behind `db/rate-limits.ts`; this module only decides
+// native-vs-fallback. `server/index.ts` still imports the prune job from here.
+export { pruneExpiredRateLimitBuckets } from "../../db/rate-limits";
+
+export { RateLimitError, type RateLimitInput } from "./rate-limit-contract";
+
+export interface RateLimitOptions {
+  /** Defaults to the D1 bucket table; tests inject a double. */
+  fallback?: RateLimitFallback;
 }
 
 export const ORGANIZATION_SCAN_LIMIT = 10;
 export const ORGANIZATION_SCAN_WINDOW_MS = 60 * 60 * 1000;
-
-export class RateLimitError extends Error {
-  constructor(public retryAfterSeconds: number) {
-    super("rate limit exceeded");
-    this.name = "RateLimitError";
-  }
-}
 
 const NATIVE_WINDOW_MS = 60_000;
 
@@ -55,7 +52,11 @@ function retryAfterSecondsFor(windowMs: number, nowMs: number): number {
   return Math.max(1, Math.ceil((windowMs - (nowMs % windowMs)) / 1000));
 }
 
-export async function enforceRateLimit(env: Cloudflare.Env, input: RateLimitInput): Promise<void> {
+export async function enforceRateLimit(
+  env: Cloudflare.Env,
+  input: RateLimitInput,
+  options: RateLimitOptions = {},
+): Promise<void> {
   const nowMs = Date.now();
 
   if (input.windowMs === NATIVE_WINDOW_MS) {
@@ -77,7 +78,7 @@ export async function enforceRateLimit(env: Cloudflare.Env, input: RateLimitInpu
     }
   }
 
-  await enforceD1RateLimit(createDb(env.DB), input, nowMs);
+  await (options.fallback ?? enforceD1RateLimit)(env, input, nowMs);
 }
 
 function warnMissingTier(input: RateLimitInput): void {
@@ -88,36 +89,4 @@ function warnMissingTier(input: RateLimitInput): void {
     limit: input.limit,
     windowMs: input.windowMs,
   });
-}
-
-async function enforceD1RateLimit(db: AppDb, input: RateLimitInput, nowMs: number): Promise<void> {
-  const bucket = Math.floor(nowMs / input.windowMs);
-  const key = `${input.key}:${bucket}`;
-  const expiresAt = new Date((bucket + 1) * input.windowMs);
-  const now = new Date(nowMs);
-
-  await db
-    .insert(rateLimits)
-    .values({
-      key,
-      count: 1,
-      expiresAt,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: rateLimits.key,
-      set: {
-        count: sql`${rateLimits.count} + 1`,
-        updatedAt: now,
-      },
-    });
-
-  const [entry] = await db.select().from(rateLimits).where(eq(rateLimits.key, key)).limit(1);
-  if ((entry?.count ?? 0) > input.limit) {
-    throw new RateLimitError(Math.max(1, Math.ceil((expiresAt.getTime() - nowMs) / 1000)));
-  }
-}
-
-export async function pruneExpiredRateLimitBuckets(db: AppDb, now: Date): Promise<void> {
-  await db.delete(rateLimits).where(lt(rateLimits.expiresAt, now));
 }

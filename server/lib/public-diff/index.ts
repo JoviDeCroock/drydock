@@ -1,7 +1,7 @@
 import { sha256Hex } from "../platform/crypto-utils";
 import type { AiReview } from "../ai-review/types";
 import { getPublicDiffAdapter } from "../ecosystems";
-import { coloCache } from "../platform/http";
+import { coloCache } from "../platform/colo-cache";
 import { parsePkgPrNewUrl } from "../../../src/lib/pkg-pr-new";
 import { PublicDiffError } from "./error";
 import { writePublicDiffDisplayName } from "./display-metadata";
@@ -420,15 +420,15 @@ export function payloadCacheTtlSeconds(
   payload: PublicPackageDiff,
   nowMs: number = Date.now(),
 ): number {
-  const adapterTtl = getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds ?? CACHE_TTL_SECONDS;
+  const adapterTtl = getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds;
   const pairTtl =
     parsePkgPrNewUrl(payload.fromVersion) || parsePkgPrNewUrl(payload.toVersion)
       ? PREVIEW_CACHE_TTL_SECONDS
       : CACHE_TTL_SECONDS;
-  const maximum = Math.min(adapterTtl, pairTtl);
+  const maximum = Math.min(adapterTtl ?? CACHE_TTL_SECONDS, pairTtl);
   // Mutable adapters must carry the original acquisition deadline. Failing
   // closed here also prevents an old payload shape from regaining a fresh TTL.
-  if (getPublicDiffAdapter(payload.ecosystem)?.cacheTtlSeconds !== undefined) {
+  if (adapterTtl !== undefined) {
     if (!payload.cacheExpiresAt) return 0;
     return remainingCacheTtlSeconds(payload.cacheExpiresAt, maximum, nowMs);
   }

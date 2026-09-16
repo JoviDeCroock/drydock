@@ -12,6 +12,8 @@
 // adjustment, so `releaseRisk` (and the workflow gate reading it) cannot move.
 // See docs/release-memory.md.
 
+import { toIsoOrNull } from "./iso-time";
+
 type ReleaseConsistencyStatus = "match" | "subset" | "diverged" | "none";
 
 export interface FindingProfileEntry {
@@ -215,10 +217,4 @@ function countEntries(entries: FindingProfileEntry[]): Map<string, number> {
 
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function toIsoOrNull(value: Date | string | null): string | null {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
-  return value;
 }

@@ -7,7 +7,9 @@ import type {
   BaselineInfo,
   StagedDetails,
 } from "../package-adapter";
-import type { PyPiBroker } from "./broker";
+import { isAllowedPyPiArtifactUrl, type PyPiBroker } from "./broker";
+
+export { isAllowedPyPiArtifactUrl };
 import { summarizePyPiArtifact, namespacedPath } from "./findings";
 import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./manifest";
 import {
@@ -304,15 +306,6 @@ export function selectPyPiReleaseArtifacts(
       };
     })
     .filter((artifact): artifact is PyPiRemoteArtifact => artifact !== null);
-}
-
-export function isAllowedPyPiArtifactUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && parsed.hostname === "files.pythonhosted.org";
-  } catch {
-    return false;
-  }
 }
 
 export function flattenPyPiArtifactFiles(artifacts: PyPiPreparedArtifact[]): FileRecord[] {

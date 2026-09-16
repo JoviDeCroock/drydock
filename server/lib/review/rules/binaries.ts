@@ -1,4 +1,4 @@
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import { tag } from "./helpers";
 import type { RuleContext } from "./context";
 

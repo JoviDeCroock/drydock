@@ -18,7 +18,7 @@ import {
   publishedWithoutDecisionConditions,
   registryFailureCodeSql,
   scanEcosystemSql,
-} from "./scan-list";
+} from "./scan-query";
 import { readScanRiskBreakdown, type ScanRiskSummary } from "./scan-risk";
 import { scans, user } from "./schema";
 

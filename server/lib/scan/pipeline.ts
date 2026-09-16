@@ -15,6 +15,7 @@ import {
   emitOperationalEvent,
 } from "../platform/observability";
 import { recordProductEvent } from "../platform/analytics";
+import { ScanPreconditionError } from "./errors";
 import { releaseFingerprintFindings } from "../release-fingerprint";
 import type { Finding } from "../review";
 import {
@@ -97,7 +98,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
             ...registryIdentity,
           });
           if (identityResult === "mismatch") {
-            throw new Error("The staged release identity changed after this scan was queued.");
+            throw new ScanPreconditionError("staged_release_identity_changed");
           }
         }
         return collectReleaseFingerprintFindings(db, identity, resolved);

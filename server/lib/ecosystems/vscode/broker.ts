@@ -1,4 +1,6 @@
+import { readBoundedJson } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
+import { reliableFetch } from "../../platform/reliable-fetch";
 import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 
@@ -6,6 +8,10 @@ const MARKETPLACE_EXTENSION_QUERY =
   "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery?api-version=7.2-preview.1";
 const MARKETPLACE_VSIX_ASSET_TYPE = "Microsoft.VisualStudio.Services.VSIXPackage";
 const MARKETPLACE_QUERY_FLAGS = 1 | 2 | 128; // IncludeVersions | IncludeFiles | IncludeAssetUri
+const MARKETPLACE_QUERY_TIMEOUT_MS = 15_000;
+// One extension's version list with file manifests; popular extensions with
+// hundreds of versions stay well under this.
+const MAX_MARKETPLACE_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export interface VscodeMarketplaceVersion {
   version: string;
@@ -41,9 +47,13 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
     async fetchExtensionVersions(extensionId: string): Promise<VscodeMarketplaceVersion[] | null> {
       const [publisher, extensionName] = extensionId.split(".");
       if (!publisher || !extensionName) return null;
+      const deadlineMs = Date.now() + MARKETPLACE_QUERY_TIMEOUT_MS;
       try {
-        const res = await fetch(MARKETPLACE_EXTENSION_QUERY, {
+        // A query POST is idempotent but `reliableFetch` only retries GET/HEAD
+        // by default; keep the single attempt and use it for the timeout.
+        const res = await reliableFetch(MARKETPLACE_EXTENSION_QUERY, {
           method: "POST",
+          timeoutMs: MARKETPLACE_QUERY_TIMEOUT_MS,
           headers: {
             accept: "application/json;api-version=7.2-preview.1",
             "content-type": "application/json",
@@ -57,8 +67,14 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
             flags: MARKETPLACE_QUERY_FLAGS,
           }),
         });
-        if (!res.ok) return null;
-        const data = (await res.json()) as unknown;
+        if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
+          return null;
+        }
+        const data = await readBoundedJson(res, {
+          maxBytes: MAX_MARKETPLACE_RESPONSE_BYTES,
+          deadlineMs,
+        });
         const extension = findMarketplaceExtension(data, publisher, extensionName);
         return extension?.versions ?? null;
       } catch {

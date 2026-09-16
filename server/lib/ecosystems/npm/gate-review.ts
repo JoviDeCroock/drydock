@@ -58,6 +58,7 @@ export interface NpmGateDetails {
  */
 export const npmGateAdapter: PackageAdapter<NpmGateAdapterInput, NpmBroker> = {
   id: "npm",
+  codePatternSet: "javascript",
 
   parseInput(raw: unknown): NpmGateAdapterInput {
     if (!isRecord(raw)) throw new Error("npm gate adapter input must be an object");

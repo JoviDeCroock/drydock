@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
 import { githubAppInstallations, githubReleaseTargets } from "../../db/schema";
-import type { AdapterBroker, PackageAdapter } from "../ecosystems/package-adapter";
+import type { AnyPackageAdapter } from "../ecosystems/package-adapter";
 import {
   type ClassifyArtifact,
   WorkflowArtifactError,
@@ -34,7 +34,7 @@ export interface PrepareForGateInput {
 /** One reviewable package derived from the bundle, paired with its review adapter. */
 export interface PreparedGatePackage {
   candidate: PreparedReleaseCandidate;
-  packageAdapter: PackageAdapter<unknown, AdapterBroker>;
+  packageAdapter: AnyPackageAdapter;
 }
 
 export interface PreparedGateRelease {

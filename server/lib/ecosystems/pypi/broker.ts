@@ -1,3 +1,5 @@
+import { readBoundedJson } from "../../platform/bounded-body";
+import { reliableFetch } from "../../platform/reliable-fetch";
 import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 import type { PyPiArtifactKind, PyPiProjectMetadata } from "./types";
@@ -13,6 +15,16 @@ interface PyPiPublicArtifactRef {
   kind: PyPiArtifactKind;
 }
 
+// The only origin PyPI serves artifacts from; anything else is not PyPI.
+export function isAllowedPyPiArtifactUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "files.pythonhosted.org";
+  } catch {
+    return false;
+  }
+}
+
 export interface PyPiBroker extends AdapterBroker {
   fetchProjectMetadata(projectName: string): Promise<PyPiProjectMetadata | null>;
   downloadPublicArtifact(
@@ -22,15 +34,10 @@ export interface PyPiBroker extends AdapterBroker {
 }
 
 const PYPI_METADATA_REGISTRY = "https://pypi.org/pypi";
-
-function isAllowedPublicPyPiArtifactUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && parsed.hostname === "files.pythonhosted.org";
-  } catch {
-    return false;
-  }
-}
+const PYPI_METADATA_TIMEOUT_MS = 15_000;
+// The JSON API lists every release with every file; large projects (numpy,
+// tensorflow) run to a few MiB, so the cap is generous but still a cap.
+const MAX_PYPI_METADATA_BYTES = 16 * 1024 * 1024;
 
 // PyPI public artifacts carry no credentials, so unlike the npm broker this is a
 // plain object rather than a WorkerEntrypoint. The sandbox download path is
@@ -39,13 +46,20 @@ function isAllowedPublicPyPiArtifactUrl(url: string): boolean {
 export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef): PyPiBroker {
   return {
     async fetchProjectMetadata(projectName: string): Promise<PyPiProjectMetadata | null> {
+      const deadlineMs = Date.now() + PYPI_METADATA_TIMEOUT_MS;
       try {
-        const res = await fetch(
+        const res = await reliableFetch(
           `${PYPI_METADATA_REGISTRY}/${encodeURIComponent(projectName)}/json`,
-          { headers: { accept: "application/json" } },
+          { headers: { accept: "application/json" }, timeoutMs: PYPI_METADATA_TIMEOUT_MS },
         );
-        if (!res.ok) return null;
-        return (await res.json()) as PyPiProjectMetadata;
+        if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
+          return null;
+        }
+        return await readBoundedJson<PyPiProjectMetadata>(res, {
+          maxBytes: MAX_PYPI_METADATA_BYTES,
+          deadlineMs,
+        });
       } catch {
         return null;
       }
@@ -55,7 +69,7 @@ export function createPyPiBroker(ctx: AdapterContext, _ref: AdapterConnectionRef
       artifact: PyPiPublicArtifactRef,
       opts?: PyPiBrokerDownloadOptions,
     ): Promise<DownloadResult> {
-      if (!isAllowedPublicPyPiArtifactUrl(artifact.url)) {
+      if (!isAllowedPyPiArtifactUrl(artifact.url)) {
         throw new Error("PyPI public artifact URL is not allowed");
       }
       const { downloadInSandbox } = await import("../../sandbox");

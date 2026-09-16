@@ -1,4 +1,5 @@
-import type { Finding, PackageJsonDiff } from "..";
+import type { PackageJsonDiff } from "../serialize";
+import type { Finding } from "../types";
 import type { DependencySection, PackageJsonDiffEntry } from "../serialize";
 import {
   majorRangesAreSubset,

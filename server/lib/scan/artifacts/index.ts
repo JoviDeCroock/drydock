@@ -1,10 +1,6 @@
-export {
-  SCAN_ARTIFACT_WRITE_ATTEMPTS,
-  SCAN_FILE_SAMPLE_LIMIT,
-  type ScanArtifactMetadata,
-} from "./types";
+export { SCAN_FILE_SAMPLE_LIMIT, type ScanArtifactMetadata } from "./types";
 
-export { scanFileRowsForArtifacts, writeScanArtifacts, writeScanArtifactsWithRetry } from "./write";
+export { writeScanArtifactsWithRetry } from "./write";
 
 export {
   loadScanArtifactFile,

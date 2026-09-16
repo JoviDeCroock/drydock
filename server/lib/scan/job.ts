@@ -8,23 +8,24 @@ import {
   markScanFailed,
   recordRegistryVersionStatus,
 } from "../../db/scans";
-import { lookupStagedReleaseFate } from "../ecosystems/npm/release-outcome";
-import {
-  isTerminalNpmVersionStatus,
-  type NpmVersionStatus,
-} from "../ecosystems/npm/version-status";
 import { getPublishedAdapter, getStagedAdapter, UnsupportedEcosystemError } from "../ecosystems";
 import type { PublishedPairRef } from "../ecosystems/published-pair";
 import { PublicDiffError } from "../public-diff/error";
-import { errorMessage } from "../platform/errors";
 import { notifyScanCompletion } from "../notify";
 import {
   describeOperationalError,
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
+import {
+  asScanPreconditionError,
+  ScanPreconditionError,
+  type SafeScanError,
+  type ScanErrorCode,
+} from "./errors";
 import { runScanPipeline } from "./pipeline";
 import { sandboxErrorDetail } from "../sandbox";
+import { parseJsonObject } from "./json";
 import type { ScanInput } from "../../types";
 import { recordProductEvent } from "../platform/analytics";
 
@@ -54,12 +55,6 @@ export function isWorkflowGateMessage(message: QueueMessage): message is Workflo
 }
 
 export const MAX_SCAN_JOB_ATTEMPTS = 3;
-
-export interface SafeScanError {
-  code: string;
-  message: string;
-  retryable: boolean;
-}
 
 export interface ExecuteScanJobOptions {
   attempt?: number;
@@ -123,7 +118,11 @@ export async function executeScanJob(
     // A staged tarball we cannot read is the one failure whose cause we can
     // actually go and ask about, and the default reading of it ("your token is
     // wrong") is the least likely one. Refine before deciding anything.
-    const { error: safe, registryStatus } = await refineStagedFailure(env, db, message, classified);
+    const {
+      error: safe,
+      registryStatus,
+      registryStatusTerminal,
+    } = await refineStagedFailure(env, db, message, classified);
     if (!safe.retryable || options.finalAttempt) {
       const skip =
         message.source === "auto_discovery" && AUTO_DISCOVERY_DISCARD_CODES.has(safe.code);
@@ -157,7 +156,7 @@ export async function executeScanJob(
         // only statuses that cannot subsequently change. The refined error
         // already explains a published release; storing that nonterminal
         // snapshot here would leave a green "published" badge after deletion.
-        if (isTerminalNpmVersionStatus(registryStatus)) {
+        if (registryStatusTerminal) {
           await recordRegistryVersionStatus(db, {
             scanId: message.scanId,
             organizationId: message.organizationId,
@@ -233,17 +232,17 @@ async function runStagedScan(
 ) {
   const npmConnection = await getNpmConnection(db, message.organizationId);
   if (!npmConnection) {
-    throw new Error("Connect an organization npm token before scanning staged publishes.");
+    throw new ScanPreconditionError("npm_connection_missing");
   }
   if (npmConnection.validationStatus !== "valid") {
-    throw new Error("Validate the organization npm token before scanning staged publishes.");
+    throw new ScanPreconditionError("npm_connection_unvalidated");
   }
   const releaseIdentity = await getScanReleaseIdentity(db, message.scanId, message.organizationId);
   if (!releaseIdentity?.registryUrl) {
-    throw new Error("The queued scan is missing its captured npm registry.");
+    throw new ScanPreconditionError("npm_registry_identity_missing");
   }
   if (npmConnection.registryUrl !== releaseIdentity.registryUrl) {
-    throw new Error("The organization npm registry changed after this scan was queued.");
+    throw new ScanPreconditionError("npm_connection_changed");
   }
 
   await markNpmConnectionUsed(db, message.organizationId);
@@ -291,7 +290,7 @@ async function runPublishedPairScan(
  * discarded rather than shown as failures: nobody asked for the scan, and the
  * thing it was going to review no longer exists.
  */
-const AUTO_DISCOVERY_DISCARD_CODES = new Set([
+const AUTO_DISCOVERY_DISCARD_CODES = new Set<ScanErrorCode>([
   "staged_tarball_unavailable",
   "staged_release_published",
   "staged_release_deleted",
@@ -300,18 +299,20 @@ const AUTO_DISCOVERY_DISCARD_CODES = new Set([
 
 export interface RefinedScanFailure {
   error: SafeScanError;
-  registryStatus: NpmVersionStatus | null;
+  registryStatus: string | null;
+  registryStatusTerminal: boolean;
 }
 
 /**
- * Narrow a staged-tarball failure using what npm says became of the release.
+ * Narrow a staged acquisition failure using what the registry says became of
+ * the release.
  *
- * The mapping from lifecycle status to failure lives in the npm adapter; this
- * only decides when it is safe to ask. Workflow-gate reviews and published-pair
- * reviews are excluded because neither is a staged publish — npm's stage
- * lifecycle has nothing to say about a PyPI release, a VS Code release, or a
- * version that is already public. Strictly advisory: an unanswerable lookup
- * leaves the classification untouched.
+ * Which failures a registry can explain, and how, lives behind the staged
+ * adapter's `refineAcquisitionFailure` hook; this only decides when it is
+ * safe to ask. Workflow-gate reviews and published-pair reviews are excluded
+ * because neither is a staged publish — a stage lifecycle has nothing to say
+ * about a gated PyPI release or a version that is already public. Strictly
+ * advisory: an unanswerable lookup leaves the classification untouched.
  */
 export async function refineStagedFailure(
   env: Cloudflare.Env,
@@ -319,20 +320,23 @@ export async function refineStagedFailure(
   message: ScanQueueMessage,
   error: SafeScanError,
 ): Promise<RefinedScanFailure> {
-  if (
-    error.code !== "staged_tarball_unavailable" ||
-    message.source === "workflow_gate" ||
-    message.published
-  ) {
-    return { error, registryStatus: null };
-  }
-  const fate = await lookupStagedReleaseFate(env, db, message.scanId, message.organizationId);
-  if (!fate) return { error, registryStatus: null };
+  const untouched: RefinedScanFailure = {
+    error,
+    registryStatus: null,
+    registryStatusTerminal: false,
+  };
+  if (message.source === "workflow_gate" || message.published) return untouched;
+  const refined = await getStagedAdapter(scanEcosystem(message)).refineAcquisitionFailure?.(
+    { env, db, scanId: message.scanId, organizationId: message.organizationId },
+    error,
+  );
+  if (!refined) return untouched;
   return {
     // Every refined code is as terminal as the one it replaces: the staged
     // bytes are gone, and no retry brings them back.
-    error: fate.failure ? { ...fate.failure, retryable: false } : error,
-    registryStatus: fate.status,
+    error: refined.failure ? { ...refined.failure, retryable: false } : error,
+    registryStatus: refined.registryStatus,
+    registryStatusTerminal: refined.registryStatusTerminal,
   };
 }
 
@@ -356,59 +360,10 @@ export function classifyScanError(err: unknown): SafeScanError {
       retryable: sandbox.retryable,
     };
   }
-  const message = errorMessage(err);
-  if (message.includes("Connect an organization npm token")) {
-    return {
-      code: "npm_connection_missing",
-      message: "Connect an organization npm token before scanning staged publishes.",
-      retryable: false,
-    };
-  }
-  if (message.includes("Validate the organization npm token")) {
-    return {
-      code: "npm_connection_unvalidated",
-      message: "Validate the organization npm token before scanning staged publishes.",
-      retryable: false,
-    };
-  }
-  if (message.includes("staged candidate changed after scan selection")) {
-    return {
-      code: "staged_candidate_changed",
-      message: "The staged candidate changed before its review started.",
-      retryable: false,
-    };
-  }
-  if (message.includes("staged release not found")) {
-    return {
-      code: "staged_tarball_unavailable",
-      message: "The staged candidate is no longer available for review.",
-      retryable: false,
-    };
-  }
-  if (message.includes("queued scan is missing its captured npm registry")) {
-    return {
-      code: "npm_registry_identity_missing",
-      message:
-        "This queued scan has no captured npm registry. Run a new scan against the current connection.",
-      retryable: false,
-    };
-  }
-  if (message.includes("npm registry changed after this scan was queued")) {
-    return {
-      code: "npm_connection_changed",
-      message:
-        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
-      retryable: false,
-    };
-  }
-  if (message.includes("staged release identity changed after this scan was queued")) {
-    return {
-      code: "staged_release_identity_changed",
-      message:
-        "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
-      retryable: false,
-    };
-  }
+  // Covers both the orchestrator-side throws and the broker's, which reach
+  // here flattened by Workers RPC (see `asScanPreconditionError`).
+  const precondition = asScanPreconditionError(err);
+  if (precondition) return precondition.toSafeScanError();
   emitOperationalEvent("error", "scan.error.unclassified", {
     error: describeOperationalError(err),
   });
@@ -419,7 +374,7 @@ export function classifyScanError(err: unknown): SafeScanError {
   };
 }
 
-function parseSandboxDetail(detail: string) {
+function parseSandboxDetail(detail: string): SafeScanError {
   const parsed = parseJsonObject(detail);
   const error = typeof parsed?.error === "string" ? parsed.error : "sandbox download failed";
   const status = typeof parsed?.status === "number" ? parsed.status : undefined;
@@ -463,17 +418,6 @@ function parseSandboxDetail(detail: string) {
     message: "Could not download or inspect the staged tarball.",
     retryable: false,
   };
-}
-
-function parseJsonObject(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 export function retryDelaySeconds(attempt: number) {

@@ -7,6 +7,7 @@ import type {
   PackageJsonDiff,
   PackageJsonSummary,
 } from "../review";
+import type { SafeScanError, ScanErrorCode } from "../scan/errors";
 import type { TarSuspiciousEntry } from "../tar-parser.js";
 import type { EcosystemId } from "./labels";
 
@@ -120,4 +121,49 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   describe(args: AdapterDescribeArgs<TInput>): AdapterPackageSummary;
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
   registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
+
+  /**
+   * Ask the registry what became of a staged release whose bytes could not be
+   * acquired, so the failure is not blamed on the credential when the release
+   * itself moved on. Advisory: `null` leaves the classification untouched.
+   */
+  refineAcquisitionFailure?(
+    ctx: AcquisitionFailureContext,
+    failure: SafeScanError,
+  ): Promise<RefinedAcquisitionFailure | null>;
+}
+
+interface AcquisitionFailureContext {
+  env: Cloudflare.Env;
+  db: AppDb;
+  scanId: string;
+  organizationId: string;
+}
+
+interface RefinedAcquisitionFailure {
+  /** Replacement failure, or `null` when the registry status explains nothing. */
+  failure: { code: ScanErrorCode; message: string } | null;
+  /** The registry lifecycle status observed while refining. */
+  registryStatus: string | null;
+  /** True when that status can no longer change and is safe to persist on the failed scan. */
+  registryStatusTerminal: boolean;
+}
+
+/**
+ * A `PackageAdapter` with its input and broker types erased. Registries and
+ * orchestrators hold adapters of every ecosystem side by side, so they cannot
+ * name one ecosystem's `TInput`/`TBroker`; `parseInput` re-establishes the
+ * concrete input at the boundary.
+ */
+export type AnyPackageAdapter = PackageAdapter<unknown, AdapterBroker>;
+
+/**
+ * The one place the erasure cast lives. `PackageAdapter` is contravariant in
+ * `TInput` through `describe`/`acquireStaged`, so a concrete adapter does not
+ * assign to the erased shape without help.
+ */
+export function erasePackageAdapter<TInput, TBroker extends AdapterBroker>(
+  adapter: PackageAdapter<TInput, TBroker>,
+): AnyPackageAdapter {
+  return adapter as unknown as AnyPackageAdapter;
 }

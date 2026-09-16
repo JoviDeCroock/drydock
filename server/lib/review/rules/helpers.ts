@@ -1,4 +1,4 @@
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import { firstMatchingLine } from "../../platform/text-utils";
 import { FINDING_SECRET_PATTERNS, HIGH_CONFIDENCE_SECRET_PATTERNS } from "./patterns";
 import { DETERMINISTIC_RULE_IDS, type DeterministicRuleKey } from "./rule-ids";

@@ -1,25 +1,25 @@
-import type { Context } from "hono";
+import type { Context, Env } from "hono";
 import { type RateLimitError } from "./rate-limit";
-import type { Bindings, Variables } from "../../types";
 
-type AppContext = Context<{ Bindings: Bindings; Variables: Variables }>;
-
-export function rateLimitResponse(c: AppContext, error: string, err: RateLimitError) {
+// Generic over the Hono env so this stays free of the app's binding/variable
+// types; `Context` is invariant, so a fixed wider type would not accept routes.
+export function rateLimitResponse<E extends Env>(
+  c: Context<E>,
+  error: string,
+  err: RateLimitError,
+) {
   return c.json({ error, retryAfterSeconds: err.retryAfterSeconds }, 429, {
     "retry-after": String(err.retryAfterSeconds),
   });
 }
 
-// The Workers runtime exposes the per-colo cache as `caches.default`, but the
-// DOM lib wins the global CacheStorage type in this repo's single tsconfig and
-// doesn't know the property.
-export function coloCache(): Cache {
-  return (caches as unknown as { default: Cache }).default;
-}
+export { coloCache } from "./colo-cache";
 
 // Origin for links we hand out (share URLs, feed report links). Prefer the
 // canonical configured origin so copied links never pin a preview host.
-export function canonicalOrigin(c: AppContext): string {
+export function canonicalOrigin<E extends Env & { Bindings: { BETTER_AUTH_URL?: string } }>(
+  c: Context<E>,
+): string {
   try {
     if (c.env.BETTER_AUTH_URL) return new URL(c.env.BETTER_AUTH_URL).origin;
   } catch {

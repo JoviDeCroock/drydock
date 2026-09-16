@@ -1,4 +1,7 @@
-import type { DiffEntry, FileRecord, Finding, PackageJsonDiff, PackageJsonSummary } from "..";
+import type { TarSuspiciousEntry } from "../../tar-parser.js";
+import type { DiffEntry } from "../diff";
+import type { PackageJsonDiff, PackageJsonSummary } from "../serialize";
+import type { FileRecord, Finding } from "../types";
 import { buildRuleContext, type DeterministicFindingOptions } from "./context";
 import { metadataFindings } from "./metadata";
 import { scriptFindings } from "./scripts";
@@ -7,6 +10,7 @@ import { dependencyDiffFindings } from "./deps";
 import { entrypointDiffFindings, entrypointPresenceFindings } from "./entrypoints";
 import { propagationFindings } from "./propagation";
 import { promptInjectionFindings } from "./prompt-injection";
+import { tarEntryFindings } from "./tar-entries";
 
 // Bump when deterministic rule semantics, severities, or coverage change in a
 // way that should invalidate cached scan reports. Stored alongside each finding
@@ -15,17 +19,6 @@ import { promptInjectionFindings } from "./prompt-injection";
 export const DETERMINISTIC_RULES_VERSION = "1.44.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
-export {
-  codePatternsFor,
-  FINDING_SECRET_PATTERNS,
-  JS_PATTERN_SET,
-  PROMPT_INJECTION_PATTERN_SET,
-  PYTHON_PATTERN_SET,
-  PYTHON_EXECUTION_CAPABILITY_PATTERNS,
-  REVIEW_MANIPULATION_PATTERN_SET,
-  SECRET_PATTERNS,
-  SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
-} from "./patterns";
 export { safeJson } from "./helpers";
 export type { DeterministicFindingOptions } from "./context";
 
@@ -60,4 +53,14 @@ export function packageJsonDiffFindings(
     ...dependencyDiffFindings(packageJsonDiff, stagedPackageJsonText),
     ...entrypointDiffFindings(packageJsonDiff, stagedPackageJsonText),
   ]);
+}
+
+export function tarSuspiciousEntryFindings(
+  entries: TarSuspiciousEntry[] | undefined | null,
+  options: {
+    dialect?: "npm" | "pypi";
+    fileDiff?: Array<Pick<DiffEntry, "status" | "flags">>;
+  } = {},
+): Finding[] {
+  return stampVersion(tarEntryFindings(entries, options));
 }

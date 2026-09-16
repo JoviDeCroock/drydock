@@ -1,3 +1,14 @@
+import type { OrganizationRole } from "../lib/auth/roles";
+import type {
+  GithubAppInstallationStatus,
+  InvitationStatus,
+  NpmConnectionValidationStatus,
+  ScanDecision,
+  ScanSource,
+  ScanStatus,
+  WorkflowGateDecision,
+  WorkflowGateStatus,
+} from "./enums";
 import {
   sqliteTable,
   text,
@@ -53,7 +64,7 @@ export const organizationMembers = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    role: text("role").notNull().default("owner"),
+    role: text("role").$type<OrganizationRole>().notNull().default("owner"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
@@ -74,9 +85,9 @@ export const organizationInvitations = sqliteTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
-    role: text("role").notNull().default("member"),
+    role: text("role").$type<OrganizationRole>().notNull().default("member"),
     tokenHash: text("token_hash").notNull(),
-    status: text("status").notNull().default("pending"),
+    status: text("status").$type<InvitationStatus>().notNull().default("pending"),
     invitedByUserId: text("invited_by_user_id").references(() => user.id, { onDelete: "set null" }),
     acceptedByUserId: text("accepted_by_user_id").references(() => user.id, {
       onDelete: "set null",
@@ -158,9 +169,9 @@ export const scans = sqliteTable(
     registryVersion: text("registry_version"),
     previousVersion: text("previous_version"),
     risk: text("risk").notNull().default("unknown"),
-    status: text("status").notNull().default("pending"),
-    source: text("source").notNull().default("manual"),
-    decision: text("decision"),
+    status: text("status").$type<ScanStatus>().notNull().default("pending"),
+    source: text("source").$type<ScanSource>().notNull().default("manual"),
+    decision: text("decision").$type<ScanDecision>(),
     decisionReason: text("decision_reason"),
     decidedByUserId: text("decided_by_user_id").references(() => user.id, {
       onDelete: "set null",
@@ -363,7 +374,10 @@ export const npmConnections = sqliteTable(
     tokenNonce: text("token_nonce").notNull(),
     tokenFingerprint: text("token_fingerprint").notNull(),
     tokenLast4: text("token_last4"),
-    validationStatus: text("validation_status").notNull().default("unvalidated"),
+    validationStatus: text("validation_status")
+      .$type<NpmConnectionValidationStatus>()
+      .notNull()
+      .default("unvalidated"),
     capabilitiesJson: text("capabilities_json", { mode: "json" }),
     validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
     lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
@@ -419,7 +433,7 @@ export const githubAppInstallations = sqliteTable(
     accountLogin: text("account_login").notNull(),
     accountType: text("account_type").notNull(),
     targetType: text("target_type").notNull().default("Organization"),
-    status: text("status").notNull().default("active"),
+    status: text("status").$type<GithubAppInstallationStatus>().notNull().default("active"),
     suspendedAt: integer("suspended_at", { mode: "timestamp_ms" }),
     uninstalledAt: integer("uninstalled_at", { mode: "timestamp_ms" }),
     createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
@@ -491,8 +505,8 @@ export const githubWorkflowGates = sqliteTable(
     deploymentId: integer("deployment_id"),
     deploymentCallbackUrl: text("deployment_callback_url").notNull(),
     eventAction: text("event_action").notNull(),
-    status: text("status").notNull().default("pending"),
-    decision: text("decision"),
+    status: text("status").$type<WorkflowGateStatus>().notNull().default("pending"),
+    decision: text("decision").$type<WorkflowGateDecision>(),
     decisionComment: text("decision_comment"),
     reportUrl: text("report_url"),
     // Representative (highest-risk) package scan for the gate. The full set of

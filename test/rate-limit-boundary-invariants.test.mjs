@@ -13,6 +13,9 @@ import { describe, expect, test } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const OWNER = "server/lib/platform/rate-limit.ts";
+// The D1 fallback table is owned by one db module; the limiter above is the
+// only module that decides when to fall back to it.
+const D1_OWNER = "server/db/rate-limits.ts";
 
 // The binding names appear in their own declaration and in the owner's tier
 // table; anywhere else is a second limiter.
@@ -63,7 +66,7 @@ describe("rate limiting has one owner", () => {
   test("no module outside the limiter queries the rate_limits table", () => {
     const offenders = sources().filter(
       (file) =>
-        file !== OWNER && file !== "server/db/schema.ts" && /\brateLimits\b/.test(read(file)),
+        file !== D1_OWNER && file !== "server/db/schema.ts" && /\brateLimits\b/.test(read(file)),
     );
     expect(offenders).toEqual([]);
   });
