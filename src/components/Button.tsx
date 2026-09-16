@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { cn } from "./cn";
+import { readSignalProp, type SignalOrValue } from "./signal-props";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "sm" | "md";
@@ -77,5 +78,32 @@ export function LinkButton({
     >
       {children}
     </a>
+  );
+}
+
+/**
+ * The paginated list footer: one secondary button whose label and disabled
+ * state follow the model's in-flight flag. `loading`/`disabled` may be signals
+ * so the list body does not re-render on the fetch round-trip.
+ */
+export function LoadMoreButton({
+  loading,
+  disabled,
+  onClick,
+  label = "Load more",
+  size = "sm",
+}: {
+  loading: SignalOrValue<boolean>;
+  disabled?: SignalOrValue<boolean>;
+  onClick: () => void;
+  label?: string;
+  size?: ButtonSize;
+}) {
+  const busy = readSignalProp(loading);
+  const blocked = disabled === undefined ? false : readSignalProp(disabled);
+  return (
+    <Button variant="secondary" size={size} onClick={onClick} disabled={busy || blocked}>
+      {busy ? "Loading…" : label}
+    </Button>
   );
 }

@@ -5,7 +5,7 @@ import { errorMessage } from "../../../models/api";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
-import { Dialog } from "../../../components/Dialog";
+import { ConfirmDialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { Muted, SectionLabel } from "../../../components/Typography";
@@ -71,29 +71,16 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         </Button>
       </div>
 
-      <Dialog
-        open={confirming.value}
+      <ConfirmDialog
+        open={confirming}
         onClose={close}
         title="Delete your account?"
         description="This permanently deletes your account and everything you solely own. This action cannot be undone."
-        footer={
-          <>
-            <Button variant="secondary" size="sm" onClick={close} disabled={busy}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="danger"
-              size="sm"
-              form="account-delete-form"
-              disabled={submitDisabled}
-            >
-              <Show when={busy} fallback="Delete account">
-                Deleting…
-              </Show>
-            </Button>
-          </>
-        }
+        busy={busy}
+        busyLabel="Deleting…"
+        confirmLabel="Delete account"
+        confirmDisabled={submitDisabled}
+        form="account-delete-form"
       >
         <form id="account-delete-form" onSubmit={onSubmit} class="flex flex-col gap-4">
           <Show
@@ -130,7 +117,7 @@ export function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
           </Field>
           <Show when={error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
         </form>
-      </Dialog>
+      </ConfirmDialog>
     </SettingsCard>
   );
 }

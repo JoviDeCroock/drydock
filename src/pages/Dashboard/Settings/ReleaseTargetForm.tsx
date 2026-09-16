@@ -1,6 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useModel } from "@preact/signals";
-import { GithubAppModel, type PublicGithubAppInstallation } from "../../../models/github-app";
+import type { PublicGithubAppInstallation } from "../../../models/github-app";
+import { ReleaseTargetsModel } from "../../../models/release-targets";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { SettingsCardForm } from "../../../components/Card";
@@ -8,19 +9,19 @@ import { Field } from "../../../components/Field";
 import { Select } from "../../../components/Select";
 import { Muted } from "../../../components/Typography";
 
-type GithubApp = ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
+type ReleaseTargets = ReturnType<typeof useModel<typeof ReleaseTargetsModel.prototype>>;
 
 export function ReleaseTargetForm({
-  githubApp,
+  targets,
   activeInstallations,
 }: {
-  githubApp: GithubApp;
+  targets: ReleaseTargets;
   activeInstallations: PublicGithubAppInstallation[];
 }) {
-  const installationRowId = githubApp.formInstallationRowId.value;
-  const formError = githubApp.formError.value;
-  const submitting = githubApp.formSubmitting.value;
-  const formValid = githubApp.formValid.value;
+  const installationRowId = targets.formInstallationRowId.value;
+  const formError = targets.formError.value;
+  const submitting = targets.formSubmitting.value;
+  const formValid = targets.formValid.value;
 
   // Always default to the first active installation; the picker is intentionally
   // not surfaced, so keep the selected installation pinned to the one we have.
@@ -28,20 +29,20 @@ export function ReleaseTargetForm({
   useEffect(() => {
     const stillValid = activeInstallations.some((row) => row.id === installationRowId);
     if (!stillValid && activeInstallations.length) {
-      githubApp.selectInstallation(activeInstallations[0].id);
+      targets.selectInstallation(activeInstallations[0].id);
     }
   }, [installationIds, installationRowId]);
 
   const onSubmit = async (event: Event) => {
     event.preventDefault();
-    await githubApp.createReleaseTarget();
+    await targets.createReleaseTarget();
   };
 
   return (
     <SettingsCardForm onSubmit={onSubmit}>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <RepositorySelector githubApp={githubApp} />
-        <EnvironmentSelector githubApp={githubApp} />
+        <RepositorySelector targets={targets} />
+        <EnvironmentSelector targets={targets} />
       </div>
 
       {formError ? <Alert tone="critical">{formError}</Alert> : null}
@@ -55,14 +56,14 @@ export function ReleaseTargetForm({
   );
 }
 
-function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
-  const installationRowId = githubApp.formInstallationRowId.value;
-  const repositoryFullName = githubApp.formRepositoryFullName.value;
-  const submitting = githubApp.formSubmitting.value;
-  const repositories = githubApp.availableRepositories.value;
-  const accessibleCount = githubApp.activeRepositories.value.length;
-  const repositoryStatus = githubApp.activeRepositoryStatus.value;
-  const repositoryError = githubApp.activeRepositoryError.value;
+function RepositorySelector({ targets }: { targets: ReleaseTargets }) {
+  const installationRowId = targets.formInstallationRowId.value;
+  const repositoryFullName = targets.formRepositoryFullName.value;
+  const submitting = targets.formSubmitting.value;
+  const repositories = targets.availableRepositories.value;
+  const accessibleCount = targets.activeRepositories.value.length;
+  const repositoryStatus = targets.activeRepositoryStatus.value;
+  const repositoryError = targets.activeRepositoryError.value;
   // Repositories disappear from the picker once they have a release target, so
   // an empty list with accessible repos behind it means every one is mapped.
   const allMapped = accessibleCount > 0 && repositories.length === 0;
@@ -73,7 +74,7 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
         id="releaseTargetRepo"
         value={repositoryFullName}
         disabled={submitting || !installationRowId || repositoryStatus === "loading"}
-        onChange={(value) => githubApp.selectRepository(value)}
+        onChange={(value) => targets.selectRepository(value)}
       >
         <option value="">
           {!installationRowId
@@ -125,13 +126,13 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
   );
 }
 
-function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
-  const repositoryFullName = githubApp.formRepositoryFullName.value;
-  const environment = githubApp.formEnvironment.value;
-  const submitting = githubApp.formSubmitting.value;
-  const environments = githubApp.activeEnvironments.value;
-  const environmentStatus = githubApp.activeEnvironmentStatus.value;
-  const environmentError = githubApp.activeEnvironmentError.value;
+function EnvironmentSelector({ targets }: { targets: ReleaseTargets }) {
+  const repositoryFullName = targets.formRepositoryFullName.value;
+  const environment = targets.formEnvironment.value;
+  const submitting = targets.formSubmitting.value;
+  const environments = targets.activeEnvironments.value;
+  const environmentStatus = targets.activeEnvironmentStatus.value;
+  const environmentError = targets.activeEnvironmentError.value;
 
   return (
     <Field label="GitHub environment" for="releaseTargetEnv">
@@ -139,7 +140,7 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
         id="releaseTargetEnv"
         value={environment}
         disabled={submitting || !repositoryFullName || environmentStatus === "loading"}
-        onChange={(value) => githubApp.selectEnvironment(value)}
+        onChange={(value) => targets.selectEnvironment(value)}
       >
         <option value="">
           {!repositoryFullName

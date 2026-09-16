@@ -10,9 +10,9 @@
  * the list's filter is two-way bound to that query parameter, so following
  * the link applies the filter without a second code path.
  */
-import { useComputed, useSignal, type ReadonlySignal } from "@preact/signals";
+import { useComputed, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
-import { useEffect } from "preact/hooks";
+import { useNow } from "../../lib/use-now";
 import { LoadingLine, MonoLabel, Muted } from "../../components/Typography";
 import type { ScanOverview } from "../../models/scan-overview";
 import { overviewTileHref, overviewTiles, type OverviewTile } from "./tiles";
@@ -26,13 +26,7 @@ export function OverviewStrip({
   loaded: ReadonlySignal<boolean>;
   error: ReadonlySignal<string | null>;
 }) {
-  const now = useSignal(Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      now.value = Date.now();
-    }, 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  const now = useNow(60_000);
 
   const tiles = useComputed<OverviewTile[] | null>(() => {
     const data = overview.value;
