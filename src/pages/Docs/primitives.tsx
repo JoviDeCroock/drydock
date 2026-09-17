@@ -100,8 +100,10 @@ export function JourneyCard({
     <a href={href} class="no-underline group">
       <Card
         as="div"
-        padding="none"
-        class="p-4 h-full grid grid-cols-[2rem_minmax(0,1fr)] gap-2 transition-colors group-hover:border-border-strong"
+        padding="tight"
+        hover="strong"
+        hoverWithin
+        class="h-full grid grid-cols-[2rem_minmax(0,1fr)] gap-2"
       >
         <span class="font-mono text-[11px] font-medium text-accent pt-[3px]">{number}</span>
         <div class="flex flex-col gap-1.5">
@@ -213,7 +215,7 @@ export function PathCard({
   decision: string;
 }) {
   return (
-    <Card as="article" padding="none" class="p-5 flex flex-col gap-4">
+    <Card as="article" padding="compact" class="flex flex-col gap-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h4 class="m-0 text-base font-medium tracking-[-0.005em]">{title}</h4>
         <Badge tone={badge === "Preview" ? "info" : "neutral"}>{badge}</Badge>

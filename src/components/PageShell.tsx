@@ -167,7 +167,7 @@ function SiteFooter({ maxWidth }: { maxWidth: string }) {
             Pre-publish review for npm, PyPI, and VS Code
             <br />© 2026 Drydock
           </p>
-          <AikidoFootnote class="text-[13px]" />
+          <AikidoFootnote />
         </div>
         <nav class="flex flex-wrap gap-x-12 gap-y-8 text-[13px]" aria-label="Footer">
           {FOOTER_GROUPS.map((group) => (

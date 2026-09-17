@@ -243,7 +243,7 @@ function RegistryCard({
   children: ComponentChildren;
 }) {
   return (
-    <Card as="article" class="p-5 flex flex-col gap-2">
+    <Card as="article" padding="compact" class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
         <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
         {badge ? <Badge tone="info">{badge}</Badge> : null}
@@ -461,7 +461,7 @@ function ScanPreview() {
       <p class="m-0 text-[13px] text-ink-muted leading-[1.55]">
         A condensed report. Select a file in the release tree to walk the diff.
       </p>
-      <Card class="p-0 overflow-hidden">
+      <Card padding="none" class="overflow-hidden">
         <header class="px-5 pt-5 pb-4 border-b border-border flex flex-col gap-3">
           <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <h3 class="m-0 text-lg font-semibold tracking-[-0.01em]">@acme/cli</h3>

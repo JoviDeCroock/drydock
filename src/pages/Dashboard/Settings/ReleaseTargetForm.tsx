@@ -93,7 +93,9 @@ function RepositorySelector({ githubApp }: { githubApp: GithubApp }) {
         ))}
       </Select>
       {repositoryError ? (
-        <Muted class="text-[12px] mt-1.5 text-danger-text">{repositoryError}</Muted>
+        <Muted tone="danger" class="text-[12px] mt-1.5">
+          {repositoryError}
+        </Muted>
       ) : null}
       {installationRowId && !repositoryError && repositoryStatus === "idle" && allMapped ? (
         <Muted class="text-[12px] mt-1.5">
@@ -155,7 +157,9 @@ function EnvironmentSelector({ githubApp }: { githubApp: GithubApp }) {
         ))}
       </Select>
       {environmentError ? (
-        <Muted class="text-[12px] mt-1.5 text-danger-text">{environmentError}</Muted>
+        <Muted tone="danger" class="text-[12px] mt-1.5">
+          {environmentError}
+        </Muted>
       ) : null}
       {repositoryFullName &&
       !environmentError &&

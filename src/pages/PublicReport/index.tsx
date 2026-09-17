@@ -405,7 +405,7 @@ function EvidenceOnlyReport({ data }: { data: PublicReport }) {
           <ul class="list-none p-0 m-0 flex flex-col gap-1.5">
             {changes.slice(0, MAX_LISTED_CHANGES).map((entry) => (
               <li key={entry.path} class="flex items-center gap-2 min-w-0">
-                <Badge tone={statusTone(entry.status)} class="flex-shrink-0">
+                <Badge tone={statusTone(entry.status)} class="shrink-0">
                   {entry.status}
                 </Badge>
                 <code class="font-mono text-[13px] text-ink-muted truncate" title={entry.path}>

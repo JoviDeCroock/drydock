@@ -44,7 +44,9 @@ export function IncidentDiffCards() {
         <Card
           key={incident.packageName}
           as="article"
-          class="p-5 flex flex-col gap-2 hover:border-accent transition-colors duration-150"
+          padding="compact"
+          hover="accent"
+          class="flex flex-col gap-2"
         >
           <a
             href={

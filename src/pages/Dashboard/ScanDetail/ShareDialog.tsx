@@ -116,7 +116,7 @@ export function ShareDialog({
       {share ? (
         <>
           <div class="flex items-center gap-2">
-            <Input value={share.url} readOnly class="flex-1 font-mono text-[12px]" />
+            <Input value={share.url} readOnly mono class="flex-1" />
             <Button variant="secondary" size="sm" onClick={copyLink}>
               {copyLabel}
             </Button>
@@ -168,7 +168,7 @@ export function ShareDialog({
             <div class="flex flex-col gap-1.5">
               <MonoLabel as="span">README badge</MonoLabel>
               <div class="flex items-center gap-2">
-                <Input value={badge} readOnly class="flex-1 font-mono text-[12px]" />
+                <Input value={badge} readOnly mono class="flex-1" />
                 <Button
                   variant="secondary"
                   size="sm"

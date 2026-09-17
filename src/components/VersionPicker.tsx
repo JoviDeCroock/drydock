@@ -42,7 +42,7 @@ export function VersionPicker({
             if (value) onChange(value);
           }}
           disabled={disabled || options.length === 0}
-          class="font-mono"
+          mono
         >
           {!options.length ? <option value="">no published versions</option> : null}
           {options.map((option) => {

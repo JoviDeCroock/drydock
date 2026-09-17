@@ -563,7 +563,7 @@ function formatStartedScanLabel(scan: { packageName: string | null; version: str
 
 function NpmSetupCallout() {
   return (
-    <Card as="section" class="p-5 flex flex-wrap items-center justify-between gap-3">
+    <Card as="section" padding="compact" class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-col gap-1.5 min-w-0">
         <SectionLabel as="h2">npm not connected</SectionLabel>
         <Muted class="text-[13px] m-0">
@@ -667,7 +667,7 @@ function ScanRows({
               <Menu
                 align="end"
                 triggerAriaLabel={`More actions for ${scan.packageName || scan.stageId}`}
-                triggerClass="inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150"
+                triggerVariant="icon"
                 trigger={() => (
                   <span aria-hidden="true" class="text-[13px] leading-none">
                     ⋯

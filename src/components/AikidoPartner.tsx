@@ -39,7 +39,7 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
       target="_blank"
       rel="noopener noreferrer"
       class={cn(
-        "text-ink-muted inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
+        "text-[13px] text-ink-muted inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
         className,
       )}
       // No aria-label override: the accessible name composes from the visible

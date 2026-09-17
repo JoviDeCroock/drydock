@@ -44,7 +44,7 @@ export function GettingStarted({
   onDismiss: () => void;
 }) {
   return (
-    <Card as="section" class="p-5 flex flex-col gap-4">
+    <Card as="section" padding="compact" class="flex flex-col gap-4">
       <div class="flex flex-col gap-1.5">
         <SectionLabel
           as="h2"

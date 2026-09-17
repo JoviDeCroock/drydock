@@ -5,6 +5,7 @@
 - **[oxlint](https://oxc.rs/docs/guide/usage/linter)** v1 — Rust-based ESLint replacement. Config in `.oxlintrc.json`.
 - **[oxfmt](https://oxc.rs/docs/guide/usage/formatter)** v0 — Rust-based Prettier replacement. Config in `.oxfmtrc.json`.
 - **[@preact/eslint-plugin-signals](https://github.com/preactjs/signals/blob/main/packages/eslint-plugin-signals/README.md)** — loaded via oxlint's `jsPlugins` (alpha) for signal-specific rules.
+- **[@shadcn/lint](https://github.com/shadcn-ui/lint)** — a Tailwind design-system linter, loaded through the same `jsPlugins` hook. Requires oxlint >= 1.80. shadcn/ui is not required and is not used here; the rules read this repo's own components and the `@theme` tokens in `src/style.css`.
 
 ## Scripts
 
@@ -232,6 +233,48 @@ review judgement. Fixtures and test: `test/fixtures/oxlint-design/src/off-system
 `test/fixtures/oxlint-design/src/sub-floor-text.tsx`, `test/fixtures/oxlint-design/src/tokens-clean.tsx`,
 `test/fixtures/oxlint-design/server/card.ts` (must stay unreported: the fixture config uses the
 same `src/**` override as the repo config), and `test/oxlint-design-tokens.test.mjs`. Both ship as `error` with no existing violations.
+
+### Design-system rules: `shadcn/*`
+
+`@shadcn/lint` enforces the component-ownership rule in `docs/design.md`: a component owns
+its appearance, a caller owns placement. It resolves a JSX tag back to the file that defines
+it, reads that file's props and variants, and reports a `class` that overrides something the
+component owns. Preact's `class` attribute is read the same as `className`.
+
+The repo has no `components.json` and no `@/` alias, so components are recognized by import
+path through `settings.shadcn.componentImports` (`(^|/)components/[A-Z]`) rather than by a `ui`
+prefix. One consequence: a sibling import inside `src/components/` (`./Menu`) does not match, so
+primitives composing each other are not checked — only their callers are. The theme is
+discovered on its own, because `src/style.css` is the only stylesheet importing Tailwind.
+
+Four rules ship as `error`, scoped to `src/**`:
+
+- `no-restyle` — the ownership rule itself. Two contracts name the aspects a component
+  deliberately leaves to its caller: `Muted` sets `text-ink-muted` and nothing else, so the
+  caller picks size and spacing; `Card`, `SettingsCard`, and `PageShell` never set `flex`, so
+  the gap between their children is the caller's. Padding is not delegated — `Card` takes a
+  `padding` prop, and a caller-side `p-*` collides with it in a plain `cn` join.
+- `no-unknown-classes` — asks the installed Tailwind whether a class generates CSS, so
+  `rounded-huge` and `hovr:flex` fail the build. This is what keeps the
+  `w-(--segment-width)` custom-property utilities honest.
+- `require-static-classes` — a class value the linter cannot read on a recognized component.
+- `no-inline-styles` — dynamic geometry belongs in a custom property (`style={{ "--segment-width": … }}`
+  plus `w-(--segment-width)`), which Preact sets through `setProperty` and renders verbatim server-side.
+- `no-raw-colors` — a second net under `design-local/no-off-system-color`. It reports a raw
+  palette color and names the nearest declared token.
+
+`no-arbitrary-values` is deliberately **not** enabled. The type and tracking scale in
+`docs/design.md` is written as arbitrary px (`text-[13px]`, `tracking-[0.1em]`) at roughly 730
+sites; turning the rule on means first moving that scale into `@theme` tokens, which is a
+design decision rather than a lint fix.
+
+### Rules disabled with the 1.83 upgrade
+
+`react/immutability` and `react/purity` entered oxlint's `correctness` category and both encode
+React's hook model, which signals deliberately break. `immutability` reads every
+`count.value = 1` on a `useSignal` result as mutating a hook return — 155 sites, this repo's
+whole state model — and `purity` reads the `useSignal(Date.now())` seed of a ticking clock as an
+impure render. Neither has a signals-safe narrowing, so both are `off` in `.oxlintrc.json`.
 
 ### What belongs in an agent file
 

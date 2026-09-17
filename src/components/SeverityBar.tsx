@@ -93,8 +93,8 @@ export function SeverityBar({
         {segments.map((segment) => (
           <span
             key={segment.key}
-            style={{ width: `${segment.width}%` }}
-            class={cn("h-full shrink-0", segment.swatchClass)}
+            style={{ "--segment-width": `${segment.width}%` }}
+            class={cn("h-full shrink-0 w-(--segment-width)", segment.swatchClass)}
             aria-hidden
           />
         ))}

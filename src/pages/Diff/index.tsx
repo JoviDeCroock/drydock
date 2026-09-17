@@ -478,7 +478,11 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
             <TrustEvidence provenance={diff.provenance ?? []} attestation={diff.attestation} />
           ) : null}
           <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
-            <Card as="aside" class="p-5 flex flex-col gap-3 lg:max-h-[720px] overflow-hidden">
+            <Card
+              as="aside"
+              padding="compact"
+              class="flex flex-col gap-3 lg:max-h-[720px] overflow-hidden"
+            >
               <SectionLabel as="h2">Release tree</SectionLabel>
               <Input
                 type="search"
@@ -513,7 +517,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
               </div>
             </Card>
 
-            <Card class="p-5 flex flex-col gap-3">
+            <Card padding="compact" class="flex flex-col gap-3">
               <SectionLabel as="h2">File diff</SectionLabel>
               <PublicDiffWorkbench
                 entry={selectedEntry.value}
@@ -692,7 +696,7 @@ function VersionSelect({
       <Select
         value={selected}
         size="sm"
-        class="font-mono"
+        mono
         aria-label={label}
         onChange={(value) => {
           if (value && value !== selected) onChange(value);

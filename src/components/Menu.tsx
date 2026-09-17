@@ -10,16 +10,24 @@ interface MenuProps {
   children: ComponentChildren;
   align?: "start" | "end";
   triggerClass?: string;
+  // `icon` is the square 28px overflow trigger that sits at the end of a row.
+  // `bare` leaves the button unstyled for a trigger that brings its own shape,
+  // such as an avatar or an org switcher.
+  triggerVariant?: "bare" | "icon";
   triggerAriaLabel?: string;
   panelClass?: string;
   disabled?: boolean;
 }
+
+const MENU_ICON_TRIGGER_CLASS =
+  "inline-flex items-center justify-center h-7 w-7 rounded-md border border-transparent text-ink-muted hover:bg-surface-2 hover:text-ink transition-colors duration-150";
 
 export function Menu({
   trigger,
   children,
   align = "start",
   triggerClass,
+  triggerVariant = "bare",
   triggerAriaLabel,
   panelClass,
   disabled,
@@ -208,7 +216,11 @@ export function Menu({
         aria-expanded={open}
         aria-controls={panelId}
         aria-label={triggerAriaLabel}
-        class={cn("cursor-pointer disabled:cursor-not-allowed disabled:opacity-60", triggerClass)}
+        class={cn(
+          "cursor-pointer disabled:cursor-not-allowed disabled:opacity-60",
+          triggerVariant === "icon" && MENU_ICON_TRIGGER_CLASS,
+          triggerClass,
+        )}
       >
         {triggerContent}
       </button>

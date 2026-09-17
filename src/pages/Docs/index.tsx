@@ -164,7 +164,7 @@ export default function DocsPage() {
 
             <Subsection id="artifact-gap" title="The artifact gap">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Card as="article" padding="none" class="p-5 flex flex-col gap-3">
+                <Card as="article" padding="compact" class="flex flex-col gap-3">
                   <div class="flex items-center justify-between gap-3">
                     <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
                       Pull request
@@ -179,11 +179,7 @@ export default function DocsPage() {
                     necessarily the bytes a registry will serve.
                   </p>
                 </Card>
-                <Card
-                  as="article"
-                  padding="none"
-                  class="p-5 flex flex-col gap-3 border-border-strong"
-                >
+                <Card as="article" padding="compact" emphasis="strong" class="flex flex-col gap-3">
                   <div class="flex items-center justify-between gap-3">
                     <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
                       Release candidate
@@ -250,7 +246,7 @@ export default function DocsPage() {
             </Subsection>
 
             <Subsection id="inside-report" title="Inside a report">
-              <Card padding="none" class="p-0 overflow-hidden">
+              <Card padding="none" class="overflow-hidden">
                 <div class="px-5 py-4 border-b border-border flex flex-wrap items-center justify-between gap-3">
                   <div class="flex flex-col gap-1">
                     <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
@@ -858,8 +854,8 @@ jobs:
 
           <section class="border-t border-border pt-10">
             <Card
-              padding="none"
-              class="p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-5"
+              padding="roomy"
+              class="flex flex-col md:flex-row md:items-center md:justify-between gap-5"
             >
               <div class="flex flex-col gap-2 max-w-[680px]">
                 <SectionLabel as="p">Ready when your release is</SectionLabel>

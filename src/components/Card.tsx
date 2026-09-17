@@ -2,12 +2,25 @@ import type { ComponentChildren } from "preact";
 import { cn } from "./cn";
 import { SectionLabel } from "./Typography";
 
-export type CardPadding = "default" | "compact" | "none";
+export type CardPadding = "default" | "compact" | "comfortable" | "tight" | "roomy" | "none";
+
+// A card that reacts to hover is a link or button target. `accent` is the
+// affordance for a card the reader is meant to open; `strong` is the quieter
+// one for a card that only needs to look reachable.
+export type CardHover = "accent" | "strong";
 
 const cardPaddingClass: Record<CardPadding, string> = {
   default: "p-6",
   compact: "p-5",
+  comfortable: "p-5 md:p-6",
+  tight: "p-4",
+  roomy: "p-6 md:p-8",
   none: "",
+};
+
+const cardHoverClass: Record<CardHover, { self: string; within: string }> = {
+  accent: { self: "hover:border-accent", within: "group-hover:border-accent" },
+  strong: { self: "hover:border-border-strong", within: "group-hover:border-border-strong" },
 };
 
 function bodyLayoutClass(inset: "all" | "belowHeader", gap: "default" | "compact" | "none") {
@@ -21,15 +34,35 @@ export function Card({
   children,
   as: As = "section",
   padding = "default",
+  emphasis = "default",
+  hover,
+  hoverWithin = false,
 }: {
   class?: string;
   children: ComponentChildren;
   as?: "section" | "article" | "div" | "aside";
   padding?: CardPadding;
+  // `strong` picks the heavier border for a card that has to stand out from
+  // the cards beside it.
+  emphasis?: "default" | "strong";
+  hover?: CardHover;
+  // The hover is driven by an ancestor marked `group` — the card is part of a
+  // larger link target rather than being the target itself.
+  hoverWithin?: boolean;
 }) {
   return (
     <As
-      class={cn("bg-surface border border-border rounded-lg", cardPaddingClass[padding], className)}
+      class={cn(
+        "bg-surface border rounded-lg",
+        emphasis === "strong" ? "border-border-strong" : "border-border",
+        cardPaddingClass[padding],
+        hover &&
+          cn(
+            cardHoverClass[hover][hoverWithin ? "within" : "self"],
+            "transition-colors duration-150",
+          ),
+        className,
+      )}
     >
       {children}
     </As>

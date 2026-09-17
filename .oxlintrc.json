@@ -3,6 +3,7 @@
   "plugins": ["typescript", "unicorn", "oxc", "import", "react", "promise"],
   "jsPlugins": [
     "@preact/eslint-plugin-signals",
+    "@shadcn/lint",
     { "name": "signals-local", "specifier": "./tooling/oxlint/signals-local/index.mjs" },
     { "name": "boundaries-local", "specifier": "./tooling/oxlint/boundaries-local/index.mjs" },
     { "name": "design-local", "specifier": "./tooling/oxlint/design-local/index.mjs" }
@@ -18,6 +19,18 @@
     "es2022": true
   },
   "settings": {
+    // @shadcn/lint discovers components through `components.json` or a `@/`
+    // alias; this repo has neither, so components are recognized by their
+    // import path instead. The theme is found on its own: `src/style.css` is
+    // the only stylesheet that imports Tailwind.
+    "shadcn": {
+      // Two forms reach the same directory: `../../components/Card` from a page
+      // or feature, and `./Card` from a sibling primitive. Without the second,
+      // primitives composing each other go unchecked — which is how a padding
+      // collision sat in `Loading` after every caller-side one was fixed.
+      "componentImports": ["(^|/)components/[A-Z]", "^\\./[A-Z]"],
+      "note": "The token system and the rules behind these components are in docs/design.md."
+    },
     "react": {
       "version": "18",
       "pragma": "h",
@@ -56,9 +69,27 @@
     "signals-local/no-signal-conditional-jsx": "error",
     "boundaries-local/no-cross-page-import": "error",
     "design-local/no-stacked-section-rule": "error",
-    "react-hooks/exhaustive-deps": "off"
+    "react-hooks/exhaustive-deps": "off",
+    // Both rules encode React's hook model, which signals deliberately break.
+    // `immutability` reads every `count.value = 1` on a `useSignal` result as
+    // mutating a hook return (155 sites — this repo's entire state model), and
+    // `purity` reads the `useSignal(Date.now())` seed of a ticking clock as an
+    // impure render. Neither has a signals-safe formulation to narrow them to.
+    "react/immutability": "off",
+    "react/purity": "off"
   },
   "overrides": [
+    {
+      // Every primitive forwards `cn(base, className)`, and the plugin's
+      // wrapper detection keys on `className`, so a Preact `class` forward reads
+      // as an unreadable value. The rule still guards the call sites, which is
+      // where an unreadable class actually hides a restyle.
+      "files": ["src/**"],
+      "excludeFiles": ["src/components/**"],
+      "rules": {
+        "shadcn/require-static-classes": "error"
+      }
+    },
     {
       // The design token system is a UI contract. Server-rendered images
       // (the OG card SVG) legitimately carry literal colors: no dark mode, no
@@ -67,6 +98,69 @@
       "rules": {
         "design-local/no-off-system-color": "error",
         "design-local/no-sub-floor-text": "error"
+      }
+    },
+    {
+      // Components own their own appearance; callers own placement. The
+      // contracts below are not exceptions to that — they name the aspects
+      // each component deliberately leaves to its caller, which is visible in
+      // what the component itself sets.
+      //
+      // `no-arbitrary-values` is intentionally absent. The type and tracking
+      // scale in docs/design.md is written as arbitrary px (`text-[13px]`,
+      // `tracking-[0.1em]`) at 730 sites; enforcing it means first moving that
+      // scale into `@theme` tokens, which is a design decision, not a lint fix.
+      "files": ["src/**"],
+      "rules": {
+        "shadcn/no-restyle": [
+          "error",
+          {
+            "allow": ["layout"],
+            "contracts": [
+              {
+                // `Muted` sets `text-ink-muted` and nothing else: it is a color
+                // primitive, so the caller picks the size and the spacing.
+                "pattern": "^Muted$",
+                "allow": ["layout", "typography", "spacing"]
+              },
+              {
+                // `CloseButton` sets the glyph's color and shape but no size:
+                // the ✕ matches the text it sits beside, so the caller picks it.
+                "pattern": "^CloseButton$",
+                "allow": ["layout", "typography"]
+              },
+              {
+                // `Menu` has no `class` prop at all. `triggerClass` and
+                // `panelClass` are its declared escape hatches — a trigger is an
+                // avatar, an org switcher, or an icon button, and the panel is
+                // positioned by its caller — so there is nothing here to guard.
+                "pattern": "^Menu$",
+                "allow": ["layout", "typography", "spacing", "color", "shape", "effects", "motion"]
+              },
+              {
+                // These are containers. None of them sets `flex`, so the gap
+                // between their children belongs to the caller. Padding does
+                // not: `Card` and `SettingsCard` take a `padding` prop, and a
+                // caller-side `p-*` lands next to the prop's value in a plain
+                // `cn` join, where the CSS source order decides the winner.
+                "pattern": "^(Card|SettingsCard|PageShell)$",
+                "allow": ["layout", "gap-*"]
+              }
+            ]
+          }
+        ],
+        "shadcn/no-unknown-classes": "error",
+        "shadcn/no-inline-styles": "error",
+        "shadcn/no-raw-colors": "error"
+      }
+    },
+    {
+      // The comment above `canonicalizePath` documents the confusable-path
+      // attack it defends against by carrying a real zero-width space in
+      // `binding\u200b.gyp`. Removing the character removes the example.
+      "files": ["server/lib/tar-parser.js"],
+      "rules": {
+        "no-irregular-whitespace": "off"
       }
     },
     {
@@ -86,6 +180,7 @@
     "**/*.d.ts",
     "test/fixtures/oxlint-signals/**",
     "test/fixtures/oxlint-boundaries/**",
-    "test/fixtures/oxlint-design/**"
+    "test/fixtures/oxlint-design/**",
+    "test/fixtures/oxlint-shadcn/**"
   ]
 }
