@@ -93,7 +93,7 @@ export function ScanDetailHeader({
         )}
       </div>
       {decision || onDecideClick || onDeleteClick || (detail && isComplete) ? (
-        <div class="flex flex-wrap items-start gap-3">
+        <div class="flex flex-wrap items-start gap-3 sm:self-end sm:items-end">
           {decision ? (
             <div class="flex flex-col items-end gap-1">
               <Badge tone={decision === "publish" ? "ok" : "critical"}>
@@ -106,18 +106,24 @@ export function ScanDetailHeader({
               ) : null}
             </div>
           ) : null}
-          {detail && isComplete && onShareClick ? (
-            <ShareAction decision={decision} shareSignal={shareSignal} onClick={onShareClick} />
-          ) : null}
           {detail && isComplete ? (
-            <LinkButton
-              variant="ghost"
-              size="sm"
-              href={reportExportHref(detail)}
-              download={reportExportFilename(detail.scan)}
+            <div
+              role="group"
+              class="flex flex-wrap items-center gap-1"
+              aria-label="Review utilities"
             >
-              Export JSON
-            </LinkButton>
+              {onShareClick ? (
+                <ShareAction decision={decision} shareSignal={shareSignal} onClick={onShareClick} />
+              ) : null}
+              <LinkButton
+                variant="ghost"
+                size="sm"
+                href={reportExportHref(detail)}
+                download={reportExportFilename(detail.scan)}
+              >
+                Export JSON
+              </LinkButton>
+            </div>
           ) : null}
           {onDecideClick ? (
             <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
