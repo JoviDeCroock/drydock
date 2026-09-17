@@ -1,0 +1,17 @@
+{
+  "jsPlugins": ["@shadcn/lint"],
+  "settings": {
+    "shadcn": {
+      "componentImports": ["(^|/)components/[A-Z]", "^\\./[A-Z]"]
+    }
+  },
+  "rules": {
+    "shadcn/no-restyle": [
+      "error",
+      {
+        "allow": ["layout"],
+        "contracts": [{ "pattern": "^(Card)$", "allow": ["layout", "gap-*"] }]
+      }
+    ]
+  }
+}

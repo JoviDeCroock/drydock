@@ -27,13 +27,13 @@ export function DiffOverview({
             <span
               key={marker.key}
               class={cn(
-                "absolute left-[-1px] right-[-1px] rounded-full",
+                "absolute left-[-1px] right-[-1px] rounded-full top-(--marker-top) h-(--marker-height)",
                 markerClass(marker),
                 marker.kind === "finding" ? "z-10 ring-1 ring-surface" : "opacity-75",
               )}
               style={{
-                top: `${marker.topPercent}%`,
-                height: `${marker.heightPercent}%`,
+                "--marker-top": `${marker.topPercent}%`,
+                "--marker-height": `${marker.heightPercent}%`,
               }}
             />
           ))}
@@ -49,10 +49,10 @@ function DiffOverviewThumb({ scrollState }: { scrollState: Signal<DiffScrollStat
   if (!state || state.content <= state.viewport) return null;
   return (
     <span
-      class="absolute left-[-1px] right-[-1px] z-20 rounded-full bg-ink/15"
+      class="absolute left-[-1px] right-[-1px] z-20 rounded-full bg-ink/15 top-(--thumb-top) h-(--thumb-height)"
       style={{
-        top: `${(state.top / state.content) * 100}%`,
-        height: `${(state.viewport / state.content) * 100}%`,
+        "--thumb-top": `${(state.top / state.content) * 100}%`,
+        "--thumb-height": `${(state.viewport / state.content) * 100}%`,
       }}
     />
   );

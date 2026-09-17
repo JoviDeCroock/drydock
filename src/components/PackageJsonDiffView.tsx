@@ -50,7 +50,7 @@ export function hasManifestChanges(diff: PackageJsonDiff): boolean {
 function InlineMeta({ label, value }: { label: string; value: string }) {
   return (
     <div class="flex items-baseline gap-2 min-w-0">
-      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
+      <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
         {label}
       </span>
       <code class="text-xs text-ink-muted break-words min-w-0">{value}</code>

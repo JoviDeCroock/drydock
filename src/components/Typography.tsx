@@ -96,12 +96,20 @@ export function Muted({
   children,
   class: className,
   as: As = "p",
+  tone = "muted",
 }: {
   children: ComponentChildren;
   class?: string;
   as?: "p" | "span" | "div";
+  // `danger` is the same quiet body copy carrying an error — a failed field
+  // check, a rejected value. `text-danger-text` is the AA-safe pair.
+  tone?: "muted" | "danger";
 }) {
-  return <As class={cn("text-ink-muted", className)}>{children}</As>;
+  return (
+    <As class={cn(tone === "danger" ? "text-danger-text" : "text-ink-muted", className)}>
+      {children}
+    </As>
+  );
 }
 
 export function LoadingLine({

@@ -13,7 +13,8 @@
     // Lint-rule fixtures deliberately hold "bad" code to exercise the rule.
     "test/fixtures/oxlint-signals/**",
     "test/fixtures/oxlint-boundaries/**",
-    "test/fixtures/oxlint-design/**"
+    "test/fixtures/oxlint-design/**",
+    "test/fixtures/oxlint-shadcn/**"
   ],
   "ignoreDependencies": [
     // `cloudflare:workers` / `cloudflare:test` / `cloudflare:email` are Workers

@@ -124,8 +124,10 @@ export function ContentArticleLinks({
           <a key={link.href} href={link.href} class="no-underline text-inherit group">
             <Card
               as="div"
-              padding="none"
-              class="p-4 h-full flex flex-col gap-1.5 transition-colors duration-150 group-hover:border-accent"
+              padding="tight"
+              hover="accent"
+              hoverWithin
+              class="h-full flex flex-col gap-1.5"
             >
               <h3 class="m-0 text-[14px] font-medium tracking-[-0.005em] flex items-baseline gap-1.5">
                 <span>{link.title}</span>

@@ -30,7 +30,6 @@ import {
   tokenizeLines,
   type TokenLine,
 } from "./highlight";
-import { Muted } from "./Typography";
 import { cn } from "./cn";
 
 export type { DiffFinding } from "./diff-annotations";
@@ -731,10 +730,10 @@ function WholeFileReplacementView({
 }) {
   return (
     <div class="flex flex-col gap-3">
-      <Muted class="border border-border rounded-md bg-surface-2 px-3 py-2 text-[12px]">
+      <p class="m-0 border border-border rounded-md bg-surface-2 px-3 py-2 text-[12px] text-ink-muted">
         Line pairing timed out on this file, so each side is shown independently. Use the line
         expanders to review the complete samples without rendering every row at once.
-      </Muted>
+      </p>
       <SingleSidedView
         path={path}
         label={beforeLabel}

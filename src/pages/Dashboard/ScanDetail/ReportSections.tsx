@@ -136,7 +136,7 @@ function ProvenanceView({ provenance }: { provenance: ReleaseProvenance }) {
               <code class="font-mono text-[12px] text-ink break-all min-w-0">{artifact.path}</code>
             </div>
             <div class="flex items-baseline gap-2 min-w-0">
-              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle flex-shrink-0">
+              <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle shrink-0">
                 sha256
               </span>
               <code class="font-mono text-[11px] text-ink-muted break-all min-w-0">

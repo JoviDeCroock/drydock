@@ -73,22 +73,22 @@ export function FindingCard({
             {severity}
           </Badge>
           {source === "ai" ? (
-            <Badge tone="neutral" class="flex-shrink-0">
+            <Badge tone="neutral" class="shrink-0">
               assistant
             </Badge>
           ) : null}
           <FileRef file={file} onSelect={onSelect} />
           {diffStatus ? (
-            <Badge tone={statusTone(diffStatus)} class="flex-shrink-0">
+            <Badge tone={statusTone(diffStatus)} class="shrink-0">
               {diffLabel ?? diffStatus}
             </Badge>
           ) : null}
         </div>
         {line || ruleId ? (
           <div class="flex items-center gap-2 min-w-0 font-mono text-[11px] text-ink-subtle">
-            {line ? <span class="flex-shrink-0">L{line}</span> : null}
+            {line ? <span class="shrink-0">L{line}</span> : null}
             {line && ruleId ? (
-              <span class="flex-shrink-0" aria-hidden>
+              <span class="shrink-0" aria-hidden>
                 ·
               </span>
             ) : null}
@@ -158,10 +158,10 @@ export function GroupedFindingCard({
           <li key={`${entry.file}:${entry.line ?? ""}`} class="flex items-center gap-2 min-w-0">
             <FileRef file={entry.file} onSelect={entry.onSelect} />
             {entry.line ? (
-              <span class="flex-shrink-0 font-mono text-[11px] text-ink-subtle">L{entry.line}</span>
+              <span class="shrink-0 font-mono text-[11px] text-ink-subtle">L{entry.line}</span>
             ) : null}
             {entry.diffStatus ? (
-              <Badge tone={statusTone(entry.diffStatus)} class="flex-shrink-0">
+              <Badge tone={statusTone(entry.diffStatus)} class="shrink-0">
                 {entry.diffLabel ?? entry.diffStatus}
               </Badge>
             ) : null}

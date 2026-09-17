@@ -100,10 +100,7 @@ export function Dialog({
         {/* Rendered last (absolutely positioned top-right) so showModal()'s
             native initial focus lands on the first real control instead of
             the ✕; call-site `autofocus` still takes precedence natively. */}
-        <CloseButton
-          onClick={onClose}
-          class="absolute top-3 right-3 w-7 h-7 text-[14px] text-ink-subtle hover:text-ink hover:bg-surface-2"
-        />
+        <CloseButton onClick={onClose} variant="icon" class="absolute top-3 right-3 text-[14px]" />
       </div>
     </dialog>
   );

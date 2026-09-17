@@ -28,7 +28,7 @@ export function LoadingState({
   class?: string;
 }) {
   return (
-    <Card class={cn("flex flex-col gap-4 p-5 md:p-6", className)}>
+    <Card padding="comfortable" class={cn("flex flex-col gap-4", className)}>
       <LoadingLine>{title}</LoadingLine>
       <IndeterminateBar />
       {detail ? (

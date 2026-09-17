@@ -103,7 +103,7 @@ export function Toaster() {
           <CloseButton
             onClick={() => dismissToast(item.id)}
             ariaLabel="Dismiss"
-            class="shrink-0 -mr-1 -mt-0.5 text-[13px] text-ink-subtle hover:text-ink"
+            class="shrink-0 -mr-1 -mt-0.5 text-[13px]"
           />
         </div>
       ))}

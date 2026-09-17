@@ -29,6 +29,8 @@ type SelectProps = Omit<
   children: ComponentChildren;
   size?: SelectSize;
   class?: string;
+  // Matches `Input`'s mono treatment for machine values.
+  mono?: boolean;
 };
 
 export function Select({
@@ -39,6 +41,7 @@ export function Select({
   children,
   size = "md",
   class: className,
+  mono = false,
   ...rest
 }: SelectProps) {
   return (
@@ -52,6 +55,7 @@ export function Select({
         class={cn(
           "appearance-none w-full bg-bg border border-border rounded-md text-ink outline-none transition-[border-color,box-shadow] duration-150 ease-out focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-soft)] disabled:opacity-60 disabled:cursor-not-allowed",
           sizeStyles[size],
+          mono && "font-mono",
           className,
         )}
       >
