@@ -342,8 +342,8 @@ export default function ScanDetailPage() {
       {/* Above the verdict on purpose: npm blocking a version, or still
           holding one this organization already approved, outranks anything the
           report has to say about it. Rendered for failed scans too — a review
-          that could not read the tarball because the release was published or
-          removed is exactly when this is the only useful thing on the page. */}
+          that could not read the tarball is exactly when npm's own state is
+          the only useful thing on the page. */}
       {detail ? <RegistryStatusNotice scan={detail.scan} /> : null}
 
       {!detail && !error ? (

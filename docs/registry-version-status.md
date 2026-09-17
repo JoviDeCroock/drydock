@@ -170,7 +170,9 @@ delay only gates the email.
 
 - The dashboard list's Decision cell (`RegistryStatusBadge`) and the
   **Published without Drydock decision** filter.
-- The scan workbench header badge and `RegistryStatusNotice`.
+- The scan workbench header badge with its observation time. `RegistryStatusNotice`
+  adds a separate row only for states with actionable context: validating,
+  blocked, or approved here while still awaiting npm approval.
 - The package release view (`/dashboard/packages/:name`), which shows the
   badge with its observation time per release and highlights the rows where
   npm's outcome disagrees with Drydock's record: published with no decision,

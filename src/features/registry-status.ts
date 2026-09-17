@@ -8,6 +8,8 @@ export type RegistryStatusVariant =
   | "published"
   | "deleted";
 
+export type RegistryStatusNoticeVariant = Exclude<RegistryStatusVariant, "published" | "deleted">;
+
 export interface RegistryStatusScan {
   registryVersionStatus?: string | null;
   registryVersionStatusAt?: string | number | Date | null;
@@ -38,6 +40,19 @@ export function registryStatusVariant(scan: RegistryStatusScan): RegistryStatusV
     default:
       return null;
   }
+}
+
+/**
+ * Quiet terminal outcomes fit in the header badge. A separate notice is
+ * reserved for states that add actionable context to the review.
+ */
+export function registryStatusNoticeVariant(
+  scan: RegistryStatusScan,
+): RegistryStatusNoticeVariant | null {
+  const variant = registryStatusVariant(scan);
+  return variant === "blocked" || variant === "awaiting_approval" || variant === "validating"
+    ? variant
+    : null;
 }
 
 /**
