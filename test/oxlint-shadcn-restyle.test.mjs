@@ -24,7 +24,15 @@ function run(cwd, args) {
 }
 
 function diagnostics() {
-  const report = JSON.parse(run(fixtureDir, ["-c", "oxlintrc.json", "--format=json", "src"]));
+  const output = run(fixtureDir, ["-c", "oxlintrc.json", "--format=json", "src"]);
+  let report;
+  try {
+    report = JSON.parse(output);
+  } catch {
+    // oxlint writes the plugin-load failure to stderr and still exits 0, so a
+    // non-JSON stdout here means the rules never ran.
+    assert.fail(`oxlint produced no JSON report; @shadcn/lint likely failed to load:\n${output}`);
+  }
   return (report.diagnostics ?? [])
     .filter((d) => d.code === "shadcn(no-restyle)")
     .map((d) => ({
@@ -35,15 +43,15 @@ function diagnostics() {
 }
 
 describe("shadcn/no-restyle", () => {
-  const flagged = diagnostics();
-
   it("reports a caller-side padding collision through a page-relative import", () => {
+    const flagged = diagnostics();
     const hit = flagged.find((d) => d.filename === "src/page.tsx" && d.line === 6);
     assert.ok(hit, `expected a finding on src/page.tsx:6, got ${JSON.stringify(flagged)}`);
     assert.match(hit.message, /p-5/);
   });
 
   it("reports the same collision through a sibling import inside components/", () => {
+    const flagged = diagnostics();
     const hit = flagged.find((d) => d.filename === "src/components/Wrapper.tsx");
     assert.ok(
       hit,
@@ -53,6 +61,7 @@ describe("shadcn/no-restyle", () => {
   });
 
   it("leaves placement and the contract's gap allowance alone", () => {
+    const flagged = diagnostics();
     assert.equal(flagged.filter((d) => d.filename === "src/page.tsx" && d.line === 7).length, 0);
   });
 });
