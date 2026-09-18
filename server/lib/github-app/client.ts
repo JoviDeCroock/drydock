@@ -40,7 +40,8 @@ export interface PaginateOptions {
   maxPages: number;
   /**
    * Veto a `rel="next"` URL before it is fetched with `headers`. Credentialed
-   * listings use this to keep the token on the API host.
+   * listings use this to keep the token on the API host. A veto ends the walk
+   * as incomplete, because the pages behind the rejected link were never read.
    */
   followNext?(next: string): boolean;
 }
@@ -50,6 +51,8 @@ export interface PaginateOptions {
  * `readPage`, which owns status handling and throws its caller's typed error.
  * The walk ends at the last page, at `maxPages`, at a vetoed link, or on a
  * link already visited (a malformed chain is treated like the cap, not looped).
+ * Only the first of those reports `complete`; every other exit left pages
+ * unread.
  */
 export async function paginate(
   firstUrl: string,
@@ -64,7 +67,12 @@ export async function paginate(
     const response = await reliableFetch(url, { headers: options.headers });
     await readPage(response);
     const next = nextLink(response.headers.get("link"));
-    url = next && (options.followNext?.(next) ?? true) ? next : "";
+    // A vetoed link is a chain we refused to walk, not the end of one. Reporting
+    // it as complete would tell a caller that fails closed on truncation that it
+    // saw the whole listing — in exactly the forged-`Link` case the veto exists
+    // for.
+    if (next && !(options.followNext?.(next) ?? true)) return { complete: false };
+    url = next;
   }
   // A remaining `next` after the cap means the listing was cut short; callers
   // decide whether that is a log line (a picker) or a failure (a decision).

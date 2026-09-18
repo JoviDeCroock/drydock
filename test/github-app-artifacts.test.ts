@@ -434,6 +434,44 @@ describe("fetchReleaseBundleWithToken", () => {
     expect(page).toBeLessThanOrEqual(8);
   });
 
+  test("bundle_unavailable when the artifact listing stops at an off-host pagination link", async () => {
+    // The host veto refuses to send the installation token to whatever a forged
+    // `Link` names. Refusing to walk the chain still leaves the rest of the
+    // listing unread, so it has to fail closed the same way the page cap does —
+    // otherwise the one case the veto exists for is the one that resolves to a
+    // subset.
+    const fixture = await buildFixture();
+    let page = 0;
+    stubArtifacts({
+      bundleZip: fixture.bundleZip,
+      artifactsResponse: () => {
+        page += 1;
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, size_in_bytes: 1, expired: false }],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              link: `<https://attacker.example/repos/o/r/actions/runs/1/artifacts?page=2>; rel="next"`,
+            },
+          },
+        );
+      },
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
+      name: "WorkflowArtifactError",
+      code: "bundle_unavailable",
+    });
+    // The vetoed link was never fetched.
+    expect(page).toBe(1);
+  });
+
   test("bundle_too_large when content-length exceeds the cap", async () => {
     const fixture = await buildFixture();
     stubArtifacts({
