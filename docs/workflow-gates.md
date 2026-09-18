@@ -19,10 +19,51 @@ atpm has no gate. Its releases are reviewed through an anonymous link from atpm'
 
 The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and bypasses Better Auth only after signature verification. All stored gate state remains organization-scoped.
 
+## Guided setup
+
+Step 1 of the contract used to be a manual walk through GitHub settings. **Settings → Integrations → Guided gate setup** (`/dashboard/settings#gate-setup`) now walks it with Drydock generating the workflow and checking the result:
+
+1. Pick the installation and repository the App can already see.
+2. Create the GitHub Environment (Drydock links straight to the repository's environment settings), then **Check it** — Drydock reads the environment list back.
+3. Enable Drydock as that environment's custom deployment-protection rule in GitHub, then **Check it** — Drydock reads the environment's protection rules and confirms its own App id is among them.
+4. Pick the ecosystem and package name; Drydock generates the publish workflow for it.
+5. Copy the workflow, or follow the link to GitHub's new-file editor with the path prefilled, and commit it yourself.
+6. Create the matching release target, which is the same `POST /release-targets` the manual form uses — pinned to the chosen ecosystem rather than left on auto-detect, because pinning is what enables the ecosystem's own artifact-name matching (notably PyPI's `pypi-release-candidate-*` shards).
+
+A maintainer who has not installed the GitHub App yet still lands on this section: it renders an install prompt in place of the wizard rather than nothing, so the `#gate-setup` deep link never dead-ends. Organization members see the same anchored section with an owner/admin-required explanation instead of controls that can only return `403`.
+
+### Why Drydock does not do the GitHub steps for you
+
+Creating the environment and registering the protection rule need **Administration: write**; committing a file under `.github/workflows/` needs **Contents: write** plus **Workflows: write**, and opening the pull request needs **Pull requests: write**. Those are standing grants on every gated repository, and `workflows: write` is specifically the power to rewrite the workflow the gate exists to protect — the same power the generated workflow's own checklist tells you to lock down with `CODEOWNERS`. A security tool should not hold it to save a dozen one-time clicks.
+
+Acting _as_ the gate needs none of that. GitHub's only requirement for the review callback is that an App may review its own custom deployment-protection rules, so Drydock's runtime permissions are unchanged by guided setup. The App's full registration — two read-only repository permissions and two webhook events — is in [`self-hosting.md`](./self-hosting.md#repository-permissions).
+
+Everything the wizard reads is repository-read tier and already used by the release-target form:
+
+| Endpoint                   | Does                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST /gate-setup/preview` | Renders the ecosystem's workflow YAML for a draft. No GitHub calls.                                  |
+| `POST /gate-setup/verify`  | Reads `GET /repos/{o}/{r}`, `GET .../environments/{name}` and `GET .../deployment_protection_rules`. |
+
+Both are owner/admin-only (`roleCanManageIntegrations`), scoped through `ensureInstallationOwnedBy`, and organization-rate-limited, with the same session posture as `POST /release-targets`. Guided setup writes no audit rows, because it makes no change to audit.
+
+### Verification, not bookkeeping
+
+`verify` returns `{ environment, protectionRule, defaultBranch }` where each check is `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and the wizard renders a gate as armed only on `protectionRule: "present"`. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup. Nothing logs a GitHub response body, header, or the installation token.
+
+Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable.
+
+### Generated workflows
+
+The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). The `/github-app/config` response derives the wizard's ecosystem choices from that same registry, so adding a template also makes the option visible without a second client-side list. Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
+
+Drydock generates these files but does not review them. Read the workflow before you commit it.
+
 ## Shared implementation
 
 - `server/routes/github-webhooks.ts` verifies GitHub webhook signatures and persists gate deliveries.
 - `server/routes/github-app/installations.ts` handles App install/callback setup.
+- `server/routes/github-app/gate-setup.ts` and `server/lib/github-app/gate-setup.ts` back the guided setup wizard (workflow preview and read-only verification of GitHub's gate configuration).
 - `server/routes/github-app/release-targets.ts` maps organizations to GitHub repositories/environments/ecosystems.
 - `server/routes/github-app/workflow-gates.ts` exposes pending/completed gate review APIs and accept/reject actions.
 - `server/lib/workflow-gates/` resolves workflow runs, artifacts, release targets, callback URLs, and gate lifecycle state.
@@ -176,7 +217,7 @@ The gate review workbench shows the release target, package identity/version, ar
 2. Implement release-set derivation from uploaded artifact bytes.
 3. Define baseline acquisition and artifact namespace matching.
 4. Add deterministic findings for ecosystem-specific risky behavior.
-5. Register the adapter with workflow-gate resolution.
+5. Register the adapter with workflow-gate resolution, and implement `gateSetupTemplate` so the guided setup wizard can generate its publish workflow.
 6. Add Worker-route tests for webhook/gate lifecycle and adapter tests for archive/metadata/baseline behavior.
 7. Add fake-registry or fake-artifact e2e coverage when the publish workflow or browser-visible review flow changes.
 
