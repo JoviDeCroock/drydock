@@ -32,6 +32,27 @@ function stalled(firstChunk: string): { response: Response; cancelled: () => boo
   return { response: new Response(body), cancelled: () => cancelled };
 }
 
+// A body that keeps producing small chunks forever, staying under the byte cap.
+// Only an absolute deadline ends this read — a timer restarted per chunk never
+// fires, because a chunk always arrives before it elapses.
+function trickling(intervalMs: number): { response: Response; cancelled: () => boolean } {
+  let cancelled = false;
+  let timer: ReturnType<typeof setInterval>;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      timer = setInterval(() => {
+        if (cancelled) return;
+        controller.enqueue(new TextEncoder().encode("."));
+      }, intervalMs);
+    },
+    cancel() {
+      cancelled = true;
+      clearInterval(timer);
+    },
+  });
+  return { response: new Response(body), cancelled: () => cancelled };
+}
+
 describe("readBoundedText", () => {
   test("concatenates chunks under the cap", async () => {
     await expect(readBoundedText(streamed(["ab", "cd"]), { maxBytes: 4 })).resolves.toBe("abcd");
@@ -71,6 +92,17 @@ describe("readBoundedText", () => {
     const result = await readBoundedText(response, { maxBytes: 1024, deadlineMs: Date.now() + 20 });
     expect(result).toBeNull();
     expect(cancelled()).toBe(true);
+  });
+
+  test("bounds a body that trickles under the cap, so the deadline is absolute", async () => {
+    const { response, cancelled } = trickling(5);
+    const startedAt = Date.now();
+    const result = await readBoundedText(response, { maxBytes: 1024, deadlineMs: startedAt + 60 });
+    expect(result).toBeNull();
+    expect(cancelled()).toBe(true);
+    // A per-chunk timer would never fire against a 5ms trickle; an absolute one
+    // ends the read near its own deadline.
+    expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 
   test("an already-passed deadline still lets a complete body through only if it is instant", async () => {

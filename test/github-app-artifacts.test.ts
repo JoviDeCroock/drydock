@@ -396,6 +396,44 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
+  test("bundle_unavailable when the artifact listing is truncated by the page cap", async () => {
+    // Every page advertises another one, so the walk stops on the page cap with
+    // a `next` still outstanding. The matching artifact is present and readable
+    // on page one — the point is that a listing we could not finish must not
+    // resolve to the subset we happened to see, because the shard that is
+    // missing is exactly the one an attacker would add last.
+    const fixture = await buildFixture();
+    let page = 0;
+    stubArtifacts({
+      bundleZip: fixture.bundleZip,
+      artifactsResponse: () => {
+        page += 1;
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, size_in_bytes: 1, expired: false }],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              link: `<https://api.github.com/repos/o/r/actions/runs/1/artifacts?page=${page + 1}>; rel="next"`,
+            },
+          },
+        );
+      },
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
+      name: "WorkflowArtifactError",
+      code: "bundle_unavailable",
+    });
+    // Bounded by the page cap rather than following `next` forever.
+    expect(page).toBeLessThanOrEqual(8);
+  });
+
   test("bundle_too_large when content-length exceeds the cap", async () => {
     const fixture = await buildFixture();
     stubArtifacts({

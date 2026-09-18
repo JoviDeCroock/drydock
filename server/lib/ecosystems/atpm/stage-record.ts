@@ -99,6 +99,7 @@ export async function fetchAtpmStagedVersion(
 
   const body = await readBoundedJson<RawStageRecord & { error?: unknown }>(response, {
     maxBytes: MAX_STAGE_RECORD_BYTES,
+    deadlineMs: Date.now() + STAGE_TIMEOUT_MS,
   });
   if (body?.error === "RecordNotFound" || response.status === 404) {
     // An approved or rejected candidate has had its record deleted, which is

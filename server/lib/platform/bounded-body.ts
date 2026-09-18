@@ -14,9 +14,15 @@ export interface BoundedBodyOptions {
   /** Hard ceiling on streamed bytes; the declared `content-length` is checked first. */
   maxBytes: number;
   /**
-   * Absolute epoch-ms deadline shared with the request that produced the
-   * response, so a slow body cannot outlive the caller's own timeout budget.
-   * Omitted means the read is bounded by bytes only.
+   * Absolute epoch-ms deadline for the whole body read, so a slow body cannot
+   * outlive the caller's own timeout budget. Set it from `Date.now()` once
+   * headers have arrived rather than from before the fetch: the fetch helpers
+   * clear their abort timer at headers, and a retried request must not inherit
+   * a deadline the first attempt already spent.
+   *
+   * Omitted means the read is bounded by bytes only — which leaves a body that
+   * trickles under `maxBytes` unbounded in time, so omit it only for hosts
+   * whose availability is already the caller's problem.
    */
   deadlineMs?: number;
 }
