@@ -63,9 +63,10 @@ Both review pages lead with the diff:
   something to say and stay shut when the release is clean; the disclosure
   header does not repeat the nested section names. The header badge carries
   npm's observation time for every state; quiet terminal states (published,
-  removed) get no separate notice row. The decision button lives in the strip on
-  a completed review and in the page header otherwise, since a failed gate
-  review renders no strip.
+  removed) get no separate notice row. The page header labels the persisted
+  comparison as the `default baseline`, while the picker owns the active
+  comparison. The decision button lives in the strip on a completed review and
+  in the page header otherwise, since a failed gate review renders no strip.
 - **Public report** — verdict card, then the same workbench, then the risk
   index. Its diff is single-sided: a share token buys the staged artifact's
   redacted samples (`GET /public/reports/:token/file`) and never a baseline,

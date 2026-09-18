@@ -73,7 +73,8 @@ export function ScanDetailHeader({
           <MonoDetail
             parts={[
               <span key="version">
-                {detail.scan.previousVersion || "—"} → {detail.scan.stagedVersion || "—"}
+                default baseline {detail.scan.previousVersion || "—"} → staged{" "}
+                {detail.scan.stagedVersion || "—"}
               </span>,
               releaseRisk ? (
                 <Badge key="risk" tone={severityTone(releaseRisk)}>
