@@ -1,4 +1,5 @@
 import { sha256Hex } from "./platform/crypto-utils";
+import { readKvJson, writeKvJson } from "./platform/kv-json-cache";
 import type { RegistryMetadata } from "./ecosystems/npm/registry";
 
 const METADATA_CACHE_PREFIX = "compare-metadata:v1:";
@@ -16,19 +17,13 @@ export async function computeCompareMetadataCacheKey(input: {
   return `${METADATA_CACHE_PREFIX}${hex}`;
 }
 
-export async function readCompareMetadataCache<T = RegistryMetadata>(
+export function readCompareMetadataCache<T = RegistryMetadata>(
   env: Cloudflare.Env,
   key: string,
 ): Promise<T | null> {
-  if (!env.COMPARE_CACHE) return null;
-  try {
-    return await env.COMPARE_CACHE.get<T>(key, {
-      type: "json",
-      cacheTtl: METADATA_CACHE_READ_COLO_TTL_SECONDS,
-    });
-  } catch {
-    return null;
-  }
+  return readKvJson<T>(env.COMPARE_CACHE, key, {
+    cacheTtl: METADATA_CACHE_READ_COLO_TTL_SECONDS,
+  });
 }
 
 export async function writeCompareMetadataCache<T = RegistryMetadata>(
@@ -36,10 +31,8 @@ export async function writeCompareMetadataCache<T = RegistryMetadata>(
   ctx: ExecutionContext,
   key: string,
   payload: T,
-) {
-  if (!env.COMPARE_CACHE) return;
-  const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {
+): Promise<void> {
+  writeKvJson(env.COMPARE_CACHE, ctx, key, payload, {
     expirationTtl: METADATA_CACHE_TTL_SECONDS,
-  }).catch(() => undefined);
-  ctx.waitUntil(write);
+  });
 }

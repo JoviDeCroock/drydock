@@ -1,6 +1,22 @@
-import { createExecutionContext, env } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createPyPiBroker } from "../../server/lib/ecosystems/pypi/broker";
+import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
+
+function buildCtx() {
+  const gatewayProps: GatewayProps[] = [];
+  const ctx = buildCtxWithGateway({
+    onGateway: (props) => gatewayProps.push(props as GatewayProps),
+  });
+  return { ctx, gatewayProps };
+}
+
+const buildStubLoader = () =>
+  buildLoaderMock<LoadConfig>({
+    results: [
+      { files: [{ path: "stub.txt", size: 1, sha256: "00", flags: [] }], packageJson: null },
+    ],
+  });
 
 const originalFetch = globalThis.fetch;
 
@@ -17,50 +33,10 @@ interface LoadConfig {
   env: Record<string, unknown>;
 }
 
-function buildLoaderMock() {
-  const loads: LoadConfig[] = [];
-  return {
-    loads,
-    binding: {
-      load: vi.fn((config: LoadConfig) => {
-        loads.push(config);
-        return {
-          getEntrypoint: () => ({
-            fetch: vi.fn(
-              async () =>
-                new Response(
-                  JSON.stringify({
-                    files: [{ path: "stub.txt", size: 1, sha256: "00", flags: [] }],
-                    packageJson: null,
-                  }),
-                  { status: 200, headers: { "content-type": "application/json" } },
-                ),
-            ),
-          }),
-        };
-      }),
-    },
-  };
-}
-
 interface GatewayProps {
   npmToken?: string;
   npmRegistry?: string;
   publicArtifactUrls?: string[];
-}
-
-function buildCtxWithGateway() {
-  const gatewayProps: GatewayProps[] = [];
-  const ctx = createExecutionContext() as ExecutionContext & {
-    exports: { NpmStageGateway(options: { props: GatewayProps }): Fetcher };
-  };
-  ctx.exports = {
-    NpmStageGateway: vi.fn((options: { props: GatewayProps }) => {
-      gatewayProps.push(options.props);
-      return { fetch: vi.fn() } as unknown as Fetcher;
-    }),
-  };
-  return { ctx, gatewayProps };
 }
 
 function brokerCtx(executionCtx: ExecutionContext, loaderBinding: unknown) {
@@ -75,8 +51,8 @@ function brokerCtx(executionCtx: ExecutionContext, loaderBinding: unknown) {
 describe("createPyPiBroker public artifact download", () => {
   test("downloads a wheel as zip through an uncredentialed, URL-pinned gateway", async () => {
     const wheelUrl = "https://files.pythonhosted.org/packages/demo-1.1.0-py3-none-any.whl";
-    const loader = buildLoaderMock();
-    const { ctx, gatewayProps } = buildCtxWithGateway();
+    const loader = buildStubLoader();
+    const { ctx, gatewayProps } = buildCtx();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     const result = await broker.downloadPublicArtifact({ url: wheelUrl, kind: "wheel" });
@@ -93,8 +69,8 @@ describe("createPyPiBroker public artifact download", () => {
 
   test("downloads an sdist as tgz", async () => {
     const sdistUrl = "https://files.pythonhosted.org/packages/demo-1.1.0.tar.gz";
-    const loader = buildLoaderMock();
-    const { ctx, gatewayProps } = buildCtxWithGateway();
+    const loader = buildStubLoader();
+    const { ctx, gatewayProps } = buildCtx();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     await broker.downloadPublicArtifact({ url: sdistUrl, kind: "sdist" });
@@ -105,8 +81,8 @@ describe("createPyPiBroker public artifact download", () => {
   });
 
   test("rejects non-https artifact URLs before loading the sandbox", async () => {
-    const loader = buildLoaderMock();
-    const { ctx } = buildCtxWithGateway();
+    const loader = buildStubLoader();
+    const { ctx } = buildCtx();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     await expect(
@@ -119,8 +95,8 @@ describe("createPyPiBroker public artifact download", () => {
   });
 
   test("rejects foreign HTTPS artifact URLs before loading the sandbox", async () => {
-    const loader = buildLoaderMock();
-    const { ctx, gatewayProps } = buildCtxWithGateway();
+    const loader = buildStubLoader();
+    const { ctx, gatewayProps } = buildCtx();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     await expect(
@@ -143,8 +119,8 @@ describe("createPyPiBroker project metadata", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
 
-    const { ctx } = buildCtxWithGateway();
-    const loader = buildLoaderMock();
+    const { ctx } = buildCtx();
+    const loader = buildStubLoader();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     const metadata = await broker.fetchProjectMetadata("demo-package");
@@ -157,8 +133,8 @@ describe("createPyPiBroker project metadata", () => {
       vi.fn(async () => new Response("not found", { status: 404 })),
     );
 
-    const { ctx } = buildCtxWithGateway();
-    const loader = buildLoaderMock();
+    const { ctx } = buildCtx();
+    const loader = buildStubLoader();
     const broker = createPyPiBroker(brokerCtx(ctx, loader.binding), { organizationId: "org_1" });
 
     expect(await broker.fetchProjectMetadata("missing-package")).toBeNull();

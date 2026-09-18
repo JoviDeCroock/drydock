@@ -1,70 +1,22 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import * as OTPAuth from "otpauth";
-import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
+import { callWorker, type Jar, PASSWORD, signUp } from "./helpers/auth-http";
 
-const ORIGIN = "http://example.com";
-const PASSWORD = "correct horse battery staple";
-const SESSION_DATA_COOKIE = "spr.session_data";
-const SESSION_TOKEN_COOKIE = "spr.session_token";
-
-type Jar = Map<string, string>;
-
-function mergeSetCookies(jar: Jar, res: Response) {
-  for (const raw of res.headers.getSetCookie?.() ?? []) {
-    const [pair] = raw.split(";");
-    const idx = pair.indexOf("=");
-    if (idx === -1) continue;
-    const name = pair.slice(0, idx).trim();
-    const value = pair.slice(idx + 1).trim();
-    // An expiring cookie clears the jar entry, the way a browser would.
-    if (!value || /expires=Thu, 01 Jan 1970/i.test(raw)) jar.delete(name);
-    else jar.set(name, value);
-  }
-}
-
-function cookieHeader(jar: Jar): string {
-  return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
-}
-
-async function call(
-  method: string,
-  path: string,
-  opts: { body?: unknown; jar?: Jar; requestEnv?: Cloudflare.Env } = {},
-) {
-  const ctx = createExecutionContext();
-  const headers = new Headers();
-  if (opts.body !== undefined) headers.set("content-type", "application/json");
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
-  if (opts.jar?.size) headers.set("cookie", cookieHeader(opts.jar));
-  const init: RequestInit = { method, headers };
-  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-  const res = await worker.fetch(
-    new Request(`${ORIGIN}${path}`, init),
-    opts.requestEnv ?? env,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  if (opts.jar) mergeSetCookies(opts.jar, res);
-  return res;
-}
-
-async function signUp(requestEnv: Cloudflare.Env = env): Promise<Jar> {
+async function signUpJar(requestEnv: typeof env = env): Promise<Jar> {
   const jar: Jar = new Map();
-  const res = await call("POST", "/api/auth/sign-up/email", {
-    body: {
-      name: "Session Cache Tester",
-      email: `session-cache-${crypto.randomUUID()}@example.test`,
-      password: PASSWORD,
-    },
-    jar,
-    requestEnv,
+  await signUp(jar, {
+    name: "Session Cache Tester",
+    email: `session-cache-${crypto.randomUUID()}@example.test`,
+    env: requestEnv,
   });
-  expect(res.status).toBe(200);
   return jar;
 }
+
+const SESSION_DATA_COOKIE = "spr.session_data";
+const SESSION_TOKEN_COOKIE = "spr.session_token";
 
 /** An env whose session KV throws on the selected operations. */
 function envWithFailingSessionStore(
@@ -101,40 +53,40 @@ async function clearSessionKv(): Promise<void> {
 
 describe("session cookie cache", () => {
   test("sign-up issues a session-data cookie", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     expect(jar.get(SESSION_TOKEN_COOKIE)).toBeTruthy();
     expect(jar.get(SESSION_DATA_COOKIE)).toBeTruthy();
   });
 
   test("an authenticated request resolves without reading the session store", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
 
     // Every /api/* request used to cost a session read against the D1 single
     // writer. With the cookie cache fresh, the request must not consult the
     // session store at all — a store that throws on read proves it.
-    const res = await call("GET", "/api/health", {
+    const { res } = await callWorker("GET", "/api/health", {
       jar,
-      requestEnv: envWithFailingSessionStore(),
+      env: envWithFailingSessionStore(),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
   });
 
   test("a request without the cached cookie still resolves from the session store", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     jar.delete(SESSION_DATA_COOKIE);
 
-    const res = await call("GET", "/api/health", { jar });
+    const { res } = await callWorker("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
   });
 
   test("falls back to D1 when the session KV read fails", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     jar.delete(SESSION_DATA_COOKIE);
 
-    const res = await call("GET", "/api/health", {
+    const { res } = await callWorker("GET", "/api/health", {
       jar,
-      requestEnv: envWithFailingSessionStore(),
+      env: envWithFailingSessionStore(),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true });
@@ -143,7 +95,7 @@ describe("session cookie cache", () => {
 
 describe("session secondary storage", () => {
   test("a session lands in KV and stays durable in D1", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
     expect(token).toBeTruthy();
 
@@ -156,13 +108,13 @@ describe("session secondary storage", () => {
   });
 
   test("an empty KV namespace falls back to D1 without persisting a stale read", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
     expect(token).toBeTruthy();
     await clearSessionKv();
     jar.delete(SESSION_DATA_COOKIE);
 
-    const res = await call("GET", "/api/health", { jar });
+    const { res } = await callWorker("GET", "/api/health", { jar });
     expect(res.status).toBe(200);
     // A read-through put can race a concurrent revocation and land after both
     // the KV and D1 deletes, resurrecting the session until its original expiry.
@@ -172,7 +124,7 @@ describe("session secondary storage", () => {
   });
 
   test("a KV write failure does not fail session creation after the D1 write", async () => {
-    const jar = await signUp(envWithFailingSessionStore());
+    const jar = await signUpJar(envWithFailingSessionStore());
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
     expect(token).toBeTruthy();
 
@@ -182,26 +134,26 @@ describe("session secondary storage", () => {
 
   test("lists and revokes sessions created before KV was enabled", async () => {
     const d1OnlyEnv = envWithoutSessionStore();
-    const primary = await signUp(d1OnlyEnv);
-    const session = await call("GET", "/api/auth/get-session", {
+    const primary = await signUpJar(d1OnlyEnv);
+    const { res: session } = await callWorker("GET", "/api/auth/get-session", {
       jar: primary,
-      requestEnv: d1OnlyEnv,
+      env: d1OnlyEnv,
     });
     const email = ((await session.json()) as { user: { email: string } }).user.email;
 
     const secondary: Jar = new Map();
     expect(
       (
-        await call("POST", "/api/auth/sign-in/email", {
+        await callWorker("POST", "/api/auth/sign-in/email", {
           body: { email, password: PASSWORD },
           jar: secondary,
-          requestEnv: d1OnlyEnv,
+          env: d1OnlyEnv,
         })
-      ).status,
+      ).res.status,
     ).toBe(200);
     await clearSessionKv();
 
-    const listed = await call("GET", "/api/auth/list-sessions", { jar: primary });
+    const { res: listed } = await callWorker("GET", "/api/auth/list-sessions", { jar: primary });
     expect(listed.status).toBe(200);
     expect(await listed.json()).toHaveLength(2);
 
@@ -216,39 +168,41 @@ describe("session secondary storage", () => {
       null,
     ]);
 
-    const revoked = await call("POST", "/api/auth/revoke-other-sessions", { jar: primary });
+    const { res: revoked } = await callWorker("POST", "/api/auth/revoke-other-sessions", {
+      jar: primary,
+    });
     expect(revoked.status).toBe(200);
 
     // Remove the bounded cookie cache so this proves the durable session and
     // request-local fallback were both revoked.
     secondary.delete(SESSION_DATA_COOKIE);
-    expect((await call("GET", "/api/health", { jar: secondary })).status).toBe(401);
-    expect((await call("GET", "/api/health", { jar: primary })).status).toBe(200);
+    expect((await callWorker("GET", "/api/health", { jar: secondary })).res.status).toBe(401);
+    expect((await callWorker("GET", "/api/health", { jar: primary })).res.status).toBe(200);
   });
 
   test("does not report a successful revocation when KV is unavailable", async () => {
     const d1OnlyEnv = envWithoutSessionStore();
-    const primary = await signUp(d1OnlyEnv);
-    const session = await call("GET", "/api/auth/get-session", {
+    const primary = await signUpJar(d1OnlyEnv);
+    const { res: session } = await callWorker("GET", "/api/auth/get-session", {
       jar: primary,
-      requestEnv: d1OnlyEnv,
+      env: d1OnlyEnv,
     });
     const email = ((await session.json()) as { user: { email: string } }).user.email;
 
     const secondary: Jar = new Map();
     expect(
       (
-        await call("POST", "/api/auth/sign-in/email", {
+        await callWorker("POST", "/api/auth/sign-in/email", {
           body: { email, password: PASSWORD },
           jar: secondary,
-          requestEnv: d1OnlyEnv,
+          env: d1OnlyEnv,
         })
-      ).status,
+      ).res.status,
     ).toBe(200);
 
-    const revoked = await call("POST", "/api/auth/revoke-other-sessions", {
+    const { res: revoked } = await callWorker("POST", "/api/auth/revoke-other-sessions", {
       jar: primary,
-      requestEnv: envWithFailingSessionStore(),
+      env: envWithFailingSessionStore(),
     });
     expect(revoked.status).toBe(500);
 
@@ -263,15 +217,15 @@ describe("session secondary storage", () => {
   });
 
   test("aborts account deletion before cleanup when session eviction fails", async () => {
-    const jar = await signUp();
-    expect((await call("GET", "/api/v1/organizations", { jar })).status).toBe(200);
-    const session = await call("GET", "/api/auth/get-session", { jar });
+    const jar = await signUpJar();
+    expect((await callWorker("GET", "/api/v1/organizations", { jar })).res.status).toBe(200);
+    const { res: session } = await callWorker("GET", "/api/auth/get-session", { jar });
     const userId = ((await session.json()) as { user: { id: string } }).user.id;
 
-    const deleted = await call("POST", "/api/auth/delete-user", {
+    const { res: deleted } = await callWorker("POST", "/api/auth/delete-user", {
       body: { password: PASSWORD },
       jar,
-      requestEnv: envWithFailingSessionStore(["delete"]),
+      env: envWithFailingSessionStore(["delete"]),
     });
     expect(deleted.status).toBe(500);
 
@@ -305,13 +259,13 @@ describe("session secondary storage contents", () => {
 
       const email = `kv-guard-${crypto.randomUUID()}@example.test`;
       const jar: Jar = new Map();
-      const signUpRes = await call("POST", "/api/auth/sign-up/email", {
+      const { res: signUpRes } = await callWorker("POST", "/api/auth/sign-up/email", {
         body: { name: "KV Guard Tester", email, password: PASSWORD },
         jar,
       });
       expect(signUpRes.status).toBe(200);
 
-      const enable = await call("POST", "/api/auth/two-factor/enable", {
+      const { res: enable } = await callWorker("POST", "/api/auth/two-factor/enable", {
         body: { password: PASSWORD },
         jar,
       });
@@ -321,18 +275,18 @@ describe("session secondary storage contents", () => {
       ) as OTPAuth.TOTP;
       expect(
         (
-          await call("POST", "/api/auth/two-factor/verify-totp", {
+          await callWorker("POST", "/api/auth/two-factor/verify-totp", {
             body: { code: totp.generate() },
             jar,
           })
-        ).status,
+        ).res.status,
       ).toBe(200);
 
       // Sign in again to leave a *pending* two-factor challenge — the shortest
       // path to a live single-use verification record.
-      await call("POST", "/api/auth/sign-out", { jar });
+      await callWorker("POST", "/api/auth/sign-out", { jar });
       const challengeJar: Jar = new Map();
-      const signIn = await call("POST", "/api/auth/sign-in/email", {
+      const { res: signIn } = await callWorker("POST", "/api/auth/sign-in/email", {
         body: { email, password: PASSWORD },
         jar: challengeJar,
       });
@@ -349,7 +303,7 @@ describe("session secondary storage contents", () => {
 
       // The guard suppresses reads as well as writes, so completing the
       // handshake has to work entirely off D1.
-      const challenge = await call("POST", "/api/auth/two-factor/verify-totp", {
+      const { res: challenge } = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
         body: { code: totp.generate() },
         jar: challengeJar,
       });
@@ -374,25 +328,25 @@ describe("a session that outlives its user", () => {
     const deviceA: Jar = new Map();
     expect(
       (
-        await call("POST", "/api/auth/sign-up/email", {
+        await callWorker("POST", "/api/auth/sign-up/email", {
           body: { name: "Ghost", email, password: PASSWORD },
           jar: deviceA,
         })
-      ).status,
+      ).res.status,
     ).toBe(200);
 
     const deviceB: Jar = new Map();
     expect(
       (
-        await call("POST", "/api/auth/sign-in/email", {
+        await callWorker("POST", "/api/auth/sign-in/email", {
           body: { email, password: PASSWORD },
           jar: deviceB,
         })
-      ).status,
+      ).res.status,
     ).toBe(200);
     expect(deviceB.get(SESSION_DATA_COOKIE)).toBeTruthy();
 
-    const deleted = await call("POST", "/api/auth/delete-user", {
+    const { res: deleted } = await callWorker("POST", "/api/auth/delete-user", {
       body: { password: PASSWORD },
       jar: deviceA,
     });
@@ -400,12 +354,12 @@ describe("a session that outlives its user", () => {
 
     // Device B never saw the sign-out, so its cookie cache is still warm.
     for (const path of ["/api/v1/organizations", "/api/v1/scans"]) {
-      const res = await call("GET", path, { jar: deviceB });
+      const { res } = await callWorker("GET", path, { jar: deviceB });
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "unauthorized" });
     }
 
-    const createOrganization = await call("POST", "/api/v1/organizations", {
+    const { res: createOrganization } = await callWorker("POST", "/api/v1/organizations", {
       body: { name: "Orphaned workspace" },
       jar: deviceB,
     });
@@ -416,7 +370,7 @@ describe("a session that outlives its user", () => {
       ["/api/v1/npm-connection", { token: "npm_stale_session_test_token_AAAA" }],
       ["/api/v1/npm-connection/validate", {}],
     ] as const) {
-      const res = await call("POST", path, { body, jar: deviceB });
+      const { res } = await callWorker("POST", path, { body, jar: deviceB });
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "unauthorized" });
     }
@@ -430,12 +384,12 @@ describe("a session that outlives its user", () => {
 
 describe("sign-out", () => {
   test("fails before clearing cookies when KV eviction is unavailable", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
 
-    const signOut = await call("POST", "/api/auth/sign-out", {
+    const { res: signOut } = await callWorker("POST", "/api/auth/sign-out", {
       jar,
-      requestEnv: envWithFailingSessionStore(["delete"]),
+      env: envWithFailingSessionStore(["delete"]),
     });
     expect(signOut.status).toBe(500);
 
@@ -448,7 +402,7 @@ describe("sign-out", () => {
     const rows = await createDb(env.DB).select().from(schema.session);
     expect(rows.some((row) => row.token === token)).toBe(true);
 
-    const retry = await call("POST", "/api/auth/sign-out", { jar });
+    const { res: retry } = await callWorker("POST", "/api/auth/sign-out", { jar });
     expect(retry.status).toBe(200);
     expect(jar.get(SESSION_DATA_COOKIE)).toBeUndefined();
     expect(jar.get(SESSION_TOKEN_COOKIE)).toBeUndefined();
@@ -456,10 +410,10 @@ describe("sign-out", () => {
   });
 
   test("clears the cached cookie and removes the session from both stores", async () => {
-    const jar = await signUp();
+    const jar = await signUpJar();
     const token = decodeURIComponent(jar.get(SESSION_TOKEN_COOKIE) ?? "").split(".")[0];
 
-    const signOut = await call("POST", "/api/auth/sign-out", { jar });
+    const { res: signOut } = await callWorker("POST", "/api/auth/sign-out", { jar });
     expect(signOut.status).toBe(200);
 
     // The cookie cache is the revocation lag, so sign-out has to expire it.
@@ -470,7 +424,7 @@ describe("sign-out", () => {
     const rows = await createDb(env.DB).select().from(schema.session);
     expect(rows.some((row) => row.token === token)).toBe(false);
 
-    const res = await call("GET", "/api/health", { jar });
+    const { res } = await callWorker("GET", "/api/health", { jar });
     expect(res.status).toBe(401);
   });
 });

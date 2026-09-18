@@ -6,7 +6,7 @@ import {
 } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
-import { githubUserHeaders, nextLink } from "./http";
+import { githubHeaders, paginate } from "./client";
 
 // ── HMAC-signed OAuth state token ────────────────────────────────────────────
 
@@ -121,43 +121,41 @@ export async function listUserAccessibleInstallations(
   userAccessToken: string,
 ): Promise<GithubUserInstallationRef[]> {
   const installations: GithubUserInstallationRef[] = [];
-  let url = "https://api.github.com/user/installations?per_page=100";
-
-  for (let page = 0; page < 10 && url; page += 1) {
-    const response = await reliableFetch(url, {
-      headers: githubUserHeaders(userAccessToken),
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new GithubAppValidationError(
-        "invalid_input",
-        `GitHub user installation lookup failed (${response.status}): ${text.slice(0, 200)}`,
-      );
-    }
-    const data = (await response.json()) as {
-      installations?: {
-        id?: number | string;
-        account?: { login?: string; type?: string } | null;
-      }[];
-    };
-    for (const installation of data.installations ?? []) {
-      const id =
-        typeof installation.id === "number"
-          ? String(installation.id)
-          : typeof installation.id === "string"
-            ? installation.id
-            : "";
-      if (!id) continue;
-      installations.push({
-        id,
-        accountLogin:
-          typeof installation.account?.login === "string" ? installation.account.login : "",
-        accountType:
-          typeof installation.account?.type === "string" ? installation.account.type : "",
-      });
-    }
-    url = nextLink(response.headers.get("link"));
-  }
+  await paginate(
+    "https://api.github.com/user/installations?per_page=100",
+    { headers: githubHeaders(userAccessToken), maxPages: 10 },
+    async (response) => {
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new GithubAppValidationError(
+          "invalid_input",
+          `GitHub user installation lookup failed (${response.status}): ${text.slice(0, 200)}`,
+        );
+      }
+      const data = (await response.json()) as {
+        installations?: {
+          id?: number | string;
+          account?: { login?: string; type?: string } | null;
+        }[];
+      };
+      for (const installation of data.installations ?? []) {
+        const id =
+          typeof installation.id === "number"
+            ? String(installation.id)
+            : typeof installation.id === "string"
+              ? installation.id
+              : "";
+        if (!id) continue;
+        installations.push({
+          id,
+          accountLogin:
+            typeof installation.account?.login === "string" ? installation.account.login : "",
+          accountType:
+            typeof installation.account?.type === "string" ? installation.account.type : "",
+        });
+      }
+    },
+  );
 
   return installations;
 }

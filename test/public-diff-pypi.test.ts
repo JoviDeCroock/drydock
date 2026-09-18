@@ -1,10 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type {
   PyPiProjectMetadata,
   PyPiReleaseFile,
   PyPiRemoteArtifact,
-} from "../../server/lib/ecosystems/pypi/types";
-import { PublicDiffError } from "../../server/lib/public-diff/error";
+} from "../server/lib/ecosystems/pypi/types";
+import { PublicDiffError } from "../server/lib/public-diff/error";
 import {
   buildPublicPyPiDiffSources,
   limitPublicPyPiDiffArtifacts,
@@ -13,8 +13,12 @@ import {
   resolvePublicPyPiDownloads,
   selectPublicPyPiDiffArtifacts,
   type PublicPyPiArtifactDownload,
-} from "../../server/lib/ecosystems/pypi/public-diff";
-import { createPackageDiff, type FileRecord } from "../../server/lib/review";
+} from "../server/lib/ecosystems/pypi/public-diff";
+import { createPackageDiff, summarizePackageJsonDiff, type FileRecord } from "../server/lib/review";
+
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {},
+}));
 
 const HOST = "https://files.pythonhosted.org/packages";
 
@@ -234,7 +238,10 @@ describe("buildPublicPyPiDiffSources", () => {
     expect(sources.from.packageJson).toEqual({ name: "demo-pkg", version: "1.0.0" });
 
     const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
-    const findings = sources.buildFindings(fileDiff, {});
+    const findings = sources.buildFindings(
+      fileDiff,
+      summarizePackageJsonDiff(sources.from.packageJson, sources.to.packageJson),
+    );
     const pth = findings.find((finding) => finding.ruleId === "pypi.pth-execution");
     expect(pth).toBeDefined();
     // The finding must reference the flattened diff path, not the artifact
@@ -291,7 +298,10 @@ describe("buildPublicPyPiDiffSources", () => {
     expect(sources.to.files.map((file) => file.path)).toEqual(["sdist/PKG-INFO", "sdist/setup.py"]);
 
     const fileDiff = createPackageDiff(sources.from.files, sources.to.files);
-    const findings = sources.buildFindings(fileDiff, {});
+    const findings = sources.buildFindings(
+      fileDiff,
+      summarizePackageJsonDiff(sources.from.packageJson, sources.to.packageJson),
+    );
     const setup = findings.find((finding) => finding.ruleId === "pypi.setup-install-command");
     expect(setup?.file).toBe("sdist/setup.py");
     const suspicious = findings.find((finding) => finding.ruleId === "tar.suspicious-entry");

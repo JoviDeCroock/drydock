@@ -1,4 +1,4 @@
-import type { FileRecord } from "./";
+import type { DiffStatus, FileRecord } from "./types";
 
 /**
  * Flags that describe how much of a *baseline* body was retained, not anything
@@ -22,7 +22,7 @@ function diffFlags(...sides: Array<string[] | undefined>): string[] {
 
 export interface DiffEntry {
   path: string;
-  status: "added" | "removed" | "modified" | "unchanged";
+  status: DiffStatus;
   previousSize?: number;
   stagedSize?: number;
   previousSha256?: string;

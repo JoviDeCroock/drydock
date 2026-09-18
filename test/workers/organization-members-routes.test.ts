@@ -1,5 +1,4 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
+import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
@@ -8,73 +7,22 @@ import {
   listPendingInvitations,
   upsertInvitation,
 } from "../../server/db/invitations";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import { generateInvitationToken } from "../../server/lib/auth/invitation-token";
 import type { OrganizationRole } from "../../server/lib/auth/roles";
 import { organizationMembersRoutes } from "../../server/routes/organization-members";
 import { organizationsRoutes } from "../../server/routes/organizations";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  email: string;
-  personalOrganizationId: string;
-}
-
-async function seedUser(options: { emailVerified?: boolean } = {}): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  const email = `${userId}@example.com`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email,
-    emailVerified: options.emailVerified ?? true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const personalOrganizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, email, personalOrganizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
+const mountMembers = (app: TestApp) => {
   app.route("/api/v1/organizations", organizationsRoutes);
   app.route("/api/v1/organizations", organizationMembersRoutes);
-  return app;
-}
-
-async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  method: string,
-  path: string,
-  options: { body?: unknown; activeOrganizationId?: string } = {},
-) {
-  const ctx = createExecutionContext();
-  const headers: Record<string, string> = {};
-  const init: RequestInit = { method };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-    headers["content-type"] = "application/json";
-  }
-  if (options.activeOrganizationId) {
-    headers[ACTIVE_ORG_HEADER] = options.activeOrganizationId;
-  }
-  init.headers = headers;
-  const res = await app.fetch(new Request(`http://test.local${path}`, init), env, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
+};
 
 async function createOrganization(owner: SeededUser, name: string): Promise<string> {
-  const res = await call(buildTestApp(owner), "POST", "/api/v1/organizations", { body: { name } });
+  const res = await call(buildTestApp(mountMembers, owner), "POST", "/api/v1/organizations", {
+    body: { name },
+  });
   const body = (await res.json()) as { organization: { id: string } };
   return body.organization.id;
 }
@@ -104,10 +52,15 @@ describe("organization member routes", () => {
     const owner = await seedUser();
     const organizationId = await createOrganization(owner, "acme");
 
-    const invite = await call(buildTestApp(owner), "POST", "/api/v1/organizations/invitations", {
-      body: { email: "teammate@example.com", role: "admin" },
-      activeOrganizationId: organizationId,
-    });
+    const invite = await call(
+      buildTestApp(mountMembers, owner),
+      "POST",
+      "/api/v1/organizations/invitations",
+      {
+        body: { email: "teammate@example.com", role: "admin" },
+        activeOrganizationId: organizationId,
+      },
+    );
     expect(invite.status).toBe(201);
     const invited = (await invite.json()) as {
       invitation: { email: string; role: string; status: string };
@@ -115,9 +68,14 @@ describe("organization member routes", () => {
     expect(invited.invitation.email).toBe("teammate@example.com");
     expect(invited.invitation.role).toBe("admin");
 
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations/invitations", {
-      activeOrganizationId: organizationId,
-    });
+    const list = await call(
+      buildTestApp(mountMembers, owner),
+      "GET",
+      "/api/v1/organizations/invitations",
+      {
+        activeOrganizationId: organizationId,
+      },
+    );
     const listed = (await list.json()) as { invitations: Array<{ email: string }> };
     expect(listed.invitations.map((i) => i.email)).toContain("teammate@example.com");
   });
@@ -126,10 +84,15 @@ describe("organization member routes", () => {
     const owner = await seedUser();
     const organizationId = await createOrganization(owner, "leak-check");
 
-    const invite = await call(buildTestApp(owner), "POST", "/api/v1/organizations/invitations", {
-      body: { email: "teammate@example.com" },
-      activeOrganizationId: organizationId,
-    });
+    const invite = await call(
+      buildTestApp(mountMembers, owner),
+      "POST",
+      "/api/v1/organizations/invitations",
+      {
+        body: { email: "teammate@example.com" },
+        activeOrganizationId: organizationId,
+      },
+    );
     const text = await invite.text();
     expect(text).not.toContain("token");
   });
@@ -141,7 +104,7 @@ describe("organization member routes", () => {
     const db = createDb(env.DB);
     await addOrganizationMember(db, { organizationId, userId: member.userId, role: "member" });
 
-    const memberApp = buildTestApp(member);
+    const memberApp = buildTestApp(mountMembers, member);
     const listInvites = await call(memberApp, "GET", "/api/v1/organizations/invitations", {
       activeOrganizationId: organizationId,
     });
@@ -175,10 +138,15 @@ describe("organization member routes", () => {
     const db = createDb(env.DB);
     await addOrganizationMember(db, { organizationId, userId: admin.userId, role: "admin" });
 
-    const invite = await call(buildTestApp(admin), "POST", "/api/v1/organizations/invitations", {
-      body: { email: "fromadmin@example.com" },
-      activeOrganizationId: organizationId,
-    });
+    const invite = await call(
+      buildTestApp(mountMembers, admin),
+      "POST",
+      "/api/v1/organizations/invitations",
+      {
+        body: { email: "fromadmin@example.com" },
+        activeOrganizationId: organizationId,
+      },
+    );
     expect(invite.status).toBe(201);
   });
 
@@ -194,7 +162,7 @@ describe("organization member routes", () => {
     });
 
     const accept = await call(
-      buildTestApp(invitee),
+      buildTestApp(mountMembers, invitee),
       "POST",
       "/api/v1/organizations/invitations/accept",
       { body: { token } },
@@ -221,7 +189,7 @@ describe("organization member routes", () => {
     });
 
     const accept = await call(
-      buildTestApp(stranger),
+      buildTestApp(mountMembers, stranger),
       "POST",
       "/api/v1/organizations/invitations/accept",
       { body: { token } },
@@ -244,7 +212,7 @@ describe("organization member routes", () => {
     });
 
     const accept = await call(
-      buildTestApp(invitee),
+      buildTestApp(mountMembers, invitee),
       "POST",
       "/api/v1/organizations/invitations/accept",
       { body: { token } },
@@ -271,7 +239,7 @@ describe("organization member routes", () => {
     });
 
     const accept = await call(
-      buildTestApp(invitee),
+      buildTestApp(mountMembers, invitee),
       "POST",
       "/api/v1/organizations/invitations/accept",
       { body: { token } },
@@ -291,7 +259,7 @@ describe("organization member routes", () => {
     });
 
     const revoke = await call(
-      buildTestApp(owner),
+      buildTestApp(mountMembers, owner),
       "DELETE",
       `/api/v1/organizations/invitations/${id}`,
       { activeOrganizationId: organizationId },
@@ -302,7 +270,7 @@ describe("organization member routes", () => {
     expect(await listPendingInvitations(db, organizationId)).toHaveLength(0);
 
     const accept = await call(
-      buildTestApp(invitee),
+      buildTestApp(mountMembers, invitee),
       "POST",
       "/api/v1/organizations/invitations/accept",
       { body: { token } },
@@ -318,7 +286,7 @@ describe("organization member routes", () => {
     await addOrganizationMember(db, { organizationId, userId: member.userId, role: "member" });
 
     const removeOwner = await call(
-      buildTestApp(owner),
+      buildTestApp(mountMembers, owner),
       "DELETE",
       `/api/v1/organizations/members/${owner.userId}`,
       { activeOrganizationId: organizationId },
@@ -326,7 +294,7 @@ describe("organization member routes", () => {
     expect(removeOwner.status).toBe(400);
 
     const removeMember = await call(
-      buildTestApp(owner),
+      buildTestApp(mountMembers, owner),
       "DELETE",
       `/api/v1/organizations/members/${member.userId}`,
       { activeOrganizationId: organizationId },
@@ -335,7 +303,7 @@ describe("organization member routes", () => {
     expect(await getOrganizationRole(db, organizationId, member.userId)).toBeNull();
 
     const removeAgain = await call(
-      buildTestApp(owner),
+      buildTestApp(mountMembers, owner),
       "DELETE",
       `/api/v1/organizations/members/${member.userId}`,
       { activeOrganizationId: organizationId },
@@ -350,9 +318,14 @@ describe("organization member routes", () => {
     const db = createDb(env.DB);
     await addOrganizationMember(db, { organizationId, userId: member.userId, role: "member" });
 
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/organizations/members", {
-      activeOrganizationId: organizationId,
-    });
+    const res = await call(
+      buildTestApp(mountMembers, owner),
+      "GET",
+      "/api/v1/organizations/members",
+      {
+        activeOrganizationId: organizationId,
+      },
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       members: Array<{ userId: string; isOwner: boolean; role: string }>;

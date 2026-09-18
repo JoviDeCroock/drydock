@@ -1,5 +1,5 @@
 import { firstMatchingCodeLine } from "../../platform/text-utils";
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import { changedPrefix, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";

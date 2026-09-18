@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { buildTree, type FolderNode } from "../src/components/file-tree-model";
+import type { DiffEntry } from "../server/lib/review";
 
-const entry = (path: string, status: "added" | "removed" | "modified" | "unchanged") => ({
+const entry = (path: string, status: DiffEntry["status"]): DiffEntry => ({
   path,
   status,
+  flags: [],
 });
 
 function findFolder(nodes: ReturnType<typeof buildTree>, path: string): FolderNode | undefined {

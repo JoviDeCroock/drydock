@@ -3,8 +3,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 // The model is a module singleton, so each case re-imports a fresh instance.
 async function loadWith(handler: () => Promise<Response>, userId = "user_1") {
   vi.resetModules();
-  const fetchMock = vi.fn(handler);
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  const fetchMock = vi.fn<typeof fetch>(handler);
+  globalThis.fetch = fetchMock;
   const { signInMethodsModel } = await import("../src/models/auth");
   await signInMethodsModel.load(userId);
   return { signInMethodsModel, fetchMock };

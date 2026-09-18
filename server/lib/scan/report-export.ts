@@ -4,6 +4,7 @@ import { parsePersistedAiReview } from "../ai-review/contract";
 import { displayedAiResult } from "../ai-review/types";
 import { normalizeIntentEnvelope } from "../intent-envelope";
 import { normalizeReleaseConsistency } from "./release-memory";
+import { toIsoOrNull } from "./iso-time";
 import type { ReleaseProvenance, ReleaseProvenanceArtifact } from "../ecosystems/package-adapter";
 import { isEcosystemId } from "../ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../ecosystems/artifact-integrity";
@@ -48,8 +49,8 @@ export function buildReportExport(detail: ScanDetail) {
       source: scan.source,
       risk: scan.risk,
       decision: scan.decision ?? null,
-      createdAt: toIso(scan.createdAt),
-      completedAt: toIso(scan.completedAt),
+      createdAt: toIsoOrNull(scan.createdAt),
+      completedAt: toIsoOrNull(scan.completedAt),
     },
     package: {
       name: scan.packageName ?? null,
@@ -107,7 +108,7 @@ export function buildReportExport(detail: ScanDetail) {
 function exportRegistryStatus(scan: ScanDetail["scan"]) {
   const status = scan.registryVersionStatus;
   if (typeof status !== "string" || !status) return null;
-  return { status, observedAt: toIso(scan.registryVersionStatusAt) };
+  return { status, observedAt: toIsoOrNull(scan.registryVersionStatusAt) };
 }
 
 export type ReportExportDocument = ReturnType<typeof buildReportExport>;
@@ -149,14 +150,6 @@ function compareFindings(
 
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function toIso(value: unknown): string | null {
-  if (value == null) return null;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "number") return new Date(value).toISOString();
-  if (typeof value === "string") return value;
-  return null;
 }
 
 // The export drops `priorScanId` and `decidedAt`: both describe a *prior* scan

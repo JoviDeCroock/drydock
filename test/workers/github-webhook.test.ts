@@ -1,8 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { eq } from "drizzle-orm";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
@@ -14,7 +12,9 @@ import {
 } from "../../server/lib/github-app/webhook-gates";
 import { githubWebhookRoutes } from "../../server/routes/github-webhooks";
 import { exhaustedRateLimitBindings, rateLimiterDouble } from "./rate-limit-doubles";
-import type { Bindings, Variables } from "../../server/types";
+import type { Bindings } from "../../server/types";
+import { buildTestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 
@@ -23,22 +23,6 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-
-async function seedUser() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
 
 async function seedMappedRepository(opts: {
   installationExternalId: string;
@@ -68,11 +52,7 @@ async function seedMappedRepository(opts: {
   return { organizationId, installation, releaseTarget };
 }
 
-function buildApp() {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.route("/webhooks", githubWebhookRoutes);
-  return app;
-}
+const buildApp = () => buildTestApp((app) => app.route("/webhooks", githubWebhookRoutes), null);
 
 async function hmacHex(secret: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -563,10 +543,12 @@ describe("postDeploymentProtectionDecision integration via mock fetch", () => {
   test("posts to the callback URL with installation token + structured body", async () => {
     const { postDeploymentProtectionDecision } =
       await import("../../server/lib/github-app/webhook");
-    const tokenFetch = vi.fn(async () =>
+    const tokenFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({ token: "ghs_install_token", expires_at: "2099-01-01T00:00:00Z" }),
     );
-    const callbackFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    const callbackFetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }),
+    );
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/access_tokens")) return tokenFetch(input, init);

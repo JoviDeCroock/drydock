@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { createDb } from "../db/client";
+import { readJsonObject } from "../lib/platform/http";
+import { guardRateLimit } from "../lib/rate-limit";
 import { recordScanEvent } from "../db/events";
 import { getOrganizationRole } from "../db/invitations";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   type SlackConnection,
   deleteSlackConnection,
@@ -14,10 +14,9 @@ import {
 } from "../db/slack-connection";
 import {
   requireActiveOrganization,
-  requireActiveOrganizationContext,
+  requireOrganizationRole,
 } from "../lib/auth/active-organization";
-import { rateLimitResponse } from "../lib/platform/http";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../lib/platform/secret-box";
 import {
@@ -45,7 +44,7 @@ const MAX_CHANNEL_NAME_LENGTH = 80;
 
 // Status is readable by any member; managing the connection requires owner/admin.
 slackRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const connection = await getSlackConnection(db, organizationId);
   return c.json({
@@ -61,23 +60,16 @@ slackRoutes.post("/connect", async (c) => {
   const redirectUri = slackRedirectUri(c.env);
   if (!redirectUri) return c.json({ error: "BETTER_AUTH_URL is not configured" }, 503);
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `slack:connect:${organizationId}`,
-      limit: 20,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "Slack connect rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `slack:connect:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+    "Slack connect rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const state = await signSlackState(c.env.BETTER_AUTH_SECRET, {
     organizationId,
@@ -111,7 +103,7 @@ slackRoutes.get("/callback", async (c) => {
     return c.redirect(settingsRedirect(c.env, "error", "state_user_mismatch"));
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const role = await getOrganizationRole(db, claims.organizationId, session.userId);
   if (!role || !roleCanManageIntegrations(role)) {
     return c.redirect(settingsRedirect(c.env, "error", "forbidden"));
@@ -150,9 +142,8 @@ slackRoutes.get("/callback", async (c) => {
 });
 
 slackRoutes.get("/channels", async (c) => {
-  const db = createDb(c.env.DB);
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const db = c.var.db;
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
   const secret = await getSlackConnectionSecret(db, organizationId);
   if (!secret) return c.json({ error: "Slack is not connected" }, 404);
@@ -160,18 +151,12 @@ slackRoutes.get("/channels", async (c) => {
     return c.json({ error: "Slack channel list permission is unavailable" }, 403);
   }
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `slack:channels:${organizationId}`,
-      limit: 30,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "Slack channel lookup rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `slack:channels:${organizationId}`, limit: 30, windowMs: 60 * 1000 },
+    "Slack channel lookup rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const botToken = await decryptSlackBotToken(c.env, {
     ciphertext: secret.botTokenCiphertext,
@@ -197,20 +182,19 @@ slackRoutes.get("/channels", async (c) => {
 });
 
 slackRoutes.put("/channel", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = await readJsonObject<{
     channelId?: unknown;
     channelName?: unknown;
-  };
+  }>(c);
   const channelId = typeof body.channelId === "string" ? body.channelId.trim() : "";
   if (!channelId || channelId.length > MAX_CHANNEL_ID_LENGTH) {
     return c.json({ error: "a Slack channel id is required" }, 400);
   }
   const channelName = sanitizeChannelName(body.channelName);
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
   const updated = await setSlackConnectionChannel(db, organizationId, { channelId, channelName });
   if (!updated) return c.json({ error: "Slack is not connected" }, 404);
@@ -224,15 +208,14 @@ slackRoutes.put("/channel", async (c) => {
 });
 
 slackRoutes.patch("/", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  const body = await readJsonObject<{ enabled?: unknown }>(c);
   if (typeof body.enabled !== "boolean") {
     return c.json({ error: "enabled must be a boolean" }, 400);
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
   const updated = await setSlackConnectionEnabled(db, organizationId, body.enabled);
   if (!updated) return c.json({ error: "Slack is not connected" }, 404);
@@ -246,10 +229,9 @@ slackRoutes.patch("/", async (c) => {
 });
 
 slackRoutes.delete("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
   const removed = await deleteSlackConnection(db, organizationId);
   if (!removed) return c.json({ error: "Slack is not connected" }, 404);
@@ -263,23 +245,16 @@ slackRoutes.delete("/", async (c) => {
 });
 
 slackRoutes.post("/test", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `slack:test:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "Slack test rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `slack:test:${organizationId}`, limit: 10, windowMs: 60 * 60 * 1000 },
+    "Slack test rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const secret = await getSlackConnectionSecret(db, organizationId);
   if (!secret) return c.json({ error: "Slack is not connected" }, 404);

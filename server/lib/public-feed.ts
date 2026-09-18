@@ -1,7 +1,24 @@
-import type { SharedScanRow } from "../db/scan-share";
+import type { scans } from "../db/schema";
 import { coloCacheDelete } from "./platform/colo-cache";
 
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
+
+/** The scan columns a public surface (feed entry, badge) is built from. */
+export type SharedScanRow = Pick<
+  typeof scans.$inferSelect,
+  | "source"
+  | "packageName"
+  | "stagedVersion"
+  | "previousVersion"
+  | "risk"
+  | "decision"
+  | "findingCount"
+  | "riskSummaryJson"
+  | "summaryJson"
+  | "publicShareToken"
+  | "publicFeedListedAt"
+  | "completedAt"
+> & { scanId: string };
 
 export const PUBLIC_ECOSYSTEMS = ["npm", "pypi", "vscode"] as const;
 export type PublicEcosystem = (typeof PUBLIC_ECOSYSTEMS)[number];

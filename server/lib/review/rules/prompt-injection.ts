@@ -1,4 +1,4 @@
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import {
   PROMPT_INJECTION_PATTERN_SET,
   REVIEW_MANIPULATION_PATTERN_SET,

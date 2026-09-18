@@ -184,7 +184,7 @@ describe("staged candidate findings", () => {
   ) {
     return atpmStagedFindings({
       staged: { ...candidate, shasum: candidate.declaredShasum },
-      manifest: { name: candidate.declaredName, version: candidate.version } as any,
+      manifest: { name: candidate.declaredName, version: candidate.version },
       archiveSha1: null,
       archiveSha512: null,
       trustPublisher: null,
@@ -260,7 +260,7 @@ describe("staged candidate findings", () => {
 
     const findings = atpmStagedFindings({
       staged: { ...staged(), shasum: null },
-      manifest: { name: "@ebey.dev/counter", version: "0.0.16" } as any,
+      manifest: { name: "@ebey.dev/counter", version: "0.0.16" },
       archiveSha1: null,
       archiveSha512: null,
       trustPublisher: null,
@@ -349,7 +349,8 @@ describe("resolveAtpmStagedReview", () => {
         values.set(key, value);
         return Promise.resolve();
       }),
-    } as KVNamespace;
+      // Partial double: the review path only reads and writes the cache.
+    } as unknown as KVNamespace;
     const pending: Promise<unknown>[] = [];
     const cachedEnv = { COMPARE_CACHE: cache } as Cloudflare.Env;
     const cachedCtx = {

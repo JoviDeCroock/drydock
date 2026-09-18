@@ -8,7 +8,9 @@ import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
+import type { ReleaseReceiptDocument } from "../../server/lib/scan/release-receipt";
 import { scansRoutes } from "../../server/routes/scans";
+import { attachDb } from "../../server/middleware/db";
 import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 
@@ -34,6 +36,7 @@ async function seedOwner(): Promise<Owner> {
 
 function appFor(owner: Owner) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+  app.use("*", attachDb);
   app.use("*", async (c, next) => {
     c.set("authSession", { userId: owner.userId });
     await next();
@@ -179,7 +182,7 @@ describe("canonical release receipt v1", () => {
     const second = await request(app, scanId, "release-receipt.json");
     expect(await second.text()).toBe(bytes);
 
-    const document = JSON.parse(bytes) as any;
+    const document = JSON.parse(bytes) as ReleaseReceiptDocument;
     expect(document.schema).toBe("drydock.release-receipt.v1");
     expect(document.address.value).toBe(await sha256Hex(canonicalJson(document.content)));
     expect(first.headers.get("x-drydock-receipt-sha256")).toBe(await sha256Hex(bytes));
@@ -220,7 +223,7 @@ describe("canonical release receipt v1", () => {
       .where(eq(schema.scans.id, scanId));
 
     const response = await request(appFor(owner), scanId, "release-receipt.json");
-    const receipt = (await response.json()) as any;
+    const receipt = (await response.json()) as ReleaseReceiptDocument;
     expect(receipt.content.release).toMatchObject({
       mode: "staged_publish",
       source: "manual",
@@ -277,7 +280,7 @@ describe("canonical release receipt v1", () => {
       .where(eq(schema.scans.id, scanId));
     const receipt = (await (
       await request(appFor(owner), scanId, "release-receipt.json")
-    ).json()) as any;
+    ).json()) as ReleaseReceiptDocument;
 
     expect(receipt.content.release.mode).toBe("workflow_gate");
     expect(receipt.content.release.control).toEqual({
@@ -334,7 +337,7 @@ describe("canonical release receipt v1", () => {
 
     const receipt = (await (
       await request(appFor(owner), scanId, "release-receipt.json")
-    ).json()) as any;
+    ).json()) as ReleaseReceiptDocument;
     expect(receipt.content.evidence.status).toBe("conflicting");
     expect(receipt.content.evidence.reviewedArtifacts.status).toBe("conflicting");
     expect(receipt.content.evidence.workflowGate.status).toBe("partial");
@@ -364,7 +367,7 @@ describe("canonical release receipt v1", () => {
     const scanId = await seedCompleted(owner);
     const receipt = (await (
       await request(appFor(owner), scanId, "release-receipt.json")
-    ).json()) as any;
+    ).json()) as ReleaseReceiptDocument;
     expect(receipt.content.evidence.status).toBe("partial");
     expect(receipt.content.evidence.reviewedArtifacts).toEqual({
       status: "unknown",

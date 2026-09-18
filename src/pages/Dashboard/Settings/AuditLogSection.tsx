@@ -9,7 +9,7 @@ import {
 } from "../../../models/audit-log";
 import { Alert } from "../../../components/Alert";
 import { Badge, type BadgeTone } from "../../../components/Badge";
-import { Button } from "../../../components/Button";
+import { LoadMoreButton } from "../../../components/Button";
 import { CollapsibleCard, SettingsCardBody, SettingsCardListItem } from "../../../components/Card";
 import { Muted } from "../../../components/Typography";
 
@@ -113,14 +113,12 @@ export function AuditLogSection({
 
       {hasMore ? (
         <SettingsCardBody inset="belowHeader" gap="none">
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={audit.busy.value}
+          <LoadMoreButton
+            size="md"
+            loading={status === "loadingMore"}
+            disabled={audit.busy}
             onClick={() => void audit.loadMore()}
-          >
-            {status === "loadingMore" ? "Loading…" : "Load more"}
-          </Button>
+          />
         </SettingsCardBody>
       ) : null}
     </CollapsibleCard>

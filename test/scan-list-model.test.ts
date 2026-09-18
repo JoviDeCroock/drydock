@@ -5,17 +5,11 @@ import {
   type PersistedScanDetail,
 } from "../src/models/scan";
 import { ACTIVE_ORG_HEADER, setActiveOrganizationId } from "../src/models/active-organization";
+import { jsonResponse } from "./helpers/fetch-stub";
 
 type ScanListModelInstance = InstanceType<typeof ScanListModel>;
 
 let model: ScanListModelInstance | null = null;
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

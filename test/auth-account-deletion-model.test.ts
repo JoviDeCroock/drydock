@@ -2,14 +2,14 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 async function deleteWith(password?: string) {
   vi.resetModules();
-  const fetchMock = vi.fn(
+  const fetchMock = vi.fn<typeof fetch>(
     async () =>
       new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
   );
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  globalThis.fetch = fetchMock;
   const { sessionModel } = await import("../src/models/auth");
 
   await sessionModel.deleteAccount(password);

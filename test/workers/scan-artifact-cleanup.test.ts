@@ -2,22 +2,16 @@ import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import {
-  deleteOrganization,
-  deleteUserAccount,
-  ensurePersonalOrganization,
-} from "../../server/db/organizations";
+import { deleteOrganization, deleteUserAccount } from "../../server/db/organizations";
 import { createScanJob, discardGateScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import type { DiffEntry, FileRecord } from "../../server/lib/review";
-import {
-  deleteOrganizationArtifacts,
-  deleteScanArtifacts,
-  writeScanArtifacts,
-} from "../../server/lib/scan/artifacts";
+import { deleteOrganizationArtifacts, deleteScanArtifacts } from "../../server/lib/scan/artifacts";
+import { writeScanArtifacts } from "../../server/lib/scan/artifacts/write";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../server/lib/platform/stable-json";
+import { canonicalJson } from "../../server/lib/platform/canonical-json";
+import { seedUser } from "./helpers/seed";
 
 // Mirrors the private safeSegment in scan-artifacts.ts: object keys live under
 // `orgs/{seg(orgId)}/scans/{seg(scanId)}/...`, so listing/asserting in the test
@@ -37,25 +31,9 @@ const diff: DiffEntry[] = [
   { path: "index.js", status: "added", stagedSize: 14, stagedSha256: "a".repeat(64), flags: [] },
 ];
 
-async function seedUser() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Cleanup Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { db, userId, organizationId };
-}
-
 async function seedScanArtifacts(organizationId: string, scanId: string) {
   // Contents are irrelevant to deletion; the cleanup tests never read them back.
-  const reportJson = stableJson({ version: 1, ruleFindings: [], findingAnnotations: [] });
+  const reportJson = canonicalJson({ version: 1, ruleFindings: [], findingAnnotations: [] });
   const reportDigest = await sha256Hex(reportJson);
   await writeScanArtifacts(env.ARTIFACTS, {
     organizationId,

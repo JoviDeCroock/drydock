@@ -1,8 +1,7 @@
-import { useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
+import { useComputed } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel, signInMethodsModel } from "../../../models/auth";
+import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { LinkButton } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
@@ -14,36 +13,19 @@ import { DeleteAccountSection } from "./DeleteAccountSection";
 
 export default function AccountPage() {
   const location = useLocation();
-  const sessionChecked = useSignal(false);
-
-  useEffect(() => {
-    rememberDashboardReturnUrl(location.url);
-  }, [location.url]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await sessionModel.load();
-      if (cancelled) return;
-      if (!data) {
-        location.route("/login", true);
-        return;
-      }
-      await signInMethodsModel.load(data.user.id);
-      if (cancelled) return;
-      sessionChecked.value = true;
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const sessionChecked = useAuthedDashboardSession({
+    onReady: (session) => signInMethodsModel.load(session.user.id),
+  });
+  // The delete section needs to know whether a password is on file, so the
+  // page holds its skeleton until sign-in methods have loaded too.
+  const ready = useComputed(() => sessionChecked.value && signInMethodsModel.loaded.value);
 
   const onSignOut = async () => {
     await sessionModel.signOut();
     location.route("/", true);
   };
 
-  if (!sessionChecked.value) {
+  if (!ready.value) {
     return (
       <PageShell width="doc">
         <AccountHeader />

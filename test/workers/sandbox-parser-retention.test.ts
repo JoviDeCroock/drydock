@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { sandboxSource, SANDBOX_MAX_ENTRIES, SANDBOX_MAX_FILES } from "../../server/lib/sandbox";
-// @ts-expect-error -- plain-JS fixture writer shared with the parser suites
-import { buildTar } from "../helpers/archive-fixtures.mjs";
+import { sandboxSource, SANDBOX_MAX_FILES } from "../../server/lib/sandbox";
+import { buildTar } from "../helpers/archive-fixtures";
 
 // Executes the *rendered* sandbox module, the same string the Worker loader is
 // handed in production. The parser functions are unit-tested directly in
@@ -29,7 +28,8 @@ const BASE_ENV = {
   NPM_REGISTRY: "https://registry.npmjs.org",
   ARCHIVE_FORMAT: "tgz",
   MAX_FILES: SANDBOX_MAX_FILES,
-  MAX_ENTRIES: SANDBOX_MAX_ENTRIES,
+  // The sandbox's own entry cap is module-private; leaving it unset takes the
+  // rendered module's MAX_FILES fallback, which these fixtures stay well under.
   MAX_TAR_BYTES: 25 * 1024 * 1024,
   MAX_STREAM_TAR_BYTES: 250 * 1024 * 1024,
 };
@@ -46,8 +46,7 @@ async function parseTgz(
   entries: Array<{ name: string; body: string }>,
   env: Record<string, unknown> = {},
 ): Promise<{ files: SandboxFile[]; packageJson: { name?: string; version?: string } | null }> {
-  const tar = buildTar(entries) as { buffer: Uint8Array };
-  const body = await gzip(tar.buffer);
+  const body = await gzip(buildTar(entries));
   const sandbox = loadRenderedSandbox();
   const res = await sandbox.fetch(
     new Request("https://sandbox.local/download", {

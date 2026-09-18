@@ -1,4 +1,6 @@
-import { type SeverityCounts, type SeverityKey } from "../components/SeverityBar";
+export type SeverityKey = "critical" | "high" | "medium" | "low" | "info" | "ok";
+
+export type SeverityCounts = Partial<Record<SeverityKey, number>>;
 
 const SEVERITY_RANK: Record<SeverityKey, number> = {
   critical: 0,

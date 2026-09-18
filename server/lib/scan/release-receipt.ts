@@ -2,6 +2,7 @@ import type { getScan } from "../../db/scans";
 import type { WorkflowGateRecord } from "../github-app/webhook-gates";
 import { canonicalJson } from "../platform/canonical-json";
 import { sha256Hex } from "../platform/crypto-utils";
+import { toIsoOrNull } from "./iso-time";
 import {
   buildReportExport,
   REPORT_EXPORT_SCHEMA,
@@ -153,7 +154,7 @@ function buildWorkflowGate(
     decision: {
       status: gate.status,
       outcome: gate.decision,
-      decidedAt: toIso(gate.decidedAt),
+      decidedAt: toIsoOrNull(gate.decidedAt),
     },
     // Callback delivery is currently observable only in ephemeral operational
     // logs. A durable gate decision is not proof GitHub received it.
@@ -162,7 +163,7 @@ function buildWorkflowGate(
 }
 
 function buildReleaseDecision(scan: ScanDetail["scan"]) {
-  const decidedAt = toIso(scan.decidedAt);
+  const decidedAt = toIsoOrNull(scan.decidedAt);
   const reviewer = scan.decidedByUserId
     ? { kind: "drydock_user" as const, id: scan.decidedByUserId }
     : null;
@@ -190,12 +191,4 @@ function aggregateEvidenceStatus(
     return "complete";
   }
   return "partial";
-}
-
-function toIso(value: unknown): string | null {
-  if (value == null) return null;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "number") return new Date(value).toISOString();
-  if (typeof value === "string") return value;
-  return null;
 }

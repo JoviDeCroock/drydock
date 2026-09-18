@@ -2,34 +2,13 @@ import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
 import { createScanJob, getScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { buildReportExport } from "../../server/lib/scan/report-export";
 import type { Finding } from "../../server/lib/review";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
-
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "AI Finding Persistence Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
+import { type SeededUser, seedUser } from "./helpers/seed";
 
 const ruleFinding: Finding = {
   severity: "medium",

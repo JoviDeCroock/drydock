@@ -1,5 +1,5 @@
 import { parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
-import { coloCache } from "../../platform/http";
+import { coloCache } from "../../platform/colo-cache";
 import { registryProtocolAllowed } from "./connection";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import {

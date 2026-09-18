@@ -1,4 +1,5 @@
-import type { Finding, PackageJsonDiff, PackageJsonSummary } from "..";
+import type { PackageJsonDiff, PackageJsonSummary } from "../serialize";
+import type { Finding } from "../types";
 import { firstJsonPropertyLine, tag } from "./helpers";
 import type { EntrypointResolution, RuleContext } from "./context";
 

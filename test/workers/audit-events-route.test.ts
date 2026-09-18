@@ -1,33 +1,13 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { auditRoutes } from "../../server/routes/audit";
 import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(name = "Tester"): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name,
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
+const mountAudit = (app: TestApp) => app.route("/api/v1/audit-events", auditRoutes);
 
 async function addMember(
   organizationId: string,
@@ -66,21 +46,7 @@ async function insertEvent(input: {
   });
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/audit-events", auditRoutes);
-  return app;
-}
-
-async function fetchAudit(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-  orgHeader?: string,
-) {
+async function fetchAudit(app: TestApp, path: string, orgHeader?: string) {
   const ctx = createExecutionContext();
   const headers: Record<string, string> = {};
   if (orgHeader) headers[ACTIVE_ORG_HEADER] = orgHeader;
@@ -107,7 +73,7 @@ interface AuditEventBody {
 
 describe("audit-events route", () => {
   test("returns only audit-visible events, shaped with registry metadata", async () => {
-    const owner = await seedUser("Ada");
+    const owner = await seedUser({ name: "Ada" });
     const base = Date.now();
     await insertEvent({
       organizationId: owner.organizationId,
@@ -123,7 +89,7 @@ describe("audit-events route", () => {
       createdAt: new Date(base + 1),
     });
 
-    const res = await fetchAudit(buildTestApp(owner), "/api/v1/audit-events");
+    const res = await fetchAudit(buildTestApp(mountAudit, owner), "/api/v1/audit-events");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: AuditEventBody[]; nextCursor: string | null };
 
@@ -158,7 +124,7 @@ describe("audit-events route", () => {
       createdAt: new Date(),
     });
 
-    const res = await fetchAudit(buildTestApp(owner), "/api/v1/audit-events");
+    const res = await fetchAudit(buildTestApp(mountAudit, owner), "/api/v1/audit-events");
     const raw = await res.text();
     expect(raw).not.toContain("SECRET_CIPHERTEXT");
     expect(raw).not.toContain("9z99");
@@ -178,7 +144,7 @@ describe("audit-events route", () => {
       createdAt: new Date(),
     });
 
-    const res = await fetchAudit(buildTestApp(owner), "/api/v1/audit-events");
+    const res = await fetchAudit(buildTestApp(mountAudit, owner), "/api/v1/audit-events");
     const body = (await res.json()) as { events: AuditEventBody[] };
     expect(body.events).toHaveLength(0);
   });
@@ -196,7 +162,7 @@ describe("audit-events route", () => {
       });
     }
 
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountAudit, owner);
     const firstRes = await fetchAudit(app, "/api/v1/audit-events?limit=2");
     const first = (await firstRes.json()) as {
       events: AuditEventBody[];
@@ -232,7 +198,7 @@ describe("audit-events route", () => {
     });
 
     const res = await fetchAudit(
-      buildTestApp(member),
+      buildTestApp(mountAudit, member),
       "/api/v1/audit-events",
       owner.organizationId,
     );
@@ -251,7 +217,11 @@ describe("audit-events route", () => {
       createdAt: new Date(),
     });
 
-    const res = await fetchAudit(buildTestApp(admin), "/api/v1/audit-events", owner.organizationId);
+    const res = await fetchAudit(
+      buildTestApp(mountAudit, admin),
+      "/api/v1/audit-events",
+      owner.organizationId,
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { events: AuditEventBody[] };
     expect(body.events).toHaveLength(1);

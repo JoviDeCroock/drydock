@@ -1,85 +1,17 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { createOrganization, ensurePersonalOrganization } from "../../server/db/organizations";
+import { createOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
-import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
-
-async function getReport(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  scanId: string,
-  options: { organizationId?: string } = {},
-) {
-  const ctx = createExecutionContext();
-  const query = options.organizationId
-    ? `?organizationId=${encodeURIComponent(options.organizationId)}`
-    : "";
-  const res = await app.fetch(
-    new Request(`http://test.local/api/v1/scans/${scanId}/report.json${query}`, { method: "GET" }),
-    env,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  return res;
-}
-
-async function seedCompletedScan(owner: SeededUser): Promise<string> {
-  return seedCompletedScanWithAi(owner, null);
-}
-
-async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<string> {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = `stage-${scanId.slice(-12)}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    packageJson: { name: "@org/pkg", version: "1.1.0" },
+function seedExportScan(owner: ScanOwner, ai: unknown = null) {
+  return seedCompletedScan(owner, {
     risk: "high",
-    status: "complete",
     summary: {
       report: {
         version: 1,
@@ -110,8 +42,6 @@ async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<
       },
     },
     ai,
-    files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
-    diff: [{ path: "package.json", status: "modified", flags: [] }],
     findings: [
       {
         severity: "high",
@@ -122,17 +52,31 @@ async function seedCompletedScanWithAi(owner: SeededUser, ai: unknown): Promise<
         ruleVersion: "1.8.0",
       },
     ],
-    report: { version: 1, digest: "abc123" },
   });
-  return scanId;
+}
+
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
+
+async function getReport(app: TestApp, scanId: string, options: { organizationId?: string } = {}) {
+  const ctx = createExecutionContext();
+  const query = options.organizationId
+    ? `?organizationId=${encodeURIComponent(options.organizationId)}`
+    : "";
+  const res = await app.fetch(
+    new Request(`http://test.local/api/v1/scans/${scanId}/report.json${query}`, { method: "GET" }),
+    env,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 describe("scan report JSON export", () => {
   test("exports a canonical, downloadable report for a completed scan", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
+    const scanId = await seedExportScan(owner);
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("content-disposition")).toBe(
@@ -180,7 +124,7 @@ describe("scan report JSON export", () => {
     ]);
 
     // Stable serialization: a re-export of the same evidence is byte-identical.
-    const again = await getReport(buildTestApp(owner), scanId);
+    const again = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(await again.text()).toBe(text);
   });
 
@@ -227,10 +171,9 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provenance: typeof provenance | null };
     expect(body.provenance).toEqual(provenance);
@@ -256,8 +199,8 @@ describe("scan report JSON export", () => {
       model: "ai-review-1",
     } as const;
 
-    const scanId = await seedCompletedScanWithAi(owner, aiReview);
-    const res = await getReport(buildTestApp(owner), scanId);
+    const scanId = await seedExportScan(owner, aiReview);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const text = await res.text();
     const body = JSON.parse(text) as {
@@ -297,13 +240,13 @@ describe("scan report JSON export", () => {
     });
 
     // Stable serialization: a re-export of the same evidence is byte-identical.
-    const again = await getReport(buildTestApp(owner), scanId);
+    const again = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(await again.text()).toBe(text);
   });
 
   test("exports unavailable AI reviews without surfacing fallback low risk", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScanWithAi(owner, {
+    const scanId = await seedExportScan(owner, {
       status: "unavailable",
       risk: "low",
       releaseAssessment: "not_assessed",
@@ -313,7 +256,7 @@ describe("scan report JSON export", () => {
       model: null,
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const body = JSON.parse(await res.text()) as {
       aiReview: {
@@ -378,10 +321,9 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provenance: typeof provenance | null };
     expect(body.provenance).toEqual(provenance);
@@ -426,10 +368,9 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provenance: unknown };
     expect(body.provenance).toBeNull();
@@ -468,10 +409,9 @@ describe("scan report JSON export", () => {
       files: [],
       diff: [],
       findings: [],
-      report: { version: 1, digest: "abc123" },
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { artifactIntegrity: unknown };
     expect(body.artifactIntegrity).toBeNull();
@@ -479,8 +419,8 @@ describe("scan report JSON export", () => {
 
   test("omits provenance for a staged-publish scan with no gate details", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
-    const res = await getReport(buildTestApp(owner), scanId);
+    const scanId = await seedExportScan(owner);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     const body = (await res.json()) as { provenance: unknown };
     expect(body.provenance).toBeNull();
   });
@@ -492,11 +432,11 @@ describe("scan report JSON export", () => {
       ownerUserId: owner.userId,
       name: "Team workspace",
     });
-    const scanId = await seedCompletedScan({ ...owner, organizationId });
+    const scanId = await seedExportScan({ ...owner, organizationId });
 
-    expect((await getReport(buildTestApp(owner), scanId)).status).toBe(404);
+    expect((await getReport(buildTestApp(mountScans, owner), scanId)).status).toBe(404);
 
-    const res = await getReport(buildTestApp(owner), scanId, { organizationId });
+    const res = await getReport(buildTestApp(mountScans, owner), scanId, { organizationId });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       package: { name: "@org/pkg", stagedVersion: "1.1.0" },
@@ -505,13 +445,13 @@ describe("scan report JSON export", () => {
 
   test("does not leak another organization's report", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner);
+    const scanId = await seedExportScan(owner);
     const outsider = await seedUser();
 
-    const res = await getReport(buildTestApp(outsider), scanId);
+    const res = await getReport(buildTestApp(mountScans, outsider), scanId);
     expect(res.status).toBe(404);
 
-    const queried = await getReport(buildTestApp(outsider), scanId, {
+    const queried = await getReport(buildTestApp(mountScans, outsider), scanId, {
       organizationId: owner.organizationId,
     });
     expect(queried.status).toBe(404);
@@ -528,13 +468,13 @@ describe("scan report JSON export", () => {
       ownerUserId: owner.userId,
     });
 
-    const res = await getReport(buildTestApp(owner), scanId);
+    const res = await getReport(buildTestApp(mountScans, owner), scanId);
     expect(res.status).toBe(409);
   });
 
   test("returns 404 for an unknown scan id", async () => {
     const owner = await seedUser();
-    const res = await getReport(buildTestApp(owner), "scan_does_not_exist");
+    const res = await getReport(buildTestApp(mountScans, owner), "scan_does_not_exist");
     expect(res.status).toBe(404);
   });
 });

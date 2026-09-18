@@ -4,7 +4,10 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 
 ## Server
 
-- `server/index.ts` mounts the Hono Worker routes under `/api/*` and is the deploy target in `wrangler.jsonc`.
+- `server/index.ts` mounts the Hono Worker routes under `/api/*`, owns the session guard and the anonymous-mount order, and is the deploy target in `wrangler.jsonc`; it re-exports the `scheduled` and `queue` handlers.
+- `server/middleware/` holds the request middleware `server/index.ts` composes: security headers, canonical host and static-asset fallback (`SERVER_OWNED_PATH_PREFIXES`), CSRF origin check, auth IP rate limit, and the per-request `c.var.db` handle.
+- `server/scheduled.ts` is the cron handler (staged-publish discovery sweep plus audit, auth-row, and rate-limit pruning); `server/queue.ts` is the `SCAN_QUEUE` consumer for scan and workflow-gate messages.
+- `server/lib/rate-limit.ts` composes the domain-free limiter in `server/lib/platform/rate-limit.ts` with the D1 fallback (`server/db/rate-limits.ts`); routes call its `enforceRateLimit`/`guardRateLimit`.
 - `server/routes/scans/` owns scan HTTP behavior, split by caller intent into `lifecycle`, `decisions`, `sharing`, and `compare` and mounted by its `index.ts`.
 - `server/routes/github-webhooks.ts` is the signed GitHub App webhook. It persists `deployment_protection_rule` deliveries into `github_workflow_gates`; see `workflow-gates.md` and the npm, PyPI, and VS Code gate docs.
 - `server/lib/sandbox.ts` is the Dynamic Worker that downloads and parses package artifacts. `NpmStageGateway` is the only npm-token egress.
@@ -17,7 +20,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/auth/` owns Better Auth, organization ownership, roles, active organization, invitation tokens, and the audit-event allowlist.
 - `server/lib/notify/` owns notification fan-out, Slack, and email.
 - `server/lib/platform/` contains domain-free HTTP, error, retry, rate-limit, canonical JSON, text, lexer, crypto, secret-box, security-header, observability, guard, path-safety, and concurrency primitives.
-- `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, and `scan-risk`.
+- `server/db/` contains the Drizzle schema and persistence helpers. `scans.ts` is a barrel over `scan-jobs`, `scan-persist`, `scan-list`, `scan-detail`, `scan-decisions`, `scan-registry-status`, `scan-overview`, `scan-package-releases`, and `scan-risk`; `scan-share` (public share and threat-feed reads) is imported directly; `enums.ts`, `scan-status.ts`, and `scan-query.ts` are the leaves those modules share instead of importing each other.
 
 ## UI, migrations, and tests
 
@@ -25,6 +28,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `drizzle/` contains migrations generated from `server/db/schema.ts`.
 - `test/` contains Vitest logic/Worker suites and Playwright fake-registry fixtures.
 - Routes, auth, organization scoping, rate limits, D1, queues, and scan lifecycle belong in `test/workers/`.
+- New tests are `.test.ts` (existing `.test.mjs` files stay; no mass rename). Pure-logic suites go in `test/` even when they exercise `server/`; only suites that need Miniflare bindings belong in `test/workers/`. Worker fixtures come from `test/workers/helpers/` (`seed.ts`, `app.ts`, `auth-http.ts`, `gate.ts`) and archive/fetch doubles from `test/helpers/`; `test/test-helper-invariants.test.mjs` rejects local copies.
 - Sandbox/archive parsing, npm forwarding, redaction, and deterministic rules use invariant or regression tests.
 - Registry behavior, staged discovery, workflow gates, and browser-visible scan flows use `test/e2e-fixtures/` and `test/e2e/local-registry.spec.ts`.
 

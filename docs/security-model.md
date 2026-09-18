@@ -150,7 +150,7 @@ A cached session can outlive its user by up to the cache lifetime, so `ensurePer
 
 ## Rate limiting
 
-`enforceRateLimit` (`server/lib/platform/rate-limit.ts`) is the single entry point for abuse control. Its backend is Cloudflare's native Rate Limiting binding — a per-colo fixed-window counter that costs no D1 write — so anonymous `/diff` floods and credential-stuffing bursts never reach the D1 single writer.
+`enforceRateLimit` (`server/lib/rate-limit.ts`, composing the domain-free limiter in `server/lib/platform/rate-limit.ts` with its D1 fallback) is the single entry point for abuse control. Its backend is Cloudflare's native Rate Limiting binding — a per-colo fixed-window counter that costs no D1 write — so anonymous `/diff` floods and credential-stuffing bursts never reach the D1 single writer.
 
 The binding's `{limit, period}` pair is static per binding and `period` may only be 10 or 60 seconds. `wrangler.jsonc` therefore declares one `ratelimits` binding per per-minute limit the app enforces (`NATIVE_TIERS` in the module), and:
 

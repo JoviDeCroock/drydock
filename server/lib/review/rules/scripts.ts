@@ -4,7 +4,7 @@ import {
   firstMatchingLine,
   firstMatchingSourceLine,
 } from "../../platform/text-utils";
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import {
   CONSUMER_INSTALL_LIFECYCLE_SCRIPTS,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,

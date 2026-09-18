@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { SERVER_OWNED_PATH_PREFIXES, workerFirstRoutes } from "./e2e/worker-routes.mjs";
 
-// Which paths the Worker owns is stated twice. `server/index.ts` states it for
-// behavior: a request under one of these prefixes gets a JSON `404` instead of
-// the SPA shell. `test/e2e/worker-routes.mjs` states it for routing: the local
+// Which paths the Worker owns is stated twice. `server/middleware/canonical-host.ts`
+// states it for behavior: a request under one of these prefixes gets a JSON
+// `404` instead of the SPA shell. `test/e2e/worker-routes.mjs` states it for routing: the local
 // harness turns it into the generated Wrangler config's `run_worker_first`
 // rules, which decide what reaches the Worker at all in development.
 //
@@ -16,14 +16,14 @@ import { SERVER_OWNED_PATH_PREFIXES, workerFirstRoutes } from "./e2e/worker-rout
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-const SERVER_INDEX = "server/index.ts";
+const SERVER_INDEX = "server/middleware/canonical-host.ts";
 const DEV_SERVER = "test/e2e/dev-server.mjs";
 
 function read(file) {
   return readFileSync(`${repoRoot}/${file}`, "utf8");
 }
 
-/** The `SERVER_OWNED_PATH_PREFIXES = ["…", …]` literal in server/index.ts. */
+/** The `SERVER_OWNED_PATH_PREFIXES = ["…", …]` literal in the canonical-host middleware. */
 function serverOwnedPrefixes(source, file) {
   const literal = /\bSERVER_OWNED_PATH_PREFIXES\s*=\s*\[(?<body>[^\]]*)\]/.exec(source)?.groups
     ?.body;
@@ -46,7 +46,7 @@ describe("worker-owned path parity", () => {
   test("the harness routes every server-owned prefix to the Worker", () => {
     expect(
       sorted(SERVER_OWNED_PATH_PREFIXES),
-      "test/e2e/worker-routes.mjs must list the same prefixes server/index.ts owns. A prefix " +
+      "test/e2e/worker-routes.mjs must list the same prefixes the canonical-host middleware owns. A prefix " +
         "missing there is served by Vite's SPA fallback as a 200 HTML document, so the route " +
         "silently never runs in local development.",
     ).toEqual(sorted(serverPrefixes));

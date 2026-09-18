@@ -348,3 +348,98 @@ describe("/api/* auth boundary", () => {
     ]);
   });
 });
+
+// Session presence is only half of the ownership rule in AGENTS.md; the other
+// half is that every organization-scoped handler resolves *which* organization
+// through `server/lib/auth/active-organization.ts`, whose membership read is the
+// authority. A handler that trusts an organization id it read from a header,
+// query, or body itself is a cross-organization read waiting to happen, and
+// nothing about the route file reveals it.
+const ORGANIZATION_RESOLVERS = [
+  "requireActiveOrganization",
+  "requireActiveOrganizationContext",
+  "requireOrganizationRole",
+];
+
+// Route files that name an organization without the shared resolver. Each is
+// either anonymous by design (docs/security-model.md) or scopes by a resource
+// id whose membership it checks itself. Adding one is a security decision.
+const ORGANIZATION_RESOLVER_EXEMPT = {
+  // Capability-token surface: the share token, not a session, names the scan.
+  "server/routes/public-reports.ts": "anonymous",
+  // Signed by GitHub; the installation row maps the delivery to an organization.
+  "server/routes/github-webhooks.ts": "anonymous",
+  // The organizations resource itself: `:id` is membership-checked inline.
+  "server/routes/organizations.ts": "requireOrganizationMember|isOrganizationOwner",
+  // Helpers that receive an already-resolved organization id.
+  "server/routes/github-app/shared.ts": "helper",
+};
+
+// Direct reads of an organization id from request input. The only one allowed
+// is the report-export override, which checks membership on the requested
+// organization before using it.
+const DIRECT_ORGANIZATION_INPUT =
+  /\b(?:ACTIVE_ORG_HEADER|x-organization-id)\b|\.(?:query|param)\(\s*["']organizationId["']\s*\)|\bbody\.organizationId\b/i;
+const DIRECT_ORGANIZATION_INPUT_ALLOWED = new Set(["server/routes/scans/sharing.ts"]);
+
+function routeSources() {
+  return serverSources("server/routes").map((file) => ({
+    file,
+    source: sanitizeApiSource(readFileSync(new URL(`../${file}`, import.meta.url), "utf8")),
+  }));
+}
+
+describe("organization-scoped routes resolve the organization through the shared resolver", () => {
+  const routes = routeSources();
+
+  test("every route file that names an organization calls a resolver or is pinned here", () => {
+    const offenders = routes
+      .filter(({ source }) => /\borganizationId\b/.test(source))
+      .filter(({ file }) => !(file in ORGANIZATION_RESOLVER_EXEMPT))
+      .filter(
+        ({ source }) =>
+          !ORGANIZATION_RESOLVERS.some((name) => new RegExp(`\\b${name}\\s*\\(`).test(source)),
+      )
+      .map(({ file }) => file);
+    expect(
+      offenders,
+      "Resolve the organization with requireActiveOrganization / requireOrganizationRole from " +
+        "server/lib/auth/active-organization.ts, or document why this file is exempt above.",
+    ).toEqual([]);
+  });
+
+  test("the exempt list carries no stale entries", () => {
+    for (const [file, reason] of Object.entries(ORGANIZATION_RESOLVER_EXEMPT)) {
+      const route = routes.find((candidate) => candidate.file === file);
+      expect(route, `${file} is exempt but no longer exists — drop the entry.`).toBeDefined();
+      const usesResolver = ORGANIZATION_RESOLVERS.some((name) =>
+        new RegExp(`\\b${name}\\s*\\(`).test(route.source),
+      );
+      expect(usesResolver, `${file} now uses a resolver — drop the exemption.`).toBe(false);
+      if (reason !== "anonymous" && reason !== "helper") {
+        expect(route.source, `${file} must keep its inline membership check`).toMatch(
+          new RegExp(`\\b(?:${reason})\\s*\\(`),
+        );
+      }
+    }
+  });
+
+  test("no route reads an organization id from request input directly", () => {
+    const offenders = routes
+      .filter(({ source }) => DIRECT_ORGANIZATION_INPUT.test(source))
+      .map(({ file }) => file)
+      .filter((file) => !DIRECT_ORGANIZATION_INPUT_ALLOWED.has(file));
+    expect(
+      offenders,
+      "The active-organization header is read in one place (active-organization.ts) so the " +
+        "membership check cannot be skipped; route handlers take the resolved id from it.",
+    ).toEqual([]);
+    for (const file of DIRECT_ORGANIZATION_INPUT_ALLOWED) {
+      const route = routes.find((candidate) => candidate.file === file);
+      expect(route && DIRECT_ORGANIZATION_INPUT.test(route.source), file).toBe(true);
+      expect(route.source, `${file} must membership-check the requested organization`).toMatch(
+        /getOrganizationRole\s*\(/,
+      );
+    }
+  });
+});

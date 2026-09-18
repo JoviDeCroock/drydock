@@ -1,5 +1,6 @@
 import type { DiffEntry } from "../../../server/lib/review";
-import { hasNoLoadableBody, type PublicReportFile } from "../../models/public-report";
+import type { PublicReportFile } from "../../models/public-report";
+import { hasNoLoadableBody } from "../../features/review/diff-entries";
 import { type DiffFinding, DiffView } from "../../components/DiffView";
 import { IndeterminateBar } from "../../components/Loading";
 import { EmptyLine, LoadingLine } from "../../components/Typography";

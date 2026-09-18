@@ -12,7 +12,7 @@ import { type DiffEntry, type FileRecord } from "../../review";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { SCAN_FILE_SAMPLE_LIMIT } from "../../sample-retention";
 import { sha256Hex } from "../../platform/crypto-utils";
-import { stableJson } from "../../platform/stable-json";
+import { canonicalJson } from "../../platform/canonical-json";
 
 export function scanFileRowsForArtifacts(
   files: FileRecord[],
@@ -112,12 +112,12 @@ export async function writeScanArtifacts(
   const runId = options.runId ?? crypto.randomUUID();
   const keys = artifactKeys(input.organizationId, input.scanId, runId);
   const files = scanFileRowsForArtifacts(input.files, input.diff);
-  const filesJson = stableJson({
+  const filesJson = canonicalJson({
     version: SCAN_ARTIFACT_STORAGE_VERSION,
     scanId: input.scanId,
     files,
   });
-  const diffJson = stableJson({
+  const diffJson = canonicalJson({
     version: SCAN_ARTIFACT_STORAGE_VERSION,
     scanId: input.scanId,
     diff: input.diff,
@@ -151,7 +151,7 @@ export async function writeScanArtifacts(
       diff: { ...descriptors.diff, count: input.diff.length },
     },
   };
-  const manifestJson = stableJson(manifest);
+  const manifestJson = canonicalJson(manifest);
   const manifestDigest = await sha256Hex(manifestJson);
   const manifestDescriptor = await putVerifiedJson(
     bucket,

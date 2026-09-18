@@ -6,7 +6,10 @@ import {
   badgeEcosystem,
   publicPackageLookupKey,
   scanDistTag,
+  type SharedScanRow,
 } from "../lib/public-feed";
+
+export type { SharedScanRow };
 import type { AppDb } from "./client";
 import { recordScanEvent } from "./events";
 import { scans } from "./schema";
@@ -343,22 +346,6 @@ export async function setThreatFeedListing(
 }
 
 export const THREAT_FEED_MAX_ENTRIES = 100;
-
-export interface SharedScanRow {
-  scanId: string;
-  source: string;
-  packageName: string | null;
-  stagedVersion: string | null;
-  previousVersion: string | null;
-  risk: string;
-  decision: string | null;
-  findingCount: number | null;
-  riskSummaryJson: unknown;
-  summaryJson: unknown;
-  publicShareToken: string | null;
-  publicFeedListedAt: Date | null;
-  completedAt: Date | null;
-}
 
 const SHARED_SCAN_COLUMNS = {
   scanId: scans.id,

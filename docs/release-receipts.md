@@ -18,10 +18,16 @@ public capability boundary.
 
 ## Canonical document
 
-The schema tag is `drydock.release-receipt.v1`. Serialization uses code-point
-key ordering: undefined fields are omitted and no presentation whitespace is
-added. This preserves the existing `drydock.report.v2` byte ordering across
-runtimes rather than depending on host locale.
+The schema tag is `drydock.release-receipt.v1`. Serialization sorts keys by
+UTF-16 code unit, as RFC 8785 (JCS) specifies, so the ordering is a pure value
+comparison independent of host locale: undefined fields are omitted and no
+presentation whitespace is added. `drydock.report.v2` and the stored scan
+artifacts use the same serializer, so their byte ordering agrees with this one
+across runtimes.
+
+Note that code-unit order is not code-point order — for keys outside the BMP a
+verifier that sorts by code point will disagree. Implement the JCS rule (JS
+`<` on strings, Java/.NET string comparison) rather than a code-point sort.
 
 - `address` is SHA-256 hex of the exact canonical bytes of `content`. Consumers
   verify it by stable-serializing `content` and hashing those bytes.

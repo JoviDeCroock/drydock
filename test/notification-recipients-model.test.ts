@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { NotificationRecipientsModel } from "../src/models/notification-recipients";
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
+import { jsonResponse, stubFetchRoutes } from "./helpers/fetch-stub";
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;
@@ -23,20 +17,15 @@ describe("NotificationRecipientsModel", () => {
 
   test("does not let a stale add reload overwrite a later organization load", async () => {
     const addOrgA = deferredResponse();
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/org-a/notification-recipients") && init?.method === "POST") {
-        return addOrgA.promise;
-      }
-      if (url.includes("/org-a/notification-recipients")) {
-        return Promise.resolve(jsonResponse({ recipients: [{ id: "a", email: "a@example.com" }] }));
-      }
-      if (url.includes("/org-b/notification-recipients")) {
-        return Promise.resolve(jsonResponse({ recipients: [{ id: "b", email: "b@example.com" }] }));
-      }
-      return Promise.resolve(jsonResponse({ recipients: [] }));
+    stubFetchRoutes({
+      "/org-a/notification-recipients": (_url, init) =>
+        init?.method === "POST"
+          ? addOrgA.promise
+          : jsonResponse({ recipients: [{ id: "a", email: "a@example.com" }] }),
+      "/org-b/notification-recipients": () =>
+        jsonResponse({ recipients: [{ id: "b", email: "b@example.com" }] }),
+      "": () => jsonResponse({ recipients: [] }),
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     const model = new NotificationRecipientsModel();
     await model.load("org-a");

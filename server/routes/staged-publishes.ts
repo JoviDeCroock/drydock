@@ -1,9 +1,7 @@
 import { Hono } from "hono";
-import { createDb } from "../db/client";
+import { guardRateLimit } from "../lib/rate-limit";
 import { getNpmConnection } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { requireActiveOrganization } from "../lib/auth/active-organization";
-import { rateLimitResponse } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { allowInsecureLocalRegistry } from "../lib/ecosystems/npm/connection";
 import {
@@ -17,22 +15,16 @@ import type { Bindings, Variables } from "../types";
 export const stagedPublishesRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 stagedPublishesRoutes.post("/scan", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
 
-  try {
-    await enforceRateLimit(c.env, {
-      key: `staged-publishes:scan:${organizationId}`,
-      limit: 12,
-      windowMs: 10 * 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "staged publish discovery rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `staged-publishes:scan:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 },
+    "staged publish discovery rate limit exceeded",
+  );
+  if (limited) return limited;
 
   const savedConnection = await getNpmConnection(db, organizationId);
   if (!savedConnection) {

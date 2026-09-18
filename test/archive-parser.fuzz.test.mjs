@@ -28,7 +28,7 @@
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import * as parser from "../server/lib/tar-parser.js";
-import { buildTar, buildZip, encoder } from "./helpers/archive-fixtures.mjs";
+import { buildTar, buildZip, encoder } from "./helpers/archive-fixtures";
 
 const {
   normalizeTarPath,

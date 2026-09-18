@@ -6,13 +6,11 @@
  * so it goes through the sandbox and the org's own npm credentials.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
-import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
+import { guardRateLimit } from "../../lib/rate-limit";
 import { getScanCompareData, getScanStatus } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { loadCompare, stripTextSamples } from "../../lib/compare-cache";
-import { rateLimitResponse } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import {
   allowInsecureLocalRegistry,
@@ -32,7 +30,7 @@ import type { Bindings, Variables } from "../../types";
 export const scanCompareRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 scanCompareRoutes.get("/:id/versions", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanStatus(db, c.req.param("id"), organizationId);
@@ -46,28 +44,21 @@ scanCompareRoutes.get("/:id/versions", async (c) => {
     });
   }
 
-  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
-  try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(c.env, {
-        key: `compare-versions:${session.userId}`,
-        limit: 60,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(db, c.env, organizationId).catch((err) => {
-        emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
-          organizationId,
-          error: describeOperationalError(err),
-        });
-        return null;
-      }),
-    ]);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const [limited, connection] = await Promise.all([
+    guardRateLimit(
+      c,
+      { key: `compare-versions:${session.userId}`, limit: 60, windowMs: 60 * 1000 },
+      "rate limit exceeded",
+    ),
+    getOrganizationNpmToken(db, c.env, organizationId).catch((err) => {
+      emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
+        organizationId,
+        error: describeOperationalError(err),
+      });
+      return null;
+    }),
+  ]);
+  if (limited) return limited;
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
   // Full packument: this response renders per-version publish dates, which
@@ -133,7 +124,7 @@ async function resolveCompareContext(
   const scanId = c.req.param("id") ?? "";
   if (!scanId) return { error: c.json({ error: "missing scan id" }, 400) } as const;
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanCompareData(db, scanId, organizationId, scanArtifactReadBucket(c.env));
@@ -184,30 +175,21 @@ async function loadCompareArchive(
   ctx: CompareContext,
   options: { rateLimitKey: string; rateLimit: number },
 ) {
-  let connection: Awaited<ReturnType<typeof getOrganizationNpmToken>> = null;
-  try {
-    [, connection] = await Promise.all([
-      enforceRateLimit(c.env, {
-        key: options.rateLimitKey,
-        limit: options.rateLimit,
-        windowMs: 60 * 1000,
-      }),
-      getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch((err) => {
-        emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
-          organizationId: ctx.organizationId,
-          error: describeOperationalError(err),
-        });
-        return null;
-      }),
-    ]);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return {
-        error: rateLimitResponse(c, "rate limit exceeded", err),
-      } as const;
-    }
-    throw err;
-  }
+  const [limited, connection] = await Promise.all([
+    guardRateLimit(
+      c,
+      { key: options.rateLimitKey, limit: options.rateLimit, windowMs: 60 * 1000 },
+      "rate limit exceeded",
+    ),
+    getOrganizationNpmToken(ctx.db, c.env, ctx.organizationId).catch((err) => {
+      emitOperationalEvent("warn", "npm_connection.token_retrieval_failed", {
+        organizationId: ctx.organizationId,
+        error: describeOperationalError(err),
+      });
+      return null;
+    }),
+  ]);
+  if (limited) return { error: limited } as const;
 
   const registryUrl = connection?.registryUrl || c.env.NPM_REGISTRY || "https://registry.npmjs.org";
   const metadata = await fetchPackageMetadataCached(c.env, workerExecutionContext(c.executionCtx), {

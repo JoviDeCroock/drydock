@@ -2,12 +2,9 @@ import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
-import {
-  NATIVE_TIERS,
-  RateLimitError,
-  enforceRateLimit,
-  pruneExpiredRateLimitBuckets,
-} from "../../server/lib/platform/rate-limit";
+import { pruneExpiredRateLimitBuckets } from "../../server/db/rate-limits";
+import { NATIVE_TIERS } from "../../server/lib/platform/rate-limit";
+import { RateLimitError, enforceRateLimit } from "../../server/lib/rate-limit";
 import {
   exhaustedRateLimitBindings,
   rateLimitBindingOverrides,
@@ -51,8 +48,9 @@ function envWithoutD1(overrides: Partial<Cloudflare.Env> = {}): Cloudflare.Env {
 
 /** An env with no native Rate Limiting bindings at all. */
 function envWithoutNativeLimiters(): Cloudflare.Env {
-  const stripped: Record<string, unknown> = { ...env };
+  const stripped: Partial<Cloudflare.Env> = { ...env };
   for (const tier of NATIVE_TIERS) delete stripped[tier.binding];
+  // Only the optional limiter bindings were removed, so the rest is a full Env.
   return stripped as Cloudflare.Env;
 }
 

@@ -58,10 +58,12 @@ vi.mock("../server/lib/ecosystems/npm/staged-publishes.ts", async (importOrigina
 
 const { scansRoutes } = await import("../server/routes/scans");
 
-function buildTestApp() {
+function buildScansApp() {
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.set("authSession", { userId: "user_route" });
+    // Production attaches the handle in server/index.ts (server/middleware/db.ts).
+    c.set("db", dbMock.createDb());
     await next();
   });
   app.route("/api/v1/scans", scansRoutes);
@@ -99,7 +101,7 @@ describe("scans route background fallback", () => {
     scanJobMock.executeScanJob.mockResolvedValue({ id: "scan_route" });
     const backgrounded = [];
 
-    const res = await buildTestApp().fetch(
+    const res = await buildScansApp().fetch(
       new Request("http://test.local/api/v1/scans", {
         method: "POST",
         headers: { "content-type": "application/json" },

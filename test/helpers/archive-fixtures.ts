@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Minimal tar/zip writers shared by the archive-parser specs.
 //
 // These produce just enough of the POSIX/ustar and ZIP container formats for
@@ -11,6 +10,24 @@
 
 import { deflateRawSync } from "node:zlib";
 
+export interface TarEntry {
+  name?: string;
+  type?: string;
+  prefix?: string;
+  linkname?: string;
+  body?: string | Uint8Array;
+}
+
+export interface ZipEntry {
+  path: string;
+  body?: string | Uint8Array;
+  deflate?: boolean;
+  rawDeflate?: Uint8Array;
+  dataDescriptor?: boolean;
+}
+
+type TarHeaderInput = Omit<TarEntry, "body"> & { size?: number };
+
 export const encoder = new TextEncoder();
 
 // --- tar -------------------------------------------------------------------
@@ -19,19 +36,25 @@ export const encoder = new TextEncoder();
 // of 512. The archive is terminated with two zero blocks.
 export const TAR_BLOCK = 512;
 
-function pad(bytes, length) {
+function pad(bytes: Uint8Array, length: number): Uint8Array {
   if (bytes.length > length) throw new Error("field overflow: " + bytes.length + " > " + length);
   const out = new Uint8Array(length);
   out.set(bytes, 0);
   return out;
 }
 
-function octal(value, length) {
+function octal(value: number, length: number): Uint8Array {
   const text = value.toString(8).padStart(length - 1, "0");
   return pad(encoder.encode(text + "\0"), length);
 }
 
-function tarHeader({ name = "", size = 0, type = "0", prefix = "", linkname = "" }) {
+function tarHeader({
+  name = "",
+  size = 0,
+  type = "0",
+  prefix = "",
+  linkname = "",
+}: TarHeaderInput): Uint8Array {
   const buf = new Uint8Array(TAR_BLOCK);
   buf.set(pad(encoder.encode(name), 100), 0);
   buf.set(pad(encoder.encode("0000644"), 8), 100); // mode
@@ -58,7 +81,7 @@ function tarHeader({ name = "", size = 0, type = "0", prefix = "", linkname = ""
 // tar writer does: the sum of the block with the checksum field itself counted
 // as eight spaces. Exported so a fixture that corrupts a header field on purpose
 // can re-seal it and test the field rather than the checksum.
-export function sealTarHeader(bytes, offset = 0) {
+export function sealTarHeader(bytes: Uint8Array, offset = 0): Uint8Array {
   let sum = 8 * 0x20;
   for (let i = offset; i < offset + 148; i++) sum += bytes[i];
   for (let i = offset + 156; i < offset + TAR_BLOCK; i++) sum += bytes[i];
@@ -66,7 +89,7 @@ export function sealTarHeader(bytes, offset = 0) {
   return bytes;
 }
 
-function tarBody(content) {
+function tarBody(content: string | Uint8Array): Uint8Array {
   const bytes = content instanceof Uint8Array ? content : encoder.encode(content);
   const padded = Math.ceil(bytes.length / TAR_BLOCK) * TAR_BLOCK;
   const out = new Uint8Array(padded);
@@ -74,8 +97,8 @@ function tarBody(content) {
   return out;
 }
 
-export function buildTar(entries) {
-  const parts = [];
+export function buildTar(entries: TarEntry[]): Uint8Array {
+  const parts: Uint8Array[] = [];
   for (const entry of entries) {
     const data = entry.body ?? "";
     const bytes = data instanceof Uint8Array ? data : encoder.encode(data);
@@ -97,7 +120,10 @@ export function buildTar(entries) {
 // A bare 512-byte header with no body, for fixtures that need the declared size
 // to disagree with the bytes that follow. `seal: false` leaves the checksum
 // placeholder in place, producing the block npm's reader skips.
-export function buildTarHeaderOnly({ seal = true, ...entry }) {
+export function buildTarHeaderOnly({
+  seal = true,
+  ...entry
+}: TarHeaderInput & { seal?: boolean }): Uint8Array {
   const header = tarHeader({ ...entry, size: entry.size ?? 0 });
   if (!seal) header.set(encoder.encode("        "), 148);
   return header;
@@ -105,11 +131,11 @@ export function buildTarHeaderOnly({ seal = true, ...entry }) {
 
 // Strip the two-block end-of-archive marker `buildTar` appends, so a fixture can
 // splice extra blocks (a lone zero block, a second archive) after real entries.
-export function tarEntriesOnly(tar) {
+export function tarEntriesOnly(tar: Uint8Array): Uint8Array {
   return tar.subarray(0, tar.length - TAR_BLOCK * 2);
 }
 
-export function concatBytes(parts) {
+export function concatBytes(parts: Uint8Array[]): Uint8Array {
   let total = 0;
   for (const part of parts) total += part.length;
   const out = new Uint8Array(total);
@@ -123,15 +149,15 @@ export function concatBytes(parts) {
 
 // --- zip -------------------------------------------------------------------
 
-function u16(view, offset, value) {
+function u16(view: DataView, offset: number, value: number): void {
   view.setUint16(offset, value, true);
 }
 
-function u32(view, offset, value) {
+function u32(view: DataView, offset: number, value: number): void {
   view.setUint32(offset, value, true);
 }
 
-function concat(parts) {
+function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
@@ -142,7 +168,10 @@ function concat(parts) {
   return out;
 }
 
-function zipEntry(entry, localOffset) {
+function zipEntry(
+  entry: ZipEntry,
+  localOffset: number,
+): { local: Uint8Array; central: Uint8Array } {
   const name = encoder.encode(entry.path);
   const body = entry.body instanceof Uint8Array ? entry.body : encoder.encode(entry.body ?? "");
   // `rawDeflate` supplies a hand-crafted deflate payload for `body` (e.g. one
@@ -199,9 +228,9 @@ function zipEntry(entry, localOffset) {
   return { local, central };
 }
 
-export function buildZip(entries) {
-  const locals = [];
-  const centrals = [];
+export function buildZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
+  const locals: Uint8Array[] = [];
+  const centrals: Uint8Array[] = [];
   let localOffset = 0;
   for (const entry of entries) {
     const built = zipEntry(entry, localOffset);

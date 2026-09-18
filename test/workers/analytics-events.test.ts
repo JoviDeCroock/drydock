@@ -1,14 +1,15 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
-import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+
+const mountOrganizations = (app: TestApp) => {
+  app.route("/api/v1/organizations", organizationsRoutes);
+  app.route("/api/v1/npm-connection", npmConnectionRoutes);
+};
 
 // End-to-end check that the funnel is actually wired: the encoder is unit-tested
 // in test/analytics.test.mjs, but an event nobody emits measures nothing. These
@@ -20,7 +21,7 @@ const ORIGIN = "http://example.com";
 const PASSWORD = "correct horse battery staple";
 const WORKER_AUTH_TIMEOUT_MS = 15_000;
 
-// Positional blob layout from lib/platform/analytics.ts. blob5 onwards are
+// Positional blob layout from lib/analytics.ts. blob5 onwards are
 // event-specific dimensions in declaration order.
 const BLOB = { schema: 0, name: 1, organizationId: 2, ecosystem: 3, dim1: 4, dim2: 5 } as const;
 
@@ -46,55 +47,6 @@ afterEach(() => {
   delete (env as { PRODUCT_ANALYTICS?: unknown }).PRODUCT_ANALYTICS;
   vi.restoreAllMocks();
 });
-
-async function seedUser(): Promise<{ userId: string; personalOrganizationId: string }> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const personalOrganizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, personalOrganizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/organizations", organizationsRoutes);
-  app.route("/api/v1/npm-connection", npmConnectionRoutes);
-  return app;
-}
-
-async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  method: string,
-  path: string,
-  options: { body?: unknown; activeOrganizationId?: string } = {},
-) {
-  const ctx = createExecutionContext();
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (options.activeOrganizationId) headers[ACTIVE_ORG_HEADER] = options.activeOrganizationId;
-  const res = await app.fetch(
-    new Request(`http://test.local${path}`, {
-      method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    }),
-    env,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  return res;
-}
 
 describe("product analytics wiring", () => {
   test(
@@ -132,7 +84,7 @@ describe("product analytics wiring", () => {
   test("organization create emits the event and keeps the name out of it", async () => {
     const written = withAnalytics();
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const res = await call(app, "POST", "/api/v1/organizations", {
       body: { name: "Acme Confidential" },
@@ -150,7 +102,7 @@ describe("product analytics wiring", () => {
   test("npm activation emits once, on the validation that first succeeds", async () => {
     const written = withAnalytics();
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const saved = await call(app, "POST", "/api/v1/npm-connection", {
       body: { token: "npm_analytics_token_AAAAAAAA" },
@@ -183,7 +135,7 @@ describe("product analytics wiring", () => {
   test("invalid npm credentials do not emit integration.connected", async () => {
     const written = withAnalytics();
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const saved = await call(app, "POST", "/api/v1/npm-connection", {
       body: { token: "npm_invalid_token_BBBBBBBB" },
@@ -203,7 +155,7 @@ describe("product analytics wiring", () => {
   test("a rejected request emits nothing", async () => {
     const written = withAnalytics();
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const res = await call(app, "POST", "/api/v1/organizations", { body: { name: "" } });
     expect(res.status).toBe(400);
@@ -218,7 +170,7 @@ describe("product analytics wiring", () => {
       },
     };
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const res = await call(app, "POST", "/api/v1/organizations", { body: { name: "Still Works" } });
     expect(res.status).toBe(201);
@@ -227,7 +179,7 @@ describe("product analytics wiring", () => {
   test("an unbound dataset leaves every route working", async () => {
     delete (env as { PRODUCT_ANALYTICS?: unknown }).PRODUCT_ANALYTICS;
     const { userId } = await seedUser();
-    const app = buildTestApp({ userId });
+    const app = buildTestApp(mountOrganizations, { userId });
 
     const res = await call(app, "POST", "/api/v1/organizations", {
       body: { name: "No Telemetry" },

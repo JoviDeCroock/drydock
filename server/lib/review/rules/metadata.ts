@@ -1,5 +1,5 @@
 import { isOutsidePackageFilesAllowlist } from "../package-files";
-import type { Finding } from "..";
+import type { Finding } from "../types";
 import { containsSecretLikeText, firstSecretLine, tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
