@@ -136,6 +136,7 @@ export async function fetchAtpmPackageRecord(
 
   const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(response, {
     maxBytes: MAX_RECORD_BYTES,
+    deadlineMs: Date.now() + RECORD_TIMEOUT_MS,
   });
   // A PDS answers "no such record" with 400 RecordNotFound, not 404, so the
   // status alone cannot distinguish a missing package from a broken request.

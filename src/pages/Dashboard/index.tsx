@@ -1,4 +1,4 @@
-import { useComputed, useSignal, useModel, useSignalEffect } from "@preact/signals";
+import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
 import { useQuerySignal } from "../../lib/query-state";
@@ -758,8 +758,12 @@ function ScanStatusBadge({ status }: { status: string }) {
 // its meaning was hidden in a tooltip.
 function ScanFreshnessIndicator({ at }: { at: number }) {
   const now = useNow(30_000);
-  const label = useComputed(() => `checked ${formatRelativeTime(at, now.value)}`);
+  // Read in render rather than through a `useComputed`: the computed is
+  // memoized on mount and only tracks the signals it reads, so a changed `at`
+  // would keep rendering the previous timestamp until `now` happened to tick.
   return (
-    <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">{label}</span>
+    <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">
+      checked {formatRelativeTime(at, now.value)}
+    </span>
   );
 }

@@ -51,6 +51,7 @@ export async function fetchAtpmTrustPublisher(
 
   const body = await readBoundedJson<{ value?: unknown; error?: unknown }>(response, {
     maxBytes: MAX_TRUST_PUBLISHER_BYTES,
+    deadlineMs: Date.now() + TRUST_PUBLISHER_TIMEOUT_MS,
   });
   if (body?.error === "RecordNotFound" || response.status === 404) return null;
   if (!response.ok || !body) {

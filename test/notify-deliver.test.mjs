@@ -102,7 +102,11 @@ describe("deliverOrganizationNotification", () => {
     await deliverOrganizationNotification(env, db, notification());
 
     expect(dbMock.resolveNotificationEmails).toHaveBeenCalledWith(db, "org_1", "sweep_actor");
-    expect(events().every((event) => event.actorUserId === "sweep_actor")).toBe(true);
+    // `every` on an empty array is true, so assert the events exist before
+    // asserting what they attribute to.
+    const actors = events().map((event) => event.actorUserId);
+    expect(actors.length).toBeGreaterThan(0);
+    expect(actors).toEqual(actors.map(() => "sweep_actor"));
   });
 
   test("omits scanId from events for notifications without a scan", async () => {

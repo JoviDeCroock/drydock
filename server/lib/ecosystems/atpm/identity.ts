@@ -419,7 +419,10 @@ async function resolveHandleViaDns(handle: string): Promise<DnsHandleResolution>
     });
     if (!response.ok) return { status: "not-found" };
     payload =
-      (await readBoundedJson<DohAnswer>(response, { maxBytes: MAX_IDENTITY_DOCUMENT_BYTES })) ?? {};
+      (await readBoundedJson<DohAnswer>(response, {
+        maxBytes: MAX_IDENTITY_DOCUMENT_BYTES,
+        deadlineMs: Date.now() + HANDLE_RESOLUTION_TIMEOUT_MS,
+      })) ?? {};
   } catch {
     // A DNS failure is not a resolution failure — the well-known method is an
     // equally valid way to prove the same handle.
@@ -453,7 +456,10 @@ async function resolveHandleViaWellKnown(handle: string): Promise<string | null>
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
     if (!response.ok) return null;
-    const body = await readBoundedText(response, { maxBytes: 2048 });
+    const body = await readBoundedText(response, {
+      maxBytes: 2048,
+      deadlineMs: Date.now() + HANDLE_RESOLUTION_TIMEOUT_MS,
+    });
     return body === null ? null : normalizeDid(body.trim());
   } catch {
     return null;
@@ -488,6 +494,7 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
 
   const document = await readBoundedJson<DidDocument>(response, {
     maxBytes: MAX_IDENTITY_DOCUMENT_BYTES,
+    deadlineMs: Date.now() + DID_DOCUMENT_TIMEOUT_MS,
   });
   if (!document || typeof document !== "object") {
     throw new PublicDiffError("DID document is not valid JSON", 502);

@@ -351,7 +351,7 @@ async function listRunArtifacts(
 ): Promise<RunArtifactRef[]> {
   const [owner, repo] = repositoryFullName.split("/");
   const found: RunArtifactRef[] = [];
-  await paginate(
+  const { complete } = await paginate(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
       `/actions/runs/${runId}/artifacts?per_page=100`,
     {
@@ -407,6 +407,16 @@ async function listRunArtifacts(
       }
     },
   );
+  // A run with more artifacts than the page cap can reach leaves shards we never
+  // listed. `found` being non-empty does not mean it is whole, and a gate that
+  // scores a partial release reports it exactly like a complete one — so a
+  // truncated listing fails closed rather than resolving a subset.
+  if (!complete) {
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      `workflow run ${runId} lists more artifacts than ${MAX_LIST_PAGES} pages can reach`,
+    );
+  }
   if (found.length > 0) {
     return found.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
   }

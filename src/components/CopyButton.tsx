@@ -1,6 +1,9 @@
 import { useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { useEffect, useRef } from "preact/hooks";
 import { Button } from "./Button";
+
+const COPIED_RESET_MS = 2000;
 
 /**
  * Copy-to-clipboard affordance: a button plus an aria-live confirmation so the
@@ -21,11 +24,18 @@ export function CopyButton({
   variant?: "secondary" | "ghost";
 }) {
   const copyState = useSignal<"copied" | "failed" | null>(null);
+  // Success is self-evident once the paste lands, so the confirmation clears
+  // itself. A failure asks the reader to do something, so it stays until the
+  // next attempt.
+  const resetTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(resetTimer.current), []);
 
   const copy = async () => {
+    clearTimeout(resetTimer.current);
     try {
       await navigator.clipboard.writeText(text);
       copyState.value = "copied";
+      resetTimer.current = setTimeout(() => (copyState.value = null), COPIED_RESET_MS);
     } catch {
       copyState.value = "failed";
     }
