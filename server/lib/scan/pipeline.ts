@@ -9,6 +9,7 @@ import type {
 import { loadReleaseFingerprintHistory } from "../../db/release-fingerprint";
 import { backfillScanRegistryReleaseIdentity } from "../../db/scans";
 import { computeIntentEnvelope, type WorkflowGateIntent } from "../intent-envelope";
+import { resolveGateContinuity } from "./gate-continuity";
 import {
   describeOperationalError,
   durationMsSince,
@@ -82,13 +83,17 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // the AI review, risk scoring, and persistence below run while only the
     // redacted copies are reachable — peak memory is what caps reviewable
     // package size.
+    // The registry's own coordinates for the stage, captured for the gate
+    // continuity lookup below: package-controlled manifest fields must never
+    // aim a lookup at another package's gate history.
+    let registryIdentity: { packageName: string; version: string } | null = null;
     const { diff, findings, facts } = await analyzeRelease(
       adapter,
       adapterCtx,
       adapterInput,
       broker,
       async (resolved) => {
-        const registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
+        registryIdentity = adapter.registryReleaseIdentity?.(resolved.staged.details) ?? null;
         if (input.scanId && registryUrl && registryIdentity) {
           const identityResult = await backfillScanRegistryReleaseIdentity(db, {
             scanId: input.scanId,
@@ -157,6 +162,18 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       declaredRepository: facts.declaredRepository,
     });
 
+    // Advisory gate-continuity record (db read): binds a registry stage to the
+    // organization's workflow-gate review of the same bytes, or names a stage
+    // that never passed the gate. Never influences risk, findings, or the
+    // decision; a lookup failure degrades to "no record" inside the resolver.
+    const gateContinuity = await resolveGateContinuity({
+      db,
+      identity,
+      source: input.source,
+      registryIdentity,
+      stagedDigest: facts.stagedArtifactSha256,
+    });
+
     const { result, persisted } = await persistResults({
       env,
       db,
@@ -171,6 +188,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       riskSummary,
       releaseConsistency,
       intentEnvelope,
+      gateContinuity,
     });
 
     await recordCompletion({

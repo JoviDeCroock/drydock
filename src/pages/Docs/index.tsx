@@ -341,7 +341,9 @@ export default function DocsPage() {
               </div>
               <Callout label="Quick decision">
                 Use npm staging for npm's private candidate store. For PyPI, the VS Code
-                Marketplace, or other CI-first releases, use a GitHub workflow gate.
+                Marketplace, or other CI-first releases, use a GitHub workflow gate. For npm the two
+                compose: run <InlineCode>npm stage publish</InlineCode> inside the gated job and the
+                gate reviews the tarball before npm holds it.
               </Callout>
             </Subsection>
           </section>
@@ -477,6 +479,45 @@ export default function DocsPage() {
                 CI unable to publish that candidate directly. The npm account still controls final
                 approval and can publish interactively outside this staged path.
               </Callout>
+            </Subsection>
+
+            <Subsection id="gated-staging" title="Gate the staging job">
+              <Prose>
+                npm has no hook for a third party to block a stage: approving and rejecting both
+                need an OTP, and there is no stage webhook. Drydock does not need one. Run{" "}
+                <InlineCode>npm stage publish</InlineCode> inside a gated GitHub Environment and the
+                workflow gate reviews the tarball before npm ever receives it. The gate is the
+                enforced checkpoint; the stage is npm holding exactly the reviewed bytes; the 2FA
+                approval on npm stays with you.
+              </Prose>
+              <Steps
+                items={[
+                  <>
+                    Pin the stage-only trusted publisher to the gate environment. npm then refuses
+                    the OIDC exchange for any job outside it, and the job inside it cannot start
+                    until Drydock has passed the gate.
+                  </>,
+                  <>
+                    Pack once, record <InlineCode>SHA256SUMS</InlineCode>, upload, and run{" "}
+                    <InlineCode>npm stage publish</InlineCode> on the verified download in the
+                    protected job. Start from the gated staging workflow below.
+                  </>,
+                  <>
+                    Approve on npm with 2FA as before. The staged review now carries a Gate
+                    continuity section: <InlineCode>matched</InlineCode> means npm holds the tarball
+                    the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> or{" "}
+                    <InlineCode>ungated</InlineCode> means bytes the gate did not approve, or a
+                    stage that never went through the gate — reject it on npm.
+                  </>,
+                ]}
+              />
+              <CodeBlock name="stage-only publisher pinned to the gate" lang="bash">
+                {`npm trust github <package> \\
+  --repo <owner>/<repo> \\
+  --file publish.yml \\
+  --environment production \\
+  --allow-stage-publish`}
+              </CodeBlock>
             </Subsection>
           </section>
 
@@ -625,6 +666,34 @@ export default function DocsPage() {
           for tgz in dist/*.tgz; do
             npm publish "$tgz" --access public --provenance
           done`}
+              </WorkflowExample>
+              <WorkflowExample title="npm gated staging">
+                {`jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm pack --pack-destination dist
+      - run: cd dist && sha256sum *.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist/
+
+  stage:
+    needs: pack
+    environment: production # Drydock is this environment's protection rule
+    permissions:
+      id-token: write # stage-only trusted publisher pinned to this environment
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-release-candidates
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: npm stage publish dist/*.tgz --provenance`}
               </WorkflowExample>
               <WorkflowExample title="VS Code extension">
                 {`jobs:

@@ -33,6 +33,8 @@ export { listPackageReleases } from "./scan-package-releases";
 
 export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-detail";
 
+export { loadGateReviewHistory } from "./scan-gate-continuity";
+
 export {
   recordGatePackageDecision,
   recordScanDecision,

@@ -120,4 +120,10 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   describe(args: AdapterDescribeArgs<TInput>): AdapterPackageSummary;
   summarizeDetails(details: StagedDetails): Record<string, unknown> | null;
   registryReleaseIdentity?(details: StagedDetails): { packageName: string; version: string } | null;
+  /**
+   * SHA-256 of the staged artifact's complete wire bytes, when the adapter
+   * computed one. The pipeline uses it to bind a registry-staged review to the
+   * organization's workflow-gate review of the same bytes (gate continuity).
+   */
+  stagedArtifactSha256?(details: StagedDetails): string | null;
 }

@@ -83,6 +83,89 @@ between the review and the publish, so the reviewed bytes and the shipped bytes
 are the same bytes by construction. The workflow gate has to prove that
 separately with a digest re-check.
 
+## Gated staging: compose both
+
+The two modes are not alternatives. npm exposes no hook for a third party to
+block a stage — `npm stage approve` and `npm stage reject` both require an OTP,
+even with a granular token, and there is no stage webhook — so Drydock cannot
+tell npm that a stage is bad. It does not need to: put `npm stage publish`
+inside the gated GitHub Environment and the gate reviews the tarball before
+npm ever receives it.
+
+1. Keep the stage-only trusted publisher from the recipe above, but pin it to
+   the gate environment (`--environment production` in `npm trust`, or the
+   environment field on npmjs.com). npm then refuses the OIDC exchange for any
+   job outside that environment, and the job inside it cannot start until the
+   gate has passed.
+2. Split the workflow into a `pack` job that uploads the `.tgz` plus
+   `SHA256SUMS`, and a `stage` job in the protected environment that verifies
+   the download and runs `npm stage publish` on the reviewed tarball.
+
+   ```yaml
+   jobs:
+     pack:
+       steps:
+         - run: npm ci
+         - run: npm pack --json > pack.json
+         - run: sha256sum *.tgz > SHA256SUMS
+         - uses: actions/upload-artifact@v4
+           with:
+             name: npm-release-candidates
+             path: |
+               *.tgz
+               SHA256SUMS
+     stage:
+       needs: pack
+       environment: production # Drydock is this environment's protection rule
+       permissions:
+         id-token: write # OIDC; the trusted publisher can stage and nothing else
+       steps:
+         - uses: actions/download-artifact@v4
+           with:
+             name: npm-release-candidates
+         - run: sha256sum --check --strict SHA256SUMS
+         - run: npm stage publish *.tgz
+   ```
+
+3. Approve on npm with 2FA as before. Nothing about npm's decision changes.
+
+What this buys:
+
+- **The gate is the enforced checkpoint.** A malicious candidate built by CI
+  never reaches npm's stage queue; Drydock rejects the job and the OIDC
+  exchange never happens.
+- **The stage is npm holding exactly the reviewed bytes.** The `.tgz` the gate
+  hashed is the `.tgz` npm stages, and npm publishes what it staged.
+- **The stage becomes the receipt.** Drydock still discovers and scans the
+  stage. For a package the organization gates, the staged review carries a
+  **Gate continuity** section: the SHA-256 the sandbox computed from the staged
+  bytes is matched against the organization's completed workflow-gate reviews
+  of the same package version. The lookup is keyed on npm's own stage record
+  (package name and version from the registry), never on the tarball's
+  manifest, so a hostile stage cannot rename itself out of its package's gate
+  history.
+
+| Gate continuity     | Meaning                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `matched`           | npm holds the tarball the gate reviewed **and approved** (the gate's latest decision on these bytes wins); approving on npm publishes the gated bytes. Links the gate review.                     |
+| `gate-not-approved` | The gate reviewed exactly these bytes and rejected them (or has not decided), yet they were staged anyway. Reject on npm.                                                                         |
+| `digest-mismatch`   | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw.                                                                             |
+| `unverified`        | The gate reviewed this version, but one of the two digests is unavailable (uncomputed stage digest, a gate review with no single-tarball provenance, or a deleted gate row), so nothing is bound. |
+| `ungated`           | The organization has completed gate reviews of this package and none for this version. The stage was produced out of band.                                                                        |
+
+The record is advisory and additive: it never moves risk, findings, or a
+decision, and a lookup failure degrades to "no record" (`scan.gate_continuity.lookup_failed`).
+A broken link emits `scan.gate_continuity.broken`. It is exported in
+`report.json` as `gateContinuity` and folded into the
+[release receipt](./release-receipts.md) as `evidence.gateContinuity`. Packages
+the organization has never gated show nothing, so an org that only uses the
+watchtower sees no change.
+
+What it still does not stop is the account-takeover path: whoever holds the npm
+account can stage from a laptop with a token and approve with 2FA. That stage
+is discovered like any other, and for a gated package it reads as `ungated` —
+the signal a maintainer needs to reject it on npm rather than approve it.
+
 ## Compared with the workflow gate
 
 They put the candidate in different places and give Drydock different authority.
@@ -99,12 +182,15 @@ They put the candidate in different places and give Drydock different authority.
 
 Stage-only is the shorter setup for a maintainer already running
 `npm stage publish`. The gate is the one that generalizes past npm and past a
-single package.
+single package. [Gated staging](#gated-staging-compose-both) runs the stage
+command inside the gate and gets both.
 
 ## What this does not stop
 
 - **A skipped Drydock review.** npm will take a 2FA approval on a stage the
-  maintainer never opened in Drydock. The recorded review is advisory.
+  maintainer never opened in Drydock. The recorded review is advisory. Gated
+  staging moves the enforced review in front of the stage; npm's approval
+  itself still does not consult Drydock.
 - **An interactive direct publish.** An account holder with password, 2FA, and
   an OTP can still run `npm publish`; npm has no trusted-publisher-only mode.
 - **npm account takeover.** Whoever controls the account can re-run `npm trust`
