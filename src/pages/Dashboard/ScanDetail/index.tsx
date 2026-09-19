@@ -359,31 +359,31 @@ export default function ScanDetailPage() {
             <ReleaseVerdictStrip
               verdict={verdict}
               ai={ai.value}
-              actions={
-                <>
-                  {detail.scan.packageName ? (
-                    versions ? (
-                      <VersionPicker
-                        options={versions.versions}
-                        selected={selectedVersion}
-                        defaultVersion={versions.defaultPreviousVersion}
-                        stagedVersion={versions.stagedVersion}
-                        onChange={(value) => model.selectVersion(value)}
-                        disabled={compareLoading}
-                      />
-                    ) : (
-                      <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
-                    )
-                  ) : null}
-                  {onDecideClick ? (
-                    <Button
-                      variant={detail.scan.decision ? "secondary" : "primary"}
-                      onClick={onDecideClick}
-                    >
-                      {detail.scan.decision ? "Update decision" : "Decide"}
-                    </Button>
-                  ) : null}
-                </>
+              comparison={
+                detail.scan.packageName ? (
+                  versions ? (
+                    <VersionPicker
+                      options={versions.versions}
+                      selected={selectedVersion}
+                      defaultVersion={versions.defaultPreviousVersion}
+                      stagedVersion={versions.stagedVersion}
+                      onChange={(value) => model.selectVersion(value)}
+                      disabled={compareLoading}
+                    />
+                  ) : (
+                    <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+                  )
+                ) : null
+              }
+              decision={
+                onDecideClick ? (
+                  <Button
+                    variant={detail.scan.decision ? "secondary" : "primary"}
+                    onClick={onDecideClick}
+                  >
+                    {detail.scan.decision ? "Update decision" : "Decide"}
+                  </Button>
+                ) : null
               }
             />
             {compareLoading ? (
