@@ -157,6 +157,16 @@ jobs:
 
 The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
 
+## Observing publication
+
+Gate approval authorizes the configured job; registries do not consume a
+Drydock artifact-digest constraint. The checksum recipes assume that job remains
+trusted to run the check and publish the checked file. For explicitly enrolled
+public npm packages, the [publication monitor](./publication-monitor.md) hashes
+published bytes and compares them with prior staged or gate approvals. This is
+post-publication evidence and does not expand gate authority or cover PyPI and
+VS Code publication outcomes.
+
 ## Trust and failure behavior
 
 - The GitHub webhook signature is mandatory.

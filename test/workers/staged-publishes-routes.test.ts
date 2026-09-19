@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { listPublicationWatches } from "../../server/db/publication-watches";
 import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
@@ -12,6 +13,7 @@ import { createScanJob, listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import { stagedPublishesRoutes } from "../../server/routes/staged-publishes";
+import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings, Variables } from "../../server/types";
 
 interface SeededUser {
@@ -42,6 +44,7 @@ function buildTestApp(session: { userId: string }) {
     await next();
   });
   app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
+  app.route("/api/v1/scans", scansRoutes);
   return app;
 }
 
@@ -86,6 +89,7 @@ describe("staged publishes route", () => {
             {
               id: "stage-new-123",
               packageName: "@org/new",
+              access: "public",
               version: "1.1.0",
               tag: "latest",
               actor: "maintainer",
@@ -126,6 +130,9 @@ describe("staged publishes route", () => {
       skipped: 1,
       scans: [{ stageId: "stage-new-123", packageName: "@org/new", version: "1.1.0" }],
     });
+    expect(await listPublicationWatches(db, owner.organizationId)).toMatchObject([
+      { packageName: "@org/new", source: "staged_discovery" },
+    ]);
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(queue.send.mock.calls[0]?.[0]).toMatchObject({ stageId: "stage-new-123" });
     const { scans } = await listScans(db, owner.organizationId);
@@ -142,4 +149,52 @@ describe("staged publishes route", () => {
     // timeline has it even for a review that never completes.
     expect(created?.stagedCreatedAt?.toISOString()).toBe("2026-05-22T12:00:00.000Z");
   });
+});
+
+test("a manually submitted public stage enrolls before its queued review runs", async () => {
+  const owner = await seedUser();
+  const db = createDb(env.DB);
+  await upsertNpmConnection(db, {
+    organizationId: owner.organizationId,
+    registryUrl: "https://registry.npmjs.org",
+    label: "npm registry",
+    createdByUserId: owner.userId,
+    ...(await encryptNpmToken(env, "npm_test_token_0123456789")),
+  });
+  await updateNpmConnectionValidation(db, {
+    organizationId: owner.organizationId,
+    validationStatus: "valid",
+    validatedAt: new Date(),
+  });
+  const stageId = "stage-manual-publication-watch-000001";
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/tarball")) return new Response("", { status: 206 });
+    expect(url).toBe(`https://registry.npmjs.org/-/stage/${stageId}`);
+    return Response.json({
+      id: stageId,
+      packageName: "@org/manual-watch",
+      version: "1.0.0",
+      access: "public",
+    });
+  });
+  try {
+    const ctx = createExecutionContext();
+    const response = await buildTestApp(owner).fetch(
+      new Request("http://test.local/api/v1/scans", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stageId }),
+      }),
+      { ...env, SCAN_QUEUE: { send: vi.fn(async () => undefined) } } as unknown as Bindings,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(202);
+    expect(await listPublicationWatches(db, owner.organizationId)).toMatchObject([
+      { packageName: "@org/manual-watch", source: "staged_discovery" },
+    ]);
+  } finally {
+    fetcher.mockRestore();
+  }
 });

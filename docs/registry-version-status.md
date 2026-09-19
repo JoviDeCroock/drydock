@@ -1,5 +1,10 @@
 # Registry version status
 
+This feature follows known staged reviews. The separate
+[publication monitor](./publication-monitor.md) watches explicitly enrolled public
+npm packages for new published versions even when no stage scan exists, and
+compares their actual bytes with prior approvals.
+
 npm knows two things about a staged release that Drydock cannot derive from the
 staged tarball: whether its own automated validation has cleared the version,
 and what eventually happened to the stage. Both are read from a single endpoint:

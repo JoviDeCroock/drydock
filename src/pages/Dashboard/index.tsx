@@ -28,6 +28,7 @@ import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
+import { PublicationMonitor } from "../../features/publication-monitor/PublicationMonitor";
 import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
 import { Button, LinkButton } from "../../components/Button";
@@ -171,6 +172,7 @@ export default function DashboardPage() {
             error={overview.error}
           />
           <RecentReviewsSection scans={scans} stagedPublishes={stagedPublishes} npm={npm} />
+          <PublicationMonitor reviews={scans.scans} />
         </>
       ) : (
         <LoadingState

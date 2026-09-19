@@ -38,6 +38,8 @@ import {
   fetchStagedPublishDetails,
 } from "../../lib/ecosystems/npm/staged-publishes";
 import { getPublishedAdapter } from "../../lib/ecosystems";
+import { registerStagedPublicationCandidates } from "../../lib/ecosystems/npm/publication-auto-enrollment";
+import { npmPublicationRegistry } from "../../lib/ecosystems/npm/publication-registry";
 import { publishedPairStageId } from "../../lib/ecosystems/published-pair";
 import { PublicDiffError } from "../../lib/public-diff/error";
 import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
@@ -185,6 +187,15 @@ async function prepareStagedScan(
   const staged = await fetchStagedPublishDetails(npmConnection.registryUrl, token, input.stageId, {
     allowInsecureLocalhost: allowInsecureLocalRegistry(c.env),
   }).catch(() => null);
+
+  const publicationRegistry = npmPublicationRegistry(c.env);
+  if (staged && npmConnection.registryUrl.replace(/\/$/, "") === publicationRegistry) {
+    try {
+      await registerStagedPublicationCandidates(db, organizationId, [staged], publicationRegistry);
+    } catch {
+      emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", { organizationId });
+    }
+  }
 
   return {
     input,

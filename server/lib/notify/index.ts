@@ -451,6 +451,101 @@ export async function notifyStagedReleaseApprovable(
   await Promise.all([emailDelivery, slackDelivery]);
 }
 
+export interface NotifyPublicationDiscrepancyInput {
+  env: Cloudflare.Env;
+  db: AppDb;
+  organizationId: string;
+  packageName: string;
+  version: string;
+  status: "published_without_approval" | "published_despite_rejection" | "artifact_mismatch";
+}
+
+// The monitor claims each release alarm before delivery. Messages describe the
+// recorded evidence, without inferring credential compromise or registry bypass.
+export async function notifyPublicationDiscrepancy(
+  input: NotifyPublicationDiscrepancyInput,
+): Promise<void> {
+  const { env, db, organizationId, packageName, version, status } = input;
+  const ownerUserId = await getOrganizationOwnerUserId(db, organizationId);
+  if (!ownerUserId) return;
+  const [recipients, organizationName] = await Promise.all([
+    resolveNotificationEmails(db, organizationId, ownerUserId),
+    getOrganizationName(db, organizationId),
+  ]);
+  const descriptions = {
+    published_without_approval: {
+      title: "Published without prior approval",
+      detail: "No approval in this organization predates the publication of this release.",
+    },
+    published_despite_rejection: {
+      title: "Published despite rejection",
+      detail: "This release was published after it was rejected in this organization.",
+    },
+    artifact_mismatch: {
+      title: "Published artifact differs from approval",
+      detail:
+        "The published package bytes do not match the artifact approved in this organization before publication.",
+    },
+  };
+  const { title, detail } = descriptions[status];
+  const release = `${packageName}@${version}`;
+  const link = dashboardRootUrl(env, organizationId);
+  const subject = `${title} — ${release}`;
+  const text = [
+    "Hi there,",
+    "",
+    `${release}: ${detail}`,
+    organizationName ? `Organization: ${organizationName}` : null,
+    "",
+    "Review the publication evidence and acknowledge the alert on your dashboard.",
+    "If the release was unexpected, investigate who published it and review publishing access.",
+    link ? `Dashboard: ${link}` : null,
+    "",
+    "— Drydock",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+  const metadata = { trigger: "publication_discrepancy", packageName, version, status };
+  const emailDelivery =
+    recipients.length === 0
+      ? recordScanEvent(db, {
+          organizationId,
+          actorUserId: ownerUserId,
+          type: "scan.notification_failed",
+          metadata: { ...metadata, channel: "email", reason: "no_recipients" },
+        })
+      : deliverToRecipients(env, db, recipients, { subject, text }, (recipient, result) => ({
+          organizationId,
+          actorUserId: ownerUserId,
+          type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+          metadata: {
+            ...metadata,
+            channel: "email",
+            recipient,
+            ...(result.ok ? {} : { reason: result.reason }),
+          },
+        }));
+  const slackDelivery = deliverToSlackConnection(
+    env,
+    db,
+    { organizationId, actorUserId: ownerUserId, scanId: null },
+    {
+      title,
+      packageLabel: release,
+      source: "publication monitor",
+      statusLine: detail,
+      dashboardUrl: link,
+    },
+    (channel, result) => ({
+      organizationId,
+      actorUserId: ownerUserId,
+      type: result.ok ? "scan.notification_sent" : "scan.notification_failed",
+      metadata: slackEventMetadata(metadata, channel, result),
+    }),
+  );
+  await Promise.all([emailDelivery, slackDelivery]);
+}
+
 export interface NotifyWorkflowGateReviewInput {
   env: Cloudflare.Env;
   db: AppDb;
@@ -725,7 +820,7 @@ interface SlackDeliveryChannel {
 async function deliverToSlackConnection(
   env: Cloudflare.Env,
   db: AppDb,
-  context: { organizationId: string; actorUserId: string; scanId: string },
+  context: { organizationId: string; actorUserId: string; scanId: string | null },
   payload: SlackNotificationPayload,
   event: (
     channel: SlackDeliveryChannel,
@@ -894,6 +989,18 @@ function scanUrl(env: Cloudflare.Env, scanId: string, organizationId?: string): 
   try {
     const url = new URL(`/dashboard/scans/${encodeURIComponent(scanId)}`, base);
     if (organizationId) url.searchParams.set("org", organizationId);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function dashboardRootUrl(env: Cloudflare.Env, organizationId: string): string | null {
+  const base = env.BETTER_AUTH_URL;
+  if (typeof base !== "string" || !base) return null;
+  try {
+    const url = new URL("/dashboard", base);
+    url.searchParams.set("org", organizationId);
     return url.toString();
   } catch {
     return null;

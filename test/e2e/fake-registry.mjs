@@ -20,6 +20,15 @@ const registry = JSON.parse(await readFile(registryFile, "utf8"));
 const baseUrl = `http://${host}:${port}`;
 const stageById = new Map(registry.scenarios.map((scenario) => [scenario.stageId, scenario]));
 const packages = buildPackageMap(registry.scenarios);
+const publicPublication = registry.publicPublication;
+const publicPackageName = publicPublication.manifest.name;
+const publicPackument = {
+  name: publicPackageName,
+  distTags: { latest: publicPublication.version },
+  versions: { [publicPublication.version]: publicPublication },
+  times: {},
+};
+packages.set(publicPackageName, publicPackument);
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || "/", baseUrl);
@@ -39,7 +48,11 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (!hasBearerToken(request)) {
+    const decodedPublicPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    const isPublicPublication =
+      decodedPublicPath === publicPackageName ||
+      decodedPublicPath === `${publicPackageName}/-/${publicPublication.tarballFile}`;
+    if (!hasBearerToken(request) && !isPublicPublication) {
       await sendJson(request, response, startedAt, 401, { error: "missing bearer token" });
       return;
     }
@@ -125,6 +138,11 @@ const server = createServer(async (request, response) => {
 
     const packument = packages.get(decodedPath);
     if (packument) {
+      // This public-only release appears on its first lookup, after enrollment;
+      // subsequent checks see the same registry publication timestamp.
+      if (packument === publicPackument && !packument.times[publicPublication.version]) {
+        packument.times[publicPublication.version] = new Date().toISOString();
+      }
       await sendJson(request, response, startedAt, 200, renderPackument(packument));
       return;
     }

@@ -175,3 +175,9 @@ the route tests.
   Slack `fetch`: connect/callback/channels/channel/patch/delete/test, OAuth state
   CSRF (forged state, user mismatch, forbidden role), encryption-at-rest, event
   redaction, and the test-send rate limit.
+
+Publication monitoring sends `publication_discrepancy` notifications for newly observed
+releases without qualifying prior approval, rejected releases, or differing bytes.
+Email uses configured organization recipients with owner fallback; Slack is independent
+and links to the organization's dashboard. Acknowledgment and retry limits are documented
+in [publication monitoring](./publication-monitor.md#alerts-and-acknowledgment).

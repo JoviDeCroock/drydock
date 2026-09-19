@@ -77,3 +77,6 @@ registry state does not make the review evidence incomplete.
   continuity against that registry record, not a new SHA-256 provenance claim.
 - Registry observation is currently the persisted staged-registry lifecycle
   status; workflow-gate registries do not yet feed a post-publish observation.
+  The separate authenticated [publication monitor](./publication-monitor.md)
+  compares enrolled public npm releases with prior reviews, including npm gates;
+  its observations are not embedded in Release Receipt v1.

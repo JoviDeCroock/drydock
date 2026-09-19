@@ -92,3 +92,8 @@ to the originating scan when present.
 `test/workers/audit-events-route.test.ts` covers visible-only filtering, metadata
 non-leakage, org scoping, cursor pagination, and the member-403 / admin-200 role
 gate.
+
+Publication monitoring adds `publication.discrepancy` (security severity) and
+`publication.acknowledged` (notice severity). Both carry package/version identity;
+acknowledgment records the member who acknowledged it and does not change approval
+or the observed evidence. Alert deduplication persists independently of audit retention.

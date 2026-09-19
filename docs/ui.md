@@ -28,6 +28,18 @@ Prefer existing primitives in `src/components/` before adding one-off classes:
 
 ## Shared review surface
 
+The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`.
+Its signal model in `src/models/publication-watches.ts` refreshes automatic enrollment
+after review discovery, supports manual enrollment and gate suggestions, displays
+watch origins, capacity deferrals and unacknowledged alert counts, supports audited
+acknowledgment without changing release evidence, shows up to 100 publication observations with unacknowledged alerts first, and
+fences requests across organization changes. The card mirrors the Recent
+reviews anatomy (header row with the enrol form, edge-to-edge rows, a per-row
+`⋯` menu for show releases and stop watching) so the dashboard reads as one
+list surface; observations expand inline under their row. The advisory meta
+line states that checks happen after publication; unknown evidence never
+receives an approval badge. See [publication monitoring](./publication-monitor.md) for scope and API.
+
 Three surfaces render the same review: the authenticated scan workbench
 (`src/pages/Dashboard/ScanDetail/`), the anonymous public diff
 (`src/pages/Diff/`), and the shared public report (`src/pages/PublicReport/`).
