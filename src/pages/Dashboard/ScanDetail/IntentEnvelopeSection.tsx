@@ -7,21 +7,21 @@ import { SectionLabel } from "../../../components/Typography";
 // rather than borrowing severity colors. Scans persisted before the envelope
 // existed render nothing (the parent passes null).
 export function IntentEnvelopeSection({ envelope }: { envelope: IntentEnvelope }) {
+  const signals = sourceBindingSignals(envelope);
   return (
     <section class="flex flex-col gap-3 min-w-0">
-      <SectionLabel as="h2">Source binding</SectionLabel>
+      <SectionLabel as="h3">Source binding</SectionLabel>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Badge tone={tierTone(envelope.tier)}>{envelope.tier}</Badge>
-        <span class="text-[13px] leading-[1.55] text-ink-muted min-w-0">
-          {tierDescription(envelope)}
-        </span>
+        <span class="text-[13px] leading-[1.55] text-ink min-w-0">{tierDescription(envelope)}</span>
+        {envelope.repository ? <RepositoryLink repository={envelope.repository} /> : null}
       </div>
-      {envelope.signals.length ? (
+      {signals.length ? (
         <ul class="list-none p-0 m-0 flex flex-col gap-2">
-          {envelope.signals.map((signal, index) => (
+          {signals.map((signal, index) => (
             <li
               key={`${signal.kind}-${index}`}
-              class="grid grid-cols-[132px_minmax(0,1fr)] gap-3 text-[13px]"
+              class="grid grid-cols-1 sm:grid-cols-[132px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]"
             >
               <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
                 {signal.kind}
@@ -43,23 +43,55 @@ function tierTone(tier: IntentEnvelopeTier): BadgeTone {
 
 function tierDescription(envelope: IntentEnvelope): string {
   if (envelope.tier === "attested") {
-    const repoName = repositoryDisplayName(envelope.repository);
-    return repoName
-      ? `Built and held by a GitHub workflow gate for ${repoName}.`
-      : "Built and held by a GitHub workflow gate.";
+    return "Built and held by a GitHub workflow gate.";
   }
   if (envelope.tier === "declared") {
-    return envelope.repository
-      ? `Package declares repository ${envelope.repository} — binding is unverified.`
-      : "Package declares a repository — binding is unverified.";
+    return "Repository declared · unverified";
   }
   return "No repository binding — the artifact cannot be tied to reviewed source.";
 }
 
-// "https://github.com/owner/repo" → "owner/repo" for the one-liner; other
-// hosts keep the full URL so the forge stays visible.
-function repositoryDisplayName(repository: string | null): string | null {
-  if (!repository) return null;
-  const match = /^https:\/\/github\.com\/(.+)$/.exec(repository);
-  return match ? match[1] : repository;
+export function sourceBindingSignals(envelope: IntentEnvelope): IntentEnvelope["signals"] {
+  // Only remove the exact standard declaration already represented above.
+  // Other manifest details may describe conflicting or additional evidence.
+  const duplicate = `manifest declares ${envelope.repository} — claimed by the package, not verified`;
+  return envelope.signals.filter(
+    (signal) =>
+      !(
+        envelope.tier === "declared" &&
+        envelope.repository &&
+        signal.kind === "manifest-repository" &&
+        signal.detail === duplicate
+      ),
+  );
+}
+
+function RepositoryLink({ repository }: { repository: string }) {
+  const href = repositoryLinkHref(repository);
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="text-[13px] text-accent hover:underline break-all"
+    >
+      {repositoryDisplayName(repository)}
+    </a>
+  ) : (
+    <span class="text-[13px] text-ink-muted break-all">{repository}</span>
+  );
+}
+
+export function repositoryLinkHref(repository: string): string | undefined {
+  try {
+    const url = new URL(repository);
+    if (url.protocol !== "https:" || url.username || url.password) return undefined;
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+function repositoryDisplayName(repository: string): string {
+  return repository.replace(/^https:\/\//, "");
 }

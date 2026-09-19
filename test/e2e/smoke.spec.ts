@@ -24,7 +24,7 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
   await expect(page.getByText("Release packages")).toBeVisible();
   await expect(page.getByText("@drydock/sidecar@0.4.0")).toBeVisible();
 
-  const evidence = page.getByText(longFindingEvidence, { exact: true });
+  const evidence = page.locator("#risk-signals").getByText(longFindingEvidence, { exact: true });
   await expect(evidence).toHaveCSS("overflow-wrap", "break-word");
   const evidenceSize = await evidence.evaluate((element) => ({
     clientHeight: element.clientHeight,
@@ -49,6 +49,61 @@ test("renders and decides a workflow-gate review", async ({ page }) => {
 
   await expect(page.getByText("rejected · job blocked").first()).toBeVisible();
   await expect(page.getByText("blocked").first()).toBeVisible();
+});
+
+test("review notes group evidence and keep AI advice subordinate to findings", async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  page.on("requestfailed", (request) =>
+    errors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
+  );
+  await installWorkflowGateMocks(page, true);
+  await page.goto(`/dashboard/scans/${scanId}`);
+  const notes = page
+    .getByRole("heading", { name: "Review notes", exact: true })
+    .locator("xpath=ancestor::details[1]");
+  await expect(page.getByRole("heading", { name: /^AI assessment advisory/ })).toBeVisible();
+  await expect(notes.getByText("AI reports nothing unusual", { exact: true })).toBeVisible();
+  await expect(
+    notes.getByText(
+      "The AI assessment does not clear the deterministic findings. Their highest severity remains critical.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(notes.getByText(reviewNotesNarrative, { exact: true })).not.toBeVisible();
+  await expect(
+    notes.getByRole("link", { name: "github.com/drydock/example", exact: true }),
+  ).toHaveAttribute("href", "https://github.com/drydock/example");
+  await expect(notes.getByText("manifest-repository", { exact: true })).toHaveCount(0);
+  await expect(notes.getByRole("heading", { name: "Release changes", exact: true })).toBeVisible();
+  await notes.screenshot({ path: testInfo.outputPath("review-notes.png") });
+  await notes.locator("summary").filter({ hasText: "Remote shell" }).click();
+  const locations = notes.getByRole("button", { name: /^site\/dist\/changelog.*:42$/ });
+  await expect(locations).toHaveCount(3);
+  await notes.locator("summary", { hasText: "Read full AI assessment" }).click();
+  await expect(notes.getByText(reviewNotesNarrative, { exact: true })).toBeVisible();
+  await notes.locator("summary", { hasText: "Read full AI assessment" }).click();
+  await page.getByPlaceholder("Filter files").fill("no-matching-file");
+  await locations.nth(1).click();
+  await expect(page.getByPlaceholder("Filter files")).toHaveValue("");
+  await expect(page.locator('[data-finding-id="review-notes-1"]').first()).toBeFocused();
+  await expect(page.locator('[data-finding-id="review-notes-1"]').first()).toBeInViewport();
+  await notes.getByRole("button", { name: "Inspect critical findings", exact: true }).click();
+  await expect(page.locator('[data-finding-id="review-notes-0"]').first()).toBeFocused();
+  await notes.getByRole("button", { name: "View manifest changes", exact: true }).click();
+  await expect(page.locator("#manifest-changes")).toBeFocused();
+  await notes.getByRole("button", { name: "Inspect deterministic findings", exact: true }).click();
+  await expect(page.locator("#risk-signals")).toBeFocused();
+  await expect(page.locator("body")).toHaveJSProperty(
+    "scrollWidth",
+    await page.locator("body").evaluate((element) => element.clientWidth),
+  );
+  expect(errors).toEqual([]);
 });
 
 // The public report is the one review surface with no session and no npm
@@ -168,7 +223,7 @@ function publicReportExport() {
   };
 }
 
-async function installWorkflowGateMocks(page: Page) {
+async function installWorkflowGateMocks(page: Page, reviewNotes = false) {
   let packageDecision: "publish" | "no_publish" | null = null;
   let gateStatus: "pending" | "rejected" = "pending";
 
@@ -190,7 +245,10 @@ async function installWorkflowGateMocks(page: Page) {
     }
 
     if (path === `/api/v1/scans/${scanId}`) {
-      await fulfillJson(route, scanDetail(packageDecision));
+      await fulfillJson(
+        route,
+        reviewNotes ? reviewNotesDetail(packageDecision) : scanDetail(packageDecision),
+      );
       return;
     }
 
@@ -318,7 +376,7 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
         evidence: "network call reads an environment secret",
         reason: "credential access and network egress appear in release-added code",
         line: 3,
-        source: "deterministic",
+        source: "rule",
         ruleId: "code.network-credential-exfil",
         ruleVersion: "smoke",
         diffStatus: "added",
@@ -332,7 +390,7 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
         evidence: longFindingEvidence,
         reason: "large binary should be reviewed manually",
         line: null,
-        source: "deterministic",
+        source: "rule",
         ruleId: "file.large-binary",
         ruleVersion: "smoke",
         diffStatus: "modified",
@@ -340,6 +398,103 @@ function scanDetail(packageDecision: "publish" | "no_publish" | null) {
       },
     ],
     events: [],
+  };
+}
+
+const reviewNotesNarrative =
+  "This release migrates the documentation site. The flagged examples fetch JSON and pipe it into a parser. " +
+  "The AI considers these documentation examples, but the maintainer must inspect the shipped evidence. ".repeat(
+    8,
+  );
+
+function reviewNotesDetail(packageDecision: "publish" | "no_publish" | null) {
+  const detail = scanDetail(packageDecision);
+  const paths = [
+    "site/dist/changelog-latest.json",
+    "site/dist/changelog.json",
+    "site/dist/changelog/index.html",
+  ];
+  const reason = "The command fetches code over the network and pipes it into an interpreter.";
+  const files = paths.map((path) => ({
+    path,
+    status: "added",
+    size: 1800,
+    sha256: "d".repeat(64),
+    flagsJson: [],
+    textSample: Array.from({ length: 65 }, (_, index) =>
+      index === 41
+        ? 'curl http://localhost:3000/bins | jq -r ".id"'
+        : `Documentation example line ${index + 1}`,
+    ).join("\n"),
+  }));
+  const findings = paths.map((file, index) => ({
+    ...detail.findings[0],
+    id: `review-notes-${index}`,
+    severity: "critical",
+    file,
+    evidence: 'curl http://localhost:3000/bins | jq -r ".id"',
+    reason,
+    line: 42,
+    ruleId: "code.remote-shell",
+  }));
+  return {
+    ...detail,
+    scan: {
+      ...detail.scan,
+      risk: "critical",
+      findingCount: 5,
+      summaryJson: {
+        ...detail.scan.summaryJson,
+        diff: [
+          ...detail.scan.summaryJson.diff,
+          ...files.map((file) => ({
+            path: file.path,
+            status: "added",
+            stagedSize: file.size,
+            flags: [],
+          })),
+        ],
+        packageJsonDiff: {
+          name: "@drydock/gate-demo",
+          previousVersion: "1.1.0",
+          stagedVersion: "1.2.0",
+          entrypointsChanged: false,
+          scripts: [{ key: "docs", status: "added", staged: "build-docs" }],
+          dependencies: [
+            { key: "docula", section: "devDependencies", status: "added", staged: "1.0.0" },
+          ],
+        },
+        intentEnvelope: {
+          tier: "declared",
+          repository: "https://github.com/drydock/example",
+          signals: [
+            {
+              kind: "manifest-repository",
+              detail:
+                "manifest declares https://github.com/drydock/example — claimed by the package, not verified",
+            },
+          ],
+        },
+      },
+      aiJson: {
+        status: "complete",
+        risk: "low",
+        releaseAssessment: "nothing_unusual",
+        summary: reviewNotesNarrative,
+        findings: [],
+        requiresManualReview: false,
+        model: "smoke-reviewer",
+        reviewerVersion: "smoke",
+      },
+    },
+    riskSummary: {
+      ...riskSummary(),
+      artifactRisk: "critical",
+      releaseRisk: "critical",
+      releaseFindingCount: 5,
+    },
+    files: [...detail.files, ...files],
+    findings: [...findings, ...detail.findings],
   };
 }
 

@@ -59,8 +59,8 @@ Both review pages lead with the diff:
   action-relevant qualifiers, the version picker, and the decision button;
   below `sm` the decision stays beside the verdict and the picker takes its own
   row), then the workbench, then a `CollapsibleCard` of review notes (why the
-  verdict reads that way, the AI reviewer's summary, release memory, source
-  binding), then the risk index and the manifest sections. The notes open
+  verdict reads that way, release memory, release changes, the advisory AI
+  assessment, source binding), then the risk index and the manifest sections. The notes open
   themselves when any of those has something to say and stay shut when the
   release is clean; the disclosure header does not repeat the nested section
   names. The header badge carries npm's observation time for every state; quiet
@@ -75,6 +75,19 @@ Both review pages lead with the diff:
   which would cost the organization's npm credentials. `singleSidedTone` in
   `DiffView` keeps a `modified` file rendered from one side neutral instead of
   tinting every row as an insertion.
+
+Review notes group release findings by rule, severity, and source, keeping every
+occurrence available under its group. File/line actions clear a conflicting tree
+filter and focus the cited annotation in the diff; unavailable lines retain the
+existing unpinned evidence banner. Synthetic release-process paths and AI paths
+are not presented as file actions. Script, dependency, and entrypoint changes sit in a separate summary linking to the manifest details.
+
+The AI assessment opens with its structured assessment and risk, with an explicit
+reminder that deterministic findings retain their severity. Model-authored prose
+stays inert under **Read full AI assessment**, labeled advisory and potentially
+quoting package text. Release memory stays beside the severity totals. Declared
+source binding shows one unverified repository link; only an exact duplicate
+manifest declaration is omitted, preserving additional or conflicting evidence.
 
 ## Dashboard overview strip
 

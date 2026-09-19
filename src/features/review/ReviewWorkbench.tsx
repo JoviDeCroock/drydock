@@ -24,7 +24,9 @@ export function ReviewWorkbench({
   findingCounts,
   onSelect,
   children,
+  id,
 }: {
+  id?: string;
   entries: ReadonlySignal<DiffEntry[]>;
   fileFilter: Signal<string>;
   changedFilesOnly: Signal<boolean>;
@@ -46,7 +48,11 @@ export function ReviewWorkbench({
   // two-line card instead of 720px of empty space — which matters more now that
   // the workbench is the first thing on the page.
   return (
-    <section class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4">
+    <section
+      id={id}
+      tabIndex={id ? -1 : undefined}
+      class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-4"
+    >
       <Card
         as="aside"
         padding="compact"

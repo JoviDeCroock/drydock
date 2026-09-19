@@ -79,7 +79,9 @@ test("agent tour: local Drydock release review walkthrough", async ({
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+    await expect(
+      page.locator("#risk-signals").getByText("install-script.implicit-node-gyp").first(),
+    ).toBeVisible();
     await tour.capture(page, "scan-report", "Completed report with recommendation and diff tree.");
 
     await page.getByPlaceholder("Filter files").fill("binding");

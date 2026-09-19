@@ -2,6 +2,7 @@ import type { ComponentProps } from "preact";
 import { useEffect } from "preact/hooks";
 import {
   type ReadonlySignal,
+  batch,
   useComputed,
   useModel,
   useSignal,
@@ -38,11 +39,13 @@ import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
+import type { ReviewFinding } from "../../../features/review/types";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
 import { hasReleaseConsistencyNote, ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import {
   buildReleaseVerdict,
+  ReleaseChangesSummary,
   ReleaseVerdictEvidence,
   ReleaseVerdictStrip,
 } from "./ReleaseRecommendation";
@@ -58,6 +61,12 @@ import { useScanFileContent } from "./hooks/useScanFileContent";
 import { useScanVersions } from "./hooks/useScanVersions";
 import type { PersistedSummary } from "./types";
 
+function focusReportSection(id: string) {
+  const section = document.getElementById(id);
+  section?.focus({ preventScroll: true });
+  section?.scrollIntoView({ block: "start" });
+}
+
 export default function ScanDetailPage() {
   const location = useLocation();
   const route = useRoute();
@@ -66,6 +75,7 @@ export default function ScanDetailPage() {
   const sessionChecked = useSignal(false);
   const fileFilter = useSignal("");
   const changedFilesOnly = useSignal(true);
+  const findingTarget = useSignal<ReviewFinding | null>(null);
   const decisionDialogOpen = useSignal(false);
   const gateDialogOpen = useSignal(false);
   const deleteDialogOpen = useSignal(false);
@@ -238,6 +248,32 @@ export default function ScanDetailPage() {
     hasReleaseConsistencyNote(summary.value.releaseConsistency) ||
     Boolean(envelope);
 
+  const inspectFindings = () => focusReportSection("risk-signals");
+  const canInspectFinding = (finding: ReviewFinding) =>
+    finding.source !== "ai" && diffEntries.peek().some((entry) => entry.path === finding.file);
+  const inspectFile = (path: string, finding: ReviewFinding | null = null) => {
+    const entry = diffEntries.peek().find((item) => item.path === path);
+    if (!entry) {
+      inspectFindings();
+      return;
+    }
+    batch(() => {
+      fileFilter.value = "";
+      if (entry.status === "unchanged") changedFilesOnly.value = false;
+      // A fresh request also seeks the annotation when this file is already open.
+      findingTarget.value = finding ? { ...finding } : null;
+      model.selectPath(path);
+    });
+    focusReportSection("release-workbench");
+  };
+  const inspectFinding = (finding: ReviewFinding) => {
+    if (!canInspectFinding(finding)) {
+      inspectFindings();
+      return;
+    }
+    inspectFile(finding.file, finding);
+  };
+
   const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
     await model.setDecision(decision, reason);
     const saved = model.decisionStatus.peek() === "idle";
@@ -392,12 +428,16 @@ export default function ScanDetailPage() {
             {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
 
             <ReviewWorkbench
+              id="release-workbench"
               entries={diffEntries}
               fileFilter={fileFilter}
               changedFilesOnly={changedFilesOnly}
               selectedPath={model.selectedPath}
               findingCounts={findingCounts}
-              onSelect={(path) => model.selectPath(path)}
+              onSelect={(path) => {
+                findingTarget.value = null;
+                model.selectPath(path);
+              }}
             >
               <DiffWorkbench
                 entry={selectedEntry.value}
@@ -410,6 +450,11 @@ export default function ScanDetailPage() {
                 selectedVersion={selectedVersion}
                 stagedVersion={detail.scan.stagedVersion}
                 findings={selectedFindings.value}
+                findingTarget={
+                  findingTarget.value?.file === model.selectedPath.value
+                    ? findingTarget.value
+                    : null
+                }
               />
             </ReviewWorkbench>
 
@@ -418,11 +463,28 @@ export default function ScanDetailPage() {
               defaultOpen={hasReviewNotes || verdict.hasSignals}
             >
               <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
-                <ReleaseVerdictEvidence verdict={verdict} />
-                <ReviewerSummary ai={ai.value} />
-                <ReleaseConsistencyNotice
-                  value={summary.value.releaseConsistency}
-                  approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
+                <ReleaseVerdictEvidence
+                  verdict={verdict}
+                  onSelectFinding={inspectFinding}
+                  canInspectFinding={canInspectFinding}
+                  onInspectFindings={inspectFindings}
+                  consistencyNote={
+                    <ReleaseConsistencyNotice
+                      value={summary.value.releaseConsistency}
+                      approvedContextCount={
+                        detail.riskSummary?.priorApprovedContextFindingCount ?? 0
+                      }
+                    />
+                  }
+                />
+                <ReleaseChangesSummary
+                  verdict={verdict}
+                  onInspectChanges={() => focusReportSection("manifest-changes")}
+                />
+                <ReviewerSummary
+                  ai={ai.value}
+                  findings={detail.findings}
+                  onInspectFindings={inspectFindings}
                 />
                 {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
               </div>
@@ -430,8 +492,9 @@ export default function ScanDetailPage() {
 
             {hasRuleFindings ? (
               <RiskSignalsSection
+                id="risk-signals"
                 findings={findingsWithDiffStatus.value}
-                onSelect={(file) => model.selectPath(file)}
+                onSelect={(file) => inspectFile(file)}
               />
             ) : null}
 

@@ -94,11 +94,13 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
       timeout: 60_000,
     });
     await expect(page.getByText("release high").first()).toBeVisible();
-    // Deterministic findings now render both pinned inline on the diff and in
-    // the risk-signals index, so the evidence/reason and rule id can each match
-    // more than one node — assert the first like the release-risk badge above.
-    await expect(page.getByText("implicit install: node-gyp rebuild").first()).toBeVisible();
-    await expect(page.getByText("install-script.implicit-node-gyp").first()).toBeVisible();
+    // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
+    await expect(
+      page.locator("#risk-signals").getByText("implicit install: node-gyp rebuild").first(),
+    ).toBeVisible();
+    await expect(
+      page.locator("#risk-signals").getByText("install-script.implicit-node-gyp").first(),
+    ).toBeVisible();
     await expect(page.getByRole("heading", { name: "Artifact verification" })).toBeVisible();
     await expect(page.getByText("verified", { exact: true })).toBeVisible();
     // The file tree carries a severity-toned finding count badge for the flagged
