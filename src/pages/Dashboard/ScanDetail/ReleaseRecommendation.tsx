@@ -4,7 +4,9 @@ import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Badge } from "../../../components/Badge";
+import { Button } from "../../../components/Button";
+import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
+import { Badge, severityTone } from "../../../components/Badge";
 import { SeverityBar } from "../../../components/SeverityBar";
 import { SectionLabel } from "../../../components/Typography";
 import { verdictTextClass } from "../../../features/review/verdict";
@@ -16,6 +18,8 @@ export interface ReleaseVerdict {
   artifactRisk: string;
   releaseRisk: string;
   evidence: Array<{ label: string; value: ComponentChildren }>;
+  findingGroups: ReleaseFindingGroup[];
+  releaseChanges: string[];
   severityCounts: Record<string, number>;
   findingTotal: number;
   // Whether the evidence says anything beyond "nothing changed and nothing
@@ -78,6 +82,8 @@ export function buildReleaseVerdict({
     artifactRisk,
     releaseRisk,
     evidence,
+    findingGroups: groupReleaseFindings(changedFindings),
+    releaseChanges: buildReleaseChanges(summary),
     severityCounts,
     findingTotal,
     hasSignals:
@@ -146,30 +152,194 @@ export function ReleaseVerdictStrip({
 }
 
 /** Why the verdict reads the way it does. Lives in the review notes group. */
-export function ReleaseVerdictEvidence({ verdict }: { verdict: ReleaseVerdict }) {
-  const { recommendation, evidence, severityCounts, findingTotal } = verdict;
+export function ReleaseVerdictEvidence({
+  verdict,
+  onSelectFinding,
+  onInspectFindings,
+  consistencyNote,
+  canInspectFinding,
+}: {
+  verdict: ReleaseVerdict;
+  onSelectFinding?: (finding: ReviewFinding) => void;
+  onInspectFindings?: () => void;
+  consistencyNote?: ComponentChildren;
+  canInspectFinding?: (finding: ReviewFinding) => boolean;
+}) {
+  const { recommendation, evidence, findingGroups, severityCounts, findingTotal } = verdict;
+  const firstFinding = findingGroups[0]?.findings[0];
+  const inspect =
+    firstFinding &&
+    canSelectFinding(firstFinding) &&
+    (canInspectFinding?.(firstFinding) ?? true) &&
+    onSelectFinding
+      ? () => onSelectFinding(firstFinding)
+      : onInspectFindings;
   return (
-    <section class="flex flex-col gap-3">
+    <section class="flex flex-col gap-4">
       <SectionLabel as="h3">Why this verdict</SectionLabel>
-      {recommendation.copy ? (
-        <p class="m-0 max-w-[760px] text-[14px] leading-[1.55] text-ink-muted">
-          {recommendation.copy}
+      <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+        {recommendation.copy ? (
+          <p class="m-0 max-w-[680px] text-[14px] leading-[1.55] text-ink">{recommendation.copy}</p>
+        ) : null}
+        {firstFinding && inspect ? (
+          <Button variant="secondary" size="sm" onClick={inspect}>
+            Inspect {firstFinding.severity} findings
+          </Button>
+        ) : null}
+      </div>
+      {evidence.length ? (
+        <ul class="list-none p-0 m-0 flex flex-col gap-2 max-w-[680px]">
+          {evidence.map((item, index) => (
+            <li key={`${item.label}-${index}`} class="text-[13px] leading-[1.55] text-ink-muted">
+              {item.value}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {findingGroups.length ? (
+        <ul class="list-none p-0 m-0 divide-y divide-border">
+          {findingGroups.map((group) => (
+            <ReleaseFindingGroupRow
+              key={group.key}
+              group={group}
+              onSelectFinding={onSelectFinding}
+              canInspectFinding={canInspectFinding}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
+      {consistencyNote ? <div class="max-w-[680px]">{consistencyNote}</div> : null}
+    </section>
+  );
+}
+
+interface ReleaseFindingGroup {
+  key: string;
+  findings: ReviewFinding[];
+}
+
+export function groupReleaseFindings(findings: ReviewFinding[]): ReleaseFindingGroup[] {
+  const groups = new Map<string, ReleaseFindingGroup>();
+  for (const finding of sortFindingsBySeverity(findings)) {
+    // A shared rule identity does not make AI evidence deterministic, or make
+    // occurrences with different severity equivalent. Unknown rules stay separate.
+    const key = JSON.stringify(
+      finding.ruleId ? [finding.ruleId, finding.severity, finding.source] : [null, finding.id],
+    );
+    const group = groups.get(key);
+    if (group) group.findings.push(finding);
+    else groups.set(key, { key, findings: [finding] });
+  }
+  return [...groups.values()];
+}
+
+function canSelectFinding(finding: ReviewFinding): boolean {
+  return finding.source !== "ai" && finding.file !== RELEASE_PROCESS_FINDING_FILE;
+}
+
+function ReleaseFindingGroupRow({
+  group,
+  onSelectFinding,
+  canInspectFinding,
+}: {
+  group: ReleaseFindingGroup;
+  onSelectFinding?: (finding: ReviewFinding) => void;
+  canInspectFinding?: (finding: ReviewFinding) => boolean;
+}) {
+  const first = group.findings[0];
+  const title = first.ruleId
+    ? capitalize(
+        first.ruleId
+          .replace(/^(?:code|file)\./, "")
+          .replaceAll(".", " ")
+          .replaceAll("-", " "),
+      )
+    : "Finding";
+  const sharedReason = group.findings.every((finding) => finding.reason === first.reason);
+  return (
+    <li class="py-3 first:pt-0 last:pb-0 min-w-0">
+      <details class="group">
+        <summary class="cursor-pointer text-[13px] text-ink marker:text-ink-subtle">
+          <span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1 align-middle">
+            <Badge tone={severityTone(first.severity)}>{first.severity}</Badge>
+            <span class="font-medium">{title}</span>
+            <span class="text-ink-muted">
+              · {group.findings.length} {pluralize("location", group.findings.length)}
+            </span>
+            {first.source === "ai" ? <Badge tone="neutral">AI · advisory</Badge> : null}
+          </span>
+        </summary>
+        <div class="pt-3 pl-4 flex flex-col gap-3">
+          {first.ruleId ? (
+            <code class="text-[11px] text-ink-subtle break-all">{first.ruleId}</code>
+          ) : null}
+          <ul class="list-none p-0 m-0 flex flex-col gap-3">
+            {group.findings.map((finding) => (
+              <li key={finding.id} class="flex flex-col gap-1 min-w-0">
+                {onSelectFinding &&
+                canSelectFinding(finding) &&
+                (canInspectFinding?.(finding) ?? true) ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectFinding(finding)}
+                    class="text-left font-mono text-[13px] text-accent hover:underline break-all cursor-pointer bg-transparent border-0 p-0"
+                    title={`Inspect ${finding.file}${finding.line ? ` at line ${finding.line}` : ""}`}
+                  >
+                    {finding.file}
+                    {finding.line ? `:${finding.line}` : ""}
+                  </button>
+                ) : (
+                  <code class="text-[13px] text-ink-muted break-all">
+                    {finding.file}
+                    {finding.line ? `:${finding.line}` : ""}
+                  </code>
+                )}
+                {!sharedReason ? (
+                  <p class="m-0 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
+                    {finding.reason}
+                  </p>
+                ) : null}
+                <p class="m-0 max-w-[680px] text-[12px] leading-[1.55] text-ink-muted break-words">
+                  {finding.evidence}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </details>
+      {sharedReason ? (
+        <p class="m-0 mt-2 max-w-[680px] text-[13px] leading-[1.55] text-ink-muted">
+          {first.reason}
         </p>
       ) : null}
-      <ul class="list-none p-0 m-0 flex flex-col gap-2">
-        {evidence.map((item, index) => (
-          <li
-            key={`${item.label}-${index}`}
-            class="grid grid-cols-[112px_minmax(0,1fr)] gap-3 text-[13px]"
+    </li>
+  );
+}
+
+export function ReleaseChangesSummary({
+  verdict,
+  onInspectChanges,
+}: {
+  verdict: ReleaseVerdict;
+  onInspectChanges?: () => void;
+}) {
+  if (!verdict.releaseChanges.length) return null;
+  return (
+    <section class="flex flex-col gap-2">
+      <SectionLabel as="h3">Release changes</SectionLabel>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
+        <p class="m-0 text-ink-muted">{verdict.releaseChanges.join(" · ")}</p>
+        {onInspectChanges ? (
+          <button
+            type="button"
+            onClick={onInspectChanges}
+            class="p-0 border-0 bg-transparent text-accent hover:underline cursor-pointer"
           >
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              {item.label}
-            </span>
-            <span class="min-w-0 text-ink-muted">{item.value}</span>
-          </li>
-        ))}
-      </ul>
-      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
+            View manifest changes
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -200,53 +370,31 @@ function buildRecommendationEvidence(
         : "The published release exceeded the download budget, so no file was compared against it.",
     });
   }
-  const releaseFindings = changedFindings;
-  if (releaseFindings.length) {
-    const topFindings = sortFindingsBySeverity(releaseFindings).slice(0, 3);
-    for (const finding of topFindings) {
-      evidence.push({
-        label: finding.severity ?? "signal",
-        value: (
-          <>
-            <code>{finding.file}</code>: {finding.reason}
-          </>
-        ),
-      });
-    }
-  }
-
-  const manifest = summary.packageJsonDiff;
-  if (manifest?.scripts.length) {
-    evidence.push({
-      label: "scripts",
-      value: `${manifest.scripts.length} lifecycle or package script ${pluralize(
-        "change",
-        manifest.scripts.length,
-      )}.`,
-    });
-  }
-  if (manifest?.dependencies.length) {
-    evidence.push({
-      label: "deps",
-      value: `${manifest.dependencies.length} dependency ${pluralize(
-        "change",
-        manifest.dependencies.length,
-      )}.`,
-    });
-  }
-  if (manifest?.entrypointsChanged) {
-    evidence.push({ label: "entrypoints", value: "Package entrypoints changed." });
-  }
-  if (evidence.length === 0) {
+  if (evidence.length === 0 && changedFindings.length === 0) {
     const changed =
       diffCount ||
       summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
       detail.files.filter((file) => file.status !== "unchanged").length;
     evidence.push({
       label: "evidence",
-      value: `${changed} changed ${pluralize("file", changed)} and no deterministic risk signals.`,
+      value: `${changed} changed ${pluralize("file", changed)}; no findings in this release delta.${detail.findings.length ? " Package findings remain below." : ""}`,
     });
   }
 
-  return evidence.slice(0, 5);
+  return evidence;
+}
+
+function buildReleaseChanges(summary: PersistedSummary): string[] {
+  const changes: string[] = [];
+  const manifest = summary.packageJsonDiff;
+  if (manifest?.scripts.length)
+    changes.push(
+      `${manifest.scripts.length} lifecycle or package script ${pluralize("change", manifest.scripts.length)}`,
+    );
+  if (manifest?.dependencies.length)
+    changes.push(
+      `${manifest.dependencies.length} dependency ${pluralize("change", manifest.dependencies.length)}`,
+    );
+  if (manifest?.entrypointsChanged) changes.push("Package entrypoints changed");
+  return changes;
 }

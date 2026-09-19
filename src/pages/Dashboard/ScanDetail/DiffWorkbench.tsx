@@ -16,6 +16,7 @@ export function DiffWorkbench({
   selectedVersion,
   stagedVersion,
   findings,
+  findingTarget,
 }: {
   entry: DiffEntry | null;
   stagedMeta: PersistedScanDetail["files"][number] | null;
@@ -27,6 +28,7 @@ export function DiffWorkbench({
   selectedVersion: string | null;
   stagedVersion: string | null | undefined;
   findings: DiffFinding[];
+  findingTarget?: DiffFinding | null;
 }) {
   if (!entry) {
     return <DiffPanelMessage>Select a file from the tree to diff.</DiffPanelMessage>;
@@ -68,6 +70,7 @@ export function DiffWorkbench({
       }
       after={staged ? scanFileToDiffSide(staged) : null}
       findings={findings}
+      findingTarget={findingTarget}
     />
   );
 }
