@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostMetadataTarEntries, tarballEntryNames } from "./tarball-entries.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
@@ -37,12 +38,17 @@ for (const name of scenarioNames) {
     assertEqual(scenario.packageName, previousManifest.name, `${name} previous package name`);
   }
 
-  const stagedPack = await maybeRewritePackageJson(
-    packPackage(stagedPackageDir, tarballRoot),
-    scenario.staged.packageJsonText,
+  const stagedPack = await assertPortableTarball(
+    await maybeRewritePackageJson(
+      packPackage(stagedPackageDir, tarballRoot),
+      scenario.staged.packageJsonText,
+      `${name} staged`,
+    ),
     `${name} staged`,
   );
-  const previousPack = previousPackageDir ? packPackage(previousPackageDir, tarballRoot) : null;
+  const previousPack = previousPackageDir
+    ? await assertPortableTarball(packPackage(previousPackageDir, tarballRoot), `${name} previous`)
+    : null;
 
   scenarios.push({
     name,
@@ -153,15 +159,54 @@ async function maybeRewritePackageJson(packed, packageJsonText, label) {
   };
 }
 
+// Every extracted file here picks up `com.apple.provenance`, and macOS tar
+// writes a file's extended attributes back out twice: as an AppleDouble
+// `._name` member (suppressed by COPYFILE_DISABLE) and as pax `*.xattr.*`
+// records (suppressed by --no-xattrs). Without both, the repacked tarball
+// differs by build host — on macOS it gained a bare `._package` member, which
+// the tar rules score `high` as a parser differential, so the
+// invalid-package-json scenario graded `high` locally and `medium` on Linux
+// CI. GNU tar ignores the variable and defaults the flag off.
 function runTar(args, label) {
-  const result = spawnSync("tar", args, {
+  const result = spawnSync("tar", ["--no-xattrs", ...args], {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
   if (result.status !== 0) {
     throw new Error(`tar failed for ${label}\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+// A fixture tarball is evidence the scanner grades, so a member the packing
+// host slipped in is a finding the scenario never declared. Checked for every
+// tarball, not just repacked ones: npm's always-ignored list already drops
+// `._*` and `.DS_Store` from a pack, but the repack path has no such rule and
+// the fixture's guarantee should not depend on which path produced it. The
+// check is over member names — it does not make the bytes identical to an
+// `npm pack` (the repack also writes an explicit `package/` directory entry,
+// which npm does not, and which the tar rules keep at `info`).
+async function assertPortableTarball(packed, label) {
+  const tarballPath = path.join(tarballRoot, packed.filename);
+  let names;
+  try {
+    names = tarballEntryNames(await readFile(tarballPath));
+  } catch (cause) {
+    throw new Error(`${label} tarball could not be read from ${relative(tarballPath)}`, { cause });
+  }
+  const hostEntries = hostMetadataTarEntries(names);
+  if (hostEntries.length) {
+    throw new Error(
+      `${label} tarball carries packing-host metadata entries: ${hostEntries.join(", ")}\n` +
+        "npm does not publish these and the scanner grades them, so the fixture would " +
+        "assert findings that describe the build machine rather than the package. " +
+        "The builder already packs with COPYFILE_DISABLE=1 and --no-xattrs, so this is " +
+        "stray material in the scenario directory or a packing host that needs another " +
+        "opt-out here — not something to assert in scenario.json.",
+    );
+  }
+  return packed;
 }
 
 function assertEqual(expected, actual, label) {
