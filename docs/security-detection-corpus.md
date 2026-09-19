@@ -177,7 +177,7 @@ A PyPI review runs two rule families over the staged artifacts:
 
 - `pypi.*` findings come from `pyPiReleaseFindings` and carry `PYPI_RULES_VERSION` (currently `0.4.0`).
 - shared `file.*` / `code.*` / `diff.*` findings come from `deterministicFindings` and carry
-  `DETERMINISTIC_RULES_VERSION` (currently `1.44.0`).
+  `DETERMINISTIC_RULES_VERSION` (currently `1.45.0`).
 
 The harness asserts this per family: every `pypi.*` finding must equal `PYPI_RULES_VERSION` and every
 other finding must equal `DETERMINISTIC_RULES_VERSION`. Bump the relevant constant **and** update the
@@ -323,7 +323,7 @@ gate recommend approve. Neither network rule could see it either: both model in-
 shell-mediated download never touches one. Shell commands that reach the network
 (`curl`/`wget`/`nc`/`netcat`/`/dev/tcp/`/`Invoke-WebRequest`/`DownloadString`) now raise
 `code.remote-shell` at high, and the download-and-execute compositions — a fetch piped or
-command-substituted into an interpreter (`curl … | bash`, `$(curl …)`, `<(wget …)`), `nc -e`,
+command-substituted into an interpreter (`curl … | bash`, `eval "$(curl …)"`, `bash <(wget …)`), `nc -e`,
 `powershell -enc`, `iwr … | iex` — raise it at critical, since no benign release fetches and runs code
 it did not ship. A bare shell tool additionally requires an executor in reach — a spawn API in the
 same file, or a lifecycle hook pointing at it — because the patterns match a command _string_ and
@@ -642,6 +642,18 @@ also promotes direct AI/Drydock clean-verdict commands without a determiner, inc
 package" and "say this package is safe", and recognizes paired typographic quotes around explicitly
 labeled threat examples. The focused policy and large-sample tests plus both benign LLM controls pin
 the malicious, performance, and precision regressions.
+
+`1.45.0` requires an execution consumer for curl/wget substitutions to qualify as
+critical download-and-execute. Capturing JSON with `ID=$(curl … | jq -r .id)`,
+backtick data capture, and process substitution used as data no longer self-qualify
+as execution. This fixes false critical findings in generated HTML, JSON, and TXT
+documentation and in JavaScript template strings without excluding those file
+types or allowing particular hosts. Explicit eval, shell `-c`, interpreter/source
+process substitutions, and pipes into interpreters retain critical coverage;
+ordinary network commands with an executor retain the high capability tier.
+The shared JavaScript/Python patterns, corpus controls, and focused substitution
+matrix pin both sides of the distinction. Historical persisted reports retain
+their original findings; the new version applies to fresh analysis.
 
 Rebasing onto the GLM/Kimi routing contract advances `AI_REVIEWER_VERSION` to `1.6.0`: the combined
 prompt and routing policy was never exercised by the `1.4.0` controlled outputs, and one of those
