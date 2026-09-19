@@ -1,0 +1,77 @@
+{
+  "id": "legit-shell-data-documentation",
+  "title": "Generated documentation collects HTTP response data without executing it",
+  "category": "control",
+  "intent": "Synthetic regression for mockhttp-style generated release notes. Command substitution assigns a JSON response field; backticks collect data and process substitution compares responses. Generated JSON, HTML, text, and an inert JavaScript template must not turn retrieval into download-and-execute capability evidence. All samples are inert FileRecord strings.",
+  "previousPackageJson": {
+    "name": "shell-data-documentation",
+    "version": "1.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "shell-data-documentation",
+    "version": "1.0.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 76,
+      "sha256": "previous-package",
+      "flags": [],
+      "textSample": "{\"name\": \"shell-data-documentation\", \"version\": \"1.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 27,
+      "sha256": "previous-index",
+      "flags": [],
+      "textSample": "export const example = \"\";\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 76,
+      "sha256": "staged-package",
+      "flags": [],
+      "textSample": "{\"name\": \"shell-data-documentation\", \"version\": \"1.0.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 75,
+      "sha256": "staged-index",
+      "flags": [],
+      "textSample": "export const example = `curl -s https://example.invalid/bins | jq -r .id`;\n"
+    },
+    {
+      "path": "CHANGELOG.json",
+      "size": 67,
+      "sha256": "changelog",
+      "flags": [],
+      "textSample": "{\"notes\": \"ID=$(curl -s https://example.invalid/bins | jq -r .id)\"}"
+    },
+    {
+      "path": "docs/index.html",
+      "size": 202,
+      "sha256": "html",
+      "flags": [],
+      "textSample": "<pre>ID=$(curl -s https://example.invalid/bins | jq -r .id)\nID=`curl -s https://example.invalid/bins | jq -r .id`\ndiff <(curl -s https://example.invalid/old) <(curl -s https://example.invalid/new)</pre>"
+    },
+    {
+      "path": "docs/usage.txt",
+      "size": 192,
+      "sha256": "text",
+      "flags": [],
+      "textSample": "ID=$(curl -s https://example.invalid/bins | jq -r .id)\nID=`curl -s https://example.invalid/bins | jq -r .id`\ndiff <(curl -s https://example.invalid/old) <(curl -s https://example.invalid/new)\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-documentation",
+  "source": "synthetic",
+  "expectMinRisk": "low",
+  "expectAnyRule": []
+}

@@ -66,10 +66,19 @@ const SHELL_DOWNLOAD_EXECUTE_PATTERNS = [
   // `| sha256sum` and `| shasum` out.
   /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:ba|z|k|da)?sh\b/i,
   /\b(?:curl|wget)\b[^\n;&]*\|\s*(?:(?:sudo|env|command|exec|xargs)(?:\s+-{1,2}\w+)*\s+)*(?:\S*\/)?(?:python[\d.]*|perl|ruby|node)\b/i,
-  /\$\(\s*(?:curl|wget)\b/i,
-  /<\(\s*(?:curl|wget)\b/i,
-  // Backtick command substitution: `` eval `curl -s https://x` ``.
-  /`\s*(?:curl|wget)\b/i,
+  // Substitution captures data; only an execution consumer makes it remote
+  // code execution. Bare $(curl ... | jq), <(curl ...), and backticks also
+  // appear in generated docs and JavaScript template strings. Allow escaped
+  // delimiters because commands can be nested inside source string literals.
+  /(?:\beval(?:\s+--)?|\b(?:ba|z|k|da)?sh\s+(?:--?[a-z-]+\s+)*-[a-z]*c[a-z]*)\s+(?:\\*["'])*\\*(?:\$\(\s*|`\s*)(?:curl|wget)\b/i,
+  // These options still read a script path. Options such as -c, -s and -m
+  // instead consume a command, stdin or a module; a /dev/fd path is then data.
+  /(?:\b(?:source|python[\d.]*|perl|ruby|node)|(?<![\w.])\.|\b(?:ba|z|k|da)?sh(?:\s+-[efuvxE]+)*)\s+(?:--\s+)?<\(\s*(?:curl|wget)\b/,
+  // An unquoted substitution in command position runs its output, unlike
+  // assignment. Source-string boundaries need a known shell execution API;
+  // matching arbitrary quotes here would mistake documentation data for code.
+  /(?:^|[\n;|&])\s*\$\(\s*(?:curl|wget)\b/i,
+  /\b(?:exec(?:Sync)?|os\.(?:system|popen))\s*\(\s*["'`]\s*(?:\$\(\s*|\\*`\s*)(?:curl|wget)\b/,
   /\bnc\s[^\n]*\s-e\s/,
   /(?:\bInvoke-WebRequest\b|\.DownloadString\s*\(|\biwr\b)[^\n]*\|\s*(?:iex|Invoke-Expression)\b/i,
   /\bpowershell\b[^\n]*\s-(?:enc|EncodedCommand)\b/i,
