@@ -108,18 +108,14 @@ export function GateSetupWizard({
 }) {
   const gateSetup = useModel(GateSetupModel);
   const installationRowId = gateSetup.installationRowId.value;
-  const repositoryFullName = gateSetup.repositoryFullName.value;
-  const environment = gateSetup.environment.value;
-  const localReleaseTarget = gateSetup.releaseTarget.value;
-  // Stored release targets are normalized; the draft carries GitHub's casing.
-  // Comparing them directly would miss an existing mapping for `Production`.
-  const persistedReleaseTarget = releaseTargets.find(
-    (target) =>
-      target.installationRowId === installationRowId &&
-      target.repositoryFullName === repositoryFullName &&
-      target.environment.toLowerCase() === environment.toLowerCase(),
-  );
-  const releaseTarget = localReleaseTarget ?? persistedReleaseTarget ?? null;
+  const releaseTarget = gateSetup.resolvedReleaseTarget.value;
+
+  // The model resolves the mapping in force (and the armed badge) from these,
+  // so it has to see what the parent last loaded.
+  const releaseTargetsKey = releaseTargets.map((target) => target.id).join(",");
+  useEffect(() => {
+    gateSetup.knownReleaseTargets.value = releaseTargets;
+  }, [gateSetup, releaseTargetsKey]);
 
   // Only pin the wizard to an installation when there is no choice to make.
   // Auto-selecting the first of several opened the wizard on whichever
@@ -146,11 +142,12 @@ export function GateSetupWizard({
     document.getElementById("gate-setup")?.scrollIntoView({ block: "start" });
   }, [deepLinked]);
 
+  const resolvedTarget = gateSetup.resolvedReleaseTarget.value;
   useEffect(() => {
-    const pinned = persistedReleaseTarget?.ecosystem;
+    const pinned = resolvedTarget?.ecosystem;
     if (!pinned || gateSetup.ecosystem.peek() === pinned) return;
     gateSetup.selectEcosystem(pinned);
-  }, [persistedReleaseTarget?.id, persistedReleaseTarget?.ecosystem]);
+  }, [gateSetup, resolvedTarget?.id, resolvedTarget?.ecosystem]);
 
   if (!canManage) {
     return <GateSetupPermissionPlaceholder deepLinked={deepLinked} />;
@@ -168,7 +165,9 @@ export function GateSetupWizard({
 
   const verification = gateSetup.verification.value;
   const preview = gateSetup.preview.value;
-  const gateArmed = verification?.protectionRule === "present" && releaseTarget !== null;
+  // Read, never recomputed: `gateArmed` is the one claim this card makes about
+  // the gate, and a second copy here is a second thing to keep honest.
+  const gateArmed = gateSetup.gateArmed.value;
   // The first unfinished step. Exactly one step owns the primary button, so the
   // card has a single next action instead of six competing ones.
   const current = !gateSetup.repositoryPicked.value
@@ -459,18 +458,20 @@ function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current
             </Field>
           ) : null}
         </div>
-        {creatingNew && repositoryPicked ? (
+        {repositoryPicked ? (
           <div class="flex flex-wrap items-center gap-3">
-            <LinkButton
-              href={environmentSettingsUrl(repositoryFullName)}
-              target="_blank"
-              rel="noreferrer"
-              variant={current === 2 ? "primary" : "secondary"}
-            >
-              Create it on GitHub ↗
-            </LinkButton>
+            {creatingNew ? (
+              <LinkButton
+                href={environmentSettingsUrl(repositoryFullName)}
+                target="_blank"
+                rel="noreferrer"
+                variant={current === 2 ? "primary" : "secondary"}
+              >
+                Create it on GitHub ↗
+              </LinkButton>
+            ) : null}
             <Button
-              variant="secondary"
+              variant={!creatingNew && current === 2 ? "primary" : "secondary"}
               onClick={() => void gateSetup.verify()}
               disabled={busy || !environment}
             >
@@ -625,6 +626,7 @@ function PackageStep({
 function WorkflowStep({ gateSetup, current }: { gateSetup: GateSetup; current: number }) {
   const preview = gateSetup.preview.value;
   const templateReady = gateSetup.templateReady.value;
+  const environmentIssue = gateSetup.environmentIssue.value;
   const verification = gateSetup.verification.value;
   const repositoryFullName = gateSetup.repositoryFullName.value;
   const busyStep = gateSetup.busyStep.value;
@@ -670,7 +672,11 @@ function WorkflowStep({ gateSetup, current }: { gateSetup: GateSetup; current: n
             </LinkButton>
           ) : null}
           {!templateReady ? (
-            <Blocked>Choose an ecosystem and package name in step 4 first.</Blocked>
+            <Blocked>
+              {environmentIssue
+                ? "Pick an environment the workflow template can use in step 2 first."
+                : "Choose an ecosystem and package name in step 4 first."}
+            </Blocked>
           ) : null}
         </div>
         <StepError gateSetup={gateSetup} step="preview" />
@@ -760,6 +766,7 @@ function ReleaseTargetStep({
           </div>
         )}
         <StepError gateSetup={gateSetup} step="release_target" />
+        <StepError gateSetup={gateSetup} step="release_target_delete" />
       </SettingsCardBody>
     </div>
   );
@@ -837,7 +844,7 @@ function StepError({
   step,
 }: {
   gateSetup: GateSetup;
-  step: "verify" | "preview" | "release_target" | null;
+  step: "verify" | "preview" | "release_target" | "release_target_delete" | null;
 }) {
   const error = gateSetup.error.value;
   if (!error || gateSetup.errorStep.value !== step) return null;
