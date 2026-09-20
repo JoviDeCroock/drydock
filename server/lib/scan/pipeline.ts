@@ -169,6 +169,7 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
       source: input.source,
       registryIdentity,
       stagedDigest: facts.stagedArtifactSha256,
+      stagedDigestBoundToRegistry: facts.stagedArtifactDigestVerified,
     });
 
     const { result, persisted } = await persistResults({
