@@ -106,16 +106,96 @@ describe("drydock verify lockfile parsing", () => {
     );
   });
 
-  test("omits an ambiguous many-to-one version change", () => {
+  test("reports an ambiguous many-to-one version change as unavailable, not verified", () => {
+    // Dropping it silently made "verified nothing" read exactly like "verified
+    // clean": the pair vanished, no policy ran, and the CLI exited 0 saying no
+    // changed pairs were found.
     const before = new Map([["shared", new Set(["1.0.0", "2.0.0"])]]);
     const after = new Map([["shared", new Set(["3.0.0"])]]);
-    expect(diffPackageVersions(before, after)).toEqual([]);
+    const [pair] = diffPackageVersions(before, after);
+    expect(pair).toMatchObject({ name: "shared" });
+    expect(pair.unavailableReason).toMatch(/several versions/);
   });
 
-  test("omits an ambiguous many-to-many version change", () => {
+  test("reports an ambiguous many-to-many version change as unavailable", () => {
     const before = new Map([["shared", new Set(["1.0.0", "2.0.0"])]]);
     const after = new Map([["shared", new Set(["3.0.0", "4.0.0"])]]);
-    expect(diffPackageVersions(before, after)).toEqual([]);
+    const [pair] = diffPackageVersions(before, after);
+    expect(pair.unavailableReason).toMatch(/several versions/);
+  });
+
+  test("keeps a peer-suffixed pnpm locator's real name and version", () => {
+    // pnpm 6+ appends `(peer@version)`. Locating the name/version separator
+    // before stripping it split `react-dom@18.2.0(react@18.2.0)` into the name
+    // `react-dom@18.2.0(react`, so a real bump produced no pair at all.
+    const before = parsePnpmLock(
+      "packages:\n  /react-dom@18.2.0(react@18.2.0):\n    resolution: {integrity: sha512-a}\n",
+    );
+    const after = parsePnpmLock(
+      "packages:\n  /react-dom@18.3.1(react@18.3.1):\n    resolution: {integrity: sha512-b}\n",
+    );
+    expect(before).toEqual(new Map([["react-dom", new Set(["18.2.0"])]]));
+    expect(diffPackageVersions(before, after)).toEqual([
+      { ecosystem: "npm", name: "react-dom", from: "18.2.0", to: "18.3.1" },
+    ]);
+  });
+
+  test("does not project a git or file pnpm locator as a public registry package", () => {
+    expect(
+      parsePnpmLock(
+        "packages:\n  /foo@git+ssh://git@github.com/o/r.git#abc:\n    resolution: {integrity: sha512-c}\n",
+      ),
+    ).toEqual(new Map());
+    expect(
+      parsePnpmLock("packages:\n  /mylib@file:../vendor:\n    resolution: {integrity: sha512-d}\n"),
+    ).toEqual(new Map());
+  });
+
+  test("uses a pnpm entry's recorded registry over the .npmrc default", () => {
+    // The lockfile itself records where the bytes came from. Discarding that left a private
+    // package indistinguishable from a public one whenever the repository root
+    // carried no .npmrc.
+    expect(
+      parsePnpmLock(
+        "packages:\n  /@acme/internal@2.0.0:\n    resolution: {registry: https://npm.example.com/, integrity: sha512-e}\n",
+      ),
+    ).toEqual(new Map());
+  });
+
+  test("does not verify a package-lock entry whose resolved tarball names another package", () => {
+    // The name and version are text in the diff under review; `resolved` is
+    // what the installer fetches. Unbound, an entry could claim lodash and
+    // install evil-pkg, and the verdict would describe the wrong bytes.
+    expect(
+      parsePackageLock(
+        JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/lodash": {
+              version: "4.17.21",
+              resolved: "https://registry.npmjs.org/evil-pkg/-/evil-pkg-9.9.9.tgz",
+              integrity: "sha512-zzz",
+            },
+          },
+        }),
+      ),
+    ).toEqual(new Map());
+  });
+
+  test("resolves a lockfileVersion 1 npm: alias to the package actually installed", () => {
+    expect(
+      parsePackageLock(
+        JSON.stringify({
+          lockfileVersion: 1,
+          dependencies: {
+            foo: {
+              version: "npm:bar@1.0.0",
+              resolved: "https://registry.npmjs.org/bar/-/bar-1.0.0.tgz",
+            },
+          },
+        }),
+      ),
+    ).toEqual(new Map([["bar", new Set(["1.0.0"])]]));
   });
 
   test("does not project non-public or workspace package-lock entries as public npm bytes", () => {

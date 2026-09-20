@@ -107,8 +107,6 @@ export async function verifyDependencies(
         listedReview,
         listedReviewUnavailable,
       });
-    } else if (requiresListedReview(policy, pair.name) && listedReview?.listed === false) {
-      evaluation.violations.push("a listed maintainer review is required");
     }
     const allUnavailable = [...unavailable, ...evaluation.unavailable];
     results.push({

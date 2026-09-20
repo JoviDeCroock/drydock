@@ -99,7 +99,14 @@ export function evaluateVerdict(
   const violations = [];
   const unavailable = [];
 
-  if (GRADES.indexOf(verdict.grade) > GRADES.indexOf(policy.maxGrade)) {
+  const grade = GRADES.indexOf(verdict.grade);
+  if (grade === -1) {
+    // A grade this build does not know cannot be ranked, and `-1 > n` is false,
+    // so comparing positions directly would let it pass as better than `clear`.
+    // Reachable through the exported evaluator, and through the CLI itself the
+    // day the endpoint introduces a grade ahead of an installed version.
+    unavailable.push(`release grade ${String(verdict.grade)} is not recognized`);
+  } else if (grade > GRADES.indexOf(policy.maxGrade)) {
     violations.push(`grade ${verdict.grade} exceeds ${policy.maxGrade}`);
   }
 

@@ -5,6 +5,9 @@ import path from "node:path";
 const SUPPORTED_LOCKFILES = new Set(["package-lock.json", "pnpm-lock.yaml"]);
 const PUBLIC_NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org";
 const UNSUPPORTED_SOURCE_REASON = "dependency is not resolved from the public npm registry";
+const AMBIGUOUS_PAIR_REASON =
+  "several versions of this package changed at once; no single pair to verify";
+const ADDED_LOCKFILE_REASON = "lockfile was added in this change, so there is no previous version";
 
 function packageNameFromInstallPath(installPath) {
   const marker = "node_modules/";
@@ -61,11 +64,67 @@ function isPublicNpmResolution(value) {
   }
 }
 
+/**
+ * Whether a public-npm tarball URL is the tarball *for this name and version*.
+ *
+ * The name and version a lockfile entry declares are just text in the diff
+ * under review, while `resolved` is what the installer actually fetches. Left
+ * unbound, an entry could say `lodash@4.17.21` while resolving
+ * `evil-pkg-9.9.9.tgz`, and the verdict — and the /diff link printed beside it
+ * — would describe a package nobody installs.
+ *
+ * npm serves `<registry>/<name>/-/<basename>-<version>.tgz`, where `basename`
+ * is the name without its scope. A URL that does not decompose that way is
+ * unusable as evidence rather than assumed to match.
+ */
+function publicNpmResolutionMatches(value, name, version) {
+  if (!isPublicNpmResolution(value)) return false;
+  let pathname;
+  try {
+    pathname = new URL(value, `${PUBLIC_NPM_REGISTRY_ORIGIN}/`).pathname;
+  } catch {
+    return false;
+  }
+  const separator = pathname.lastIndexOf("/-/");
+  if (separator === -1) return false;
+  const resolvedName = decodeURIComponent(pathname.slice(1, separator));
+  const file = decodeURIComponent(pathname.slice(separator + 3));
+  if (resolvedName !== name) return false;
+  const unscoped = name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
+  return file === `${unscoped}-${version}.tgz`;
+}
+
 function walkPackageLockDependencies(dependencies, index) {
   if (!dependencies || typeof dependencies !== "object") return;
   for (const [name, dependency] of Object.entries(dependencies)) {
     if (!dependency || typeof dependency !== "object") continue;
-    addDependency(index, name, dependency.version, isPublicNpmResolution(dependency.resolved));
+    // lockfileVersion 1 records an alias as `version: "npm:real-name@1.0.0"`,
+    // so the key is the local name and the real package is inside the version
+    // string. Looking the key up publicly would present a same-named
+    // squatter's diff, which is the failure `docs/dependency-pr-diff-links.md`
+    // already documents for the Renovate integration.
+    const alias = typeof dependency.version === "string" && dependency.version.startsWith("npm:");
+    if (alias) {
+      const spec = dependency.version.slice("npm:".length);
+      const separator = spec.lastIndexOf("@");
+      const aliasName = separator > 0 ? spec.slice(0, separator) : null;
+      const aliasVersion = separator > 0 ? spec.slice(separator + 1) : null;
+      if (aliasName && aliasVersion) {
+        addDependency(
+          index,
+          aliasName,
+          aliasVersion,
+          publicNpmResolutionMatches(dependency.resolved, aliasName, aliasVersion),
+        );
+      }
+    } else {
+      addDependency(
+        index,
+        name,
+        dependency.version,
+        publicNpmResolutionMatches(dependency.resolved, name, dependency.version),
+      );
+    }
     walkPackageLockDependencies(dependency.dependencies, index);
   }
 }
@@ -93,11 +152,12 @@ function parsePackageLockIndex(text, source = "package-lock.json") {
       // private registries, direct tarballs, and local sources.
       const installedName = packageNameFromInstallPath(installPath);
       if (!installedName) continue;
+      const entryName = entry.name ?? installedName;
       addDependency(
         index,
-        entry.name ?? installedName,
+        entryName,
         entry.version,
-        isPublicNpmResolution(entry.resolved),
+        publicNpmResolutionMatches(entry.resolved, entryName, entry.version),
       );
     }
   } else {
@@ -127,34 +187,93 @@ function unquoteYamlScalar(value) {
 function packageFromPnpmLocator(rawLocator) {
   const unquoted = unquoteYamlScalar(rawLocator);
   if (!unquoted) return null;
-  const locator = unquoted.startsWith("/") ? unquoted.slice(1) : unquoted;
+  const withoutLeadingSlash = unquoted.startsWith("/") ? unquoted.slice(1) : unquoted;
+  // pnpm 6+ appends the resolved peers as `(peer@version)` suffixes. They have
+  // to come off before the name/version separator is located, or the last `@`
+  // found is the one inside the suffix: `react-dom@18.2.0(react@18.2.0)` splits
+  // into the name `react-dom@18.2.0(react`, and a real version bump then
+  // produces no pair at all rather than a verdict.
+  const locator = withoutLeadingSlash.replace(/\(.*$/, "");
+  if (!locator) return null;
 
-  // pnpm 5 used /name/version and /@scope/name/version locators.
+  // pnpm 5 used /name/version and /@scope/name/version locators. A tail that
+  // carries a `:` is a non-registry locator (`file:`, `link:`, `git+ssh:`),
+  // never a version.
   const slashParts = locator.split("/");
-  if (locator.startsWith("@") && slashParts.length === 3 && !slashParts[2].includes("@")) {
+  const isPnpm5Version = (value) => /^[0-9][^@:]*$/.test(value);
+  if (
+    locator.startsWith("@") &&
+    slashParts.length === 3 &&
+    !slashParts[1].includes(":") &&
+    isPnpm5Version(slashParts[2])
+  ) {
     return {
       name: `${slashParts[0]}/${slashParts[1]}`,
       version: slashParts[2],
       registryCandidate: true,
     };
   }
-  if (!locator.startsWith("@") && slashParts.length === 2 && !slashParts[1].includes("@")) {
+  if (
+    !locator.startsWith("@") &&
+    slashParts.length === 2 &&
+    // A pnpm 5 name carries neither an `@` nor a `:`; `mylib@file:../vendor`
+    // splits into two parts whose tail looks like a version, so without this
+    // the local directory dependency would be projected as public npm bytes.
+    !slashParts[0].includes("@") &&
+    !slashParts[0].includes(":") &&
+    isPnpm5Version(slashParts[1])
+  ) {
     return { name: slashParts[0], version: slashParts[1], registryCandidate: true };
   }
 
   const separatorAt = locator.lastIndexOf("@");
   if (separatorAt <= 0 || separatorAt === locator.length - 1) return null;
   const name = locator.slice(0, separatorAt);
-  const version = locator.slice(separatorAt + 1).replace(/\(.+$/, "");
+  const version = locator.slice(separatorAt + 1);
   if (!name || !version) return null;
-  return { name, version, registryCandidate: !version.includes(":") };
+  // A name that still holds a `/` past its scope, or either half carrying a
+  // `:`, is a locator this reader does not understand well enough to call a
+  // public registry package.
+  const scopedSegments = name.startsWith("@") ? 2 : 1;
+  const understood =
+    !version.includes(":") &&
+    !name.includes(":") &&
+    name.split("/").length === scopedSegments &&
+    /^[0-9]/.test(version);
+  return { name, version, registryCandidate: understood };
 }
 
-function inlineResolutionTarball(line) {
-  const inline = /^ {4}resolution:\s*\{.*\btarball:\s*([^,}]+).*\}\s*$/.exec(line);
-  if (inline) return unquoteYamlScalar(inline[1].trim());
-  const nested = /^ {6}tarball:\s*(.+?)\s*$/.exec(line);
-  return nested ? unquoteYamlScalar(nested[1].trim()) : null;
+/**
+ * Pull the resolution evidence out of one line of a pnpm entry.
+ *
+ * `registry` is the field that actually says where the bytes came from, and
+ * dropping it was what made a private package indistinguishable from a public
+ * one. The nested form is only honoured inside the entry's own `resolution:`
+ * block, so a crafted key elsewhere in the entry cannot supply one.
+ */
+function resolutionFields(line, insideResolution) {
+  const inline = /^ {4}resolution:\s*\{(.*)\}\s*$/.exec(line);
+  if (inline) {
+    const body = inline[1];
+    const tarball = /\btarball:\s*([^,}]+)/.exec(body);
+    const registry = /\bregistry:\s*([^,}]+)/.exec(body);
+    return {
+      tarball: tarball ? unquoteYamlScalar(tarball[1].trim()) : null,
+      registry: registry ? unquoteYamlScalar(registry[1].trim()) : null,
+      opensBlock: false,
+    };
+  }
+  if (/^ {4}resolution:\s*$/.test(line)) {
+    return { tarball: null, registry: null, opensBlock: true };
+  }
+  if (!insideResolution) return { tarball: null, registry: null, opensBlock: false };
+  const tarball = /^ {6}tarball:\s*(.+?)\s*$/.exec(line);
+  const registry = /^ {6}registry:\s*(.+?)\s*$/.exec(line);
+  return {
+    tarball: tarball ? unquoteYamlScalar(tarball[1].trim()) : null,
+    registry: registry ? unquoteYamlScalar(registry[1].trim()) : null,
+    opensBlock: false,
+  };
 }
 
 function parsePnpmLockIndex(text, source = "pnpm-lock.yaml", isPublicRegistryPackage = () => true) {
@@ -164,17 +283,27 @@ function parsePnpmLockIndex(text, source = "pnpm-lock.yaml", isPublicRegistryPac
   let foundPackages = false;
   let current = null;
   let currentTarball = null;
+  let currentRegistry = null;
+  let insideResolution = false;
 
   const flush = () => {
     if (!current) return;
-    const publicRegistry =
-      current.registryCandidate &&
-      (currentTarball
-        ? isPublicNpmResolution(currentTarball)
-        : isPublicRegistryPackage(current.name));
+    // Explicit evidence first, in the order of how much it proves: a recorded
+    // registry, then a tarball URL bound to this exact name and version. Only
+    // when the lockfile records neither does the resolved .npmrc policy decide,
+    // which is the common pnpm 9 shape where entries carry just an integrity.
+    let publicRegistry = false;
+    if (current.registryCandidate) {
+      if (currentRegistry !== null) publicRegistry = isPublicNpmResolution(currentRegistry);
+      else if (currentTarball !== null) {
+        publicRegistry = publicNpmResolutionMatches(currentTarball, current.name, current.version);
+      } else publicRegistry = isPublicRegistryPackage(current.name);
+    }
     addDependency(index, current.name, current.version, publicRegistry);
     current = null;
     currentTarball = null;
+    currentRegistry = null;
+    insideResolution = false;
   };
 
   for (const line of lines) {
@@ -195,7 +324,12 @@ function parsePnpmLockIndex(text, source = "pnpm-lock.yaml", isPublicRegistryPac
       current = packageFromPnpmLocator(match[1]);
       continue;
     }
-    if (current) currentTarball ??= inlineResolutionTarball(line);
+    if (!current) continue;
+    const fields = resolutionFields(line, insideResolution);
+    if (fields.opensBlock) insideResolution = true;
+    else if (/^ {4}\S/.test(line)) insideResolution = false;
+    currentTarball ??= fields.tarball;
+    currentRegistry ??= fields.registry;
   }
   flush();
 
@@ -240,9 +374,20 @@ export function diffPackageVersions(before, after) {
 
     // A lockfile can hold several versions of one package. Pair only when the
     // old and new sides are unambiguous; a confidently wrong public diff is
-    // worse than omitting a pair that needs a human to disambiguate.
-    if (removed.length !== 1 || added.length !== 1) continue;
-    pairs.push({ ecosystem: "npm", name, from: removed[0], to: added[0] });
+    // worse than a pair that needs a human to disambiguate. It is reported as
+    // unavailable rather than dropped, because a change that quietly verifies
+    // nothing must not read like a change that verified clean.
+    if (removed.length === 1 && added.length === 1) {
+      pairs.push({ ecosystem: "npm", name, from: removed[0], to: added[0] });
+    } else if (removed.length > 0 && added.length > 0) {
+      pairs.push({
+        ecosystem: "npm",
+        name,
+        from: removed[0],
+        to: added[added.length - 1],
+        unavailableReason: AMBIGUOUS_PAIR_REASON,
+      });
+    }
   }
   return pairs;
 }
@@ -256,6 +401,7 @@ function diffDependencyIndexes(before, after) {
       beforeSource.unsupported === false &&
       afterSource?.publicRegistry === true &&
       afterSource.unsupported === false;
+    if (pair.unavailableReason) return pair;
     return publicPair ? pair : { ...pair, unavailableReason: UNSUPPORTED_SOURCE_REASON };
   });
 }
@@ -436,29 +582,48 @@ export function discoverDependencyPairs({ cwd = process.cwd(), base, env = proce
   // The baseline must use versioned repository evidence, not the target's
   // current environment: otherwise a private-to-public registry migration can
   // relabel historical private bytes as public npm bytes.
-  const beforeIsPublicRegistryPackage = publicRegistryPackagePolicy(
-    repositoryFileAtRevision(cwd, baseRevision, ".npmrc"),
-    {},
-  );
-  const afterIsPublicRegistryPackage = publicRegistryPackagePolicy(
-    currentRepositoryFile(cwd, ".npmrc"),
-    env,
-  );
+  // npm and pnpm both read an `.npmrc` per directory, so a monorepo that puts
+  // its private registry beside the package — rather than at the repository
+  // root — would otherwise have every one of its packages classified from the
+  // root's public default.
+  const npmrcFor = (lockfilePath, readFile) => {
+    const directories = [];
+    let directory = path.posix.dirname(lockfilePath);
+    while (directory && directory !== "." && directory !== "/") {
+      directories.push(directory);
+      directory = path.posix.dirname(directory);
+    }
+    directories.push(".");
+    // Nearest wins, so the root is read first and closer files layer over it.
+    return directories
+      .reverse()
+      .map((entry) => readFile(entry === "." ? ".npmrc" : `${entry}/.npmrc`))
+      .filter((text) => typeof text === "string")
+      .join("\n");
+  };
+  const policyFor = (lockfilePath, readFile, policyEnv) =>
+    publicRegistryPackagePolicy(npmrcFor(lockfilePath, readFile), policyEnv);
+  const readAtBase = (filePath) => repositoryFileAtRevision(cwd, baseRevision, filePath);
+  const readCurrent = (filePath) => currentRepositoryFile(cwd, filePath);
   const pairsByIdentity = new Map();
+  const addedLockfiles = [];
   for (const { beforePath, afterPath } of changed) {
     if (!beforePath) {
-      // A newly added lockfile has no old pair to verify.
+      // A lockfile added in this change has no previous side to diff against.
+      // Skipping it silently made "verified nothing" read exactly like
+      // "verified clean", so it is reported as unavailable evidence instead.
+      addedLockfiles.push({ path: afterPath, unavailableReason: ADDED_LOCKFILE_REASON });
       continue;
     }
     const before = parseLockfileIndex(
       beforePath,
       git(cwd, ["show", `${baseRevision}:${beforePath}`]),
-      beforeIsPublicRegistryPackage,
+      policyFor(beforePath, readAtBase, {}),
     );
     const after = parseLockfileIndex(
       afterPath,
       currentLockfileText(cwd, afterPath),
-      afterIsPublicRegistryPackage,
+      policyFor(afterPath, readCurrent, env),
     );
     for (const pair of diffDependencyIndexes(before, after)) {
       const identity = `${pair.ecosystem}\0${pair.name}\0${pair.from}\0${pair.to}`;
@@ -475,5 +640,6 @@ export function discoverDependencyPairs({ cwd = process.cwd(), base, env = proce
     baseRevision,
     lockfiles: changed.map(({ afterPath }) => afterPath),
     pairs: [...pairsByIdentity.values()],
+    addedLockfiles,
   };
 }

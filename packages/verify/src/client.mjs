@@ -37,7 +37,7 @@ async function fetchJson(url, { fetchImpl, sleep, attempts = 3 }) {
   throw lastError ?? new Error("request failed");
 }
 
-function assertVerdict(value) {
+function assertVerdict(value, pair) {
   if (!value || typeof value !== "object" || value.schema !== "drydock.verdict.v1") {
     throw new Error("response is not a drydock.verdict.v1 verdict");
   }
@@ -63,6 +63,16 @@ function assertVerdict(value) {
   }
   if (value.diffUrl !== null && !["http:", "https:"].includes(new URL(value.diffUrl).protocol)) {
     throw new Error("verdict diffUrl must use HTTP or HTTPS");
+  }
+  // The verdict is printed and linked against the pair that was asked for, so
+  // a response describing a different release must not be read as an answer to
+  // this question.
+  if (
+    value.package !== pair.name ||
+    value.from?.version !== pair.from ||
+    value.to?.version !== pair.to
+  ) {
+    throw new Error("verdict response does not describe the requested release pair");
   }
   return value;
 }
@@ -102,7 +112,7 @@ export function createDrydockClient({
       url.searchParams.set("package", pair.name);
       url.searchParams.set("from", pair.from);
       url.searchParams.set("to", pair.to);
-      return assertVerdict(await fetchJson(url, { fetchImpl, sleep }));
+      return assertVerdict(await fetchJson(url, { fetchImpl, sleep }), pair);
     },
 
     async listedReview(pair, publishedSha1) {

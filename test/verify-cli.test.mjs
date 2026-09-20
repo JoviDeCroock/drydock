@@ -50,7 +50,12 @@ function consumerRepository(policy) {
 function verdict(overrides = {}) {
   return {
     schema: "drydock.verdict.v1",
+    // The endpoint always identifies the pair it answered for, and the client
+    // refuses a response describing a different release.
+    ecosystem: "npm",
+    package: "left-pad",
     grade: "notable",
+    from: { version: "1.0.0", publishedAt: "2026-07-01T00:00:00.000Z", integrity: null },
     to: {
       version: "2.0.0",
       publishedAt: "2026-08-01T00:00:00.000Z",
@@ -70,6 +75,18 @@ function response(body, status = 200, headers = {}) {
 }
 
 describe("drydock verify CLI", () => {
+  test("refuses a verdict that describes a different release pair", async () => {
+    // The row and its /diff link are printed against the pair that was asked
+    // for; a mismatched answer must not be read as an answer to this question.
+    const client = createDrydockClient({
+      origin: "https://drydock.org",
+      fetchImpl: async () => response(verdict({ package: "right-pad" })),
+    });
+    await expect(
+      client.verdict({ ecosystem: "npm", name: "left-pad", from: "1.0.0", to: "2.0.0" }),
+    ).rejects.toThrow(/requested release pair/);
+  });
+
   test("honors the public endpoint's full fixed-window retry delay", async () => {
     const sleeps = [];
     let calls = 0;
