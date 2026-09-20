@@ -181,7 +181,9 @@ describe("gate-setup validation and ownership", () => {
     // and an environment created by hand has to stay checkable.
     globalThis.fetch = githubDouble((request) =>
       request.url.includes("/deployment_protection_rules")
-        ? Response.json({ custom_deployment_protection_rules: [{ app: { id: 12345 } }] })
+        ? Response.json({
+            custom_deployment_protection_rules: [{ app: { id: 12345 }, enabled: true }],
+          })
         : Response.json({ name: "production/eu", default_branch: "main" }),
     );
 
@@ -194,6 +196,97 @@ describe("gate-setup validation and ownership", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       state: { environment: "present", protectionRule: "present" },
+    });
+  });
+
+  test("does not report a disabled protection rule as armed", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    // GitHub returns the rule with `enabled: false` when a maintainer switches
+    // it off. The row still names Drydock, but it holds no deployment.
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? Response.json({
+            custom_deployment_protection_rules: [{ app: { id: 12345 }, enabled: false }],
+          })
+        : Response.json({ name: "production", default_branch: "main" }),
+    );
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      state: { environment: "present", protectionRule: "absent" },
+    });
+  });
+
+  test("does not call an environment 404 absent when the repository is unreadable", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    // A repository renamed, transferred, or with App access revoked answers 404
+    // on both reads. That is not evidence the environment is missing.
+    globalThis.fetch = githubDouble(() => new Response("", { status: 404 }));
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      state: { environment: string; protectionRule: string; unavailableReason?: string };
+    };
+    expect(body.state.environment).toBe("unknown");
+    expect(body.state.protectionRule).toBe("unknown");
+    expect(body.state.unavailableReason).toContain("cannot see this repository");
+  });
+
+  test("keeps an environment 404 absent when the repository itself reads fine", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/environments/")
+        ? new Response("", { status: 404 })
+        : Response.json({ name: "octo/widgets", default_branch: "main" }),
+    );
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      state: { environment: "absent", protectionRule: "absent" },
+    });
+  });
+
+  test("does not report an unreadable rules body as no rule", async () => {
+    const { userId, organizationId } = await seedUser();
+    const installation = await seedInstallation(organizationId);
+    // A 200 carrying a truncated or non-JSON body is a read that did not
+    // complete; folding it into an empty list would report a live gate as gone.
+    globalThis.fetch = githubDouble((request) =>
+      request.url.includes("/deployment_protection_rules")
+        ? new Response("<html>proxy</html>", { status: 200 })
+        : Response.json({ name: "production", default_branch: "main" }),
+    );
+
+    const res = await call(
+      buildTestApp(userId),
+      "/api/v1/github-app/gate-setup/verify",
+      draft(installation.id),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      state: { environment: "present", protectionRule: "unknown" },
     });
   });
 
@@ -329,7 +422,10 @@ describe("gate-setup verify", () => {
       seen.push(new URL(request.url).pathname);
       if (request.url.includes("/deployment_protection_rules")) {
         return Response.json({
-          custom_deployment_protection_rules: [{ app: { id: 999 } }, { app: { id: 12345 } }],
+          custom_deployment_protection_rules: [
+            { app: { id: 999 }, enabled: true },
+            { app: { id: 12345 }, enabled: true },
+          ],
         });
       }
       if (request.url.includes("/environments/")) return Response.json({ name: "production" });
@@ -356,7 +452,9 @@ describe("gate-setup verify", () => {
     const installation = await seedInstallation(organizationId);
     globalThis.fetch = githubDouble((request) =>
       request.url.includes("/deployment_protection_rules")
-        ? Response.json({ custom_deployment_protection_rules: [{ app: { id: 999 } }] })
+        ? Response.json({
+            custom_deployment_protection_rules: [{ app: { id: 999 }, enabled: true }],
+          })
         : Response.json({ name: "production", default_branch: "main" }),
     );
 

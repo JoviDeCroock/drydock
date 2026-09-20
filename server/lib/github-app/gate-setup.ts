@@ -122,6 +122,17 @@ export async function readGateSetupState(
     );
   }
   const path = repositoryPath(fullName);
+  // `.` and `..` survive encodeURIComponent and are then collapsed by URL
+  // normalization, which would silently retarget the environment read at the
+  // *list* endpoint and report a non-existent environment as present. Neither
+  // is a name GitHub can hold, so they are rejected rather than checked.
+  const trimmedEnvironment = environmentName.trim();
+  if (!trimmedEnvironment || trimmedEnvironment === "." || trimmedEnvironment === "..") {
+    throw new GithubAppValidationError(
+      "invalid_input",
+      "environment name is not a GitHub environment",
+    );
+  }
   const environmentPath = encodeURIComponent(environmentName);
 
   let headers: Record<string, string>;
@@ -132,7 +143,8 @@ export async function readGateSetupState(
     return unavailable({}, "Drydock could not authenticate to GitHub for this installation.");
   }
 
-  const defaultBranch = await readDefaultBranch(path, headers);
+  const repository = await readRepository(path, headers);
+  const defaultBranch = repository.status === "visible" ? repository.defaultBranch : null;
 
   let environmentResponse: Response;
   try {
@@ -144,6 +156,14 @@ export async function readGateSetupState(
     return unavailable({ defaultBranch }, "Drydock could not reach GitHub. Retry in a moment.");
   }
   if (environmentResponse.status === 404) {
+    // GitHub answers 404 both for an environment that does not exist and for a
+    // repository this installation cannot see, and the two want opposite
+    // answers. Only a repository read that actually succeeded makes the missing
+    // environment a definite answer; otherwise the 404 is unattributable and
+    // stays `unknown`, per this function's contract.
+    if (repository.status !== "visible") {
+      return unavailable({ defaultBranch }, repository.reason);
+    }
     // A missing environment is a definite answer, and its protection rule
     // cannot exist either — reading the rules would 404 for the same reason.
     return { environment: "absent", protectionRule: "absent", defaultBranch };
@@ -171,35 +191,68 @@ export async function readGateSetupState(
     );
   }
 
-  const data = (await rulesResponse.json().catch(() => ({}))) as {
-    custom_deployment_protection_rules?: { app?: { id?: number } | null }[];
+  let data: {
+    custom_deployment_protection_rules?: { app?: { id?: number } | null; enabled?: boolean }[];
   };
-  const enabled = (data.custom_deployment_protection_rules ?? []).some(
-    (rule) => rule.app?.id === appId,
-  );
+  try {
+    data = (await rulesResponse.json()) as typeof data;
+  } catch {
+    // A 200 whose body will not parse is a read that did not complete. Folding
+    // it into an empty rule list would report a live gate as absent.
+    return unavailable(
+      { environment: "present", defaultBranch },
+      "Drydock could not read this environment's protection rules.",
+    );
+  }
+  const rules = data.custom_deployment_protection_rules;
+  if (!Array.isArray(rules)) {
+    return unavailable(
+      { environment: "present", defaultBranch },
+      "Drydock could not read this environment's protection rules.",
+    );
+  }
+  // `enabled` is a required field on every rule GitHub returns. A rule that is
+  // present but switched off holds nothing, so reading only the app id would
+  // badge a gate as armed over a gate that never runs. The test is strict in
+  // the safe direction: anything but an explicit `true` reads as not armed,
+  // because a green badge over a dead gate is the one answer this wizard must
+  // never give.
+  const armed = rules.some((rule) => rule.app?.id === appId && rule.enabled === true);
   return {
     environment: "present",
-    protectionRule: enabled ? "present" : "absent",
+    protectionRule: armed ? "present" : "absent",
     defaultBranch,
   };
 }
 
+type RepositoryRead =
+  | { status: "visible"; defaultBranch: string | null }
+  | { status: "unreadable"; reason: string };
+
 /**
- * The default branch only feeds the "create this file on GitHub" deep link, so
- * a failed read degrades the link rather than the whole check.
+ * Read the repository itself. The default branch only feeds the "create this
+ * file on GitHub" deep link, so a failed read degrades the link — but whether
+ * the read succeeded is also the only way to tell a missing environment from a
+ * repository this installation cannot see, so the failure is reported rather
+ * than swallowed.
  */
-async function readDefaultBranch(
+async function readRepository(
   path: string,
   headers: Record<string, string>,
-): Promise<string | null> {
+): Promise<RepositoryRead> {
+  let response: Response;
   try {
-    const response = await reliableFetch(`https://api.github.com/repos/${path}`, { headers });
-    if (!response.ok) return null;
-    const data = (await response.json().catch(() => ({}))) as { default_branch?: string };
-    return typeof data.default_branch === "string" && data.default_branch
-      ? data.default_branch
-      : null;
+    response = await reliableFetch(`https://api.github.com/repos/${path}`, { headers });
   } catch {
-    return null;
+    return { status: "unreadable", reason: "Drydock could not reach GitHub. Retry in a moment." };
   }
+  if (!response.ok) {
+    return { status: "unreadable", reason: reasonForStatus(response.status) };
+  }
+  const data = (await response.json().catch(() => ({}))) as { default_branch?: string };
+  return {
+    status: "visible",
+    defaultBranch:
+      typeof data.default_branch === "string" && data.default_branch ? data.default_branch : null,
+  };
 }
