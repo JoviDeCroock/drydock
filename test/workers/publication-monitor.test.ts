@@ -74,6 +74,26 @@ describe("publication evidence", () => {
     expect(classify([review({ registryPackageName: "different" })])).toBe(
       "published_without_approval",
     );
+    // Reviewed in Drydock of exactly these bytes but never formally decided is
+    // an ordinary flow (the dashboard filters for it), not a bypass. Accusing
+    // the owner of publishing behind their own back is the false positive that
+    // burns trust fastest.
+    const undecided = classifyPublication(name, version, published, { sha1, sha256 }, [
+      review({ decision: null, decidedAt: null }),
+    ]);
+    expect(undecided.status).toBe("unknown");
+    expect(undecided.reason).toBe("reviewed_without_decision");
+    expect(undecided.scanId).toBe("scan1");
+    // A review of *different* bytes with no decision is still unapproved.
+    expect(
+      classifyPublication(
+        name,
+        version,
+        published,
+        { sha1: "c".repeat(40), sha256: "d".repeat(64) },
+        [review({ decision: null, decidedAt: null })],
+      ).status,
+    ).toBe("published_without_approval");
     expect(
       classifyPublication(name, version, published, { sha1: "b".repeat(40), sha256 }, [review()])
         .status,

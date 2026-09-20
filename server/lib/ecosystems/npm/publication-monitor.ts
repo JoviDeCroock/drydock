@@ -1,4 +1,10 @@
-import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
+import {
+  isPublicationAlert,
+  listUnnotifiedPublicationAlerts,
+  markPublicationAlertNotified,
+  savePublicationObservation,
+  type PublicationAlertStatus,
+} from "../../../db/publication-alerts";
 import { notifyPublicationDiscrepancy } from "../../notify";
 import { recordProductEvent } from "../../platform/analytics";
 import { createHash } from "node:crypto";
@@ -76,6 +82,17 @@ function reviewDigest(
     : null;
 }
 
+function matchesReviewedBytes(
+  scan: ReviewEvidence,
+  name: string,
+  version: string,
+  registry: string,
+  digests: { sha1: string; sha256: string },
+): boolean {
+  const evidence = reviewDigest(scan, name, version, registry);
+  return evidence !== null && digests[evidence.algorithm] === evidence.digest;
+}
+
 export function classifyPublication(
   name: string,
   version: string,
@@ -135,6 +152,29 @@ export function classifyPublication(
   if (missingEvidence)
     return { status: "unknown", reason: "review_digest_unavailable", scanId: null };
   if (mismatched) return { status: "artifact_mismatch", reason: null, scanId: mismatched };
+  // Reviewing a release in Drydock and publishing it without clicking a
+  // decision is an ordinary flow — the dashboard has a filter for it. An
+  // accusing alert ("investigate who published it") for a release the
+  // organization reviewed, of exactly these bytes, is a false positive.
+  const reviewedUndecided = reviews.find(
+    (scan) =>
+      scan.packageName === name &&
+      scan.stagedVersion === version &&
+      scan.status === "complete" &&
+      !scan.decision &&
+      (scan.source === "workflow_gate" ||
+        (scan.registryUrl?.replace(/\/$/, "") === registry &&
+          scan.registryPackageName === name &&
+          scan.registryVersion === version)) &&
+      matchesReviewedBytes(scan, name, version, registry, digests),
+  );
+  if (reviewedUndecided) {
+    return {
+      status: "unknown",
+      reason: "reviewed_without_decision",
+      scanId: reviewedUndecided.id,
+    };
+  }
   return { status: "published_without_approval", reason: null, scanId: null };
 }
 
@@ -373,14 +413,7 @@ export async function checkNpmPublicationWatch(
             ecosystem: "npm",
             status: verdict.status,
           });
-          try {
-            await notifyPublicationDiscrepancy({ env, db, ...alert });
-          } catch {
-            emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", {
-              organizationId: watch.organizationId,
-              watchId: watch.id,
-            });
-          }
+          await deliverPublicationAlert(env, db, watch, alert);
         }
       }
     }
@@ -391,6 +424,11 @@ export async function checkNpmPublicationWatch(
       watchId: watch.id,
     });
   }
+  // Alert rows are committed before delivery is attempted, and a settled
+  // observation is never re-examined, so anything left unsent gets another
+  // chance here rather than being lost with the isolate that failed to send it.
+  await redeliverPendingAlerts(env, db, watch);
+
   await db
     .update(publicationWatches)
     .set({ lastError })
@@ -401,6 +439,57 @@ export async function checkNpmPublicationWatch(
       ),
     );
   return getPublicationWatch(db, watch.organizationId, watch.id);
+}
+
+/**
+ * Send one alert and record that it was sent. A failure is logged and leaves
+ * `notified_at` null, which is what the re-drive below looks for.
+ */
+async function deliverPublicationAlert(
+  env: Cloudflare.Env,
+  db: AppDb,
+  watch: { id: string; organizationId: string },
+  alert: {
+    organizationId: string;
+    packageName: string;
+    version: string;
+    status: PublicationAlertStatus;
+  },
+) {
+  try {
+    const delivered = await notifyPublicationDiscrepancy({ env, db, ...alert });
+    if (delivered === false) return;
+    await markPublicationAlertNotified(db, alert);
+  } catch {
+    emitOperationalEvent("warn", "npm.publication_monitor.notification_failed", {
+      organizationId: watch.organizationId,
+      watchId: watch.id,
+    });
+  }
+}
+
+async function redeliverPendingAlerts(
+  env: Cloudflare.Env,
+  db: AppDb,
+  watch: { id: string; organizationId: string; packageName: string },
+) {
+  let pending: Awaited<ReturnType<typeof listUnnotifiedPublicationAlerts>>;
+  try {
+    pending = await listUnnotifiedPublicationAlerts(db, {
+      organizationId: watch.organizationId,
+      packageName: watch.packageName,
+    });
+  } catch {
+    return;
+  }
+  for (const alert of pending) {
+    await deliverPublicationAlert(env, db, watch, {
+      organizationId: watch.organizationId,
+      packageName: watch.packageName,
+      version: alert.version,
+      status: alert.status,
+    });
+  }
 }
 
 export async function sweepNpmPublicationWatches(db: AppDb, env: Cloudflare.Env) {

@@ -232,6 +232,13 @@
       "when": 1789491776844,
       "tag": "0032_easy_bug",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1789894066394,
+      "tag": "0033_right_human_fly",
+      "breakpoints": true
     }
   ]
 }

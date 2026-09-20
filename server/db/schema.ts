@@ -714,6 +714,14 @@ export const publicationAlerts = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
     acknowledgedBy: text("acknowledged_by").references(() => user.id, { onDelete: "set null" }),
+    /**
+     * When the organization was actually told. The alert row is committed
+     * before delivery is attempted, so without this a transport failure would
+     * leave a durable alert nobody was ever notified about and no way to find
+     * it again. Declared last so the column order matches the migration's
+     * `ALTER TABLE ... ADD`, which the alert insert relies on positionally.
+     */
+    notifiedAt: integer("notified_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_alerts_org_release").on(

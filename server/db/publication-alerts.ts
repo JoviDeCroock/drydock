@@ -51,7 +51,7 @@ export async function savePublicationObservation(
     db
       .insert(publicationAlerts)
       .select(
-        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null where exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
+        sql`select ${id}, ${observation.organizationId}, ${packageName}, ${observation.version}, ${observation.status}, ${now.getTime()}, null, null, null where exists(select 1 from publication_observations where watch_id = ${observation.watchId} and organization_id = ${observation.organizationId} and version = ${observation.version} and status = ${observation.status})`,
       )
       .onConflictDoNothing({
         target: [
@@ -68,6 +68,53 @@ export async function savePublicationObservation(
       ),
   ]);
   return created.length > 0;
+}
+
+/**
+ * Alerts this organization holds that nobody has been told about yet.
+ *
+ * The alert row is committed before delivery is attempted, so a transport that
+ * was down at the moment of detection would otherwise lose the notification
+ * permanently: the observation is settled, so the version is never re-examined.
+ */
+export async function listUnnotifiedPublicationAlerts(
+  db: AppDb,
+  input: { organizationId: string; packageName: string },
+) {
+  return db
+    .select({
+      id: publicationAlerts.id,
+      version: publicationAlerts.version,
+      status: publicationAlerts.status,
+    })
+    .from(publicationAlerts)
+    .where(
+      and(
+        eq(publicationAlerts.organizationId, input.organizationId),
+        eq(publicationAlerts.packageName, input.packageName),
+        isNull(publicationAlerts.notifiedAt),
+        isNull(publicationAlerts.acknowledgedAt),
+      ),
+    )
+    .limit(20);
+}
+
+/** Record that delivery succeeded, so the alert stops being re-driven. */
+export async function markPublicationAlertNotified(
+  db: AppDb,
+  input: { organizationId: string; packageName: string; version: string },
+) {
+  await db
+    .update(publicationAlerts)
+    .set({ notifiedAt: new Date() })
+    .where(
+      and(
+        eq(publicationAlerts.organizationId, input.organizationId),
+        eq(publicationAlerts.packageName, input.packageName),
+        eq(publicationAlerts.version, input.version),
+        isNull(publicationAlerts.notifiedAt),
+      ),
+    );
 }
 
 export async function acknowledgePublicationAlert(

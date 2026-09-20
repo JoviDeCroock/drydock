@@ -85,7 +85,7 @@ publicationWatchRoutes.post("/:id/check", async (c) => {
   try {
     await enforceRateLimit(c.env, {
       key: `publication-watches:check:${organizationId}`,
-      limit: 6,
+      limit: 10,
       windowMs: 60 * 1000,
     });
   } catch (err) {

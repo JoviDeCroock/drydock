@@ -1,0 +1,1 @@
+ALTER TABLE `publication_alerts` ADD `notified_at` integer;
