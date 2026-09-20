@@ -17,7 +17,9 @@ export function RiskSignalsSection({
   findings,
   onSelect,
   description = DEFAULT_DESCRIPTION,
+  id,
 }: {
+  id?: string;
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
   description?: string;
@@ -32,7 +34,7 @@ export function RiskSignalsSection({
   )}`;
 
   return (
-    <section class="flex flex-col gap-3">
+    <section id={id} tabIndex={id ? -1 : undefined} class="flex flex-col gap-3">
       <SectionLabel as="h2">Risk signals</SectionLabel>
       <div class="flex flex-wrap items-center gap-2">
         <Badge tone={changedFindings.length ? "medium" : "ok"}>

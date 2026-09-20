@@ -1,6 +1,6 @@
 import { Fragment, type ComponentChildren } from "preact";
 import { useSignal, type Signal } from "@preact/signals";
-import { useEffect, useMemo, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { Badge, statusTone } from "./Badge";
 import { partitionFindingsByLine, type DiffFinding } from "./diff-annotations";
 import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
@@ -52,6 +52,7 @@ export interface DiffViewProps {
   // reference. Findings without a matching line surface in a banner above the
   // diff so a truncated sample can't hide a signal.
   findings?: DiffFinding[];
+  findingTarget?: DiffFinding | null;
 }
 
 // Tokenize an entire side once, memoized on the text/language/ready signal.
@@ -112,14 +113,13 @@ function DiffScrollViewport({
       content: container.scrollHeight,
     };
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = ref.current;
     if (!container) return;
-    const frame = window.requestAnimationFrame(() => {
-      resetDiffScroll(container);
-      syncScrollState();
-    });
-    return () => window.cancelAnimationFrame(frame);
+    // Initialize the pane before effects can seek an explicitly chosen finding.
+    // A deferred reset races that navigation and can hide the focused evidence.
+    resetDiffScroll(container);
+    syncScrollState();
   }, [resetKey]);
   useEffect(() => {
     const container = ref.current;
@@ -260,7 +260,9 @@ export function DiffView({
   beforeLabel,
   afterLabel,
   findings = [],
+  findingTarget,
 }: DiffViewProps) {
+  const root = useRef<HTMLDivElement>(null);
   const beforeSample = before?.textSample ?? "";
   const afterSample = after?.textSample ?? "";
   const wordDiff = useSignal(false);
@@ -308,6 +310,19 @@ export function DiffView({
   );
   const beforeText = beforeFormatted?.text ?? beforeSample;
   const afterText = afterFormatted?.text ?? afterSample;
+  useEffect(() => {
+    if (!findingTarget) return;
+    // Stable finding IDs survive formatting and land on the annotation banner
+    // when the cited line lies outside the stored or rendered sample.
+    const frame = window.requestAnimationFrame(() => {
+      const annotation = Array.from(
+        root.current?.querySelectorAll<HTMLElement>("[data-finding-id]") ?? [],
+      ).find((element) => element.dataset.findingId === findingTarget.id);
+      annotation?.focus({ preventScroll: true });
+      annotation?.scrollIntoView({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [findingTarget, beforeText, afterText]);
   // A source with nothing left to re-flow comes back unchanged, and saying
   // "reformatted" over bytes nobody touched is the kind of small lie that costs a
   // reviewer their trust in the whole surface.
@@ -330,7 +345,7 @@ export function DiffView({
     (!canHighlight(beforeText) || !canHighlight(afterText));
 
   return (
-    <div class="flex flex-col gap-3 min-h-0">
+    <div ref={root} class="flex flex-col gap-3 min-h-0">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-2">
           <Badge tone={statusTone(status)}>{status}</Badge>

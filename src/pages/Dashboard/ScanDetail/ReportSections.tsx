@@ -11,7 +11,7 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
   return (
     <section class="flex flex-col gap-6">
-      <ReportSection title="Manifest changes">
+      <ReportSection title="Manifest changes" id="manifest-changes">
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView
             diff={summary.packageJsonDiff}
@@ -54,13 +54,19 @@ function ReportSection({
   title,
   children,
   class: className,
+  id,
 }: {
   title: string;
   children: ComponentChildren;
   class?: string;
+  id?: string;
 }) {
   return (
-    <section class={`flex flex-col gap-3 min-w-0 ${className || ""}`}>
+    <section
+      id={id}
+      tabIndex={id ? -1 : undefined}
+      class={`flex flex-col gap-3 min-w-0 ${className || ""}`}
+    >
       <SectionLabel as="h2">{title}</SectionLabel>
       {children}
     </section>
