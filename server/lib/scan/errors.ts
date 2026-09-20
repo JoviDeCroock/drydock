@@ -5,7 +5,6 @@
  */
 export type ScanErrorCode =
   | ScanPreconditionCode
-  | "staged_tarball_unavailable"
   | "staged_release_published"
   | "staged_release_deleted"
   | "staged_release_blocked"
@@ -35,7 +34,13 @@ export type ScanPreconditionCode =
   | "npm_connection_unvalidated"
   | "npm_connection_changed"
   | "npm_registry_identity_missing"
-  | "staged_release_identity_changed";
+  | "staged_release_identity_changed"
+  // Both reach the job as plain errors flattened across the Workers RPC
+  // boundary. Neither is retryable: a candidate that disappeared or changed
+  // will not come back by trying again, and classifying them as generic
+  // failures retried each one three times behind an unhelpful message.
+  | "staged_tarball_unavailable"
+  | "staged_candidate_changed";
 
 interface ScanPreconditionCopy {
   /** The thrown message; terse because it is also what the job log records. */
@@ -64,6 +69,14 @@ const SCAN_PRECONDITIONS: Record<ScanPreconditionCode, ScanPreconditionCopy> = {
   staged_release_identity_changed: {
     thrown: "The staged release identity changed after this scan was queued.",
     safe: "The staged release identity changed after this scan was queued. Run a new scan from the current staged release.",
+  },
+  staged_tarball_unavailable: {
+    thrown: "staged release not found",
+    safe: "The staged candidate is no longer available for review.",
+  },
+  staged_candidate_changed: {
+    thrown: "staged candidate changed after scan selection",
+    safe: "The staged candidate changed before its review started.",
   },
 };
 

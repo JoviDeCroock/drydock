@@ -6,7 +6,6 @@ import type { DiffEntry } from "../../../server/lib/review";
 import { SaveReviewAction } from "./SaveReviewAction";
 import { TrustEvidence } from "./TrustEvidence";
 import { countSeverities } from "../../lib/findings";
-import { useQuerySignal } from "../../lib/query-state";
 import { packageDiffIndexSeo, packageDiffSeo, PageSeo } from "../../lib/seo";
 import {
   getPublicDiffVersions,
@@ -369,19 +368,6 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
   useEffect(() => {
     void model.load();
   }, []);
-
-  // Deep-linkable tree state, as the scan detail and public report bind it.
-  useQuerySignal(fileFilter, {
-    name: "file",
-    parse: (raw) => raw ?? "",
-    serialize: (value) => value || null,
-    debounceMs: 250,
-  });
-  useQuerySignal(changedFilesOnly, {
-    name: "changedOnly",
-    parse: (raw) => raw !== "0",
-    serialize: (value) => (value ? null : "0"),
-  });
 
   const diffEntries = useComputed<DiffEntry[]>(() => model.diff.value?.diff ?? []);
   const findingItems = useComputed<FindingWithDiffStatus[]>(() => adaptFindings(model.diff.value));

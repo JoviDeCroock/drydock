@@ -431,7 +431,7 @@ describe("fetchReleaseBundleWithToken", () => {
       code: "bundle_unavailable",
     });
     // Bounded by the page cap rather than following `next` forever.
-    expect(page).toBeLessThanOrEqual(8);
+    expect(page).toBeLessThanOrEqual(10);
   });
 
   test("bundle_unavailable when the artifact listing stops at an off-host pagination link", async () => {

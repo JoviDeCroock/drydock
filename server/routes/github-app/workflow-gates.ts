@@ -30,7 +30,11 @@ import {
   executeWorkflowGateJob,
 } from "../../lib/workflow-gate-job";
 import { redeliverGateDecision } from "../../lib/workflow-gates/decision-delivery";
-import { type GithubAppConfig, readGithubAppConfig } from "../../lib/github-app/config";
+import {
+  type GithubAppConfig,
+  GithubAppConfigError,
+  readGithubAppConfig,
+} from "../../lib/github-app/config";
 import {
   type GatePackageScan,
   type WorkflowGateRecord,
@@ -397,11 +401,34 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
   );
 });
 
-// The decision is already durable on the gate row; post it to GitHub now and
-// only fall back to the queue (which re-runs the job's redelivery branch with
-// retries) when the callback fails. The old path enqueued the whole job for
-// every decision, so a healthy callback still waited on a queue hop.
+/**
+ * Hand the decision to the queue, which owns the GitHub callback and its
+ * retries, and only deliver inline when there is no queue or the send itself
+ * failed.
+ *
+ * The ordering is the durability: this runs inside `waitUntil` after the
+ * response has gone, so delivering inline first buys no latency but does put
+ * the only copy of the work in an isolate that can be evicted mid-flight. The
+ * enqueue completes in milliseconds and survives that.
+ */
 async function deliverDecidedGate(c: RouteContext, db: AppDb, gate: WorkflowGateRecord) {
+  if (c.env.SCAN_QUEUE) {
+    try {
+      await c.env.SCAN_QUEUE.send({
+        kind: "workflow_gate" as const,
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+      });
+      return;
+    } catch (err) {
+      emitOperationalEvent("error", "github_workflow_gate.redelivery_enqueue_failed", {
+        organizationId: gate.organizationId,
+        gateId: gate.id,
+        error: describeOperationalError(err),
+      });
+      // Fall through: an inline attempt is better than dropping the decision.
+    }
+  }
   let config: GithubAppConfig;
   try {
     config = readGithubAppConfig(c.env);
@@ -409,28 +436,16 @@ async function deliverDecidedGate(c: RouteContext, db: AppDb, gate: WorkflowGate
     emitOperationalEvent("error", "github_workflow_gate.config_error", {
       organizationId: gate.organizationId,
       gateId: gate.id,
+      // The queue path reports this as `message`; keep both shapes readable by
+      // an operator filtering on either.
+      message: err instanceof GithubAppConfigError ? err.message : "github app is not configured",
       error: describeOperationalError(err),
     });
     return;
   }
-  try {
-    await redeliverGateDecision(config, db, gate);
-  } catch {
-    // Already logged by redeliverGateDecision. Without a queue there is no
-    // retry path beyond the next human or cron touch of this gate.
-    if (!c.env.SCAN_QUEUE) return;
-    await c.env.SCAN_QUEUE.send({
-      kind: "workflow_gate" as const,
-      organizationId: gate.organizationId,
-      gateId: gate.id,
-    }).catch((err: unknown) => {
-      emitOperationalEvent("error", "github_workflow_gate.redelivery_enqueue_failed", {
-        organizationId: gate.organizationId,
-        gateId: gate.id,
-        error: describeOperationalError(err),
-      });
-    });
-  }
+  // Already logged by redeliverGateDecision. Without a queue there is no retry
+  // path beyond the next human or cron touch of this gate.
+  await redeliverGateDecision(config, db, gate).catch(() => {});
 }
 
 async function runWorkflowGateJob(

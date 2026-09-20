@@ -84,7 +84,11 @@ export const MAX_PER_ENTRY_BYTES = 25 * 1024 * 1024;
 const MAX_RELEASE_ARTIFACTS = 20;
 const MAX_STREAMED_RELEASE_ARTIFACTS = 128;
 const MAX_RUN_ARTIFACTS = 128;
-const MAX_LIST_PAGES = 4;
+// A matrix run uploads one artifact per job alongside the release shards, so
+// 400 was reachable by ordinary CI. Since a truncated listing now fails the
+// review closed rather than scoring whatever it found, the cap has to be high
+// enough that a normal run never hits it; pages past the last one cost nothing.
+const MAX_LIST_PAGES = 10;
 const MAX_DOWNLOAD_REDIRECTS = 4;
 
 const REPOSITORY_FULL_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;

@@ -143,18 +143,20 @@ export function ConfirmDialog({
   children?: ComponentChildren;
 }) {
   const isBusy = readSignalProp(busy);
-  const handleClose = () => {
-    if (!isBusy) onClose();
-  };
+  // Escape, the backdrop and the ✕ stay live while the action is in flight.
+  // Closing does not cancel the request, and these requests have no client
+  // timeout, so a guard here only traps the reader in a dialog that may never
+  // resolve. The Cancel button is disabled instead, which says the same thing
+  // without taking the exits away.
   return (
     <Dialog
       open={open}
-      onClose={handleClose}
+      onClose={onClose}
       title={title}
       description={description}
       footer={
         <>
-          <Button variant="secondary" size="sm" onClick={handleClose} disabled={isBusy}>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={isBusy}>
             Cancel
           </Button>
           <Button

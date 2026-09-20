@@ -160,6 +160,22 @@ describe("scan job retry classification", () => {
     errorSpy.mockRestore();
   });
 
+  test("does not retry an atpm candidate that disappeared before the scan started", () => {
+    expect(classifyScanError(new Error("staged release not found"))).toEqual({
+      code: "staged_tarball_unavailable",
+      message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    });
+  });
+
+  test("does not retry a staged candidate that changed after selection", () => {
+    expect(classifyScanError(new Error("staged candidate changed after scan selection"))).toEqual({
+      code: "staged_candidate_changed",
+      message: "The staged candidate changed before its review started.",
+      retryable: false,
+    });
+  });
+
   test("does not retry a staged release identity mismatch", () => {
     expect(
       classifyScanError(
