@@ -170,7 +170,12 @@ function ScanReport({ model, view }: SectionProps) {
           <ReleaseVerdictStrip
             verdict={verdict}
             ai={ai}
-            actions={<VerdictActions model={model} view={view} />}
+            comparison={
+              detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null
+            }
+            decision={
+              view.decideAction.value ? <VerdictDecision model={model} view={view} /> : null
+            }
           />
           <CompareStatus model={model} />
 
@@ -199,9 +204,7 @@ function ScanReport({ model, view }: SectionProps) {
                 consistencyNote={
                   <ReleaseConsistencyNotice
                     value={summary.releaseConsistency}
-                    approvedContextCount={
-                      detail.riskSummary?.priorApprovedContextFindingCount ?? 0
-                    }
+                    approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
                   />
                 }
               />
@@ -249,33 +252,32 @@ function ScanReport({ model, view }: SectionProps) {
 
 // The version picker and decision button, read apart from the report so a
 // comparison fetch does not re-render the risk index.
-function VerdictActions({ model, view }: SectionProps) {
+function VerdictComparison({ model, view }: SectionProps) {
   const detail = model.detail.value;
   const versions = view.versions.value;
-  const decide = view.decideAction.value;
   if (!detail) return null;
+  return versions ? (
+    <VersionPicker
+      options={versions.versions}
+      selected={model.selectedVersion.value}
+      defaultVersion={versions.defaultPreviousVersion}
+      stagedVersion={versions.stagedVersion}
+      onChange={(value) => model.selectVersion(value)}
+      disabled={model.compareLoading.value}
+    />
+  ) : (
+    <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+  );
+}
+
+function VerdictDecision({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  const decide = view.decideAction.value;
+  if (!detail || !decide) return null;
   return (
-    <>
-      {detail.scan.packageName ? (
-        versions ? (
-          <VersionPicker
-            options={versions.versions}
-            selected={model.selectedVersion.value}
-            defaultVersion={versions.defaultPreviousVersion}
-            stagedVersion={versions.stagedVersion}
-            onChange={(value) => model.selectVersion(value)}
-            disabled={model.compareLoading.value}
-          />
-        ) : (
-          <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
-        )
-      ) : null}
-      {decide ? (
-        <Button variant={detail.scan.decision ? "secondary" : "primary"} onClick={decide}>
-          {detail.scan.decision ? "Update decision" : "Decide"}
-        </Button>
-      ) : null}
-    </>
+    <Button variant={detail.scan.decision ? "secondary" : "primary"} onClick={decide}>
+      {detail.scan.decision ? "Update decision" : "Decide"}
+    </Button>
   );
 }
 
