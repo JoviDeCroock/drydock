@@ -66,6 +66,10 @@ export const GateSetupModel = createModel(() => {
 
   const verification = signal<GateSetupVerification | null>(null);
   const releaseTarget = signal<PublicReleaseTarget | null>(null);
+  // Release targets already stored for this organization. The wizard's own
+  // `releaseTarget` only holds one it created this session, so without these a
+  // returning maintainer's existing mapping would read as missing.
+  const knownReleaseTargets = signal<readonly PublicReleaseTarget[]>([]);
   const preview = signal<GateSetupPreview | null>(null);
 
   const busyStep = signal<GateSetupAction | null>(null);
@@ -124,8 +128,29 @@ export const GateSetupModel = createModel(() => {
    * deployment; it says nothing about whether GitHub will ever hold one. Only a
    * verified protection rule does, so a green summary requires both.
    */
+  /**
+   * The mapping in force for the current draft: one made this session, else one
+   * already stored. Stored targets are normalized and the draft carries
+   * GitHub's casing, so the environment is matched case-insensitively —
+   * comparing directly would miss an existing mapping for `Production`.
+   */
+  const resolvedReleaseTarget = computed<PublicReleaseTarget | null>(() => {
+    if (releaseTarget.value) return releaseTarget.value;
+    const installation = installationRowId.value;
+    const repository = repositoryFullName.value;
+    const environmentName = environment.value.toLowerCase();
+    return (
+      knownReleaseTargets.value.find(
+        (target) =>
+          target.installationRowId === installation &&
+          target.repositoryFullName === repository &&
+          target.environment.toLowerCase() === environmentName,
+      ) ?? null
+    );
+  });
+
   const gateArmed = computed(
-    () => verification.value?.protectionRule === "present" && releaseTarget.value !== null,
+    () => verification.value?.protectionRule === "present" && resolvedReleaseTarget.value !== null,
   );
 
   function draft() {
@@ -236,6 +261,8 @@ export const GateSetupModel = createModel(() => {
     environmentsLoading,
     verification,
     releaseTarget,
+    knownReleaseTargets,
+    resolvedReleaseTarget,
     preview,
     busyStep,
     busy,
@@ -406,6 +433,12 @@ export const GateSetupModel = createModel(() => {
           }),
         () => {
           if (releaseTarget.peek()?.id === id) releaseTarget.value = null;
+          // The parent's stored list is refetched asynchronously; drop the row
+          // here too, or the resolved mapping (and the armed badge that rests
+          // on it) keeps reading from a target that no longer exists.
+          knownReleaseTargets.value = knownReleaseTargets
+            .peek()
+            .filter((target) => target.id !== id);
         },
       );
       return data !== null;
