@@ -150,6 +150,11 @@ async function prepare(
     return { response: c.json({ error: "forbidden" }, 403) } as const;
   }
 
+  // Ownership first, then the budget — the sibling installation routes order it
+  // this way, and it keeps a replayed bad installation id from spending the
+  // caller's own organization out of its window.
+  const installation = await ensureInstallationOwnedBy(db, organizationId, draft.installationRowId);
+
   try {
     await enforceRateLimit(c.env, {
       key: `github-app:gate-setup:${options.scope}:${organizationId}`,
@@ -165,7 +170,6 @@ async function prepare(
     throw err;
   }
 
-  const installation = await ensureInstallationOwnedBy(db, organizationId, draft.installationRowId);
   return { config, draft, installation } as const;
 }
 
