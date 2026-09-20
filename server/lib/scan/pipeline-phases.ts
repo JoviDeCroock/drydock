@@ -114,6 +114,7 @@ export interface ArtifactFacts {
    * review to a workflow-gate review of the same bytes.
    */
   stagedArtifactSha256: string | null;
+  stagedArtifactDigestVerified: boolean;
 }
 
 export interface DeterministicFindings {
@@ -241,6 +242,7 @@ export function summarizeResolvedArtifacts<TInput, TBroker extends AdapterBroker
       }),
     ),
     stagedArtifactSha256: adapter.stagedArtifactSha256?.(staged.details) ?? null,
+    stagedArtifactDigestVerified: adapter.stagedArtifactDigestVerified?.(staged.details) ?? false,
   };
 }
 
