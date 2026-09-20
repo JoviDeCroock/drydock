@@ -88,6 +88,11 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     return d?.artifactSha256 ?? null;
   },
 
+  stagedArtifactDigestVerified(details) {
+    const d = details as NpmStagedDetails | null;
+    return d?.artifactIntegrity?.status === "verified";
+  },
+
   registryReleaseIdentity(details) {
     const d = details as NpmStagedDetails | null;
     return d?.packageName && d.version ? { packageName: d.packageName, version: d.version } : null;

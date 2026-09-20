@@ -66,10 +66,22 @@ const MAX_TEXT = 512;
 export function evaluateGateContinuity(
   history: GateReviewHistory,
   stagedDigest: string | null | undefined,
+  /**
+   * Whether the staged bytes were confirmed against npm's own record for the
+   * stage. `matched` claims the tarball *npm holds* is the gated tarball, and
+   * only this makes the downloaded bytes evidence of what npm holds.
+   */
+  stagedDigestBoundToRegistry = false,
 ): GateContinuity | null {
   const staged = normalizeSha256(stagedDigest);
   if (history.forVersion.length === 0) {
     if (!history.packageHasGateHistory) return null;
+    // A gate scan of this version that has not completed is still a review a
+    // maintainer can decide, so the stage did not skip the gate — the gate's
+    // verdict is simply not in yet.
+    if (history.versionHasIncompleteGateScan) {
+      return { status: "unverified", algorithm: "sha256", stagedDigest: staged, review: null };
+    }
     return { status: "ungated", algorithm: "sha256", stagedDigest: staged, review: null };
   }
   const reviews = history.forVersion.map(toReview);
@@ -92,6 +104,12 @@ export function evaluateGateContinuity(
   const latest = comparable.find((review) => review.sha256 === staged);
   if (latest) {
     if (latest.decision === "approved") {
+      // The digests agree, but `matched` also asserts npm holds these bytes.
+      // Without the registry binding the scan only knows what it downloaded,
+      // which the stage-digest finding may already be disputing.
+      if (!stagedDigestBoundToRegistry) {
+        return { status: "unverified", algorithm: "sha256", stagedDigest: staged, review: latest };
+      }
       return { status: "matched", algorithm: "sha256", stagedDigest: staged, review: latest };
     }
     // The gate saw exactly these bytes and did not let them through; they were
@@ -105,8 +123,11 @@ export function evaluateGateContinuity(
       review: latest,
     };
   }
+  // Nothing in the window matched. If the window was truncated the approved
+  // review may simply be outside it, and absence of evidence must not be
+  // rendered as "something staged bytes the gate never saw".
   return {
-    status: "digest-mismatch",
+    status: history.truncated ? "unverified" : "digest-mismatch",
     algorithm: "sha256",
     stagedDigest: staged,
     review: comparable[0] ?? null,
@@ -126,10 +147,17 @@ export function normalizeGateContinuity(value: unknown): GateContinuity | null {
   }
   const review = normalizeReview(value.review);
   if (status !== "ungated" && !review) return null;
+  const stagedDigest = normalizeSha256(value.stagedDigest);
+  // `matched` is the one status that asserts an equality, so re-derive it here
+  // rather than trust it: a truncated or hand-edited blob must not be able to
+  // render the green badge with its digest rows blank.
+  if (status === "matched" && (!stagedDigest || review?.sha256 !== stagedDigest)) {
+    return null;
+  }
   return {
     status: status as GateContinuityStatus,
     algorithm: "sha256",
-    stagedDigest: normalizeSha256(value.stagedDigest),
+    stagedDigest,
     review: status === "ungated" ? null : review,
   };
 }

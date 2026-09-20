@@ -30,6 +30,12 @@ export async function resolveGateContinuity(args: {
    */
   registryIdentity: { packageName: string; version: string } | null;
   stagedDigest: string | null;
+  /**
+   * Whether the staged digest was confirmed against the registry's own record.
+   * `matched` speaks about the tarball the registry holds, so without this the
+   * comparison can only report `unverified`.
+   */
+  stagedDigestBoundToRegistry: boolean;
 }): Promise<GateContinuity | null> {
   if (!STAGED_SOURCES.has(args.source ?? "manual")) return null;
   if (!args.registryIdentity) return null;
@@ -40,7 +46,11 @@ export async function resolveGateContinuity(args: {
       packageName,
       version,
     });
-    const continuity = evaluateGateContinuity(history, args.stagedDigest);
+    const continuity = evaluateGateContinuity(
+      history,
+      args.stagedDigest,
+      args.stagedDigestBoundToRegistry,
+    );
     if (continuity && continuity.status !== "matched") {
       // A stage the gate never saw, one it did not approve, or one whose bytes
       // drifted from the gated review is the out-of-band signal this record

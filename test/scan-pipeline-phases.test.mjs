@@ -250,6 +250,7 @@ describe("summarizeResolvedArtifacts", () => {
       baselineComparisonSkipped: false,
       declaredRepository: null,
       stagedArtifactSha256: null,
+      stagedArtifactDigestVerified: false,
     });
     // Nothing in the facts carries file text: that is the whole point.
     expect(JSON.stringify(facts)).not.toContain(NPM_TOKEN);

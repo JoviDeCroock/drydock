@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { githubWorkflowGates, scans } from "./schema";
 
@@ -29,6 +29,18 @@ export interface GateReviewHistory {
   forVersion: GateReviewRow[];
   /** Whether the organization has ever gated any version of this package. */
   packageHasGateHistory: boolean;
+  /**
+   * Whether more completed reviews of this version exist than were read. A
+   * truncated window is an absence of evidence: the approved review may be the
+   * one left outside it, so a non-match cannot be reported as a mismatch.
+   */
+  truncated: boolean;
+  /**
+   * Whether a gate scan of this version exists that did not complete. Such a
+   * scan is still a gate review a maintainer can decide, so its presence rules
+   * out the claim that this version never went through the gate.
+   */
+  versionHasIncompleteGateScan: boolean;
 }
 
 const GATE_REVIEW_LIMIT = 10;
@@ -62,7 +74,7 @@ export async function loadGateReviewHistory(
     eq(scans.status, "complete"),
     eq(scans.packageName, input.packageName),
   );
-  const [forVersion, anyVersion] = await Promise.all([
+  const [forVersion, anyVersion, incompleteForVersion] = await Promise.all([
     db
       .select(selection)
       .from(scans)
@@ -77,11 +89,27 @@ export async function loadGateReviewHistory(
       // An explicit gate decision supersedes scan chronology. Undecided or
       // deleted gate rows fall back to the newest completed scan.
       .orderBy(desc(githubWorkflowGates.decidedAt), desc(scans.completedAt), desc(scans.createdAt))
-      .limit(GATE_REVIEW_LIMIT),
+      // One past the window, so a truncated read is detectable rather than
+      // silently indistinguishable from a complete one.
+      .limit(GATE_REVIEW_LIMIT + 1),
     db.select({ id: scans.id }).from(scans).where(scope).limit(1),
+    db
+      .select({ id: scans.id })
+      .from(scans)
+      .where(
+        and(
+          eq(scans.organizationId, input.organizationId),
+          eq(scans.source, "workflow_gate"),
+          ne(scans.status, "complete"),
+          eq(scans.packageName, input.packageName),
+          eq(scans.stagedVersion, input.version),
+        ),
+      )
+      .limit(1),
   ]);
+  const truncated = forVersion.length > GATE_REVIEW_LIMIT;
   return {
-    forVersion: forVersion.map((row) => ({
+    forVersion: forVersion.slice(0, GATE_REVIEW_LIMIT).map((row) => ({
       scanId: row.scanId,
       stagedVersion: row.stagedVersion,
       summaryJson: row.summaryJson,
@@ -99,5 +127,7 @@ export async function loadGateReviewHistory(
         : null,
     })),
     packageHasGateHistory: anyVersion.length > 0,
+    truncated,
+    versionHasIncompleteGateScan: incompleteForVersion.length > 0,
   };
 }

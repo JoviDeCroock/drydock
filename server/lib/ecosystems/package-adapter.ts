@@ -130,6 +130,13 @@ export interface PackageAdapter<TInput = unknown, TBroker extends AdapterBroker 
   stagedArtifactSha256?(details: StagedDetails): string | null;
 
   /**
+   * Whether the staged bytes were confirmed against the registry's own record
+   * for the stage. Without it a digest computed here describes only what this
+   * scan downloaded, not what the registry holds.
+   */
+  stagedArtifactDigestVerified?(details: StagedDetails): boolean;
+
+  /**
    * Ask the registry what became of a staged release whose bytes could not be
    * acquired, so the failure is not blamed on the credential when the release
    * itself moved on. Advisory: `null` leaves the classification untouched.

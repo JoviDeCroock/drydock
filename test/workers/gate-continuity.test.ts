@@ -162,7 +162,7 @@ describe("gate review history for gate continuity", () => {
     });
 
     expect(history.packageHasGateHistory).toBe(true);
-    expect(evaluateGateContinuity(history, GATED)).toEqual({
+    expect(evaluateGateContinuity(history, GATED, true)).toEqual({
       status: "matched",
       algorithm: "sha256",
       stagedDigest: GATED,
@@ -245,7 +245,7 @@ describe("gate review history for gate continuity", () => {
     expect(evaluateGateContinuity(history, OTHER)?.status).toBe("ungated");
   });
 
-  test("ignores incomplete gate scans and other packages", async () => {
+  test("keeps an incomplete gate scan out of the reviews but records that it exists", async () => {
     const owner = await seedOwner();
     await seedGateScan(owner, { version: "2.0.0", sha256: GATED, status: "failed" });
     await seedGateScan(owner, { version: "2.0.0", sha256: GATED, name: "@octo/other" });
@@ -256,7 +256,16 @@ describe("gate review history for gate continuity", () => {
       version: "2.0.0",
     });
 
-    expect(history).toEqual({ forVersion: [], packageHasGateHistory: false });
+    // A failed gate scan cannot vouch for or accuse the stage, so it is not a
+    // review — but it is still a gate review of this version that a maintainer
+    // can decide, so the stage did not go around the gate.
+    expect(history).toEqual({
+      forVersion: [],
+      packageHasGateHistory: false,
+      truncated: false,
+      versionHasIncompleteGateScan: true,
+    });
+    expect(evaluateGateContinuity(history, GATED, true)).toBeNull();
   });
 
   test("never lets another organization's gate review vouch for a stage", async () => {
@@ -270,7 +279,12 @@ describe("gate review history for gate continuity", () => {
       version: "2.0.0",
     });
 
-    expect(history).toEqual({ forVersion: [], packageHasGateHistory: false });
-    expect(evaluateGateContinuity(history, GATED)).toBeNull();
+    expect(history).toEqual({
+      forVersion: [],
+      packageHasGateHistory: false,
+      truncated: false,
+      versionHasIncompleteGateScan: false,
+    });
+    expect(evaluateGateContinuity(history, GATED, true)).toBeNull();
   });
 });

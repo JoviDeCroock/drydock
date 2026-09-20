@@ -39,15 +39,27 @@ function gateRow(sha256, overrides = {}) {
   };
 }
 
+/**
+ * A history literal with the honest defaults: nothing truncated, no incomplete
+ * gate scan. Tests that care about either say so explicitly.
+ */
+function history(forVersion, packageHasGateHistory, extra = {}) {
+  return {
+    forVersion,
+    packageHasGateHistory,
+    truncated: false,
+    versionHasIncompleteGateScan: false,
+    ...extra,
+  };
+}
+
 describe("evaluateGateContinuity", () => {
   test("is silent for a package the organization never gated", () => {
-    expect(
-      evaluateGateContinuity({ forVersion: [], packageHasGateHistory: false }, GATED),
-    ).toBeNull();
+    expect(evaluateGateContinuity(history([], false), GATED, true)).toBeNull();
   });
 
   test("names a stage of a gated package that never passed the gate", () => {
-    expect(evaluateGateContinuity({ forVersion: [], packageHasGateHistory: true }, GATED)).toEqual({
+    expect(evaluateGateContinuity(history([], true), GATED, true)).toEqual({
       status: "ungated",
       algorithm: "sha256",
       stagedDigest: GATED,
@@ -55,10 +67,46 @@ describe("evaluateGateContinuity", () => {
     });
   });
 
+  test("does not claim npm holds the gated bytes when the stage digest is unbound", () => {
+    // The digests agree, but nothing confirmed the downloaded bytes against
+    // npm's own record for the stage — which is exactly the case the critical
+    // stage-digest finding is raised for. `matched` speaks about what npm
+    // holds, so it is not available here.
+    const continuity = evaluateGateContinuity(history([gateRow(GATED)], true), GATED, false);
+    expect(continuity).toMatchObject({ status: "unverified", stagedDigest: GATED });
+    expect(continuity?.review?.scanId).toBe("scan_gate");
+  });
+
+  test("does not call a version ungated while its gate review is still incomplete", () => {
+    // A gate scan that failed is still a review a maintainer can decide, so the
+    // stage did not go around the gate — the verdict is just not in yet.
+    const continuity = evaluateGateContinuity(
+      history([], true, { versionHasIncompleteGateScan: true }),
+      GATED,
+      true,
+    );
+    expect(continuity?.status).toBe("unverified");
+  });
+
+  test("does not accuse the stage when the review window was truncated", () => {
+    // The approved review may be the one that fell outside the window. Absence
+    // of evidence must not render as "bytes the gate never saw".
+    const continuity = evaluateGateContinuity(
+      history([gateRow(GATED)], true, { truncated: true }),
+      OTHER,
+      true,
+    );
+    expect(continuity?.status).toBe("unverified");
+
+    const complete = evaluateGateContinuity(history([gateRow(GATED)], true), OTHER, true);
+    expect(complete?.status).toBe("digest-mismatch");
+  });
+
   test("matches the stage to the gate review of the same bytes, case-insensitively", () => {
     const continuity = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED)], packageHasGateHistory: true },
+      history([gateRow(GATED)], true),
       GATED.toUpperCase(),
+      true,
     );
     expect(continuity).toMatchObject({
       status: "matched",
@@ -78,19 +126,13 @@ describe("evaluateGateContinuity", () => {
 
   test("prefers a same-bytes review over a newer re-run of different bytes", () => {
     const rerun = gateRow(OTHER, { scanId: "scan_rerun" });
-    const continuity = evaluateGateContinuity(
-      { forVersion: [rerun, gateRow(GATED)], packageHasGateHistory: true },
-      GATED,
-    );
+    const continuity = evaluateGateContinuity(history([rerun, gateRow(GATED)], true), GATED, true);
     expect(continuity?.status).toBe("matched");
     expect(continuity?.review?.scanId).toBe("scan_gate");
   });
 
   test("reports a mismatch when the gate reviewed this version but different bytes were staged", () => {
-    const continuity = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED)], packageHasGateHistory: true },
-      OTHER,
-    );
+    const continuity = evaluateGateContinuity(history([gateRow(GATED)], true), OTHER, true);
     expect(continuity).toMatchObject({
       status: "digest-mismatch",
       stagedDigest: OTHER,
@@ -99,10 +141,7 @@ describe("evaluateGateContinuity", () => {
   });
 
   test("is unverified rather than a mismatch when the staged digest is unavailable", () => {
-    const continuity = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED)], packageHasGateHistory: true },
-      null,
-    );
+    const continuity = evaluateGateContinuity(history([gateRow(GATED)], true), null, true);
     expect(continuity).toMatchObject({ status: "unverified", stagedDigest: null });
   });
 
@@ -116,10 +155,7 @@ describe("evaluateGateContinuity", () => {
       gate: { ...gateRow(GATED).gate, status: "pending", decision: null, decidedAt: null },
     });
     for (const row of [rejected, pending]) {
-      const continuity = evaluateGateContinuity(
-        { forVersion: [row], packageHasGateHistory: true },
-        GATED,
-      );
+      const continuity = evaluateGateContinuity(history([row], true), GATED, true);
       expect(continuity).toMatchObject({
         status: "gate-not-approved",
         review: { scanId: row.scanId, sha256: GATED },
@@ -129,14 +165,16 @@ describe("evaluateGateContinuity", () => {
     // an approved re-run outranks an earlier rejection, and a later rejection
     // outranks an earlier approval.
     const approvedLater = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED), rejected], packageHasGateHistory: true },
+      history([gateRow(GATED), rejected], true),
       GATED,
+      true,
     );
     expect(approvedLater?.status).toBe("matched");
     expect(approvedLater?.review?.scanId).toBe("scan_gate");
     const rejectedLater = evaluateGateContinuity(
-      { forVersion: [rejected, gateRow(GATED)], packageHasGateHistory: true },
+      history([rejected, gateRow(GATED)], true),
       GATED,
+      true,
     );
     expect(rejectedLater?.status).toBe("gate-not-approved");
     expect(rejectedLater?.review?.scanId).toBe("scan_rejected");
@@ -153,10 +191,7 @@ describe("evaluateGateContinuity", () => {
     // With no comparable gate digest there is nothing to accuse the stage
     // with: one digest is not a mismatch.
     for (const row of [multi, malformed]) {
-      const continuity = evaluateGateContinuity(
-        { forVersion: [row], packageHasGateHistory: true },
-        GATED,
-      );
+      const continuity = evaluateGateContinuity(history([row], true), GATED, true);
       expect(continuity?.status).toBe("unverified");
       expect(continuity?.review?.sha256).toBeNull();
     }
@@ -164,8 +199,9 @@ describe("evaluateGateContinuity", () => {
 
   test("reads a deleted gate row as an unknown decision, not a negative one", () => {
     const continuity = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED, { gate: null })], packageHasGateHistory: true },
+      history([gateRow(GATED, { gate: null })], true),
       GATED,
+      true,
     );
     expect(continuity).toMatchObject({
       status: "unverified",
@@ -204,16 +240,14 @@ describe("resolveGateContinuity", () => {
   });
 
   test("scopes the lookup to the organization and package version", async () => {
-    dbMock.loadGateReviewHistory.mockResolvedValueOnce({
-      forVersion: [gateRow(GATED)],
-      packageHasGateHistory: true,
-    });
+    dbMock.loadGateReviewHistory.mockResolvedValueOnce(history([gateRow(GATED)], true));
     const continuity = await resolveGateContinuity({
       db: {},
       identity,
       source: "auto_discovery",
       registryIdentity: { packageName: "pkg", version: "2.0.0" },
       stagedDigest: GATED,
+      stagedDigestBoundToRegistry: true,
     });
     expect(dbMock.loadGateReviewHistory).toHaveBeenCalledWith(
       {},
@@ -231,6 +265,7 @@ describe("resolveGateContinuity", () => {
         source: "manual",
         registryIdentity: { packageName: "pkg", version: "2.0.0" },
         stagedDigest: GATED,
+        stagedDigestBoundToRegistry: true,
       }),
     ).resolves.toBeNull();
   });
@@ -238,10 +273,7 @@ describe("resolveGateContinuity", () => {
 
 describe("normalizeGateContinuity", () => {
   test("round-trips a persisted record", () => {
-    const record = evaluateGateContinuity(
-      { forVersion: [gateRow(GATED)], packageHasGateHistory: true },
-      GATED,
-    );
+    const record = evaluateGateContinuity(history([gateRow(GATED)], true), GATED, true);
     expect(normalizeGateContinuity(JSON.parse(JSON.stringify(record)))).toEqual(record);
   });
 
@@ -266,11 +298,27 @@ describe("normalizeGateContinuity", () => {
       stagedDigest: null,
       review: null,
     });
+    // `unverified` asserts no equality, so it is the status that exercises the
+    // field bounds without also having to satisfy the digest invariant below.
     const long = normalizeGateContinuity({
-      status: "matched",
+      status: "unverified",
       review: { scanId: "s", repository: "r".repeat(2000), runId: Number.NaN },
     });
     expect(long?.review?.repository).toHaveLength(512);
     expect(long?.review?.runId).toBeNull();
+  });
+
+  test("re-derives the match rather than trusting a persisted claim", () => {
+    const review = { scanId: "s", sha256: GATED };
+    // A blob that says `matched` but carries digests that do not agree — or
+    // none at all — would otherwise render the green badge with blank rows.
+    expect(normalizeGateContinuity({ status: "matched", review })).toBeNull();
+    expect(normalizeGateContinuity({ status: "matched", stagedDigest: OTHER, review })).toBeNull();
+    expect(
+      normalizeGateContinuity({ status: "matched", stagedDigest: GATED, review: { scanId: "s" } }),
+    ).toBeNull();
+    expect(
+      normalizeGateContinuity({ status: "matched", stagedDigest: GATED, review })?.status,
+    ).toBe("matched");
   });
 });
