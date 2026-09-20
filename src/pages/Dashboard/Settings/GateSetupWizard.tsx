@@ -605,7 +605,9 @@ function PackageStep({
               }
             />
             {packageNameIssue ? (
-              <Muted class="text-[12px] mt-1.5 text-warn-text">{packageNameIssue}</Muted>
+              <Muted class="text-[12px] mt-1.5" tone="danger">
+                {packageNameIssue}
+              </Muted>
             ) : (
               <Muted class="text-[12px] mt-1.5">
                 Names the generated workflow and its registry pins. Drydock still derives the
