@@ -213,7 +213,11 @@ function normalizeCapabilitySet(value: unknown): CapabilitySet | null {
     capabilities,
     inspectedFiles,
     uninspectedFiles,
-    complete: uninspectedFiles === 0,
+    // Coverage can be incomplete without any file being skipped — an omitted
+    // artifact kind counts no uninspected bodies — so a stored `false` is kept
+    // rather than recomputed away. Recomputing it would let a round-trip
+    // through this normalizer upgrade a delta back to confident.
+    complete: uninspectedFiles === 0 && value.complete !== false,
   };
 }
 

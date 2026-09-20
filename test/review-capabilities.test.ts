@@ -257,6 +257,20 @@ describe("normalizeCapabilityDelta", () => {
     ).toBeNull();
   });
 
+  test("keeps an incomplete side incomplete when no file was skipped", () => {
+    // A whole artifact kind left out of the comparison marks the side
+    // incomplete while counting zero uninspected bodies. Recomputing `complete`
+    // from the counter alone would upgrade the delta back to confident on
+    // every round-trip through a persisted blob.
+    const omitted = JSON.parse(JSON.stringify(valid)) as Record<string, unknown>;
+    (omitted.to as Record<string, unknown>).complete = false;
+    (omitted as Record<string, unknown>).confident = false;
+
+    const normalized = normalizeCapabilityDelta(omitted);
+    expect(normalized?.to.complete).toBe(false);
+    expect(normalized?.confident).toBe(false);
+  });
+
   test("recomputes confidence instead of trusting the persisted flag", () => {
     const tampered = JSON.parse(JSON.stringify(valid)) as Record<string, unknown>;
     (tampered.to as Record<string, unknown>).uninspectedFiles = 3;

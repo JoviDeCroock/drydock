@@ -42,7 +42,17 @@ export function CapabilitiesSection({ delta }: { delta: CapabilityDelta }) {
             {CAPABILITY_LABELS[capability]}
           </Badge>
         ))}
-        {!delta.to.capabilities.length ? <Badge tone="ok">none detected</Badge> : null}
+        {!delta.to.capabilities.length ? (
+          // The reassuring tone is only available over bytes that were all
+          // inspected. Where the scan could not read everything, an empty set
+          // is a lower bound, and the badge is what a scanning reader takes
+          // away — the caveat below it is not enough on its own.
+          delta.to.complete ? (
+            <Badge tone="ok">none detected</Badge>
+          ) : (
+            <Badge tone="neutral">none detected in what was inspected</Badge>
+          )
+        ) : null}
       </div>
       <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
         {capabilityDeltaDescription(delta)}
@@ -74,6 +84,13 @@ export function capabilityDeltaDescription(delta: CapabilityDelta): string {
     parts.push(
       `Lower bound: ${uninspected} file ${uninspected === 1 ? "body" : "bodies"} exceeded the ` +
         "inspection tier and could carry capabilities this review cannot see.",
+    );
+  } else if (delta.to.complete === false || delta.from?.complete === false) {
+    // Coverage can also be incomplete without any file being skipped — a whole
+    // artifact kind left out of the comparison counts no uninspected bodies.
+    parts.push(
+      "Lower bound: part of this release was not inspected, so it could carry " +
+        "capabilities this review cannot see.",
     );
   }
   parts.push("Derived from the same patterns the deterministic rules match; advisory only.");
