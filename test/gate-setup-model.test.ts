@@ -162,6 +162,46 @@ describe("GateSetupModel", () => {
     expect(model.environment.value).toBe("Production");
   });
 
+  test("resolves a stored mapping for the draft, matching GitHub's casing", () => {
+    const model = readyModel();
+    model.environmentChoice.value = "Production";
+    // Stored targets are normalized to lowercase; the draft carries GitHub's
+    // casing. A returning maintainer's existing mapping has to still count.
+    model.knownReleaseTargets.value = [releaseTarget()];
+
+    expect(model.resolvedReleaseTarget.value?.id).toBe("target-1");
+
+    model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(true);
+  });
+
+  test("does not resolve a stored mapping belonging to another draft", () => {
+    const model = readyModel();
+    model.knownReleaseTargets.value = [{ ...releaseTarget(), repositoryFullName: "octo/other" }];
+
+    expect(model.resolvedReleaseTarget.value).toBeNull();
+    model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(false);
+  });
+
+  test("stops reading a removed mapping before the parent refetches", async () => {
+    const model = readyModel();
+    model.verification.value = verified();
+    model.knownReleaseTargets.value = [releaseTarget()];
+    expect(model.gateArmed.value).toBe(true);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: true })),
+    );
+    await model.removeReleaseTarget("target-1");
+
+    // The parent's stored list is refetched asynchronously. Until it lands the
+    // mapping is gone, and the armed badge must not keep resting on it.
+    expect(model.resolvedReleaseTarget.value).toBeNull();
+    expect(model.gateArmed.value).toBe(false);
+  });
+
   test("reports the gate armed only when GitHub confirms the protection rule", () => {
     const model = readyModel();
     model.releaseTarget.value = releaseTarget();
