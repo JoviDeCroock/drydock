@@ -135,24 +135,115 @@ together always verifies, which is what matters for the archival use case.
 `GET /public/badge/:ecosystem/:package[?tag=]` (ecosystems: `npm`, `pypi`,
 `vscode`; npm names may contain `@scope/` slashes) returns a
 [shields.io endpoint-badge](https://shields.io/badges/endpoint-badge) payload
-for the most recent **feed-listed** review of that package's release line:
+for the most recent review of that package's release line that the badge may
+answer with. Two routes qualify a review: an **approved, published release of a
+provably public npm package**, which needs no opt-in (see "Default-on" below),
+or any review an organization **deliberately feed-listed**. Candidates from
+both are ordered by _release_ — `compareBadgeCandidates`, semver over the
+registry's version — never by which scan finished last.
 
-- Not listed / unknown → `not reviewed` (lightgrey). Always `200` so badge
-  proxies never render an error.
-- Listed, undecided → `<version> reviewed · <release risk> risk`, colored
-  green / yellow / red by risk.
-- Listed, approved (`publish`) → `<version> approved` (green when
-  registry-verified). The decision supersedes the pre-decision risk grade in
-  the message: a maintainer read the evidence and signed off, and an approved
-  release wearing "medium risk" would read as a warning about a release the
-  review process cleared. The grade and findings stay in the report behind the
-  badge.
-- Listed, rejected (`no_publish`) → `<version> blocked` (red).
+- Nothing qualifying → `not reviewed` (lightgrey). Always `200` so badge
+  proxies never render an error, and byte-identical whether the package was
+  never scanned or its reviews simply do not qualify.
+- Approved (`publish`) → `<version> approved` (green when registry-verified).
+  The decision supersedes the pre-decision risk grade in the message: a
+  maintainer read the evidence and signed off, and an approved release wearing
+  "medium risk" would read as a warning about a release the review process
+  cleared. The grade and findings stay in the report behind the badge.
+- Listed and undecided → `<version> reviewed · <release risk> risk`, colored
+  green / yellow / red by risk. Only via the listing route; a default-on badge
+  never speaks for a review nobody acted on.
+- Listed and rejected (`no_publish`) → `<version> blocked` (red). Listing route
+  only, for the same reason.
 
-The badge is a name-discoverable index, so it takes the same second opt-in as
-the threat feed — a report shared privately by link never becomes queryable by
-package name. **Published-pair reviews never answer it at all** — see package
-identity below.
+The version rendered is npm's own `registry_version` wherever there is one, and
+falls back to the manifest's only for a review the registry never answered
+about — a gate review, which already renders `unverified`.
+
+**An OSS package needs no opt-in.** A badge lives in a README and answers for
+whatever a consumer would install, so for a package that is provably public it
+answers from the organization's approvals directly — nothing to share, nothing
+to list. `isDefaultBadgePublic` decides that at write time, and every part of
+it fails closed (see "Default-on" below).
+
+Everything else keeps the second opt-in the threat feed takes: a report shared
+privately by link never becomes queryable by package name. **Published-pair
+reviews never answer the badge at all** — see package identity below.
+
+### Default-on (`badge_public`)
+
+Requiring an opt-in per release is how a badge ends up quoting a version from
+last month: listing is per scan, a release line is forever, and the two only
+stay in step if someone remembers. For an OSS package there is nothing to
+protect that the registry has not already published, so the badge answers on
+its own.
+
+`scans.badge_public` records that decision when the scan is persisted, and it
+is false unless all three of these are provable:
+
+- **A registry-verified source.** npm accepted the organization's own token for
+  that exact name, so the review is the maintainer's own. A `workflow_gate`
+  review only _claims_ the name in a tarball manifest — anyone can build one —
+  so without this, approving a review of a tarball calling itself `react` would
+  mint an authoritative-looking approval for a package the reviewer has no
+  claim on. Manifest-claimed reviews keep the explicit opt-in.
+- **The public npm registry.** A mirror, proxy, or enterprise registry proves
+  nothing about whether the package is public.
+- **An unscoped name.** npm only allows a private package under a scope, so an
+  unscoped name on the public registry is public by construction. A scoped
+  package may well be private, and keeps the opt-in.
+
+It is a stored column rather than a predicate readers re-derive, because
+`registry_url` is null on rows that predate it — the registry cannot be
+recovered later, and a disclosure gate should not be an inference three columns
+deep. Reviews predating the column are backfilled by
+`pnpm run db:backfill:badge-package-key:remote`, whose header states the one
+assertion that backfill makes.
+
+Two further conditions apply to the _release_ rather than the package, and
+`listDefaultBadgeCandidateScans` enforces both:
+
+- **Approved only.** With no deliberate listing there is no consent to publish
+  a verdict the organization did not act on, so an undecided review and a
+  rejection are both simply absent — indistinguishable from a package nobody
+  scanned. This is the one place the badge is deliberately quieter than the
+  truth, and the remedy is in the maintainer's hands: listing a review
+  publishes it with the full vocabulary, `blocked` included.
+- **Published by the registry.** A staged version is not public until npm
+  publishes it, so the badge keys on npm's own version status. Without it, an
+  approved release would appear on the badge before it shipped, leaking both
+  the version number and the timing.
+
+Four limits are known and deliberate:
+
+- **The sweep that creates a badge does not purge its cache.** A default-on
+  badge appears when the registry-status sweep flips a version to `published`,
+  and that sweep runs in cron with no request colo to purge — so a new badge,
+  or an older one going grey, lags by up to the 300s TTL. Every _user_ action
+  that changes a badge (decision, share, list, unlist, revoke) does purge. The
+  old design had a user action behind every badge change; default-on removed
+  that, and nothing replaced it.
+- **A default-on badge is not organization-scoped.** Two organizations can both
+  prove npm accepts their token for the same name, and both answer; the higher
+  release wins. That is the right outcome for co-maintainers and an invisible
+  handover for anyone else, with no dashboard signal that a badge changed
+  hands.
+- **`isDefaultBadgePublic` cites an advisory check.** "npm accepted the
+  organization's token for this name" rests on `checkStagedPublishAccess`,
+  which fails _open_ on a network error or any non-401/403/404 response. The
+  authorization that actually holds is the later credentialed tarball fetch.
+  Tightening that check is worth doing before this surface grows.
+- **Version comparison degrades on non-semver versions.** `compareSemver` falls
+  back to `localeCompare` when either side fails to parse, so a review whose
+  only version is an unparseable manifest string can order arbitrarily against
+  a real release. Reachable only for a gate review a maintainer listed
+  themselves, which already renders `unverified`.
+
+The two routes union in the badge handler: a review can satisfy both, so they
+are deduplicated by scan id and ordered over the union, because `pickBadgeScan`
+reads position to break ties. Nothing about the _report_ changes — a default-on
+badge carries no link, no findings, and no feed entry. It is a verdict, not
+evidence.
 
 ### Release lines (`?tag=`)
 
@@ -210,6 +301,59 @@ on. Two locks enforce it: `badgeLookupKey` gives such a scan no
 `public_package_key` on listing, so it never enters the badge index, and
 `listBadgeCandidateScans` excludes the source in SQL so a row that acquired a
 key some other way still never reaches `pickBadgeScan`.
+
+### Releasing again (`badge_package_key`)
+
+A badge lives in a README forever and is keyed on a package name, while
+listing is per scan. Nothing tied the two together, so a package that released
+again kept a green `3.0.0 approved` badge next to an install command that
+fetches `3.0.1` — the badge vouching for bytes nobody installs. Two mechanisms
+close that, one on each side.
+
+**The badge stops vouching.** When the organization behind the pick has a newer
+release on the same line with no listed review, the badge answers about _that_
+version instead: `<newer version> not reviewed`, lightgrey, with no identity
+qualifier — the pick is no longer what the badge reports. "Not reviewed" is the
+same claim the badge already makes for a package with nothing listed: nothing
+is public, not that nobody looked. This also closes the obvious way to game the
+badge, which is to list the releases that reviewed well and quietly skip the
+rest.
+
+`findNewerPublishedRelease` bounds that check three ways, because the badge is
+an anonymous surface:
+
+- **The pick's own organization.** Another organization's review of the same
+  package says nothing about this maintainer's release line, and letting one
+  count would hand any account a lever on someone else's README. The cost is
+  that a maintainer who stops scanning a package keeps their last badge.
+- **Only versions the registry itself published.** Both the gate
+  (`registry_version_status`) and the string the badge renders come from npm's
+  answer about `registry_version` — never from `staged_version`, which the scan
+  replaces with the _inspected tarball's_ manifest and which is therefore
+  reviewed package bytes. That keeps two things out of a third party's README:
+  a version npm has not announced (a staged release is not public yet, so
+  naming one would leak the release and its timing), and an attacker-authored
+  string. Only npm reports version status, so no PyPI or VS Code review is
+  stale-detected today.
+- **Only unlisted releases.** A newer _listed_ review is either the badge's own
+  pick or a deliberate preference (registry-verified outranks manifest-claimed);
+  neither is staleness.
+
+Recency is **version order, not scan time**: re-reviewing the quoted release,
+or an older one, completes later than the pick without being a newer release,
+and must not take the badge off a valid review. Scan time only bounds the page
+the comparison runs over.
+
+The newer release's decision is never consulted and never disclosed — an
+automatic red badge for a release the organization chose not to ship would
+publish an internal verdict about software that was never released.
+
+The probe runs on a badge cache miss against `scans.badge_package_key`, which
+is the canonical identity written for **every** badge-eligible scan, shared or
+not. It is not an authorization signal and never admits a row to the badge
+index: `public_package_key` plus `public_feed_listed_at` remain the only two
+locks on that. Reviews that predate the column need
+`pnpm run db:backfill:badge-package-key:remote` (see `docs/tooling.md`).
 
 Embed via
 `https://img.shields.io/endpoint?url=<origin>/public/badge/npm/<package>`

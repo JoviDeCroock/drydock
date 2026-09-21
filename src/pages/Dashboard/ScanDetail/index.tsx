@@ -369,6 +369,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           badgeEcosystem={badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
           packageName={detail.scan.packageName}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
+          badgePublic={Boolean(detail.scan.badgePublic)}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}

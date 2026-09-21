@@ -5,7 +5,11 @@ import {
   getScan,
   getScanFile,
   encodeThreatFeedCursor,
+  compareBadgeCandidates,
+  findNewerPublishedRelease,
   listBadgeCandidateScans,
+  listDefaultBadgeCandidateScans,
+  type SharedScanRow,
   listThreatFeedScans,
   parseThreatFeedCursor,
   resolvePublicShareToken,
@@ -21,6 +25,7 @@ import {
   pickBadgeScan,
   PUBLIC_ECOSYSTEMS,
   publicFeedCacheKey,
+  publicPackageLookupKey,
   publicPackageNameMax,
   resolveBadgeTag,
   scanDistTag,
@@ -155,6 +160,15 @@ publicReportsRoutes.get("/threat-feed.json", async (c) => {
 
 const BADGE_ERROR_HEADERS = { "access-control-allow-origin": "*" } as const;
 
+/** The claim the badge ended up making, for the serve counter. */
+function badgeOutcome(match: SharedScanRow | null, supersededBy: string | null): string {
+  if (!match) return "not_reviewed";
+  if (supersededBy) return "superseded";
+  if (match.decision === "publish") return "approved";
+  if (match.decision === "no_publish") return "blocked";
+  return "reviewed";
+}
+
 publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const ecosystem = c.req.param("ecosystem") as PublicEcosystem;
   if (!PUBLIC_ECOSYSTEMS.includes(ecosystem)) {
@@ -187,7 +201,24 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
         badgeTagMatches(scanDistTag(row.summaryJson), tag),
     ),
   );
-  return c.json(buildBadgePayload(match, tag), 200, {
+  // One indexed probe, only on a cache miss with a review to quote: has this
+  // organization published a newer release on this line that it never listed?
+  const supersededBy = match ? await findNewerPublishedRelease(db, match) : null;
+  // A serve, not an impression: shields (and Camo, on GitHub) sit in front of
+  // this handler, and the colo cache means repeats inside the TTL never reach
+  // it at all. What this counts is proxies refreshing their copy.
+  recordProductEvent(c.env, {
+    name: "badge.served",
+    ecosystem,
+    // Only a name a review actually answered for. The endpoint replies
+    // `not reviewed` for any string, so recording the request would let
+    // anyone write arbitrary values into the dataset.
+    packageName: match ? packageName : "",
+    tag,
+    outcome: badgeOutcome(match, supersededBy),
+    route: match && defaultOn.some((row) => row.scanId === match.scanId) ? "default" : "listed",
+  });
+  return c.json(buildBadgePayload(match, tag, supersededBy), 200, {
     "cache-control": "public, max-age=300",
     "access-control-allow-origin": "*",
     ...(match ? {} : { [COLO_CACHE_SKIP_HEADER]: "1" }),

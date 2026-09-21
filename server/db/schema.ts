@@ -222,6 +222,29 @@ export const scans = sqliteTable(
     // Populated only while feed-listed, so private shares stay unqueryable by
     // package name and PyPI/VS Code aliases resolve through one indexed key.
     publicPackageKey: text("public_package_key"),
+    // The same canonical identity, but written for every badge-eligible scan
+    // whether or not it is shared. This is the *release line* a scan belongs
+    // to, not an authorization signal: it never admits a row to the badge
+    // index (`public_package_key` + `public_feed_listed_at` remain the only
+    // two locks on that). It answers one question the badge cannot answer from
+    // listed rows alone — has this package released again since the review the
+    // badge is quoting — so a green badge cannot keep vouching for a
+    // superseded version. Null for sources that may never occupy a badge.
+    badgePackageKey: text("badge_package_key"),
+    // Whether this review may answer the badge with no opt-in at all.
+    //
+    // A badge is a name-keyed anonymous surface, so "no opt-in" is only safe
+    // where three things are provable at write time, and it fails closed if
+    // any is not: the source is registry-verified (npm accepted the
+    // organization's token for this exact name, so this is the maintainer's
+    // own review, not a manifest claim); the registry is the public npm
+    // registry; and the name is unscoped, which on npm means public, because
+    // npm only allows a private package under a scope.
+    //
+    // Encoded once here rather than re-derived by readers: `registry_url` is
+    // null on rows that predate it, so the registry cannot be recovered later,
+    // and a disclosure gate should not be an inference three columns deep.
+    badgePublic: integer("badge_public", { mode: "boolean" }).notNull().default(false),
     // npm's own lifecycle status for this exact package version, as reported by
     // `GET /-/package/{name}/version/{version}/status`. This is the registry's
     // view of the release, never Drydock's: `decision` records what the
@@ -271,6 +294,11 @@ export const scans = sqliteTable(
     // index covered nothing and taxed every write to the busiest table.
     publicPackageKeyCompletedIdx: index("scans_public_package_key_completed_idx").on(
       table.publicPackageKey,
+      table.completedAt,
+    ),
+    // Serves the staleness probe: newest release on a line, listed or not.
+    badgePackageKeyCompletedIdx: index("scans_badge_package_key_completed_idx").on(
+      table.badgePackageKey,
       table.completedAt,
     ),
     gateIdx: index("scans_gate_org_idx").on(table.gateId, table.organizationId),

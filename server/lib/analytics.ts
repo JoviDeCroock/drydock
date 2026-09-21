@@ -129,6 +129,29 @@ export type AnalyticsEvent =
       packageCount: number;
     }
   | {
+      /**
+       * One badge *serve*, never an impression. A README badge is fetched by
+       * shields.io and, on GitHub, by Camo before it — and this Worker caches
+       * for 300s per colo on top of that — so a recorded event means a proxy
+       * refreshed its copy, not that a person looked. It is a lower bound on
+       * distribution breadth and a fine relative signal; it is not a view
+       * count and must never be reported as one.
+       */
+      name: "badge.served";
+      ecosystem: string;
+      /**
+       * Only when a review actually answered. The endpoint replies
+       * `not reviewed` for any name at all, so recording the requested string
+       * would put unbounded attacker-chosen values into the dataset.
+       */
+      packageName: string;
+      tag: string;
+      /** What the badge said: approved / blocked / reviewed / superseded / not_reviewed. */
+      outcome: string;
+      /** Which route answered: `default` (no opt-in) or `listed`. */
+      route: string;
+    }
+  | {
       name: "public_diff.viewed";
       ecosystem: string;
       packageName: string;
@@ -149,6 +172,7 @@ export const ANALYTICS_EVENT_NAMES = [
   "ai_review.decided",
   "npm_connection.validated",
   "public_diff.viewed",
+  "badge.served",
   "user.signed_up",
   "organization.created",
   "integration.connected",
@@ -292,6 +316,13 @@ function toDataPoint(event: AnalyticsEvent): AnalyticsEngineDataPoint {
         "",
         [event.surface, event.decision],
         [0, event.packageCount],
+      );
+    case "badge.served":
+      return base(
+        "",
+        event.ecosystem,
+        [event.packageName, event.tag, event.outcome, event.route],
+        [],
       );
     case "public_diff.viewed":
       return base(

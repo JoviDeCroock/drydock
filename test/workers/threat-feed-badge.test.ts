@@ -1350,3 +1350,383 @@ describe("public threat feed", () => {
     expect(((await malformed.json()) as FeedBody).entries.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * A README badge is permanent and name-keyed, while listing is per scan. These
+ * cover the two halves of keeping those consistent: the badge refusing to
+ * vouch for a version the registry has already moved past, and the standing
+ * grant that keeps it current without a manual step per release.
+ */
+async function markRegistryPublished(scanId: string, registryVersion: string): Promise<void> {
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({
+      registryVersionStatus: "published",
+      registryVersionStatusAt: new Date(),
+      // The badge names *this* string, never the manifest's version: only the
+      // registry's answer is safe to render on an anonymous surface.
+      registryVersion,
+    })
+    .where(eq(schema.scans.id, scanId));
+}
+
+// Seeded scans can land in the same millisecond, and "newer" is a strict
+// comparison; pin the order rather than race the clock.
+async function backdateScan(scanId: string, msAgo: number): Promise<void> {
+  const db = createDb(env.DB);
+  await db
+    .update(schema.scans)
+    .set({ completedAt: new Date(Date.now() - msAgo) })
+    .where(eq(schema.scans.id, scanId));
+}
+
+async function decide(
+  app: ReturnType<typeof buildTestApp>,
+  scanId: string,
+  decision: "publish" | "no_publish",
+  // A user who is not the owner resolves their own personal organization
+  // unless the request names one, the same as the dashboard's org switcher.
+  organizationId?: string,
+) {
+  const res = await request(app, `/api/v1/scans/${scanId}/decision`, {
+    method: "POST",
+    body: JSON.stringify({ decision, reason: "reviewed" }),
+    headers: organizationId ? { "x-organization-id": organizationId } : undefined,
+  });
+  expect(res.status).toBe(200);
+  return res;
+}
+
+async function shareState(scanId: string) {
+  const db = createDb(env.DB);
+  const [row] = await db
+    .select({
+      token: schema.scans.publicShareToken,
+      listedAt: schema.scans.publicFeedListedAt,
+      includesFiles: schema.scans.publicShareIncludesFiles,
+    })
+    .from(schema.scans)
+    .where(eq(schema.scans.id, scanId));
+  return row;
+}
+
+async function seedApprovedListedRelease(
+  owner: SeededUser,
+  app: ReturnType<typeof buildTestApp>,
+  packageName: string,
+  version: string,
+  options: { tag?: string } = {},
+): Promise<string> {
+  const scanId = await seedCompletedScan(owner, { packageName, version, ...options });
+  await backdateScan(scanId, 60_000);
+  await decide(app, scanId, "publish");
+  await share(app, scanId, { threatFeed: true });
+  return scanId;
+}
+
+describe("badge staleness", () => {
+  test("a published release with no listed review takes the badge off the older one", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    const newer = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    await markRegistryPublished(newer, "3.0.1");
+
+    // The badge answers about the version a consumer would install, and says
+    // only that nothing is listed for it — never the newer scan's decision.
+    const badge = await fetchBadge(app, "npm", packageName);
+    expect(badge.body).toMatchObject({
+      label: "drydock",
+      message: "3.0.1 not reviewed",
+      color: "lightgrey",
+    });
+  });
+
+  test("a newer release npm has not published never reaches the badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+
+    // Staged but not published: the version number is not public yet, so the
+    // badge must not disclose that a release is in flight.
+    await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("another organization's release cannot grey out a maintainer's badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+
+    const stranger = await seedUser();
+    const strangerScan = await seedCompletedScan(stranger, { packageName, version: "3.0.1" });
+    await markRegistryPublished(strangerScan, "3.0.1");
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("listing the newer release makes the badge current again", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+    const newer = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    await markRegistryPublished(newer, "3.0.1");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+
+    await decide(app, newer, "publish");
+    await share(app, newer, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a release on another line leaves the default badge alone", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+
+    const prerelease = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.1.0-rc.1",
+      tag: "beta",
+      registryUrl: "https://registry.npmjs.org",
+    });
+    await markRegistryPublished(prerelease, "3.1.0-rc.1");
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+});
+
+describe("the badge renders registry facts, not package bytes", () => {
+  test("a manifest cannot put its own string on the badge", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+
+    // `staged_version` is replaced with the inspected tarball's manifest after
+    // a scan, so it is reviewed package bytes; npm's answer is what may be
+    // rendered on an anonymous surface.
+    const hostile = await seedCompletedScan(owner, {
+      packageName,
+      version: "99.0.0-CONTACT-attacker.example",
+    });
+    await markRegistryPublished(hostile, "3.0.1");
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+
+  test("re-reviewing the quoted release does not take the badge off it", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedListedRelease(owner, app, packageName, "3.0.0");
+
+    // A second review of 3.0.0 completes later than the listed one, but it is
+    // not a newer release.
+    const rereview = await seedCompletedScan(owner, { packageName, version: "3.0.0" });
+    await markRegistryPublished(rereview, "3.0.0");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    // Nor is a late review of an older one.
+    const older = await seedCompletedScan(owner, { packageName, version: "2.9.0" });
+    await markRegistryPublished(older, "2.9.0");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+});
+
+/**
+ * Badges answer for an OSS package with no opt-in. These pin the three things
+ * that make that safe — the maintainer's own credential, a public name, and a
+ * release npm has actually served — and the two the maintainer never
+ * consented to publish.
+ */
+async function seedPublicRelease(
+  owner: SeededUser,
+  packageName: string,
+  version: string,
+  options: { tag?: string; source?: "manual" | "workflow_gate" } = {},
+): Promise<string> {
+  const scanId = await seedCompletedScan(owner, {
+    packageName,
+    version,
+    registryUrl: "https://registry.npmjs.org",
+    ...options,
+  });
+  await markRegistryPublished(scanId, version);
+  return scanId;
+}
+
+describe("an OSS package needs no opt-in", () => {
+  test("an approved public release answers the badge unshared and unlisted", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await decide(app, scanId, "publish");
+    const badge = await fetchBadge(app, "npm", packageName);
+    expect(badge.body).toMatchObject({
+      label: "drydock",
+      message: "3.0.1 approved",
+      color: "brightgreen",
+    });
+
+    // Still no share link and no feed entry: the badge is a verdict, the
+    // report is evidence, and only the second one took an opt-in.
+    expect(await shareState(scanId)).toMatchObject({ token: null, listedAt: null });
+    const feed = await fetchFeed(app);
+    expect(feed.entries.some((entry) => entry.package === packageName)).toBe(false);
+  });
+
+  test("the queried release line answers on its own", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const stable = await seedPublicRelease(owner, packageName, "3.0.1");
+    const beta = await seedPublicRelease(owner, packageName, "4.0.0-beta.1", { tag: "beta" });
+    await decide(app, stable, "publish");
+    await decide(app, beta, "publish");
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    const betaBadge = await fetchBadge(app, "npm", packageName, { tag: "beta" });
+    expect(betaBadge.body).toMatchObject({
+      label: "drydock (beta)",
+      message: "4.0.0-beta.1 approved",
+    });
+  });
+
+  test("a rejected or undecided release is simply absent", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+
+    // Undecided: reviewed, but the organization has not acted on it.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    await decide(app, scanId, "no_publish");
+    // Rejected: a verdict about their own release that nobody chose to publish.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    // Listing it is how a maintainer publishes that verdict deliberately.
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 blocked");
+  });
+
+  test("a scoped package keeps the opt-in", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    // npm only allows a private package under a scope, so a scoped name proves
+    // nothing about publicness and must not answer by default.
+    const packageName = `@acme/pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a manifest claim cannot mint an approval for a name it does not own", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    // A gate review only *claims* the name in a tarball manifest. Anyone can
+    // build one, so it never answers without a deliberate listing.
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1", {
+      source: "workflow_gate",
+    });
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("an approved release npm has not published yet stays quiet", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    // Staged and approved, but npm has not served it. Announcing it here would
+    // leak the version number and the timing of a release that has not shipped.
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.1",
+      registryUrl: "https://registry.npmjs.org",
+    });
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+
+    await markRegistryPublished(scanId, "3.0.1");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a mirror or private registry never qualifies", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.1",
+      registryUrl: "https://npm.internal.example.com",
+    });
+    await markRegistryPublished(scanId, "3.0.1");
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("a newer public release the badge cannot speak for still supersedes it", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const first = await seedPublicRelease(owner, packageName, "3.0.0");
+    await backdateScan(first, 60_000);
+    await decide(app, first, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+
+    // Published, reviewed, never approved — so it answers no badge itself, and
+    // must not leave the older green one vouching for what people install.
+    await seedPublicRelease(owner, packageName, "3.0.1");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
+  });
+});
+
+describe("release order decides the badge, not scan order", () => {
+  test("a newer release that finished scanning first still wins", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+
+    // Two releases staged together; the 3.0.1 tarball happens to finish first.
+    // Ordering candidates by completion would pin the badge to 3.0.0 forever,
+    // and the staleness probe cannot catch it — a newer release that is itself
+    // a candidate is not "a release the badge cannot speak for".
+    const newer = await seedPublicRelease(owner, packageName, "3.0.1");
+    await backdateScan(newer, 60_000);
+    const older = await seedPublicRelease(owner, packageName, "3.0.0");
+    await decide(app, newer, "publish");
+    await decide(app, older, "publish");
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("the badge names the registry's version, never the tarball manifest's", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "99.0.0-CONTACT-attacker.example",
+      registryUrl: "https://registry.npmjs.org",
+    });
+    await markRegistryPublished(scanId, "3.0.1");
+    await decide(app, scanId, "publish");
+
+    // The approved branch renders too — not only the superseded one.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+});

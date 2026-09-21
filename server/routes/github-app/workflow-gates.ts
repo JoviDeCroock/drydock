@@ -246,11 +246,7 @@ workflowGateRoutes.post("/workflow-gates/:gateId/decision", async (c) => {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
-      badgeLookupKey({
-        source: decidedPackage.scan.source,
-        packageName: decidedPackage.scan.packageName,
-        summaryJson: decidedPackage.scan.summaryJson,
-      }),
+      badgeLookupKey(decidedPackage.scan),
       // Gate scans carry no dist-tag today, so this resolves to the default
       // entry — passed explicitly so it stays correct if they ever do.
       scanDistTag(decidedPackage.scan.summaryJson),

@@ -239,6 +239,13 @@
       "when": 1790144955299,
       "tag": "0033_lying_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1790063778987,
+      "tag": "0034_fancy_moira_mactaggert",
+      "breakpoints": true
     }
   ]
 }

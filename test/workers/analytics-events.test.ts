@@ -187,3 +187,31 @@ describe("product analytics wiring", () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe("badge serves", () => {
+  // The endpoint answers `not reviewed` for any string at all, so the request
+  // is attacker-controlled text on an anonymous surface. It must not become a
+  // dimension: unbounded cardinality, and a dataset anyone can write into.
+  test("an unknown package is counted without recording the requested name", async () => {
+    const written = withAnalytics();
+    const requested = `pkg-${crypto.randomUUID().slice(0, 8)}-not-a-real-package`;
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`${ORIGIN}/public/badge/npm/${requested}`),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { message: string }).message).toBe("not reviewed");
+
+    const served = eventsNamed(written, "badge.served");
+    expect(served).toHaveLength(1);
+    expect(served[0].blobs[BLOB.ecosystem]).toBe("npm");
+    // blob5 is `packageName`, blob7 the outcome, in declaration order.
+    expect(served[0].blobs[BLOB.dim1]).toBe("");
+    expect(served[0].blobs).not.toContain(requested);
+    expect(served[0].blobs[BLOB.dim1 + 2]).toBe("not_reviewed");
+  });
+});

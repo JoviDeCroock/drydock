@@ -221,6 +221,66 @@ export function badgeEcosystem(source: string, summaryJson: unknown): PublicEcos
   return isBadgeEligibleSource(source) ? scanEcosystem(source, summaryJson) : null;
 }
 
+/**
+ * The badge cache key a row occupies, or null when it can never occupy one —
+ * no package name, a source that may not answer the name-keyed badge index, or
+ * a scan whose ecosystem was never established. The one rule for "which badge
+ * would this row answer", so the listing write, the key persisted on every
+ * scan, and the cache purge cannot drift from each other or from the badge
+ * route.
+ */
+export function badgeLookupKey(row: {
+  source: string;
+  packageName: string | null;
+  summaryJson: unknown;
+}): string | null {
+  if (!row.packageName) return null;
+  const ecosystem = badgeEcosystem(row.source, row.summaryJson);
+  return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
+}
+
+// npm serves the public registry from exactly this host. A scan pointed at
+// anything else — a mirror, a proxy, an enterprise registry — proves nothing
+// about whether the package is public, so it never qualifies.
+const PUBLIC_NPM_REGISTRY_HOSTS: ReadonlySet<string> = new Set(["registry.npmjs.org"]);
+
+/**
+ * Whether this review may answer the badge with **no opt-in at all**.
+ *
+ * The badge is name-keyed and anonymous, so default-on is only safe where
+ * being public is provable rather than assumed. Three things must hold, and
+ * every one of them fails closed:
+ *
+ * - **Registry-verified source.** npm accepted the organization's own token
+ *   for this exact name, so the review is the maintainer's. A manifest claim
+ *   is not: anyone can build a tarball calling itself `react`, and without
+ *   this they could mint an approval for a name they have no claim on.
+ * - **The public npm registry.** Any other host says nothing about publicness.
+ * - **An unscoped name.** npm only allows a private package under a scope, so
+ *   an unscoped name on the public registry is public by construction. A
+ *   scoped package may be private and keeps the explicit opt-in.
+ *
+ * This is about the *package*; whether a given release is public is a separate
+ * question the badge answers with npm's own version status.
+ */
+export function isDefaultBadgePublic(row: {
+  source: string;
+  packageName: string | null;
+  registryUrl: string | null;
+  summaryJson: unknown;
+}): boolean {
+  if (!REGISTRY_VERIFIED_SOURCES.has(row.source)) return false;
+  if (scanEcosystem(row.source, row.summaryJson) !== "npm") return false;
+  const name = row.packageName?.trim();
+  if (!name || name.startsWith("@")) return false;
+  if (!row.registryUrl) return false;
+  try {
+    return PUBLIC_NPM_REGISTRY_HOSTS.has(new URL(row.registryUrl).host);
+  } catch {
+    return false;
+  }
+}
+
 // A manifest claim must not displace a registry-verified npm review, and an
 // unaffiliated public review must not occupy the badge at all.
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
@@ -330,10 +390,31 @@ export function buildUnavailableBadgePayload(tag: string = DEFAULT_BADGE_TAG): B
   };
 }
 
+/**
+ * `supersededBy` is the version of a newer published release on this line that
+ * has no listed review (see `findNewerPublishedRelease`). The badge then
+ * answers about *that* version rather than the older one it holds a review
+ * for: a consumer reads the badge next to an install command, and a green
+ * "3.0.0 approved" beside a registry serving 3.0.1 vouches for bytes nobody
+ * installs. It also closes the obvious way to game the badge — list the
+ * releases that reviewed well, quietly skip the ones that did not.
+ *
+ * "not reviewed" is the same claim this badge already makes for a package with
+ * no listed review at all: nothing is public, not that nobody looked. The
+ * newer release's own decision is never consulted or disclosed.
+ */
 export function buildBadgePayload(
   row: SharedScanRow | null,
   tag: string = DEFAULT_BADGE_TAG,
+  supersededBy: string | null = null,
 ): BadgePayload {
+  // The registry's own version wherever there is one. `stagedVersion` is
+  // replaced with the *inspected tarball's* manifest after a scan, so it is
+  // reviewed package bytes: sanitized by `badgeVersion`, but still an
+  // attacker-authored string on an anonymous surface, and not a version npm
+  // ever confirmed. Only a review with no registry answer at all — a gate
+  // review, which already renders `unverified` — falls back to it.
+  const version = badgeVersion(row?.registryVersion ?? row?.stagedVersion ?? null);
   if (!row) {
     return {
       schemaVersion: 1,
@@ -343,11 +424,22 @@ export function buildBadgePayload(
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }
+  if (supersededBy) {
+    return {
+      schemaVersion: 1,
+      // The pick no longer speaks for the line, so its identity qualifier
+      // would describe a review this badge is not reporting.
+      label: badgeLabel(null, tag),
+      message: `${badgeVersion(supersededBy)} not reviewed`,
+      color: "lightgrey",
+      cacheSeconds: BADGE_CACHE_SECONDS,
+    };
+  }
   if (row.decision === "no_publish") {
     return {
       schemaVersion: 1,
       label: badgeLabel(row, tag),
-      message: `${badgeVersion(row.stagedVersion)} blocked`,
+      message: `${version} blocked`,
       color: "red",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
@@ -356,7 +448,7 @@ export function buildBadgePayload(
     return {
       schemaVersion: 1,
       label: badgeLabel(row, tag),
-      message: `${badgeVersion(row.stagedVersion)} approved`,
+      message: `${version} approved`,
       color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
@@ -365,7 +457,7 @@ export function buildBadgePayload(
   return {
     schemaVersion: 1,
     label: badgeLabel(row, tag),
-    message: `${badgeVersion(row.stagedVersion)} reviewed · ${risk} risk`,
+    message: `${version} reviewed · ${risk} risk`,
     color:
       scanPackageIdentity(row.source) === "registry-verified"
         ? (RISK_BADGE_COLOR[risk] ?? "lightgrey")

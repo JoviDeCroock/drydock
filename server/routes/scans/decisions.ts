@@ -67,19 +67,16 @@ scanDecisionRoutes.post("/:id/decision", async (c) => {
     return c.json({ error: "decision can only be set on completed scans" }, 409);
   }
 
-  // A decision changes what a listed scan's cached badge and feed entry
-  // assert ("reviewed · risk" → "approved"/"blocked"), and a publish →
-  // no_publish flip must not leave a brightgreen "approved" badge sitting in
-  // this colo for the full TTL. Same canonical-origin purge as (un)listing.
-  if (updated.scan.publicFeedListedAt) {
+  // A decision changes what the cached badge and feed entry assert
+  // ("reviewed · risk" → "approved"/"blocked"), and a publish → no_publish
+  // flip must not leave a brightgreen "approved" badge sitting in this colo
+  // for the full TTL. It moves a default-on badge too, which needs no listing
+  // at all. Same canonical-origin purge as (un)listing.
+  if (updated.scan.badgePublic || updated.scan.publicFeedListedAt) {
     purgePublicFeedCache(
       optionalWorkerExecutionContext(c),
       canonicalOrigin(c),
-      badgeLookupKey({
-        source: updated.scan.source,
-        packageName: updated.scan.packageName,
-        summaryJson: updated.scan.summaryJson,
-      }),
+      badgeLookupKey(updated.scan),
       // The scan's own release line: purging the default entry for an `rc`
       // review would leave the stale rc badge cached and drop an unrelated one.
       scanDistTag(updated.scan.summaryJson),

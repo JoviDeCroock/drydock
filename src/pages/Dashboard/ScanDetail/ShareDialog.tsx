@@ -21,6 +21,7 @@ export function ShareDialog({
   badgeEcosystem,
   packageName,
   badgeTag,
+  badgePublic,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -38,6 +39,11 @@ export function ShareDialog({
   // The dist-tag this release was staged under, so the snippet points at the
   // line the maintainer just listed rather than at `latest`.
   badgeTag: string | null;
+  /**
+   * Whether this package's badge answers with no opt-in at all. Decides
+   * whether the snippet is worth handing over before anything is shared.
+   */
+  badgePublic: boolean;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -47,15 +53,17 @@ export function ShareDialog({
   const attestationAvailable = readSignalProp(attestationAvailableProp);
   const saving = readSignalProp(status) === "saving";
 
-  // The badge endpoint only answers for feed-listed scans with a resolvable
-  // ecosystem, so the snippet appears exactly when it would render something.
+  // The snippet appears exactly when the endpoint would render something: an
+  // OSS package answers from the organization's approvals with nothing shared
+  // at all, and everything else answers once this report is feed-listed.
+  const badgeAnswers = badgePublic || (share !== null && share.threatFeedListedAt !== null);
   const badge =
-    share && share.threatFeedListedAt !== null && badgeEcosystem && packageName
+    badgeAnswers && badgeEcosystem && packageName
       ? badgeMarkdown({
           origin: location.origin,
           ecosystem: badgeEcosystem,
           packageName,
-          reportUrl: share.url,
+          reportUrl: share?.url ?? "",
           tag: badgeTag,
         })
       : null;
@@ -148,8 +156,7 @@ export function ShareDialog({
               >
                 threat-feed.json
               </a>{" "}
-              index that security partners consume and powers the README badge below, not just
-              behind this link.
+              index that security partners consume, not just behind this link.
             </span>
           </label>
           {badge ? (
@@ -173,6 +180,40 @@ export function ShareDialog({
           role.
         </EmptyLine>
       )}
+
+      {badge ? (
+        <div class="flex flex-col gap-1.5">
+          <MonoLabel as="span">README badge</MonoLabel>
+          <div class="flex items-center gap-2">
+            <Input value={badge} readOnly mono class="flex-1" />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyToClipboard(badge, badgeCopied)}
+            >
+              {badgeCopyLabel}
+            </Button>
+          </div>
+          {badgePublic ? (
+            <EmptyLine>
+              Paste into the package&apos;s README. It follows your approvals on the{" "}
+              <code class="font-mono">{badgeLine}</code> tag on its own — approve a release and the
+              badge moves to it, with nothing to share or list. Publish a newer version that Drydock
+              reviews but nobody approves and the badge reports <em>that</em> version as &ldquo;not
+              reviewed&rdquo; rather than keep vouching for this one. A release Drydock never sees
+              leaves the badge where it is.
+            </EmptyLine>
+          ) : (
+            <EmptyLine>
+              Paste into the package&apos;s README. The badge shows the newest listed review on the{" "}
+              <code class="font-mono">{badgeLine}</code> tag; a review of another release line never
+              displaces it, and unlisting reverts it to &ldquo;not reviewed&rdquo;. Publish a newer
+              version on this tag without listing its review and the badge reports <em>that</em>{" "}
+              version as &ldquo;not reviewed&rdquo; rather than keep vouching for this one.
+            </EmptyLine>
+          )}
+        </div>
+      ) : null}
     </Dialog>
   );
 }
