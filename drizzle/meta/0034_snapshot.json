@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "bea26d41-6821-4d65-9f75-e4d2de06d4a2",
+  "id": "972876d5-d805-4f10-8100-d851204ba9c3",
   "prevId": "09a67038-430f-4a99-9ea8-ba7aa748e148",
   "tables": {
     "account": {
@@ -1694,6 +1694,13 @@
         },
         "stopped_at": {
           "name": "stopped_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "badge_disabled_at": {
+          "name": "badge_disabled_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

@@ -9,6 +9,7 @@ import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
 import type { RiskLevel } from "../../server/lib/review/types";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
+import { publicationWatchRoutes } from "../../server/routes/publication-watches";
 import { scansRoutes } from "../../server/routes/scans";
 import { buildTestApp, type TestApp } from "./helpers/app";
 import { type SeededUser, seedUser } from "./helpers/seed";
@@ -1407,6 +1408,32 @@ async function decide(
   return res;
 }
 
+async function addMember(
+  organizationId: string,
+  role: "member" | "admin",
+): Promise<{ userId: string }> {
+  const db = createDb(env.DB);
+  const now = new Date();
+  const userId = `user_${crypto.randomUUID()}`;
+  await db.insert(schema.user).values({
+    id: userId,
+    name: "Member",
+    email: `${userId}@example.com`,
+    emailVerified: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(schema.organizationMembers).values({
+    id: `member_${crypto.randomUUID()}`,
+    organizationId,
+    userId,
+    role,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { userId };
+}
+
 async function shareState(scanId: string) {
   const db = createDb(env.DB);
   const [row] = await db
@@ -1753,5 +1780,101 @@ describe("release order decides the badge, not scan order", () => {
 
     // The approved branch renders too — not only the superseded one.
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+});
+
+/**
+ * The off switch. Badge evidence is per release and immutable; consent is per
+ * package and belongs to the organization, which until now had no way to
+ * withdraw it — unlisting and revoking do not stop a default-on badge, and a
+ * completed scan cannot be deleted.
+ */
+async function setBadgeVisibility(
+  app: ReturnType<typeof buildTestApp>,
+  packageName: string,
+  disabled: boolean,
+  organizationId?: string,
+) {
+  const res = await request(app, "/api/v1/publication-watches/badge-visibility", {
+    method: "POST",
+    body: JSON.stringify({ packageName, disabled }),
+    headers: organizationId ? { "x-organization-id": organizationId } : undefined,
+  });
+  return res;
+}
+
+describe("turning a package's badge off", () => {
+  test("silences a default-on badge and brings it back", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    expect((await setBadgeVisibility(app, packageName, true)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body).toMatchObject({
+      message: "not reviewed",
+      color: "lightgrey",
+    });
+
+    expect((await setBadgeVisibility(app, packageName, false)).status).toBe(200);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("also silences a review that was deliberately listed", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+
+    // "Public badge: off" has to mean off, or the control does not mean what
+    // it says. The feed entry is a separate surface and stays.
+    await setBadgeVisibility(app, packageName, true);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    const feed = await fetchFeed(app);
+    expect(feed.entries.some((entry) => entry.package === packageName)).toBe(true);
+  });
+
+  test("is scoped to the organization that set it", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+
+    // A stranger must not be able to silence someone else's badge.
+    const stranger = await seedUser();
+    await setBadgeVisibility(buildTestApp(stranger), packageName, true);
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("takes the same role as sharing, and is audited", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const member = await addMember(owner.organizationId, "member");
+    const refused = await setBadgeVisibility(
+      buildTestApp(member),
+      packageName,
+      true,
+      owner.organizationId,
+    );
+    expect(refused.status).toBe(403);
+
+    await setBadgeVisibility(app, packageName, true);
+    const db = createDb(env.DB);
+    const events = await listOrganizationAuditEvents(db, owner.organizationId, { limit: 20 });
+    const disabled = events.events.find(
+      (event) => event.type === "organization.package_badge_disabled",
+    );
+    expect(disabled).toBeTruthy();
+    expect(describeAuditEvent(disabled!.type, disabled!.metadataJson)).toMatchObject({
+      label: "Public badge turned off",
+      detail: packageName,
+    });
   });
 });

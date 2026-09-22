@@ -443,6 +443,27 @@ function badgeTagMatchesSql(tag: string) {
     : sql`${distTag} = ${tag}`;
 }
 
+/**
+ * The package-level off switch: an organization can stop its own package from
+ * answering the badge at all.
+ *
+ * Matched against both names a scan carries. The badge is keyed on
+ * `package_name` (the inspected manifest's), while watch enrollment records
+ * `registry_package_name` (the registry's), and nothing guarantees the two
+ * agree — so a switch that checked only one could be bypassed by the other.
+ *
+ * It suppresses *both* badge routes, including a review that was deliberately
+ * feed-listed: "public badge: off" has to mean the badge is off, or the
+ * control does not mean what it says. The threat-feed entry is a different
+ * surface and is unaffected; unlisting is still how that is withdrawn.
+ */
+const badgeNotDisabled = sql`not exists (
+    select 1 from publication_watch_candidates c
+    where c.organization_id = ${scans.organizationId}
+      and c.badge_disabled_at is not null
+      and c.package_name in (${scans.packageName}, ${scans.registryPackageName})
+  )`;
+
 // Badge-ineligible sources never get a badge key, so this excludes nothing the
 // key filters admit today. It stays as the second lock: a row that acquired a
 // key before its source was reclassified, or through a future write that
@@ -492,6 +513,7 @@ export async function listBadgeCandidateScans(
         ecosystemMatches,
         badgeTagMatchesSql(tag),
         badgeEligibleSource,
+        badgeNotDisabled,
       ),
     )
     .orderBy(packageIdentityPriority, desc(scans.completedAt), desc(scans.id))
@@ -563,6 +585,7 @@ export async function listDefaultBadgeCandidateScans(
         eq(scans.registryVersionStatus, "published"),
         badgeEligibleSource,
         badgeTagMatchesSql(tag),
+        badgeNotDisabled,
       ),
     )
     .orderBy(desc(scans.completedAt), desc(scans.id))

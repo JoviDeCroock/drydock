@@ -218,8 +218,40 @@ Two further conditions apply to the _release_ rather than the package, and
   approved release would appear on the badge before it shipped, leaking both
   the version number and the timing.
 
-Four limits are known and deliberate:
+### Turning a badge off (`badge_disabled_at`)
 
+`scans.badge_public` is _evidence_, written once when the scan is persisted and
+never edited: npm accepted this organization's token for this name, npm says
+the package is public, npm published this version, the organization approved
+it. That is the part an attacker must not be able to mint, so it is derived and
+immutable.
+
+_Consent_ is a different thing, and it belongs to the organization: `POST
+/api/v1/publication-watches/badge-visibility` sets `badge_disabled_at` on the
+package's `publication_watch_candidates` row, and both badge routes filter on
+it. Owner/admin, audited, and it purges the cached badge.
+
+It lives on the watch candidate because that row is already the per-
+(organization, package) record of intent and deliberately outlives the watch —
+and because per-_scan_ consent is exactly what produced the problem this
+section exists to solve. It is a sibling of `stopped_at`, never the same field:
+"stop alerting me about publications" and "stop telling the world I approved
+this" are different intents, and an organization managing watch noise must not
+silently grey out its own READMEs. Stopping a watch leaves the badge alone.
+
+The switch suppresses **both** routes, including a review that was deliberately
+feed-listed — "public badge: off" has to mean the badge is off, or the control
+does not mean what it says. The threat-feed entry is a separate surface and is
+unaffected; unlisting is still how that is withdrawn.
+
+Five limits are known and deliberate:
+
+- **A badge can outlive the organization's use of Drydock.** Staleness is
+  detected from releases _this organization scanned_, so an organization that
+  stops scanning keeps its last green badge for a release nobody installs. The
+  off switch above is the remedy today; reading `publication_observations` —
+  which the monitor fills anonymously, without the organization's token —
+  would close it properly.
 - **The sweep that creates a badge does not purge its cache.** A default-on
   badge appears when the registry-status sweep flips a version to `published`,
   and that sweep runs in cron with no request colo to purge — so a new badge,

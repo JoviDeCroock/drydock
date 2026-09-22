@@ -736,6 +736,18 @@ export const publicationWatchCandidates = sqliteTable(
     }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     stoppedAt: integer("stopped_at", { mode: "timestamp_ms" }),
+    // The public badge's off switch, and deliberately a sibling of
+    // `stopped_at` rather than the same field: "stop alerting me about
+    // publications" and "stop telling the world I approved this" are different
+    // intents, and an organization managing watch noise must not silently
+    // grey out its own READMEs.
+    //
+    // Consent lives here, per (organization, package), because the badge is
+    // per package and outlives any one release — `scans.badge_public` is the
+    // *evidence* a release may be badged, is written once and never edited,
+    // and per-scan consent is what left a badge quoting a stale version with
+    // no way to withdraw it.
+    badgeDisabledAt: integer("badge_disabled_at", { mode: "timestamp_ms" }),
   },
   (table) => [
     uniqueIndex("publication_watch_candidates_org_package").on(
