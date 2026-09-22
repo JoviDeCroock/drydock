@@ -30,6 +30,8 @@ function seedBadgeScan(
     // A gate scan with no provenance snapshot at all: a legacy pre-provenance
     // record, or one whose redaction failed. Its ecosystem is unknowable.
     withoutProvenance?: boolean;
+    // npm's own access level for the stage. `restricted` is a private package.
+    access?: string;
   } = {},
 ): Promise<string> {
   const packageName = options.packageName ?? "@org/pkg";
@@ -80,8 +82,15 @@ function seedBadgeScan(
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
       ...(publishedPair ? { stagedPublish: publishedPair } : {}),
-      ...(!gateEcosystem && !publishedPair && options.tag
-        ? { stagedPublish: { tag: options.tag } }
+      // Staged publishes carry npm's record of the stage, including the access
+      // level that decides whether the package is public.
+      ...(!gateEcosystem && !publishedPair
+        ? {
+            stagedPublish: {
+              access: options.access ?? "public",
+              ...(options.tag ? { tag: options.tag } : {}),
+            },
+          }
         : {}),
       ...(gateEcosystem
         ? {
@@ -1620,13 +1629,29 @@ describe("an OSS package needs no opt-in", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 blocked");
   });
 
-  test("a scoped package keeps the opt-in", async () => {
+  test("a scoped package published publicly answers too", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
-    // npm only allows a private package under a scope, so a scoped name proves
-    // nothing about publicness and must not answer by default.
+    // Publicness comes from npm's `access`, not the name shape — a scoped
+    // package published publicly is as public as an unscoped one.
     const packageName = `@acme/pkg-${crypto.randomUUID().slice(0, 8)}`;
     const scanId = await seedPublicRelease(owner, packageName, "3.0.1");
+    await decide(app, scanId, "publish");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+  });
+
+  test("a restricted stage keeps the opt-in", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    // npm says this one is private. Nothing about it may answer by name.
+    const packageName = `@acme/pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.1",
+      registryUrl: "https://registry.npmjs.org",
+      access: "restricted",
+    });
+    await markRegistryPublished(scanId, "3.0.1");
     await decide(app, scanId, "publish");
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
 

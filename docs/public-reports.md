@@ -189,9 +189,13 @@ is false unless all three of these are provable:
   claim on. Manifest-claimed reviews keep the explicit opt-in.
 - **The public npm registry.** A mirror, proxy, or enterprise registry proves
   nothing about whether the package is public.
-- **An unscoped name.** npm only allows a private package under a scope, so an
-  unscoped name on the public registry is public by construction. A scoped
-  package may well be private, and keeps the opt-in.
+- **npm's own `access`.** The staged-publish record npm returns says whether
+  the stage is `public` or `restricted`; the badge gates on that. It is the
+  registry's answer, from the same response as the stage id and shasum — not
+  `publishConfig` out of the tarball, which is package bytes. Reading npm
+  rather than the name shape matters: "unscoped therefore public" is true but
+  narrow, and silently excludes every scoped package that is published
+  publicly. `publication-auto-enrollment.ts` gates on the same field.
 
 It is a stored column rather than a predicate readers re-derive, because
 `registry_url` is null on rows that predate it — the registry cannot be

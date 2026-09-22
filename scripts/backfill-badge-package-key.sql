@@ -7,6 +7,11 @@
 -- the badge notice a package has released again since the review it quotes.
 -- `badge_public` is whether the review may answer the badge with no opt-in.
 --
+-- Publicness is npm's own `access` from the staged-publish record it returns,
+-- the same field `isDefaultBadgePublic` and #687's watch auto-enrollment gate
+-- on. Not the name shape, and not `publishConfig` out of the tarball, which is
+-- package bytes.
+--
 -- Scoped to npm on purpose, and not as a shortcut: the npm key is the package
 -- name verbatim (`npm:<name>`), so this cannot disagree with the TypeScript
 -- rule it mirrors, while the PyPI key needs a lowercase-and-collapse
@@ -41,7 +46,7 @@
 UPDATE scans
 SET badge_package_key = 'npm:' || package_name,
     badge_public = CASE
-      WHEN package_name NOT LIKE '@%'
+      WHEN json_extract(summary_json, '$.stagedPublish.access') = 'public'
        AND (
          registry_url IS NULL
          -- Exact host, never a prefix: `isDefaultBadgePublic` compares

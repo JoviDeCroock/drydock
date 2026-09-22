@@ -239,6 +239,18 @@ export function badgeLookupKey(row: {
   return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
 }
 
+/** npm's own access level for the stage, from its staged-publish record. */
+function stagedPublishAccess(summaryJson: unknown): string | null {
+  if (summaryJson && typeof summaryJson === "object" && !Array.isArray(summaryJson)) {
+    const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+    if (stagedPublish && typeof stagedPublish === "object" && !Array.isArray(stagedPublish)) {
+      const access = (stagedPublish as { access?: unknown }).access;
+      if (typeof access === "string") return access;
+    }
+  }
+  return null;
+}
+
 // npm serves the public registry from exactly this host. A scan pointed at
 // anything else — a mirror, a proxy, an enterprise registry — proves nothing
 // about whether the package is public, so it never qualifies.
@@ -256,9 +268,16 @@ const PUBLIC_NPM_REGISTRY_HOSTS: ReadonlySet<string> = new Set(["registry.npmjs.
  *   is not: anyone can build a tarball calling itself `react`, and without
  *   this they could mint an approval for a name they have no claim on.
  * - **The public npm registry.** Any other host says nothing about publicness.
- * - **An unscoped name.** npm only allows a private package under a scope, so
- *   an unscoped name on the public registry is public by construction. A
- *   scoped package may be private and keeps the explicit opt-in.
+ * - **npm's own `access`.** The staged-publish record npm returns says whether
+ *   the stage is `public` or `restricted`. This is the registry's answer, from
+ *   the same response as the stage id and shasum — not `publishConfig` out of
+ *   the tarball, which is package bytes and may not be trusted here.
+ *
+ * Reading npm rather than the name shape matters: "unscoped therefore public"
+ * is a true inference but a narrow one, and it silently excludes every scoped
+ * package that is published publicly. The registry already answers the
+ * question directly, and `publication-auto-enrollment.ts` gates on the same
+ * field for the same reason.
  *
  * This is about the *package*; whether a given release is public is a separate
  * question the badge answers with npm's own version status.
@@ -271,8 +290,8 @@ export function isDefaultBadgePublic(row: {
 }): boolean {
   if (!REGISTRY_VERIFIED_SOURCES.has(row.source)) return false;
   if (scanEcosystem(row.source, row.summaryJson) !== "npm") return false;
-  const name = row.packageName?.trim();
-  if (!name || name.startsWith("@")) return false;
+  if (!row.packageName?.trim()) return false;
+  if (stagedPublishAccess(row.summaryJson) !== "public") return false;
   if (!row.registryUrl) return false;
   try {
     return PUBLIC_NPM_REGISTRY_HOSTS.has(new URL(row.registryUrl).host);
