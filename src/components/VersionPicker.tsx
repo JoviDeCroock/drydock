@@ -1,5 +1,4 @@
 import { useId } from "preact/hooks";
-import { Badge } from "./Badge";
 import { Select } from "./Select";
 
 interface VersionOption {
@@ -23,7 +22,6 @@ export function VersionPicker({
   onChange: (version: string) => void;
   disabled?: boolean;
 }) {
-  const tagsForSelected = options.find((option) => option.version === selected)?.distTags ?? [];
   const selectId = useId();
 
   return (
@@ -58,12 +56,9 @@ export function VersionPicker({
           })}
         </Select>
       </div>
+      {/* The selected option's text already names its dist-tags; a chip after
+          this caption read as tagging the staged version instead. */}
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
-      {tagsForSelected.map((tag) => (
-        <Badge key={tag} tone="info">
-          {tag}
-        </Badge>
-      ))}
     </div>
   );
 }

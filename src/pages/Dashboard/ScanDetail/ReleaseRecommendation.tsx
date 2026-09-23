@@ -8,7 +8,7 @@ import { Button } from "../../../components/Button";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
 import { Badge, severityTone } from "../../../components/Badge";
 import { SeverityBar } from "../../../components/SeverityBar";
-import { SectionLabel } from "../../../components/Typography";
+import { MonoDetail, SectionLabel } from "../../../components/Typography";
 import { verdictTextClass } from "../../../features/review/verdict";
 import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
 import type { PersistedSummary } from "./types";
@@ -96,57 +96,55 @@ export function buildReleaseVerdict({
 }
 
 /**
- * The verdict line the page opens on, above the diff.
+ * The verdict line the page opens on, above the diff: Drydock's reading on the
+ * left, the maintainer's decision on the right.
  *
- * Deliberately one row: the recommendation, the risk badges that qualify it,
- * the comparison picker, and the decision button. Below `sm` the decision
- * stays beside the verdict and the picker drops to its own full-width row,
- * so the primary action never trails the control it does not depend on. The
+ * The headline is the recommendation; the risk grade and any assistant note
+ * qualify it in one plain caption. Only "manual review" keeps a Badge, because
+ * it is the one qualifier that asks the reader to do something. The comparison
+ * picker is the diff's control, so it sits on the workbench, not here. The
  * evidence behind the verdict moves below the workbench into the review notes,
  * because a reviewer reads the diff first and the reasoning second.
  */
 export function ReleaseVerdictStrip({
   verdict,
   ai,
-  comparison,
   decision,
 }: {
   verdict: ReleaseVerdict;
   ai: DisplayedAiResult | null;
-  comparison?: ComponentChildren;
   decision?: ComponentChildren;
 }) {
   const { recommendation, artifactRisk, releaseRisk } = verdict;
+  const assistant = ai?.model != null ? ai : null;
   return (
-    <section class="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0 order-1">
+    <section class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
         <h2
           class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
         >
           {capitalize(recommendation.label)}
         </h2>
-        {artifactRisk !== releaseRisk ? (
-          <Badge tone="neutral">artifact {artifactRisk}</Badge>
-        ) : null}
-        {ai?.model != null && ai.kind === "complete" && ai.requiresManualReview ? (
-          <Badge tone="medium">manual review</Badge>
-        ) : null}
-        {/* The model reports the assessment and the manual-review flag
-            independently, so a suspicious assessment without the flag must
-            still surface here; only the clean reading stays quiet. */}
-        {ai?.model != null &&
-        ai.kind === "complete" &&
-        ai.releaseAssessment !== "nothing_unusual" ? (
-          <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-        ) : null}
-        {ai?.model != null && ai.kind === "unavailable" ? (
-          <Badge tone="neutral">assistant unavailable</Badge>
+        <MonoDetail
+          parts={[
+            `release risk ${releaseRisk}`,
+            artifactRisk !== releaseRisk ? `artifact risk ${artifactRisk}` : null,
+            // The model reports the assessment and the manual-review flag
+            // independently, so a suspicious assessment without the flag must
+            // still surface here; only the clean reading stays quiet.
+            assistant?.kind === "complete" && assistant.releaseAssessment !== "nothing_unusual"
+              ? `assistant: ${assistant.releaseAssessment.replaceAll("_", " ")}`
+              : null,
+            assistant?.kind === "unavailable" ? "assistant unavailable" : null,
+          ]}
+        />
+        {assistant?.kind === "complete" && assistant.requiresManualReview ? (
+          <Badge tone="medium" class="self-center">
+            manual review
+          </Badge>
         ) : null}
       </div>
-      {comparison ? (
-        <div class="order-3 basis-full sm:order-2 sm:basis-auto sm:ml-auto">{comparison}</div>
-      ) : null}
-      {decision ? <div class="order-2 ml-auto sm:order-3 sm:ml-0">{decision}</div> : null}
+      {decision}
     </section>
   );
 }

@@ -52,7 +52,12 @@ import {
 import { ReleaseTimeline } from "./ReleaseTimeline";
 import { PersistedReportSections } from "./ReportSections";
 import { ReviewerSummary, reviewerSummaryVisible } from "./ReviewerSummary";
-import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
+import {
+  DecisionControl,
+  ScanDetailHeader,
+  ScanFailureAlert,
+  VersionPickerSkeleton,
+} from "./ScanDetailChrome";
 import { ShareDialog } from "./ShareDialog";
 import { findingCountsByPath } from "../../../features/review/diff-entries";
 import { scanFilesToFileRecords } from "./diff-helpers";
@@ -322,10 +327,17 @@ export default function ScanDetailPage() {
       ? () => (decisionDialogOpen.value = true)
       : undefined;
 
-  // The decision button rides the verdict strip on a completed review, beside
-  // the comparison it is a decision about. A failed gate review renders no
-  // strip, so there it stays the header action.
-  const headerDecideClick = detail?.scan.status === "complete" ? undefined : onDecideClick;
+  // The decision and its button ride the verdict strip on a completed review,
+  // opposite the verdict they answer. A failed gate review renders no strip,
+  // so there they stay in the header.
+  const decisionControl = detail ? (
+    <DecisionControl
+      decision={detail.scan.decision}
+      decidedAt={detail.scan.decidedAt}
+      onDecideClick={onDecideClick}
+    />
+  ) : null;
+  const decisionInStrip = detail?.scan.status === "complete" && verdict != null;
 
   const onShareClick =
     detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
@@ -339,7 +351,7 @@ export default function ScanDetailPage() {
     <PageShell>
       <ScanDetailHeader
         detail={detail}
-        onDecideClick={headerDecideClick}
+        decision={decisionInStrip ? null : decisionControl}
         onDeleteClick={
           detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
         }
@@ -389,74 +401,62 @@ export default function ScanDetailPage() {
       {detail ? (
         detail.scan.status === "complete" && verdict ? (
           <>
-            {/* Verdict, comparison, and the decision — one strip, then the
-                diff. Everything explaining the verdict moves below the
-                workbench: a reviewer reads the change first. */}
-            <ReleaseVerdictStrip
-              verdict={verdict}
-              ai={ai.value}
-              comparison={
-                detail.scan.packageName ? (
-                  versions ? (
-                    <VersionPicker
-                      options={versions.versions}
-                      selected={selectedVersion}
-                      defaultVersion={versions.defaultPreviousVersion}
-                      stagedVersion={versions.stagedVersion}
-                      onChange={(value) => model.selectVersion(value)}
-                      disabled={compareLoading}
-                    />
-                  ) : (
-                    <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
-                  )
-                ) : null
-              }
-              decision={
-                onDecideClick ? (
-                  <Button
-                    variant={detail.scan.decision ? "secondary" : "primary"}
-                    onClick={onDecideClick}
-                  >
-                    {detail.scan.decision ? "Update decision" : "Decide"}
-                  </Button>
-                ) : null
-              }
-            />
-            {compareLoading ? (
-              <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
-            ) : null}
-            {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+            {/* Verdict and decision — one strip, then the diff with its
+                comparison control. Everything explaining the verdict moves
+                below the workbench: a reviewer reads the change first. */}
+            <ReleaseVerdictStrip verdict={verdict} ai={ai.value} decision={decisionControl} />
 
-            <ReviewWorkbench
-              id="release-workbench"
-              entries={diffEntries}
-              fileFilter={fileFilter}
-              changedFilesOnly={changedFilesOnly}
-              selectedPath={model.selectedPath}
-              findingCounts={findingCounts}
-              onSelect={(path) => {
-                findingTarget.value = null;
-                model.selectPath(path);
-              }}
-            >
-              <DiffWorkbench
-                entry={selectedEntry.value}
-                stagedMeta={stagedFileMeta.value}
-                staged={stagedFile.value}
-                previousMeta={previousFileMeta.value}
-                previousContent={previousFile.value}
-                compareReady={Boolean(compare)}
-                compareLoading={compareLoading}
-                selectedVersion={selectedVersion}
-                stagedVersion={detail.scan.stagedVersion}
-                findings={selectedFindings.value}
-                findingTarget={
-                  findingTarget.value?.file === model.selectedPath.value
-                    ? findingTarget.value
-                    : null
-                }
-              />
-            </ReviewWorkbench>
+            <div class="flex flex-col gap-3">
+              {detail.scan.packageName ? (
+                versions ? (
+                  <VersionPicker
+                    options={versions.versions}
+                    selected={selectedVersion}
+                    defaultVersion={versions.defaultPreviousVersion}
+                    stagedVersion={versions.stagedVersion}
+                    onChange={(value) => model.selectVersion(value)}
+                    disabled={compareLoading}
+                  />
+                ) : (
+                  <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+                )
+              ) : null}
+              {compareLoading ? (
+                <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
+              ) : null}
+              {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+
+              <ReviewWorkbench
+                id="release-workbench"
+                entries={diffEntries}
+                fileFilter={fileFilter}
+                changedFilesOnly={changedFilesOnly}
+                selectedPath={model.selectedPath}
+                findingCounts={findingCounts}
+                onSelect={(path) => {
+                  findingTarget.value = null;
+                  model.selectPath(path);
+                }}
+              >
+                <DiffWorkbench
+                  entry={selectedEntry.value}
+                  stagedMeta={stagedFileMeta.value}
+                  staged={stagedFile.value}
+                  previousMeta={previousFileMeta.value}
+                  previousContent={previousFile.value}
+                  compareReady={Boolean(compare)}
+                  compareLoading={compareLoading}
+                  selectedVersion={selectedVersion}
+                  stagedVersion={detail.scan.stagedVersion}
+                  findings={selectedFindings.value}
+                  findingTarget={
+                    findingTarget.value?.file === model.selectedPath.value
+                      ? findingTarget.value
+                      : null
+                  }
+                />
+              </ReviewWorkbench>
+            </div>
 
             <CollapsibleCard
               title="Review notes"
