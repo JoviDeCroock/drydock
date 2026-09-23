@@ -238,7 +238,9 @@ export default function SettingsPage() {
                     not installed the App yet. */}
                 <GateSetupWizard
                   activeInstallations={activeGithubInstallations}
-                  releaseTargets={targets.releaseTargets.value}
+                  releaseTargets={
+                    targets.releaseTargetsError.value === null ? targets.releaseTargets.value : null
+                  }
                   gateSetupEcosystems={githubApp.config.value?.gateSetupEcosystems ?? []}
                   canManage={canManageIntegrations(organizations)}
                   onReleaseTargetsChanged={() => void targets.load()}

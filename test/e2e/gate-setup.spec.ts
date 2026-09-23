@@ -207,6 +207,30 @@ test("removing the mapping from the GitHub App card withdraws the armed claim", 
   await expect(wizard.getByText("env production", { exact: true })).toHaveCount(0);
 });
 
+test("a failed list refresh after creating the mapping keeps the gate armed", async ({ page }) => {
+  // Another environment is already mapped, so a failed refresh would change
+  // the parent's list (to empty) rather than leave it as it was.
+  await installGateSetupMocks(page, {
+    existingReleaseTarget: true,
+    environments: ["production"],
+    failReleaseTargetReloads: true,
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("production");
+  await wizard.getByRole("button", { name: "Create release target" }).click();
+
+  // The refetch the create triggers fails. That says nothing about the
+  // mapping, so it must not read as "no mapping" and offer a duplicate create.
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+  await expect(wizard.getByRole("button", { name: "Remove mapping" })).toBeVisible();
+  await expect(wizard.getByRole("button", { name: "Create release target" })).toHaveCount(0);
+});
+
 test("a returning maintainer's automatic verification survives the ecosystem pin", async ({
   page,
 }) => {
@@ -348,6 +372,16 @@ test("the deep link selects Integrations once, not on every tab change", async (
     "aria-current",
     "page",
   );
+  // The old snap-back ran in the effect after the tab's URL write, so let a
+  // couple of frames pass before checking the choice held.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await expect(page.getByRole("button", { name: "General" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page).not.toHaveURL(/tab=integrations/);
 
   await page.getByRole("button", { name: "Integrations" }).click();
   // Back on the tab by choice: the wizard is there, but not reopened for them.
@@ -362,6 +396,7 @@ async function installGateSetupMocks(
     environments = ["staging"],
     verifyStates = [{ environment: "present", protectionRule: "present", defaultBranch: "main" }],
     verifyDelayMs = 0,
+    failReleaseTargetReloads = false,
   }: {
     existingReleaseTarget?: boolean;
     environments?: string[];
@@ -381,6 +416,8 @@ async function installGateSetupMocks(
     )[];
     /** Holds every `verify` answer back, to race it against the wizard's effects. */
     verifyDelayMs?: number;
+    /** Every release-target list load after a create answers 500. */
+    failReleaseTargetReloads?: boolean;
   } = {},
 ) {
   let storedReleaseTargets = existingReleaseTarget
@@ -464,6 +501,8 @@ async function installGateSetupMocks(
         await fulfillJson(route, {
           releaseTarget: created,
         });
+      } else if (failReleaseTargetReloads && releaseTargetRequests.length > 0) {
+        await fulfillJson(route, { error: "internal error" }, 500);
       } else {
         await fulfillJson(route, { releaseTargets: storedReleaseTargets });
       }

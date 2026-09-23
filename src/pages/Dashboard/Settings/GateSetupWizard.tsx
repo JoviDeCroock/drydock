@@ -98,7 +98,8 @@ export function GateSetupWizard({
   deepLinked = false,
 }: {
   activeInstallations: PublicGithubAppInstallation[];
-  releaseTargets: PublicReleaseTarget[];
+  /** The organization's stored targets; `null` when the last load failed. */
+  releaseTargets: PublicReleaseTarget[] | null;
   onReleaseTargetsChanged?: () => void;
   onInstall?: () => void;
   gateSetupEcosystems: GateSetupEcosystemOption[];
@@ -117,9 +118,13 @@ export function GateSetupWizard({
   const releaseTarget = gateSetup.resolvedReleaseTarget.value;
 
   // The model resolves the mapping in force (and the armed badge) from these,
-  // so it has to see what the parent last loaded.
-  const releaseTargetsKey = releaseTargets.map((target) => target.id).join(",");
+  // so it has to see what the parent last loaded. `null` is a load that failed:
+  // the wizard keeps the list it has, because reading a failed refresh right
+  // after its own create as "no mapping" withdrew a just-armed gate and offered
+  // a create that then failed as a duplicate.
+  const releaseTargetsKey = releaseTargets?.map((target) => target.id).join(",") ?? null;
   useEffect(() => {
+    if (releaseTargets === null) return;
     gateSetup.knownReleaseTargets.value = releaseTargets;
   }, [gateSetup, releaseTargetsKey]);
 
