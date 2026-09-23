@@ -438,8 +438,14 @@ describe("bytes that cannot be hashed", () => {
       reason: "artifact_too_large",
       scanId: "gate",
     });
-    // Hashed bytes match it by either digest.
+    // Hashed bytes are matched by SHA-256: a SHA-1 match (a collision) whose
+    // SHA-256 differs is not the approved bytes.
     expect(classify([gate])).toMatchObject({ status: "approved_match", scanId: "gate" });
+    expect(classify([gate], { sha1, sha256: "d".repeat(64) })).toEqual({
+      status: "artifact_mismatch",
+      reason: null,
+      scanId: "gate",
+    });
   });
 });
 
@@ -449,6 +455,14 @@ describe("a version with more records than were read", () => {
 
   test("a byte match among the newest records still decides", () => {
     expect(limited([review()])).toMatchObject({ status: "approved_match", scanId: "scan1" });
+  });
+
+  test("records filtered away entirely still say the history was cut short", () => {
+    expect(limited([review({ source: "published" })])).toEqual({
+      status: "published_without_approval",
+      reason: "review_history_limit",
+      scanId: null,
+    });
   });
 
   test("no byte match among them alerts and says the history was cut short", () => {

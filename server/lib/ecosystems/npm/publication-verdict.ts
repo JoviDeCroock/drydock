@@ -266,11 +266,15 @@ export function classifyPublication(
   options: { registry?: string; declaredSha1?: unknown; historyLimited?: boolean } = {},
 ): Verdict {
   if (!publishedAt) return unknown("publication_time_unavailable");
+  const historyLimited = options.historyLimited ?? false;
   const records = releaseRecords(name, version, reviews, options.registry);
   if (records.length === 0)
-    return { status: "published_without_approval", reason: null, scanId: null };
+    return {
+      status: "published_without_approval",
+      reason: historyLimited ? "review_history_limit" : null,
+      scanId: null,
+    };
   const vouched = records.map((scan) => ({ scan, digests: recordDigests(scan, name, version) }));
-  const historyLimited = options.historyLimited ?? false;
 
   if (artifact === null || typeof artifact === "string") {
     const reason = artifact ?? "artifact_unavailable";
@@ -293,7 +297,13 @@ export function classifyPublication(
   }
 
   const matching = vouched.flatMap(({ scan, digests }) => {
-    const hits = digests.filter((entry) => artifact[entry.algorithm] === entry.digest);
+    // A record that carries SHA-256 is matched by SHA-256 alone: its SHA-1 is
+    // there only for when the bytes cannot be hashed, and must never let a
+    // SHA-1 collision stand in for bytes whose SHA-256 differs.
+    const strongest = digests.some((entry) => entry.algorithm === "sha256")
+      ? digests.filter((entry) => entry.algorithm === "sha256")
+      : digests;
+    const hits = strongest.filter((entry) => artifact[entry.algorithm] === entry.digest);
     return hits.length ? [{ scan, reviewed: hits.some((entry) => entry.reviewed) }] : [];
   });
   return matching.length

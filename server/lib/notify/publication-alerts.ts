@@ -136,6 +136,10 @@ const coverageGapDetails: Record<string, string> = {
     "npm's document for this package is larger than Drydock reads, so its new releases cannot be compared.",
   publication_history_limit:
     "the package has more versions than Drydock compares, so its new releases cannot be compared.",
+  registry_evidence_unavailable:
+    "npm's document for this package has not been readable for over an hour, so its new releases cannot be compared.",
+  invalid_version_metadata:
+    "npm lists a version of this package that Drydock cannot read as a version, so that release cannot be compared.",
   artifact_too_large:
     "the published tarball is larger than Drydock hashes, and npm's shasum cannot be compared with this organization's records of it.",
   artifact_timeout: "the published tarball has repeatedly failed to download in time.",

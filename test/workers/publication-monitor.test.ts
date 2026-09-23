@@ -578,15 +578,19 @@ test("streaming metadata cap applies without content-length and cancels the stre
   );
 });
 
-test("malformed metadata is unavailable evidence, not a coverage gap", async () => {
+test("malformed metadata is unavailable evidence, a gap only once it persists", async () => {
   const { db, organizationId, watch } = await seed();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(`{"name":${JSON.stringify(name)},`));
   await checkNpmPublicationWatch(db, env, watch);
-  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+  const current = await getPublicationWatch(db, organizationId, watch.id);
+  expect(current).toMatchObject({
     lastError: "registry_evidence_unavailable",
-    coverageGap: null,
+    coverageGap: "registry_evidence_unavailable",
+    coverageGapNotifiedAt: null,
   });
+  // Recorded from now: it is reported only if no read succeeds for an hour.
+  expect(current!.coverageGapSince!.getTime()).toBeGreaterThan(Date.now() - 60_000);
 });
 
 test("Workers Request accepts the fetch contract and registry redirects remain unknown", async () => {
@@ -758,5 +762,85 @@ test("dist-tags past the read limit are recorded as unknown, not as absent", asy
   ]);
   expect((await getPublicationWatch(db, organizationId, watch.id))?.distTagsCheckedAt).toEqual(
     expect.any(Date),
+  );
+});
+
+test("a version string up to npm's 256 characters is observed, and an unreadable one is a gap", async () => {
+  const { db, organizationId, watch } = await seed();
+  const long = `1.0.1-${"a".repeat(200)}`;
+  const releases = [long, "not a version"];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json({ ...registryMetadata(watch, releases), "dist-tags": { latest: long } }),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { version: long, status: "published_without_approval", distTags: ["latest"] },
+  ]);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    lastError: "invalid_version_metadata",
+    coverageGap: "invalid_version_metadata",
+  });
+});
+
+test("a deeply nested field in one release cannot blind the monitor to the package", async () => {
+  const { db, organizationId, watch } = await seed();
+  const releases = ["1.0.0", "2.0.0"];
+  const metadata = registryMetadata(watch, releases);
+  const depth = 5_000;
+  const hostile = `${"[".repeat(depth)}${"]".repeat(depth)}`;
+  const body = JSON.stringify(metadata).replace(
+    '"version":"1.0.0",',
+    `"version":"1.0.0","custom":${hostile},`,
+  );
+  expect(body).toContain('"custom":[[[');
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(body));
+  await checkNpmPublicationWatch(db, env, watch);
+  const observations = await listPublicationObservations(db, organizationId, watch.id);
+  expect(observations.map((row) => [row.version, row.status]).sort()).toEqual([
+    ["1.0.0", "published_without_approval"],
+    ["2.0.0", "published_without_approval"],
+  ]);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBeNull();
+});
+
+test("a flood of undecided records cannot push a decision out of view", async () => {
+  const { db, organizationId, watch } = await seed();
+  // The owner's approval of the published bytes, created before a flood of
+  // newer undecided gate runs of other bytes.
+  await insertReview(db, organizationId, { createdAt: new Date(0) });
+  for (let index = 0; index < 101; index++) {
+    await insertReview(db, organizationId, {
+      source: "workflow_gate",
+      registryUrl: null,
+      registryPackageName: null,
+      registryVersion: null,
+      decision: null,
+      decidedAt: null,
+      summaryJson: gateSummary({ sha256: index.toString(16).padStart(64, "0") }),
+      createdAt: new Date(Date.now() - index * 1000),
+    });
+  }
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
+  );
+  await checkNpmPublicationWatch(db, env, watch);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toMatchObject([
+    { status: "approved_match" },
+  ]);
+});
+
+test("once a sweep's byte budget is spent, no tarball download starts", async () => {
+  const { db, organizationId, watch } = await seed();
+  await insertReview(db, organizationId);
+  const fetcher = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (input) =>
+      isTarball(input) ? new Response(bytes) : Response.json(registryMetadata(watch, [version])),
+    );
+  await checkNpmPublicationWatch(db, env, watch, { meter: { bytes: 1024 * 1024 * 1024 } });
+  expect(fetcher.mock.calls.filter(([input]) => isTarball(input))).toHaveLength(0);
+  expect(await listPublicationObservations(db, organizationId, watch.id)).toEqual([]);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.lastError).toBe(
+    "pending_release_backlog",
   );
 });

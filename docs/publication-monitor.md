@@ -84,22 +84,28 @@ was recorded before or after publication. Beside an approval of the same bytes, 
 decision recorded after publication leaves the verdict unknown, since reconfirming a
 decision overwrites its timestamp and the overwritten one may have been newer.
 
-Only the newest 100 release records of a version (staged reviews and workflow gates;
-published-pair reviews are excluded in the query) are read, newest first. With more,
-a byte match among them still decides; without one the release alerts, with reason
-`review_history_limit` so the message says only the latest 100 were compared. A flood
-of records, such as a gate re-run many times for one version, cannot settle it.
+A version's release records are staged reviews and workflow gates (published-pair
+reviews are excluded in the query). Every decided record is read, up to 500, since
+only people make decisions; undecided records, which anyone who can stage or run a
+gate can create, are read newest first up to 100. With more, a byte match still
+decides; without one the release alerts, with reason `review_history_limit` so the
+message says only the latest 100 were compared. A flood of records, such as a gate
+re-run many times for one version, can neither settle a release nor push a decision
+out of view.
 
-Tarballs are hashed as they stream, so memory stays flat: the cap is 256 MiB with a
-30-second deadline per tarball, and a check starts no new download once it has spent
-30 seconds downloading. When a tarball still cannot be hashed (over the cap, timed out,
-unavailable) and every record that carries a digest carries a SHA-1, npm's own
-`dist.shasum` from the packument identifies the published bytes one-sidedly: the same
-rules as above apply, except that an approval then stays `unknown` with the reason
-recorded, because the bytes were not independently hashed. Gate reviews recorded
-before the gate hashed SHA-1 carry only SHA-256 and cannot be compared this way; such
-a release stays `unknown` with nothing vouching for it and becomes a coverage gap
-(below). A version with no record is published without approval without any bytes, so
+A gate review that carries SHA-256 is matched by SHA-256 alone when the bytes are
+hashed; its SHA-1 is used only when they cannot be, so a SHA-1 collision cannot stand
+in for bytes whose SHA-256 differs.
+
+Tarballs are hashed as they stream, so memory stays flat: the cap is 256 MiB, and all
+of a check's downloads share one 30-second deadline. When a tarball still cannot be
+hashed (over the cap, timed out, unavailable) and every record that carries a digest
+carries a SHA-1, npm's own `dist.shasum` from the packument identifies the published
+bytes one-sidedly: the same rules as above apply, except that an approval then stays
+`unknown` with the reason recorded, because the bytes were not independently hashed.
+Gate reviews recorded before the gate hashed SHA-1 carry only SHA-256 and cannot be
+compared this way, so such a release stays `unknown`. Either way an unhashed release
+becomes a coverage gap (below). A version with no record is published without approval without any bytes, so
 padding cannot suppress it. Unknown does not mean approved; observations describe the
 evidence available when checked, not a complete immutable history of every decision,
 deleted review or registry event.
@@ -115,18 +121,24 @@ a consumer can tell which release line a version is on and how current that is. 
 
 A watch that cannot establish a verdict for a reason another check will not fix says
 so rather than settling silently. Package-wide: npm's document is larger than Drydock
-reads (`registry_metadata_too_large`), or the package has more versions than it
-compares (`publication_history_limit`); the watch records the gap and since when, and a
-check that reads the package again clears it. Per release: an `unknown` observation
-that nothing vouches for (no record's decision, so no scan id) because its tarball is
-too large, keeps timing out, cannot be downloaded, or is not a valid npm tarball.
+reads (`registry_metadata_too_large`), the package has more versions than it compares
+(`publication_history_limit`), npm lists a version since enrollment that is not a
+readable version string (`invalid_version_metadata`), or the document cannot be read
+at all (`registry_evidence_unavailable`, recorded only when no other gap is, so an
+outage never displaces or restarts one). The watch records the gap and since when,
+and a check that reads the package again clears it. Per release: an `unknown`
+observation whose tarball is too large, keeps timing out, cannot be downloaded, or is
+not a valid npm tarball, so its bytes were never hashed here (at best npm's declared
+shasum was compared). One hostile release cannot blind the watch to the others: the
+package document parser skips fields it does not read without a depth limit, and an
+overlong field it does read degrades only that field or version.
 Once a gap has lasted an hour, the organization is told once per gap (per watch for a
 package-wide reason, per release otherwise) through the same email and Slack delivery
 as alerts, worded as a coverage notice: "Drydock could not verify <release> against
 <organization>'s reviews: <reason>", never as a discrepancy. The dashboard card and
 the package page show the gap, and each unverifiable release is marked "not verified".
 A notice claim makes overlapping checks send it once; a failed delivery gives the
-claim back for a later check. Transient registry outages are shown as the watch's
+claim back for a later check. An outage shorter than an hour is shown as the watch's
 last problem only.
 
 ## Alerts and acknowledgment
@@ -195,7 +207,7 @@ Both response size and request duration are bounded. It streams tarball bytes
 into SHA-256 and SHA-1 hashes without extracting, installing or executing them.
 
 Review lookup is organization-scoped, requires the exact package and version, and
-reads the newest 100 release records.
+reads every decided release record and the newest 100 undecided ones.
 For staged reviews, registry coordinates must also match public npm, and an approval
 counts only for bytes the review hashed itself (npm's stage shasum alone identifies the
 bytes but cannot approve them). Staged reviews carry SHA-1, so their comparison
@@ -253,8 +265,10 @@ overlapping manual and scheduled checks from multiplying work on the same watch.
 npm's full package document is read because only it carries per-version publish
 times (the abbreviated install document omits them); it streams into just the fields
 the verdict reads (`packument-stream.ts`), so memory stays flat, under a 64 MiB cap and
-a 15-second deadline. Tarballs are capped at 256 MiB with a 30-second deadline. An
-oversized document is `registry_metadata_too_large`, distinct from a transient
+a 15-second deadline. Tarballs are capped at 256 MiB, and a check's downloads share
+one 30-second deadline, so a check ends well inside its one-minute claim. A sweep (or
+a manual check) reads at most 1 GiB in total; once that is spent no new check or
+download starts, and the rest drain on later ticks. An oversized document is `registry_metadata_too_large`, distinct from a transient
 `registry_evidence_unavailable`; an oversized or timed-out tarball is recorded on the
 watch and logged. A package exceeding 10,000 versions or stored observations reports
 `publication_history_limit` rather than silently treating a partial history as

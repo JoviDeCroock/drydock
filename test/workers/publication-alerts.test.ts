@@ -467,7 +467,7 @@ test("a package-wide coverage gap is told once, after it persists, in its own wo
   });
 });
 
-test("a release that stays unverifiable with nothing vouching is told once", async () => {
+test("a release whose bytes stay unverifiable is told once", async () => {
   vi.resetModules();
   const { db, organizationId, watch } = await setup();
   const now = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -475,7 +475,8 @@ test("a release that stays unverifiable with nothing vouching is told once", asy
   for (const [version, reason, scanId] of [
     ["1.0.0", "artifact_too_large", null],
     ["1.0.1", "artifact_timeout", null],
-    // Resting on a record (npm's shasum matched an approval): not a gap.
+    // npm's declared shasum matched an approval, but the bytes were never
+    // hashed here: still a gap the organization is told about.
     ["1.0.2", "artifact_too_large", "scan"],
   ] as const) {
     if (scanId) {
@@ -510,10 +511,48 @@ test("a release that stays unverifiable with nothing vouching is told once", asy
   }
   await recheck(db, organizationId, watch.id);
   await recheck(db, organizationId, watch.id);
-  expect(notifyCoverage).toHaveBeenCalledTimes(2);
+  expect(notifyCoverage).toHaveBeenCalledTimes(3);
   expect(notifyCoverage.mock.calls.map(([input]) => [input.version, input.reason]).sort()).toEqual([
     ["1.0.0", "artifact_too_large"],
     ["1.0.1", "artifact_timeout"],
+    ["1.0.2", "artifact_too_large"],
   ]);
-  expect((await getPublicationWatch(db, organizationId, watch.id))?.unverifiedReleaseCount).toBe(2);
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.unverifiedReleaseCount).toBe(3);
+});
+
+test("a package document that stays unreadable becomes a gap, but never displaces or restarts one", async () => {
+  vi.resetModules();
+  const { db, organizationId, watch } = await setup();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const outage = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 503 }));
+  await recheck(db, organizationId, watch.id);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    lastError: "registry_evidence_unavailable",
+    coverageGap: "registry_evidence_unavailable",
+  });
+  await db
+    .update(publicationWatches)
+    .set({ coverageGapSince: new Date(Date.now() - 2 * 60 * 60 * 1000) })
+    .where(eq(publicationWatches.id, watch.id));
+  await recheck(db, organizationId, watch.id);
+  expect(notifyCoverage).toHaveBeenCalledWith(
+    expect.objectContaining({ version: null, reason: "registry_evidence_unavailable" }),
+  );
+
+  // A persistent gap is not replaced, nor its start reset, by an outage.
+  outage.mockRestore();
+  oversizedMetadata();
+  await recheck(db, organizationId, watch.id);
+  const since = (await getPublicationWatch(db, organizationId, watch.id))?.coverageGapSince;
+  expect((await getPublicationWatch(db, organizationId, watch.id))?.coverageGap).toBe(
+    "registry_metadata_too_large",
+  );
+  vi.restoreAllMocks();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 503 }));
+  await recheck(db, organizationId, watch.id);
+  expect(await getPublicationWatch(db, organizationId, watch.id)).toMatchObject({
+    coverageGap: "registry_metadata_too_large",
+    coverageGapSince: since,
+  });
 });

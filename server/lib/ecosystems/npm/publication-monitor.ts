@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
 import { isPublicationAlert, savePublicationObservation } from "../../../db/publication-alerts";
 import {
@@ -15,7 +15,6 @@ import { describeOperationalError, emitOperationalEvent } from "../../platform/o
 import type { PublicationMonitorAdapter } from "../types";
 import {
   createPackumentExtractor,
-  PackumentStreamError,
   type PackumentExtract,
   type PackumentVersion,
 } from "./packument-stream";
@@ -48,13 +47,24 @@ const METADATA_LIMIT = 64 * 1024 * 1024;
 const METADATA_DEADLINE_MS = 15_000;
 const TARBALL_LIMIT = 256 * 1024 * 1024;
 const TARBALL_DEADLINE_MS = 30_000;
-// A check starts no new tarball download once it has spent this long on them,
-// so three slow tarballs cannot hold one check for a minute and a half.
-const DOWNLOAD_WINDOW_MS = 30_000;
+// All of a check's tarball downloads share this deadline, so metadata plus
+// downloads end well inside the watch's claim lease and a manual check cannot
+// overlap a scheduled one and download the same bytes again.
+const DOWNLOAD_BUDGET_MS = 30_000;
+// Bytes one sweep (or one manual check) reads, metadata and tarballs together.
+// Once spent, no new check or download starts; hashing and parsing cost CPU,
+// and the sweep shares its invocation with stage discovery.
+const SWEEP_BYTE_BUDGET = 1024 * 1024 * 1024;
 const MAX_VERSIONS = 10_000;
-// Records read per release, newest first. More than this and a byte match
-// among the newest still decides; without one, the release alerts.
-const REVIEW_HISTORY_LIMIT = 100;
+// Undecided records read per release, newest first. Decisions are made by
+// people, so every decided record is read (up to a generous bound); records
+// anyone who can stage or run a gate can create are capped. With more, a byte
+// match still decides; without one, the release alerts.
+const UNDECIDED_HISTORY_LIMIT = 100;
+const DECIDED_HISTORY_LIMIT = 500;
+// History queries per check, so a check whose download budget is spent does
+// not keep querying every pending release.
+const HISTORY_LOOKUPS_PER_CHECK = 12;
 // One check examines a bounded batch of releases, and only some of them may
 // download a tarball. Re-evaluating a release from stored digests, or deciding
 // one that has no Drydock record, costs queries rather than egress.
@@ -74,12 +84,21 @@ const SWEEP_CONCURRENCY = 4;
 // per-response deadlines, well inside the cron wall-clock limit.
 const SWEEP_DEADLINE_MS = 60_000;
 
-// Package-wide reasons no release can be verified that another check will not
-// fix by itself; they become a coverage gap on the watch.
+// Package-wide reasons some release cannot be verified that another check will
+// not fix by itself; they become a coverage gap on the watch. A failed read of
+// the package document is a weaker one: it becomes a gap only if nothing else
+// is recorded, and like any gap is reported only once it has lasted an hour.
 const PERSISTENT_WATCH_PROBLEMS = new Set([
   "registry_metadata_too_large",
   "publication_history_limit",
+  "invalid_version_metadata",
 ]);
+const TRANSIENT_WATCH_PROBLEM = "registry_evidence_unavailable";
+
+/** Bytes read so far by one sweep or manual check, against `SWEEP_BYTE_BUDGET`. */
+interface ByteMeter {
+  bytes: number;
+}
 
 class PublicEvidenceError extends Error {
   constructor(readonly code: "unavailable" | "too_large" | "timeout") {
@@ -89,7 +108,7 @@ class PublicEvidenceError extends Error {
 
 async function consumePublicResponse(
   url: string,
-  limits: { maxBytes: number; deadlineMs: number },
+  limits: { maxBytes: number; deadlineMs: number; meter: ByteMeter },
   consume: (chunk: Uint8Array) => void,
 ) {
   const controller = new AbortController();
@@ -116,6 +135,7 @@ async function consumePublicResponse(
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
+      limits.meter.bytes += chunk.value.byteLength;
       if (size > limits.maxBytes) throw new PublicEvidenceError("too_large");
       try {
         consume(chunk.value);
@@ -148,21 +168,24 @@ class MetadataError extends Error {
  * publish times that bound enrollment and order decisions, so the full one is
  * read, with flat memory, whatever its size up to the cap.
  */
-async function fetchMetadata(name: string, registry: string): Promise<PackumentExtract> {
+async function fetchMetadata(
+  name: string,
+  registry: string,
+  meter: ByteMeter,
+): Promise<PackumentExtract> {
   const extractor = createPackumentExtractor({ maxVersions: MAX_VERSIONS + 1 });
   try {
     await consumePublicResponse(
       `${registry}/${encodeURIComponent(name).replace(/^%40/, "@")}`,
-      { maxBytes: METADATA_LIMIT, deadlineMs: METADATA_DEADLINE_MS },
+      { maxBytes: METADATA_LIMIT, deadlineMs: METADATA_DEADLINE_MS, meter },
       (chunk) => extractor.write(chunk),
     );
     const metadata = extractor.end();
     if (metadata.name !== name || !metadata.versionsIsObject) throw new Error("invalid_metadata");
     return metadata;
   } catch (err) {
-    const tooLarge =
-      (err instanceof PublicEvidenceError && err.code === "too_large") ||
-      (err instanceof PackumentStreamError && err.code === "too_complex");
+    // A malformed document (`PackumentStreamError`) is unavailable evidence.
+    const tooLarge = err instanceof PublicEvidenceError && err.code === "too_large";
     throw new MetadataError(
       tooLarge ? "registry_metadata_too_large" : "registry_evidence_unavailable",
     );
@@ -174,6 +197,7 @@ async function hashPublishedArtifact(
   name: string,
   version: string,
   registry: string,
+  limits: { deadlineMs: number; meter: ByteMeter },
 ): Promise<PublishedDigests | ArtifactUnavailableReason> {
   if (!value || value.name !== name || value.version !== version || value.tarball === null)
     return "artifact_identity_invalid";
@@ -194,14 +218,10 @@ async function hashPublishedArtifact(
   const sha1 = createHash("sha1");
   const sha256 = createHash("sha256");
   try {
-    await consumePublicResponse(
-      url.href,
-      { maxBytes: TARBALL_LIMIT, deadlineMs: TARBALL_DEADLINE_MS },
-      (chunk) => {
-        sha1.update(chunk);
-        sha256.update(chunk);
-      },
-    );
+    await consumePublicResponse(url.href, { maxBytes: TARBALL_LIMIT, ...limits }, (chunk) => {
+      sha1.update(chunk);
+      sha256.update(chunk);
+    });
   } catch (err) {
     const code = err instanceof PublicEvidenceError ? err.code : "unavailable";
     return code === "too_large"
@@ -251,7 +271,7 @@ export async function checkNpmPublicationWatch(
   db: AppDb,
   env: Cloudflare.Env,
   watch: PublicationWatch,
-  options: { monitoringEnabled?: boolean } = {},
+  options: { monitoringEnabled?: boolean; meter?: ByteMeter } = {},
 ) {
   const now = new Date();
   // Claim first, before anything that can return early or throw. The lease
@@ -279,18 +299,20 @@ export async function checkNpmPublicationWatch(
       await setLastError(db, watch, "monitoring_disabled");
       return getPublicationWatch(db, watch.organizationId, watch.id);
     }
-    const { lastError, attempted, watchProblem, metadataRead } = await examineReleases(
+    const { lastError, attempted, watchGap } = await examineReleases(
       db,
       env,
       watch,
       now,
+      options.meter ?? { bytes: 0 },
     );
     await redeliverPendingAlerts(env, db, watch, attempted, now);
-    // A transient registry failure says nothing about coverage either way; a
-    // read that got past the package document clears a package-wide gap.
-    if (metadataRead || watchProblem) {
-      await recordWatchCoverageGap(db, watch, watchProblem, now);
-    }
+    // A read that got past the package document clears a package-wide gap; a
+    // failed read records one only when none is recorded, so an outage never
+    // resets how long a persistent gap has lasted.
+    await recordWatchCoverageGap(db, watch, watchGap, now, {
+      weak: watchGap === TRANSIENT_WATCH_PROBLEM,
+    });
     await notifyCoverageGaps(env, db, watch, now);
     await setLastError(db, watch, lastError);
     return getPublicationWatch(db, watch.organizationId, watch.id);
@@ -414,45 +436,63 @@ const reviewEvidenceColumns = {
 } satisfies Record<keyof ReviewEvidence, unknown>;
 
 /**
- * The organization's release-path records of one version, newest first:
- * staged reviews and workflow gates, never published-pair reviews. Returns at
- * most `REVIEW_HISTORY_LIMIT` and says whether more exist, so a flood of
- * records (a gate re-run for one version, say) cannot settle the release.
+ * The organization's release-path records of one version: staged reviews and
+ * workflow gates, never published-pair reviews. Every decided record is read
+ * (up to a bound no person reaches), newest decision first, and the newest
+ * undecided ones; `historyLimited` says either bound was hit, so a flood of
+ * records (a gate re-run for one version, say) can neither settle the release
+ * nor push a decision out of view.
  */
 async function releaseHistory(db: AppDb, watch: PublicationWatch, version: string) {
-  const rows = await db
-    .select(reviewEvidenceColumns)
-    .from(scans)
-    .where(
-      and(
-        eq(scans.organizationId, watch.organizationId),
-        eq(scans.packageName, watch.packageName),
-        eq(scans.stagedVersion, version),
-        inArray(scans.source, ["manual", "auto_discovery", "workflow_gate"]),
-      ),
-    )
-    .orderBy(desc(scans.createdAt), desc(scans.id))
-    .limit(REVIEW_HISTORY_LIMIT + 1);
+  const releaseOf = and(
+    eq(scans.organizationId, watch.organizationId),
+    eq(scans.packageName, watch.packageName),
+    eq(scans.stagedVersion, version),
+    inArray(scans.source, ["manual", "auto_discovery", "workflow_gate"]),
+  );
+  const [decided, undecided] = await Promise.all([
+    db
+      .select(reviewEvidenceColumns)
+      .from(scans)
+      .where(and(releaseOf, isNotNull(scans.decision)))
+      .orderBy(desc(scans.decidedAt), desc(scans.id))
+      .limit(DECIDED_HISTORY_LIMIT + 1),
+    db
+      .select(reviewEvidenceColumns)
+      .from(scans)
+      .where(and(releaseOf, isNull(scans.decision)))
+      .orderBy(desc(scans.createdAt), desc(scans.id))
+      .limit(UNDECIDED_HISTORY_LIMIT + 1),
+  ]);
   return {
-    reviews: rows.slice(0, REVIEW_HISTORY_LIMIT),
-    historyLimited: rows.length > REVIEW_HISTORY_LIMIT,
+    reviews: [
+      ...decided.slice(0, DECIDED_HISTORY_LIMIT),
+      ...undecided.slice(0, UNDECIDED_HISTORY_LIMIT),
+    ],
+    historyLimited:
+      decided.length > DECIDED_HISTORY_LIMIT || undecided.length > UNDECIDED_HISTORY_LIMIT,
   };
 }
 
 interface Examination {
   lastError: string | null;
   attempted: Set<string>;
-  /** A package-wide reason no release could be verified that persists by itself. */
-  watchProblem: string | null;
-  /** npm's package document was read, so the package itself is covered. */
-  metadataRead: boolean;
+  /**
+   * The package-wide reason some release cannot be verified, or null when
+   * npm's document was read and every version could be considered.
+   */
+  watchGap: string | null;
 }
+
+// npm versions are semver, at most 256 characters.
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,255}$/;
 
 async function examineReleases(
   db: AppDb,
   env: Cloudflare.Env,
   watch: PublicationWatch,
   now: Date,
+  meter: ByteMeter,
 ): Promise<Examination> {
   const registry = npmPublicationRegistry(env);
   const attempted = new Set<string>();
@@ -469,13 +509,15 @@ async function examineReleases(
     return {
       lastError: problem,
       attempted,
-      watchProblem: PERSISTENT_WATCH_PROBLEMS.has(problem) ? problem : null,
-      metadataRead: false,
+      watchGap:
+        PERSISTENT_WATCH_PROBLEMS.has(problem) || problem === TRANSIENT_WATCH_PROBLEM
+          ? problem
+          : null,
     };
   };
   let metadata: PackumentExtract;
   try {
-    metadata = await fetchMetadata(watch.packageName, registry);
+    metadata = await fetchMetadata(watch.packageName, registry, meter);
   } catch (err) {
     return failed(err instanceof MetadataError ? err.reason : "registry_evidence_unavailable");
   }
@@ -513,15 +555,18 @@ async function examineReleases(
   await refreshObservedDistTags(db, watch, observed, tagsByVersion, now);
   const existing = new Map(observed.map((item) => [item.version, item]));
   const pending: { version: string; publishedAt: Date | null; previous?: ObservedRelease }[] = [];
+  // A version the monitor cannot consider is never skipped quietly: it is a
+  // coverage gap, reported like any other once it persists.
+  let unconsidered = metadata.oversizedVersionKey;
   for (const version of metadata.versions.keys()) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(version)) {
-      note("invalid_version_metadata");
-      continue;
-    }
     const rawTime = metadata.time.get(version);
     const millis = typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
     const publishedAt = Number.isFinite(millis) && millis <= Date.now() ? new Date(millis) : null;
     if (publishedAt && publishedAt < watch.createdAt) continue;
+    if (!VERSION_PATTERN.test(version)) {
+      unconsidered = true;
+      continue;
+    }
     const previous = existing.get(version);
     if (previous && previous.status !== "unknown") continue;
     if (
@@ -539,14 +584,17 @@ async function examineReleases(
       a.version.localeCompare(b.version),
   );
 
+  if (unconsidered) note("invalid_version_metadata");
   let examined = 0;
+  let lookups = 0;
   let downloads = 0;
-  let downloadsStartedAt: number | null = null;
+  let downloadDeadline: number | null = null;
   for (const item of pending) {
-    if (examined >= RELEASES_PER_CHECK) {
+    if (examined >= RELEASES_PER_CHECK || lookups >= HISTORY_LOOKUPS_PER_CHECK) {
       note("pending_release_backlog");
       break;
     }
+    lookups++;
     const { reviews, historyLimited } = await releaseHistory(db, watch, item.version);
     const entry = metadata.versions.get(item.version);
     let digests: PublishedDigests | null = null;
@@ -558,16 +606,23 @@ async function examineReleases(
       item.publishedAt &&
       releaseRecords(watch.packageName, item.version, reviews, registry).length > 0
     ) {
+      downloadDeadline ??= Date.now() + DOWNLOAD_BUDGET_MS;
+      const remainingMs = Math.min(TARBALL_DEADLINE_MS, downloadDeadline - Date.now());
       if (
         downloads >= TARBALLS_PER_CHECK ||
-        (downloadsStartedAt !== null && Date.now() - downloadsStartedAt > DOWNLOAD_WINDOW_MS)
+        remainingMs < 1_000 ||
+        meter.bytes >= SWEEP_BYTE_BUDGET
       ) {
         note("pending_release_backlog");
         continue;
       }
       downloads++;
-      downloadsStartedAt ??= Date.now();
-      artifact = await hashPublishedArtifact(entry, watch.packageName, item.version, registry);
+      // A download cut short by the shared deadline is a timeout, retried on a
+      // later check, never a settled verdict.
+      artifact = await hashPublishedArtifact(entry, watch.packageName, item.version, registry, {
+        deadlineMs: remainingMs,
+        meter,
+      });
       if (typeof artifact === "string") {
         note(artifact);
         emitOperationalEvent("warn", "npm.publication_monitor.artifact_unavailable", {
@@ -621,7 +676,7 @@ async function examineReleases(
       });
     }
   }
-  return { lastError, attempted, watchProblem: null, metadataRead: true };
+  return { lastError, attempted, watchGap: unconsidered ? "invalid_version_metadata" : null };
 }
 
 /**
@@ -705,6 +760,7 @@ export async function sweepNpmPublicationWatches(
   const enabled = new Map<string, Promise<boolean>>();
   const deferred = new Set<string>();
   const counts = { checked: 0, failed: 0, skipped: 0, switchedOff: 0 };
+  const meter: ByteMeter = { bytes: 0 };
   let started = 0;
   await mapWithConcurrency(candidates, SWEEP_CONCURRENCY, async (watch) => {
     try {
@@ -720,12 +776,12 @@ export async function sweepNpmPublicationWatches(
         await deferSwitchedOffOrganization(db, watch.organizationId, now);
         return;
       }
-      if (started >= budget || Date.now() > deadline) {
+      if (started >= budget || Date.now() > deadline || meter.bytes >= SWEEP_BYTE_BUDGET) {
         counts.skipped++;
         return;
       }
       started++;
-      await checkNpmPublicationWatch(db, env, watch, { monitoringEnabled: true });
+      await checkNpmPublicationWatch(db, env, watch, { monitoringEnabled: true, meter });
       counts.checked++;
     } catch (err) {
       counts.failed++;

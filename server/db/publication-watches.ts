@@ -34,11 +34,10 @@ const unresolvedAlertCount = sql<number>`(select count(*) from publication_alert
 const COVERAGE_GAP_AFTER_MS = 60 * 60 * 1000;
 
 /**
- * Why a published release can stay unverified with nothing vouching for it:
- * its bytes could not be hashed or located, and no record's digest could be
- * compared with npm's instead (a verdict that rests on a record carries its
- * scan id). Those outlast a transient failure once they persist past
- * `COVERAGE_GAP_AFTER_MS`, and the organization is told once.
+ * Why a published release can stay unverified: its bytes could not be hashed
+ * or located, so at best npm's own declared shasum was compared. Those outlast
+ * a transient failure once they persist past `COVERAGE_GAP_AFTER_MS`, and the
+ * organization is told once.
  */
 const RELEASE_COVERAGE_GAP_REASONS = [
   "artifact_too_large",
@@ -51,14 +50,13 @@ function releaseCoverageGap(now: Date) {
   return and(
     eq(publicationObservations.status, "unknown"),
     inArray(publicationObservations.reason, [...RELEASE_COVERAGE_GAP_REASONS]),
-    isNull(publicationObservations.scanId),
     lte(publicationObservations.firstSeenAt, new Date(now.getTime() - COVERAGE_GAP_AFTER_MS)),
   );
 }
 
 // Correlated form of `releaseCoverageGap` for the watch listings.
 const unverifiedReleaseCount = () =>
-  sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id and o.status = 'unknown' and o.scan_id is null and o.reason in ${sql.raw(`(${RELEASE_COVERAGE_GAP_REASONS.map((reason) => `'${reason}'`).join(", ")})`)} and o.first_seen_at <= ${Date.now() - COVERAGE_GAP_AFTER_MS})`;
+  sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id and o.status = 'unknown' and o.reason in ${sql.raw(`(${RELEASE_COVERAGE_GAP_REASONS.map((reason) => `'${reason}'`).join(", ")})`)} and o.first_seen_at <= ${Date.now() - COVERAGE_GAP_AFTER_MS})`;
 
 const watchColumns = () => ({
   ...getTableColumns(publicationWatches),
@@ -258,6 +256,7 @@ export async function recordWatchCoverageGap(
   watch: WatchKey,
   reason: string | null,
   now: Date,
+  options: { weak?: boolean } = {},
 ) {
   if (reason === null) {
     await db
@@ -266,13 +265,16 @@ export async function recordWatchCoverageGap(
       .where(and(watchKey(watch), sql`${publicationWatches.coverageGap} is not null`));
     return;
   }
+  // A weak reason (a failed read) never replaces a recorded gap or restarts it.
   await db
     .update(publicationWatches)
     .set({ coverageGap: reason, coverageGapSince: now, coverageGapNotifiedAt: null })
     .where(
       and(
         watchKey(watch),
-        or(isNull(publicationWatches.coverageGap), ne(publicationWatches.coverageGap, reason)),
+        options.weak
+          ? isNull(publicationWatches.coverageGap)
+          : or(isNull(publicationWatches.coverageGap), ne(publicationWatches.coverageGap, reason)),
       ),
     );
 }

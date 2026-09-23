@@ -135,6 +135,8 @@ const COVERAGE_GAP_AFTER_MS = 60 * 60 * 1000;
 const coverageGapReasons: Record<string, string> = {
   registry_metadata_too_large: "npm's document for it is larger than Drydock reads",
   publication_history_limit: "it has more versions than Drydock compares",
+  registry_evidence_unavailable: "npm's document for it has not been readable for over an hour",
+  invalid_version_metadata: "npm lists a version of it that Drydock cannot read as a version",
 };
 
 /**

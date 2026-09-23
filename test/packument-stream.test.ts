@@ -60,6 +60,7 @@ function reference(text: string) {
     distTags: stringEntries(own(doc, "dist-tags")).sort(byKey),
     distTagsTruncated: false,
     versionLimitExceeded: false,
+    oversizedVersionKey: false,
   };
 }
 
@@ -72,6 +73,7 @@ function normalize(extract: PackumentExtract) {
     distTags: [...extract.distTags].sort(byKey),
     distTagsTruncated: extract.distTagsTruncated,
     versionLimitExceeded: extract.versionLimitExceeded,
+    oversizedVersionKey: extract.oversizedVersionKey,
   };
 }
 
@@ -234,9 +236,11 @@ describe("invalid and hostile documents", () => {
     ["empty input", ``],
     ["a missing colon", `{"a" 1}`],
     ["a trailing comma in an object", `{"a":1,}`],
-    ["a trailing comma in an array", `{"a":[1,]}`],
     ["an empty member", `{,}`],
-    ["mismatched brackets", `{"a":[1}`],
+    ["a tracked object closed by a bracket", `{"a":1]`],
+    ["a version entry closed by a bracket", `{"versions":{"1.0.0":{"version":"1"]}}`],
+    ["dist closed by a bracket", `{"versions":{"1.0.0":{"dist":{}]}}`],
+    ["a skipped value closed by the wrong bracket, leaving the document open", `{"a":[1}`],
     ["a leading zero", `{"a":01}`],
     ["a bare fraction dot", `{"a":1.}`],
     ["a lone minus", `{"a":-}`],
@@ -246,7 +250,7 @@ describe("invalid and hostile documents", () => {
     ["a single-quoted string", `{'a':1}`],
     ["an invalid escape in a captured string", String.raw`{"name":"\x"}`],
     ["a raw control character in a captured string", `{"name":"a\nb"}`],
-    ["a byte-order mark", `﻿{}`],
+    ["a byte-order mark", `${String.fromCharCode(0xfeff)}{}`],
   ])("%s is invalid", (_, text) => {
     expect(errorCode(text)).toBe("invalid");
   });
@@ -269,24 +273,95 @@ describe("invalid and hostile documents", () => {
     expect(() => extractor.end()).toThrow(PackumentStreamError);
   });
 
-  test("a nesting bomb is too complex, without deep recursion", () => {
-    expect(errorCode(`{"a":${"[".repeat(10_000)}`)).toBe("too_complex");
-    expect(errorCode(`{"a":${'{"a":'.repeat(10_000)}`)).toBe("too_complex");
-    expect(errorCode(`{"a":[[[1]]]}`, { maxDepth: 3 })).toBe("too_complex");
-    expect(normalize(extract(`{"a":[[1]]}`, [], { maxDepth: 3 }))).toEqual(
-      reference(`{"a":[[1]]}`),
+  test("a nesting bomb in a skipped value parses, and what follows it is captured", () => {
+    const arrays = `${"[".repeat(100_000)}${"]".repeat(100_000)}`;
+    const objects = `${'{"a":'.repeat(100_000)}1${"}".repeat(100_000)}`;
+    for (const bomb of [arrays, objects]) {
+      const text = `{"bomb":${bomb},"versions":{"1.0.0":{"name":"p","custom":${bomb},"version":"1.0.0","dist":{"extra":${bomb},"tarball":"t","shasum":"s"}},"2.0.0":{"version":"2.0.0"}},"time":{"1.0.0":"t1"},"name":"p"}`;
+      const bytes = encoder.encode(text);
+      const cuts = Array.from({ length: 64 }, (_, index) =>
+        Math.floor((bytes.length * index) / 64),
+      );
+      const result = extract(bytes, cuts);
+      expect(normalize(result)).toEqual(reference(text));
+      expect(result.versions.get("1.0.0")).toEqual({
+        name: "p",
+        version: "1.0.0",
+        tarball: "t",
+        shasum: "s",
+      });
+      expect(result.versions.get("2.0.0")?.version).toBe("2.0.0");
+      expect(result.time.get("1.0.0")).toBe("t1");
+      expect(result.name).toBe("p");
+    }
+  });
+
+  test("structure inside a skipped value is not validated, but strings in it are tracked", () => {
+    // npm serves `JSON.stringify` output; the skip scanner only needs brackets
+    // outside strings to balance, and nothing inside is captured.
+    expect(extract(`{"a":[1,],"b":{"c" 1},"name":"n"}`).name).toBe("n");
+    const text = String.raw`{"a":["x\"]",{"y":"}\\"},"[{"],"name":"n","versions":{"1":{"k":["]"],"version":"1"}}}`;
+    expect(normalize(extract(text))).toEqual(reference(text));
+    expect(extract(text).versions.get("1")?.version).toBe("1");
+  });
+
+  test("an overlong captured string loses only its own field", () => {
+    const long = `"${"a".repeat(5_000)}"`;
+    const result = extract(
+      `{"name":${long},"versions":{"1.0.0":{"name":${long},"version":${long},"dist":{"tarball":${long},"shasum":${long}}},"2.0.0":{"version":"2.0.0","dist":{"tarball":"t2"}}},"time":{"1.0.0":"t","2.0.0":${long}},"dist-tags":{"latest":"2.0.0","next":${long}}}`,
+    );
+    expect(result.name).toBeNull();
+    expect(result.versions.get("1.0.0")).toEqual({
+      name: null,
+      version: null,
+      tarball: null,
+      shasum: null,
+    });
+    expect(result.versions.get("2.0.0")).toEqual({
+      name: null,
+      version: "2.0.0",
+      tarball: "t2",
+      shasum: null,
+    });
+    expect([...result.time]).toEqual([["1.0.0", "t"]]);
+    expect([...result.distTags]).toEqual([["latest", "2.0.0"]]);
+    expect(result.distTagsTruncated).toBe(true);
+    expect(result.oversizedVersionKey).toBe(false);
+    // Uncaptured content of any length is skipped without being held.
+    expect(extract(`{"readme":"${"a".repeat(100_000)}","name":"x"}`).name).toBe("x");
+  });
+
+  test("an overlong key drops its entry: time, dist-tags, versions", () => {
+    const key = `"${"1".repeat(5_000)}"`;
+    const result = extract(
+      `{"versions":{"1.0.0":{"version":"1.0.0"},${key}:{"version":"x","custom":[[[]]]}},"time":{${key}:"t","1.0.0":"t1"},"dist-tags":{${key}:"1.0.0","latest":"1.0.0"}}`,
+    );
+    expect([...result.versions.keys()]).toEqual(["1.0.0"]);
+    expect(result.oversizedVersionKey).toBe(true);
+    expect([...result.time]).toEqual([["1.0.0", "t1"]]);
+    expect([...result.distTags]).toEqual([["latest", "1.0.0"]]);
+    expect(result.distTagsTruncated).toBe(true);
+    // A later `versions` replaces the earlier one, including that flag.
+    expect(extract(`{"versions":{${key}:{}},"versions":{"1.0.0":{}}}`).oversizedVersionKey).toBe(
+      false,
     );
   });
 
-  test("an overlong captured key or value is too complex", () => {
-    expect(errorCode(`{"name":"${"a".repeat(5_000)}"}`)).toBe("too_complex");
-    expect(errorCode(`{"time":{"${"1".repeat(5_000)}":"x"}}`)).toBe("too_complex");
-    expect(errorCode(`{"name":"${"a".repeat(98)}"}`, { maxCapturedBytes: 100 })).toBeNull();
-    expect(errorCode(`{"name":"${"a".repeat(99)}"}`, { maxCapturedBytes: 100 })).toBe(
-      "too_complex",
+  test("a later valid duplicate wins over an overlong capture", () => {
+    const long = `"${"a".repeat(200)}"`;
+    const result = extract(
+      `{"versions":{"1.0.0":{"version":${long},"version":"1.0.0"}},"time":{"1.0.0":${long},"1.0.0":"t"},"dist-tags":{"latest":${long},"latest":"1.0.0"}}`,
+      [],
+      { maxCapturedBytes: 100 },
     );
-    // Uncaptured content of any length is skipped without being held.
-    expect(extract(`{"readme":"${"a".repeat(100_000)}","name":"x"}`).name).toBe("x");
+    expect(result.versions.get("1.0.0")?.version).toBe("1.0.0");
+    expect(result.time.get("1.0.0")).toBe("t");
+    expect(result.distTags.get("latest")).toBe("1.0.0");
+    // The earlier drop is still reported.
+    expect(result.distTagsTruncated).toBe(true);
+    const exact = `"${"a".repeat(98)}"`;
+    expect(extract(`{"name":${exact}}`, [], { maxCapturedBytes: 100 }).name).toHaveLength(98);
+    expect(extract(`{"name":"${"a".repeat(99)}"}`, [], { maxCapturedBytes: 100 }).name).toBeNull();
   });
 
   test("the dist-tag cap drops the excess and says so", () => {
@@ -319,13 +394,14 @@ describe("invalid and hostile documents", () => {
   });
 });
 
-test("a ~40 MB packument streams with flat state and captures every version", () => {
+test("a ~40 MB packument with deep skipped subtrees streams fast and captures every version", () => {
   const readme = `${'lorem \\"ipsum\\" dolor \\u00e9 '.repeat(340)}`;
-  const parts: string[] = [`{"name":"big","readme":"${readme}","versions":{`];
+  const deep = `${"[".repeat(200_000)}"]["${"]".repeat(200_000)}`;
+  const parts: string[] = [`{"name":"big","readme":"${readme}","deep":${deep},"versions":{`];
   const count = 4_000;
   for (let index = 0; index < count; index++) {
     parts.push(
-      `${index ? "," : ""}"1.0.${index}":{"name":"big","version":"1.0.${index}","readme":"${readme}","dist":{"tarball":"https://registry.npmjs.org/big/-/big-1.0.${index}.tgz","shasum":"${"a".repeat(40)}"}}`,
+      `${index ? "," : ""}"1.0.${index}":{"name":"big","version":"1.0.${index}","readme":"${readme}","custom":${index % 1_000 === 0 ? deep : "[]"},"dist":{"tarball":"https://registry.npmjs.org/big/-/big-1.0.${index}.tgz","shasum":"${"a".repeat(40)}"}}`,
     );
   }
   parts.push(`},"time":{`);

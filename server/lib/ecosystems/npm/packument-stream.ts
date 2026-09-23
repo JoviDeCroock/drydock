@@ -5,20 +5,25 @@
  *
  * The packument is a hostile registry document, and only npm's full document
  * carries per-version publish times, so a mature package's packument can be
- * tens of megabytes. This consumes it chunk by chunk with an explicit stack
- * (never recursion on input depth), keeps only the captured fields, and holds
- * at most one bounded captured string at a time, so memory stays flat however
- * large the document is. The result equals `JSON.parse` followed by the same
- * projection, duplicate keys included (the last one wins).
+ * tens of megabytes. This consumes it chunk by chunk and holds at most one
+ * bounded captured string at a time, so memory stays flat however large the
+ * document is. The result equals `JSON.parse` followed by the same projection,
+ * duplicate keys included (the last one wins).
+ *
+ * Anyone who can publish a version controls most of that version's entry, so
+ * no single entry may blind the monitor to the rest of the package: nothing
+ * outside the tracked containers is depth-limited, and a captured string that
+ * is too long loses only that field (see `PackumentExtract`).
  */
 
 export class PackumentStreamError extends Error {
-  constructor(readonly code: "invalid" | "too_complex") {
+  constructor(readonly code: "invalid") {
     super(`packument_${code}`);
   }
 }
 
 export interface PackumentVersion {
+  /** Each field is the string at that path, or null (absent, not a string, or too long). */
   name: string | null;
   version: string | null;
   tarball: string | null;
@@ -29,21 +34,23 @@ export interface PackumentExtract {
   name: string | null;
   versions: Map<string, PackumentVersion | null>;
   versionsIsObject: boolean;
+  /** A version key too long to capture was present; its entry was skipped. */
+  oversizedVersionKey: boolean;
+  /** Entries with a string value; a too-long key or value leaves the entry out. */
   time: Map<string, string>;
   distTags: Map<string, string>;
+  /** Some tag was dropped: beyond the cap, or its key or value too long to capture. */
   distTagsTruncated: boolean;
   versionLimitExceeded: boolean;
 }
 
-// Container frames: what the keys of an open object mean.
+// The only containers tracked, at most four deep: root > versions > entry > dist.
 const ROOT = 0;
 const VERSIONS = 1;
 const ENTRY = 2;
 const DIST = 3;
 const TIME = 4;
 const TAGS = 5;
-const SKIP_OBJECT = 6;
-const ARRAY = 7;
 
 // Value slots: what the next value means.
 const SLOT_SKIP = 0;
@@ -67,18 +74,11 @@ const S_OBJECT_FIRST = 1;
 const S_OBJECT_KEY = 2;
 const S_COLON = 3;
 const S_OBJECT_NEXT = 4;
-const S_ARRAY_FIRST = 5;
-const S_ARRAY_NEXT = 6;
-const S_STRING = 7;
-const S_NUMBER = 8;
-const S_KEYWORD = 9;
-const S_DONE = 10;
-
-// String modes. A `MATCH` key only has to equal one of a few short names, so
-// an overlong one is simply not a match; a `CAPTURE` string is data we keep.
-const SKIP = 0;
-const CAPTURE = 1;
-const MATCH = 2;
+const S_STRING = 5;
+const S_NUMBER = 6;
+const S_KEYWORD = 7;
+const S_SKIP = 8;
+const S_DONE = 9;
 
 // JSON number grammar states. `nextNumberState` answers -1 when the byte ends
 // the number (it is reprocessed as what follows) and null when it is invalid.
@@ -148,16 +148,10 @@ function nextNumberState(state: number, c: number): number | null {
 }
 
 export function createPackumentExtractor(
-  limits: {
-    maxVersions?: number;
-    maxDistTags?: number;
-    maxDepth?: number;
-    maxCapturedBytes?: number;
-  } = {},
+  limits: { maxVersions?: number; maxDistTags?: number; maxCapturedBytes?: number } = {},
 ): { write(chunk: Uint8Array): void; end(): PackumentExtract } {
   const maxVersions = limits.maxVersions ?? 10_001;
   const maxDistTags = limits.maxDistTags ?? 1_000;
-  const maxDepth = limits.maxDepth ?? 256;
   const maxCaptured = limits.maxCapturedBytes ?? 4_096;
   const decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -165,6 +159,7 @@ export function createPackumentExtractor(
     name: null,
     versions: new Map(),
     versionsIsObject: false,
+    oversizedVersionKey: false,
     time: new Map(),
     distTags: new Map(),
     distTagsTruncated: false,
@@ -178,7 +173,7 @@ export function createPackumentExtractor(
   let failed: PackumentStreamError | null = null;
 
   let stringIsKey = false;
-  let stringMode = SKIP;
+  let keep = false;
   let escaped = false;
   const captured = new Uint8Array(maxCaptured);
   let capturedLength = 0;
@@ -186,19 +181,15 @@ export function createPackumentExtractor(
   let numberState = N_INT;
   let keyword: Uint8Array = KEYWORDS[0x74]!;
   let keywordAt = 0;
+  // Open brackets of the skipped container being consumed; 0 outside one.
+  let skipDepth = 0;
 
-  const fail = (code: "invalid" | "too_complex"): never => {
-    throw (failed = new PackumentStreamError(code));
+  const fail = (): never => {
+    throw (failed = new PackumentStreamError("invalid"));
   };
 
-  function push(frame: number) {
-    if (frames.length >= maxDepth) fail("too_complex");
-    frames.push(frame);
-  }
-
   function afterValue() {
-    const top = frames[frames.length - 1];
-    state = top === undefined ? S_DONE : top === ARRAY ? S_ARRAY_NEXT : S_OBJECT_NEXT;
+    state = frames.length === 0 ? S_DONE : S_OBJECT_NEXT;
   }
 
   function versionAllowed(): boolean {
@@ -213,7 +204,7 @@ export function createPackumentExtractor(
   function applyNonString() {
     switch (slot) {
       case SLOT_ROOT:
-        fail("invalid");
+        fail();
         break;
       case SLOT_NAME:
         out.name = null;
@@ -221,6 +212,7 @@ export function createPackumentExtractor(
       case SLOT_VERSIONS:
         out.versions = new Map();
         out.versionsIsObject = false;
+        out.oversizedVersionKey = false;
         out.versionLimitExceeded = false;
         break;
       case SLOT_TIME:
@@ -258,7 +250,13 @@ export function createPackumentExtractor(
     }
   }
 
-  function applyString(value: string) {
+  function applyString(value: string | null) {
+    // A string too long to capture loses only its own field.
+    if (value === null) {
+      applyNonString();
+      if (slot === SLOT_TAG_VALUE) out.distTagsTruncated = true;
+      return;
+    }
     switch (slot) {
       case SLOT_NAME:
         out.name = value;
@@ -288,57 +286,61 @@ export function createPackumentExtractor(
     }
   }
 
-  function openObject() {
+  /** The tracked container an object in `slot` opens, or null to skip it. */
+  function trackedObject(): number | null {
     switch (slot) {
       case SLOT_ROOT:
-        return push(ROOT);
+        return ROOT;
       case SLOT_VERSIONS:
         applyNonString();
         out.versionsIsObject = true;
-        return push(VERSIONS);
+        return VERSIONS;
       case SLOT_TIME:
         applyNonString();
-        return push(TIME);
+        return TIME;
       case SLOT_TAGS:
         applyNonString();
-        return push(TAGS);
-      case SLOT_VERSION: {
-        if (!versionAllowed()) return push(SKIP_OBJECT);
+        return TAGS;
+      case SLOT_VERSION:
+        if (!versionAllowed()) return null;
         entry = { name: null, version: null, tarball: null, shasum: null };
         out.versions.set(pendingKey, entry);
-        return push(ENTRY);
-      }
+        return ENTRY;
       case SLOT_ENTRY_DIST:
         applyNonString();
-        return push(DIST);
+        return DIST;
       default:
         applyNonString();
-        return push(SKIP_OBJECT);
+        return null;
     }
   }
 
-  function startString(isKey: boolean, mode: number) {
+  function startString(isKey: boolean, keeping: boolean) {
     stringIsKey = isKey;
-    stringMode = mode;
+    keep = keeping;
     escaped = false;
     capturedLength = 0;
     overflow = false;
-    if (mode !== SKIP) captured[capturedLength++] = QUOTE;
+    if (keeping) captured[capturedLength++] = QUOTE;
     state = S_STRING;
   }
 
   function startValue(c: number) {
-    if (c === 0x7b) {
-      openObject();
-      state = S_OBJECT_FIRST;
-    } else if (c === 0x5b) {
-      applyNonString();
-      push(ARRAY);
-      state = S_ARRAY_FIRST;
+    if (c === 0x7b || c === 0x5b) {
+      let frame: number | null = null;
+      if (c === 0x7b) frame = trackedObject();
+      else applyNonString();
+      if (frame === null) {
+        skipDepth = 1;
+        state = S_SKIP;
+      } else {
+        frames.push(frame);
+        state = S_OBJECT_FIRST;
+      }
     } else if (c === QUOTE) {
-      const keep = STRING_SLOTS.has(slot);
-      if (!keep) applyNonString();
-      startString(false, keep ? CAPTURE : SKIP);
+      const keeping = STRING_SLOTS.has(slot);
+      if (!keeping) applyNonString();
+      startString(false, keeping);
     } else if (c === 0x2d || isDigit(c)) {
       applyNonString();
       numberState = c === 0x2d ? N_MINUS : c === 0x30 ? N_ZERO : N_INT;
@@ -349,25 +351,13 @@ export function createPackumentExtractor(
       keywordAt = 1;
       state = S_KEYWORD;
     } else {
-      fail("invalid");
+      fail();
     }
   }
 
-  function startKey() {
-    const top = frames[frames.length - 1];
-    const mode =
-      top === VERSIONS || top === TIME || top === TAGS
-        ? CAPTURE
-        : top === ROOT || top === ENTRY || top === DIST
-          ? MATCH
-          : SKIP;
-    startString(true, mode);
-  }
-
   function capture(chunk: Uint8Array, from: number, to: number) {
-    if (stringMode === SKIP || overflow) return;
+    if (!keep || overflow) return;
     if (capturedLength + (to - from) > maxCaptured) {
-      if (stringMode === CAPTURE) fail("too_complex");
       overflow = true;
       return;
     }
@@ -382,31 +372,37 @@ export function createPackumentExtractor(
     } catch {
       // Invalid UTF-8, a bad escape or a raw control character.
     }
-    return fail("invalid");
+    return fail();
   }
 
   function endString() {
-    const text = stringMode === SKIP || overflow ? null : decodeCaptured();
+    if (skipDepth > 0) {
+      state = S_SKIP;
+      return;
+    }
+    const text = keep && !overflow ? decodeCaptured() : null;
     if (!stringIsKey) {
-      if (text !== null) applyString(text);
+      if (keep) applyString(text);
       afterValue();
       return;
     }
     const top = frames[frames.length - 1];
     if (top === VERSIONS || top === TIME || top === TAGS) {
-      pendingKey = text!;
-      slot = top === VERSIONS ? SLOT_VERSION : top === TIME ? SLOT_TIME_VALUE : SLOT_TAG_VALUE;
+      if (text === null) {
+        // A key too long to capture: its value is skipped.
+        if (top === VERSIONS) out.oversizedVersionKey = true;
+        if (top === TAGS) out.distTagsTruncated = true;
+        slot = SLOT_SKIP;
+      } else {
+        pendingKey = text;
+        slot = top === VERSIONS ? SLOT_VERSION : top === TIME ? SLOT_TIME_VALUE : SLOT_TAG_VALUE;
+      }
     } else {
+      // A field name too long to capture cannot be one of these short names.
       const names = top === ROOT ? ROOT_KEYS : top === ENTRY ? ENTRY_KEYS : DIST_KEYS;
       slot = text !== null && Object.hasOwn(names, text) ? names[text]! : SLOT_SKIP;
     }
     state = S_COLON;
-  }
-
-  function closeContainer(isObject: boolean) {
-    const top = frames.pop();
-    if (top === undefined || (top === ARRAY) === isObject) fail("invalid");
-    afterValue();
   }
 
   function write(chunk: Uint8Array) {
@@ -451,10 +447,31 @@ export function createPackumentExtractor(
         endString();
         continue;
       }
+      if (state === S_SKIP) {
+        // A value nothing is captured from (an array, an object in a slot
+        // that takes none, a version beyond the cap) is consumed by counting
+        // brackets outside strings, with no per-level memory and no depth
+        // limit, so a deeply nested custom field in one version cannot stop
+        // the rest of the packument from being read. Its inner structure is
+        // not validated: npm serves `JSON.stringify` output, nothing inside is
+        // captured, and for valid JSON the count returns to zero exactly at
+        // the matching bracket.
+        for (; i < length; i++) {
+          const c = chunk[i]!;
+          if (c === QUOTE) break;
+          if (c === 0x7b || c === 0x5b) skipDepth++;
+          else if ((c === 0x7d || c === 0x5d) && --skipDepth === 0) break;
+        }
+        if (i >= length) break;
+        i++;
+        if (skipDepth > 0) startString(false, false);
+        else afterValue();
+        continue;
+      }
       const c = chunk[i]!;
       if (state === S_NUMBER) {
         const next = nextNumberState(numberState, c);
-        if (next === null) fail("invalid");
+        if (next === null) fail();
         if (next === -1) {
           afterValue();
           continue;
@@ -464,7 +481,7 @@ export function createPackumentExtractor(
         continue;
       }
       if (state === S_KEYWORD) {
-        if (c !== keyword[keywordAt]) fail("invalid");
+        if (c !== keyword[keywordAt]) fail();
         i++;
         if (++keywordAt === keyword.length) afterValue();
         continue;
@@ -475,40 +492,30 @@ export function createPackumentExtractor(
         case S_VALUE:
           startValue(c);
           break;
-        case S_ARRAY_FIRST:
-          if (c === 0x5d) closeContainer(false);
-          else {
-            slot = SLOT_SKIP;
-            startValue(c);
-          }
-          break;
-        case S_ARRAY_NEXT:
-          if (c === 0x5d) closeContainer(false);
-          else if (c === 0x2c) {
-            slot = SLOT_SKIP;
-            state = S_VALUE;
-          } else fail("invalid");
-          break;
         case S_OBJECT_FIRST:
-          if (c === 0x7d) closeContainer(true);
-          else if (c === QUOTE) startKey();
-          else fail("invalid");
+          if (c === 0x7d) {
+            frames.pop();
+            afterValue();
+          } else if (c === QUOTE) startString(true, true);
+          else fail();
           break;
         case S_OBJECT_KEY:
-          if (c === QUOTE) startKey();
-          else fail("invalid");
+          if (c === QUOTE) startString(true, true);
+          else fail();
           break;
         case S_COLON:
           if (c === 0x3a) state = S_VALUE;
-          else fail("invalid");
+          else fail();
           break;
         case S_OBJECT_NEXT:
-          if (c === 0x7d) closeContainer(true);
-          else if (c === 0x2c) state = S_OBJECT_KEY;
-          else fail("invalid");
+          if (c === 0x7d) {
+            frames.pop();
+            afterValue();
+          } else if (c === 0x2c) state = S_OBJECT_KEY;
+          else fail();
           break;
         default:
-          fail("invalid");
+          fail();
       }
     }
   }
@@ -525,7 +532,7 @@ export function createPackumentExtractor(
     },
     end() {
       if (failed) throw failed;
-      if (state !== S_DONE) fail("invalid");
+      if (state !== S_DONE) fail();
       return out;
     },
   };
