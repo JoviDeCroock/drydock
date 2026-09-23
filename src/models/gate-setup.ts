@@ -84,8 +84,8 @@ export const GateSetupModel = createModel(() => {
   const knownReleaseTargets = signal<readonly PublicReleaseTarget[]>([]);
   const preview = signal<GateSetupPreview | null>(null);
 
-  // Every action in flight. More than one can be: choosing an environment
-  // verifies it while the ecosystem a stored mapping pins resets the workflow.
+  // Every action in flight, tracked per action so that invalidating one (a
+  // template change drops the pending preview) cannot clear another's state.
   const pendingSteps = signal<readonly GateSetupAction[]>([]);
   const error = signal<string | null>(null);
   // Which action raised `error`, so the wizard can render it against the step
