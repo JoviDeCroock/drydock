@@ -3,15 +3,30 @@ import type { ReleaseProvenance, StagedArtifactIntegrity } from "../../../../ser
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/artifact-integrity";
 import { Badge } from "../../../components/Badge";
-import { PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
+import { manifestVersionRange, PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
 import { EmptyLine, SectionLabel } from "../../../components/Typography";
 import type { PersistedSummary } from "./types";
 
 export function PersistedReportSections({ summary }: { summary: PersistedSummary }) {
   const artifactIntegrity = parseStagedArtifactIntegrity(summary.stagedPublish?.artifactIntegrity);
+  // The manifest pair is the persisted default baseline, which can differ from
+  // the version the picker above currently compares against, so it stays.
+  const manifestRange = summary.packageJsonDiff
+    ? manifestVersionRange(summary.packageJsonDiff)
+    : null;
   return (
     <section class="flex flex-col gap-6">
-      <ReportSection title="Manifest changes" id="manifest-changes">
+      <ReportSection
+        title="Manifest changes"
+        id="manifest-changes"
+        aside={
+          manifestRange ? (
+            <>
+              version <span class="normal-case">{manifestRange}</span>
+            </>
+          ) : null
+        }
+      >
         {summary.packageJsonDiff ? (
           <PackageJsonDiffView
             diff={summary.packageJsonDiff}
@@ -52,11 +67,13 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
 
 function ReportSection({
   title,
+  aside,
   children,
   class: className,
   id,
 }: {
   title: string;
+  aside?: ComponentChildren;
   children: ComponentChildren;
   class?: string;
   id?: string;
@@ -67,13 +84,32 @@ function ReportSection({
       tabIndex={id ? -1 : undefined}
       class={`flex flex-col gap-3 min-w-0 ${className || ""}`}
     >
-      <SectionLabel as="h2">{title}</SectionLabel>
+      <SectionLabel as="h2" aside={aside}>
+        {title}
+      </SectionLabel>
       {children}
     </section>
   );
 }
 
 function ArtifactIntegrityView({ integrity }: { integrity: StagedArtifactIntegrity }) {
+  // The expected outcome is one plain line: two identical digests in two
+  // bordered rows made the reader compare 40 hex characters to learn "yes".
+  // Anything else keeps both digests side by side, because there the
+  // difference is the evidence.
+  if (integrity.status === "verified" && integrity.computed) {
+    return (
+      <p class="m-0 font-mono text-[11px] text-ink-subtle flex flex-wrap items-baseline gap-x-2 gap-y-1 min-w-0">
+        <span class="text-ink-muted">verified</span>
+        <span aria-hidden>·</span>
+        <span class="break-all min-w-0">
+          {integrity.algorithm} {integrity.computed}
+        </span>
+        <span aria-hidden>·</span>
+        <span>matches npm&rsquo;s stage record</span>
+      </p>
+    );
+  }
   const description =
     integrity.status === "verified"
       ? "The reviewed tarball bytes match the SHA-1 npm recorded for this staged release."

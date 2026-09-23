@@ -4,11 +4,10 @@ import { pluralize } from "../../../lib/format";
 import { getReleaseRecommendation, type ReleaseRecommendationCopy } from "../recommendation";
 import type { DisplayedAiResult } from "../../../../server/lib/ai-review/types";
 import type { PersistedScanDetail } from "../../../models/scan";
-import { Button } from "../../../components/Button";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../../server/lib/release-fingerprint";
 import { Badge, severityTone } from "../../../components/Badge";
 import { SeverityBar } from "../../../components/SeverityBar";
-import { SectionLabel } from "../../../components/Typography";
+import { MonoDetail, SectionLabel } from "../../../components/Typography";
 import { verdictTextClass } from "../../../features/review/verdict";
 import type { FindingWithDiffStatus, ReviewFinding } from "../../../features/review/types";
 import type { PersistedSummary } from "./types";
@@ -72,6 +71,7 @@ export function buildReleaseVerdict({
     diffCount,
     changedFindings,
     baselineComparisonSkipped,
+    recommendation.label === "likely safe",
   );
   const severityCounts = countSeverities(detail.findings);
   const findingTotal = Object.values(severityCounts).reduce((sum, count) => sum + (count ?? 0), 0);
@@ -96,57 +96,55 @@ export function buildReleaseVerdict({
 }
 
 /**
- * The verdict line the page opens on, above the diff.
+ * The verdict line the page opens on, above the diff: Drydock's reading on the
+ * left, the maintainer's decision on the right.
  *
- * Deliberately one row: the recommendation, the risk badges that qualify it,
- * the comparison picker, and the decision button. Below `sm` the decision
- * stays beside the verdict and the picker drops to its own full-width row,
- * so the primary action never trails the control it does not depend on. The
+ * The headline is the recommendation; the risk grade and any assistant note
+ * qualify it in one plain caption. Only "manual review" keeps a Badge, because
+ * it is the one qualifier that asks the reader to do something. The comparison
+ * picker is the diff's control, so it sits on the workbench, not here. The
  * evidence behind the verdict moves below the workbench into the review notes,
  * because a reviewer reads the diff first and the reasoning second.
  */
 export function ReleaseVerdictStrip({
   verdict,
   ai,
-  comparison,
   decision,
 }: {
   verdict: ReleaseVerdict;
   ai: DisplayedAiResult | null;
-  comparison?: ComponentChildren;
   decision?: ComponentChildren;
 }) {
   const { recommendation, artifactRisk, releaseRisk } = verdict;
+  const assistant = ai?.model != null ? ai : null;
   return (
-    <section class="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0 order-1">
+    <section class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
         <h2
           class={`m-0 text-lg font-semibold tracking-[-0.01em] ${verdictTextClass(recommendation.tone)}`}
         >
           {capitalize(recommendation.label)}
         </h2>
-        {artifactRisk !== releaseRisk ? (
-          <Badge tone="neutral">artifact {artifactRisk}</Badge>
-        ) : null}
-        {ai?.model != null && ai.kind === "complete" && ai.requiresManualReview ? (
-          <Badge tone="medium">manual review</Badge>
-        ) : null}
-        {/* The model reports the assessment and the manual-review flag
-            independently, so a suspicious assessment without the flag must
-            still surface here; only the clean reading stays quiet. */}
-        {ai?.model != null &&
-        ai.kind === "complete" &&
-        ai.releaseAssessment !== "nothing_unusual" ? (
-          <Badge tone="neutral">{ai.releaseAssessment.replaceAll("_", " ")}</Badge>
-        ) : null}
-        {ai?.model != null && ai.kind === "unavailable" ? (
-          <Badge tone="neutral">assistant unavailable</Badge>
+        <MonoDetail
+          parts={[
+            `release risk ${releaseRisk}`,
+            artifactRisk !== releaseRisk ? `artifact risk ${artifactRisk}` : null,
+            // The model reports the assessment and the manual-review flag
+            // independently, so a suspicious assessment without the flag must
+            // still surface here; only the clean reading stays quiet.
+            assistant?.kind === "complete" && assistant.releaseAssessment !== "nothing_unusual"
+              ? `assistant: ${assistant.releaseAssessment.replaceAll("_", " ")}`
+              : null,
+            assistant?.kind === "unavailable" ? "assistant unavailable" : null,
+          ]}
+        />
+        {assistant?.kind === "complete" && assistant.requiresManualReview ? (
+          <Badge tone="medium" class="self-center">
+            manual review
+          </Badge>
         ) : null}
       </div>
-      {comparison ? (
-        <div class="order-3 basis-full sm:order-2 sm:basis-auto sm:ml-auto">{comparison}</div>
-      ) : null}
-      {decision ? <div class="order-2 ml-auto sm:order-3 sm:ml-0">{decision}</div> : null}
+      {decision}
     </section>
   );
 }
@@ -177,14 +175,17 @@ export function ReleaseVerdictEvidence({
   return (
     <section class="flex flex-col gap-4">
       <SectionLabel as="h3">Why this verdict</SectionLabel>
-      <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+      {/* The inspect action is a text link like "View manifest changes": the
+          page's one filled button is Decide, and a second one here competed
+          with it for the same glance. */}
+      <div class="flex flex-wrap items-baseline gap-x-6 gap-y-2">
         {recommendation.copy ? (
           <p class="m-0 max-w-[680px] text-[14px] leading-[1.55] text-ink">{recommendation.copy}</p>
         ) : null}
         {firstFinding && inspect ? (
-          <Button variant="secondary" size="sm" onClick={inspect}>
+          <button type="button" onClick={inspect} class={TEXT_ACTION}>
             Inspect {firstFinding.severity} findings
-          </Button>
+          </button>
         ) : null}
       </div>
       {evidence.length ? (
@@ -208,7 +209,10 @@ export function ReleaseVerdictEvidence({
           ))}
         </ul>
       ) : null}
-      {findingTotal ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
+      {/* A lone finding is already stated by its inline annotation and its
+          risk-signal card; a one-segment bar plus its legend and total would
+          state it three more times. */}
+      {findingTotal > 1 ? <SeverityBar counts={severityCounts} class="max-w-[520px]" /> : null}
       {consistencyNote ? <div class="max-w-[680px]">{consistencyNote}</div> : null}
     </section>
   );
@@ -331,11 +335,7 @@ export function ReleaseChangesSummary({
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
         <p class="m-0 text-ink-muted">{verdict.releaseChanges.join(" · ")}</p>
         {onInspectChanges ? (
-          <button
-            type="button"
-            onClick={onInspectChanges}
-            class="p-0 border-0 bg-transparent text-accent hover:underline cursor-pointer"
-          >
+          <button type="button" onClick={onInspectChanges} class={TEXT_ACTION}>
             View manifest changes
           </button>
         ) : null}
@@ -343,6 +343,9 @@ export function ReleaseChangesSummary({
     </section>
   );
 }
+
+const TEXT_ACTION =
+  "p-0 border-0 bg-transparent text-[13px] text-accent hover:underline cursor-pointer text-left";
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -357,6 +360,7 @@ function buildRecommendationEvidence(
   diffCount: number,
   changedFindings: ReviewFinding[],
   baselineComparisonSkipped: boolean,
+  verdictSaysClean: boolean,
 ): Array<{ label: string; value: ComponentChildren }> {
   const evidence: Array<{ label: string; value: ComponentChildren }> = [];
   // Lead with the missing comparison: it explains why there are no release
@@ -375,9 +379,15 @@ function buildRecommendationEvidence(
       diffCount ||
       summary.diff?.filter((entry) => entry.status !== "unchanged").length ||
       detail.files.filter((file) => file.status !== "unchanged").length;
+    const files = `${changed} changed ${pluralize("file", changed)}`;
+    const packageNote = detail.findings.length ? " Package findings remain below." : "";
     evidence.push({
       label: "evidence",
-      value: `${changed} changed ${pluralize("file", changed)}; no findings in this release delta.${detail.findings.length ? " Package findings remain below." : ""}`,
+      // "Likely safe" already says nothing fired on the release delta; the
+      // other verdicts (package context only) still need it said.
+      value: verdictSaysClean
+        ? `${files}.${packageNote}`
+        : `${files}; no findings in this release delta.${packageNote}`,
     });
   }
 

@@ -12,9 +12,9 @@ import { findingCountsByPath } from "../../../../features/review/diff-entries";
 import type { ReviewFinding } from "../../../../features/review/types";
 import { useSelectedDiffFile } from "../../../../features/review/useSelectedDiffFile";
 import { scanFilesToFileRecords } from "../diff-helpers";
-import { hasReleaseConsistencyNote } from "../ReleaseConsistencyNotice";
+import { releaseConsistencyDiverged } from "../ReleaseConsistencyNotice";
 import { buildReleaseVerdict } from "../ReleaseRecommendation";
-import { reviewerSummaryVisible } from "../ReviewerSummary";
+import { assistantFlagsRelease } from "../ReviewerSummary";
 import type { PersistedSummary } from "../types";
 import { useFindingsWithDiff } from "./useFindingsWithDiff";
 import { useScanFileContent } from "./useScanFileContent";
@@ -155,12 +155,15 @@ export function useScanDetailView(model: ScanDetailModelInstance) {
 
   // Open the advisory group when it carries context worth reading. Its title
   // stays quiet; repeating every nested section name in the summary made the
-  // report header harder to scan than its contents.
+  // report header harder to scan than its contents. Source binding and release
+  // memory that agrees with the last approved release are present on nearly
+  // every scan, and the assistant now runs by default, so none of those alone
+  // holds the notes open on a clean release: only diverged release memory or an
+  // assistant reading that flags the release (`assistantFlagsRelease`) does.
   const reviewNotesOpen = useComputed(
     () =>
-      reviewerSummaryVisible(ai.value) ||
-      hasReleaseConsistencyNote(summary.value.releaseConsistency) ||
-      Boolean(intentEnvelope.value) ||
+      assistantFlagsRelease(ai.value) ||
+      releaseConsistencyDiverged(summary.value.releaseConsistency) ||
       Boolean(verdict.value?.hasSignals),
   );
 

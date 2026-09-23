@@ -1,5 +1,4 @@
 import { useId } from "preact/hooks";
-import { Badge } from "./Badge";
 import { Select } from "./Select";
 
 export interface VersionOption {
@@ -49,7 +48,15 @@ function VersionSelect({
       disabled={disabled || options.length === 0}
       mono
     >
-      {!options.length ? <option value="">no published versions</option> : null}
+      {/* The version list can come back empty while the review still has a
+          persisted baseline (the packument lookup failed, or a gate scan in an
+          ecosystem the list does not cover). Name that baseline rather than
+          claim nothing was published above a tree of modified files. */}
+      {!options.length ? (
+        <option value={selected ?? ""}>
+          {defaultVersion ? `${defaultVersion} (default)` : "no published versions"}
+        </option>
+      ) : null}
       {options.map((option) => (
         <option
           key={option.version}
@@ -80,7 +87,6 @@ export function VersionPicker({
   onChange: (version: string) => void;
   disabled?: boolean;
 }) {
-  const tagsForSelected = options.find((option) => option.version === selected)?.distTags ?? [];
   const selectId = useId();
 
   return (
@@ -101,12 +107,9 @@ export function VersionPicker({
           onChange={onChange}
         />
       </div>
+      {/* The selected option's text already names its dist-tags; a chip after
+          this caption read as tagging the staged version instead. */}
       <span class="font-mono text-[11px] text-ink-muted">→ staged {stagedVersion || "—"}</span>
-      {tagsForSelected.map((tag) => (
-        <Badge key={tag} tone="info">
-          {tag}
-        </Badge>
-      ))}
     </div>
   );
 }

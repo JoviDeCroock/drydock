@@ -11,11 +11,14 @@ import { EmptyLine, LoadingLine } from "../../components/Typography";
  * Single-sided by construction: the share token buys the staged artifact's
  * redacted samples and nothing else, because reaching the published previous
  * version means spending the organization's npm credentials. `DiffView` keeps
- * the release's own status badge and pins the findings to their staged lines,
+ * the release's own status label and pins the findings to their staged lines,
  * so the reader still sees which lines a rule matched — they just do not get
- * the baseline text next to it. Say so rather than letting the missing side
- * read as "nothing changed here".
+ * the baseline text next to it. The page says so once, as the panel label's
+ * aside (`REPORT_DIFF_ASIDE`), rather than letting the missing side read as
+ * "nothing changed here" — and rather than repeating it above every file.
  */
+export const REPORT_DIFF_ASIDE = "staged side only";
+
 export function ReportDiffPanel({
   entry,
   file,
@@ -63,30 +66,22 @@ export function ReportDiffPanel({
   }
 
   return (
-    <div class="flex flex-col gap-3 min-h-0">
-      {entry.status === "modified" ? (
-        <p class="m-0 font-mono text-[11px] text-ink-subtle">
-          Shared reports carry the reviewed release only: modified files show the staged side with
-          findings pinned, not a side-by-side against the previous version.
-        </p>
-      ) : null}
-      <DiffView
-        path={entry.path}
-        status={entry.status}
-        beforeLabel="previous"
-        afterLabel={`staged (${stagedVersion ?? "current"})`}
-        before={null}
-        after={{
-          textSample: file.textSample,
-          size: file.size,
-          sha256: file.sha256,
-          flags: Array.isArray(file.flagsJson)
-            ? file.flagsJson.filter((flag): flag is string => typeof flag === "string")
-            : [],
-        }}
-        findings={findings}
-      />
-    </div>
+    <DiffView
+      path={entry.path}
+      status={entry.status}
+      beforeLabel="previous"
+      afterLabel={`staged (${stagedVersion ?? "current"})`}
+      before={null}
+      after={{
+        textSample: file.textSample,
+        size: file.size,
+        sha256: file.sha256,
+        flags: Array.isArray(file.flagsJson)
+          ? file.flagsJson.filter((flag): flag is string => typeof flag === "string")
+          : [],
+      }}
+      findings={findings}
+    />
   );
 }
 

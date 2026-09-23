@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   channelLabel,
+  describeAttentionCounts,
   describeBaseline,
   groupReleasesByChannel,
   releaseAttention,
@@ -39,6 +40,32 @@ describe("releaseAttention", () => {
         release({ registryVersionStatus: "published", registryStatusSupersededAt: "2026-09-01" }),
       ),
     ).toBe(null);
+  });
+});
+
+describe("describeAttentionCounts", () => {
+  test("says nothing for a package npm and Drydock agree on", () => {
+    expect(describeAttentionCounts({ publishedWithoutDecision: 0, publishedDespiteBlock: 0 })).toBe(
+      null,
+    );
+  });
+
+  test("warns about releases npm published with no decision here", () => {
+    expect(
+      describeAttentionCounts({ publishedWithoutDecision: 1, publishedDespiteBlock: 0 }),
+    ).toEqual({ tone: "warn", text: "npm published 1 release with no decision here." });
+  });
+
+  test("escalates to critical once npm published over a block, naming both counts", () => {
+    expect(
+      describeAttentionCounts({ publishedWithoutDecision: 0, publishedDespiteBlock: 2 }),
+    ).toEqual({ tone: "critical", text: "npm published 2 releases over a block." });
+    expect(
+      describeAttentionCounts({ publishedWithoutDecision: 3, publishedDespiteBlock: 1 }),
+    ).toEqual({
+      tone: "critical",
+      text: "npm published 1 release over a block and 3 with no decision here.",
+    });
   });
 });
 

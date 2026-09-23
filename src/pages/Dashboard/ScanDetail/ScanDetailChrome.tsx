@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import type { ReadonlySignal } from "@preact/signals";
 import type { ScanErrorCode } from "../../../../server/lib/scan/errors";
 import { dashboardReturnLabel, getDashboardReturnUrl } from "../../../lib/query-state";
@@ -7,9 +8,9 @@ import { formatDateTime } from "../../../lib/format";
 import { reportExportFilename } from "../../../../server/lib/scan/report-export";
 import type { PersistedScanDetail, PublicShareInfo } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
-import { Badge, severityTone } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { registryStatusBadge } from "../../../features/registry-status";
+import { DecisionState } from "../../../features/review/DecisionState";
 import { LoadingLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 /**
@@ -28,30 +29,33 @@ export function shouldOfferShare(
   return decision === "publish" || hasShareLink;
 }
 
+/**
+ * The page header says what this release is and where it stands outside
+ * Drydock; the verdict strip below it says what Drydock thinks. Keeping the
+ * risk grade and the comparison out of here is deliberate: each was stated
+ * twice when the header also carried them, and the metadata line stays plain
+ * text because a colored chip in it competes with the verdict for attention.
+ */
 export function ScanDetailHeader({
   detail,
-  onDecideClick,
+  decision,
   onDeleteClick,
   onShareClick,
   shareSignal,
 }: {
   detail?: PersistedScanDetail | null;
-  onDecideClick?: () => void;
+  decision?: ComponentChildren;
   onDeleteClick?: () => void;
   onShareClick?: () => void;
   shareSignal?: ReadonlySignal<PublicShareInfo | null>;
 } = {}) {
-  const decision = detail?.scan.decision;
-  const decidedAt = detail?.scan.decidedAt;
   const isComplete = detail?.scan.status === "complete";
-  const releaseRisk = isComplete ? (detail.riskSummary?.releaseRisk ?? detail.scan.risk) : null;
-  // npm's own state for the version, next to our risk verdict. The two answer
-  // different questions and are deliberately labelled so nobody reads
-  // "npm blocked" as Drydock's finding, or a clean release risk as proof the
-  // version shipped.
-  const registryBadge = detail ? registryStatusBadge(detail.scan) : null;
+  // Labelled "npm …" so nobody reads "npm blocked" as Drydock's finding, or a
+  // clean verdict as proof the version shipped. States that need action also
+  // get a RegistryStatusNotice below; this line only records the observation.
+  const registryPhrase = detail ? (registryStatusBadge(detail.scan)?.label ?? null) : null;
   const registryObservedAt =
-    registryBadge && detail?.scan.registryVersionStatusAt
+    registryPhrase && detail?.scan.registryVersionStatusAt
       ? formatDateTime(detail.scan.registryVersionStatusAt)
       : null;
   const dashboardHref = getDashboardReturnUrl();
@@ -73,22 +77,12 @@ export function ScanDetailHeader({
         {detail ? (
           <MonoDetail
             parts={[
-              <span key="version">
-                default baseline {detail.scan.previousVersion || "—"} → staged{" "}
-                {detail.scan.stagedVersion || "—"}
-              </span>,
-              releaseRisk ? (
-                <Badge key="risk" tone={severityTone(releaseRisk)}>
-                  release {releaseRisk}
-                </Badge>
+              detail.scan.stagedVersion ? (
+                <span key="version">staged {detail.scan.stagedVersion}</span>
               ) : null,
-              registryBadge ? (
-                <Badge key="registry" tone={registryBadge.tone}>
-                  {registryBadge.label}
-                </Badge>
-              ) : null,
+              registryPhrase ? <span key="registry">{registryPhrase}</span> : null,
               registryObservedAt ? (
-                <span key="registry-observed">checked {registryObservedAt}</span>
+                <span key="registry-seen">seen {registryObservedAt}</span>
               ) : null,
               packageHref && !sameLocation(packageHref, dashboardHref) ? (
                 <a key="package" href={packageHref} class="text-ink-muted hover:text-ink">
@@ -101,20 +95,8 @@ export function ScanDetailHeader({
           <LoadingLine size="inline">Loading saved review</LoadingLine>
         )}
       </div>
-      {decision || onDecideClick || onDeleteClick || (detail && isComplete) ? (
-        <div class="flex flex-wrap items-start gap-3 sm:self-end sm:items-end">
-          {decision ? (
-            <div class="flex flex-col items-end gap-1">
-              <Badge tone={decision === "publish" ? "ok" : "critical"}>
-                {decision === "publish" ? "approved" : "blocked"}
-              </Badge>
-              {decidedAt ? (
-                <span class="font-mono text-[11px] text-ink-subtle">
-                  {formatDateTime(decidedAt)}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
+      {decision || onDeleteClick || (detail && isComplete) ? (
+        <div class="flex flex-wrap items-center gap-3 sm:self-end">
           {detail && isComplete ? (
             <div
               role="group"
@@ -122,7 +104,11 @@ export function ScanDetailHeader({
               aria-label="Review utilities"
             >
               {onShareClick ? (
-                <ShareAction decision={decision} shareSignal={shareSignal} onClick={onShareClick} />
+                <ShareAction
+                  decision={detail.scan.decision}
+                  shareSignal={shareSignal}
+                  onClick={onShareClick}
+                />
               ) : null}
               <LinkButton
                 variant="ghost"
@@ -134,19 +120,40 @@ export function ScanDetailHeader({
               </LinkButton>
             </div>
           ) : null}
-          {onDecideClick ? (
-            <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
-              {decision ? "Update decision" : "Decide"}
-            </Button>
-          ) : null}
+          {decision}
           {onDeleteClick ? (
-            <Button variant="danger" onClick={onDeleteClick}>
+            // Secondary here: this only opens the confirmation, whose own
+            // button carries the danger treatment for the destructive step.
+            <Button variant="secondary" onClick={onDeleteClick}>
               Delete review
             </Button>
           ) : null}
         </div>
       ) : null}
     </header>
+  );
+}
+
+/** The recorded decision beside the button that changes it. */
+export function DecisionControl({
+  decision,
+  decidedAt,
+  onDecideClick,
+}: {
+  decision: string | null | undefined;
+  decidedAt?: string | number | Date | null;
+  onDecideClick?: () => void;
+}) {
+  if (!decision && !onDecideClick) return null;
+  return (
+    <div class="flex flex-wrap items-center gap-3">
+      <DecisionState decision={decision} decidedAt={decidedAt} />
+      {onDecideClick ? (
+        <Button variant={decision ? "secondary" : "primary"} onClick={onDecideClick}>
+          {decision ? "Update decision" : "Decide"}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

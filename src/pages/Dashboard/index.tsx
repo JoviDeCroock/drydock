@@ -31,6 +31,8 @@ import { EmailVerificationBanner } from "../../features/account/EmailVerificatio
 import { useAuthedDashboardSession } from "../../features/account/useAuthedDashboardSession";
 import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
+import { scanSourceLabel } from "../../features/scan-source";
+import { DecisionState } from "../../features/review/DecisionState";
 import { Button, LinkButton, LoadMoreButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
@@ -420,10 +422,7 @@ function RecentReviewsSection({
 
 const FILTER_OPTIONS: Array<{ value: ScanDecisionFilter; label: string }> = [
   { value: "undecided", label: "Undecided" },
-  {
-    value: "published_without_decision",
-    label: "Published without Drydock decision",
-  },
+  { value: "published_without_decision", label: "Published, no decision" },
   { value: "publish", label: "Approved" },
   { value: "no_publish", label: "Blocked" },
   { value: "all", label: "All" },
@@ -454,7 +453,7 @@ function ScanStateSelect({
       <span aria-hidden class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
         State
       </span>
-      <span class="w-[260px]">
+      <span class="w-[200px]">
         <Select
           id="scan-state-filter"
           size="sm"
@@ -625,15 +624,24 @@ function ScanRows({
                   </span>
                 ) : null}
                 <ScanDiffSummary scan={scan} />
-                <DecisionBadge decision={scan.decision} />
                 <RegistryStatusBadge scan={scan} />
               </div>
               <p class="m-0 font-mono text-[11px] text-ink-subtle">{scanMetaLine(scan)}</p>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-3">
+              <DecisionState decision={scan.decision} decidedAt={scan.decidedAt} />
+              {/* The Decide button is what says "undecided" on a row; a gate or
+                  superseded review offers none here, so it says so in words. */}
+              {!scan.decision && scan.status === "complete" && !canQuickDecide(scan) ? (
+                <p class="m-0 font-mono text-[11px] text-ink-subtle whitespace-nowrap">
+                  {scan.registryStatusSupersededAt != null ? "superseded" : "undecided"}
+                </p>
+              ) : null}
               {canQuickDecide(scan) ? (
+                // Secondary on every row: one action repeated down a list is
+                // not the page's primary action.
                 <Button
-                  variant={scan.decision ? "secondary" : "primary"}
+                  variant="secondary"
                   size="sm"
                   onClick={() => onQuickDecide(scan)}
                   disabled={decisionSaving}
@@ -673,19 +681,16 @@ function ScanRows({
   );
 }
 
-const SCAN_SOURCE_LABELS: Record<string, string> = {
-  manual: "started by hand",
-  auto_discovery: "found on npm",
-  workflow_gate: "workflow gate",
-};
-
 // Provenance and timing: real context, but never the reason a row is read.
+// The decision time sits beside the decision (`DecisionState`), and an npm
+// state that asks nothing of the reader ends the line as plain text instead of
+// taking a chip on the lead line.
 function scanMetaLine(scan: ScanListItem): string {
-  const source = scan.source ?? "manual";
-  const parts = [SCAN_SOURCE_LABELS[source] ?? source];
-  if (scan.decidedAt) parts.push(`decided ${formatDateTime(scan.decidedAt)}`);
-  else if (scan.completedAt) parts.push(`reviewed ${formatDateTime(scan.completedAt)}`);
+  const parts = [scanSourceLabel(scan.source)];
+  if (scan.completedAt) parts.push(`reviewed ${formatDateTime(scan.completedAt)}`);
   else parts.push(`queued ${formatDateTime(scan.createdAt)}`);
+  const registry = registryStatusBadge(scan);
+  if (registry && registry.tone === null) parts.push(registry.label);
   return parts.join(" · ");
 }
 
@@ -729,25 +734,18 @@ function ScanDiffSummary({ scan }: { scan: ScanListItem }) {
   );
 }
 
-// Shares the Decision cell rather than taking a column of its own: the pair
-// "what we decided / what npm did with it" is one thought, and the two only
-// ever disagree in ways worth reading together. Absent for most rows — a
-// release npm has merely staged says nothing this page does not already show.
+// Only an npm state that asks something of the reader takes a chip on the lead
+// line: npm blocked the release, still holds one approved here, or published
+// one with no decision or over a block. Quiet states end the meta line as plain
+// text (`scanMetaLine`); a release npm has merely staged says nothing at all.
 function RegistryStatusBadge({ scan }: { scan: ScanListItem }) {
   const badge = registryStatusBadge(scan);
-  if (!badge) return null;
+  if (!badge?.tone) return null;
   return <Badge tone={badge.tone}>{badge.label}</Badge>;
 }
 
-function DecisionBadge({ decision }: { decision?: string | null }) {
-  if (decision === "publish") return <Badge tone="ok">approved</Badge>;
-  if (decision === "no_publish") return <Badge tone="critical">blocked</Badge>;
-  return <Badge tone="neutral">undecided</Badge>;
-}
-
-// Status and Decision are both state columns, so both render as Badges (Status
-// was previously raw mono text). Lifecycle status is not a severity: only a
-// failed run is critical; running is info; pending/complete stay neutral.
+// Lifecycle status is not a severity: only a failed run is critical; running
+// is info; pending/complete stay neutral.
 function ScanStatusBadge({ status }: { status: string }) {
   const tone = status === "failed" ? "critical" : status === "running" ? "info" : "neutral";
   return <Badge tone={tone}>{status}</Badge>;

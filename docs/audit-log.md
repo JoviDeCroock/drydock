@@ -84,8 +84,10 @@ The **Audit log** tab in organization settings
 (`src/pages/Dashboard/Settings/AuditLogSection.tsx`, model
 `src/models/audit-log.ts`) is rendered only for owners/admins; members never see
 the tab and the endpoint 403s them. The tab shows a paginated, newest-first
-timeline with a category badge, label, detail, actor, timestamp, and a deep-link
-to the originating scan when present.
+timeline: an untoned mono category and the label with its timestamp on one line,
+then one mono line of detail · actor · a deep-link to the originating scan when
+present. The category carries no severity color — the row text never states a
+severity, so color there read as an alarm on routine actions.
 
 ## Tests
 

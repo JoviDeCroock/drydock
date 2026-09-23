@@ -8,7 +8,7 @@ export type AuditCategory =
   | "integration"
   | "organization";
 
-export type AuditSeverity = "info" | "notice" | "security";
+type AuditSeverity = "info" | "notice" | "security";
 
 export type AuditActor =
   | { type: "user"; name: string | null; email: string | null }

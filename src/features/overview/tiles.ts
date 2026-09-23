@@ -10,7 +10,14 @@ export interface OverviewTile {
   id: "waiting" | "validating" | "published" | "decided";
   label: string;
   value: string;
-  detail: string;
+  /**
+   * A second figure behind the value, or null. A line that only restates the
+   * label or an empty count ("nothing to decide") repeats what the tile
+   * already says, so it is dropped rather than filled.
+   */
+  detail: string | null;
+  /** Tints the value only (docs/design.md "Count tiles"); null reads as plain ink. */
+  tone: "warn" | null;
   filter: ScanDecisionFilter;
 }
 
@@ -24,8 +31,9 @@ export function overviewTiles(overview: ScanOverview, now: number): OverviewTile
       value: String(waiting.count),
       detail:
         waiting.count === 0
-          ? "nothing to decide"
-          : `oldest ${formatCompactDuration(now - (oldestWaiting ?? now))} · decide before approving`,
+          ? null
+          : `oldest ${formatCompactDuration(now - (oldestWaiting ?? now))}`,
+      tone: null,
       filter: "undecided",
     },
     {
@@ -34,18 +42,19 @@ export function overviewTiles(overview: ScanOverview, now: number): OverviewTile
       value: String(validating.count),
       detail:
         validating.count === 0
-          ? "nothing in npm validation"
+          ? null
           : `${validating.reviewReady} of ${validating.count} Drydock ${pluralize("review", validating.count)} ready first`,
+      tone: null,
       filter: "undecided",
     },
     {
       id: "published",
-      label: "Published, no decision",
+      label: `Published, no decision · ${windowDays}d`,
       value: String(publishedWithoutDecision.count),
-      detail:
-        publishedWithoutDecision.count === 0
-          ? `none in ${windowDays}d`
-          : `went live unreviewed · ${windowDays}d`,
+      detail: null,
+      // The one tile that counts something already past the gate: a release
+      // went live with no decision recorded here.
+      tone: publishedWithoutDecision.count > 0 ? "warn" : null,
       filter: "published_without_decision",
     },
     {
@@ -54,12 +63,13 @@ export function overviewTiles(overview: ScanOverview, now: number): OverviewTile
       value: String(decided.count),
       detail:
         decided.count === 0
-          ? "no decisions yet"
+          ? null
           : `${decided.approved} approved · ${decided.rejected} rejected${
               decided.medianDecisionMs === null
                 ? ""
                 : ` · median ${formatCompactDuration(decided.medianDecisionMs)}`
             }`,
+      tone: null,
       filter: "all",
     },
   ];

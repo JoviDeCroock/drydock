@@ -12,6 +12,7 @@
  */
 import { useComputed, type ReadonlySignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { cn } from "../../components/cn";
 import { useNow } from "../../lib/use-now";
 import { LoadingLine, MonoLabel, Muted } from "../../components/Typography";
 import type { ScanOverview } from "../../models/scan-overview";
@@ -73,10 +74,17 @@ function OverviewTileLink({ tile }: { tile: OverviewTile }) {
       class="flex flex-col gap-1.5 h-full bg-surface border border-border rounded-lg p-4 no-underline text-ink hover:border-accent focus-visible:border-accent transition-colors duration-150"
     >
       <MonoLabel>{tile.label}</MonoLabel>
-      <span class="font-mono text-[18px] font-medium leading-none tracking-[-0.01em] tabular-nums">
+      <span
+        class={cn(
+          "font-mono text-[18px] font-medium leading-none tracking-[-0.01em] tabular-nums",
+          tile.tone === "warn" && "text-warn-text",
+        )}
+      >
         {tile.value}
       </span>
-      <span class="font-mono text-[11px] leading-[1.4] text-ink-muted">{tile.detail}</span>
+      {tile.detail ? (
+        <span class="font-mono text-[11px] leading-[1.4] text-ink-muted">{tile.detail}</span>
+      ) : null}
     </a>
   );
 }

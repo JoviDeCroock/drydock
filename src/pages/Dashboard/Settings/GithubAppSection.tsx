@@ -15,7 +15,7 @@ import {
   SettingsCardHeader,
   SettingsCardListItem,
 } from "../../../components/Card";
-import { MonoDetail, Muted } from "../../../components/Typography";
+import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
 
 export function GithubAppSection({
@@ -44,34 +44,25 @@ export function GithubAppSection({
   };
 
   return (
-    <CollapsibleCard
-      title="GitHub App"
-      defaultOpen={defaultOpen}
-      aside={
-        configured ? <Badge tone="ok">configured</Badge> : <Badge tone="info">not configured</Badge>
-      }
-    >
+    <CollapsibleCard title="GitHub App" defaultOpen={defaultOpen}>
       <SettingsCardBody>
         {/* Pair the install action with the intro copy and anchor it to the card's
-            right edge — same axis as the header badge and section counts — so it
-            reads as this section's primary action instead of a stranded button. */}
+            right edge, on the same axis as the section counts. It is primary only
+            until an installation exists; after that, mapping a release target is
+            the section's next step and "Modify installation" is maintenance. */}
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-          <div class="flex flex-col gap-1.5 max-w-[600px]">
-            <Muted class="text-[13px] m-0">
-              Install the Drydock GitHub App on your organization so releases gated by a GitHub
-              Actions environment can be approved here. Drydock never asks for publish credentials.
-              Your workflow keeps its own OIDC/Trusted Publishing trust, and Drydock only acts as
-              the deployment-protection approver.
-            </Muted>
-            <MonoDetail
-              parts={[
-                <span key="ecosystem">workflow gate</span>,
-                <span key="oidc">no publish credentials</span>,
-                <span key="env">github environment required</span>,
-              ]}
-            />
-          </div>
-          <Button onClick={onInstall} disabled={!configured || busy} class="shrink-0 self-start">
+          <Muted class="text-[13px] m-0 max-w-[600px]">
+            Install the Drydock GitHub App on your organization so releases gated by a GitHub
+            Actions environment can be approved here. Drydock never asks for publish credentials.
+            Your workflow keeps its own OIDC/Trusted Publishing trust, and Drydock only acts as the
+            deployment-protection approver.
+          </Muted>
+          <Button
+            variant={installations.length ? "secondary" : "primary"}
+            onClick={onInstall}
+            disabled={!configured || busy}
+            class="shrink-0 self-start"
+          >
             {status === "starting"
               ? "Redirecting…"
               : installations.length
@@ -103,11 +94,7 @@ export function GithubAppSection({
       <div>
         <SettingsCardHeader
           title="Linked installations"
-          aside={
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              {installations.length} linked
-            </span>
-          }
+          aside={installations.length ? <MonoLabel>{installations.length} linked</MonoLabel> : null}
         />
         {installations.length ? (
           <InstallationList installations={installations} />
@@ -122,9 +109,7 @@ export function GithubAppSection({
         <SettingsCardHeader
           title="Release targets"
           aside={
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              {releaseTargets.length} mapped
-            </span>
+            releaseTargets.length ? <MonoLabel>{releaseTargets.length} mapped</MonoLabel> : null
           }
         />
         {activeInstallations.length ? (
@@ -170,12 +155,10 @@ function ReleaseTargetList({
         return (
           <SettingsCardListItem key={target.id}>
             <div class="flex flex-col gap-1.5 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-mono text-[14px] font-medium">{target.repositoryFullName}</span>
-                <Badge tone="info">{target.ecosystem ?? "auto"}</Badge>
-              </div>
+              <span class="font-mono text-[14px] font-medium">{target.repositoryFullName}</span>
               <MonoDetail
                 parts={[
+                  <span key="ecosystem">{target.ecosystem ?? "auto"}</span>,
                   <span key="env">env {target.environment}</span>,
                   target.artifactName ? (
                     <span key="artifact">artifact {target.artifactName}</span>
@@ -197,47 +180,41 @@ function ReleaseTargetList({
   );
 }
 
+// An active installation is the expected state and gets no mark; the others
+// need a status badge and the step that restores them.
+const INACTIVE_INSTALLATION: Record<
+  Exclude<InstallationStatus, "active">,
+  { tone: BadgeTone; hint: string }
+> = {
+  suspended: { tone: "medium", hint: "re-enable on github to use" },
+  uninstalled: { tone: "critical", hint: "re-install to reconnect" },
+};
+
 function InstallationList({ installations }: { installations: PublicGithubAppInstallation[] }) {
   return (
     <ul class="m-0 p-0 list-none">
-      {installations.map((installation) => (
-        <SettingsCardListItem key={installation.id}>
-          <div class="flex flex-col gap-1.5 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
-              <Badge tone={installationStatusTone(installation.status)}>
-                {installation.status}
-              </Badge>
-              <Badge tone="neutral">{installation.accountType.toLowerCase()}</Badge>
+      {installations.map((installation) => {
+        const inactive =
+          installation.status === "active" ? null : INACTIVE_INSTALLATION[installation.status];
+        return (
+          <SettingsCardListItem key={installation.id}>
+            <div class="flex flex-col gap-1.5 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-mono text-[14px] font-medium">{installation.accountLogin}</span>
+                {inactive ? <Badge tone={inactive.tone}>{installation.status}</Badge> : null}
+              </div>
+              <MonoDetail
+                parts={[
+                  <span key="installation">installation {installation.installationId}</span>,
+                  <span key="target">{installation.targetType.toLowerCase()}</span>,
+                  <span key="linked">linked {formatTimestamp(installation.installedAt)}</span>,
+                  inactive ? <span key="hint">{inactive.hint}</span> : null,
+                ]}
+              />
             </div>
-            <MonoDetail
-              parts={[
-                <span key="installation">installation {installation.installationId}</span>,
-                <span key="target">{installation.targetType.toLowerCase()}</span>,
-                <span key="linked">linked {formatTimestamp(installation.installedAt)}</span>,
-              ]}
-            />
-          </div>
-          {installation.status !== "active" ? (
-            <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
-              {installation.status === "suspended"
-                ? "re-enable on github to use"
-                : "removed on github · re-install to reconnect"}
-            </span>
-          ) : null}
-        </SettingsCardListItem>
-      ))}
+          </SettingsCardListItem>
+        );
+      })}
     </ul>
   );
-}
-
-function installationStatusTone(status: InstallationStatus): BadgeTone {
-  switch (status) {
-    case "active":
-      return "ok";
-    case "suspended":
-      return "medium";
-    case "uninstalled":
-      return "critical";
-  }
 }

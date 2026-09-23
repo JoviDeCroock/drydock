@@ -54,7 +54,13 @@ What they use lives in `src/features/review/`:
   arrives as signals and is read inside the component, so a keystroke in the
   filter box re-renders the tree and not the page body (which on the scan
   detail also renders the per-finding risk index). The diff panel itself is the
-  caller's `children`, because what a "previous side" is differs per surface.
+  caller's `children`, because what a "previous side" is differs per surface;
+  a surface-wide caveat about that side goes in the optional `diffAside`
+  (the File diff label's trailing slot) rather than above every file.
+- `initial-path.ts` — `findingFirstPath`: every review surface opens the
+  workbench on the changed file carrying the most severe finding, falling back
+  to its own rule (scan detail and report: first change; `/diff`: the
+  ecosystem manifest, then status order).
 
 Surface-specific code stays with its page. `ScanDetail/diff-helpers.ts` keeps
 what is tied to the persisted scan model (`scanFilesToFileRecords`,
@@ -77,22 +83,29 @@ and renders them through sections that each subscribe to what they show.
 
 Both review pages lead with the diff:
 
-- **Scan detail** — a one-row verdict strip (recommendation, only
-  action-relevant qualifiers, the version picker, and the decision button;
-  below `sm` the decision stays beside the verdict and the picker takes its own
-  row), then the workbench, then a `CollapsibleCard` of review notes (why the
+- **Scan detail** — a one-row verdict strip (the recommendation with its risk
+  grade and any assistant note in one plain mono caption, a `manual review`
+  Badge only when the assistant asks for it, and the recorded decision beside
+  the button that changes it), then the version picker directly above the
+  workbench it controls, then the workbench, then a `CollapsibleCard` of review notes (why the
   verdict reads that way, release memory, release changes, the advisory AI
   assessment, source binding), then the risk index and the manifest sections. The notes open
-  themselves when any of those has something to say and stay shut when the
-  release is clean; the disclosure header does not repeat the nested section
-  names. The header badge carries npm's observation time for every state; quiet
-  terminal states (published, removed) get no separate notice row. The page
-  header labels the persisted comparison as the `default baseline`, while the
-  picker owns the active comparison. The decision button lives in the strip on
-  a completed review and in the page header otherwise, since a failed gate
-  review renders no strip.
-- **Public report** — verdict card, then the same workbench, then the risk
-  index. Its diff is single-sided: a share token buys the staged artifact's
+  themselves when any of those has something to say — findings or manifest
+  changes, release memory that diverged, an assistant reading that flags the
+  release — and stay shut when the release is clean (source binding, release
+  memory that matches, and a "nothing unusual" assistant reading are present
+  on nearly every scan and do not open them); the disclosure header does not repeat the nested section
+  names. The page header is identity only: the package, then a plain-text
+  metadata line (staged version, npm's state with its observation time, the
+  package's other releases) with no Badges, and the Share / Export JSON
+  utilities. Risk and the comparison are not repeated there — the strip owns
+  the verdict and the picker owns the comparison. Quiet terminal npm states
+  (published, removed) get no separate notice row. The decision and its button
+  live in the strip on a completed review and in the page header otherwise,
+  since a failed gate review renders no strip.
+- **Public report** — an identity-only header (package, the compared pair,
+  review time, changed-file count, and the decision as plain `DecisionState`
+  text), the verdict card, then the same workbench, then the risk index. Its diff is single-sided: a share token buys the staged artifact's
   redacted samples (`GET /public/reports/:token/file`) and never a baseline,
   which would cost the organization's npm credentials. `singleSidedTone` in
   `DiffView` keeps a `modified` file rendered from one side neutral instead of
@@ -107,7 +120,7 @@ are not presented as file actions. Script, dependency, and entrypoint changes si
 The AI assessment opens with its structured assessment and risk, with an explicit
 reminder that deterministic findings retain their severity. Model-authored prose
 stays inert under **Read full AI assessment**, labeled advisory and potentially
-quoting package text. Release memory stays beside the severity totals. Declared
+quoting package text. Release memory stays beside the verdict evidence (the severity bar renders only for two or more findings). Declared
 source binding shows one unverified repository link; only an exact duplicate
 manifest declaration is omitted, preserving additional or conflicting evidence.
 
@@ -121,7 +134,7 @@ that window as four tiles, each a link into the matching `?filter=` on the
 list: **Waiting on you** (completed npm reviews with no decision whose npm
 status is unknown, `staged`, or `validating`, with the age of the oldest),
 **npm still scanning** (`validating`, with how many already have a finished
-Drydock review), **Published, no decision** (the list's
+Drydock review), **Published, no decision · 30d** (the list's
 `published_without_decision` semantics, limited to scans created in the last 30
 days), and **Decided · 30d** (approved vs rejected plus the median
 completion-to-decision time). The first three count only npm staged-publish
@@ -132,7 +145,20 @@ carry no npm stage. `ScanOverviewModel` (`src/models/scan-overview.ts`) reads
 changes and joins an in-flight request rather than repeating it. The strip is
 absent for an organization with no scans, keeps its previous figures while a
 refresh is in flight, and renders a mono loading or error line otherwise. Tiles
-are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`.
+are mono tabular numbers under an 11px mono label, on a 2x2 grid below `lg`. A
+tile carries a detail line only when it adds a figure (the oldest age, how many
+are ready, the approve/reject split and median); a line that restated the label
+is omitted. Only the Published value takes a tone — `warn` text when above 0.
+
+Review rows lead with one chip: the release risk, or the lifecycle status while
+there is none. A second chip appears only when npm's state asks something of
+the reader (`registryStatusBadge` returns a tone: blocked, awaiting approval
+after an approval here, published with no decision or over a block); quieter npm
+states end the mono meta line as plain text. There is no "undecided" chip — the
+row's Decide button says it; a gate or superseded row, which offers no button
+there, says `undecided` / `superseded` in plain text — and a recorded decision renders as plain
+`DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
+the same action repeated down a list is not the region's primary action.
 
 ## Dashboard onboarding funnel
 
@@ -163,13 +189,18 @@ name as a rest parameter and `src/lib/package-releases-path.ts` builds the
 URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. Each row shows the version, what it was compared against
 (`describeBaseline` in `src/features/package-releases.ts` turns the persisted
 baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
-"(highest published)" / "no baseline"), release risk, the decision with who
-and when, npm's lifecycle badge with its observation time, the scan source,
-and the review link. `releaseAttention` marks the two disagreements the page
-exists to surface — npm published a version nobody here decided on (warn
-fill), and npm published a version Drydock blocked (danger fill) — and the
-summary strip counts both alongside total reviews, channels, and the last
-release. Package names in the dashboard list and the `all releases →` link in
+"(highest published)" / "no baseline"), release risk, the decision
+(`DecisionState`, captioned with who decided), npm's state with its observation
+time — a Badge only when `registryStatusBadge` gives it a tone, plain text
+otherwise — and the scan source (`scanSourceLabel`, shared with the dashboard).
+The version is the link to its review, captioned with the review's created
+date; there is no separate review column. `releaseAttention` marks the two
+disagreements the page exists to surface — npm published a version nobody here
+decided on (warn fill), and npm published a version Drydock blocked (danger
+fill). The header's mono line carries the ecosystem, review and channel counts,
+and the last release; the two disagreement counts appear only when above zero,
+as one Alert (`describeAttentionCounts`) — critical once anything was published
+over a block, warn otherwise. Package names in the dashboard list and the `all releases →` link in
 the scan header open it; the scan header's back link returns to whichever
 list surface the review was opened from (`getDashboardReturnUrl`).
 

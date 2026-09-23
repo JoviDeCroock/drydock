@@ -2,7 +2,7 @@ import { Fragment, type ComponentChildren } from "preact";
 import { useSignal, type Signal } from "@preact/signals";
 import { formatSize } from "../lib/format";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "preact/hooks";
-import { Badge, statusTone } from "./Badge";
+import { Badge } from "./Badge";
 import { partitionFindingsByLine, type DiffFinding } from "./diff-annotations";
 import { buildDisplaySegments, GAP_EXPAND_STEP, GAP_SHOW_ALL_MAX } from "./diff-hunks";
 import { diffOverviewMarkers, displayOverviewRows } from "./diff-overview";
@@ -63,7 +63,7 @@ export interface DiffViewProps {
  * file whose opposite side is unavailable — a public report shares the staged
  * artifact and never a baseline — and tinting every row as inserted would be a
  * claim about the release that is wrong on every line the file did not change.
- * The status badge above the body keeps carrying the real verdict.
+ * The status label above the body keeps carrying the real verdict.
  */
 export function singleSidedTone(
   status: string,
@@ -234,6 +234,17 @@ export function diffHashLines(
   return lines;
 }
 
+// Byte sizes only: the diff's own header strip already names each side's
+// version, so the size line does not label them again. A side that does not
+// exist is omitted rather than printed as "—".
+// Exported for tests.
+export function diffSizeLine(before: DiffSide | null, after: DiffSide | null): string | null {
+  const sizes = [before?.size, after?.size].filter(
+    (size): size is number => typeof size === "number",
+  );
+  return sizes.length ? sizes.map(formatSize).join(" → ") : null;
+}
+
 export function DiffView({
   path,
   status,
@@ -259,6 +270,7 @@ export function DiffView({
   const native = nativeBadge(after) ?? nativeBadge(before);
   const showDiffOptions = !binary && !contentSkipped && Boolean(beforeSample && afterSample);
   const hashLines = diffHashLines(before, after, beforeLabel, afterLabel);
+  const sizeLine = diffSizeLine(before, after);
 
   const formatLang = formatLanguageFor(langForPath(path));
   const sourceGoal = sourceGoalForPath(path);
@@ -330,8 +342,10 @@ export function DiffView({
     <div ref={root} class="flex flex-col gap-3 min-h-0">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <Badge tone={statusTone(status)}>{status}</Badge>
+          {/* Status is plain text: the release tree already colors the name by
+              status, and a colored chip here repeated it one glance away. */}
           <code class="font-mono text-xs text-ink-muted break-all">{path}</code>
+          <span class="font-mono text-xs text-ink-subtle">· {status}</span>
           {truncated ? <Badge tone="neutral">truncated</Badge> : null}
           {binary ? <Badge tone="neutral">binary</Badge> : null}
           {contentSkipped ? <Badge tone="neutral">content skipped</Badge> : null}
@@ -356,12 +370,7 @@ export function DiffView({
       </div>
       <div class="font-mono text-[11px] text-ink-subtle flex flex-col gap-1">
         <div class="flex flex-wrap gap-3">
-          <span>
-            {beforeLabel}: {formatSize(before?.size ?? null)}
-          </span>
-          <span>
-            {afterLabel}: {formatSize(after?.size ?? null)}
-          </span>
+          {sizeLine ? <span>{sizeLine}</span> : null}
           {reformatted ? <span>reformatted for review</span> : null}
           {highlightCapped ? <span>syntax highlighting off (large file)</span> : null}
         </div>

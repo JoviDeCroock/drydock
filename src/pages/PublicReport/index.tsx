@@ -5,22 +5,28 @@ import { useRoute } from "preact-iso";
 import { formatDateTime } from "../../lib/format";
 import { sortFindingsBySeverity } from "../../lib/findings";
 import { useQuerySignal } from "../../lib/query-state";
-import { PublicReportModel, type PublicReport } from "../../models/public-report";
+import {
+  initialReportPath,
+  PublicReportModel,
+  verdictSummary,
+  type PublicReport,
+} from "../../models/public-report";
 import { Alert } from "../../components/Alert";
-import { Badge, severityTone, statusTone } from "../../components/Badge";
+import { Badge, statusTone } from "../../components/Badge";
 import { Card } from "../../components/Card";
 import { FindingCard } from "../../components/FindingCard";
 import { LoadingState } from "../../components/Loading";
 import { PageShell } from "../../components/PageShell";
 import { LinkButton } from "../../components/Button";
 import { EmptyLine, MonoDetail, Muted, SectionLabel } from "../../components/Typography";
+import { DecisionState } from "../../features/review/DecisionState";
 import { hasNoLoadableBody } from "../../features/review/diff-entries";
 import { ReviewWorkbench } from "../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../features/review/RiskSignalsSection";
 import { verdictTextClass } from "../../features/review/verdict";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
-import { ReportDiffPanel } from "./ReportDiffPanel";
+import { REPORT_DIFF_ASIDE, ReportDiffPanel } from "./ReportDiffPanel";
 
 const CHANGED_STATUSES = new Set(["added", "removed", "modified"]);
 const MAX_LISTED_CHANGES = 200;
@@ -83,15 +89,10 @@ export default function PublicReportPage() {
   useSignalEffect(() => {
     const includesFiles = model.includesFiles.value;
     const entries = model.diffEntries.value;
+    const findings = model.report.value?.findings ?? [];
     if (!includesFiles || !entries.length || model.selectedPath.peek()) return;
-    // Prefer a file with a staged body: a `removed` entry is a legitimate first
-    // change but its contents belong to the previous version, so landing there
-    // opens the report on an explanation instead of on the diff.
-    const first =
-      entries.find((entry) => entry.status === "modified" || entry.status === "added") ??
-      entries.find((entry) => entry.status !== "unchanged") ??
-      entries[0];
-    if (first) model.selectPath(first.path);
+    const first = initialReportPath(entries, findings);
+    if (first) model.selectPath(first);
   });
 
   useSignalEffect(() => {
@@ -187,6 +188,7 @@ export default function PublicReportPage() {
 
   const releaseRisk = data.riskSummary?.releaseRisk ?? data.scan.risk;
   const decision = data.scan.decision;
+  const decided = decision === "publish" || decision === "no_publish";
   const attestationHref = `/public/reports/${encodeURIComponent(token)}/attestation`;
   const changedCount = model.diffEntries.value.filter(
     (entry) => entry.status !== "unchanged",
@@ -194,14 +196,18 @@ export default function PublicReportPage() {
 
   return (
     <PageShell headerActions={<MarketingHeaderActions authed={authed} />}>
-      <header class="flex flex-wrap items-start justify-between gap-4">
-        <div class="flex flex-col gap-2 min-w-0">
-          <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
-            Public release review
-          </p>
-          <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
-            {data.package.name || "Release review"}
-          </h1>
+      {/* Identity only, as on the scan detail: the verdict card below owns the
+          risk and the finding counts, so neither is repeated here as a chip.
+          The maintainer's decision closes the metadata line as plain text — it
+          is settled state, not an alert. */}
+      <header class="flex flex-col gap-2 min-w-0">
+        <p class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle m-0">
+          Public release review
+        </p>
+        <h1 class="text-2xl font-semibold tracking-[-0.015em] m-0">
+          {data.package.name || "Release review"}
+        </h1>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <MonoDetail
             parts={[
               <span key="version">
@@ -213,18 +219,17 @@ export default function PublicReportPage() {
               <span key="changed">
                 {changedCount} changed {changedCount === 1 ? "file" : "files"}
               </span>,
-              <span key="findings">
-                {data.findings.length} finding{data.findings.length === 1 ? "" : "s"}
-              </span>,
             ]}
           />
-        </div>
-        <div class="flex flex-col items-end gap-1">
-          <Badge tone={severityTone(releaseRisk)}>release {releaseRisk}</Badge>
-          {decision ? (
-            <Badge tone={decision === "publish" ? "ok" : "critical"}>
-              {decision === "publish" ? "approved" : "blocked"}
-            </Badge>
+          {/* Its own line on a phone, where the metadata already wraps and a
+              trailing "· approved" would strand a separator at a line start. */}
+          {decided ? (
+            <div class="flex basis-full items-center gap-x-2 sm:basis-auto">
+              <span aria-hidden class="hidden font-mono text-[11px] text-ink-subtle sm:inline">
+                ·
+              </span>
+              <DecisionState decision={decision} />
+            </div>
           ) : null}
         </div>
       </header>
@@ -236,20 +241,14 @@ export default function PublicReportPage() {
         >
           Release risk: {releaseRisk}
         </p>
-        <EmptyLine>
-          Deterministic review of the staged release against its previous version
-          {data.riskSummary
-            ? ` — ${data.riskSummary.releaseFindingCount} release finding${
-                data.riskSummary.releaseFindingCount === 1 ? "" : "s"
-              }, ${data.riskSummary.contextFindingCount} pre-existing.`
-            : "."}
-        </EmptyLine>
+        <EmptyLine>{verdictSummary(data.riskSummary)}</EmptyLine>
       </Card>
 
       <Show when={model.includesFiles} fallback={<EvidenceOnlyReport data={data} />}>
         {() => (
           <>
             <ReviewWorkbench
+              diffAside={REPORT_DIFF_ASIDE}
               entries={model.diffEntries}
               fileFilter={fileFilter}
               changedFilesOnly={changedFilesOnly}

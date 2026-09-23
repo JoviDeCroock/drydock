@@ -28,7 +28,12 @@ import {
 import { ReleaseTimeline } from "./ReleaseTimeline";
 import { PersistedReportSections } from "./ReportSections";
 import { ReviewerSummary } from "./ReviewerSummary";
-import { ScanDetailHeader, ScanFailureAlert, VersionPickerSkeleton } from "./ScanDetailChrome";
+import {
+  DecisionControl,
+  ScanDetailHeader,
+  ScanFailureAlert,
+  VersionPickerSkeleton,
+} from "./ScanDetailChrome";
 import { ShareDialog } from "./ShareDialog";
 import {
   focusReportSection,
@@ -77,15 +82,18 @@ type SectionProps = { model: ScanDetailModelInstance; view: ScanDetailView };
 
 function ScanHeader({ model, view }: SectionProps) {
   const detail = model.detail.value;
-  // The decision button rides the verdict strip on a completed review, beside
-  // the comparison it is a decision about. A failed gate review renders no
-  // strip, so there it stays the header action.
-  const headerDecideClick =
-    detail?.scan.status === "complete" ? undefined : view.decideAction.value;
+  // The decision and its button ride the verdict strip on a completed review,
+  // opposite the verdict they answer. A failed gate review renders no strip,
+  // so there they stay in the header.
+  const inStrip = detail?.scan.status === "complete" && view.verdict.value != null;
   return (
     <ScanDetailHeader
       detail={detail}
-      onDecideClick={headerDecideClick}
+      decision={
+        !inStrip && hasDecisionControl(model, view) ? (
+          <VerdictDecision model={model} view={view} />
+        ) : null
+      }
       onDeleteClick={view.deleteAction.value}
       onShareClick={view.shareAction.value}
       shareSignal={model.share}
@@ -164,35 +172,36 @@ function ScanReport({ model, view }: SectionProps) {
     <>
       {detail.scan.status === "complete" && verdict ? (
         <>
-          {/* Verdict, comparison, and the decision — one strip, then the
-              diff. Everything explaining the verdict moves below the
-              workbench: a reviewer reads the change first. */}
+          {/* Verdict and decision — one strip, then the diff with its
+              comparison control. Everything explaining the verdict moves
+              below the workbench: a reviewer reads the change first. */}
           <ReleaseVerdictStrip
             verdict={verdict}
             ai={ai}
-            comparison={
-              detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null
-            }
             decision={
-              view.decideAction.value ? <VerdictDecision model={model} view={view} /> : null
+              hasDecisionControl(model, view) ? <VerdictDecision model={model} view={view} /> : null
             }
           />
-          <CompareStatus model={model} />
 
-          <ReviewWorkbench
-            id="release-workbench"
-            entries={view.diffEntries}
-            fileFilter={view.fileFilter}
-            changedFilesOnly={view.changedFilesOnly}
-            selectedPath={model.selectedPath}
-            findingCounts={view.findingCounts}
-            onSelect={(path) => {
-              view.findingTarget.value = null;
-              model.selectPath(path);
-            }}
-          >
-            <ScanDiffPanel model={model} view={view} />
-          </ReviewWorkbench>
+          <div class="flex flex-col gap-3">
+            {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}
+            <CompareStatus model={model} />
+
+            <ReviewWorkbench
+              id="release-workbench"
+              entries={view.diffEntries}
+              fileFilter={view.fileFilter}
+              changedFilesOnly={view.changedFilesOnly}
+              selectedPath={model.selectedPath}
+              findingCounts={view.findingCounts}
+              onSelect={(path) => {
+                view.findingTarget.value = null;
+                model.selectPath(path);
+              }}
+            >
+              <ScanDiffPanel model={model} view={view} />
+            </ReviewWorkbench>
+          </div>
 
           <CollapsibleCard title="Review notes" defaultOpen={view.reviewNotesOpen.value}>
             <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
@@ -270,14 +279,21 @@ function VerdictComparison({ model, view }: SectionProps) {
   );
 }
 
+// Null rather than an empty element when there is nothing to show: the header
+// reserves its actions row for any truthy slot.
+function hasDecisionControl(model: ScanDetailModelInstance, view: ScanDetailView): boolean {
+  return Boolean(model.detail.value?.scan.decision || view.decideAction.value);
+}
+
 function VerdictDecision({ model, view }: SectionProps) {
   const detail = model.detail.value;
-  const decide = view.decideAction.value;
-  if (!detail || !decide) return null;
+  if (!detail) return null;
   return (
-    <Button variant={detail.scan.decision ? "secondary" : "primary"} onClick={decide}>
-      {detail.scan.decision ? "Update decision" : "Decide"}
-    </Button>
+    <DecisionControl
+      decision={detail.scan.decision}
+      decidedAt={detail.scan.decidedAt}
+      onDecideClick={view.decideAction.value}
+    />
   );
 }
 

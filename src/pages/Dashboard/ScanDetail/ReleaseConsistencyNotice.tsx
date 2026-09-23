@@ -5,6 +5,8 @@ import {
 import { formatDateTime, pluralize } from "../../../lib/format";
 import { Alert } from "../../../components/Alert";
 
+const QUIET_LINE = "m-0 text-[13px] leading-[1.55] text-ink-muted";
+
 export type ReleaseConsistencyVariant = "match" | "subset" | "empty" | "diverged";
 
 export function releaseConsistencyVariant(
@@ -15,10 +17,10 @@ export function releaseConsistencyVariant(
   return consistency.currentFindingCount === 0 ? "empty" : consistency.status;
 }
 
-/** Whether `ReleaseConsistencyNotice` would render anything for this value. */
-export function hasReleaseConsistencyNote(value: unknown): boolean {
+/** Whether release memory asks for attention: findings new since the last approved release. */
+export function releaseConsistencyDiverged(value: unknown): boolean {
   const consistency = normalizeReleaseConsistency(value);
-  return Boolean(consistency && releaseConsistencyVariant(consistency));
+  return Boolean(consistency && releaseConsistencyVariant(consistency) === "diverged");
 }
 
 export function ReleaseConsistencyNotice({
@@ -43,17 +45,20 @@ export function ReleaseConsistencyNotice({
       </>
     ) : null;
 
+  // Emphasis goes to the one variant that asks for attention. Release memory
+  // agreeing with the last approved release is the expected case, so it reads
+  // as a quiet line; a green Alert there out-ranked the findings it vouches for.
   if (variant === "diverged") {
     const count = consistency.newFindingCount;
     return (
-      <p class="m-0 text-[13px] text-ink-muted">
+      <Alert tone="warn">
         {count} {pluralize("finding", count)} {count === 1 ? "is" : "are"} new since the last
         approved release
         {consistency.priorVersion || consistency.priorScanId ? (
           <> ({priorScanLink(consistency)})</>
         ) : null}
         .{scoringNote}
-      </p>
+      </Alert>
     );
   }
 
@@ -62,7 +67,7 @@ export function ReleaseConsistencyNotice({
     : "";
   if (variant === "empty") {
     return (
-      <Alert tone="ok">
+      <p class={QUIET_LINE}>
         No deterministic findings —{" "}
         {consistency.priorFindingCount === 0 ? (
           <>
@@ -76,11 +81,11 @@ export function ReleaseConsistencyNotice({
         )}
         . Only deterministic checks are compared; the diff and AI review are specific to this
         release.
-      </Alert>
+      </p>
     );
   }
   return (
-    <Alert tone="ok">
+    <p class={QUIET_LINE}>
       {variant === "match" ? (
         <>
           Finding profile matches {priorScanLink(consistency)}
@@ -93,7 +98,7 @@ export function ReleaseConsistencyNotice({
         </>
       )}
       {scoringNote}
-    </Alert>
+    </p>
   );
 }
 

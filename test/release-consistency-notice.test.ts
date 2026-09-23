@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { releaseConsistencyVariant } from "../src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice";
+import {
+  releaseConsistencyDiverged,
+  releaseConsistencyVariant,
+} from "../src/pages/Dashboard/ScanDetail/ReleaseConsistencyNotice";
 import type { ReleaseConsistency } from "../server/lib/scan/release-memory";
 
 function consistency(overrides: Partial<ReleaseConsistency>): ReleaseConsistency {
@@ -51,5 +54,22 @@ describe("releaseConsistencyVariant", () => {
         consistency({ status: "subset", currentFindingCount: 0, priorFindingCount: 3 }),
       ),
     ).toBe("empty");
+  });
+});
+
+describe("releaseConsistencyDiverged", () => {
+  test("only findings new since the last approved release ask for attention", () => {
+    expect(
+      releaseConsistencyDiverged(consistency({ status: "diverged", newFindingCount: 1 })),
+    ).toBe(true);
+    for (const status of ["match", "subset", "none"] as const) {
+      expect(releaseConsistencyDiverged(consistency({ status }))).toBe(false);
+    }
+    expect(
+      releaseConsistencyDiverged(
+        consistency({ status: "match", currentFindingCount: 0, priorFindingCount: 0 }),
+      ),
+    ).toBe(false);
+    expect(releaseConsistencyDiverged(null)).toBe(false);
   });
 });

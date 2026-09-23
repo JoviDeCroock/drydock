@@ -11,6 +11,19 @@ export function reviewerSummaryVisible(ai: DisplayedAiResult | null): boolean {
   return Boolean(ai && ai.model != null);
 }
 
+/**
+ * Whether the assistant's reading is worth opening the review notes for. It
+ * runs by default, so its mere presence cannot be the trigger: a clean
+ * "nothing unusual" reading stays folded, one that flags the release opens,
+ * and so does an attempted review that could not complete — that floors the
+ * scan's risk at medium, and the notes are where the page says why.
+ */
+export function assistantFlagsRelease(ai: DisplayedAiResult | null): boolean {
+  if (!ai || !reviewerSummaryVisible(ai)) return false;
+  if (ai.kind === "unavailable") return true;
+  return ai.requiresManualReview || ai.releaseAssessment !== "nothing_unusual";
+}
+
 const ASSESSMENT_LABELS = {
   nothing_unusual: "AI reports nothing unusual",
   review_recommended: "AI recommends further review",

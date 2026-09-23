@@ -4,12 +4,11 @@ import {
   type NotificationRecipient,
 } from "../../../models/notification-recipients";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { CollapsibleCard, SettingsCardBody } from "../../../components/Card";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { LoadingLine, Muted } from "../../../components/Typography";
+import { LoadingLine, MonoLabel, Muted } from "../../../components/Typography";
 
 export function NotificationRecipientsSection({
   recipients,
@@ -40,7 +39,13 @@ export function NotificationRecipientsSection({
     <CollapsibleCard
       title="notification recipients"
       defaultOpen={defaultOpen}
-      aside={<Badge tone="info">{list.length} configured</Badge>}
+      aside={
+        list.length ? (
+          <MonoLabel>
+            {list.length} {list.length === 1 ? "recipient" : "recipients"}
+          </MonoLabel>
+        ) : null
+      }
     >
       <SettingsCardBody>
         <Muted class="text-[13px] m-0 max-w-[760px]">
@@ -98,10 +103,11 @@ export function NotificationRecipientsSection({
                 spellcheck={false}
               />
             </Field>
+            {/* h-[38px] matches the Input control height, like the sibling settings forms. */}
             <Button
               type="submit"
               disabled={busy || !draft.trim() || !organizationId}
-              class="shrink-0"
+              class="shrink-0 h-[38px]"
             >
               {status === "adding" ? "Adding…" : "Add recipient"}
             </Button>

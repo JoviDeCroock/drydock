@@ -102,10 +102,10 @@ accept or update decisions; they remain under **All** as history but leave the
 default **Undecided** work queue. Likewise, a review with no Drydock decision
 leaves **Undecided** once npm reports `published`, `blocked`, or `deleted`, or a
 terminal scan failure proves the same outcome, because the stage is no longer
-actionable. It remains under **All** with its npm status badge when one was
+actionable. It remains under **All** with its npm status when one was
 persisted. Completed reviews, unlike superseded history, can still accept a
 decision for the audit trail; failed reviews remain read-only history.
-**Published without Drydock decision** isolates both `published` and
+**Published, no decision** isolates both `published` and
 subsequently `deleted` releases that still have no decision, including a manual
 scan that failed because npm published before the review could read the tarball.
 `blocked` releases are excluded because they did not go live. Failure
@@ -168,13 +168,23 @@ delay only gates the email.
 
 ## Where the status is rendered
 
-- The dashboard list's Decision cell (`RegistryStatusBadge`) and the
-  **Published without Drydock decision** filter.
-- The scan workbench header badge with its observation time. `RegistryStatusNotice`
+`registryStatusBadge` in `src/features/registry-status.ts` names npm in every
+label and reads a published version against the decision recorded here. It sets
+a tone only for states that ask something of the reader: `blocked` (critical),
+awaiting approval after an approval here (medium), published with no decision
+(medium, "npm published, no decision"), and published over a block (critical).
+Validating, removed, and published after approval carry no tone and render as
+plain text.
+
+- The dashboard list: a chip on the row's lead line when the state has a tone,
+  otherwise plain text at the end of the mono meta line; and the
+  **Published, no decision** filter.
+- The scan workbench header's plain-text metadata line, with its observation
+  time. `RegistryStatusNotice`
   adds a separate row only for states with actionable context: validating,
   blocked, or approved here while still awaiting npm approval.
 - The package release view (`/dashboard/packages/:name`), which shows the
-  badge with its observation time per release and highlights the rows where
+  state with its observation time per release and highlights the rows where
   npm's outcome disagrees with Drydock's record: published with no decision,
   and published over a `no_publish` decision. Its summary counts reuse the
   same `published`/`deleted` conditions as the dashboard filter

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { diffHashLines, nativeBadge } from "../src/components/DiffView";
+import { diffHashLines, diffSizeLine, nativeBadge } from "../src/components/DiffView";
 import { buildRows } from "../src/components/diff-rows";
 import {
   initialScrollResetKey,
@@ -206,6 +206,20 @@ describe("diffHashLines", () => {
       ),
     ).toEqual([]);
     expect(diffHashLines(null, { sha256: "", flags: ["content-skipped"] }, "p", "s")).toEqual([]);
+  });
+});
+
+describe("diffSizeLine", () => {
+  test("names byte sizes without repeating the version labels", () => {
+    expect(diffSizeLine({ size: 77 }, { size: 80 })).toBe("77 B → 80 B");
+    expect(diffSizeLine({ size: 2048 }, { size: 3 * 1024 * 1024 })).toBe("2.0 KiB → 3.0 MiB");
+  });
+
+  test("prints only the side that exists instead of a placeholder", () => {
+    expect(diffSizeLine(null, { size: 44 })).toBe("44 B");
+    expect(diffSizeLine({ size: 77 }, null)).toBe("77 B");
+    expect(diffSizeLine({ size: null }, { size: 0 })).toBe("0 B");
+    expect(diffSizeLine(null, null)).toBe(null);
   });
 });
 

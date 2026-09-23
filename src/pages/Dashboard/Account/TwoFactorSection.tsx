@@ -3,13 +3,12 @@ import { Show } from "@preact/signals/utils";
 import { sessionModel, signInMethodsModel } from "../../../models/auth";
 import { TwoFactorModel } from "../../../models/two-factor";
 import { Alert } from "../../../components/Alert";
-import { Badge } from "../../../components/Badge";
 import { Button, LinkButton } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
 import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
-import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
+import { MonoLabel, Muted, SectionLabel } from "../../../components/Typography";
 
 type DialogMode = "none" | "enroll" | "regenerate" | "disable";
 type EnrollStep = "password" | "verify" | "backup";
@@ -235,28 +234,20 @@ export function TwoFactorSection() {
 
   return (
     <SettingsCard as="section" class="flex flex-col gap-5">
-      <div class="flex flex-col gap-1.5">
-        <div class="flex items-center gap-3">
-          <SectionLabel as="h2" class="flex-1">
-            Two-factor authentication
-          </SectionLabel>
-          <span class="shrink-0">
-            <Show when={enabled} fallback={<Badge tone="neutral">not enabled</Badge>}>
-              <Badge tone="ok">enabled</Badge>
-            </Show>
-          </span>
-        </div>
-        <Muted class="text-[13px] m-0 max-w-[760px]">
-          Protect your account with a time-based code from an authenticator app. Once enabled,
-          you'll enter a code each time you sign in.
-        </Muted>
-        <MonoDetail
-          parts={[
-            <span key="totp">totp authenticator</span>,
-            <span key="backup">10 backup codes</span>,
-          ]}
-        />
-      </div>
+      <SectionLabel
+        as="h2"
+        aside={
+          <Show when={enabled} fallback={<MonoLabel>not enabled</MonoLabel>}>
+            <MonoLabel>enabled</MonoLabel>
+          </Show>
+        }
+      >
+        Two-factor authentication
+      </SectionLabel>
+      <Muted class="text-[13px] m-0 max-w-[760px]">
+        Protect your account with a time-based code from an authenticator app. Once enabled, you'll
+        enter a code each time you sign in.
+      </Muted>
 
       <Show
         when={enabled}
@@ -282,7 +273,8 @@ export function TwoFactorSection() {
           <Button variant="secondary" onClick={() => open("regenerate")}>
             Regenerate backup codes
           </Button>
-          <Button variant="danger" onClick={() => open("disable")}>
+          {/* Opening the dialog is not yet destructive; its confirm button is danger. */}
+          <Button variant="secondary" onClick={() => open("disable")}>
             Disable two-factor
           </Button>
         </div>

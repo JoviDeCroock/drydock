@@ -1,17 +1,17 @@
 import { compareSeverity, groupFindingsByRule } from "../../lib/findings";
-import { pluralize } from "../../lib/format";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../../server/lib/release-fingerprint";
-import type { FindingDiffStatus } from "../../../server/lib/review";
-import { Badge } from "../../components/Badge";
 import { FindingCard, FindingRow, GroupedFindingCard } from "../../components/FindingCard";
 import { EmptyLine, Muted, SectionLabel } from "../../components/Typography";
 import type { FindingWithDiffStatus } from "./types";
 
 const DEFAULT_DESCRIPTION =
-  "Deterministic rules scan the full staged artifact; assistant-labeled signals are advisory " +
-  "additions from the AI reviewer and never replace them. Changed-file signals are pinned to " +
-  "their line in the diff above. Open a file to read them in context; unchanged signals stay " +
-  "here as package context.";
+  "Changed-file signals are pinned to their line in the diff above; the rest stay here as " +
+  "package context.";
+// Said only when an assistant finding is on the page: explaining a badge the
+// reader cannot see is noise.
+const ASSISTANT_NOTE =
+  " Assistant-labeled signals are advisory additions from the AI reviewer and never replace " +
+  "deterministic rules.";
 
 export function RiskSignalsSection({
   findings,
@@ -28,26 +28,23 @@ export function RiskSignalsSection({
   const contextualFindings = sortFindingItemsBySeverity(
     findings.filter((item) => !item.releaseDelta),
   );
-  const contextLabel = `${contextualFindings.length} context ${pluralize(
-    "signal",
-    contextualFindings.length,
-  )}`;
+  const counts = [
+    changedFindings.length ? `${changedFindings.length} changed-file` : null,
+    contextualFindings.length ? `${contextualFindings.length} package context` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const hasAssistantFindings = findings.some((item) => item.finding.source === "ai");
 
   return (
     <section id={id} tabIndex={id ? -1 : undefined} class="flex flex-col gap-3">
-      <SectionLabel as="h2">Risk signals</SectionLabel>
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge tone={changedFindings.length ? "medium" : "ok"}>
-          {changedFindings.length
-            ? `${changedFindings.length} changed-file ${pluralize(
-                "signal",
-                changedFindings.length,
-              )}`
-            : "no changed-file signals"}
-        </Badge>
-        {contextualFindings.length ? <Badge tone="neutral">{contextLabel}</Badge> : null}
-      </div>
-      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">{description}</Muted>
+      <SectionLabel as="h2" aside={counts || undefined}>
+        Risk signals
+      </SectionLabel>
+      <Muted class="m-0 text-[13px] leading-[1.55] max-w-[760px]">
+        {description}
+        {hasAssistantFindings ? ASSISTANT_NOTE : null}
+      </Muted>
 
       {changedFindings.length ? (
         <FindingGrid findings={changedFindings} onSelect={onSelect} />
@@ -57,12 +54,7 @@ export function RiskSignalsSection({
 
       {contextualFindings.length ? (
         <div>
-          <SectionLabel
-            as="h3"
-            aside={`${contextualFindings.length} ${pluralize("signal", contextualFindings.length)}`}
-          >
-            Package context
-          </SectionLabel>
+          <SectionLabel as="h3">Package context</SectionLabel>
           <div class="pt-3">
             <FindingGrid findings={contextualFindings} onSelect={onSelect} />
           </div>
@@ -79,6 +71,11 @@ function FindingGrid({
   findings: FindingWithDiffStatus[];
   onSelect?: (file: string) => void;
 }) {
+  // The section split already says whether a signal is on a changed file or is
+  // package context, so a card names its file's diff status only where that
+  // split would mislead: a release-scoped signal whose file did not change.
+  const statusNote = (item: FindingWithDiffStatus) =>
+    item.releaseDelta && item.diffStatus === "unchanged" ? "existing" : null;
   // release.* findings carry the synthetic "<release-process>" label — there is
   // no such file in the artifact, so the label must not become an
   // open-in-the-diff button.
@@ -97,7 +94,7 @@ function FindingGrid({
     <ul class="list-none p-0 m-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
       {groups.map(({ key, items }) => {
         if (items.length === 1) {
-          const { finding, diffStatus } = items[0].item;
+          const { finding } = items[0].item;
           // AI findings carry a model-authored file path that may not resolve to
           // a diff entry (prefixed, truncated, or hallucinated), so they are not
           // wired to open the diff workbench — clicking would dead-end on an
@@ -109,8 +106,7 @@ function FindingGrid({
               severity={finding.severity}
               file={finding.file}
               line={finding.line}
-              diffStatus={diffStatus === "unknown" ? null : diffStatus}
-              diffLabel={findingDiffStatusLabel(diffStatus)}
+              diffStatus={statusNote(items[0].item)}
               ruleId={finding.ruleId}
               source={finding.source}
               onSelect={canOpen ? selectFile(finding.file) : undefined}
@@ -129,8 +125,7 @@ function FindingGrid({
             files={items.map(({ item }) => ({
               file: item.finding.file,
               line: item.finding.line,
-              diffStatus: item.diffStatus === "unknown" ? null : item.diffStatus,
-              diffLabel: findingDiffStatusLabel(item.diffStatus),
+              diffStatus: statusNote(item),
               onSelect: selectFile(item.finding.file),
             }))}
           >
@@ -148,10 +143,4 @@ function sortFindingItemsBySeverity(items: FindingWithDiffStatus[]): FindingWith
     const severity = compareSeverity(a.finding.severity, b.finding.severity);
     return severity || a.finding.file.localeCompare(b.finding.file);
   });
-}
-
-function findingDiffStatusLabel(status: FindingDiffStatus): string | null {
-  if (status === "unknown") return null;
-  if (status === "unchanged") return "existing";
-  return status;
 }

@@ -93,7 +93,7 @@ test("UI smoke: reviews the implicit node-gyp fixture", async ({ browser, baseUR
     await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByText("release high").first()).toBeVisible();
+    await expect(page.getByText("release risk high").first()).toBeVisible();
     // Review notes disclose duplicate evidence on demand; verify the always-visible risk index.
     await expect(
       page.locator("#risk-signals").getByText("implicit install: node-gyp rebuild").first(),

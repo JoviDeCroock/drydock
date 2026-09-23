@@ -18,6 +18,8 @@ export interface RegistryStatusScan {
   stageId?: string | null;
   registryUrl?: string | null;
   registryStatusSupersededAt?: string | number | Date | null;
+  /** Server-derived settled outcome; also set when a failed review proved it. */
+  registryReleaseOutcome?: string | null;
 }
 
 /**
@@ -77,17 +79,46 @@ export function registryStatusPhrase(status: string | null | undefined): string 
     : null;
 }
 
-const BADGE_LABELS: Record<RegistryStatusVariant, { label: string; tone: BadgeTone }> = {
-  blocked: { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" },
-  awaiting_approval: { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" },
-  validating: { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: "info" },
-  published: { label: `npm ${REGISTRY_STATUS_PHRASE.published}`, tone: "ok" },
-  deleted: { label: `npm ${REGISTRY_STATUS_PHRASE.deleted}`, tone: "unchanged" },
-};
-
+/**
+ * npm's state for a reviewed version, as the review surfaces print it. Every
+ * label names npm so it is never read as Drydock's verdict.
+ *
+ * `tone` is set only when the state asks something of the reader: npm blocked
+ * the version, still holds one approved here, or published one nobody here
+ * approved. Everything else — validating, removed, published after approval —
+ * is `null` and renders as plain text: a green chip on the expected ending, or
+ * on a release that went live undecided, read as "fine" on rows where nothing
+ * else was colored.
+ */
 export function registryStatusBadge(
   scan: RegistryStatusScan,
-): { label: string; tone: BadgeTone } | null {
+): { label: string; tone: BadgeTone | null } | null {
   const variant = registryStatusVariant(scan);
-  return variant ? BADGE_LABELS[variant] : null;
+  switch (variant) {
+    case "blocked":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" };
+    case "awaiting_approval":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" };
+    case "validating":
+      return { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: null };
+  }
+  // A version npm published — including one later removed, and one a failed
+  // review proved published (`registryReleaseOutcome`) — is read against the
+  // decision here. Same conditions as `releaseAttention` and the "Published,
+  // no decision" filter, so a row's fill, this label, and the counts agree.
+  const outcome =
+    scan.registryStatusSupersededAt != null
+      ? null
+      : (scan.registryReleaseOutcome ??
+        (variant === "published" || variant === "deleted" ? variant : null));
+  if (outcome !== "published" && outcome !== "deleted") return null;
+  const state = `npm ${REGISTRY_STATUS_PHRASE[outcome]}`;
+  if (scan.decision === "no_publish") {
+    return {
+      label: outcome === "published" ? `${state} over a block` : `${state}, published over a block`,
+      tone: "critical",
+    };
+  }
+  if (!scan.decision) return { label: `${state}, no decision`, tone: "medium" };
+  return { label: state, tone: null };
 }

@@ -8,6 +8,11 @@ import { EmptyLine } from "./Typography";
 // per-row link from added/bumped dependencies to that dependency's own public
 // diff view; leave it off for ecosystems whose dependencies are not npm
 // packages (PyPI).
+//
+// The package name and version pair are left to the caller: the page heading
+// already names the package, and only the caller knows whether the manifest's
+// version pair adds anything to what its header shows (see
+// `manifestVersionRange`).
 export function PackageJsonDiffView({
   diff,
   linkDependencyDiffs,
@@ -15,30 +20,48 @@ export function PackageJsonDiffView({
   diff: PackageJsonDiff;
   linkDependencyDiffs?: boolean;
 }) {
+  // Empty change lists collapse into one line rather than a pair of empty
+  // bordered cards; once any list has rows, the empty ones keep their card so
+  // "no script changes" stays stated beside the dependency changes.
+  if (!hasManifestChanges(diff)) {
+    return <EmptyLine>No script, dependency, bin, or entrypoint changes.</EmptyLine>;
+  }
+  const hasListChanges = Boolean(
+    diff.scripts.length || diff.dependencies.length || diff.bin?.length,
+  );
   return (
-    <div class="flex flex-col gap-4">
+    <div class={hasListChanges ? "flex flex-col gap-4" : "flex flex-col gap-2"}>
       <div class="flex flex-wrap gap-x-6 gap-y-2 text-[13px]">
-        <InlineMeta label="package" value={diff.name || "unknown"} />
-        <InlineMeta
-          label="version"
-          value={`${diff.previousVersion || "—"} → ${diff.stagedVersion || "—"}`}
-        />
         <InlineMeta label="entrypoints" value={diff.entrypointsChanged ? "changed" : "unchanged"} />
       </div>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <ChangeList title="scripts" rows={diff.scripts} />
-        <ChangeList
-          title="dependencies"
-          rows={diff.dependencies}
-          linkFor={linkDependencyDiffs ? dependencyDiffHref : undefined}
-        />
-        {/* Only surfaced when present: most releases change no bin, and a new
-            bin command is the install-path change flagged by diff.bin-added.
-            Optional-chained for reports persisted before bin was diffed. */}
-        {diff.bin?.length ? <ChangeList title="bin" rows={diff.bin} /> : null}
-      </div>
+      {hasListChanges ? (
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <ChangeList title="scripts" noun="script" rows={diff.scripts} />
+          <ChangeList
+            title="dependencies"
+            noun="dependency"
+            rows={diff.dependencies}
+            linkFor={linkDependencyDiffs ? dependencyDiffHref : undefined}
+          />
+          {/* Only surfaced when present: most releases change no bin, and a new
+              bin command is the install-path change flagged by diff.bin-added.
+              Optional-chained for reports persisted before bin was diffed. */}
+          {diff.bin?.length ? <ChangeList title="bin" noun="bin" rows={diff.bin} /> : null}
+        </div>
+      ) : (
+        <EmptyLine>No script, dependency, or bin changes.</EmptyLine>
+      )}
     </div>
   );
+}
+
+/**
+ * The manifest's own version pair (`1.0.0 → 1.0.1`), or null for a first
+ * release, where the staged version alone would repeat the page header.
+ */
+export function manifestVersionRange(diff: PackageJsonDiff): string | null {
+  if (!diff.previousVersion || !diff.stagedVersion) return null;
+  return `${diff.previousVersion} → ${diff.stagedVersion}`;
 }
 
 export function hasManifestChanges(diff: PackageJsonDiff): boolean {
@@ -60,10 +83,13 @@ function InlineMeta({ label, value }: { label: string; value: string }) {
 
 function ChangeList({
   title,
+  noun,
   rows,
   linkFor,
 }: {
   title: string;
+  // Singular attributive form for the empty line: "No dependency changes."
+  noun: string;
   rows: DependencyDiffRow[];
   linkFor?: (row: DependencyDiffRow) => string | null;
 }) {
@@ -106,7 +132,7 @@ function ChangeList({
         </div>
       ) : (
         <div class="px-3 py-3">
-          <EmptyLine>No {title} changes.</EmptyLine>
+          <EmptyLine>No {noun} changes.</EmptyLine>
         </div>
       )}
     </div>

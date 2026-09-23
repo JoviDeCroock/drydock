@@ -10,12 +10,53 @@ import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
 
+type Organizations = ReturnType<typeof useModel<typeof OrganizationModel.prototype>>;
+
 export function GeneralSection({
+  organizations,
+  currentUserRole,
+}: {
+  organizations: Organizations;
+  currentUserRole: OrganizationRole | null;
+}) {
+  const active = organizations.active.value;
+  const isPersonal = active?.isPersonal ?? false;
+
+  return (
+    <SettingsCard class="flex flex-col gap-5">
+      <SectionLabel as="h2">General</SectionLabel>
+
+      {active ? (
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[14px] font-medium text-ink">{active.name}</span>
+            {currentUserRole ? <Badge tone="neutral">{currentUserRole}</Badge> : null}
+          </div>
+          <MonoDetail
+            parts={[
+              <span key="id">{active.id}</span>,
+              isPersonal ? <span key="personal">personal workspace</span> : null,
+            ]}
+          />
+        </div>
+      ) : (
+        <Muted class="text-[13px] m-0">No organization selected.</Muted>
+      )}
+    </SettingsCard>
+  );
+}
+
+/**
+ * The General tab's last card, so the one destructive action sits apart from
+ * the settings above it. Only the owner of a non-personal org can delete it,
+ * so the card renders only when the action is actually available.
+ */
+export function OrganizationDangerZone({
   organizations,
   currentUserRole,
   onDeleted,
 }: {
-  organizations: ReturnType<typeof useModel<typeof OrganizationModel.prototype>>;
+  organizations: Organizations;
   currentUserRole: OrganizationRole | null;
   onDeleted: () => Promise<void> | void;
 }) {
@@ -25,10 +66,6 @@ export function GeneralSection({
   const deleting = status === "deleting";
   const confirming = useSignal(false);
   const confirmName = useSignal("");
-
-  const isOwner = currentUserRole === "owner";
-  const isPersonal = active?.isPersonal ?? false;
-  const canDelete = Boolean(active) && isOwner && !isPersonal;
 
   const openConfirm = () => {
     organizations.error.value = null;
@@ -51,78 +88,48 @@ export function GeneralSection({
     }
   };
 
+  if (!active || currentUserRole !== "owner" || active.isPersonal) return null;
+
   return (
-    <SettingsCard class="flex flex-col gap-5">
-      <SectionLabel as="h2">General</SectionLabel>
+    <SettingsCard class="flex flex-col gap-3">
+      <SectionLabel as="h2">Danger zone</SectionLabel>
+      <Muted class="text-[13px] m-0 max-w-[760px]">
+        Deleting this organization permanently removes its members, npm and GitHub connections,
+        notification recipients, and scan history. This cannot be undone.
+      </Muted>
+      <div>
+        <Button variant="danger" size="sm" onClick={openConfirm}>
+          Delete organization
+        </Button>
+      </div>
 
-      {active ? (
-        <div class="flex flex-col gap-1.5">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-[14px] font-medium text-ink">{active.name}</span>
-            {currentUserRole ? (
-              <Badge tone={currentUserRole === "owner" ? "info" : "neutral"}>
-                {currentUserRole}
-              </Badge>
-            ) : null}
-            {isPersonal ? <Badge tone="neutral">personal</Badge> : null}
-          </div>
-          <MonoDetail
-            parts={[
-              <span key="id">{active.id}</span>,
-              isPersonal ? <span key="personal">personal workspace</span> : null,
-            ]}
-          />
-        </div>
-      ) : (
-        <Muted class="text-[13px] m-0">No organization selected.</Muted>
-      )}
-
-      {/* Only the owner of a non-personal org can delete it, so the Danger zone
-          is shown only when the action is actually available. */}
-      {canDelete ? (
-        <div class="flex flex-col gap-3">
-          <SectionLabel as="h3">Danger zone</SectionLabel>
-          <Muted class="text-[13px] m-0 max-w-[760px]">
-            Deleting this organization permanently removes its members, npm and GitHub connections,
-            notification recipients, and scan history. This cannot be undone.
-          </Muted>
-          <div>
-            <Button variant="danger" size="sm" onClick={openConfirm}>
-              Delete organization
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {active ? (
-        <ConfirmDialog
-          open={confirming}
-          onClose={closeConfirm}
-          title={`Delete ${active.name}?`}
-          description="This permanently deletes the organization and everything scoped to it. This action cannot be undone."
-          busy={deleting}
-          busyLabel="Deleting…"
-          confirmLabel="Delete organization"
-          confirmDisabled={confirmName.value !== active.name}
-          form="org-delete-form"
-        >
-          <form id="org-delete-form" onSubmit={onConfirmDelete} class="flex flex-col gap-3">
-            <Field label={`Type ${active.name} to confirm`} for="confirmOrgName">
-              <Input
-                id="confirmOrgName"
-                type="text"
-                value={confirmName.value}
-                onInput={(e) => (confirmName.value = (e.target as HTMLInputElement).value)}
-                disabled={deleting}
-                autoComplete="off"
-                spellcheck={false}
-                autofocus
-              />
-            </Field>
-            {error ? <Alert tone="critical">{error}</Alert> : null}
-          </form>
-        </ConfirmDialog>
-      ) : null}
+      <ConfirmDialog
+        open={confirming}
+        onClose={closeConfirm}
+        title={`Delete ${active.name}?`}
+        description="This permanently deletes the organization and everything scoped to it. This action cannot be undone."
+        busy={deleting}
+        busyLabel="Deleting…"
+        confirmLabel="Delete organization"
+        confirmDisabled={confirmName.value !== active.name}
+        form="org-delete-form"
+      >
+        <form id="org-delete-form" onSubmit={onConfirmDelete} class="flex flex-col gap-3">
+          <Field label={`Type ${active.name} to confirm`} for="confirmOrgName">
+            <Input
+              id="confirmOrgName"
+              type="text"
+              value={confirmName.value}
+              onInput={(e) => (confirmName.value = (e.target as HTMLInputElement).value)}
+              disabled={deleting}
+              autoComplete="off"
+              spellcheck={false}
+              autofocus
+            />
+          </Field>
+          {error ? <Alert tone="critical">{error}</Alert> : null}
+        </form>
+      </ConfirmDialog>
     </SettingsCard>
   );
 }

@@ -4,6 +4,7 @@
  * was diffed against. Kept free of rendering so the rules can be unit tested
  * and reused by any surface that lists releases per package.
  */
+import { pluralize } from "../lib/format";
 import { settledRegistryStatus, type SettledRegistryStatus } from "../lib/npm-stage-follow-up";
 
 export interface PackageReleaseLike {
@@ -39,6 +40,40 @@ export function releaseAttention(release: PackageReleaseLike): ReleaseAttention 
   if (!release.decision) return "published_without_review";
   if (release.decision === "no_publish") return "published_despite_block";
   return null;
+}
+
+/**
+ * The package-wide tally of `releaseAttention` as one sentence for the page's
+ * Alert, worded like the rows' npm labels so the reader can match them. Null
+ * when both counts are zero: a clean package gets no "0" to read past.
+ */
+export function describeAttentionCounts({
+  publishedWithoutDecision,
+  publishedDespiteBlock,
+}: {
+  publishedWithoutDecision: number;
+  publishedDespiteBlock: number;
+}): { tone: "warn" | "critical"; text: string } | null {
+  const blocked = publishedDespiteBlock > 0;
+  const undecided = publishedWithoutDecision > 0;
+  if (!blocked && !undecided) return null;
+  const clauses: string[] = [];
+  if (blocked) clauses.push(`${releaseCount(publishedDespiteBlock)} over a block`);
+  // "…2 releases over a block and 1 with no decision here": the noun is said once.
+  if (undecided) {
+    const count = blocked
+      ? String(publishedWithoutDecision)
+      : releaseCount(publishedWithoutDecision);
+    clauses.push(`${count} with no decision here`);
+  }
+  return {
+    tone: blocked ? "critical" : "warn",
+    text: `npm published ${clauses.join(" and ")}.`,
+  };
+}
+
+function releaseCount(count: number): string {
+  return `${count} ${pluralize("release", count)}`;
 }
 
 export interface ReleaseChannel<T extends PackageReleaseLike> {

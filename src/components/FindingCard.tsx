@@ -1,5 +1,5 @@
-import type { ComponentChildren } from "preact";
-import { Badge, severityTone, statusTone } from "./Badge";
+import { Fragment, type ComponentChildren } from "preact";
+import { Badge, severityTone } from "./Badge";
 import { cn } from "./cn";
 
 function FileRef({
@@ -78,30 +78,56 @@ export function FindingCard({
             </Badge>
           ) : null}
           <FileRef file={file} onSelect={onSelect} />
-          {diffStatus ? (
-            <Badge tone={statusTone(diffStatus)} class="shrink-0">
-              {diffLabel ?? diffStatus}
-            </Badge>
-          ) : null}
         </div>
-        {line || ruleId ? (
-          <div class="flex items-center gap-2 min-w-0 font-mono text-[11px] text-ink-subtle">
-            {line ? <span class="shrink-0">L{line}</span> : null}
-            {line && ruleId ? (
-              <span class="shrink-0" aria-hidden>
-                ·
+        <FindingMeta
+          parts={[
+            line ? (
+              <span key="line" class="shrink-0">
+                L{line}
               </span>
-            ) : null}
-            {ruleId ? (
-              <span class="truncate uppercase tracking-[0.05em]" title={`Rule ${ruleId}`}>
+            ) : null,
+            ruleId ? (
+              <span
+                key="rule"
+                class="truncate uppercase tracking-[0.05em]"
+                title={`Rule ${ruleId}`}
+              >
                 {ruleId}
               </span>
-            ) : null}
-          </div>
-        ) : null}
+            ) : null,
+            diffStatus ? (
+              <span key="status" class="shrink-0">
+                {diffLabel ?? diffStatus}
+              </span>
+            ) : null,
+          ]}
+        />
       </div>
       <div class="text-[13px] leading-[1.55] flex flex-col gap-1.5">{children}</div>
     </li>
+  );
+}
+
+// The mono caption under the file: line, rule, and — only when the caller
+// passes one — the file's diff status as plain text. The status used to be a
+// colored chip, which painted a finding's own file green ("added") and repeated
+// what the risk-signals section split already says.
+function FindingMeta({ parts }: { parts: ComponentChildren[] }) {
+  const present = parts.filter(Boolean);
+  if (!present.length) return null;
+  return (
+    <div class="flex items-center gap-2 min-w-0 font-mono text-[11px] text-ink-subtle">
+      {present.map((part, index) => (
+        <Fragment key={index}>
+          {index > 0 ? (
+            <span class="shrink-0" aria-hidden>
+              ·
+            </span>
+          ) : null}
+          {part}
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
@@ -161,9 +187,9 @@ export function GroupedFindingCard({
               <span class="shrink-0 font-mono text-[11px] text-ink-subtle">L{entry.line}</span>
             ) : null}
             {entry.diffStatus ? (
-              <Badge tone={statusTone(entry.diffStatus)} class="shrink-0">
+              <span class="shrink-0 font-mono text-[11px] text-ink-subtle">
                 {entry.diffLabel ?? entry.diffStatus}
-              </Badge>
+              </span>
             ) : null}
           </li>
         ))}
