@@ -20,6 +20,20 @@ export interface PublicationWatch {
   unverifiedReleaseCount: number;
 }
 
+/** How an organization resolved a publication alert by reviewing the release after it. */
+export type PostReleaseResolution = "approved_after_release" | "declined_after_release";
+
+/**
+ * Whether a post-release decision counts on the public README badge, and if
+ * not, why. Only `applied` moves the badge.
+ */
+export type PostReleaseBadgeEffect =
+  | "applied"
+  | "not_public_npm"
+  | "not_a_verified_publisher"
+  | "digests_unavailable"
+  | "digests_differ";
+
 export interface PublicationObservation {
   id: string;
   acknowledgedAt: string | null;
@@ -45,6 +59,17 @@ export interface PublicationObservation {
   distTags: string[] | null;
   /** Unverifiable with nothing vouching for longer than the gap threshold. */
   coverageGap: boolean;
+  /**
+   * The post-release review linked to this release's alert, if one was
+   * started. Distinct from `scanId`, the staged review that matched the bytes.
+   */
+  reviewScanId: string | null;
+  reviewStatus: "pending" | "running" | "complete" | "failed" | null;
+  reviewDecision: "publish" | "no_publish" | null;
+  /** Recorded alongside `status`, which stays the historical verdict. */
+  resolution: PostReleaseResolution | null;
+  resolvedAt: string | null;
+  resolutionBadge: PostReleaseBadgeEffect | null;
 }
 
 export interface AutoEnrollmentInfo {
@@ -58,6 +83,11 @@ interface WatchDetail {
 }
 
 const endpoint = "/api/v1/publication-watches";
+
+/** Where an alert's post-release review is started, or found when it already exists. */
+export function publicationReviewApiPath(watchId: string, observationId: string): string {
+  return `${endpoint}/${encodeURIComponent(watchId)}/observations/${encodeURIComponent(observationId)}/review`;
+}
 
 export const PublicationWatchesModel = createModel(() => {
   const watches = signal<PublicationWatch[]>([]);
@@ -186,6 +216,24 @@ export const PublicationWatchesModel = createModel(() => {
           if (detail.peek()?.watch.id === watchId) detail.value = data;
         },
       );
+    },
+    /**
+     * Start the alert's post-release review, or find the one already linked to
+     * it. Resolves to the review's scan id, or null when the request failed or
+     * was superseded (the error signal says why).
+     */
+    async review(watchId: string, observationId: string): Promise<string | null> {
+      let scanId: string | null = null;
+      await run(
+        () =>
+          apiFetch<{ scanId: string }>(publicationReviewApiPath(watchId, observationId), {
+            method: "POST",
+          }),
+        (data) => {
+          scanId = data.scanId;
+        },
+      );
+      return scanId;
     },
     remove(id: string) {
       return run(

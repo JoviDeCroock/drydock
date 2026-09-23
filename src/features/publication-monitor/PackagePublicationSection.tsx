@@ -1,5 +1,6 @@
 import { useComputed, useModel, useSignal } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
+import { useLocation } from "preact-iso";
 import { Alert } from "../../components/Alert";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -12,7 +13,13 @@ import {
   type PublicationAlertRecord,
   type PublicationEnrollment,
 } from "../../models/package-publication";
-import { observationStatusLabels, watchMetaLine, watchProblemMessage } from "./copy";
+import {
+  observationStatusLabels,
+  resolutionLabels,
+  resolutionTone,
+  watchMetaLine,
+  watchProblemMessage,
+} from "./copy";
 import { CoverageGap } from "./CoverageGap";
 import { ObservationList } from "./ObservationList";
 import { StopWatchingDialog } from "./StopWatchingDialog";
@@ -96,10 +103,17 @@ function EarlierAlerts({ publication }: { publication: PackagePublication }) {
                 <li key={alert.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span class="font-mono text-[13px] font-medium break-all">{alert.version}</span>
                   <Badge tone="critical">{observationStatusLabels[alert.status]}</Badge>
+                  {alert.resolution ? (
+                    <Badge tone={resolutionTone(alert.resolution)}>
+                      {resolutionLabels[alert.resolution]}
+                    </Badge>
+                  ) : null}
                   <span class="font-mono text-[11px] text-ink-subtle">
                     {alert.acknowledgedAt
                       ? `acknowledged ${formatDateTime(alert.acknowledgedAt)}`
-                      : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
+                      : alert.resolution === "approved_after_release"
+                        ? `raised ${formatDateTime(alert.createdAt)}`
+                        : `raised ${formatDateTime(alert.createdAt)} · not acknowledged`}
                   </span>
                 </li>
               ))}
@@ -148,6 +162,7 @@ function PublicationBody({
   // Stopping hides alert history and opts the package out, so the server
   // allows it only to integration managers; the button mirrors that.
   const stopDisabled = useComputed(() => model.busy.value || !model.canStop.value);
+  const location = useLocation();
   const confirmingStop = useSignal(false);
   const stopPackageName = useComputed(() =>
     confirmingStop.value ? publication.packageName : null,
@@ -213,6 +228,12 @@ function PublicationBody({
         observations={publication.observations}
         busy={model.busy}
         acknowledge={(observationId) => void model.acknowledge(observationId)}
+        review={(observationId) =>
+          void model.review(observationId).then((scanId: string | null) => {
+            // The alert is decided on its review page, diff first.
+            if (scanId) location.route(`/dashboard/scans/${encodeURIComponent(scanId)}`);
+          })
+        }
       />
       <StopWatchingDialog
         packageName={stopPackageName}
