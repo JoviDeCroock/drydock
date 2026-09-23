@@ -62,7 +62,12 @@ export const ReleaseTargetsModel = createModel(() => {
 
   const releaseTargets = signal<PublicReleaseTarget[]>([]);
   const releaseTargetsLoaded = signal(false);
+  // What the card shows: the last load's failure, or a failed delete.
   const releaseTargetsError = signal<string | null>(null);
+  // The list's own health, separate from action errors: a failed delete does
+  // not make the list stale, and consumers that must not read a failed load as
+  // "no mapping" (the setup wizard) key on this one.
+  const releaseTargetsLoadError = signal<string | null>(null);
 
   const formInstallationRowId = signal<string>("");
   const formRepositoryFullName = signal<string>("");
@@ -160,6 +165,7 @@ export const ReleaseTargetsModel = createModel(() => {
     releaseTargets,
     releaseTargetsLoaded,
     releaseTargetsError,
+    releaseTargetsLoadError,
 
     formInstallationRowId,
     formRepositoryFullName,
@@ -186,9 +192,11 @@ export const ReleaseTargetsModel = createModel(() => {
         if (requestId !== releaseTargetsRequestId) return;
         releaseTargets.value = data.releaseTargets;
         releaseTargetsError.value = null;
+        releaseTargetsLoadError.value = null;
       } catch (err) {
         if (requestId !== releaseTargetsRequestId) return;
         releaseTargetsError.value = errorMessage(err);
+        releaseTargetsLoadError.value = errorMessage(err);
         releaseTargets.value = [];
       } finally {
         if (requestId === releaseTargetsRequestId) releaseTargetsLoaded.value = true;
@@ -311,6 +319,8 @@ export const ReleaseTargetsModel = createModel(() => {
           { method: "DELETE" },
         );
         releaseTargets.value = releaseTargets.peek().filter((row) => row.id !== id);
+        // A retry that succeeded clears the earlier failure it replaced.
+        releaseTargetsError.value = releaseTargetsLoadError.peek();
         return true;
       } catch (err) {
         releaseTargetsError.value = errorMessage(err);
