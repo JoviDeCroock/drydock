@@ -243,6 +243,29 @@ describe("the public badge counts a publisher's decision after release", () => {
     expect((await fetchBadge(app, "left-pad")).message).toBe("not reviewed");
   });
 
+  test("a version shaped like a secret can still be declined onto the badge", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    await seedStagedRelease(owner, app, packageName, "1.0.0");
+    // Valid semver that the secret redactor rewrites in the stored summary;
+    // the decision must bind to the unredacted stage id, not that copy.
+    const version = "1.0.1-AKIAABCDEFGHIJKLMNOP";
+    await seedAlert(owner, packageName, version);
+    const scanId = await seedPublishedReview(owner, packageName, version);
+    await linkReview(owner, packageName, version, scanId);
+
+    expect((await decide(app, scanId, "no_publish")).postRelease).toMatchObject({
+      version,
+      resolution: "declined_after_release",
+      resolutionBadge: "applied",
+    });
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: `${version} blocked`,
+      color: "red",
+    });
+  });
+
   test("an organization that handed over the package claim cannot answer over the claim holder's decline", async () => {
     // The organization that first staged this name on public npm, watched it,
     // and saw 1.0.1 published without an approval...
