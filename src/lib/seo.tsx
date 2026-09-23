@@ -17,6 +17,7 @@ export {
   homePageSeo,
   INCIDENT_CASE_PATHS,
   incidentCaseSeoByPath,
+  packageDiffIndexSeo,
   packageDiffSeo,
   privacyPageSeo,
 } from "./seo-metadata";

@@ -61,6 +61,11 @@
     <priority>0.6</priority>
   </url>
   <url>
+    <loc>https://drydock.org/maintainer-pledge</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://drydock.org/incidents/node-ipc-peacenotwar</loc>
     <changefreq>yearly</changefreq>
     <priority>0.7</priority>
@@ -69,5 +74,88 @@
     <loc>https://drydock.org/incidents/es5-ext-postinstall</loc>
     <changefreq>yearly</changefreq>
     <priority>0.7</priority>
+  </url>
+  <!-- Curated package diff pages. Each resolves to that package's latest
+       published pair, so the entry stays valid across releases. Kept in
+       sync with CURATED_DIFF_PACKAGES by test/prerender-routes.test.ts. -->
+  <url>
+    <loc>https://drydock.org/diff/react</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/vue</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/express</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/axios</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/lodash</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/typescript</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/next</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/vite</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/eslint</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/semver</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/requests</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/urllib3</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/numpy</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/pandas</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/flask</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://drydock.org/diff/pypi/django</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.5</priority>
   </url>
 </urlset>

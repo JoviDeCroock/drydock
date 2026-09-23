@@ -1,4 +1,9 @@
-import { packageDiffCardPath, packageDiffPath, type DiffEcosystem } from "./package-diff-path";
+import {
+  packageDiffCardPath,
+  packageDiffIndexPath,
+  packageDiffPath,
+  type DiffEcosystem,
+} from "./package-diff-path";
 import { diffRefLabel } from "./pkg-pr-new";
 import { type DiscoveryGuidePath, type IncidentCasePath } from "./public-content-routes";
 
@@ -77,6 +82,12 @@ export const discoveryGuideSeoByPath = {
     description:
       "Audit Drydock's Apache-2.0 detection rules and security boundaries, or self-host package review in your own Cloudflare account.",
     path: "/open-source",
+  },
+  "/maintainer-pledge": {
+    title: "Drydock will not charge open-source maintainers | Drydock",
+    description:
+      "Reviewing a public package release on Drydock is free for the maintainer who publishes it, and is intended to stay that way. What this commits to, and what it does not.",
+    path: "/maintainer-pledge",
   },
 } as const satisfies Record<DiscoveryGuidePath, PageSeoMetadata>;
 
@@ -163,6 +174,32 @@ export function packageDiffSeo(
     title: `${shownName} ${fromLabel} → ${toLabel} | Drydock package diff`,
     description: `File-by-file diff of ${shownName} between ${fromLabel} and ${toLabel}, with deterministic supply-chain findings pinned to changed lines.`,
     path: packageDiffPath(ecosystem, packageName, fromVersion, toVersion),
+  };
+}
+
+const ECOSYSTEM_NOUN: Record<DiffEcosystem, string> = {
+  npm: "npm package",
+  pypi: "PyPI project",
+  atpm: "atpm package",
+};
+
+/**
+ * Metadata for the version-less page of one package.
+ *
+ * Without this the page fell back to `packageDiffSeo()`, whose canonical path is
+ * `/diff` — every package resolved to the same URL, so none of them could be
+ * indexed on their own terms.
+ */
+export function packageDiffIndexSeo(
+  ecosystem: DiffEcosystem,
+  packageName: string,
+  displayName?: string,
+): PageSeoMetadata {
+  const shownName = displayName || packageName;
+  return {
+    title: `${shownName} release diffs | Drydock`,
+    description: `Compare any two published versions of the ${ECOSYSTEM_NOUN[ecosystem]} ${shownName} file by file, with deterministic supply-chain findings pinned to changed lines. No account required.`,
+    path: packageDiffIndexPath(ecosystem, packageName),
   };
 }
 

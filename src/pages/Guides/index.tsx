@@ -293,6 +293,39 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
       label: "Read self-hosting setup",
     },
   },
+  "/maintainer-pledge": {
+    relatedTitle: "The maintainer pledge",
+    heading: "Reviewing your own open-source release will not cost you money.",
+    lead: "Drydock is built on the assumption that the people who publish open-source packages are the least able to pay for reviewing them and the most consequential to get right. Reviewing a release of a package you publish publicly is free, and the plan is for it to stay free. This page states what that covers and what it does not.",
+    details: ["free for public packages", "Apache-2.0 source", "sponsor-funded"],
+    sections: [
+      {
+        label: "What it covers",
+        heading: "Public packages, for the maintainer who publishes them.",
+        body: "Reviewing a release of a package you publish to a public registry — the staged tarball, the gated workflow artifact, the report, and the decision you record against it. Reading a diff at /diff has never needed an account at all, and does not need one now.",
+      },
+      {
+        label: "What it does not promise",
+        heading: "This is a commitment about pricing, not a guarantee about uptime.",
+        body: "There are no paid plans today, so nothing here describes a free tier of a product that exists. It does not promise that the hosted service runs forever, that every future capability lands on the free path, or that private packages and company release processes stay free — those are where paying for Drydock is expected to come from. Development is currently funded by Aikido Security's sponsorship, which does not influence detection rules, findings, or risk scoring.",
+      },
+      {
+        label: "Why you need not take our word for it",
+        heading: "The source is the enforcement.",
+        body: "A pledge from a small vendor is worth what the vendor is worth. Drydock is Apache-2.0: the detection rules, sandbox boundaries, report model, and deployment configuration are public, and the same review system deploys into your own Cloudflare account. If the hosted service ever stops being free for maintainers, the licence is what lets you keep running it anyway.",
+      },
+    ],
+    close: {
+      heading: "Start by reading a diff.",
+      body: "The fastest way to judge whether this is worth wiring into your release is to read the diff of a package you already publish, and decide whether you had seen those bytes before.",
+      action: { href: "/diff", label: "Read a diff" },
+    },
+    primary: { href: "/diff", label: "Read a diff" },
+    secondary: {
+      href: "https://github.com/JoviDeCroock/drydock/blob/main/docs/self-hosting.md",
+      label: "Read self-hosting setup",
+    },
+  },
 };
 
 const GUIDE_PATHS = Object.keys(GUIDES) as DiscoveryGuidePath[];

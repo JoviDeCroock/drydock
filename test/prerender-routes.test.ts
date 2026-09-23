@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { locationStub } from "preact-iso/prerender";
 import { isGeneratedIndexRoute, isPrerenderedRoute, prerender } from "../src";
+import { packageDiffIndexPath } from "../src/lib/package-diff-path";
+import { CURATED_DIFF_PACKAGES } from "../src/lib/public-content-routes";
 import {
   DISCOVERY_GUIDE_PATHS,
   discoveryGuideSeoByPath,
@@ -10,9 +12,11 @@ import {
   homePageSeo,
   INCIDENT_CASE_PATHS,
   incidentCaseSeoByPath,
+  packageDiffIndexSeo,
   packageDiffSeo,
   privacyPageSeo,
 } from "../src/lib/seo";
+import { SITE_URL } from "../src/lib/seo-metadata";
 
 describe("isPrerenderedRoute", () => {
   it("matches generated public prerender pages with or without canonical trailing slashes", () => {
@@ -101,6 +105,19 @@ describe("page SEO metadata", () => {
     });
   });
 
+  // The version-less page used to fall back to packageDiffSeo(), whose path is
+  // "/diff" — every package pointed its canonical at the diff tool, so no
+  // package page could be indexed as itself.
+  it("canonicalises a version-less package page to that package, not to /diff", () => {
+    expect(packageDiffIndexSeo("npm", "react")).toMatchObject({
+      title: "react release diffs | Drydock",
+      path: "/diff/react",
+    });
+    expect(packageDiffIndexSeo("pypi", "requests").path).toBe("/diff/pypi/requests");
+    expect(packageDiffIndexSeo("npm", "@preact/signals").path).toBe("/diff/@preact/signals");
+    expect(packageDiffIndexSeo("npm", "react").description).toContain("npm package react");
+  });
+
   it("gives every focused guide distinct canonical metadata", () => {
     expect(Object.keys(discoveryGuideSeoByPath)).toEqual(DISCOVERY_GUIDE_PATHS);
     const titles = new Set<string>();
@@ -116,12 +133,43 @@ describe("page SEO metadata", () => {
 });
 
 describe("sitemap", () => {
+  const sitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
+  const robots = readFileSync(new URL("../public/robots.txt", import.meta.url), "utf8");
+  const locations = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, loc]) => loc);
+  const paths = locations.map((loc) => new URL(loc).pathname);
+
   it("wraps every sitemap location in a url entry", () => {
-    const sitemap = readFileSync(new URL("../public/sitemap.xml", import.meta.url), "utf8");
     const entries = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/g)];
-    const locations = [...sitemap.matchAll(/<loc>[^<]+<\/loc>/g)];
 
     expect(entries).toHaveLength(locations.length);
     expect(entries.every((entry) => /<loc>[^<]+<\/loc>/.test(entry[1]))).toBe(true);
+  });
+
+  it("lists every location once, under the canonical origin", () => {
+    expect(new Set(locations).size).toBe(locations.length);
+    expect(locations.every((loc) => loc.startsWith(`${SITE_URL}/`))).toBe(true);
+  });
+
+  // A public page nobody can discover is the failure this catches: adding a
+  // route to DISCOVERY_GUIDE_PATHS is the step that gets remembered, and
+  // listing it for crawlers is the one that does not.
+  it("lists every prerendered guide and incident page", () => {
+    for (const path of [...DISCOVERY_GUIDE_PATHS, ...INCIDENT_CASE_PATHS]) {
+      expect(paths).toContain(path);
+    }
+  });
+
+  it("lists the curated package diff pages", () => {
+    for (const { ecosystem, name } of CURATED_DIFF_PACKAGES) {
+      expect(paths).toContain(packageDiffIndexPath(ecosystem, name));
+    }
+  });
+
+  it("lists no path that robots.txt disallows", () => {
+    const disallowed = [...robots.matchAll(/^Disallow:\s*(\S+)$/gm)].map(([, value]) => value);
+
+    for (const path of paths) {
+      expect(disallowed.some((prefix) => path.startsWith(prefix))).toBe(false);
+    }
   });
 });
