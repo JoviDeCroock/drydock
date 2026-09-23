@@ -53,7 +53,7 @@ export async function seedStagedRelease(
   app: TestApp,
   packageName: string,
   version: string,
-  options: { decision?: "publish" | "no_publish" | null; tag?: string } = {},
+  options: { decision?: "publish" | "no_publish" | null; tag?: string; access?: string } = {},
 ) {
   const scanId = await seedCompletedScan(owner, {
     job: { source: "manual", packageName, stagedVersion: version, registryUrl: PUBLIC_NPM },
@@ -62,7 +62,7 @@ export async function seedStagedRelease(
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
       stagedPublish: {
-        access: "public",
+        access: options.access ?? "public",
         ...(options.tag ? { tag: options.tag } : {}),
         artifactIntegrity: {
           algorithm: "sha1",
@@ -130,11 +130,19 @@ export async function seedPublishedReview(
   owner: SeededUser,
   packageName: string,
   version: string,
-  options: { digests?: { sha1: string | null; sha256: string | null }; registryUrl?: string } = {},
+  options: {
+    digests?: { sha1: string | null; sha256: string | null };
+    registryUrl?: string;
+    manifest?: { name: string; version: string };
+  } = {},
 ) {
   return seedCompletedScan(owner, {
+    // The stage id the route derives from the registry-resolved pair.
+    stageId: `published:npm:${packageName}@${version}`,
     job: { source: "published", packageName, stagedVersion: version, registryUrl: null },
-    packageJson: { name: packageName, version },
+    // What the reviewed tarball's own package.json says, which a hostile
+    // release controls: persisted as the scan's package name and version.
+    packageJson: options.manifest ?? { name: packageName, version },
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
       stagedPublish: {

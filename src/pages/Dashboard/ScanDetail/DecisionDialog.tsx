@@ -112,7 +112,7 @@ export function DecisionDialog({
       title={postRelease ? "Decision after release" : "Publish decision"}
       description={
         postRelease
-          ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert, declining keeps the alert open with next steps. Nothing changes on npm.`
+          ? `${postRelease.packageName}@${postRelease.version} is already public on npm. Record whether this organization approves the published release: approving resolves its publication alert, declining keeps the alert open with next steps. If this organization is a registry-verified publisher of the package and the reviewed bytes match the published ones, the public badge shows it as approved or blocked. Nothing changes on npm.`
           : "Record whether this staged publish is safe to approve. This adds to the audit trail, but it does not publish or cancel anything on npm. You still confirm or cancel with 2FA there."
       }
     >

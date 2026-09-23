@@ -378,6 +378,23 @@ export async function linkPublicationAlertReview(
   return linked.length > 0;
 }
 
+/** Undo a link whose review never reached the queue, so Scan is offered again. */
+export async function unlinkPublicationAlertReview(
+  db: AppDb,
+  input: { alertId: string; organizationId: string; scanId: string },
+) {
+  await db
+    .update(publicationAlerts)
+    .set({ reviewScanId: null, reviewRequestedAt: null, reviewRequestedBy: null })
+    .where(
+      and(
+        eq(publicationAlerts.id, input.alertId),
+        eq(publicationAlerts.organizationId, input.organizationId),
+        eq(publicationAlerts.reviewScanId, input.scanId),
+      ),
+    );
+}
+
 /** The alert a post-release review answers, or null when the scan is linked to none. */
 export async function getPublicationAlertReview(db: AppDb, organizationId: string, scanId: string) {
   const [alert] = await db
@@ -433,13 +450,17 @@ export async function resolvePublicationAlertReview(
           eq(publicationAlerts.id, input.alertId),
           eq(publicationAlerts.organizationId, input.organizationId),
           eq(publicationAlerts.reviewScanId, input.scanId),
+          // Only while the review still carries the decision this resolution
+          // was computed from: of two decisions racing, the later one's
+          // resolution is the one that lands.
+          sql`exists (select 1 from scans s where s.id = ${input.scanId} and s.organization_id = ${input.organizationId} and s.decision = ${input.resolution === "approved_after_release" ? "publish" : "no_publish"})`,
         ),
       )
       .returning({ id: publicationAlerts.id }),
     db
       .insert(scanEvents)
       .select(
-        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, ${input.scanId}, 'publication.review_resolved', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, resolution: input.resolution, badge: input.resolutionBadge })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId})`,
+        sql`select ${crypto.randomUUID()}, ${input.organizationId}, ${input.actorUserId}, ${input.scanId}, 'publication.review_resolved', ${JSON.stringify({ packageName: input.packageName, stagedVersion: input.version, resolution: input.resolution, badge: input.resolutionBadge })}, ${now.getTime()} where exists(select 1 from publication_alerts where id = ${input.alertId} and review_scan_id = ${input.scanId} and resolution = ${input.resolution} and resolved_at = ${now.getTime()})`,
       ),
   ]);
   return resolved.length > 0;

@@ -13,7 +13,7 @@ Use this map after `AGENTS.md` when a task needs ownership or command details. R
 - `server/lib/sandbox.ts` is the Dynamic Worker that downloads and parses package artifacts. `NpmStageGateway` is the only npm-token egress.
 - `server/lib/review/` owns deterministic findings, package and `package.json` diffs, redaction, serialization, risk, and shared UI types. Its public entry is `server/lib/review/index.ts`.
 - `server/lib/ai-review/` owns the Workers AI reviewer, wired through `server/lib/scan/pipeline.ts`.
-- `server/lib/scan/` owns pipeline phases, queue jobs, input parsing, artifact persistence, report export, and release memory.
+- `server/lib/scan/` owns pipeline phases, queue jobs, input parsing, starting a scan (`start.ts`, shared by every route that starts one), artifact persistence, report export, and release memory.
 - `server/lib/public-diff/` owns anonymous `/diff` orchestration and `PublicDiffAdapter`. The atpm ecosystem resolves releases over AT Protocol; see `atpm-public-diff.md`.
 - `server/lib/ecosystems/` contains one directory per ecosystem. `server/lib/ecosystems/index.ts` is the capability registry; ecosystem gate adapters live in `<id>/workflow-gate.ts`. `published-pair.ts` is ecosystem-generic: it turns any `publicDiff` capability into the credential-free `published` scan adapter.
 - `server/lib/workflow-gates/` contains only shared GitHub Environment gate plumbing.

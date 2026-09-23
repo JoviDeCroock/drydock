@@ -391,14 +391,28 @@ guard, checked when the review is decided and recorded on the alert
 `listPostReleaseBadgeCandidates` enforces what can change again on every read:
 the organization is still a registry-verified publisher, the review is still a
 completed published-pair review of exactly the alerted release read from public
-npm, and its current decision is the one the resolution recorded. A row written
+npm, and its current decision is the one the resolution recorded. "Exactly the
+alerted release" is the registry-resolved pair the review was started for (its
+stage id and summary), never the name and version in the reviewed tarball's own
+`package.json`, which a hostile release controls and could otherwise use to keep
+a decline from landing. A row written
 some other way, or one that outlived its evidence, answers nothing. The
 candidate carries the alert's own coordinates (npm's version, from npm's
 packument), never the reviewed manifest. It answers the badge lines the
 monitor last recorded pointing at the version, and `latest` whenever the version
 is stable — a moved tag must not take a decline off the badge. For the same
 version, it outranks a review of the staged bytes, which may not be the ones
-consumers install. The off switch silences it like the other routes.
+consumers install. As with every route the badge is not organization-scoped;
+between two publishers' decisions on the same version a decline wins, whichever
+was made last, so one publisher cannot answer green over another's warning by
+deciding again. Publisher status is the off switch's rule and does not expire:
+an organization that once staged the name can still approve a later release
+another publisher has only been alerted about, not declined. The remedy is the
+same as for any co-publisher — decline it after release, or switch the badge
+off. The off switch silences it like the other routes. The decision
+is re-evaluated only when the review is decided again: a resolution computed
+from a decision that has since changed never lands, and one whose review
+decision no longer matches is ignored on read.
 
 The monitor evidence reads the same decisions, for the pick's own organization
 (`findPublicationDiscrepancy`): a guarded approval of the quoted version clears

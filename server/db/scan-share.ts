@@ -562,6 +562,12 @@ export function compareBadgeCandidates(a: SharedScanRow, b: SharedScanRow): numb
   // published outranks a review of the bytes that were staged, which may not
   // be the ones consumers install.
   if (Boolean(a.postRelease) !== Boolean(b.postRelease)) return a.postRelease ? -1 : 1;
+  // Two publishers' decisions after release on the same version: a decline
+  // wins, whichever came last, so one publisher cannot answer green over
+  // another's warning by deciding again.
+  if (a.postRelease && b.postRelease && a.decision !== b.decision) {
+    return a.decision === "no_publish" ? -1 : 1;
+  }
   return (
     (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0) ||
     b.scanId.localeCompare(a.scanId)

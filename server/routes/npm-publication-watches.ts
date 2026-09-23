@@ -5,6 +5,7 @@ import {
   findObservationAlert,
   linkPublicationAlertReview,
   listPublicationAlertsForPackage,
+  unlinkPublicationAlertReview,
 } from "../db/publication-alerts";
 import {
   createPublicationWatch,
@@ -255,12 +256,20 @@ npmPublicationWatchRoutes.post("/:id/observations/:observationId/review", async 
     if (!current?.reviewScanId) return c.json({ error: "not found" }, 404);
     return c.json({ scanId: current.reviewScanId, started: false }, 200);
   }
-  await enqueuePreparedScan(c, db, {
-    scanId,
-    organizationId,
-    actorUserId: session.userId,
-    prepared,
-  });
+  try {
+    await enqueuePreparedScan(c, db, {
+      scanId,
+      organizationId,
+      actorUserId: session.userId,
+      prepared,
+    });
+  } catch (err) {
+    // A review that never reached the queue would stay pending forever and
+    // hold the alert's one link, hiding Scan. Unlink it and remove it.
+    await unlinkPublicationAlertReview(db, { alertId: alert.id, organizationId, scanId });
+    await deletePendingScanJob(db, scanId, organizationId);
+    throw err;
+  }
   // The decision is bound to the bytes the monitor saw npm publish. A release
   // with no Drydock record was never downloaded, so hash it now, off the
   // request path; the decision tries again if this has not landed by then.
