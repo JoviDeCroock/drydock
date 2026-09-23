@@ -3,15 +3,21 @@
  * re-validation live in `gate-continuity-record.ts`, which the UI imports;
  * keep everything that touches the database on this side.
  *
- * Advisory and additive: it never moves risk, findings, or a decision. Every
- * lookup failure degrades to "no record", because the artifact review stands on
- * its own and a missing link must not fail a scan.
+ * Advisory and additive: it never moves risk, findings, or a decision, and a
+ * failure never fails the scan, because the artifact review stands on its
+ * own. A check that could not run persists as `unknown` rather than as no
+ * record: no record means the organization does not gate the package, which a
+ * failed read cannot establish.
  */
 
 import type { AppDb } from "../../db/client";
-import { loadGateReviewHistory } from "../../db/scans";
+import { hasLiveReleaseTarget, loadGateReviewHistory } from "../../db/scans";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
-import { evaluateGateContinuity, type GateContinuity } from "./gate-continuity-record";
+import {
+  evaluateGateContinuity,
+  unknownGateContinuity,
+  type GateContinuity,
+} from "./gate-continuity-record";
 import type { PipelineIdentity } from "./pipeline-phases";
 
 /** Sources whose scans can be bound to a gate review: registry stages only. */
@@ -22,11 +28,15 @@ export async function resolveGateContinuity(args: {
   identity: PipelineIdentity;
   source: string | undefined;
   /**
+   * The staged adapter's ecosystem when it hashes its staged artifact — the
+   * capability gate continuity needs — else null and there is no record.
+   */
+  ecosystem: string | null;
+  /**
    * The registry's own coordinates for the stage (npm's stage record), never
    * the tarball manifest: the manifest is package-controlled, and a hostile
    * stage of a gated package must not be able to dodge the lookup by naming
-   * itself something else. Null when the registry record was unavailable,
-   * which is an absence of evidence and yields no record.
+   * itself something else. Null when the registry record was unavailable.
    */
   registryIdentity: { packageName: string; version: string } | null;
   stagedDigest: string | null;
@@ -37,13 +47,24 @@ export async function resolveGateContinuity(args: {
    */
   stagedDigestBoundToRegistry: boolean;
 }): Promise<GateContinuity | null> {
-  if (!STAGED_SOURCES.has(args.source ?? "manual")) return null;
-  if (!args.registryIdentity) return null;
-  const { packageName, version } = args.registryIdentity;
+  const { ecosystem } = args;
+  if (!ecosystem || !STAGED_SOURCES.has(args.source ?? "manual")) return null;
+  const { organizationId, scanId } = args.identity;
+  const packageName = args.registryIdentity?.packageName ?? null;
   try {
+    if (!args.registryIdentity) {
+      // Nothing trustworthy to key the lookup on. That only matters if the
+      // organization could be gating this stage's package at all; with no
+      // live release target for the ecosystem, "not applicable" is still true.
+      return (await hasLiveReleaseTarget(args.db, organizationId, ecosystem))
+        ? unknownGateContinuity("registry-record-unavailable", args.stagedDigest)
+        : null;
+    }
+    const { version } = args.registryIdentity;
     const history = await loadGateReviewHistory(args.db, {
-      organizationId: args.identity.organizationId,
-      packageName,
+      organizationId,
+      ecosystem,
+      packageName: args.registryIdentity.packageName,
       version,
     });
     const continuity = evaluateGateContinuity(
@@ -56,22 +77,23 @@ export async function resolveGateContinuity(args: {
       // drifted from the gated review is the out-of-band signal this record
       // exists to surface.
       emitOperationalEvent("warn", "scan.gate_continuity.broken", {
-        scanId: args.identity.scanId,
-        organizationId: args.identity.organizationId,
+        scanId,
+        organizationId,
         packageName,
         version,
         status: continuity.status,
+        reason: continuity.reason,
         gateScanId: continuity.review?.scanId ?? null,
       });
     }
     return continuity;
   } catch (err) {
     emitOperationalEvent("warn", "scan.gate_continuity.lookup_failed", {
-      scanId: args.identity.scanId,
-      organizationId: args.identity.organizationId,
+      scanId,
+      organizationId,
       packageName,
       error: describeOperationalError(err),
     });
-    return null;
+    return unknownGateContinuity("history-unavailable", args.stagedDigest);
   }
 }

@@ -435,18 +435,18 @@ describe("scan report JSON export", () => {
     expect(body.provenance).toBeNull();
   });
 
-  test("exports a validated gate-continuity record and drops a malformed one", async () => {
+  test("exports a validated gate-continuity verdict without the gate's identity", async () => {
     const owner = await seedUser();
-    const db = createDb(env.DB);
     const record = {
       status: "matched",
+      reason: null,
       algorithm: "sha256",
       stagedDigest: "e".repeat(64),
       review: {
         scanId: "scan_gate",
         gateId: "gate_1",
-        repository: "octo/pkg",
-        environment: "production",
+        repository: "octo/private-release",
+        environment: "gated-release-env",
         runId: 7,
         status: "approved",
         decision: "approved",
@@ -454,37 +454,28 @@ describe("scan report JSON export", () => {
         sha256: "e".repeat(64),
       },
     };
-    const seed = async (gateContinuity: unknown) => {
-      const scanId = `scan_${crypto.randomUUID()}`;
-      const stageId = `stage-${scanId.slice(-12)}`;
-      await createScanJob(db, {
-        id: scanId,
-        stageId,
-        organizationId: owner.organizationId,
-        ownerUserId: owner.userId,
-      });
-      await persistScanWithArtifacts(db, {
-        id: scanId,
-        stageId,
-        organizationId: owner.organizationId,
-        ownerUserId: owner.userId,
-        packageJson: { name: "@org/pkg", version: "1.1.0" },
-        risk: "low",
-        status: "complete",
-        summary: { gateContinuity },
-        ai: null,
-        files: [],
-        diff: [],
-        findings: [],
-        report: { version: 1, digest: "abc123" },
-      });
-      const res = await getReport(buildTestApp(owner), scanId);
+    const exported = async (gateContinuity: unknown) => {
+      const scanId = await seedCompletedScan(owner, { summary: { gateContinuity } });
+      const res = await getReport(buildTestApp(mountScans, owner), scanId);
       expect(res.status).toBe(200);
-      return ((await res.json()) as { gateContinuity: unknown }).gateContinuity;
+      return { body: await res.text(), scanId };
     };
 
-    expect(await seed(record)).toEqual(record);
-    expect(await seed({ status: "matched", review: null })).toBeNull();
+    // report.json is also what a public share token serves, so it carries the
+    // verdict and both digests only; the gate stays in the authenticated receipt.
+    const { body } = await exported(record);
+    expect((JSON.parse(body) as { gateContinuity: unknown }).gateContinuity).toEqual({
+      status: "matched",
+      reason: null,
+      algorithm: "sha256",
+      stagedDigest: "e".repeat(64),
+      gateDigest: "e".repeat(64),
+    });
+    for (const internal of ["scan_gate", "gate_1", "octo/private-release", "gated-release-env"]) {
+      expect(body).not.toContain(internal);
+    }
+    const malformed = await exported({ status: "matched", review: null });
+    expect((JSON.parse(malformed.body) as { gateContinuity: unknown }).gateContinuity).toBeNull();
   });
 
   test("omits an internally inconsistent staged-tarball verdict", async () => {

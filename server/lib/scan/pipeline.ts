@@ -162,11 +162,14 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
     // Advisory gate-continuity record (db read): binds a registry stage to the
     // organization's workflow-gate review of the same bytes, or names a stage
     // that never passed the gate. Never influences risk, findings, or the
-    // decision; a lookup failure degrades to "no record" inside the resolver.
+    // decision; a check that cannot run records `unknown` inside the resolver.
     const gateContinuity = await resolveGateContinuity({
       db,
       identity,
       source: input.source,
+      // An adapter opts in by hashing its staged artifact; the history lookup
+      // and the provenance match are then scoped to that adapter's ecosystem.
+      ecosystem: adapter.stagedArtifactSha256 ? adapter.id : null,
       registryIdentity,
       stagedDigest: facts.stagedArtifactSha256,
       stagedDigestBoundToRegistry: facts.stagedArtifactDigestVerified,

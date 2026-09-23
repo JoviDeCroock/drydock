@@ -5,6 +5,7 @@ import { parseStagedArtifactIntegrity } from "../../../../server/lib/ecosystems/
 import {
   normalizeGateContinuity,
   type GateContinuity,
+  type GateContinuityReason,
 } from "../../../../server/lib/scan/gate-continuity-record";
 import { Badge } from "../../../components/Badge";
 import { manifestVersionRange, PackageJsonDiffView } from "../../../components/PackageJsonDiffView";
@@ -69,28 +70,73 @@ export function PersistedReportSections({ summary }: { summary: PersistedSummary
 
       {gateContinuity ? (
         <ReportSection title="Gate continuity">
-          <GateContinuityView continuity={gateContinuity} />
+          <GateContinuityView
+            continuity={gateContinuity}
+            boundToRegistry={artifactIntegrity?.status === "verified"}
+          />
         </ReportSection>
       ) : null}
     </section>
   );
 }
 
-function GateContinuityView({ continuity }: { continuity: GateContinuity }) {
+// Each non-binding outcome has a different cause and asks something different
+// of the maintainer, so the copy names the cause rather than a generic "one of
+// the digests is unavailable".
+const UNBOUND_DESCRIPTIONS: Record<GateContinuityReason, string> = {
+  "gate-review-incomplete":
+    "A workflow-gate review of this version exists but has not completed — it is still running, or it failed — so there is no gated digest to compare yet.",
+  "staged-digest-unavailable":
+    "The workflow gate reviewed this version, but Drydock computed no SHA-256 for the staged tarball, so the stage is not bound to the gated review.",
+  "gate-digest-unavailable":
+    "The workflow gate reviewed this version, but no review recorded a single npm tarball digest (a multi-artifact bundle, or a review older than gate provenance), so the stage is not bound to it.",
+  "gate-decision-unavailable":
+    "The workflow gate reviewed exactly these bytes, but its gate record has since been deleted, so whether it approved them is unknown.",
+  "stage-not-bound-to-registry":
+    "The tarball Drydock downloaded is the tarball the workflow gate approved, but the download was not confirmed against npm's own record for this stage (see Artifact verification), so this does not show what npm holds.",
+  "review-window-truncated":
+    "The workflow gate reviewed this version more often than Drydock compares, and none of the most recent reviews match the staged bytes. An older one might, so the stage is neither bound to a review nor accused.",
+  "history-unavailable":
+    "Drydock could not read this organization's workflow-gate history when it scanned this stage, so whether the stage went through the gate is unknown. If this package is gated, confirm the gate reviewed this version before approving on npm.",
+  "registry-record-unavailable":
+    "npm's record for this stage was unavailable, and the name inside the tarball is not trusted to look up gate history, so whether the stage went through the gate is unknown. If this package is gated, confirm the gate reviewed this version before approving on npm.",
+};
+
+function describeGateContinuity(continuity: GateContinuity, npmHolds: boolean): string {
+  if (continuity.reason) return UNBOUND_DESCRIPTIONS[continuity.reason];
+  switch (continuity.status) {
+    case "matched":
+      return "The tarball npm holds for this stage is byte-for-byte the tarball the workflow gate reviewed and approved. Approving on npm publishes the gated bytes.";
+    case "gate-not-approved":
+      return "The workflow gate reviewed exactly these bytes and did not approve them (rejected, or not yet decided), yet they were staged. Reject this stage on npm.";
+    case "digest-mismatch":
+      return `The workflow gate reviewed this version, but the ${npmHolds ? "tarball npm holds" : "tarball Drydock downloaded for this stage"} hashes differently: bytes the gate never saw. Do not approve on npm on the strength of the gated review.`;
+    case "ungated":
+      return "A release target this organization still has configured has gated this package before, and no gate review exists for this version. The stage was produced outside the gated workflow; reject it on npm unless it was staged on purpose.";
+    case "unverified":
+      return "The workflow gate reviewed this version, but the stage could not be bound to its review.";
+    case "unknown":
+      return "Drydock could not check this stage against the organization's workflow-gate history.";
+  }
+}
+
+function GateContinuityView({
+  continuity,
+  boundToRegistry,
+}: {
+  continuity: GateContinuity;
+  /** Whether the staged bytes were confirmed against npm's own record for the stage. */
+  boundToRegistry: boolean;
+}) {
   const review = continuity.review;
-  const description =
-    continuity.status === "matched"
-      ? "The tarball npm holds for this stage is byte-for-byte the tarball the workflow gate reviewed and approved. Approving on npm publishes the gated bytes."
-      : continuity.status === "gate-not-approved"
-        ? "The workflow gate reviewed exactly these bytes and did not approve them, yet they were staged anyway. Reject this stage on npm."
-        : continuity.status === "digest-mismatch"
-          ? "The workflow gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw; do not approve on npm from the gated review alone."
-          : continuity.status === "unverified"
-            ? "The workflow gate reviewed this version, but one of the two digests is unavailable, so the stage is not bound to the gated review."
-            : "This organization gates releases of this package, and no gate review exists for this version. The stage was produced outside the gated workflow.";
+  // "npm holds" is a claim about the registry, which only a download
+  // confirmed against npm's stage record can make. `matched` is only ever
+  // evaluated for a confirmed download.
+  const npmHolds = continuity.status === "matched" || boundToRegistry;
   // Only a matched stage is good news. A mismatch is an accusation backed by
   // two digests, so it reads as critical; an ungated stage of a gated package
-  // is the out-of-band signal and reads as a warning, never as neutral.
+  // is the out-of-band signal and reads as a warning, never as neutral. A
+  // stage that could not be bound or checked is never quieter than amber.
   const tone =
     continuity.status === "matched"
       ? "ok"
@@ -106,16 +152,18 @@ function GateContinuityView({ continuity }: { continuity: GateContinuity }) {
     : null;
   const decisionLabel = review?.decision
     ? `${review.decision}${review.decidedAt ? ` · ${new Date(review.decidedAt).toLocaleString()}` : ""}`
-    : (review?.status ?? null);
+    : (review?.status ?? (review?.gateId === null ? "record deleted" : null));
   return (
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap gap-2">
         <Badge tone={tone}>{continuity.status}</Badge>
         <Badge tone="neutral">{continuity.algorithm}</Badge>
       </div>
-      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">{description}</p>
-      {review ? (
-        <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+      <p class="m-0 text-[13px] leading-[1.6] text-ink-muted">
+        {describeGateContinuity(continuity, npmHolds)}
+      </p>
+      <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
+        {review ? (
           <div class="flex flex-col gap-1.5 px-3 py-2.5 min-w-0">
             <span class="font-mono text-[11px] uppercase tracking-[0.1em] text-ink-subtle">
               gate review
@@ -130,14 +178,13 @@ function GateContinuityView({ continuity }: { continuity: GateContinuity }) {
               <span class="text-[12px] text-ink-muted">gate {decisionLabel}</span>
             ) : null}
           </div>
-          <DigestRow label="gate reviewed" value={review.sha256} />
-          <DigestRow label="npm holds" value={continuity.stagedDigest} />
-        </div>
-      ) : (
-        <div class="border border-border rounded-lg overflow-hidden divide-y divide-border">
-          <DigestRow label="npm holds" value={continuity.stagedDigest} />
-        </div>
-      )}
+        ) : null}
+        {review ? <DigestRow label="gate reviewed" value={review.sha256} /> : null}
+        <DigestRow
+          label={npmHolds ? "npm holds" : "staged download"}
+          value={continuity.stagedDigest}
+        />
+      </div>
     </div>
   );
 }

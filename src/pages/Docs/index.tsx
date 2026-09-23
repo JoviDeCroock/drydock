@@ -505,9 +505,12 @@ export default function DocsPage() {
                   <>
                     Approve on npm with 2FA as before. The staged review now carries a Gate
                     continuity section: <InlineCode>matched</InlineCode> means npm holds the tarball
-                    the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> or{" "}
-                    <InlineCode>ungated</InlineCode> means bytes the gate did not approve, or a
-                    stage that never went through the gate — reject it on npm.
+                    the gate reviewed and approved; <InlineCode>gate-not-approved</InlineCode> means
+                    the gate saw these bytes and did not approve them, and{" "}
+                    <InlineCode>ungated</InlineCode> means a release target you still have
+                    configured has gated this package and this version never went through it —
+                    reject either on npm. <InlineCode>unverified</InlineCode> and{" "}
+                    <InlineCode>unknown</InlineCode> bind nothing; the section says why.
                   </>,
                 ]}
               />
@@ -671,8 +674,13 @@ export default function DocsPage() {
                 {`jobs:
   pack:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: npm ci
       - run: npm pack --pack-destination dist
       - run: cd dist && sha256sum *.tgz > SHA256SUMS
@@ -683,17 +691,23 @@ export default function DocsPage() {
 
   stage:
     needs: pack
+    runs-on: ubuntu-latest
     environment: production # Drydock is this environment's protection rule
     permissions:
       id-token: write # stage-only trusted publisher pinned to this environment
       contents: read
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.15.0 # npm stage needs >= 11.15.0
       - uses: actions/download-artifact@v4
         with:
           name: npm-release-candidates
           path: dist
       - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: npm stage publish dist/*.tgz --provenance`}
+      - run: npm stage publish dist/*.tgz`}
               </WorkflowExample>
               <WorkflowExample title="VS Code extension">
                 {`jobs:

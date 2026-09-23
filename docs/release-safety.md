@@ -75,9 +75,9 @@ Current structured events cover:
 - `scan.gate_continuity.broken` when a registry stage of a package the
   organization gates does not match an approved gate review
   (`gate-not-approved`, `digest-mismatch`, `unverified`, or `ungated`; scan,
-  package, version, and the gate scan id), and
+  package, version, status, reason, and the gate scan id), and
   `scan.gate_continuity.lookup_failed` when the history read failed and the
-  scan persisted with no record.
+  scan persisted an `unknown` record rather than none.
 - `scan.job.completed`, `scan.job.failed`, `scan.job.retryable_failed`, and
   `scan.job.skipped` with scan ID, organization ID, source, attempt, duration,
   and safe error code.

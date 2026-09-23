@@ -436,7 +436,8 @@ export interface PersistResultsArgs<TInput, TBroker extends AdapterBroker> {
   // with the scan but never allowed to influence risk or findings.
   intentEnvelope: IntentEnvelope;
   // Advisory gate-continuity record; null when the scan is not a registry
-  // stage or the organization has never gated this package.
+  // stage or the organization does not gate this package (no live release
+  // target has reviewed it, and no gate scan of this version exists).
   gateContinuity: GateContinuity | null;
 }
 

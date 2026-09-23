@@ -42,7 +42,7 @@ export { getScan, getScanCompareData, getScanFile, getScanStatus } from "./scan-
 
 export { recordGatePackageDecision, recordScanDecision } from "./scan-decisions";
 
-export { loadGateReviewHistory } from "./scan-gate-continuity";
+export { hasLiveReleaseTarget, loadGateReviewHistory } from "./scan-gate-continuity";
 
 export {
   compareBadgeCandidates,
