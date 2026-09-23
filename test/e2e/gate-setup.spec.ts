@@ -167,10 +167,16 @@ test("a broader existing GitHub environment blocks only the generated workflow",
   await expect(wizard.getByText("cannot generate a workflow", { exact: false })).toBeVisible();
   await expect(wizard.getByRole("button", { name: "Generate workflow" })).toBeDisabled();
 
-  // Verifying and mapping the hand-made environment still has to work.
+  // Verifying and mapping the hand-made environment still has to work, and it
+  // is the next step: the flow does not park on the workflow it cannot write.
   await expect(wizard.getByRole("button", { name: "Create release target" })).toBeEnabled();
+  const releaseTargetStep = wizard
+    .locator("div", { has: page.getByText("6 · Release target") })
+    .last();
+  await expect(releaseTargetStep.getByText("now", { exact: true })).toBeVisible();
   await wizard.getByRole("button", { name: "Create release target" }).click();
   await expect(wizard.getByText("env production/eu", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("Gate armed", { exact: true })).toBeVisible();
   expect(mocks.releaseTargetRequests.at(-1)).toEqual({
     installationRowId: "installation-acme",
     repositoryFullName: "acme/toolkit",
@@ -179,22 +185,202 @@ test("a broader existing GitHub environment blocks only the generated workflow",
   });
 });
 
+test("removing the mapping from the GitHub App card withdraws the armed claim", async ({
+  page,
+}) => {
+  await installGateSetupMocks(page, { environments: ["production"] });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("production");
+  await wizard.getByRole("button", { name: "Create release target" }).click();
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+
+  // The mapping goes away somewhere the wizard's own remove never ran.
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+
+  await expect(wizard.getByText("gate armed", { exact: true })).toHaveCount(0);
+  await expect(wizard.getByRole("button", { name: "Create release target" })).toBeVisible();
+  await expect(wizard.getByText("env production", { exact: true })).toHaveCount(0);
+});
+
+test("a returning maintainer's automatic verification survives the ecosystem pin", async ({
+  page,
+}) => {
+  const mocks = await installGateSetupMocks(page, {
+    existingReleaseTarget: true,
+    // Slow enough that the stored mapping pins the ecosystem while this check
+    // is still in flight — the race that used to discard it.
+    verifyDelayMs: 400,
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
+
+  await expect(wizard.getByLabel("Ecosystem")).toHaveValue("npm");
+  await expect(
+    wizard.getByText("GitHub confirms Drydock is a deployment-protection rule", { exact: false }),
+  ).toBeVisible();
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+  // One automatic check, and its answer landed: nothing had to be re-clicked.
+  expect(mocks.verifyRequests).toHaveLength(1);
+});
+
+test("an environment GitHub confirms with an unreadable rule is not a gate", async ({ page }) => {
+  await installGateSetupMocks(page, {
+    existingReleaseTarget: true,
+    verifyStates: [
+      {
+        environment: "present",
+        protectionRule: "unknown",
+        defaultBranch: "main",
+        unavailableReason: "The Drydock App installation cannot read this repository's settings.",
+      },
+    ],
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
+
+  // Mapped and the environment exists, but the rule could not be read: "could
+  // not check" in the rule step, never either answer, and no armed badge.
+  await expect(
+    wizard.getByText("cannot read this repository's settings", { exact: false }),
+  ).toBeVisible();
+  await expect(wizard.getByText("env staging", { exact: true })).toBeVisible();
+  await expect(wizard.getByText("gate armed", { exact: true })).toHaveCount(0);
+  await expect(wizard.getByRole("button", { name: "Check the rule" })).toBeVisible();
+});
+
+test("a failed re-check withdraws the armed claim in the step that asked", async ({ page }) => {
+  await installGateSetupMocks(page, {
+    existingReleaseTarget: true,
+    verifyStates: [
+      { environment: "present", protectionRule: "present", defaultBranch: "main" },
+      { fail: true },
+    ],
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+
+  await wizard.getByRole("button", { name: "Re-check" }).click();
+
+  await expect(wizard.getByText("gate armed", { exact: true })).toHaveCount(0);
+  // Rendered once, next to "Re-check" in step 3, rather than up in step 2.
+  const failure = wizard.getByRole("alert").filter({ hasText: "Drydock could not check GitHub" });
+  await expect(failure).toHaveCount(1);
+  const order = await wizard.evaluate((root) => {
+    const all = [...root.querySelectorAll("*")];
+    const heading = (label: string) =>
+      all.findIndex((el) => el.tagName === "H3" && el.textContent?.startsWith(label));
+    const alert = all.findIndex(
+      (el) =>
+        el.getAttribute("role") === "alert" &&
+        el.textContent?.includes("Drydock could not check GitHub"),
+    );
+    return { rule: heading("3 ·"), workflow: heading("4 ·"), alert };
+  });
+  expect(order.alert).toBeGreaterThan(order.rule);
+  expect(order.alert).toBeLessThan(order.workflow);
+  // Nothing is left in flight: both checks can be asked for again.
+  await expect(wizard.getByRole("button", { name: "Check it" })).toBeEnabled();
+  await expect(wizard.getByRole("button", { name: "Check the rule" })).toBeEnabled();
+});
+
+test("an armed rule that admins can bypass says so beside the rule", async ({ page }) => {
+  await installGateSetupMocks(page, {
+    existingReleaseTarget: true,
+    verifyStates: [
+      {
+        environment: "present",
+        protectionRule: "present",
+        adminBypass: "allowed",
+        defaultBranch: "main",
+      },
+    ],
+  });
+
+  await page.goto("/dashboard/settings#gate-setup");
+
+  const wizard = page.locator("#gate-setup");
+  await wizard.getByLabel("Installation").selectOption("installation-acme");
+  await wizard.getByLabel("Repository", { exact: true }).selectOption("acme/toolkit");
+  await wizard.getByLabel("Environment", { exact: true }).selectOption("staging");
+
+  // A warning, not a failed check: the rule still holds every run nobody
+  // overrides, so the gate is armed.
+  await expect(wizard.getByText("gate armed", { exact: true })).toBeVisible();
+  await expect(
+    wizard.getByText("Repository admins can still push a held release past Drydock", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    wizard.getByRole("link", { name: "Uncheck it in the environment settings ↗" }),
+  ).toHaveAttribute("href", "https://github.com/acme/toolkit/settings/environments");
+});
+
+test("the deep link selects Integrations once, not on every tab change", async ({ page }) => {
+  await installGateSetupMocks(page);
+
+  await page.goto("/dashboard/settings#gate-setup");
+  await expect(page.locator("#gate-setup details").first()).toHaveAttribute("open", "");
+
+  await page.getByRole("button", { name: "General" }).click();
+  await expect(page.getByRole("button", { name: "General" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+
+  await page.getByRole("button", { name: "Integrations" }).click();
+  // Back on the tab by choice: the wizard is there, but not reopened for them.
+  await expect(page.locator("#gate-setup")).toBeVisible();
+  await expect(page.locator("#gate-setup details").first()).not.toHaveAttribute("open", "");
+});
+
 async function installGateSetupMocks(
   page: Page,
   {
     existingReleaseTarget = false,
     environments = ["staging"],
     verifyStates = [{ environment: "present", protectionRule: "present", defaultBranch: "main" }],
+    verifyDelayMs = 0,
   }: {
     existingReleaseTarget?: boolean;
     environments?: string[];
-    /** Consumed one per `verify` call; the last entry repeats. */
-    verifyStates?: {
-      environment: string;
-      protectionRule: string;
-      defaultBranch?: string | null;
-      unavailableReason?: string;
-    }[];
+    /**
+     * Consumed one per `verify` call; the last entry repeats. `fail` answers
+     * the call with a 500 instead of a state.
+     */
+    verifyStates?: (
+      | {
+          environment: string;
+          protectionRule: string;
+          adminBypass?: string;
+          defaultBranch?: string | null;
+          unavailableReason?: string;
+        }
+      | { fail: true }
+    )[];
+    /** Holds every `verify` answer back, to race it against the wizard's effects. */
+    verifyDelayMs?: number;
   } = {},
 ) {
   let storedReleaseTargets = existingReleaseTarget
@@ -322,9 +508,13 @@ async function installGateSetupMocks(
     if (path === "/api/v1/github-app/gate-setup/verify") {
       const body = JSON.parse(request.postData() || "{}") as Record<string, unknown>;
       verifyRequests.push(body);
-      await fulfillJson(route, {
-        state: verifyStates[Math.min(verifyCalls++, verifyStates.length - 1)],
-      });
+      const state = verifyStates[Math.min(verifyCalls++, verifyStates.length - 1)];
+      if (verifyDelayMs) await new Promise((resolve) => setTimeout(resolve, verifyDelayMs));
+      if ("fail" in state) {
+        await fulfillJson(route, { error: "internal error" }, 500);
+      } else {
+        await fulfillJson(route, { state });
+      }
       return;
     }
 

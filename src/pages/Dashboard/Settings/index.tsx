@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { useModel, useSignal } from "@preact/signals";
+import { useModel, useSignal, useSignalEffect } from "@preact/signals";
 import { useLocation } from "preact-iso";
 import { buildQueryUrl, useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
@@ -47,6 +47,7 @@ export default function SettingsPage() {
   const audit = useModel(AuditLogModel);
   const activeTab = useSignal<SettingsTab>("general");
   const gateSetupDeepLink = useSignal(false);
+  const gateSetupHashHandled = useSignal(false);
 
   useQuerySignal(activeTab, {
     name: "tab",
@@ -58,12 +59,29 @@ export default function SettingsPage() {
   // the integrations tab, so the hash has to select the tab before the browser
   // has anything to scroll to; the wizard itself does the scrolling once it
   // mounts.
+  //
+  // Once per arrival. Query writes keep the hash (`buildQueryUrl`), so every
+  // tab change is a new `location.url` still ending in `#gate-setup`; reacting
+  // to each one snapped the page back to Integrations the moment the maintainer
+  // picked another tab.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.location.hash !== "#gate-setup") return;
+    if (window.location.hash !== "#gate-setup") {
+      gateSetupHashHandled.value = false;
+      return;
+    }
+    if (gateSetupHashHandled.peek()) return;
+    gateSetupHashHandled.value = true;
     gateSetupDeepLink.value = true;
     activeTab.value = "integrations";
   }, [location.url]);
+
+  // The deep link describes the arrival, not the page: after the maintainer
+  // leaves Integrations, coming back must not reopen the wizard's card and
+  // scroll them to it again.
+  useSignalEffect(() => {
+    if (activeTab.value !== "integrations") gateSetupDeepLink.value = false;
+  });
 
   // Surface the result of the Slack OAuth callback redirect, then strip the
   // one-shot params so a refresh doesn't replay the notice.
