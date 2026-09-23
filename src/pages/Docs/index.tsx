@@ -114,7 +114,7 @@ export default function DocsPage() {
               Learn what Drydock inspects and how a maintainer makes the call.
             </JourneyCard>
             <JourneyCard number="03" href="#choose-path" title="Choose your setup">
-              Pick advisory Stage Watchtower or an enforced Workflow Gate.
+              Pick the enforced Workflow Gate or advisory Stage Watchtower.
             </JourneyCard>
           </nav>
         </div>
@@ -868,7 +868,7 @@ jobs:
                 </p>
               </div>
               <div class="flex flex-wrap gap-3 shrink-0">
-                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/register">Review my next release</LinkButton>
                 <LinkButton href="/login" variant="secondary">
                   Sign in
                 </LinkButton>

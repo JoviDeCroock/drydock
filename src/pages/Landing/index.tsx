@@ -29,18 +29,18 @@ export default function LandingPage() {
       <StructuredData />
       <section class="py-8 md:py-12 border-t border-border flex flex-col gap-5">
         <h1 class="text-4xl md:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-[760px] m-0">
-          Review the package artifact before it ships.
+          Read the release before the registry does.
         </h1>
         <p class="text-[17px] text-ink-muted max-w-[620px] leading-[1.6] m-0">
-          Between your last code review and the public registry sit build scripts, bundler output,
-          and CI credentials. Drydock diffs the exact artifact against the last published version
-          and pins every supply-chain finding to a changed line. Workflow Gate enforces the decision
-          on a configured protected job; Stage Watchtower records an advisory npm review.
+          Your pull request got reviewed. The tarball the registry serves — build output, lifecycle
+          hooks, files that never lived in the repository — did not. Drydock diffs the exact
+          artifact against the last published version and pins every supply-chain finding to the
+          changed line.
         </p>
         <MonoDetail
           parts={[
-            "Stage Watchtower — advisory",
             "Workflow Gate — enforced",
+            "Stage Watchtower — advisory",
             "no publish credential",
           ]}
         />
@@ -103,12 +103,12 @@ export default function LandingPage() {
         <HowSteps
           items={[
             {
-              title: "Pause or watch the release candidate",
+              title: "Pause the publish, or watch the stage",
               body: (
                 <>
-                  Stage Watchtower observes a private npm staged artifact without controlling it.
                   Workflow Gate uses a GitHub Environment to pause the configured protected publish
-                  job after CI uploads built artifacts.
+                  job after CI uploads built artifacts. Stage Watchtower observes a private npm
+                  staged artifact without controlling it.
                 </>
               ),
             },
@@ -124,12 +124,12 @@ export default function LandingPage() {
               ),
             },
             {
-              title: "Let a maintainer decide",
+              title: "Decide — the publish credential stays yours",
               body: (
                 <>
-                  Approve the npm publish yourself with 2FA, or approve or reject the gated GitHub
-                  job from the workbench. Drydock gives you the review; it never publishes and never
-                  holds your publish credential.
+                  Approve or reject the gated GitHub job from the workbench, or finish the npm
+                  publish yourself with 2FA. Drydock hands you the review and nothing else: it never
+                  publishes, and it never holds a credential that could.
                 </>
               ),
             },
@@ -140,17 +140,16 @@ export default function LandingPage() {
       <section aria-label="How Drydock hooks in" class="flex flex-col gap-4">
         <SectionLabel as="h2">How it hooks in</SectionLabel>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <RegistryCard title="Stage Watchtower — advisory">
+          <RegistryCard title="Workflow Gate — enforced: npm, PyPI & VS Code">
+            A GitHub Environment pauses your publish job the moment CI uploads the release artifact.
+            Drydock reviews that upload; you approve or reject. Approved, the job continues with its
+            own credential. Rejected, nothing reaches the registry.
+          </RegistryCard>
+          <RegistryCard title="Stage Watchtower — advisory: npm">
             A maintainer runs <code class="font-mono text-[12px] text-ink">npm stage publish</code>{" "}
             and the registry parks a private candidate. Drydock reviews that tarball and pins risk
-            signals to the diff. The maintainer independently approves or rejects in npm with 2FA;
-            Drydock cannot stop a separate manual publish.
-          </RegistryCard>
-          <RegistryCard title="Workflow Gate — enforced: PyPI, npm & VS Code" badge="Preview">
-            For PyPI, VS Code extensions, or npm workflows that do not stage, a GitHub Environment
-            pauses the publish job after CI uploads the release artifact. Drydock reviews the
-            upload, the maintainer approves or rejects, and, if approved, the job continues with its
-            own credential.
+            signals to the diff. You approve or reject in npm with 2FA — Drydock is advisory here
+            and cannot stop a separate manual publish.
           </RegistryCard>
         </div>
         <LinkButton href="/docs" variant="ghost" size="sm" class="self-start">
@@ -181,16 +180,15 @@ export default function LandingPage() {
           Put your next release in the dock.
         </h2>
         <p class="m-0 text-[14px] text-ink-muted leading-[1.65] max-w-[620px]">
-          Watch an npm stage or add an enforced workflow gate to a protected release job. Setup
-          takes minutes, and each configured release path gets a second pair of eyes before
-          publication.
+          Add a workflow gate to the environment your publish job already uses, or point Drydock at
+          an npm stage. It is configuration, not code — and your publish credential never moves.
         </p>
         <div class="flex gap-3 mt-1">
           <Show
             when={authed}
             fallback={
               <>
-                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/register">Review my next release</LinkButton>
                 <LinkButton href="/docs" variant="secondary">
                   Read the docs
                 </LinkButton>
@@ -233,21 +231,10 @@ function HowSteps({ items }: { items: Array<{ title: string; body: ComponentChil
   );
 }
 
-function RegistryCard({
-  title,
-  badge,
-  children,
-}: {
-  title: string;
-  badge?: string;
-  children: ComponentChildren;
-}) {
+function RegistryCard({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <Card as="article" padding="compact" class="flex flex-col gap-2">
-      <div class="flex flex-wrap items-center gap-2">
-        <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
-        {badge ? <Badge tone="info">{badge}</Badge> : null}
-      </div>
+      <h2 class="text-base font-medium tracking-[-0.005em] m-0">{title}</h2>
       <p class="text-[13px] text-ink-muted leading-[1.55] m-0">{children}</p>
     </Card>
   );

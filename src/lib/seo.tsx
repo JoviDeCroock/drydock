@@ -1,8 +1,8 @@
 import { toStatic, useHead, useLink, type MetaOptions } from "hoofd/preact";
 import {
-  homePageSeo,
   OG_IMAGE_ALT,
   OG_IMAGE_URL,
+  PRODUCT_DESCRIPTION,
   PRODUCT_NAME,
   SITE_NAME,
   SITE_URL,
@@ -77,7 +77,7 @@ const STRUCTURED_DATA = {
       alternateName: PRODUCT_NAME,
       url: `${SITE_URL}/`,
       logo: OG_IMAGE_URL,
-      description: homePageSeo.description,
+      description: PRODUCT_DESCRIPTION,
       sameAs: ["https://github.com/JoviDeCroock/drydock"],
     },
     {
@@ -95,7 +95,7 @@ const STRUCTURED_DATA = {
       applicationCategory: "SecurityApplication",
       operatingSystem: "Web",
       url: `${SITE_URL}/`,
-      description: homePageSeo.description,
+      description: PRODUCT_DESCRIPTION,
       sameAs: ["https://github.com/JoviDeCroock/drydock"],
       publisher: { "@id": `${SITE_URL}/#organization` },
     },

@@ -102,7 +102,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/npm-trusted-publishing": {
     relatedTitle: "npm trusted publishing",
-    heading: "Enforce review on the configured npm workflow.",
+    heading: "Make npm issue publish credentials only after a review.",
     lead: "Workflow Gate can approve or reject the configured protected GitHub job. Pinning npm trusted publishing to that environment and disallowing tokens means the workflow's OIDC credential only exists after review; npm's separate interactive 2FA publish path remains possible.",
     details: ["OIDC, no npm tokens", "environment pinned to the gate", "configuration, not code"],
     sections: [
@@ -259,7 +259,7 @@ const GUIDES: Record<DiscoveryGuidePath, GuideContent> = {
   },
   "/open-source": {
     relatedTitle: "Open-source package review",
-    heading: "Inspect, verify, and self-host the release-review boundary.",
+    heading: "Read the rules that decide what gets flagged, or run the whole thing yourself.",
     lead: "Drydock is Apache-2.0 licensed and its detection rules, sandbox boundaries, report model, and deployment configuration are public. Maintainers can use the hosted service or deploy the same review system in their own Cloudflare account.",
     details: ["Apache-2.0", "public detection rules", "Cloudflare self-hosting"],
     sections: [
