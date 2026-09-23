@@ -4,6 +4,7 @@ import { WorkflowArtifactError } from "../../github-app/artifacts";
 import {
   GATE_SETUP_ACTIONS,
   GATE_SETUP_PINNING_NOTE,
+  GATE_SETUP_NPM_CLI_VERSION,
 } from "../../workflow-gates/gate-setup-actions";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import type {
@@ -103,13 +104,7 @@ export const npmWorkflowGateAdapter: WorkflowGateAdapter = {
   },
 };
 
-/**
- * The npm CLI the generated publish job installs. npm's OIDC trusted
- * publishing needs >= 11.5.1, newer than the npm bundled with Node 22, and the
- * job that installs it holds `id-token: write` — so it is an exact version,
- * bumped deliberately, never a range a compromised release could satisfy.
- */
-const NPM_CLI_VERSION = "11.19.1";
+const NPM_CLI_VERSION = GATE_SETUP_NPM_CLI_VERSION;
 
 /**
  * The npm publish workflow the setup wizard generates for a maintainer to
@@ -207,7 +202,7 @@ jobs:
       `On npmjs.com, configure a trusted publisher for \`${packageName}\`: GitHub Actions, this repository, \`drydock-npm-release.yml\`, and — the load-bearing part — the environment set to \`${environmentName}\`.`,
       'Set the package\'s publishing access to "Require two-factor authentication and disallow tokens" so no token path can publish around the gate.',
       `Keep \`NODE_AUTH_TOKEN\` and \`registry-url\` out of the workflow entirely: the publish runs on OIDC, with npm ${NPM_CLI_VERSION} installed at that exact version because the job holds \`id-token: write\`. Bump it deliberately.`,
-      "npm attaches provenance to a trusted publish from a public repository on its own. A private repository publishes without it; adding `--provenance` there fails the publish.",
+      "npm attaches provenance to a trusted publish from a public repository on its own, and then checks that `package.json`'s `repository.url` names this GitHub repository — a missing or different URL fails the publish. A private repository publishes without provenance; adding `--provenance` there fails the publish.",
       GATE_SETUP_PINNING_NOTE,
     ],
   };
