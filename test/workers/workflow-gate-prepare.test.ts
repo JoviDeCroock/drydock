@@ -1,15 +1,21 @@
-import { createExecutionContext, env } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { readGithubAppConfig } from "../../server/lib/github-app/config";
+import { type GithubAppEnv, readGithubAppConfig } from "../../server/lib/github-app/config";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import { getGateForOrganization } from "../../server/lib/github-app/webhook-gates";
 import type { PyPiAdapterInput } from "../../server/lib/ecosystems/pypi";
 import { acquireStagedPyPi } from "../../server/lib/ecosystems/pypi/acquire";
 import { prepareReleaseCandidatesForGate } from "../../server/lib/workflow-gates/prepare";
+import { buildZip } from "../helpers/archive-fixtures";
+import { buildCtxWithGateway, buildLoaderMock } from "./helpers/gate";
+import { seedPersonalOrganization } from "./helpers/seed";
+
+// One sandbox result per file set; the last set repeats once exhausted.
+const buildFileSetLoader = (fileSets: SandboxFile[][]) =>
+  buildLoaderMock({ results: fileSets.map((files) => ({ files, packageJson: null })) });
 
 const WEBHOOK_SECRET = "webhook-secret-value-1234567890";
 
@@ -42,7 +48,7 @@ async function seedGateForTest(opts: {
     createdAt: now,
     updatedAt: now,
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
+  const organizationId = await seedPersonalOrganization(db, userId);
   const installation = await upsertInstallation(db, {
     organizationId,
     installationId: opts.installationExternalId,
@@ -84,80 +90,6 @@ async function seedGateForTest(opts: {
   return { organizationId, installation, releaseTarget, gateId };
 }
 
-// Minimal store-only ZIP builder.
-interface ZipEntry {
-  path: string;
-  body: Uint8Array | string;
-}
-
-function makeZip(entries: ZipEntry[]): Uint8Array {
-  const encoder = new TextEncoder();
-  const records: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const body = typeof entry.body === "string" ? encoder.encode(entry.body) : entry.body;
-    const nameBytes = encoder.encode(entry.path);
-    const crc = crc32(body);
-    const local = new Uint8Array(30 + nameBytes.length + body.length);
-    const lv = new DataView(local.buffer);
-    lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, 20, true);
-    lv.setUint16(8, 0, true);
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, body.length, true);
-    lv.setUint32(22, body.length, true);
-    lv.setUint16(26, nameBytes.length, true);
-    local.set(nameBytes, 30);
-    local.set(body, 30 + nameBytes.length);
-    records.push(local);
-
-    const c = new Uint8Array(46 + nameBytes.length);
-    const cv = new DataView(c.buffer);
-    cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true);
-    cv.setUint16(6, 20, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, body.length, true);
-    cv.setUint32(24, body.length, true);
-    cv.setUint16(28, nameBytes.length, true);
-    cv.setUint32(42, offset, true);
-    c.set(nameBytes, 46);
-    central.push(c);
-    offset += local.length;
-  }
-  const centralBytes = concat(central);
-  const eocd = new Uint8Array(22);
-  const ev = new DataView(eocd.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(8, entries.length, true);
-  ev.setUint16(10, entries.length, true);
-  ev.setUint32(12, centralBytes.length, true);
-  ev.setUint32(16, offset, true);
-  return concat([...records, centralBytes, eocd]);
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, p) => sum + p.length, 0);
-  const out = new Uint8Array(total);
-  let i = 0;
-  for (const part of parts) {
-    out.set(part, i);
-    i += part.length;
-  }
-  return out;
-}
-
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 type SandboxFile = {
   path: string;
   size: number;
@@ -189,46 +121,7 @@ function sharedSourceFile(path = "demo_package/_core.py"): SandboxFile {
   };
 }
 
-// `fileSets[i]` is what the sandbox returns for the i-th artifact it parses, in
-// bundle order. The mock clamps to the last entry so single-set callers can omit
-// extras.
-function buildLoaderMock(fileSets: SandboxFile[][]) {
-  const calls: { format: string | null; bodySize: number }[] = [];
-  let index = 0;
-  return {
-    calls,
-    binding: {
-      load: vi.fn(() => ({
-        getEntrypoint: () => ({
-          fetch: vi.fn(async (request: Request) => {
-            calls.push({
-              format: request.headers.get("x-archive-format"),
-              bodySize: (await request.arrayBuffer()).byteLength,
-            });
-            const files = fileSets[Math.min(index, fileSets.length - 1)] ?? [];
-            index += 1;
-            return new Response(JSON.stringify({ files, packageJson: null }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            });
-          }),
-        }),
-      })),
-    },
-  };
-}
-
-function buildCtxWithGateway() {
-  const ctx = createExecutionContext() as ExecutionContext & {
-    exports: { NpmStageGateway(options: { props: unknown }): Fetcher };
-  };
-  ctx.exports = {
-    NpmStageGateway: vi.fn(() => ({ fetch: vi.fn() }) as unknown as Fetcher),
-  };
-  return ctx;
-}
-
-function buildConfigBindings(): Record<string, string> {
+function buildConfigBindings(): GithubAppEnv {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
   return {
@@ -296,7 +189,7 @@ async function buildScenario(
       const artifactId = match ? Number.parseInt(match[1], 10) : 88888;
       const zip = bundles.get(artifactId);
       if (!zip) return new Response("not found", { status: 404 });
-      return new Response(zip, {
+      return new Response(new Uint8Array(zip), {
         status: 200,
         headers: { "content-type": "application/zip" },
       });
@@ -308,7 +201,7 @@ async function buildScenario(
 }
 
 function zipForArtifactPaths(artifactPaths: string[]): Uint8Array {
-  return makeZip(artifactPaths.map((path) => ({ path, body: `opaque bytes for ${path}` })));
+  return buildZip(artifactPaths.map((path) => ({ path, body: `opaque bytes for ${path}` })));
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -321,7 +214,7 @@ describe("prepareReleaseCandidatesForGate", () => {
       runId: 7777,
     });
     const scenario = await buildScenario(7777);
-    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
+    const loaderMock = buildFileSetLoader([[metadataFile("demo-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const config = readGithubAppConfig({
@@ -378,7 +271,7 @@ describe("prepareReleaseCandidatesForGate", () => {
         },
       ],
     });
-    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
+    const loaderMock = buildFileSetLoader([[metadataFile("demo-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const bindings = buildConfigBindings();
     const config = readGithubAppConfig({
@@ -434,7 +327,7 @@ describe("prepareReleaseCandidatesForGate", () => {
         },
       ],
     });
-    const loaderMock = buildLoaderMock(
+    const loaderMock = buildFileSetLoader(
       wheelPaths.map(() => [metadataFile("demo-package", "1.2.0"), sharedSourceFile()]),
     );
     const ctx = buildCtxWithGateway();
@@ -494,7 +387,7 @@ describe("prepareReleaseCandidatesForGate", () => {
         "dist/beta_pkg-2.0.0-py3-none-any.whl",
       ],
     });
-    const loaderMock = buildLoaderMock([
+    const loaderMock = buildFileSetLoader([
       [metadataFile("alpha-pkg", "1.0.0"), sharedSourceFile("shared.py")],
       [metadataFile("beta-pkg", "2.0.0"), sharedSourceFile("shared.py")],
     ]);
@@ -542,7 +435,7 @@ describe("prepareReleaseCandidatesForGate", () => {
     });
     await buildScenario(8888);
     // The sandbox returns a file with no usable PyPI metadata.
-    const loaderMock = buildLoaderMock([
+    const loaderMock = buildFileSetLoader([
       [{ path: "demo_package/__init__.py", size: 1, sha256: "00", flags: [], textSample: "x" }],
     ]);
     const ctx = buildCtxWithGateway();
@@ -582,7 +475,7 @@ describe("prepareReleaseCandidatesForGate", () => {
     });
     // The wheel and sdist disagree on version: a version-skewed file must be
     // rejected rather than silently shipped.
-    const loaderMock = buildLoaderMock([
+    const loaderMock = buildFileSetLoader([
       [metadataFile("demo-package", "1.2.0")],
       [{ ...metadataFile("demo-package", "1.3.0"), path: "demo_package-1.3.0/PKG-INFO" }],
     ]);
@@ -623,7 +516,7 @@ describe("prepareReleaseCandidatesForGate", () => {
       ...bindings,
       BETTER_AUTH_SECRET: bindings.BETTER_AUTH_SECRET,
     });
-    const loaderMock = buildLoaderMock([[metadataFile("demo-package", "1.2.0")]]);
+    const loaderMock = buildFileSetLoader([[metadataFile("demo-package", "1.2.0")]]);
     const ctx = buildCtxWithGateway();
     const sandboxEnv = {
       ...env,

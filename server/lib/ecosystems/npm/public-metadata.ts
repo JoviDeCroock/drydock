@@ -2,16 +2,16 @@ import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
   writeCompareMetadataCache,
-} from "../compare-cache";
-import { fetchPackageMetadata, type RegistryMetadata } from "../ecosystems/npm/registry";
-import { PublicDiffError } from "./error";
+} from "../../compare-cache";
+import { fetchPackageMetadata, type RegistryMetadata } from "./registry";
+import { PublicDiffError } from "../../public-diff/error";
 
 const PUBLIC_CACHE_SCOPE = "public";
 
 /**
- * Cached, credential-free npm registry metadata read. Lives outside
- * `public-diff/index.ts` so ecosystem adapters can use it without importing the
- * orchestrator that imports them.
+ * Cached, credential-free npm registry metadata read for the public diff path.
+ * npm-specific (packument shape, npm registry URL), so it lives with the npm
+ * adapter rather than under the ecosystem-generic `public-diff/`.
  */
 export async function fetchPublicPackageMetadata(
   env: Cloudflare.Env,

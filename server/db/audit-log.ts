@@ -21,16 +21,14 @@ export interface ListAuditEventsOptions {
   limit?: number;
 }
 
-interface AuditEventRow {
-  id: string;
-  type: string;
-  createdAt: Date;
-  scanId: string | null;
-  actorUserId: string | null;
+// The event columns plus the actor's display fields joined from `user`.
+type AuditEventRow = Pick<
+  typeof scanEvents.$inferSelect,
+  "id" | "type" | "createdAt" | "scanId" | "actorUserId" | "metadataJson"
+> & {
   actorName: string | null;
   actorEmail: string | null;
-  metadataJson: unknown;
-}
+};
 
 export interface ListAuditEventsResult {
   events: AuditEventRow[];

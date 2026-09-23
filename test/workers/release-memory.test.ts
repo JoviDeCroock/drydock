@@ -1,9 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
 import { createScanJob, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
@@ -11,50 +9,39 @@ import {
   computeReleaseConsistency,
   type ReleaseConsistency,
 } from "../../server/lib/scan/release-memory";
-import { writeScanArtifacts } from "../../server/lib/scan/artifacts";
 import { resolveReleaseConsistency } from "../../server/lib/scan/pipeline-phases";
-import { sha256Hex } from "../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../server/lib/platform/stable-json";
 import type { Finding } from "../../server/lib/review";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Release Memory Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
+async function seedMemoryScan(owner: ScanOwner, options: SeedScanOptions = {}) {
+  const packageName = options.packageName ?? "tape";
+  const version = options.version ?? "5.7.4";
+  const scanId = await seedCompletedScan(owner, {
+    packageJson: { name: packageName, version },
+    risk: "high",
+    summary: { diff: [{ path: "index.js", status: "modified" }], ...options.summaryExtra },
+    files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
+    diff: [{ path: "index.js", status: "modified", flags: [] }],
+    findings: options.findings ?? [spawnFinding("test/spawn.js")],
   });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
+  if (options.decision) {
+    await recordScanDecision(createDb(env.DB), {
+      scanId,
+      organizationId: owner.organizationId,
+      actorUserId: owner.userId,
+      decision: options.decision,
+    });
+  }
+  return { scanId, packageName, version };
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
-async function fetchWithSession(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-) {
+async function fetchWithSession(app: TestApp, path: string) {
   const ctx = createExecutionContext();
   const res = await app.fetch(new Request(`http://test.local${path}`), env, ctx);
   await waitOnExecutionContext(ctx);
@@ -79,47 +66,6 @@ interface SeedScanOptions {
   findings?: Finding[];
   decision?: "publish" | "no_publish" | null;
   summaryExtra?: Record<string, unknown>;
-}
-
-async function seedCompletedScan(owner: SeededUser, options: SeedScanOptions = {}) {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = `stage-${scanId.slice(-12)}`;
-  const packageName = options.packageName ?? "tape";
-  const version = options.version ?? "5.7.4";
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    packageJson: { name: packageName, version },
-    risk: "high",
-    status: "complete",
-    summary: {
-      diff: [{ path: "index.js", status: "modified" }],
-      ...options.summaryExtra,
-    },
-    ai: null,
-    files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
-    diff: [{ path: "index.js", status: "modified", flags: [] }],
-    findings: options.findings ?? [spawnFinding("test/spawn.js")],
-    report: { version: 1, digest: `digest-${scanId}` },
-  });
-  if (options.decision) {
-    await recordScanDecision(db, {
-      scanId,
-      organizationId: owner.organizationId,
-      actorUserId: owner.userId,
-      decision: options.decision,
-    });
-  }
-  return { scanId, stageId, packageName, version };
 }
 
 async function setScanCreatedAt(scanId: string, createdAt: Date) {
@@ -148,7 +94,7 @@ function consistencyFor(
 describe("release memory (prior-release consistency)", () => {
   test("matches the prior approved scan for the same org + package", async () => {
     const owner = await seedUser();
-    const prior = await seedCompletedScan(owner, {
+    const prior = await seedMemoryScan(owner, {
       findings: [spawnFinding("test/spawn.js"), spawnFinding("bin/tape.js")],
       decision: "publish",
     });
@@ -171,7 +117,7 @@ describe("release memory (prior-release consistency)", () => {
 
   test("does not match another organization's identical package history", async () => {
     const ownerA = await seedUser();
-    await seedCompletedScan(ownerA, { decision: "publish" });
+    await seedMemoryScan(ownerA, { decision: "publish" });
 
     const ownerB = await seedUser();
     const out = await consistencyFor(ownerB, "tape", [spawnFinding("test/spawn.js")]);
@@ -182,8 +128,8 @@ describe("release memory (prior-release consistency)", () => {
 
   test("returns none without an approved prior (undecided or no_publish)", async () => {
     const owner = await seedUser();
-    await seedCompletedScan(owner, { decision: null });
-    await seedCompletedScan(owner, { decision: "no_publish" });
+    await seedMemoryScan(owner, { decision: null });
+    await seedMemoryScan(owner, { decision: "no_publish" });
 
     const out = await consistencyFor(owner, "tape", [spawnFinding("test/spawn.js")]);
     expect(out.status).toBe("none");
@@ -191,7 +137,7 @@ describe("release memory (prior-release consistency)", () => {
 
   test("diverges with the new findings when the profile grew", async () => {
     const owner = await seedUser();
-    await seedCompletedScan(owner, {
+    await seedMemoryScan(owner, {
       findings: [spawnFinding("test/spawn.js")],
       decision: "publish",
     });
@@ -210,12 +156,12 @@ describe("release memory (prior-release consistency)", () => {
 
   test("compares against the most recent approved scan", async () => {
     const owner = await seedUser();
-    const older = await seedCompletedScan(owner, {
+    const older = await seedMemoryScan(owner, {
       version: "5.7.3",
       findings: [spawnFinding("test/spawn.js")],
       decision: "publish",
     });
-    const newer = await seedCompletedScan(owner, {
+    const newer = await seedMemoryScan(owner, {
       version: "5.7.4",
       findings: [spawnFinding("test/spawn.js"), spawnFinding("bin/tape.js")],
       decision: "publish",
@@ -275,23 +221,6 @@ describe("release memory (prior-release consistency)", () => {
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
     const ruleFindings = [spawnFinding("test/spawn.js")];
-    const reportPayload = {
-      version: 1,
-      stageId,
-      ruleFindings,
-      findingAnnotations: [{ findingIndex: 0, diffStatus: "modified", releaseDelta: true }],
-    };
-    const reportJson = stableJson(reportPayload);
-    const reportDigest = await sha256Hex(reportJson);
-    const artifacts = await writeScanArtifacts(env.ARTIFACTS, {
-      organizationId: owner.organizationId,
-      scanId,
-      reportJson,
-      reportDigest,
-      files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
-      diff: [{ path: "index.js", status: "modified", flags: [] }],
-      generatedAt: "2026-07-01T00:00:00.000Z",
-    });
     await createScanJob(db, {
       id: scanId,
       stageId,
@@ -311,8 +240,6 @@ describe("release memory (prior-release consistency)", () => {
       files: [{ path: "index.js", size: 10, sha256: "a", flags: [], textSample: "x" }],
       diff: [{ path: "index.js", status: "modified", flags: [] }],
       findings: ruleFindings,
-      report: { version: 1, digest: reportDigest },
-      artifacts,
     });
     await recordScanDecision(db, {
       scanId,
@@ -345,7 +272,7 @@ describe("release memory (prior-release consistency)", () => {
 
   test("db helper is org-scoped and feeds computeReleaseConsistency", async () => {
     const owner = await seedUser();
-    const prior = await seedCompletedScan(owner, { decision: "publish" });
+    const prior = await seedMemoryScan(owner, { decision: "publish" });
     const db = createDb(env.DB);
 
     const found = await getPriorApprovedScanFindings(
@@ -392,9 +319,12 @@ describe("release memory exposure (API + report export)", () => {
       newFindingCount: 0,
       newFindings: [],
     };
-    const seeded = await seedCompletedScan(owner, { summaryExtra: { releaseConsistency } });
+    const seeded = await seedMemoryScan(owner, { summaryExtra: { releaseConsistency } });
 
-    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${seeded.scanId}`);
+    const res = await fetchWithSession(
+      buildTestApp(mountScans, owner),
+      `/api/v1/scans/${seeded.scanId}`,
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { scan: { summaryJson: Record<string, unknown> } };
     expect(body.scan.summaryJson.releaseConsistency).toEqual(releaseConsistency);
@@ -412,10 +342,10 @@ describe("release memory exposure (API + report export)", () => {
       newFindingCount: 1,
       newFindings: [{ ruleId: "code.network", severity: "high", file: "lib/exfil.js" }],
     };
-    const withField = await seedCompletedScan(owner, { summaryExtra: { releaseConsistency } });
-    const withoutField = await seedCompletedScan(owner, { packageName: "other-pkg" });
+    const withField = await seedMemoryScan(owner, { summaryExtra: { releaseConsistency } });
+    const withoutField = await seedMemoryScan(owner, { packageName: "other-pkg" });
 
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, owner);
     const res = await fetchWithSession(app, `/api/v1/scans/${withField.scanId}/report.json`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { releaseConsistency: unknown };

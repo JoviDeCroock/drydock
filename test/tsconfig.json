@@ -1,0 +1,20 @@
+{
+  // Typechecks the test tree the root program excludes. `pnpm run typecheck`
+  // runs both projects; vitest itself only strips types.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "vite/client"],
+    "rootDir": ".."
+  },
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "../src/**/*.ts",
+    "../src/**/*.tsx",
+    "../server/**/*.ts",
+    // `cloudflare:test` is an ambient module under an exports subpath that
+    // `types[]` cannot resolve, so the declaration file is included directly.
+    "../node_modules/@cloudflare/vitest-pool-workers/types/cloudflare-test.d.ts"
+  ],
+  "exclude": ["./e2e-fixtures/**", "./fixtures/**"]
+}

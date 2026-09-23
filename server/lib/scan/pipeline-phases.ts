@@ -21,7 +21,7 @@ import {
   durationMsSince,
   emitOperationalEvent,
 } from "../platform/observability";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 import {
   computeReleaseConsistency,
   noneReleaseConsistency,
@@ -56,7 +56,7 @@ import {
   scanArtifactReadBucket,
 } from "./artifacts";
 import { sha256Hex } from "../platform/crypto-utils";
-import { stableJson } from "../platform/stable-json";
+import { canonicalJson } from "../platform/canonical-json";
 import type { ScanResult } from "../../types";
 
 export interface PipelineIdentity {
@@ -480,7 +480,7 @@ export async function persistResults<TInput, TBroker extends AdapterBroker>(
     intentEnvelope: args.intentEnvelope,
     safety,
   };
-  const reportJson = stableJson(reportPayload);
+  const reportJson = canonicalJson(reportPayload);
   const reportDigest = await sha256Hex(reportJson);
   const generatedAt = new Date().toISOString();
   const artifacts = await writeScanArtifactsWithRetry(args.env?.ARTIFACTS, {

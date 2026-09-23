@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import { createDb } from "../db/client";
+import { parseLimitQuery } from "../lib/platform/http";
 import {
   AUDIT_LOG_DEFAULT_LIMIT,
   AUDIT_LOG_MAX_LIMIT,
   type AuditLogCursor,
   listOrganizationAuditEvents,
 } from "../db/audit-log";
-import { requireActiveOrganizationContext } from "../lib/auth/active-organization";
+import { requireOrganizationRole } from "../lib/auth/active-organization";
 import { describeAuditEvent } from "../lib/auth/audit-events";
 import { roleCanManageMembers } from "../lib/auth/roles";
 import type { Bindings, Variables } from "../types";
@@ -32,14 +32,13 @@ function encodeCursor(cursor: AuditLogCursor | null): string | null {
 // as member management. Metadata never leaves the Worker: each row is reduced to
 // a registry-derived label + short detail before serialization.
 auditRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageMembers(role)) return c.json({ error: "forbidden" }, 403);
+  const db = c.var.db;
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageMembers);
 
-  const rawLimit = Number(c.req.query("limit"));
-  const limit = Number.isFinite(rawLimit)
-    ? Math.min(AUDIT_LOG_MAX_LIMIT, Math.max(1, Math.floor(rawLimit)))
-    : AUDIT_LOG_DEFAULT_LIMIT;
+  const limit = parseLimitQuery(c.req.query("limit"), {
+    default: AUDIT_LOG_DEFAULT_LIMIT,
+    max: AUDIT_LOG_MAX_LIMIT,
+  });
   const cursor = parseCursor(c.req.query("cursor"));
 
   const { events, nextCursor } = await listOrganizationAuditEvents(db, organizationId, {

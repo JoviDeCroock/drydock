@@ -1,77 +1,13 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
-import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
-import * as schema from "../../server/db/schema";
 import type { IntentEnvelope } from "../../server/lib/intent-envelope";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
-import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
-
-async function fetchJson(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-): Promise<Response> {
-  const ctx = createExecutionContext();
-  const res = await app.fetch(new Request(`http://test.local${path}`, { method: "GET" }), env, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
-
-async function seedCompletedScan(
-  owner: SeededUser,
-  intentEnvelope: IntentEnvelope | undefined,
-): Promise<string> {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = `stage-${scanId.slice(-12)}`;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    packageJson: { name: "@org/pkg", version: "1.1.0" },
-    risk: "low",
-    status: "complete",
+function seedEnvelopeScan(owner: ScanOwner, intentEnvelope: IntentEnvelope | undefined) {
+  return seedCompletedScan(owner, {
     summary: {
       report: {
         version: 1,
@@ -84,13 +20,16 @@ async function seedCompletedScan(
       // Scans persisted before the envelope existed simply omit the key.
       ...(intentEnvelope ? { intentEnvelope } : {}),
     },
-    ai: null,
-    files: [{ path: "package.json", size: 10, sha256: "a", flags: [], textSample: "{}" }],
-    diff: [{ path: "package.json", status: "modified", flags: [] }],
-    findings: [],
-    report: { version: 1, digest: "abc123" },
   });
-  return scanId;
+}
+
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
+
+async function fetchJson(app: TestApp, path: string): Promise<Response> {
+  const ctx = createExecutionContext();
+  const res = await app.fetch(new Request(`http://test.local${path}`, { method: "GET" }), env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 describe("scan intent envelope persistence and readers", () => {
@@ -102,9 +41,9 @@ describe("scan intent envelope persistence and readers", () => {
 
   test("the scan detail endpoint returns the persisted envelope in summaryJson", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, attestedEnvelope);
+    const scanId = await seedEnvelopeScan(owner, attestedEnvelope);
 
-    const res = await fetchJson(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const res = await fetchJson(buildTestApp(mountScans, owner), `/api/v1/scans/${scanId}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       scan: { summaryJson: { intentEnvelope?: unknown } };
@@ -114,9 +53,9 @@ describe("scan intent envelope persistence and readers", () => {
 
   test("the report export includes the envelope as an additive field", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, attestedEnvelope);
+    const scanId = await seedEnvelopeScan(owner, attestedEnvelope);
 
-    const app = buildTestApp(owner);
+    const app = buildTestApp(mountScans, owner);
     const res = await fetchJson(app, `/api/v1/scans/${scanId}/report.json`);
     expect(res.status).toBe(200);
     const text = await res.text();
@@ -131,8 +70,8 @@ describe("scan intent envelope persistence and readers", () => {
 
   test("readers tolerate scans persisted before the envelope existed", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, undefined);
-    const app = buildTestApp(owner);
+    const scanId = await seedEnvelopeScan(owner, undefined);
+    const app = buildTestApp(mountScans, owner);
 
     const detail = await fetchJson(app, `/api/v1/scans/${scanId}`);
     expect(detail.status).toBe(200);
@@ -149,13 +88,16 @@ describe("scan intent envelope persistence and readers", () => {
 
   test("a malformed persisted envelope exports as null instead of partial data", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedEnvelopeScan(owner, {
       tier: "verified",
       repository: 42,
       signals: "nope",
     } as unknown as IntentEnvelope);
 
-    const report = await fetchJson(buildTestApp(owner), `/api/v1/scans/${scanId}/report.json`);
+    const report = await fetchJson(
+      buildTestApp(mountScans, owner),
+      `/api/v1/scans/${scanId}/report.json`,
+    );
     expect(report.status).toBe(200);
     const body = (await report.json()) as { intentEnvelope: unknown };
     expect(body.intentEnvelope).toBeNull();
@@ -163,11 +105,14 @@ describe("scan intent envelope persistence and readers", () => {
 
   test("an evidence-free persisted attested tier exports as null", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedEnvelopeScan(owner, {
       tier: "attested",
     } as unknown as IntentEnvelope);
 
-    const report = await fetchJson(buildTestApp(owner), `/api/v1/scans/${scanId}/report.json`);
+    const report = await fetchJson(
+      buildTestApp(mountScans, owner),
+      `/api/v1/scans/${scanId}/report.json`,
+    );
     expect(report.status).toBe(200);
     const body = (await report.json()) as { intentEnvelope: unknown };
     expect(body.intentEnvelope).toBeNull();

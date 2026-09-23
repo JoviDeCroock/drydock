@@ -1,10 +1,10 @@
-import { useEffect } from "preact/hooks";
 import { useSignal, useModel, useSignalEffect } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation } from "preact-iso";
-import { rememberDashboardReturnUrl, useQuerySignal } from "../../lib/query-state";
+import { useQuerySignal } from "../../lib/query-state";
 import { npmStagedPackagesUrlFor } from "../../lib/npm-staged-url";
-import { formatDateTime, pluralize } from "../../lib/format";
+import { formatDateTime, formatRelativeTime, pluralize } from "../../lib/format";
+import { useNow } from "../../lib/use-now";
 import { packageReleasesPath } from "../../lib/package-releases-path";
 import { activeOrganizationId } from "../../models/active-organization";
 import { sessionModel } from "../../models/auth";
@@ -28,9 +28,10 @@ import { StagedPublishesModel } from "../../models/staged-publishes";
 import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
+import { useAuthedDashboardSession } from "../../features/account/useAuthedDashboardSession";
 import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
-import { Button, LinkButton } from "../../components/Button";
+import { Button, LinkButton, LoadMoreButton } from "../../components/Button";
 import { Card } from "../../components/Card";
 import { LoadingState } from "../../components/Loading";
 import { Menu, MenuItem, MenuLink } from "../../components/Menu";
@@ -51,7 +52,6 @@ export default function DashboardPage() {
   const organizations = useModel(OrganizationModel);
   const stagedPublishes = useModel(StagedPublishesModel);
   const overview = useModel(ScanOverviewModel);
-  const sessionChecked = useSignal(false);
 
   // Two-way bind the decision filter to ?filter=. The model re-fetches
   // whenever the filter signal changes, so URL → filter → refresh comes
@@ -62,31 +62,16 @@ export default function DashboardPage() {
     serialize: (value) => (value === "undecided" ? null : value),
   });
 
-  useEffect(() => {
-    rememberDashboardReturnUrl(location.url);
-  }, [location.url]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await sessionModel.load();
-      if (cancelled) return;
-      if (!data) {
-        location.route("/login", true);
-        return;
-      }
-      sessionChecked.value = true;
+  const sessionChecked = useAuthedDashboardSession({
+    onReady: async (_session, isCancelled) => {
       // A first visit has no stored organization ID. Resolve it before the
       // organization-scoped requests so their active scope cannot change while
       // they are in flight.
       await organizations.load();
-      if (cancelled) return;
+      if (isCancelled()) return;
       await Promise.all([scans.refresh(), npm.load(), overview.refresh()]);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    },
+  });
 
   // Every list mutation (refresh, decision, delete, Check npm) changes what
   // the overview counts, so the strip follows the list rather than each action
@@ -393,14 +378,11 @@ function RecentReviewsSection({
       </div>
       {scans.nextCursor.value ? (
         <div class="border-t border-border px-5 py-4 flex justify-center">
-          <Button
-            variant="secondary"
-            size="sm"
+          <LoadMoreButton
+            loading={scans.loadingMore}
+            disabled={scans.refreshing}
             onClick={() => void scans.loadMore()}
-            disabled={scans.loadingMore.value || scans.refreshing.value}
-          >
-            {scans.loadingMore.value ? "Loading…" : "Load more"}
-          </Button>
+          />
         </div>
       ) : null}
       <Show<ScanListItem | null> when={quickDecisionScan}>
@@ -411,8 +393,8 @@ function RecentReviewsSection({
             decision={scan.decision}
             decisionReason={scan.decisionReason}
             decidedAt={scan.decidedAt}
-            status={scans.decisionStatus.value}
-            error={scans.decisionError.value}
+            status={scans.decisionStatus}
+            error={scans.decisionError}
             npmStagedPackagesUrl={npmStagedPackagesUrlFor(scan)}
             scan={scan}
             onSubmit={onQuickDecisionSubmit}
@@ -426,8 +408,8 @@ function RecentReviewsSection({
             open={true}
             onClose={() => (deleteScan.value = null)}
             packageName={scan.packageName}
-            status={scans.deleteStatus.value}
-            error={scans.deleteError.value}
+            status={scans.deleteStatus}
+            error={scans.deleteError}
             onConfirm={onDeleteConfirm}
           />
         )}
@@ -775,28 +757,13 @@ function ScanStatusBadge({ status }: { status: string }) {
 // than a bare ✓ — the check read as a pass/fail state it doesn't represent, and
 // its meaning was hidden in a tooltip.
 function ScanFreshnessIndicator({ at }: { at: number }) {
-  const now = useSignal(Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      now.value = Date.now();
-    }, 30_000);
-    return () => window.clearInterval(id);
-  }, []);
+  const now = useNow(30_000);
+  // Read in render rather than through a `useComputed`: the computed is
+  // memoized on mount and only tracks the signals it reads, so a changed `at`
+  // would keep rendering the previous timestamp until `now` happened to tick.
   return (
     <span class="font-mono text-[11px] text-ink-subtle whitespace-nowrap select-none">
       checked {formatRelativeTime(at, now.value)}
     </span>
   );
-}
-
-function formatRelativeTime(at: number, now: number): string {
-  const diff = Math.max(0, now - at);
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 45) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
 }

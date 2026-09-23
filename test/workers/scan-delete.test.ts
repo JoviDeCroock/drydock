@@ -1,34 +1,14 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob, markScanFailed } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Delete Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
 async function seedScan(owner: SeededUser, status: "pending" | "running" | "complete" | "failed") {
   const db = createDb(env.DB);
@@ -55,19 +35,9 @@ async function seedScan(owner: SeededUser, status: "pending" | "running" | "comp
   return scanId;
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
-
 async function deleteScan(owner: SeededUser, scanId: string) {
   const ctx = createExecutionContext();
-  const res = await buildTestApp(owner).fetch(
+  const res = await buildTestApp(mountScans, owner).fetch(
     new Request(`http://test.local/api/v1/scans/${scanId}`, { method: "DELETE" }),
     env,
     ctx,

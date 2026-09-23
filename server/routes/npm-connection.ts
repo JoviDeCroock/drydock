@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { readJsonObject } from "../lib/platform/http";
+import { guardRateLimit } from "../lib/rate-limit";
 import { requireVerifiedEmail } from "../lib/auth/email-verification";
-import { createDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
 import {
   deleteNpmConnection,
@@ -8,13 +9,12 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../db/npm-connections";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   requireActiveOrganization,
-  requireActiveOrganizationContext,
+  requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import {
   allowInsecureLocalRegistry,
   decryptNpmToken,
@@ -24,15 +24,14 @@ import {
   validateNpmCredential,
 } from "../lib/ecosystems/npm/connection";
 import { isValidStageId } from "../lib/ecosystems/npm/stage-id";
-import { errorMessage, UnauthorizedError } from "../lib/platform/errors";
-import { rateLimitResponse } from "../lib/platform/http";
+import { errorMessage, ForbiddenError, UnauthorizedError } from "../lib/platform/errors";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
 export const npmConnectionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 npmConnectionRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   return c.json({ connection: publicNpmConnection(await getNpmConnection(db, organizationId)) });
 });
@@ -40,11 +39,11 @@ npmConnectionRoutes.get("/", async (c) => {
 npmConnectionRoutes.post("/", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = (await c.req.json().catch(() => ({}))) as {
+  const body = await readJsonObject<{
     token?: unknown;
     label?: unknown;
     registryUrl?: unknown;
-  };
+  }>(c);
   const token = typeof body.token === "string" ? body.token.trim() : "";
   const label =
     typeof body.label === "string" && body.label.trim()
@@ -64,18 +63,18 @@ npmConnectionRoutes.post("/", async (c) => {
     );
   }
   try {
-    const db = createDb(c.env.DB);
+    const db = c.var.db;
     const session = c.get("authSession");
-    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-    const [, encrypted] = await Promise.all([
-      enforceRateLimit(c.env, {
-        key: `npm-connection:save:${organizationId}`,
-        limit: 20,
-        windowMs: 60 * 60 * 1000,
-      }),
+    const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+    const [limited, encrypted] = await Promise.all([
+      guardRateLimit(
+        c,
+        { key: `npm-connection:save:${organizationId}`, limit: 20, windowMs: 60 * 60 * 1000 },
+        "npm connection save rate limit exceeded",
+      ),
       encryptNpmToken(c.env, token),
     ]);
+    if (limited) return limited;
     const [connection] = await Promise.all([
       upsertNpmConnection(db, {
         organizationId,
@@ -98,10 +97,9 @@ npmConnectionRoutes.post("/", async (c) => {
 
     return c.json({ connection: publicNpmConnection(connection) });
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm connection save rate limit exceeded", err);
-    }
-    if (err instanceof UnauthorizedError) throw err;
+    // Auth denials are the caller's answer (401/403), not a storage failure to
+    // log and mask as 500.
+    if (err instanceof UnauthorizedError || err instanceof ForbiddenError) throw err;
     emitOperationalEvent("error", "npm_connection.upsert_failed", {
       error: describeOperationalError(err),
     });
@@ -112,21 +110,21 @@ npmConnectionRoutes.post("/", async (c) => {
 npmConnectionRoutes.post("/validate", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
-  const body = (await c.req.json().catch(() => ({}))) as { stageId?: unknown };
+  const body = await readJsonObject<{ stageId?: unknown }>(c);
   const stageId =
     typeof body.stageId === "string" && body.stageId.trim() ? body.stageId.trim() : undefined;
   if (stageId && !isValidStageId(stageId)) return c.json({ error: "invalid stageId" }, 400);
 
   try {
-    const db = createDb(c.env.DB);
+    const db = c.var.db;
     const session = c.get("authSession");
-    const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-    if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
-    await enforceRateLimit(c.env, {
-      key: `npm-connection:validate:${organizationId}`,
-      limit: 12,
-      windowMs: 10 * 60 * 1000,
-    });
+    const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
+    const limited = await guardRateLimit(
+      c,
+      { key: `npm-connection:validate:${organizationId}`, limit: 12, windowMs: 10 * 60 * 1000 },
+      "npm validation rate limit exceeded",
+    );
+    if (limited) return limited;
 
     const connection = await getNpmConnection(db, organizationId);
     if (!connection) return c.json({ error: "npm connection is not configured" }, 404);
@@ -176,10 +174,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
 
     return c.json({ validation, connection: publicNpmConnection(updated) });
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "npm validation rate limit exceeded", err);
-    }
-    if (err instanceof UnauthorizedError) throw err;
+    // Auth denials are the caller's answer (401/403), not a storage failure to
+    // log and mask as 500.
+    if (err instanceof UnauthorizedError || err instanceof ForbiddenError) throw err;
     emitOperationalEvent("error", "npm_connection.validation_failed", {
       error: describeOperationalError(err),
     });
@@ -188,10 +185,9 @@ npmConnectionRoutes.post("/validate", async (c) => {
 });
 
 npmConnectionRoutes.delete("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
   const existing = await getNpmConnection(db, organizationId);
   await Promise.all([
     deleteNpmConnection(db, organizationId),

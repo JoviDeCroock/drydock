@@ -1,80 +1,33 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { addOrganizationMember, getOrganizationRole } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
 import {
-  ensurePersonalOrganization,
   listNotificationRecipients,
   resolveNotificationEmails,
 } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { organizationsRoutes } from "../../server/routes/organizations";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  personalOrganizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const personalOrganizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, personalOrganizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
+const mountOrganizations = (app: TestApp) => {
   app.route("/api/v1/organizations", organizationsRoutes);
   app.route("/api/v1/npm-connection", npmConnectionRoutes);
-  return app;
-}
-
-async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  method: string,
-  path: string,
-  options: { body?: unknown; activeOrganizationId?: string } = {},
-) {
-  const ctx = createExecutionContext();
-  const headers: Record<string, string> = {};
-  const init: RequestInit = { method };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-    headers["content-type"] = "application/json";
-  }
-  if (options.activeOrganizationId) {
-    headers[ACTIVE_ORG_HEADER] = options.activeOrganizationId;
-  }
-  init.headers = headers;
-  const res = await app.fetch(new Request(`http://test.local${path}`, init), env, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
+};
 
 async function readReleasePolicy(
   session: { userId: string },
   orgId: string,
 ): Promise<boolean | undefined> {
-  const list = await call(buildTestApp(session), "GET", "/api/v1/organizations");
+  const list = await call(
+    buildTestApp(mountOrganizations, session),
+    "GET",
+    "/api/v1/organizations",
+  );
   return (
     (await list.json()) as {
       organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
@@ -102,18 +55,18 @@ afterEach(() => {
 describe("organizations routes", () => {
   test("GET / returns the caller's organizations with the personal one first", async () => {
     const owner = await seedUser();
-    await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
+    await call(buildTestApp(mountOrganizations, owner), "POST", "/api/v1/organizations", {
       body: { name: "secondary" },
     });
 
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const res = await call(buildTestApp(mountOrganizations, owner), "GET", "/api/v1/organizations");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       organizations: Array<{ id: string; name: string; isPersonal: boolean }>;
     };
     expect(body.organizations).toHaveLength(2);
     expect(body.organizations[0]?.isPersonal).toBe(true);
-    expect(body.organizations[0]?.id).toBe(owner.personalOrganizationId);
+    expect(body.organizations[0]?.id).toBe(owner.organizationId);
     expect(body.organizations[1]?.name).toBe("secondary");
   });
 
@@ -121,20 +74,33 @@ describe("organizations routes", () => {
     const owner = await seedUser();
     const stranger = await seedUser();
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "acme-frontend" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "acme-frontend" },
+      },
+    );
     expect(create.status).toBe(201);
     const created = (await create.json()) as { organization: { id: string; name: string } };
     expect(created.organization.name).toBe("acme-frontend");
 
-    const ownerList = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const ownerList = await call(
+      buildTestApp(mountOrganizations, owner),
+      "GET",
+      "/api/v1/organizations",
+    );
     const ownerBody = (await ownerList.json()) as {
       organizations: Array<{ id: string; name: string }>;
     };
     expect(ownerBody.organizations.map((o) => o.name)).toContain("acme-frontend");
 
-    const strangerList = await call(buildTestApp(stranger), "GET", "/api/v1/organizations");
+    const strangerList = await call(
+      buildTestApp(mountOrganizations, stranger),
+      "GET",
+      "/api/v1/organizations",
+    );
     const strangerBody = (await strangerList.json()) as {
       organizations: Array<{ id: string }>;
     };
@@ -144,14 +110,24 @@ describe("organizations routes", () => {
   test("POST / rejects invalid names", async () => {
     const owner = await seedUser();
 
-    const blank = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "  " },
-    });
+    const blank = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "  " },
+      },
+    );
     expect(blank.status).toBe(400);
 
-    const garbage = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "$bad name!" },
-    });
+    const garbage = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "$bad name!" },
+      },
+    );
     expect(garbage.status).toBe(400);
   });
 
@@ -159,13 +135,18 @@ describe("organizations routes", () => {
     const owner = await seedUser();
     const stranger = await seedUser();
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "old-name" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "old-name" },
+      },
+    );
     const created = (await create.json()) as { organization: { id: string } };
 
     const rename = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PATCH",
       `/api/v1/organizations/${created.organization.id}`,
       { body: { name: "new-name" } },
@@ -175,7 +156,7 @@ describe("organizations routes", () => {
     expect(renamed.organization.name).toBe("new-name");
 
     const intruder = await call(
-      buildTestApp(stranger),
+      buildTestApp(mountOrganizations, stranger),
       "PATCH",
       `/api/v1/organizations/${created.organization.id}`,
       { body: { name: "hijack" } },
@@ -185,15 +166,20 @@ describe("organizations routes", () => {
 
   test("PUT /:id/release-two-factor requires the owner to be enrolled before enabling", async () => {
     const owner = await seedUser();
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "secure-org" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "secure-org" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
     expect(await readReleasePolicy(owner, orgId)).toBe(false);
 
     // An owner who has not turned on 2FA themselves cannot mandate it for everyone.
     const blocked = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: true } },
@@ -207,7 +193,7 @@ describe("organizations routes", () => {
     // Once enrolled, enabling only hardens the gate, so it needs no fresh code.
     await setEnrolledInTwoFactor(owner.userId, true);
     const enable = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: true } },
@@ -222,13 +208,18 @@ describe("organizations routes", () => {
   test("PUT /:id/release-two-factor refuses to relax the policy without a fresh code", async () => {
     const owner = await seedUser();
     await setEnrolledInTwoFactor(owner.userId, true);
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "hardened-org" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "hardened-org" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
 
     const enable = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: true } },
@@ -240,7 +231,7 @@ describe("organizations routes", () => {
     // the worker e2e specs). Without a code it stops at `two_factor_required` and
     // the policy stays on.
     const disable = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: false } },
@@ -256,14 +247,19 @@ describe("organizations routes", () => {
     const stranger = await seedUser();
     const db = createDb(env.DB);
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "owner-only-org" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "owner-only-org" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
     await addOrganizationMember(db, { organizationId: orgId, userId: admin.userId, role: "admin" });
 
     const asAdmin = await call(
-      buildTestApp(admin),
+      buildTestApp(mountOrganizations, admin),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: true } },
@@ -271,7 +267,7 @@ describe("organizations routes", () => {
     expect(asAdmin.status).toBe(404);
 
     const asStranger = await call(
-      buildTestApp(stranger),
+      buildTestApp(mountOrganizations, stranger),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: true } },
@@ -279,7 +275,11 @@ describe("organizations routes", () => {
     expect(asStranger.status).toBe(404);
 
     // The policy was never flipped by the rejected callers.
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const list = await call(
+      buildTestApp(mountOrganizations, owner),
+      "GET",
+      "/api/v1/organizations",
+    );
     const org = (
       (await list.json()) as {
         organizations: Array<{ id: string; requireTwoFactorForReleaseDecisions: boolean }>;
@@ -290,13 +290,18 @@ describe("organizations routes", () => {
 
   test("PUT /:id/release-two-factor rejects a non-boolean body", async () => {
     const owner = await seedUser();
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "validate-org" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "validate-org" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
 
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "PUT",
       `/api/v1/organizations/${orgId}/release-two-factor`,
       { body: { enabled: "yes" } },
@@ -308,27 +313,37 @@ describe("organizations routes", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+    await call(buildTestApp(mountOrganizations, owner), "POST", "/api/v1/npm-connection", {
       body: { token: "npm_personal_token_AAAAAAAA", label: "personal" },
     });
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "client-work" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "client-work" },
+      },
+    );
     const created = (await create.json()) as { organization: { id: string } };
 
-    const beforeWrite = await call(buildTestApp(owner), "GET", "/api/v1/npm-connection", {
-      activeOrganizationId: created.organization.id,
-    });
+    const beforeWrite = await call(
+      buildTestApp(mountOrganizations, owner),
+      "GET",
+      "/api/v1/npm-connection",
+      {
+        activeOrganizationId: created.organization.id,
+      },
+    );
     const beforeBody = (await beforeWrite.json()) as { connection: { label: string } | null };
     expect(beforeBody.connection).toBeNull();
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+    await call(buildTestApp(mountOrganizations, owner), "POST", "/api/v1/npm-connection", {
       body: { token: "npm_client_token_BBBBBBBB", label: "client" },
       activeOrganizationId: created.organization.id,
     });
 
-    const personalConnection = await getNpmConnection(db, owner.personalOrganizationId);
+    const personalConnection = await getNpmConnection(db, owner.organizationId);
     const clientConnection = await getNpmConnection(db, created.organization.id);
     expect(personalConnection?.label).toBe("personal");
     expect(clientConnection?.label).toBe("client");
@@ -339,18 +354,28 @@ describe("organizations routes", () => {
     const owner = await seedUser();
     const stranger = await seedUser();
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "owner-private" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "owner-private" },
+      },
+    );
     const created = (await create.json()) as { organization: { id: string } };
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+    await call(buildTestApp(mountOrganizations, owner), "POST", "/api/v1/npm-connection", {
       body: { token: "npm_personal_token_CCCCCCCC", label: "owner personal" },
     });
 
-    const res = await call(buildTestApp(stranger), "GET", "/api/v1/npm-connection", {
-      activeOrganizationId: created.organization.id,
-    });
+    const res = await call(
+      buildTestApp(mountOrganizations, stranger),
+      "GET",
+      "/api/v1/npm-connection",
+      {
+        activeOrganizationId: created.organization.id,
+      },
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { connection: unknown };
     expect(body.connection).toBeNull();
@@ -361,10 +386,10 @@ describe("organization notification recipients", () => {
   test("lists, adds (lowercased), and the list is scoped to the owner", async () => {
     const owner = await seedUser();
     const stranger = await seedUser();
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
 
     const empty = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "GET",
       `/api/v1/organizations/${orgId}/notification-recipients`,
     );
@@ -372,7 +397,7 @@ describe("organization notification recipients", () => {
     expect(((await empty.json()) as { recipients: unknown[] }).recipients).toHaveLength(0);
 
     const add = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "Security@Example.com" } },
@@ -382,7 +407,7 @@ describe("organization notification recipients", () => {
     expect(added.recipient.email).toBe("security@example.com");
 
     const listed = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "GET",
       `/api/v1/organizations/${orgId}/notification-recipients`,
     );
@@ -390,7 +415,7 @@ describe("organization notification recipients", () => {
     expect(listedBody.recipients.map((r) => r.email)).toEqual(["security@example.com"]);
 
     const intruder = await call(
-      buildTestApp(stranger),
+      buildTestApp(mountOrganizations, stranger),
       "GET",
       `/api/v1/organizations/${orgId}/notification-recipients`,
     );
@@ -399,10 +424,10 @@ describe("organization notification recipients", () => {
 
   test("rejects invalid emails and is idempotent on duplicates", async () => {
     const owner = await seedUser();
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
 
     const bad = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "not-an-email" } },
@@ -410,7 +435,7 @@ describe("organization notification recipients", () => {
     expect(bad.status).toBe(400);
 
     const first = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "dupe@example.com" } },
@@ -418,7 +443,7 @@ describe("organization notification recipients", () => {
     expect(first.status).toBe(201);
 
     const second = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "dupe@example.com" } },
@@ -434,7 +459,7 @@ describe("organization notification recipients", () => {
     const admin = await seedUser();
     const member = await seedUser();
     const db = createDb(env.DB);
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
 
     await addOrganizationMember(db, {
       organizationId: orgId,
@@ -448,7 +473,7 @@ describe("organization notification recipients", () => {
     });
 
     const add = await call(
-      buildTestApp(admin),
+      buildTestApp(mountOrganizations, admin),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "reviewers@example.com" } },
@@ -457,7 +482,7 @@ describe("organization notification recipients", () => {
     const recipientId = ((await add.json()) as { recipient: { id: string } }).recipient.id;
 
     const listed = await call(
-      buildTestApp(member),
+      buildTestApp(mountOrganizations, member),
       "GET",
       `/api/v1/organizations/${orgId}/notification-recipients`,
     );
@@ -466,7 +491,7 @@ describe("organization notification recipients", () => {
     expect(listedBody.recipients.map((r) => r.email)).toEqual(["reviewers@example.com"]);
 
     const memberAdd = await call(
-      buildTestApp(member),
+      buildTestApp(mountOrganizations, member),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "member-write@example.com" } },
@@ -474,7 +499,7 @@ describe("organization notification recipients", () => {
     expect(memberAdd.status).toBe(403);
 
     const memberRemove = await call(
-      buildTestApp(member),
+      buildTestApp(mountOrganizations, member),
       "DELETE",
       `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
     );
@@ -484,10 +509,10 @@ describe("organization notification recipients", () => {
   test("DELETE removes an owned recipient and rejects non-owners", async () => {
     const owner = await seedUser();
     const stranger = await seedUser();
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
 
     const add = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "drop@example.com" } },
@@ -495,14 +520,14 @@ describe("organization notification recipients", () => {
     const recipientId = ((await add.json()) as { recipient: { id: string } }).recipient.id;
 
     const intruder = await call(
-      buildTestApp(stranger),
+      buildTestApp(mountOrganizations, stranger),
       "DELETE",
       `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
     );
     expect(intruder.status).toBe(404);
 
     const removed = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "DELETE",
       `/api/v1/organizations/${orgId}/notification-recipients/${recipientId}`,
     );
@@ -514,11 +539,11 @@ describe("organization notification recipients", () => {
 
   test("limits notification recipients to five addresses", async () => {
     const owner = await seedUser();
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
 
     for (let i = 0; i < 5; i++) {
       const add = await call(
-        buildTestApp(owner),
+        buildTestApp(mountOrganizations, owner),
         "POST",
         `/api/v1/organizations/${orgId}/notification-recipients`,
         { body: { email: `recipient-${i}@example.com` } },
@@ -527,7 +552,7 @@ describe("organization notification recipients", () => {
     }
 
     const duplicate = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "recipient-4@example.com" } },
@@ -536,7 +561,7 @@ describe("organization notification recipients", () => {
     expect(await listNotificationRecipients(createDb(env.DB), orgId)).toHaveLength(5);
 
     const overflow = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       { body: { email: "recipient-5@example.com" } },
@@ -548,7 +573,7 @@ describe("organization notification recipients", () => {
 
   test("resolveNotificationEmails falls back to the owner only when no recipients exist", async () => {
     const owner = await seedUser();
-    const orgId = owner.personalOrganizationId;
+    const orgId = owner.organizationId;
     const db = createDb(env.DB);
 
     expect(await resolveNotificationEmails(db, orgId, owner.userId)).toEqual([
@@ -556,7 +581,7 @@ describe("organization notification recipients", () => {
     ]);
 
     await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       {
@@ -574,9 +599,14 @@ describe("organization deletion", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "doomed-org" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "doomed-org" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
 
     await addOrganizationMember(db, {
@@ -585,14 +615,14 @@ describe("organization deletion", () => {
       role: "admin",
     });
     await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "POST",
       `/api/v1/organizations/${orgId}/notification-recipients`,
       {
         body: { email: "alerts@example.com" },
       },
     );
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
+    await call(buildTestApp(mountOrganizations, owner), "POST", "/api/v1/npm-connection", {
       body: { token: "npm_doomed_token_AAAAAAAA", label: "doomed" },
       activeOrganizationId: orgId,
     });
@@ -614,10 +644,18 @@ describe("organization deletion", () => {
       createdAt: now,
     });
 
-    const res = await call(buildTestApp(owner), "DELETE", `/api/v1/organizations/${orgId}`);
+    const res = await call(
+      buildTestApp(mountOrganizations, owner),
+      "DELETE",
+      `/api/v1/organizations/${orgId}`,
+    );
     expect(res.status).toBe(200);
 
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const list = await call(
+      buildTestApp(mountOrganizations, owner),
+      "GET",
+      "/api/v1/organizations",
+    );
     const listed = (await list.json()) as { organizations: Array<{ id: string }> };
     expect(listed.organizations.map((o) => o.id)).not.toContain(orgId);
 
@@ -637,15 +675,28 @@ describe("organization deletion", () => {
     const owner = await seedUser();
     const stranger = await seedUser();
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "owner-only" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "owner-only" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
 
-    const res = await call(buildTestApp(stranger), "DELETE", `/api/v1/organizations/${orgId}`);
+    const res = await call(
+      buildTestApp(mountOrganizations, stranger),
+      "DELETE",
+      `/api/v1/organizations/${orgId}`,
+    );
     expect(res.status).toBe(404);
 
-    const list = await call(buildTestApp(owner), "GET", "/api/v1/organizations");
+    const list = await call(
+      buildTestApp(mountOrganizations, owner),
+      "GET",
+      "/api/v1/organizations",
+    );
     const listed = (await list.json()) as { organizations: Array<{ id: string }> };
     expect(listed.organizations.map((o) => o.id)).toContain(orgId);
   });
@@ -655,13 +706,22 @@ describe("organization deletion", () => {
     const admin = await seedUser();
     const db = createDb(env.DB);
 
-    const create = await call(buildTestApp(owner), "POST", "/api/v1/organizations", {
-      body: { name: "admin-managed" },
-    });
+    const create = await call(
+      buildTestApp(mountOrganizations, owner),
+      "POST",
+      "/api/v1/organizations",
+      {
+        body: { name: "admin-managed" },
+      },
+    );
     const orgId = ((await create.json()) as { organization: { id: string } }).organization.id;
     await addOrganizationMember(db, { organizationId: orgId, userId: admin.userId, role: "admin" });
 
-    const res = await call(buildTestApp(admin), "DELETE", `/api/v1/organizations/${orgId}`);
+    const res = await call(
+      buildTestApp(mountOrganizations, admin),
+      "DELETE",
+      `/api/v1/organizations/${orgId}`,
+    );
     expect(res.status).toBe(404);
   });
 
@@ -669,9 +729,9 @@ describe("organization deletion", () => {
     const owner = await seedUser();
 
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountOrganizations, owner),
       "DELETE",
-      `/api/v1/organizations/${owner.personalOrganizationId}`,
+      `/api/v1/organizations/${owner.organizationId}`,
     );
     expect(res.status).toBe(400);
     expect((await res.json()) as { error: string }).toEqual({
@@ -679,6 +739,6 @@ describe("organization deletion", () => {
     });
 
     const db = createDb(env.DB);
-    expect(await getOrganizationRole(db, owner.personalOrganizationId, owner.userId)).toBe("owner");
+    expect(await getOrganizationRole(db, owner.organizationId, owner.userId)).toBe("owner");
   });
 });

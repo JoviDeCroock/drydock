@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { attestationLinks, githubRepoUrl, resolutionLinks } from "../src/pages/Diff/TrustEvidence";
+import { attestationLinks, githubRepoUrl, resolutionLinks } from "../src/lib/trust-links";
 
 // Every value linked from the trust card is publisher-controlled: the
 // resolution trail is unsigned by construction, and even the attestation's

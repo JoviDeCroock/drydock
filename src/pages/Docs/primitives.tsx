@@ -13,12 +13,7 @@ import { Card } from "../../components/Card";
 import { CopyButton } from "../../components/CopyButton";
 import { cn } from "../../components/cn";
 import { MonoLabel } from "../../components/Typography";
-import {
-  ensureHighlighter,
-  highlighterReady,
-  type TokenLine,
-  tokenizeLines,
-} from "../../components/highlight";
+import { ensureHighlighter, type TokenLine, useLineTokens } from "../../components/highlight";
 import { codeFold } from "./code-fold";
 import { TOC } from "./toc";
 
@@ -331,11 +326,7 @@ export function CodeBlock({
     if (lang) ensureHighlighter();
   }, [lang]);
 
-  const ready = highlighterReady.value;
-  const tokens = useMemo(() => {
-    if (!lang || !ready) return null;
-    return tokenizeLines(children, lang);
-  }, [children, lang, ready]);
+  const tokens = useLineTokens(children, lang);
   const fold = useMemo(() => codeFold(children), [children]);
 
   const shellClass = "overflow-hidden rounded-md border border-border bg-surface-2";

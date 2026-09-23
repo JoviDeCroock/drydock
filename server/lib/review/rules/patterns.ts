@@ -1,4 +1,4 @@
-import type { CodePatternSet } from "..";
+import type { CodePatternSet } from "../types";
 
 export const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ["preinstall", "install", "postinstall"];
 

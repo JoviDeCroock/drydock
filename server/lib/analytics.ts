@@ -1,7 +1,8 @@
-import { emitOperationalEvent } from "./observability";
-
-// Bump when positional mappings change. Never add PII or package evidence.
-export const ANALYTICS_SCHEMA_VERSION = "1";
+// Product analytics: the event vocabulary, the positional Analytics Engine
+// encoding, and the sink. This is product code, not a platform primitive, so
+// it lives beside the other lib modules and keeps platform/ domain-free.
+// Never add PII or package evidence.
+import { emitOperationalEvent } from "./platform/observability";
 
 export type AnalyticsEvent =
   | {
@@ -163,6 +164,9 @@ type _EveryListedNameExists = AssertExtends<
   (typeof ANALYTICS_EVENT_NAMES)[number],
   AnalyticsEvent["name"]
 >;
+
+// Bump when positional mappings change. Never add PII or package evidence.
+export const ANALYTICS_SCHEMA_VERSION = "1";
 
 export function recordProductEvent(
   env: Pick<Cloudflare.Env, "PRODUCT_ANALYTICS"> | undefined,

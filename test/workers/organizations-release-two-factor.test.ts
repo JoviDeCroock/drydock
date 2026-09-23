@@ -1,7 +1,5 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import * as OTPAuth from "otpauth";
-import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import {
   ensurePersonalOrganization,
@@ -9,6 +7,7 @@ import {
   setRequireTwoFactorForReleaseDecisions,
 } from "../../server/db/organizations";
 import { personalOrganizationId } from "../../server/lib/auth/ownership";
+import { callWorker, type Jar, PASSWORD, signUpUserId, totpFor } from "./helpers/auth-http";
 
 // The owner-only release-two-factor toggle is itself 2FA-guarded, mirroring the
 // gate decision it governs: enabling requires the owner be enrolled (you cannot
@@ -19,74 +18,15 @@ import { personalOrganizationId } from "../../server/lib/auth/ownership";
 // browser hits it; the stub-harness specs in organizations-routes.test.ts cover
 // the enrollment gate and the no-code path that need no real authenticator.
 
-const ORIGIN = "http://example.com";
-const PASSWORD = "correct horse battery staple";
-
-type Jar = Map<string, string>;
-
-function mergeSetCookies(jar: Jar, res: Response) {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  for (const raw of cookies) {
-    const [pair] = raw.split(";");
-    const idx = pair.indexOf("=");
-    if (idx === -1) continue;
-    jar.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
-  }
-}
-
-function cookieHeader(jar: Jar): string {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-
-async function call(method: string, path: string, opts: { body?: unknown; jar?: Jar } = {}) {
-  const ctx = createExecutionContext();
-  const headers = new Headers();
-  if (opts.body !== undefined) headers.set("content-type", "application/json");
-  // Non-GET requests are CSRF-checked against the request origin.
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
-  if (opts.jar && opts.jar.size) headers.set("cookie", cookieHeader(opts.jar));
-  const init: RequestInit = { method, headers };
-  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-  const res = await worker.fetch(new Request(`${ORIGIN}${path}`, init), env, ctx);
-  await waitOnExecutionContext(ctx);
-  if (opts.jar) mergeSetCookies(opts.jar, res);
-  const text = await res.text();
-  let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  return { res, json: json as Record<string, unknown> | null };
-}
-
-function totpFor(totpURI: string): string {
-  const parsed = OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP;
-  return parsed.generate();
-}
-
-async function signUp(jar: Jar): Promise<string> {
-  const email = `release2fa-${crypto.randomUUID()}@example.test`;
-  const up = await call("POST", "/api/auth/sign-up/email", {
-    body: { name: "Release Tester", email, password: PASSWORD },
-    jar,
-  });
-  expect(up.res.status).toBe(200);
-  const session = await call("GET", "/api/auth/get-session", { jar });
-  const userId = (session.json?.user as { id?: string } | undefined)?.id;
-  expect(typeof userId).toBe("string");
-  return userId as string;
-}
-
 async function enrollTwoFactor(jar: Jar): Promise<string> {
-  const enable = await call("POST", "/api/auth/two-factor/enable", {
+  const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
     body: { password: PASSWORD },
     jar,
   });
   expect(enable.res.status).toBe(200);
   const totpURI = enable.json?.totpURI as string;
   expect(typeof totpURI).toBe("string");
-  const verify = await call("POST", "/api/auth/two-factor/verify-totp", {
+  const verify = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
     body: { code: totpFor(totpURI) },
     jar,
   });
@@ -96,7 +36,7 @@ async function enrollTwoFactor(jar: Jar): Promise<string> {
 
 async function setUpOwner(): Promise<{ jar: Jar; userId: string; organizationId: string }> {
   const jar: Jar = new Map();
-  const userId = await signUp(jar);
+  const userId = await signUpUserId(jar);
   const organizationId = personalOrganizationId(userId);
   await ensurePersonalOrganization(createDb(env.DB), { userId });
   return { jar, userId, organizationId };
@@ -110,7 +50,10 @@ describe("release-two-factor toggle 2FA guard", () => {
     const { jar, organizationId } = await setUpOwner();
     await enrollTwoFactor(jar);
 
-    const res = await call("PUT", releasePath(organizationId), { body: { enabled: true }, jar });
+    const res = await callWorker("PUT", releasePath(organizationId), {
+      body: { enabled: true },
+      jar,
+    });
 
     expect(res.res.status).toBe(200);
     expect(res.json).toMatchObject({ requireTwoFactorForReleaseDecisions: true });
@@ -124,7 +67,7 @@ describe("release-two-factor toggle 2FA guard", () => {
     const totpURI = await enrollTwoFactor(jar);
     await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
 
-    const res = await call("PUT", releasePath(organizationId), {
+    const res = await callWorker("PUT", releasePath(organizationId), {
       body: { enabled: false, totpCode: totpFor(totpURI) },
       jar,
     });
@@ -144,7 +87,10 @@ describe("release-two-factor toggle 2FA guard", () => {
       await enrollTwoFactor(jar);
       await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
 
-      const res = await call("PUT", releasePath(organizationId), { body: { enabled: false }, jar });
+      const res = await callWorker("PUT", releasePath(organizationId), {
+        body: { enabled: false },
+        jar,
+      });
 
       expect(res.res.status).toBe(401);
       expect(res.json).toMatchObject({ code: "two_factor_required" });
@@ -163,7 +109,7 @@ describe("release-two-factor toggle 2FA guard", () => {
       await enrollTwoFactor(jar);
       await setRequireTwoFactorForReleaseDecisions(createDb(env.DB), organizationId, true);
 
-      const res = await call("PUT", releasePath(organizationId), {
+      const res = await callWorker("PUT", releasePath(organizationId), {
         body: { enabled: false, totpCode: "000000" },
         jar,
       });
@@ -179,7 +125,10 @@ describe("release-two-factor toggle 2FA guard", () => {
   test("an owner without 2FA cannot enable the policy", { timeout: 30_000 }, async () => {
     const { jar, organizationId } = await setUpOwner();
 
-    const res = await call("PUT", releasePath(organizationId), { body: { enabled: true }, jar });
+    const res = await callWorker("PUT", releasePath(organizationId), {
+      body: { enabled: true },
+      jar,
+    });
 
     expect(res.res.status).toBe(403);
     expect(res.json).toMatchObject({ code: "two_factor_enrollment_required" });

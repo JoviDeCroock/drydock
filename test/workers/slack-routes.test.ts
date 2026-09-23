@@ -1,10 +1,8 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import { addOrganizationMember } from "../../server/db/invitations";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   getSlackConnection,
   getSlackConnectionSecret,
@@ -13,34 +11,15 @@ import {
   upsertSlackConnection,
 } from "../../server/db/slack-connection";
 import * as schema from "../../server/db/schema";
-import { ACTIVE_ORG_HEADER } from "../../server/lib/auth/active-organization";
 import { decryptSlackBotToken, encryptSlackBotToken } from "../../server/lib/platform/secret-box";
 import { signSlackState } from "../../server/lib/notify/slack";
 import { slackRoutes } from "../../server/routes/slack";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+
+const mountSlack = (app: TestApp) => app.route("/api/v1/slack", slackRoutes);
 
 const BOT_TOKEN = "xoxb-0000000000-1111111111-AbCdEfGhIjKlMnOpQrStUvWx";
-
-interface SeededUser {
-  userId: string;
-  personalOrganizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const personalOrganizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, personalOrganizationId };
-}
 
 async function seedConnection(
   organizationId: string,
@@ -90,39 +69,6 @@ async function seedRateLimit(key: string, count: number, windowMs: number) {
   });
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/slack", slackRoutes);
-  return app;
-}
-
-async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  method: string,
-  path: string,
-  options: { body?: unknown; activeOrganizationId?: string; envOverride?: Partial<Bindings> } = {},
-) {
-  const ctx = createExecutionContext();
-  const headers: Record<string, string> = {};
-  const init: RequestInit = { method };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-    headers["content-type"] = "application/json";
-  }
-  if (options.activeOrganizationId) {
-    headers[ACTIVE_ORG_HEADER] = options.activeOrganizationId;
-  }
-  init.headers = headers;
-  const routeEnv: Bindings = { ...(env as unknown as Bindings), ...options.envOverride };
-  const res = await app.fetch(new Request(`http://test.local${path}`, init), routeEnv, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
-
 interface CapturedRequest {
   url: string;
   authorization: string | null;
@@ -168,20 +114,19 @@ afterEach(() => {
 describe("GET /api/v1/slack", () => {
   test("reports configured + null connection when nothing is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack");
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ configured: true, connection: null });
   });
 
   test("returns the public connection without leaking the bot token", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
-      canListChannels: true,
     });
 
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack");
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { configured: boolean; connection: Record<string, unknown> };
     expect(body.configured).toBe(true);
@@ -191,6 +136,7 @@ describe("GET /api/v1/slack", () => {
       channelId: "C0RELEASE",
       channelName: "releases",
       enabled: true,
+      canListChannels: true,
     });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain(BOT_TOKEN);
@@ -199,7 +145,7 @@ describe("GET /api/v1/slack", () => {
 
   test("reports configured: false when Slack credentials are absent", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack", {
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack", {
       envOverride: { SLACK_CLIENT_ID: "", SLACK_CLIENT_SECRET: "" },
     });
     expect(res.status).toBe(200);
@@ -210,7 +156,7 @@ describe("GET /api/v1/slack", () => {
 describe("POST /api/v1/slack/connect", () => {
   test("owner gets an authorize URL carrying the signed state", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/connect");
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/connect");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { authorizeUrl: string; expiresInSeconds: number };
     const url = new URL(body.authorizeUrl);
@@ -226,20 +172,20 @@ describe("POST /api/v1/slack/connect", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
     await addOrganizationMember(db, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
       role: "member",
     });
 
-    const res = await call(buildTestApp(member), "POST", "/api/v1/slack/connect", {
-      activeOrganizationId: owner.personalOrganizationId,
+    const res = await call(buildTestApp(mountSlack, member), "POST", "/api/v1/slack/connect", {
+      activeOrganizationId: owner.organizationId,
     });
     expect(res.status).toBe(403);
   });
 
   test("returns 503 when Slack is not configured", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/connect", {
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/connect", {
       envOverride: { SLACK_CLIENT_ID: "", SLACK_CLIENT_SECRET: "" },
     });
     expect(res.status).toBe(503);
@@ -251,7 +197,7 @@ describe("GET /api/v1/slack/callback", () => {
   test("exchanges the code, encrypts the token, and redirects with slack=connected", async () => {
     const owner = await seedUser();
     const state = await signSlackState(env.BETTER_AUTH_SECRET, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: owner.userId,
     });
 
@@ -269,7 +215,7 @@ describe("GET /api/v1/slack/callback", () => {
     });
 
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountSlack, owner),
       "GET",
       `/api/v1/slack/callback?state=${encodeURIComponent(state)}&code=good-code`,
     );
@@ -282,10 +228,10 @@ describe("GET /api/v1/slack/callback", () => {
     expect(captured[0]?.url).toContain("oauth.v2.access");
 
     const db = createDb(env.DB);
-    const connection = await getSlackConnection(db, owner.personalOrganizationId);
+    const connection = await getSlackConnection(db, owner.organizationId);
     expect(connection?.teamId).toBe("T0REAL0001");
 
-    const secret = await getSlackConnectionSecret(db, owner.personalOrganizationId);
+    const secret = await getSlackConnectionSecret(db, owner.organizationId);
     expect(secret?.botTokenCiphertext.startsWith("v1:")).toBe(true);
     expect(secret?.botTokenCiphertext).not.toContain(BOT_TOKEN);
     expect(
@@ -295,7 +241,7 @@ describe("GET /api/v1/slack/callback", () => {
       }),
     ).toBe(BOT_TOKEN);
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     const connectedEvent = events.find((e) => e.type === "organization.slack_connected");
     expect(connectedEvent).toBeTruthy();
     expect(JSON.stringify(connectedEvent)).not.toContain(BOT_TOKEN);
@@ -304,7 +250,7 @@ describe("GET /api/v1/slack/callback", () => {
   test("redirects with an error when Slack denies consent", async () => {
     const owner = await seedUser();
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountSlack, owner),
       "GET",
       "/api/v1/slack/callback?error=access_denied",
     );
@@ -317,7 +263,7 @@ describe("GET /api/v1/slack/callback", () => {
   test("rejects a forged state with invalid_state", async () => {
     const owner = await seedUser();
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountSlack, owner),
       "GET",
       "/api/v1/slack/callback?state=slackv1.forged.signature&code=good-code",
     );
@@ -329,11 +275,11 @@ describe("GET /api/v1/slack/callback", () => {
     const owner = await seedUser();
     const attacker = await seedUser();
     const state = await signSlackState(env.BETTER_AUTH_SECRET, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: attacker.userId,
     });
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountSlack, owner),
       "GET",
       `/api/v1/slack/callback?state=${encodeURIComponent(state)}&code=good-code`,
     );
@@ -344,19 +290,19 @@ describe("GET /api/v1/slack/callback", () => {
   test("redirects with the Slack error when the token exchange fails", async () => {
     const owner = await seedUser();
     const state = await signSlackState(env.BETTER_AUTH_SECRET, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: owner.userId,
     });
     mockSlackFetch(() => jsonResponse({ ok: false, error: "invalid_code" }));
 
     const res = await call(
-      buildTestApp(owner),
+      buildTestApp(mountSlack, owner),
       "GET",
       `/api/v1/slack/callback?state=${encodeURIComponent(state)}&code=bad-code`,
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("location") ?? "").toContain("slackError=invalid_code");
-    expect(await getSlackConnection(createDb(env.DB), owner.personalOrganizationId)).toBeNull();
+    expect(await getSlackConnection(createDb(env.DB), owner.organizationId)).toBeNull();
   });
 
   test("forbids a caller who is no longer allowed to manage integrations", async () => {
@@ -364,17 +310,17 @@ describe("GET /api/v1/slack/callback", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
     await addOrganizationMember(db, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
       role: "member",
     });
     const state = await signSlackState(env.BETTER_AUTH_SECRET, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
     });
 
     const res = await call(
-      buildTestApp(member),
+      buildTestApp(mountSlack, member),
       "GET",
       `/api/v1/slack/callback?state=${encodeURIComponent(state)}&code=good-code`,
     );
@@ -386,7 +332,7 @@ describe("GET /api/v1/slack/callback", () => {
 describe("GET /api/v1/slack/channels", () => {
   test("lists public channels sorted by name without echoing the token", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId);
+    await seedConnection(owner.organizationId);
 
     const captured = mockSlackFetch((url) => {
       if (url.startsWith("https://slack.com/api/conversations.list")) {
@@ -402,7 +348,7 @@ describe("GET /api/v1/slack/channels", () => {
       return jsonResponse({ ok: false, error: "unexpected" });
     });
 
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack/channels");
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack/channels");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { channels: { id: string; name: string }[] };
     expect(body.channels.map((c) => c.name)).toEqual(["alerts", "releases"]);
@@ -413,7 +359,7 @@ describe("GET /api/v1/slack/channels", () => {
 
   test("404s when no Slack workspace is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack/channels");
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack/channels");
     expect(res.status).toBe(404);
   });
 
@@ -422,26 +368,26 @@ describe("GET /api/v1/slack/channels", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
     await addOrganizationMember(db, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
       role: "member",
     });
-    await seedConnection(owner.personalOrganizationId);
+    await seedConnection(owner.organizationId);
 
-    const res = await call(buildTestApp(member), "GET", "/api/v1/slack/channels", {
-      activeOrganizationId: owner.personalOrganizationId,
+    const res = await call(buildTestApp(mountSlack, member), "GET", "/api/v1/slack/channels", {
+      activeOrganizationId: owner.organizationId,
     });
     expect(res.status).toBe(403);
   });
 
   test("skips Slack API calls when channel list permission is unavailable", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       scope: "chat:write,chat:write.public",
     });
     globalThis.fetch = vi.fn(async () => jsonResponse({ ok: true }));
 
-    const res = await call(buildTestApp(owner), "GET", "/api/v1/slack/channels");
+    const res = await call(buildTestApp(mountSlack, owner), "GET", "/api/v1/slack/channels");
     expect(res.status).toBe(403);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -450,9 +396,9 @@ describe("GET /api/v1/slack/channels", () => {
 describe("PUT /api/v1/slack/channel", () => {
   test("stores the chosen channel and records a redacted event", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId);
+    await seedConnection(owner.organizationId);
 
-    const res = await call(buildTestApp(owner), "PUT", "/api/v1/slack/channel", {
+    const res = await call(buildTestApp(mountSlack, owner), "PUT", "/api/v1/slack/channel", {
       body: { channelId: "C0RELEASE", channelName: "releases" },
     });
     expect(res.status).toBe(200);
@@ -460,17 +406,17 @@ describe("PUT /api/v1/slack/channel", () => {
     expect(body.connection.channelId).toBe("C0RELEASE");
     expect(body.connection.channelName).toBe("releases");
 
-    const connection = await getSlackConnection(createDb(env.DB), owner.personalOrganizationId);
+    const connection = await getSlackConnection(createDb(env.DB), owner.organizationId);
     expect(connection?.channelId).toBe("C0RELEASE");
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     expect(events.some((e) => e.type === "organization.slack_channel_set")).toBe(true);
   });
 
   test("rejects a missing channel id", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId);
-    const res = await call(buildTestApp(owner), "PUT", "/api/v1/slack/channel", {
+    await seedConnection(owner.organizationId);
+    const res = await call(buildTestApp(mountSlack, owner), "PUT", "/api/v1/slack/channel", {
       body: { channelName: "releases" },
     });
     expect(res.status).toBe(400);
@@ -478,7 +424,7 @@ describe("PUT /api/v1/slack/channel", () => {
 
   test("404s when no Slack workspace is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "PUT", "/api/v1/slack/channel", {
+    const res = await call(buildTestApp(mountSlack, owner), "PUT", "/api/v1/slack/channel", {
       body: { channelId: "C0RELEASE", channelName: "releases" },
     });
     expect(res.status).toBe(404);
@@ -489,14 +435,14 @@ describe("PUT /api/v1/slack/channel", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
     await addOrganizationMember(db, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
       role: "member",
     });
-    await seedConnection(owner.personalOrganizationId);
-    const res = await call(buildTestApp(member), "PUT", "/api/v1/slack/channel", {
+    await seedConnection(owner.organizationId);
+    const res = await call(buildTestApp(mountSlack, member), "PUT", "/api/v1/slack/channel", {
       body: { channelId: "C0RELEASE" },
-      activeOrganizationId: owner.personalOrganizationId,
+      activeOrganizationId: owner.organizationId,
     });
     expect(res.status).toBe(403);
   });
@@ -505,12 +451,12 @@ describe("PUT /api/v1/slack/channel", () => {
 describe("PATCH /api/v1/slack", () => {
   test("toggles delivery off and records the event", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
     });
 
-    const res = await call(buildTestApp(owner), "PATCH", "/api/v1/slack", {
+    const res = await call(buildTestApp(mountSlack, owner), "PATCH", "/api/v1/slack", {
       body: { enabled: false },
     });
     expect(res.status).toBe(200);
@@ -518,17 +464,17 @@ describe("PATCH /api/v1/slack", () => {
       false,
     );
 
-    const connection = await getSlackConnection(createDb(env.DB), owner.personalOrganizationId);
+    const connection = await getSlackConnection(createDb(env.DB), owner.organizationId);
     expect(connection?.enabled).toBe(false);
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     expect(events.some((e) => e.type === "organization.slack_disabled")).toBe(true);
   });
 
   test("rejects a non-boolean enabled", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId);
-    const res = await call(buildTestApp(owner), "PATCH", "/api/v1/slack", {
+    await seedConnection(owner.organizationId);
+    const res = await call(buildTestApp(mountSlack, owner), "PATCH", "/api/v1/slack", {
       body: { enabled: "nope" },
     });
     expect(res.status).toBe(400);
@@ -536,7 +482,7 @@ describe("PATCH /api/v1/slack", () => {
 
   test("404s when no Slack workspace is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "PATCH", "/api/v1/slack", {
+    const res = await call(buildTestApp(mountSlack, owner), "PATCH", "/api/v1/slack", {
       body: { enabled: true },
     });
     expect(res.status).toBe(404);
@@ -546,20 +492,20 @@ describe("PATCH /api/v1/slack", () => {
 describe("DELETE /api/v1/slack", () => {
   test("disconnects the workspace and records the event", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, { channelId: "C0RELEASE" });
+    await seedConnection(owner.organizationId, { channelId: "C0RELEASE" });
 
-    const res = await call(buildTestApp(owner), "DELETE", "/api/v1/slack");
+    const res = await call(buildTestApp(mountSlack, owner), "DELETE", "/api/v1/slack");
     expect(res.status).toBe(200);
     expect((await res.json()) as { ok: boolean }).toMatchObject({ ok: true });
-    expect(await getSlackConnection(createDb(env.DB), owner.personalOrganizationId)).toBeNull();
+    expect(await getSlackConnection(createDb(env.DB), owner.organizationId)).toBeNull();
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     expect(events.some((e) => e.type === "organization.slack_disconnected")).toBe(true);
   });
 
   test("404s when nothing is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "DELETE", "/api/v1/slack");
+    const res = await call(buildTestApp(mountSlack, owner), "DELETE", "/api/v1/slack");
     expect(res.status).toBe(404);
   });
 
@@ -568,13 +514,13 @@ describe("DELETE /api/v1/slack", () => {
     const member = await seedUser();
     const db = createDb(env.DB);
     await addOrganizationMember(db, {
-      organizationId: owner.personalOrganizationId,
+      organizationId: owner.organizationId,
       userId: member.userId,
       role: "member",
     });
-    await seedConnection(owner.personalOrganizationId);
-    const res = await call(buildTestApp(member), "DELETE", "/api/v1/slack", {
-      activeOrganizationId: owner.personalOrganizationId,
+    await seedConnection(owner.organizationId);
+    const res = await call(buildTestApp(mountSlack, member), "DELETE", "/api/v1/slack", {
+      activeOrganizationId: owner.organizationId,
     });
     expect(res.status).toBe(403);
   });
@@ -583,7 +529,7 @@ describe("DELETE /api/v1/slack", () => {
 describe("POST /api/v1/slack/test", () => {
   test("posts to the chosen channel and records a redacted success event", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
     });
@@ -595,14 +541,14 @@ describe("POST /api/v1/slack/test", () => {
       return jsonResponse({ ok: false, error: "unexpected" });
     });
 
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/test");
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/test");
     expect(res.status).toBe(200);
     expect((await res.json()) as { ok: boolean }).toMatchObject({ ok: true });
 
     expect(captured[0]?.authorization).toBe(`Bearer ${BOT_TOKEN}`);
     expect(captured[0]?.body).toContain("C0RELEASE");
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     const testEvent = events.find((e) => e.type === "organization.slack_tested");
     expect(testEvent).toBeTruthy();
     expect(JSON.stringify(testEvent)).not.toContain(BOT_TOKEN);
@@ -610,19 +556,19 @@ describe("POST /api/v1/slack/test", () => {
 
   test("reports a failure reason without leaking the token", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
     });
     mockSlackFetch(() => jsonResponse({ ok: false, error: "channel_not_found" }));
 
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/test");
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/test");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; reason?: string };
     expect(body.ok).toBe(false);
     expect(body.reason).toBe("channel_not_found");
 
-    const events = await readOrgEvents(owner.personalOrganizationId);
+    const events = await readOrgEvents(owner.organizationId);
     const failEvent = events.find((e) => e.type === "organization.slack_test_failed");
     expect(failEvent).toBeTruthy();
     expect(JSON.stringify(failEvent)).not.toContain(BOT_TOKEN);
@@ -630,26 +576,26 @@ describe("POST /api/v1/slack/test", () => {
 
   test("400s when no channel has been chosen", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId);
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/test");
+    await seedConnection(owner.organizationId);
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/test");
     expect(res.status).toBe(400);
   });
 
   test("404s when nothing is connected", async () => {
     const owner = await seedUser();
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/test");
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/test");
     expect(res.status).toBe(404);
   });
 
   test("rate-limits repeated test sends", async () => {
     const owner = await seedUser();
-    await seedConnection(owner.personalOrganizationId, {
+    await seedConnection(owner.organizationId, {
       channelId: "C0RELEASE",
       channelName: "releases",
     });
-    await seedRateLimit(`slack:test:${owner.personalOrganizationId}`, 10, 60 * 60 * 1000);
+    await seedRateLimit(`slack:test:${owner.organizationId}`, 10, 60 * 60 * 1000);
 
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/slack/test");
+    const res = await call(buildTestApp(mountSlack, owner), "POST", "/api/v1/slack/test");
     expect(res.status).toBe(429);
   });
 });

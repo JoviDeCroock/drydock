@@ -3,11 +3,18 @@ import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
 import { createNpmBroker, type NpmBroker } from "./broker";
 import { buildNpmFindings } from "./findings";
+import { lookupStagedReleaseFate } from "./release-outcome";
+import { isTerminalNpmVersionStatus } from "./version-status";
 
 const STAGE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,160}$/;
 
 export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   id: "npm",
+  // Detection scans every file of an npm package with the JavaScript set, so
+  // diff annotation must re-match findings with it too. Left undefined,
+  // annotation falls back to Python patterns for a `.py` file (a node-gyp
+  // script), which is not the set that produced the finding.
+  codePatternSet: "javascript",
 
   parseInput(raw: unknown): NpmAdapterInput {
     if (!raw || typeof raw !== "object") {
@@ -78,6 +85,19 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
   registryReleaseIdentity(details) {
     const d = details as NpmStagedDetails | null;
     return d?.packageName && d.version ? { packageName: d.packageName, version: d.version } : null;
+  },
+
+  // Only an unreadable staged tarball has a registry-side explanation: npm may
+  // have published, deleted, or blocked the version since the scan was queued.
+  async refineAcquisitionFailure(ctx, failure) {
+    if (failure.code !== "staged_tarball_unavailable") return null;
+    const fate = await lookupStagedReleaseFate(ctx.env, ctx.db, ctx.scanId, ctx.organizationId);
+    if (!fate) return null;
+    return {
+      failure: fate.failure,
+      registryStatus: fate.status,
+      registryStatusTerminal: isTerminalNpmVersionStatus(fate.status),
+    };
   },
 };
 

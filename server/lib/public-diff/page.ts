@@ -80,11 +80,12 @@ async function readCachedDisplayName(
   env: Cloudflare.Env,
   spec: NonNullable<ReturnType<typeof parseDiffSpec>>,
 ): Promise<string | undefined> {
-  // npm and PyPI canonical names are already human-facing. Only atpm has a
-  // separate verified handle, so no other detail page should touch KV here.
-  if (spec.ecosystem !== "atpm") return undefined;
+  // A display name distinct from the canonical name only exists where
+  // resolution is mutable (a verified handle over a DID): exactly the adapters
+  // that bound their cache lifetime. Immutable registries' canonical names are
+  // already human-facing, so their detail pages never touch KV here.
   const adapter = getPublicDiffAdapter(spec.ecosystem);
-  if (!adapter) return undefined;
+  if (!adapter || adapter.cacheTtlSeconds === undefined) return undefined;
   try {
     const key = await computePublicDiffCacheKey({
       ecosystem: spec.ecosystem,

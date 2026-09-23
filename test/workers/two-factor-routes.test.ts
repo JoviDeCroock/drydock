@@ -1,69 +1,8 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
-import * as OTPAuth from "otpauth";
-import worker from "../../server";
 import { createDb } from "../../server/db/client";
 import * as schema from "../../server/db/schema";
-
-const ORIGIN = "http://example.com";
-const PASSWORD = "correct horse battery staple";
-
-type Jar = Map<string, string>;
-
-function mergeSetCookies(jar: Jar, res: Response) {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  for (const raw of cookies) {
-    const [pair] = raw.split(";");
-    const idx = pair.indexOf("=");
-    if (idx === -1) continue;
-    jar.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
-  }
-}
-
-function cookieHeader(jar: Jar): string {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-
-interface CallOptions {
-  body?: unknown;
-  jar?: Jar;
-  ip?: string;
-}
-
-async function call(method: string, path: string, opts: CallOptions = {}) {
-  const ctx = createExecutionContext();
-  const headers = new Headers();
-  if (opts.body !== undefined) headers.set("content-type", "application/json");
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("origin", ORIGIN);
-  if (opts.jar && opts.jar.size) headers.set("cookie", cookieHeader(opts.jar));
-  if (opts.ip) headers.set("cf-connecting-ip", opts.ip);
-  const init: RequestInit = { method, headers };
-  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-  const res = await worker.fetch(new Request(`${ORIGIN}${path}`, init), env, ctx);
-  await waitOnExecutionContext(ctx);
-  if (opts.jar) mergeSetCookies(opts.jar, res);
-  const text = await res.text();
-  let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  return { res, json: json as Record<string, unknown> | null, text };
-}
-
-function totpFor(totpURI: string): string {
-  const parsed = OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP;
-  return parsed.generate();
-}
-
-async function signUp(jar: Jar, email: string) {
-  const { res } = await call("POST", "/api/auth/sign-up/email", {
-    body: { name: "2FA Tester", email, password: PASSWORD },
-    jar,
-  });
-  expect(res.status).toBe(200);
-}
+import { callWorker, type Jar, PASSWORD, signUp, totpFor } from "./helpers/auth-http";
 
 describe("two-factor routes", () => {
   test(
@@ -72,10 +11,10 @@ describe("two-factor routes", () => {
     async () => {
       const email = `tf-${crypto.randomUUID()}@example.test`;
       const jar: Jar = new Map();
-      await signUp(jar, email);
+      await signUp(jar, { email });
 
       // Enable: returns the otpauth URI and backup codes.
-      const enable = await call("POST", "/api/auth/two-factor/enable", {
+      const enable = await callWorker("POST", "/api/auth/two-factor/enable", {
         body: { password: PASSWORD },
         jar,
       });
@@ -87,20 +26,20 @@ describe("two-factor routes", () => {
       expect(backupCodes.length).toBeGreaterThan(0);
 
       // Confirm enrollment with a freshly generated TOTP code.
-      const verify = await call("POST", "/api/auth/two-factor/verify-totp", {
+      const verify = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
         body: { code: totpFor(totpURI) },
         jar,
       });
       expect(verify.res.status).toBe(200);
 
       // Session now reports two-factor enabled.
-      const session = await call("GET", "/api/auth/get-session", { jar });
+      const session = await callWorker("GET", "/api/auth/get-session", { jar });
       expect((session.json?.user as { twoFactorEnabled?: boolean })?.twoFactorEnabled).toBe(true);
 
       // Sign out, then sign in again — should be redirected to the 2FA challenge.
-      await call("POST", "/api/auth/sign-out", { jar });
+      await callWorker("POST", "/api/auth/sign-out", { jar });
       const freshJar: Jar = new Map();
-      const signIn = await call("POST", "/api/auth/sign-in/email", {
+      const signIn = await callWorker("POST", "/api/auth/sign-in/email", {
         body: { email, password: PASSWORD },
         jar: freshJar,
       });
@@ -108,7 +47,7 @@ describe("two-factor routes", () => {
       expect(signIn.json?.twoFactorRedirect).toBe(true);
 
       // No authenticated session until the second factor is provided.
-      const pending = await call("GET", "/api/auth/get-session", { jar: freshJar });
+      const pending = await callWorker("GET", "/api/auth/get-session", { jar: freshJar });
       expect(pending.json?.user).toBeFalsy();
 
       // The challenge lives in D1, not only in KV secondary storage: single-use
@@ -118,21 +57,21 @@ describe("two-factor routes", () => {
       expect(verifications.length).toBeGreaterThan(0);
 
       // Complete sign-in with a backup code.
-      const backup = await call("POST", "/api/auth/two-factor/verify-backup-code", {
+      const backup = await callWorker("POST", "/api/auth/two-factor/verify-backup-code", {
         body: { code: backupCodes[0] },
         jar: freshJar,
       });
       expect(backup.res.status).toBe(200);
-      const authed = await call("GET", "/api/auth/get-session", { jar: freshJar });
+      const authed = await callWorker("GET", "/api/auth/get-session", { jar: freshJar });
       expect((authed.json?.user as { email?: string })?.email).toBe(email);
 
       // Disable two-factor.
-      const disable = await call("POST", "/api/auth/two-factor/disable", {
+      const disable = await callWorker("POST", "/api/auth/two-factor/disable", {
         body: { password: PASSWORD },
         jar: freshJar,
       });
       expect(disable.res.status).toBe(200);
-      const after = await call("GET", "/api/auth/get-session", { jar: freshJar });
+      const after = await callWorker("GET", "/api/auth/get-session", { jar: freshJar });
       expect((after.json?.user as { twoFactorEnabled?: boolean })?.twoFactorEnabled).toBeFalsy();
     },
   );
@@ -141,7 +80,7 @@ describe("two-factor routes", () => {
     const ip = `203.0.113.${Math.floor(Math.random() * 250) + 1}`;
     const statuses: number[] = [];
     for (let i = 0; i < 12; i++) {
-      const { res } = await call("POST", "/api/auth/two-factor/verify-totp", {
+      const { res } = await callWorker("POST", "/api/auth/two-factor/verify-totp", {
         body: { code: "000000" },
         ip,
       });

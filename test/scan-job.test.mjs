@@ -36,6 +36,7 @@ vi.mock("../server/lib/notify/index.ts", () => notifyMock);
 const { classifyScanError, executeScanJob, retryDelaySeconds } =
   await import("../server/lib/scan/job");
 const { SandboxError } = await import("../server/lib/sandbox");
+const { ScanPreconditionError } = await import("../server/lib/scan/errors");
 
 describe("scan job retry classification", () => {
   test("retries transient sandbox download failures and does not leak raw detail", () => {
@@ -135,10 +136,42 @@ describe("scan job retry classification", () => {
     });
   });
 
+  test("classifies a typed precondition error by its code, not its message", () => {
+    const err = new ScanPreconditionError("npm_connection_changed");
+    err.message = "rewritten before it reached the classifier";
+
+    expect(classifyScanError(err)).toEqual({
+      code: "npm_connection_changed",
+      message:
+        "The organization npm registry changed after this scan was queued. Run a new scan against the current connection.",
+      retryable: false,
+    });
+  });
+
+  test("only recovers a flattened precondition from its exact thrown message", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(
+      classifyScanError({
+        name: "Error",
+        message: "prefix: Connect an organization npm token before scanning staged publishes.",
+        remote: true,
+      }),
+    ).toMatchObject({ code: "scan_failed", retryable: true });
+    errorSpy.mockRestore();
+  });
+
   test("does not retry an atpm candidate that disappeared before the scan started", () => {
     expect(classifyScanError(new Error("staged release not found"))).toEqual({
       code: "staged_tarball_unavailable",
       message: "The staged candidate is no longer available for review.",
+      retryable: false,
+    });
+  });
+
+  test("does not retry a staged candidate that changed after selection", () => {
+    expect(classifyScanError(new Error("staged candidate changed after scan selection"))).toEqual({
+      code: "staged_candidate_changed",
+      message: "The staged candidate changed before its review started.",
       retryable: false,
     });
   });

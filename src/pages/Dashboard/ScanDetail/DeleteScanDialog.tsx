@@ -1,7 +1,7 @@
 import type { DeleteStatus } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
-import { Button } from "../../../components/Button";
-import { Dialog } from "../../../components/Dialog";
+import { ConfirmDialog } from "../../../components/Dialog";
+import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
 
 export function DeleteScanDialog({
   open,
@@ -11,39 +11,33 @@ export function DeleteScanDialog({
   error,
   onConfirm,
 }: {
-  open: boolean;
+  open: SignalOrValue<boolean>;
   onClose: () => void;
   packageName?: string | null;
-  status: DeleteStatus;
-  error: string | null;
+  status: SignalOrValue<DeleteStatus>;
+  error: SignalOrValue<string | null>;
   onConfirm: () => boolean | Promise<boolean>;
 }) {
-  const deleting = status === "deleting";
-  const handleClose = () => {
-    if (!deleting) onClose();
-  };
+  // Read here, not in the page: the delete round-trip re-renders this dialog
+  // alone rather than the review it sits on.
+  const deleting = readSignalProp(status) === "deleting";
+  const message = readSignalProp(error);
 
   return (
-    <Dialog
+    <ConfirmDialog
       open={open}
-      onClose={handleClose}
+      onClose={onClose}
       title="Delete failed review?"
       description={`This permanently deletes the failed review${packageName ? ` for ${packageName}` : ""} and its stored evidence. This action cannot be undone.`}
-      footer={
-        <>
-          <Button variant="secondary" size="sm" onClick={handleClose} disabled={deleting}>
-            Cancel
-          </Button>
-          <Button variant="danger" size="sm" onClick={() => void onConfirm()} disabled={deleting}>
-            {deleting ? "Deleting…" : "Delete review"}
-          </Button>
-        </>
-      }
+      busy={deleting}
+      busyLabel="Deleting…"
+      confirmLabel="Delete review"
+      onConfirm={() => void onConfirm()}
     >
       <p class="m-0 text-[13px] leading-[1.55] text-ink-muted">
         Completed, pending, and running reviews cannot be deleted.
       </p>
-      {error ? <Alert tone="critical">{error}</Alert> : null}
-    </Dialog>
+      {message ? <Alert tone="critical">{message}</Alert> : null}
+    </ConfirmDialog>
   );
 }

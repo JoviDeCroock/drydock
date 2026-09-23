@@ -1,18 +1,16 @@
 import { useEffect } from "preact/hooks";
 import { useModel, useSignal } from "@preact/signals";
 import { useLocation } from "preact-iso";
-import {
-  buildQueryUrl,
-  rememberDashboardReturnUrl,
-  useQuerySignal,
-} from "../../../lib/query-state";
+import { buildQueryUrl, useQuerySignal } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
+import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { AuditLogModel } from "../../../models/audit-log";
 import { NpmConnectionModel } from "../../../models/npm-connection";
 import { NotificationRecipientsModel } from "../../../models/notification-recipients";
 import { SlackConnectionModel } from "../../../models/slack-connection";
 import { OrganizationModel } from "../../../models/organization";
 import { GithubAppModel } from "../../../models/github-app";
+import { ReleaseTargetsModel } from "../../../models/release-targets";
 import { MembersModel } from "../../../models/organization-members";
 import {
   normalizeRole,
@@ -41,11 +39,11 @@ export default function SettingsPage() {
   const npm = useModel(NpmConnectionModel);
   const organizations = useModel(OrganizationModel);
   const githubApp = useModel(GithubAppModel);
+  const targets = useModel(ReleaseTargetsModel);
   const members = useModel(MembersModel);
   const recipients = useModel(NotificationRecipientsModel);
   const slack = useModel(SlackConnectionModel);
   const audit = useModel(AuditLogModel);
-  const sessionChecked = useSignal(false);
   const activeTab = useSignal<SettingsTab>("general");
 
   useQuerySignal(activeTab, {
@@ -53,10 +51,6 @@ export default function SettingsPage() {
     parse: (raw) => (isSettingsTab(raw) ? raw : "general"),
     serialize: (value) => (value === "general" ? null : value),
   });
-
-  useEffect(() => {
-    rememberDashboardReturnUrl(location.url);
-  }, [location.url]);
 
   // Surface the result of the Slack OAuth callback redirect, then strip the
   // one-shot params so a refresh doesn't replay the notice.
@@ -67,38 +61,27 @@ export default function SettingsPage() {
     location.route(buildQueryUrl({ slack: null, slackError: null }), true);
   }, [location.query.slack]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await sessionModel.load();
-      if (cancelled) return;
-      if (!data) {
-        location.route("/login", true);
-        return;
-      }
-      sessionChecked.value = true;
+  const sessionChecked = useAuthedDashboardSession({
+    onReady: async (_session, isCancelled) => {
       await Promise.all([organizations.load(), npm.load()]);
-      if (cancelled) return;
+      if (isCancelled()) return;
       await Promise.all([
         githubApp.loadConfig(),
         githubApp.loadInstallations(),
-        githubApp.loadReleaseTargets(),
+        targets.load(),
         members.load(canManageMembers(organizations)),
         recipients.load(organizations.active.peek()?.id ?? null),
         slack.load(organizations.active.peek()?.id ?? null),
         audit.load(canManageMembers(organizations)),
       ]);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    },
+  });
 
   const reloadActiveOrgScopedData = async () => {
     const loaders: Promise<unknown>[] = [npm.load(), members.load(canManageMembers(organizations))];
-    githubApp.clearForm();
+    targets.clearForm();
     if (!githubApp.configLoaded.peek()) loaders.push(githubApp.loadConfig());
-    loaders.push(githubApp.loadInstallations(), githubApp.loadReleaseTargets());
+    loaders.push(githubApp.loadInstallations(), targets.load());
     loaders.push(recipients.load(organizations.active.peek()?.id ?? null));
     loaders.push(slack.load(organizations.active.peek()?.id ?? null));
     loaders.push(audit.load(canManageMembers(organizations)));
@@ -133,7 +116,7 @@ export default function SettingsPage() {
   }
 
   const user = sessionModel.user.value;
-  const githubAppLoaded = githubApp.loaded.value;
+  const githubAppLoaded = githubApp.loaded.value && targets.releaseTargetsLoaded.value;
   const npmLoaded = npm.loaded.value;
   const workspaceLoaded = githubAppLoaded && npmLoaded;
   // The audit log is owner/admin-only: hide the tab from members and fall back
@@ -211,7 +194,7 @@ export default function SettingsPage() {
             {tab === "integrations" ? (
               <>
                 <NpmConnectionSection npm={npm} defaultOpen />
-                <GithubAppSection githubApp={githubApp} defaultOpen />
+                <GithubAppSection githubApp={githubApp} targets={targets} defaultOpen />
               </>
             ) : null}
             {tab === "audit" && canViewAudit ? <AuditLogSection audit={audit} /> : null}

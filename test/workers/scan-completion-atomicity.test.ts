@@ -1,12 +1,11 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
-import * as schema from "../../server/db/schema";
 import { createPackageDiff } from "../../server/lib/review";
 import { scanArtifactPrefix } from "../../server/lib/scan/artifacts/keys";
+import { seedUser } from "./helpers/seed";
 
 function deferred() {
   let resolve!: () => void;
@@ -39,28 +38,12 @@ function gateFirstBatch(d1: D1Database, reached: () => void, gate: Promise<void>
   });
 }
 
-async function seedUserAndOrg() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
 describe("scan completion atomicity", () => {
   // A duplicate Queue delivery may finish while an earlier completion attempt
   // is still parked before its D1 batch. The stale batch must not clear or
   // replace the detail rows written by the successful completion.
   test("stale completion batch cannot clobber findings from a duplicate completion", async () => {
-    const { userId, organizationId } = await seedUserAndOrg();
+    const { userId, organizationId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = "stage-atomicity-000001";
 
@@ -96,14 +79,14 @@ describe("scan completion atomicity", () => {
       packageJson: { name: "demo", version: "1.0.0" },
       previousPackageJson: null,
       risk: "high",
-      status: "complete",
+      status: "complete" as const,
       summary: { ok: true },
       ai: null,
       files,
       diff,
       findings: [
         {
-          severity: "high",
+          severity: "high" as const,
           file: "binding.gyp",
           evidence: "implicit install: node-gyp rebuild",
           reason: "stale completion should not survive",
@@ -123,14 +106,14 @@ describe("scan completion atomicity", () => {
       packageJson: { name: "demo", version: "1.0.0" },
       previousPackageJson: null,
       risk: "high",
-      status: "complete",
+      status: "complete" as const,
       summary: { ok: true },
       ai: null,
       files,
       diff,
       findings: [
         {
-          severity: "high",
+          severity: "high" as const,
           file: "binding.gyp",
           evidence: "implicit install: node-gyp rebuild",
           reason: "package builds a native addon on install",
@@ -158,7 +141,7 @@ describe("scan completion atomicity", () => {
   // closed to metadata forever. The interleaving is the plain sequential one: the
   // loser only learns it lost *after* its R2 write.
   test("a stale attempt's artifact write cannot strand the winner's detail read", async () => {
-    const { userId, organizationId } = await seedUserAndOrg();
+    const { userId, organizationId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = "stage-atomicity-000002";
 
@@ -189,14 +172,14 @@ describe("scan completion atomicity", () => {
       packageJson: { name: "demo", version: "1.0.0" },
       previousPackageJson: null,
       risk: "high",
-      status: "complete",
+      status: "complete" as const,
       summary: { ok: true },
       ai: null,
       files,
       diff,
       findings: [
         {
-          severity: "high",
+          severity: "high" as const,
           file: "binding.gyp",
           evidence: "implicit install: node-gyp rebuild",
           reason,

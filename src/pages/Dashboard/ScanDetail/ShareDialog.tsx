@@ -1,4 +1,3 @@
-import { useComputed, useSignal } from "@preact/signals";
 import { DEFAULT_BADGE_TAG, type PublicEcosystem } from "../../../../server/lib/public-feed";
 import { badgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
@@ -6,17 +5,19 @@ import type { DecisionStatus, PublicShareInfo } from "../../../models/scan";
 import { publicReportAttestationUrl } from "../../../models/scan";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
+import { CopyButton } from "../../../components/CopyButton";
 import { Dialog } from "../../../components/Dialog";
 import { Input } from "../../../components/Input";
+import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
 import { EmptyLine, MonoDetail, MonoLabel } from "../../../components/Typography";
 
 export function ShareDialog({
   open,
   onClose,
-  share,
+  share: shareProp,
   status,
-  error,
-  attestationAvailable,
+  error: errorProp,
+  attestationAvailable: attestationAvailableProp,
   badgeEcosystem,
   packageName,
   badgeTag,
@@ -24,12 +25,14 @@ export function ShareDialog({
   onRevoke,
   onSetFeedListing,
 }: {
-  open: boolean;
+  // Signals are read here so the share round-trip re-renders the dialog, not
+  // the review page that mounts it.
+  open: SignalOrValue<boolean>;
   onClose: () => void;
-  share: PublicShareInfo | null;
-  status: DecisionStatus;
-  error: string | null;
-  attestationAvailable: boolean | null;
+  share: SignalOrValue<PublicShareInfo | null>;
+  status: SignalOrValue<DecisionStatus>;
+  error: SignalOrValue<string | null>;
+  attestationAvailable: SignalOrValue<boolean | null>;
   badgeEcosystem: PublicEcosystem | null;
   packageName: string | null;
   // The dist-tag this release was staged under, so the snippet points at the
@@ -39,25 +42,10 @@ export function ShareDialog({
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
 }) {
-  const copied = useSignal(false);
-  const badgeCopied = useSignal(false);
-  // Rendered directly as signal children so the copy feedback re-renders only
-  // the text node, not the dialog (signals-local/no-signal-conditional-jsx).
-  const copyLabel = useComputed(() => (copied.value ? "Copied ✓" : "Copy"));
-  const badgeCopyLabel = useComputed(() => (badgeCopied.value ? "Copied ✓" : "Copy"));
-  const saving = status === "saving";
-
-  const copyToClipboard = async (text: string, feedback: typeof copied) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      feedback.value = true;
-      setTimeout(() => (feedback.value = false), 2000);
-    } catch {
-      // Clipboard access denied — the text stays selectable in the input.
-    }
-  };
-
-  const copyLink = () => (share ? copyToClipboard(share.url, copied) : Promise.resolve());
+  const share = readSignalProp(shareProp);
+  const error = readSignalProp(errorProp);
+  const attestationAvailable = readSignalProp(attestationAvailableProp);
+  const saving = readSignalProp(status) === "saving";
 
   // The badge endpoint only answers for feed-listed scans with a resolvable
   // ecosystem, so the snippet appears exactly when it would render something.
@@ -116,10 +104,10 @@ export function ShareDialog({
       {share ? (
         <>
           <div class="flex items-center gap-2">
+            {/* The inputs stay read-only rather than disabled so the text is
+                selectable when CopyButton reports the clipboard unavailable. */}
             <Input value={share.url} readOnly mono class="flex-1" />
-            <Button variant="secondary" size="sm" onClick={copyLink}>
-              {copyLabel}
-            </Button>
+            <CopyButton text={share.url} />
           </div>
           <MonoDetail
             parts={[
@@ -169,13 +157,7 @@ export function ShareDialog({
               <MonoLabel as="span">README badge</MonoLabel>
               <div class="flex items-center gap-2">
                 <Input value={badge} readOnly mono class="flex-1" />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void copyToClipboard(badge, badgeCopied)}
-                >
-                  {badgeCopyLabel}
-                </Button>
+                <CopyButton text={badge} />
               </div>
               <EmptyLine>
                 Paste into the package&apos;s README. The badge always shows the newest listed

@@ -11,6 +11,7 @@ import { Button } from "../../../components/Button";
 import { Dialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
+import { readSignalProp, type SignalOrValue } from "../../../components/signal-props";
 
 export function DecisionDialog({
   open,
@@ -24,14 +25,17 @@ export function DecisionDialog({
   scan,
   onSubmit,
 }: {
-  open: boolean;
+  // Signals are read here rather than by the page: opening the dialog and the
+  // save round-trip (idle → saving → idle/error) then re-render the dialog
+  // alone, not a page that also renders one card per finding.
+  open: SignalOrValue<boolean>;
   onClose: () => void;
   decision?: string | null;
   decisionReason?: string | null;
   decidedAt?: string | number | Date | null;
-  status: DecisionStatus;
-  error: string | null;
-  npmStagedPackagesUrl?: string | null;
+  status: SignalOrValue<DecisionStatus>;
+  error: SignalOrValue<string | null>;
+  npmStagedPackagesUrl?: SignalOrValue<string | null>;
   /** Identifies the stage for the follow-up CLI command. */
   scan: Pick<
     ScanListItem,
@@ -46,17 +50,21 @@ export function DecisionDialog({
   onSubmit: (decision: ScanDecision, reason: string | null) => boolean | Promise<boolean>;
 }) {
   const reasonDraft = useSignal("");
-  const saving = status === "saving";
+  const isOpen = readSignalProp(open);
+  const saving = readSignalProp(status) === "saving";
+  const message = readSignalProp(error);
+  const stagedUrl =
+    npmStagedPackagesUrl === undefined ? null : readSignalProp(npmStagedPackagesUrl);
 
   useEffect(() => {
-    if (open) {
+    if (isOpen) {
       reasonDraft.value = decisionReason ?? "";
     }
-  }, [open, decisionReason]);
+  }, [isOpen, decisionReason]);
 
   const submit = async (next: ScanDecision) => {
     if (saving) return;
-    const shouldOpenNpm = Boolean(npmStagedPackagesUrl && openNpmAfterDecision.peek());
+    const shouldOpenNpm = Boolean(stagedUrl && openNpmAfterDecision.peek());
     const npmWindow = shouldOpenNpm ? window.open("about:blank", "_blank") : null;
     if (npmWindow) npmWindow.opener = null;
     const trimmed = reasonDraft.value.trim();
@@ -65,8 +73,8 @@ export function DecisionDialog({
       npmWindow?.close();
       return;
     }
-    if (npmWindow && npmStagedPackagesUrl) {
-      npmWindow.location.href = npmStagedPackagesUrl;
+    if (npmWindow && stagedUrl) {
+      npmWindow.location.href = stagedUrl;
       return;
     }
     // Nobody is going to npm's web UI for us: either the reviewer finishes in a
@@ -79,7 +87,7 @@ export function DecisionDialog({
         command,
         packageName: scan.packageName,
         stagedVersion: scan.stagedVersion,
-        npmStagedPackagesUrl: npmStagedPackagesUrl ?? null,
+        npmStagedPackagesUrl: stagedUrl,
       });
     }
   };
@@ -126,7 +134,7 @@ export function DecisionDialog({
         />
       </Field>
 
-      {npmStagedPackagesUrl ? (
+      {stagedUrl ? (
         <label class="flex items-start gap-2 text-[13px] text-ink-muted">
           <input
             type="checkbox"
@@ -152,7 +160,7 @@ export function DecisionDialog({
           {saving ? "Saving…" : "Block publish"}
         </Button>
       </div>
-      {error ? <Alert tone="critical">{error}</Alert> : null}
+      {message ? <Alert tone="critical">{message}</Alert> : null}
     </Dialog>
   );
 }

@@ -1,48 +1,20 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import type { QueueMessage } from "../../server/lib/scan/job";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
+import type { Bindings } from "../../server/types";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
 async function connectValidNpmToken(owner: SeededUser, token: string) {
   const db = createDb(env.DB);
@@ -70,8 +42,8 @@ describe("scans route queue behavior", () => {
     const owner = await seedUser();
     const token = "npm_route_queue_secret_0123456789";
     await connectValidNpmToken(owner, token);
-    const queue = { send: vi.fn(async () => undefined) };
-    const app = buildTestApp(owner);
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
+    const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
     vi.stubGlobal(
       "fetch",
@@ -141,8 +113,8 @@ describe("scans route queue behavior", () => {
   test("POST /scans rejects stage ids the organization token cannot access before persisting", async () => {
     const owner = await seedUser();
     await connectValidNpmToken(owner, "npm_route_denied_secret_0123456789");
-    const queue = { send: vi.fn(async () => undefined) };
-    const app = buildTestApp(owner);
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
+    const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
     vi.stubGlobal(
       "fetch",
@@ -173,8 +145,8 @@ describe("scans route queue behavior", () => {
   test("POST /scans rejects client-controlled scan limits before queueing", async () => {
     const owner = await seedUser();
     await connectValidNpmToken(owner, "npm_route_limit_secret_0123456789");
-    const queue = { send: vi.fn(async () => undefined) };
-    const app = buildTestApp(owner);
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
+    const app = buildTestApp(mountScans, owner);
     const ctx = createExecutionContext();
 
     const res = await app.fetch(

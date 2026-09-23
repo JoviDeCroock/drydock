@@ -1,16 +1,28 @@
+import { readBoundedJson } from "../../platform/bounded-body";
 import { isRecord } from "../../platform/guards";
+import { reliableFetch } from "../../platform/reliable-fetch";
 import type { DownloadResult } from "../../sandbox";
 import type { AdapterBroker, AdapterConnectionRef, AdapterContext } from "../package-adapter";
 
 const MARKETPLACE_EXTENSION_QUERY =
   "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery?api-version=7.2-preview.1";
 const MARKETPLACE_VSIX_ASSET_TYPE = "Microsoft.VisualStudio.Services.VSIXPackage";
-const MARKETPLACE_QUERY_FLAGS = 1 | 2 | 128; // IncludeVersions | IncludeFiles | IncludeAssetUri
+// IncludeVersions | IncludeAssetUri. Not IncludeFiles: the per-version file
+// manifests are most of the response (rust-analyzer's ~16k platform builds
+// measured 33 MB with them, 6 MB without), and the VSIX URL is recoverable
+// from `assetUri` alone.
+const MARKETPLACE_QUERY_FLAGS = 1 | 128;
+const MARKETPLACE_QUERY_TIMEOUT_MS = 15_000;
+// One extension's version list without file manifests; the largest measured
+// (rust-analyzer, 2026-09) is ~6 MB.
+const MAX_MARKETPLACE_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 export interface VscodeMarketplaceVersion {
   version: string;
   lastUpdated: string | null;
-  files: VscodeMarketplaceFile[];
+  /** Base URL of the version's assets; the VSIX is `${assetUri}/${VSIX asset type}`. */
+  assetUri?: string | null;
+  files?: VscodeMarketplaceFile[];
 }
 
 interface VscodeMarketplaceFile {
@@ -29,6 +41,12 @@ interface VscodePublicArtifactRef {
 }
 
 export interface VscodeBroker extends AdapterBroker {
+  /**
+   * The extension's published versions: `[]` when the Marketplace answered and
+   * has none, `null` when the answer could not be read. Either way the review
+   * has no baseline; the split keeps the recorded reason honest, so an outage
+   * or an oversized history is not filed as "never published".
+   */
   fetchExtensionVersions(extensionId: string): Promise<VscodeMarketplaceVersion[] | null>;
   downloadPublicArtifact(
     artifact: VscodePublicArtifactRef,
@@ -42,8 +60,11 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
       const [publisher, extensionName] = extensionId.split(".");
       if (!publisher || !extensionName) return null;
       try {
-        const res = await fetch(MARKETPLACE_EXTENSION_QUERY, {
+        // A query POST is idempotent but `reliableFetch` only retries GET/HEAD
+        // by default; keep the single attempt and use it for the timeout.
+        const res = await reliableFetch(MARKETPLACE_EXTENSION_QUERY, {
           method: "POST",
+          timeoutMs: MARKETPLACE_QUERY_TIMEOUT_MS,
           headers: {
             accept: "application/json;api-version=7.2-preview.1",
             "content-type": "application/json",
@@ -57,10 +78,20 @@ export function createVscodeBroker(ctx: AdapterContext, _ref: AdapterConnectionR
             flags: MARKETPLACE_QUERY_FLAGS,
           }),
         });
-        if (!res.ok) return null;
-        const data = (await res.json()) as unknown;
-        const extension = findMarketplaceExtension(data, publisher, extensionName);
-        return extension?.versions ?? null;
+        if (!res.ok) {
+          await res.body?.cancel().catch(() => undefined);
+          return null;
+        }
+        // Budget the body read from when headers arrived, not from before
+        // reliableFetch started: a retried request must not inherit a deadline
+        // the first attempt already spent.
+        const deadlineMs = Date.now() + MARKETPLACE_QUERY_TIMEOUT_MS;
+        const data = await readBoundedJson(res, {
+          maxBytes: MAX_MARKETPLACE_RESPONSE_BYTES,
+          deadlineMs,
+        });
+        if (!isRecord(data) || !Array.isArray(data.results)) return null;
+        return findMarketplaceExtension(data, publisher, extensionName)?.versions ?? [];
       } catch {
         return null;
       }
@@ -129,11 +160,13 @@ export function pickVscodeBaselineVersion(
 }
 
 function vscodeVsixAssetUrl(version: VscodeMarketplaceVersion): string | null {
-  for (const file of version.files) {
+  for (const file of version.files ?? []) {
     if (file.assetType !== MARKETPLACE_VSIX_ASSET_TYPE || !file.source) continue;
     return isAllowedVscodeArtifactUrl(file.source) ? file.source : null;
   }
-  return null;
+  if (!version.assetUri) return null;
+  const url = `${version.assetUri.replace(/\/+$/, "")}/${MARKETPLACE_VSIX_ASSET_TYPE}`;
+  return isAllowedVscodeArtifactUrl(url) ? url : null;
 }
 
 export function isAllowedVscodeArtifactUrl(url: string): boolean {
@@ -197,6 +230,7 @@ function parseMarketplaceVersion(value: unknown): VscodeMarketplaceVersion | nul
   return {
     version,
     lastUpdated: typeof value.lastUpdated === "string" ? value.lastUpdated : null,
+    assetUri: typeof value.assetUri === "string" ? value.assetUri : null,
     files: Array.isArray(value.files)
       ? value.files.map(parseMarketplaceFile).filter((file) => file !== null)
       : [],

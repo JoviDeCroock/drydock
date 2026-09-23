@@ -7,7 +7,7 @@ import { twoFactor } from "better-auth/plugins";
 import { and, eq, gt } from "drizzle-orm";
 import { type AppDb, createDb } from "../../db/client";
 import { deleteUserAccount, findCoOwnedOrganizations } from "../../db/organizations";
-import { recordProductEvent } from "../platform/analytics";
+import { recordProductEvent } from "../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import * as schema from "../../db/schema";
 import { sendAccountVerificationEmail } from "../notify/account-email";

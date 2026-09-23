@@ -6,6 +6,7 @@ import { downloadPublishedTarball } from "./published-tarball";
 import { fetchPackageMetadataCached } from "./registry-cache";
 import type { RegistryMetadata } from "./registry";
 import { downloadInSandbox, sandboxErrorDetail, type DownloadResult } from "../../sandbox";
+import { ScanPreconditionError } from "../../scan/errors";
 import { fetchStagedPublishDetails, type StagedPublishDetails } from "./staged-publishes";
 import type { AdapterBroker, AdapterContext, AdapterConnectionRef } from "../package-adapter";
 
@@ -110,13 +111,13 @@ async function resolveNpmCredentials(
 ): Promise<ResolvedCredentials> {
   const connection = await getNpmConnection(db, organizationId);
   if (!connection) {
-    throw new Error("Connect an organization npm token before scanning staged publishes.");
+    throw new ScanPreconditionError("npm_connection_missing");
   }
   if (connection.validationStatus !== "valid") {
-    throw new Error("Validate the organization npm token before scanning staged publishes.");
+    throw new ScanPreconditionError("npm_connection_unvalidated");
   }
   if (expectedRegistryUrl && connection.registryUrl !== expectedRegistryUrl) {
-    throw new Error("The organization npm registry changed after this scan was queued.");
+    throw new ScanPreconditionError("npm_connection_changed");
   }
   const token = await decryptNpmToken(env, connection);
   return { token, registry: connection.registryUrl };

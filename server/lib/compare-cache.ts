@@ -1,4 +1,5 @@
 import { sha256Hex } from "./platform/crypto-utils";
+import { readKvJson, writeKvJson } from "./platform/kv-json-cache";
 import { downloadPublishedTarball } from "./ecosystems/npm/published-tarball";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
 
@@ -19,6 +20,8 @@ const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 // the request that observed the miss, and KV writes revalidate its caching
 // tiers.
 const CACHE_READ_COLO_TTL_SECONDS = 60 * 60;
+// Compatibility re-export: the metadata cache has its own module, but four
+// ecosystem callers still import it from here.
 export {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
@@ -34,19 +37,10 @@ export async function computeCompareCacheKey(
   return `${CACHE_PREFIX}${hex}`;
 }
 
-export async function readCompareCache(
-  env: Cloudflare.Env,
-  key: string,
-): Promise<CachedCompare | null> {
-  if (!env.COMPARE_CACHE) return null;
-  try {
-    return await env.COMPARE_CACHE.get<CachedCompare>(key, {
-      type: "json",
-      cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
-    });
-  } catch {
-    return null;
-  }
+export function readCompareCache(env: Cloudflare.Env, key: string): Promise<CachedCompare | null> {
+  return readKvJson<CachedCompare>(env.COMPARE_CACHE, key, {
+    cacheTtl: CACHE_READ_COLO_TTL_SECONDS,
+  });
 }
 
 async function writeCompareCache(
@@ -54,12 +48,8 @@ async function writeCompareCache(
   ctx: ExecutionContext,
   key: string,
   payload: CachedCompare,
-) {
-  if (!env.COMPARE_CACHE) return;
-  const write = env.COMPARE_CACHE.put(key, JSON.stringify(payload), {
-    expirationTtl: CACHE_TTL_SECONDS,
-  }).catch(() => undefined);
-  ctx.waitUntil(write);
+): Promise<void> {
+  writeKvJson(env.COMPARE_CACHE, ctx, key, payload, { expirationTtl: CACHE_TTL_SECONDS });
 }
 
 export async function loadCompare(

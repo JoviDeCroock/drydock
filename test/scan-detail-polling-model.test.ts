@@ -6,6 +6,7 @@ import {
   ScanDetailModel,
   type PersistedScanDetail,
 } from "../src/models/scan";
+import { jsonResponse } from "./helpers/fetch-stub";
 
 function runningDetail(): PersistedScanDetail {
   return {
@@ -24,13 +25,6 @@ function runningDetail(): PersistedScanDetail {
     findings: [],
     events: [],
   };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
 }
 
 function failedResponse(): Response {

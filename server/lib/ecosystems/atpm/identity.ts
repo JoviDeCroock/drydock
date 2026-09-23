@@ -1,3 +1,4 @@
+import { readBoundedJson, readBoundedText } from "../../platform/bounded-body";
 import { reliableFetch } from "../../platform/reliable-fetch";
 import { PublicDiffError } from "../../public-diff/error";
 
@@ -417,7 +418,11 @@ async function resolveHandleViaDns(handle: string): Promise<DnsHandleResolution>
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
     if (!response.ok) return { status: "not-found" };
-    payload = (await readBoundedJson<DohAnswer>(response)) ?? {};
+    payload =
+      (await readBoundedJson<DohAnswer>(response, {
+        maxBytes: MAX_IDENTITY_DOCUMENT_BYTES,
+        deadlineMs: Date.now() + HANDLE_RESOLUTION_TIMEOUT_MS,
+      })) ?? {};
   } catch {
     // A DNS failure is not a resolution failure — the well-known method is an
     // equally valid way to prove the same handle.
@@ -451,7 +456,10 @@ async function resolveHandleViaWellKnown(handle: string): Promise<string | null>
       timeoutMs: HANDLE_RESOLUTION_TIMEOUT_MS,
     });
     if (!response.ok) return null;
-    const body = await readBoundedText(response, 2048);
+    const body = await readBoundedText(response, {
+      maxBytes: 2048,
+      deadlineMs: Date.now() + HANDLE_RESOLUTION_TIMEOUT_MS,
+    });
     return body === null ? null : normalizeDid(body.trim());
   } catch {
     return null;
@@ -484,7 +492,10 @@ async function fetchDidDocument(did: string): Promise<DidDocument> {
   }
   if (!response.ok) throw new PublicDiffError("DID document fetch failed", 502);
 
-  const document = await readBoundedJson<DidDocument>(response);
+  const document = await readBoundedJson<DidDocument>(response, {
+    maxBytes: MAX_IDENTITY_DOCUMENT_BYTES,
+    deadlineMs: Date.now() + DID_DOCUMENT_TIMEOUT_MS,
+  });
   if (!document || typeof document !== "object") {
     throw new PublicDiffError("DID document is not valid JSON", 502);
   }
@@ -548,60 +559,4 @@ function assertAtprotoPdsEndpoint(value: string): string {
     );
   }
   return url.origin;
-}
-
-/**
- * Read a response body under a hard byte ceiling. `response.json()` would let a
- * publisher-controlled endpoint decide how much memory the parent Worker spends
- * on what is supposed to be a few kilobytes of identity metadata.
- */
-async function readBoundedText(
-  response: Response,
-  maxBytes = MAX_IDENTITY_DOCUMENT_BYTES,
-): Promise<string | null> {
-  const declared = Number(response.headers.get("content-length") || "0");
-  if (declared > maxBytes) {
-    await response.body?.cancel();
-    return null;
-  }
-  if (!response.body) return null;
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } catch {
-    return null;
-  }
-
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(merged);
-}
-
-export async function readBoundedJson<T>(
-  response: Response,
-  maxBytes = MAX_IDENTITY_DOCUMENT_BYTES,
-): Promise<T | null> {
-  const text = await readBoundedText(response, maxBytes);
-  if (text === null) return null;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { fetchPublishedTarballStream } from "../../server/lib/ecosystems/npm/published-tarball";
+import { coloCache } from "../../server/lib/platform/colo-cache";
 
 const PUBLIC_REGISTRY = "https://registry.npmjs.org";
 const CUSTOM_REGISTRY = "https://npm.internal.example.com";
@@ -86,7 +87,7 @@ describe("published tarball colo cache", () => {
 
   test("token requests on custom registries never read or write the cache", async () => {
     const url = `${CUSTOM_REGISTRY}/pkg-c/-/pkg-c-1.0.0.tgz`;
-    await caches.default.put(
+    await coloCache().put(
       url,
       new Response("poisoned-bytes", {
         status: 200,
@@ -147,6 +148,6 @@ describe("published tarball colo cache", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(pending).toHaveLength(0);
-    expect(await caches.default.match(url)).toBeUndefined();
+    expect(await coloCache().match(url)).toBeUndefined();
   });
 });

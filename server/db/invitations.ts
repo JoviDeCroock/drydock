@@ -1,5 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { normalizeRole, type OrganizationRole } from "../lib/auth/roles";
+import type { InvitationStatus } from "./enums";
 import type { AppDb } from "./client";
 import { organizationInvitations, organizationMembers, organizations, user } from "./schema";
 
@@ -76,7 +77,7 @@ export async function listOrganizationMembers(
         userId: row.userId,
         email: row.email ?? null,
         name: row.name ?? null,
-        role: isOwner ? ("owner" as OrganizationRole) : normalizeRole(row.role),
+        role: isOwner ? "owner" : normalizeRole(row.role),
         isOwner,
         joinedAt: row.joinedAt,
       };
@@ -130,7 +131,7 @@ export interface InvitationRecord {
   organizationId: string;
   email: string;
   role: OrganizationRole;
-  status: string;
+  status: InvitationStatus;
   invitedByUserId: string | null;
   acceptedByUserId: string | null;
   acceptedAt: Date | null;
