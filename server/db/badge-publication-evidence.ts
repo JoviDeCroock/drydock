@@ -25,15 +25,17 @@ const DISCREPANCY_STATUSES = [
 
 // Newest observations first; newer releases are observed later, so this is
 // the window a newer release lives in. Bounded because it runs on every badge
-// cache miss for a package that has a review to quote.
-const OBSERVATION_WINDOW = 50;
+// cache miss for a package that has a review to quote (at most once per colo,
+// tag and cache lifetime). Sized so that pushing a superseding release out of
+// it takes hundreds of further publications, each one raising its own alert.
+export const OBSERVATION_WINDOW = 500;
 
 const SEMVER_RE = /^(\d+)\.\d+\.\d+(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/;
 
 /**
  * Whether an observed version belongs to the release line the badge quotes,
- * inferred from the pick's tag and version shape. Only while no observed
- * version holds the badge's tag (see `supersedesQuote`):
+ * inferred from the pick's tag and version shape. It always applies;
+ * recorded dist-tags can only add to it (see `supersedesQuote`):
  *
  * - `latest` moves to stable releases, so every newer stable version is on it,
  *   and newer prereleases too when the pick itself is a prerelease.
@@ -55,8 +57,9 @@ function onQuotedLine(version: string, pickVersion: string, tag: string): boolea
   return channel(observedPre) === channel(pickPre);
 }
 
-// Unapproved versions npm pointed the badge's tag at, per the monitor's latest
-// check. A packument's tags are capped (see the monitor), so this bounds the read.
+// Unapproved versions recorded holding the badge's tag. A tag has one holder
+// per check, but each observation keeps the tags of its own latest check, so
+// earlier holders can linger; newest first, bounded like the window above.
 const TAGGED_WINDOW = 100;
 
 /**

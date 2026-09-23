@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
+import { OBSERVATION_WINDOW } from "../../server/db/badge-publication-evidence";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
@@ -2565,6 +2566,40 @@ async function recordAlertOnly(
   });
 }
 
+// Many observations at once, each first seen after the last, under the
+// organization's existing watch.
+async function recordObservations(
+  organizationId: string,
+  packageName: string,
+  versions: string[],
+  status: ObservationStatus,
+): Promise<void> {
+  const db = createDb(env.DB);
+  const [watch] = await db
+    .select({ id: schema.publicationWatches.id })
+    .from(schema.publicationWatches)
+    .where(eq(schema.publicationWatches.organizationId, organizationId));
+  if (!watch) throw new Error("recordObservations needs an existing watch");
+  const start = Date.now() + 1_000;
+  const rows = versions.map((version, index) => {
+    const seenAt = new Date(start + index);
+    return {
+      id: crypto.randomUUID(),
+      watchId: watch.id,
+      organizationId,
+      version,
+      publishedAt: seenAt,
+      firstSeenAt: seenAt,
+      checkedAt: seenAt,
+      status,
+    };
+  });
+  // D1 caps bound parameters per statement, so insert in slices.
+  for (let index = 0; index < rows.length; index += 10) {
+    await db.insert(schema.publicationObservations).values(rows.slice(index, index + 10));
+  }
+}
+
 async function seedApprovedDefaultRelease(
   owner: SeededUser,
   app: TestApp,
@@ -2922,6 +2957,62 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       distTags: ["latest"],
     });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
+  });
+
+  test("`latest` moved to an older approved release leaves the quote approved", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // npm installs 2.9.9, which this organization approved: nothing unapproved
+    // stands where the quote did.
+    await recordObservation(owner.organizationId, packageName, "2.9.9", "approved_match", {
+      distTags: ["latest"],
+    });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("only the badge's own tag places a release on its line", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    // A prerelease under `next` is neither on `latest`'s inferred line nor its
+    // tag's holder.
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.2-0",
+      "published_without_approval",
+      { distTags: ["next"] },
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+  });
+
+  test("a tag holder counts however many releases were observed after it", async () => {
+    const owner = await seedUser();
+    const app = publicApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    await seedApprovedDefaultRelease(owner, app, packageName, "3.0.0");
+
+    await recordObservation(
+      owner.organizationId,
+      packageName,
+      "3.0.1-0",
+      "published_without_approval",
+      { distTags: ["latest"] },
+    );
+    // Off-line releases observed later fill the observation window; the
+    // holder is read on its own, so it still stands where the quote did.
+    await recordObservations(
+      owner.organizationId,
+      packageName,
+      Array.from({ length: OBSERVATION_WINDOW }, (_, index) => `0.0.${index}`),
+      "published_without_approval",
+    );
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1-0 not reviewed");
   });
 
   test("a missing tag is never read as off the line", async () => {
