@@ -140,6 +140,7 @@ function PackageReleasesView({
                 </div>
               )}
             </Show>
+            {ecosystem === "npm" ? <PackagePublicationSection packageName={packageName} /> : null}
           </>
         )}
       </Show>

@@ -8,6 +8,8 @@ import {
 } from "./schema";
 
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
+/** Watches per organization; enrollment SQL enforces the same bound. */
+const PUBLICATION_WATCH_LIMIT = 20;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
 
@@ -20,6 +22,67 @@ export function listPublicationWatches(db: AppDb, organizationId: string) {
     .where(eq(publicationWatches.organizationId, organizationId))
     .orderBy(asc(publicationWatches.createdAt));
 }
+export async function getPublicationWatchByPackage(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+) {
+  const [watch] = await db
+    .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })
+    .from(publicationWatches)
+    .where(
+      and(
+        eq(publicationWatches.organizationId, organizationId),
+        eq(publicationWatches.packageName, packageName),
+      ),
+    )
+    .limit(1);
+  return watch ?? null;
+}
+
+/**
+ * Why a package is or is not watched, from the organization's own enrollment
+ * evidence. `pending` enrolls at the next reconciliation; `deferred` waits for
+ * a free slot under the watch limit; `suggested` is a workflow-gate package
+ * whose public visibility nothing has confirmed; `stopped` is a persisted
+ * opt-out; `not_enrolled` means no public release was seen here at all.
+ */
+export type PublicationEnrollment =
+  | { state: "watched" }
+  | { state: "stopped"; stoppedAt: Date }
+  | { state: "suggested" }
+  | { state: "pending" }
+  | { state: "deferred" }
+  | { state: "not_enrolled" };
+
+export async function getPublicationEnrollment(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+): Promise<PublicationEnrollment> {
+  const [candidate] = await db
+    .select({
+      source: publicationWatchCandidates.source,
+      stoppedAt: publicationWatchCandidates.stoppedAt,
+    })
+    .from(publicationWatchCandidates)
+    .where(
+      and(
+        eq(publicationWatchCandidates.organizationId, organizationId),
+        eq(publicationWatchCandidates.packageName, packageName),
+      ),
+    )
+    .limit(1);
+  if (!candidate) return { state: "not_enrolled" };
+  if (candidate.stoppedAt) return { state: "stopped", stoppedAt: candidate.stoppedAt };
+  if (candidate.source === "workflow_gate") return { state: "suggested" };
+  const [{ watches }] = await db
+    .select({ watches: sql<number>`count(*)` })
+    .from(publicationWatches)
+    .where(eq(publicationWatches.organizationId, organizationId));
+  return { state: watches >= PUBLICATION_WATCH_LIMIT ? "deferred" : "pending" };
+}
+
 export async function getPublicationWatch(db: AppDb, organizationId: string, id: string) {
   const [watch] = await db
     .select({ ...getTableColumns(publicationWatches), unresolvedAlertCount })

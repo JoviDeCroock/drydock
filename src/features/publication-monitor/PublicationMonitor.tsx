@@ -7,52 +7,10 @@ import { Card } from "../../components/Card";
 import { Input } from "../../components/Input";
 import { Menu, MenuItem } from "../../components/Menu";
 import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
-import { formatDateTime } from "../../lib/format";
-import {
-  PublicationWatchesModel,
-  type PublicationObservation,
-  type PublicationWatch,
-} from "../../models/publication-watches";
-
-const statusLabels: Record<PublicationObservation["status"], string> = {
-  approved_match: "Approved bytes published",
-  published_without_approval: "Published without prior approval",
-  published_despite_rejection: "Published despite rejection",
-  artifact_mismatch: "Published different bytes",
-  unknown: "Evidence unknown",
-};
-
-const checkErrors: Record<string, string> = {
-  registry_evidence_unavailable:
-    "Registry evidence could not be retrieved. Coverage is unknown until a successful check.",
-  pending_release_backlog:
-    "More releases are waiting to be checked. Existing observations are retained; coverage is incomplete.",
-  invalid_version_metadata:
-    "Some registry versions have invalid metadata and could not be checked. Coverage is incomplete.",
-  artifact_too_large:
-    "A published tarball exceeds the 16 MiB hashing limit, so that release cannot be compared with its reviews.",
-  artifact_timeout:
-    "A published tarball did not download in time. It is retried on the next check; coverage is incomplete.",
-  artifact_unavailable:
-    "A published tarball could not be downloaded. It is retried on the next check; coverage is incomplete.",
-  artifact_identity_invalid:
-    "A release's registry metadata does not name a valid tarball on npm, so its bytes cannot be compared.",
-  monitoring_disabled: "Publication monitoring is switched off for this organization.",
-  check_failed: "The latest check failed. It is retried on the next scheduled check.",
-};
-
-const sourceLabels: Record<PublicationWatch["source"], string> = {
-  manual: "added by hand",
-  staged_discovery: "from staged discovery",
-  published_history: "from published review history",
-};
-
-function watchMetaLine(watch: PublicationWatch): string {
-  const checked = watch.lastCheckedAt
-    ? `checked ${formatDateTime(watch.lastCheckedAt)}`
-    : "not checked yet";
-  return `${sourceLabels[watch.source]} · watching since ${formatDateTime(watch.createdAt)} · ${checked}`;
-}
+import { packageReleasesPath } from "../../lib/package-releases-path";
+import { PublicationWatchesModel } from "../../models/publication-watches";
+import { watchMetaLine, watchProblemMessage } from "./copy";
+import { ObservationList } from "./ObservationList";
 
 // Same header/row anatomy as the dashboard's Recent reviews card, so the two
 // lists read as one surface rather than a second feature bolted underneath.
@@ -188,9 +146,12 @@ export function PublicationMonitor({
               <li key={watch.id} class="border-b border-border last:border-b-0">
                 <div class="px-5 py-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 transition-colors duration-150 hover:bg-surface-2">
                   <div class="flex min-w-0 flex-col gap-1.5">
-                    <span class="min-w-0 truncate text-[14px] font-medium">
+                    <a
+                      href={packageReleasesPath(watch.packageName)}
+                      class="min-w-0 truncate text-[14px] font-medium text-ink"
+                    >
                       {watch.packageName}
-                    </span>
+                    </a>
                     <p class="m-0 font-mono text-[11px] text-ink-subtle">{watchMetaLine(watch)}</p>
                     {watch.unresolvedAlertCount > 0 ? (
                       <div>
@@ -244,10 +205,7 @@ export function PublicationMonitor({
                 </div>
                 {watch.lastError ? (
                   <div class="px-5 pb-3.5">
-                    <Alert tone="warn">
-                      {checkErrors[watch.lastError] ??
-                        "Latest check incomplete. Coverage is unknown until a successful check."}
-                    </Alert>
+                    <Alert tone="warn">{watchProblemMessage(watch.lastError)}</Alert>
                   </div>
                 ) : null}
                 {expanded ? (
@@ -263,71 +221,5 @@ export function PublicationMonitor({
         </ul>
       </div>
     </Card>
-  );
-}
-
-function observationTone(status: PublicationObservation["status"]) {
-  if (status === "approved_match") return "ok";
-  if (status === "unknown") return "neutral";
-  return "critical";
-}
-
-function ObservationList({
-  observations,
-  busy,
-  acknowledge,
-}: {
-  observations: PublicationObservation[];
-  busy: ReadonlySignal<boolean>;
-  acknowledge: (observationId: string) => void;
-}) {
-  if (observations.length === 0) {
-    return (
-      <div class="border-t border-border px-5 py-3.5">
-        <EmptyLine>No releases since enrollment. Earlier releases are not checked.</EmptyLine>
-      </div>
-    );
-  }
-  return (
-    <ul class="list-none m-0 border-t border-border px-5 py-3.5 flex flex-col gap-2">
-      {observations.map((observation) => (
-        <li key={observation.version} class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span class="font-mono text-[13px] font-medium break-all">{observation.version}</span>
-          <Badge tone={observationTone(observation.status)}>
-            {statusLabels[observation.status]}
-          </Badge>
-          <span class="font-mono text-[11px] text-ink-subtle">
-            {observation.publishedAt
-              ? `published ${formatDateTime(observation.publishedAt)}`
-              : "publication time unknown"}
-          </span>
-          {observation.acknowledgedAt ? (
-            <span class="font-mono text-[11px] text-ink-subtle">
-              Acknowledged {formatDateTime(observation.acknowledgedAt)}
-            </span>
-          ) : observation.status === "published_without_approval" ||
-            observation.status === "published_despite_rejection" ||
-            observation.status === "artifact_mismatch" ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => acknowledge(observation.id)}
-              title="Mark this publication alert as seen. Its evidence and approval status stay unchanged."
-            >
-              Acknowledge
-            </Button>
-          ) : null}
-          {observation.scanId ? (
-            <a
-              href={`/dashboard/scans/${encodeURIComponent(observation.scanId)}`}
-              class="text-[13px]"
-            >
-              Open review
-            </a>
-          ) : null}
-        </li>
-      ))}
-    </ul>
   );
 }

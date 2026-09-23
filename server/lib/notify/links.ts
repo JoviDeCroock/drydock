@@ -4,6 +4,8 @@
  * and the caller drops the line rather than emitting a relative or broken URL
  * into an email.
  */
+import { packageReleasesPath } from "../../../src/lib/package-releases-path";
+
 function appUrl(
   env: Cloudflare.Env,
   path: string,
@@ -30,8 +32,13 @@ export function scanUrl(
   return appUrl(env, `/dashboard/scans/${encodeURIComponent(scanId)}`, { org: organizationId });
 }
 
-export function dashboardUrl(env: Cloudflare.Env, organizationId: string): string | null {
-  return appUrl(env, "/dashboard", { org: organizationId });
+/** One package's page (review history and publication monitoring) in one organization. */
+export function packageUrl(
+  env: Cloudflare.Env,
+  packageName: string,
+  organizationId: string,
+): string | null {
+  return appUrl(env, packageReleasesPath(packageName), { org: organizationId });
 }
 
 export function settingsUrl(env: Cloudflare.Env, organizationId?: string): string | null {

@@ -132,7 +132,7 @@ app.get("/api", (c) =>
         "GET /api/v1/packages/:name/releases[?ecosystem=npm|pypi|vscode|atpm&cursor&limit] (one organization's reviews of one package, newest first; scoped names keep their slash: /@scope/name/releases)",
       stagedPublishes: "POST /api/v1/staged-publishes/scan",
       publicationWatches:
-        "GET/POST /api/v1/publication-watches; GET/DELETE /api/v1/publication-watches/:id; POST /api/v1/publication-watches/:id/check; POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge (organization-scoped public npm publication monitoring)",
+        "GET/POST /api/v1/publication-watches; GET/DELETE /api/v1/publication-watches/:id; GET /api/v1/publication-watches/packages/:name; POST /api/v1/publication-watches/:id/check; POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge (organization-scoped public npm publication monitoring)",
       npmConnection: "GET/POST/DELETE /api/v1/npm-connection; POST /api/v1/npm-connection/validate",
       organizations:
         "GET /api/v1/organizations; POST /api/v1/organizations; PATCH /api/v1/organizations/:id",

@@ -1,11 +1,14 @@
 import { env } from "cloudflare:test";
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { and, eq } from "drizzle-orm";
 import { addOrganizationMember } from "../../server/db/invitations";
 import { savePublicationObservation } from "../../server/db/publication-alerts";
-import { createPublicationWatch } from "../../server/db/publication-watches";
-import { scanEvents, scans } from "../../server/db/schema";
+import {
+  createPublicationWatch,
+  deletePublicationWatch,
+} from "../../server/db/publication-watches";
+import { publicationWatchCandidates, scanEvents, scans } from "../../server/db/schema";
 import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
 import { buildTestApp, call, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
@@ -235,4 +238,111 @@ test("only integration managers can stop a watch; enrolling and stopping are aud
     ["publication_watch.started", member.userId, { packageName: "audited-package" }],
     ["publication_watch.stopped", admin.userId, { packageName: "audited-package" }],
   ]);
+});
+
+describe("one package's monitoring for the package page", () => {
+  const path = (name: string) => `/packages/${name}`;
+
+  test("returns the organization's own watch and observations, never another's", async () => {
+    const owner = await seedOwner();
+    const outsider = await seedOwner();
+    const db = createDb(env.DB);
+    const watch = await createPublicationWatch(db, owner.organizationId, "@scope/watched");
+    const now = new Date();
+    await savePublicationObservation(
+      db,
+      {
+        id: crypto.randomUUID(),
+        watchId: watch.id,
+        organizationId: owner.organizationId,
+        version: "1.0.0",
+        publishedAt: now,
+        firstSeenAt: now,
+        checkedAt: now,
+        status: "unknown",
+        reason: "review_pending",
+      },
+      watch.packageName,
+    );
+    const mine = await request(owner, "GET", path("@scope/watched"));
+    expect(mine.status).toBe(200);
+    expect(mine.headers.get("cache-control")).toBe("private, no-store");
+    expect(await mine.json()).toMatchObject({
+      packageName: "@scope/watched",
+      watch: { id: watch.id, unresolvedAlertCount: 0 },
+      observations: [{ version: "1.0.0", status: "unknown", reason: "review_pending" }],
+      enrollment: { state: "watched" },
+      viewer: { canStop: true },
+    });
+    // The name is a filter over the caller's organization, and an explicit
+    // selector for an organization they do not belong to grants nothing.
+    for (const selector of [undefined, owner.organizationId]) {
+      const theirs = await request(outsider, "GET", path("@scope/watched"), undefined, selector);
+      expect(await theirs.json()).toEqual({
+        packageName: "@scope/watched",
+        watch: null,
+        observations: [],
+        enrollment: { state: "not_enrolled" },
+        viewer: { canStop: true },
+      });
+    }
+  });
+
+  test("explains why a package is not watched", async () => {
+    const owner = await seedOwner();
+    const db = createDb(env.DB);
+    const stopped = await createPublicationWatch(db, owner.organizationId, "stopped-package");
+    await deletePublicationWatch(db, owner.organizationId, stopped.id);
+    const candidate = (packageName: string, source: "workflow_gate" | "staged_discovery") => ({
+      id: crypto.randomUUID(),
+      organizationId: owner.organizationId,
+      packageName,
+      source,
+      createdAt: new Date(),
+      stoppedAt: null,
+    });
+    await db
+      .insert(publicationWatchCandidates)
+      .values([
+        candidate("gate-package", "workflow_gate"),
+        candidate("discovered-package", "staged_discovery"),
+      ]);
+    const state = async (name: string) =>
+      (await (await request(owner, "GET", path(name))).json<{ enrollment: unknown }>()).enrollment;
+    expect(await state("stopped-package")).toEqual({
+      state: "stopped",
+      stoppedAt: expect.any(String),
+    });
+    expect(await state("gate-package")).toEqual({ state: "suggested" });
+    expect(await state("discovered-package")).toEqual({ state: "pending" });
+    expect(await state("never-seen")).toEqual({ state: "not_enrolled" });
+    for (let index = 0; index < 20; index++) {
+      await createPublicationWatch(db, owner.organizationId, `filler-${index}`);
+    }
+    expect(await state("discovered-package")).toEqual({ state: "deferred" });
+  });
+
+  test("tells a member they cannot stop the watch and rejects an invalid name", async () => {
+    const owner = await seedOwner();
+    const member = await seedUser({ name: "Member" });
+    const db = createDb(env.DB);
+    await addOrganizationMember(db, {
+      organizationId: owner.organizationId,
+      userId: member.userId,
+      role: "member",
+    });
+    await createPublicationWatch(db, owner.organizationId, "shared-package");
+    const response = await request(
+      member,
+      "GET",
+      path("shared-package"),
+      undefined,
+      owner.organizationId,
+    );
+    expect(await response.json()).toMatchObject({
+      watch: { packageName: "shared-package" },
+      viewer: { canStop: false },
+    });
+    expect((await request(owner, "GET", path("Not A Package"))).status).toBe(400);
+  });
 });

@@ -36,7 +36,8 @@ the primitive, which makes the primitive the subscriber rather than the page.
 
 ## Shared review surface
 
-The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`.
+The dashboard also includes `src/features/publication-monitor/PublicationMonitor.tsx`;
+each watched package name links to its package release view.
 Its signal model in `src/models/publication-watches.ts` refreshes automatic enrollment
 after review discovery, supports manual enrollment and gate suggestions, displays
 watch origins, capacity deferrals and unacknowledged alert counts, supports audited

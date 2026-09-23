@@ -1,0 +1,154 @@
+import { useComputed, useModel } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
+import { Alert } from "../../components/Alert";
+import { Badge } from "../../components/Badge";
+import { Button } from "../../components/Button";
+import { Card } from "../../components/Card";
+import { EmptyLine, LoadingLine, SectionLabel } from "../../components/Typography";
+import { formatDateTime, pluralize } from "../../lib/format";
+import {
+  PackagePublicationModel,
+  type PackagePublication,
+  type PublicationEnrollment,
+} from "../../models/package-publication";
+import { watchMetaLine, watchProblemMessage } from "./copy";
+import { ObservationList } from "./ObservationList";
+
+type Model = ReturnType<typeof useModel<typeof PackagePublicationModel.prototype>>;
+
+function notWatchedReason(packageName: string, enrollment: PublicationEnrollment): string {
+  switch (enrollment.state) {
+    case "stopped":
+      return `Not watched. Monitoring was stopped on ${formatDateTime(enrollment.stoppedAt)}, so automatic enrollment will not restore it.`;
+    case "suggested":
+      return "Not watched. A workflow gate reviewed it, but nothing has confirmed it is public on npm.";
+    case "pending":
+      return "Not watched yet. It enrolls automatically the next time the monitor reconciles.";
+    case "deferred":
+      return "Not watched. Automatic enrollment is waiting for a free slot under the 20-package limit.";
+    default:
+      return `Not watched. No public npm release of ${packageName} has been reviewed in this organization.`;
+  }
+}
+
+/**
+ * The package page's view of the publication monitor for one npm package:
+ * the same watch, observations and actions as the dashboard card, scoped to
+ * this package. Self-contained so the page mounts it with one line.
+ */
+export function PackagePublicationSection({ packageName }: { packageName: string }) {
+  const model = useModel(() => new PackagePublicationModel(packageName));
+  return (
+    <section class="flex flex-col gap-3" aria-label="Publication monitor">
+      <SectionLabel as="h2" aside={<MonitorAside model={model} />}>
+        publication monitor
+      </SectionLabel>
+      <Show when={model.error}>{(message) => <Alert tone="critical">{message}</Alert>}</Show>
+      <Card padding="none" class="overflow-hidden">
+        <Show
+          when={model.publication}
+          fallback={
+            <div class="p-5">
+              <LoadingLine>Loading publication monitoring</LoadingLine>
+            </div>
+          }
+        >
+          {(publication) => <PublicationBody model={model} publication={publication} />}
+        </Show>
+      </Card>
+    </section>
+  );
+}
+
+function MonitorAside({ model }: { model: Model }) {
+  return (
+    <Show<PackagePublication | null> when={model.publication}>
+      {(publication) =>
+        publication.watch ? (
+          publication.watch.unresolvedAlertCount > 0 ? (
+            <Badge tone="critical">
+              {publication.watch.unresolvedAlertCount} unacknowledged{" "}
+              {pluralize("alert", publication.watch.unresolvedAlertCount)}
+            </Badge>
+          ) : (
+            <Badge tone="ok">watching</Badge>
+          )
+        ) : (
+          <Badge tone="neutral">not watched</Badge>
+        )
+      }
+    </Show>
+  );
+}
+
+function PublicationBody({
+  model,
+  publication,
+}: {
+  model: Model;
+  publication: PackagePublication;
+}) {
+  // Stopping hides alert history and opts the package out, so the server
+  // allows it only to integration managers; the button mirrors that.
+  const stopDisabled = useComputed(() => model.busy.value || !model.canStop.value);
+  const { watch } = publication;
+  if (!watch) {
+    return (
+      <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+        <EmptyLine>{notWatchedReason(publication.packageName, publication.enrollment)}</EmptyLine>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={model.busy}
+          onClick={() => void model.start()}
+          title="Compare this package's public npm releases with this organization's approvals"
+        >
+          Watch package
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div class="px-5 py-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div class="flex min-w-0 flex-col gap-1.5">
+          <p class="m-0 font-mono text-[11px] text-ink-subtle">{watchMetaLine(watch)}</p>
+          {publication.viewer.canStop ? null : (
+            <p class="m-0 text-[13px] text-ink-muted">
+              Only organization owners and admins can stop watching a package.
+            </p>
+          )}
+        </div>
+        <div class="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={model.busy}
+            onClick={() => void model.check()}
+            title="Fetch the latest releases from npm and compare them with recorded approvals"
+          >
+            Check npm
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={stopDisabled}
+            onClick={() => void model.stop()}
+          >
+            Stop watching
+          </Button>
+        </div>
+      </div>
+      {watch.lastError ? (
+        <div class="px-5 pb-3.5">
+          <Alert tone="warn">{watchProblemMessage(watch.lastError)}</Alert>
+        </div>
+      ) : null}
+      <ObservationList
+        observations={publication.observations}
+        busy={model.busy}
+        acknowledge={(observationId) => void model.acknowledge(observationId)}
+      />
+    </>
+  );
+}

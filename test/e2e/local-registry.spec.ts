@@ -370,13 +370,33 @@ test("publication monitor observes an unreviewed public release", async ({ brows
       path: path.join(artifactsDir, "publication-monitor-unacknowledged.png"),
       fullPage: true,
     });
-    await monitor.getByRole("button", { name: "Acknowledge", exact: true }).click();
+    // The card links the package to its page, which shows the same watch and
+    // alert and acknowledges it there.
+    await publicationRow
+      .getByRole("link", { name: "@drydock/e2e-publication", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/dashboard\/packages\/@drydock\/e2e-publication/);
+    const packageMonitor = page.getByRole("region", { name: "Publication monitor" });
+    await expect(packageMonitor.getByText("1 unacknowledged alert", { exact: true })).toBeVisible();
+    await expect(packageMonitor.getByText(/added by hand · watching since/)).toBeVisible();
+    await expect(
+      packageMonitor.getByText("Published without prior approval", { exact: true }),
+    ).toBeVisible();
+    await packageMonitor.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(artifactsDir, "publication-monitor-package-page.png"),
+      fullPage: true,
+    });
+    await packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }).click();
+    await expect(packageMonitor.getByText(/^Acknowledged /)).toBeVisible();
+    await expect(packageMonitor.getByText("watching", { exact: true })).toBeVisible();
+    await expect(
+      packageMonitor.getByRole("button", { name: "Acknowledge", exact: true }),
+    ).toHaveCount(0);
+    await page.goto("/dashboard");
     await expect(publicationRow.getByText("1 unacknowledged alert", { exact: true })).toHaveCount(
       0,
     );
-    await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
-    await expect(monitor.getByRole("button", { name: "Acknowledge", exact: true })).toHaveCount(0);
-    await page.reload();
     await publicationRow.getByRole("button", { name: "Check npm", exact: true }).click();
     await expect(monitor.getByText(/^Acknowledged /)).toBeVisible();
     await expect(
@@ -396,9 +416,12 @@ test("publication monitor observes an unreviewed public release", async ({ brows
     const publicRequests = (await readJournal()).filter((entry) =>
       /^\/@drydock\/e2e-publication(?:$|\/-\/)/.test(decodeURIComponent(entry.path)),
     );
+    // A release with no Drydock record is decided from metadata alone: its
+    // bytes are never downloaded, so no padding can hide it.
+    expect(publicRequests.length).toBeGreaterThan(0);
     expect(
       publicRequests.some((entry) => entry.path.includes("/-/drydock-e2e-publication-1.0.0.tgz")),
-    ).toBe(true);
+    ).toBe(false);
     expect(publicRequests.every((entry) => entry.authorization === "absent")).toBe(true);
   } finally {
     await context.close();

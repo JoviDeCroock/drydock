@@ -704,7 +704,9 @@ describe("notifyPublicationDiscrepancy", () => {
         expect(message.subject).toBe(`${title} — @acme/package@2.0.0`);
         expect(message.text).toContain(evidence);
         expect(message.text).toContain("Organization: Acme Corp");
-        expect(message.text).toContain("https://drydock.test/dashboard?org=org_1");
+        expect(message.text).toContain(
+          "https://drydock.test/dashboard/packages/@acme/package?org=org_1",
+        );
       }
       expect(slackMock.postSlackMessage).toHaveBeenCalledTimes(1);
       expect(slackMock.renderSlackMessage).toHaveBeenCalledWith(
@@ -712,7 +714,7 @@ describe("notifyPublicationDiscrepancy", () => {
           title,
           packageLabel: "@acme/package@2.0.0",
           statusLine: expect.stringContaining(evidence),
-          dashboardUrl: "https://drydock.test/dashboard?org=org_1",
+          dashboardUrl: "https://drydock.test/dashboard/packages/@acme/package?org=org_1",
         }),
       );
       expect(dbMock.recordScanEvent).toHaveBeenCalledTimes(3);

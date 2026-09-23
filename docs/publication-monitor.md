@@ -38,7 +38,9 @@ window. Both are recorded in the audit log.
 The existing 15-minute cron checks watches independently of staged discovery.
 **Check npm** runs a bounded check on demand. The dashboard displays the latest
 100 observed versions for the selected watch (unacknowledged alerts first, then newest), along with the enrollment time,
-last check and any coverage problem. Checks drain a backlog in batches, so one
+last check and any coverage problem; each package links to its package page,
+which shows the same watch, observations and controls for that package and says
+why an unwatched package is not watched. Checks drain a backlog in batches, so one
 check is not a promise that every pending version has been processed.
 
 | Observation                      | Evidence                                                                                                                            |
@@ -143,6 +145,10 @@ All endpoints require a Better Auth session and active-organization membership:
   with per-watch `unresolvedAlertCount`, plus `autoEnrollment.deferred` and opt-in `autoEnrollment.suggestions`.
 - `POST /api/v1/publication-watches { "packageName": "@scope/package" }` enrolls.
 - `GET /api/v1/publication-watches/:id` returns the watch and latest observations.
+- `GET /api/v1/publication-watches/packages/:name` returns one package's watch (or
+  `null`), its observations, why it is not watched when it is not, and whether the
+  caller may stop it. It is read-only and never reconciles enrollment; the package
+  page renders it.
 - `POST /api/v1/publication-watches/:id/check` checks a bounded batch and returns
   current observations. Repeated checks are rate-limited.
 - `POST /api/v1/publication-watches/:id/observations/:observationId/acknowledge`

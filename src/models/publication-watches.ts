@@ -25,6 +25,8 @@ export interface PublicationObservation {
     | "published_despite_rejection"
     | "artifact_mismatch"
     | "unknown";
+  /** Why an `unknown` observation is unknown; null for a settled verdict. */
+  reason: string | null;
   scanId: string | null;
 }
 

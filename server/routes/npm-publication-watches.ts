@@ -4,13 +4,16 @@ import { acknowledgePublicationAlert } from "../db/publication-alerts";
 import {
   createPublicationWatch,
   deletePublicationWatch,
+  getPublicationEnrollment,
   getPublicationWatch,
+  getPublicationWatchByPackage,
   listPublicationObservations,
   listPublicationWatches,
   PublicationWatchLimitError,
 } from "../db/publication-watches";
 import {
   requireActiveOrganization,
+  requireActiveOrganizationContext,
   requireOrganizationRole,
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
@@ -38,6 +41,33 @@ npmPublicationWatchRoutes.get("/", async (c) => {
     npmPublicationRegistry(c.env),
   );
   return c.json({ watches: await listPublicationWatches(db, organizationId), autoEnrollment });
+});
+
+// One package's monitoring state for the package page. Read-only: unlike the
+// list, it never reconciles enrollment, and the package name is a filter over
+// this organization's rows, never an authority. `{.+}` keeps a scoped name's
+// `/`.
+npmPublicationWatchRoutes.get("/packages/:name{.+}", async (c) => {
+  const packageName = c.req.param("name").trim();
+  if (!isValidNpmPackageName(packageName)) {
+    return c.json({ error: "Enter a valid public npm package name." }, 400);
+  }
+  const db = c.var.db;
+  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
+  const watch = await getPublicationWatchByPackage(db, organizationId, packageName);
+  const [enrollment, observations] = await Promise.all([
+    watch
+      ? Promise.resolve({ state: "watched" as const })
+      : getPublicationEnrollment(db, organizationId, packageName),
+    watch ? listPublicationObservations(db, organizationId, watch.id) : Promise.resolve([]),
+  ]);
+  return c.json({
+    packageName,
+    watch,
+    observations,
+    enrollment,
+    viewer: { canStop: roleCanManageIntegrations(role) },
+  });
 });
 
 npmPublicationWatchRoutes.post("/", async (c) => {

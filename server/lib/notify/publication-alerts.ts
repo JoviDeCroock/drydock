@@ -2,7 +2,7 @@ import { type AppDb } from "../../db/client";
 import { getOrganizationName, getOrganizationOwnerUserId } from "../../db/organizations";
 import { emitOperationalEvent } from "../platform/observability";
 import { deliverOrganizationNotification, type NotificationDeliveryOutcome } from "./deliver";
-import { dashboardUrl } from "./links";
+import { packageUrl } from "./links";
 
 export interface NotifyPublicationDiscrepancyInput {
   env: Cloudflare.Env;
@@ -51,7 +51,7 @@ export async function notifyPublicationDiscrepancy(
   const organizationName = await getOrganizationName(db, organizationId);
   const { title, detail } = DESCRIPTIONS[status];
   const release = `${packageName}@${version}`;
-  const link = dashboardUrl(env, organizationId);
+  const link = packageUrl(env, packageName, organizationId);
   return deliverOrganizationNotification(env, db, {
     organizationId,
     ownerUserId,
@@ -65,9 +65,9 @@ export async function notifyPublicationDiscrepancy(
         `${release}: ${detail}`,
         organizationName ? `Organization: ${organizationName}` : null,
         "",
-        "Review the publication evidence and acknowledge the alert on your dashboard.",
+        "Review the publication evidence and acknowledge the alert on the package's page.",
         "If the release was unexpected, investigate who published it and review publishing access.",
-        link ? `Dashboard: ${link}` : null,
+        link ? `Package: ${link}` : null,
         "",
         "— Drydock",
       ],
