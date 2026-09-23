@@ -117,6 +117,7 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
       reportDigest: scans.reportDigest,
       source: scans.source,
       registryUrl: scans.registryUrl,
+      registryPackageName: scans.registryPackageName,
     })
     .from(scans)
     .where(and(eq(scans.id, input.id), eq(scans.organizationId, input.organizationId)))
@@ -133,6 +134,10 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
   const badgeRow = {
     source: existing[0]?.source ?? "manual",
     packageName: scanValues.packageName,
+    // npm's name for the stage, recorded from npm's stage record when the job
+    // was created or reconciled against it during acquisition. The INSERT
+    // branch has none, so its scan has no public identity.
+    registryPackageName: existing[0]?.registryPackageName ?? null,
     summaryJson: scanValues.summaryJson,
   };
   const badgePackageKey = badgeLookupKey(badgeRow);

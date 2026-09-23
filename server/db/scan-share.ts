@@ -238,8 +238,9 @@ export async function revokePublicShare(
       packageName: scans.packageName,
       stagedVersion: scans.stagedVersion,
       // `public_package_key` is nulled by this same UPDATE, so the key that
-      // just went stale is recomputed from the (untouched) source + snapshot.
+      // just went stale is recomputed from the (untouched) identity columns.
       source: scans.source,
+      registryPackageName: scans.registryPackageName,
       summaryJson: scans.summaryJson,
     });
   if (updated.length === 0) return { revoked: false, publicPackageKey: null, publicBadgeTag: null };
@@ -285,6 +286,7 @@ export async function setThreatFeedListing(
     .select({
       source: scans.source,
       packageName: scans.packageName,
+      registryPackageName: scans.registryPackageName,
       summaryJson: scans.summaryJson,
     })
     .from(scans)
@@ -292,7 +294,9 @@ export async function setThreatFeedListing(
     .limit(1);
   if (!candidate) return null;
   // Null here means "listed in the feed but not badge-discoverable" — the scan
-  // has no name, or is a gate scan whose ecosystem was never established.
+  // has no public name (a staged scan whose manifest disagrees with npm's name
+  // for the stage, or no name at all), or is a gate scan whose ecosystem was
+  // never established.
   const badgeKey = badgeLookupKey(candidate);
   const publicPackageKey = input.listed ? badgeKey : null;
   const updated = await db
@@ -346,6 +350,7 @@ const SHARED_SCAN_COLUMNS = {
   // this is here so the badge's staleness probe can scope itself to the
   // organization whose review it is about, in the same read.
   organizationId: scans.organizationId,
+  registryPackageName: scans.registryPackageName,
   source: scans.source,
   packageName: scans.packageName,
   stagedVersion: scans.stagedVersion,
@@ -470,6 +475,17 @@ const badgeNotDisabled = sql`not exists (
 // forgets the rule, must still never speak for a badge.
 const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCES]);
 
+// The read-side lock for `scanPublicPackageName`: only a manifest-claimed gate
+// review answers under its own manifest name; any other row answers only while
+// that name is npm's name for the stage. A key written before the write-side
+// rule existed — or by a future write that forgets it — must still never let a
+// tarball's claimed name speak for a package the credential did not reach.
+// SQLite compares text exactly, which is how npm resolves names.
+const publicNameIsRegistryName = or(
+  eq(scans.source, "workflow_gate"),
+  eq(scans.packageName, scans.registryPackageName),
+);
+
 /**
  * Recent badge candidates for one package name that an organization
  * deliberately listed. The opt-in route: a privately shared link never becomes
@@ -513,6 +529,7 @@ export async function listBadgeCandidateScans(
         ecosystemMatches,
         badgeTagMatchesSql(tag),
         badgeEligibleSource,
+        publicNameIsRegistryName,
         badgeNotDisabled,
       ),
     )

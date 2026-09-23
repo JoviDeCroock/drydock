@@ -222,21 +222,50 @@ export function badgeEcosystem(source: string, summaryJson: unknown): PublicEcos
 }
 
 /**
+ * The name a scan may be publicly identified by on the name-keyed badge index,
+ * or null when it has none.
+ *
+ * `package_name` is the *reviewed tarball's* manifest, which is package bytes:
+ * a stage the organization's token can read may carry a manifest naming any
+ * package at all. What the credential establishes is npm's name for the stage
+ * (`registry_package_name`, taken from npm's stage record, never the
+ * manifest). So a credential-backed scan is identified by npm's name, and only
+ * while the manifest agrees with it; a scan whose bytes claim another name has
+ * no public identity at all. npm resolves package names exactly — no case
+ * folding or other normalization — so agreement is plain equality.
+ *
+ * Only a manifest-claimed source answers under its own manifest name, which is
+ * exactly the claim it makes and why it renders `unverified`. Every other
+ * source must agree with npm, so a source added later has no identity until
+ * it is classified deliberately.
+ */
+export function scanPublicPackageName(row: {
+  source: string;
+  packageName: string | null;
+  registryPackageName: string | null;
+}): string | null {
+  if (!row.packageName) return null;
+  if (scanPackageIdentity(row.source) === "manifest-claimed") return row.packageName;
+  return row.registryPackageName === row.packageName ? row.registryPackageName : null;
+}
+
+/**
  * The badge cache key a row occupies, or null when it can never occupy one —
- * no package name, a source that may not answer the name-keyed badge index, or
- * a scan whose ecosystem was never established. The one rule for "which badge
- * would this row answer", so the listing write, the key persisted on every
- * scan, and the cache purge cannot drift from each other or from the badge
- * route.
+ * no public name (see `scanPublicPackageName`), a source that may not answer
+ * the name-keyed badge index, or a scan whose ecosystem was never established.
+ * The one rule for "which badge would this row answer", so the listing write
+ * and the cache purge cannot drift from each other or from the badge route.
  */
 export function badgeLookupKey(row: {
   source: string;
   packageName: string | null;
+  registryPackageName: string | null;
   summaryJson: unknown;
 }): string | null {
-  if (!row.packageName) return null;
+  const name = scanPublicPackageName(row);
+  if (!name) return null;
   const ecosystem = badgeEcosystem(row.source, row.summaryJson);
-  return ecosystem ? publicPackageLookupKey(ecosystem, row.packageName) : null;
+  return ecosystem ? publicPackageLookupKey(ecosystem, name) : null;
 }
 
 /** npm's own access level for the stage, from its staged-publish record. */

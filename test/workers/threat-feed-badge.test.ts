@@ -33,6 +33,10 @@ function seedBadgeScan(
     withoutProvenance?: boolean;
     // npm's own access level for the stage. `restricted` is a private package.
     access?: string;
+    // npm's name for the stage, from its stage record. Defaults to the
+    // manifest's name for staged sources, which is what npm reports for an
+    // honest release; a different value is a tarball claiming another name.
+    registryPackageName?: string | null;
   } = {},
 ): Promise<string> {
   const packageName = options.packageName ?? "@org/pkg";
@@ -1064,6 +1068,82 @@ describe("shields badge endpoint", () => {
 
     const cache = (caches as unknown as { default: Cache }).default;
     expect(await cache.match(coloCacheKey(`/public/badge/npm/${missName}`))).toBeUndefined();
+  });
+});
+
+describe("a staged review answers only under npm's name for the stage", () => {
+  // The manifest is package bytes. The organization's token proves only that
+  // npm let it read *this* stage, under npm's name for it — never that the
+  // name inside the tarball belongs to anyone in particular.
+  test("a tarball claiming another package's name is not listable under either name", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const stagedAs = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const claimed = `victim-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName: claimed,
+      version: "3.0.1",
+      registryPackageName: stagedAs,
+    });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", claimed)).body.message).toBe("not reviewed");
+    expect((await fetchBadge(app, "npm", stagedAs)).body.message).toBe("not reviewed");
+    const db = createDb(env.DB);
+    const [row] = await db
+      .select({ key: schema.scans.publicPackageKey })
+      .from(schema.scans)
+      .where(eq(schema.scans.id, scanId));
+    expect(row.key).toBeNull();
+    // Still a feed entry: the report is evidence, and its package field is
+    // what the report says. Only the name-keyed index refuses it.
+    expect((await fetchFeed(app)).entries.some((entry) => entry.package === claimed)).toBe(true);
+  });
+
+  test("a staged review with no name from npm has no public identity", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.1",
+      registryPackageName: null,
+    });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+  });
+
+  test("a key written before the rule still cannot answer for a disagreeing scan", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const stagedAs = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const claimed = `victim-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName: claimed,
+      version: "3.0.1",
+      registryPackageName: stagedAs,
+    });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+    // What the listing wrote before the write-side rule existed.
+    const db = createDb(env.DB);
+    await db
+      .update(schema.scans)
+      .set({ publicPackageKey: `npm:${claimed}` })
+      .where(eq(schema.scans.id, scanId));
+    expect((await fetchBadge(app, "npm", claimed)).body.message).toBe("not reviewed");
+  });
+
+  test("names that agree keep answering", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
   });
 });
 
