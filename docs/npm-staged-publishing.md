@@ -166,14 +166,14 @@ What this buys:
   registry), never on the tarball's manifest, so a hostile stage cannot rename
   itself out of its package's gate history.
 
-| Gate continuity     | Meaning                                                                                                                                                                                                                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `matched`           | npm holds the tarball the gate reviewed **and approved** (the gate's latest decision on these bytes wins, and the download was confirmed against npm's stage record); approving on npm publishes the gated bytes. Links the gate review.                                                                                       |
-| `gate-not-approved` | The gate reviewed exactly these bytes and rejected them (or has not decided), yet they were staged anyway. Reject on npm.                                                                                                                                                                                                      |
-| `digest-mismatch`   | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw.                                                                                                                                                                                                          |
-| `unverified`        | A gate review of this version exists, but nothing binds the stage to it. The `reason` says why: `gate-review-incomplete`, `staged-digest-unavailable`, `gate-digest-unavailable`, `gate-decision-unavailable`, `stage-not-bound-to-registry`, or `review-window-truncated`.                                                    |
-| `ungated`           | A release target the organization **still has configured** (npm or auto-detect, on an active GitHub App installation) has completed a gate review of this package — directly, or as a target recreated for the same repository — and no gate review of this version exists. The stage was produced outside the gated workflow. |
-| `unknown`           | The check could not run while the organization has a live npm-capable release target (or that too could not be read): the gate history read failed (`history-unavailable`), or npm's stage record was unavailable (`registry-record-unavailable`). Whether the stage went through the gate is not known.                       |
+| Gate continuity     | Meaning                                                                                                                                                                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `matched`           | npm holds the tarball the gate reviewed **and approved** (the gate's latest decision on these bytes wins, and the download was confirmed against npm's stage record); approving on npm publishes the gated bytes. Links the gate review.                                                                                     |
+| `gate-not-approved` | The gate reviewed exactly these bytes and rejected them (or has not decided), yet they were staged anyway. Reject on npm.                                                                                                                                                                                                    |
+| `digest-mismatch`   | The gate reviewed this version, but the staged tarball hashes differently. Something staged bytes the gate never saw.                                                                                                                                                                                                        |
+| `unverified`        | A gate review of this version exists, but nothing binds the stage to it. The `reason` says why: `gate-review-incomplete`, `staged-digest-unavailable`, `gate-digest-unavailable`, `gate-decision-unavailable`, `stage-not-bound-to-registry`, or `review-window-truncated`.                                                  |
+| `ungated`           | A release target the organization **still has configured** (npm or auto-detect, on an active GitHub App installation) has completed a gate review of this package — directly, or from a repository a live target still gates — and no gate review of this version exists. The stage was produced outside the gated workflow. |
+| `unknown`           | The check could not run while the organization has a live npm-capable release target (or that too could not be read): the gate history read failed (`history-unavailable`), or npm's stage record was unavailable (`registry-record-unavailable`). Whether the stage went through the gate is not known.                     |
 
 `unverified` reasons, in the order the evaluator reaches them: only a gate scan
 of this version that has not completed (still running, or failed) exists; the
@@ -190,14 +190,19 @@ release target has reviewed it, and no gate scan of this version exists. An
 organization that only uses the watchtower sees no change, even when a lookup
 fails; one that deleted its release target, uninstalled the GitHub App, or
 pinned the target to another ecosystem stops seeing `ungated` for that package.
-Recreating a target for the same repository (the only way to edit one) keeps
-it: liveness also matches the repository the gate attested on its scans.
+Recreating a target (the only way to edit one) keeps it: liveness also matches
+the repository recorded on the gate scans against every live target, so a
+target recreated for the same repository still counts (a repository renamed in
+between does not).
 
 The record is advisory and additive: it never moves risk, findings, or a
 decision, and a check that could not run for an organization that could be
 gating is recorded as `unknown` (and emits `scan.gate_continuity.lookup_failed`)
-rather than as no record, so a transient failure never reads as "not gated". A stage that
-was checked and is not `matched` emits `scan.gate_continuity.broken`. It is folded into the
+rather than as no record. An organization with no live release target stays
+silent through a failure; if its GitHub App was uninstalled with gate history
+still on record, that silence can hide what the stale rows would have said.
+A stage that was checked and is not `matched` emits
+`scan.gate_continuity.broken`. It is folded into the
 [release receipt](./release-receipts.md) as `evidence.gateContinuity`, which
 names the gate review. `report.json` carries it as `gateContinuity` with the
 status, reason, and both digests only (`stagedDigest`, `gateDigest`): a public
