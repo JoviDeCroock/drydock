@@ -10,6 +10,10 @@ import {
 } from "./";
 import { erasePackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
+import {
+  GATE_SETUP_ACTIONS,
+  GATE_SETUP_PINNING_NOTE,
+} from "../../workflow-gates/gate-setup-actions";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import { compactDuplicateTextSamples } from "../../workflow-gates/resolve";
 import type {
@@ -120,14 +124,23 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
   },
 };
 
+/** PyPA's publish action, pinned like the shared actions in `gate-setup-actions.ts`. */
+const PYPI_PUBLISH_ACTION =
+  "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2";
+
 /**
- * The PyPI publish workflow the setup wizard offers as a pull request.
+ * The PyPI publish workflow the setup wizard generates for a maintainer to
+ * commit.
  *
- * Same contract as the canonical example in `docs/workflow-gates.md`: build
+ * Same contract as the canonical example in `docs/pypi-workflow-gate.md`: build
  * once, record `SHA256SUMS` in `dist/`, upload the whole directory, pause at
  * the gated environment, re-check the digests on download, and hand the
  * reviewed distributions to `pypa/gh-action-pypi-publish` over OIDC.
  * `SHA256SUMS` is removed just before publish so it is never uploaded to PyPI.
+ *
+ * It is the single-build shape. A platform wheel matrix uploads one shard per
+ * leg and needs a publish job that downloads and checks every shard, which is
+ * the sharded example in the same doc — not something this template emits.
  */
 function pypiGateSetupTemplate({
   environmentName,
@@ -146,19 +159,27 @@ on:
     tags:
       - "v*"
 
+# No token scope by default; each job asks for exactly what it needs.
+permissions: {}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ${GATE_SETUP_ACTIONS.checkout}
+        with:
+          # The build runs third-party build backends; keep the token off disk.
+          persist-credentials: false
+      - uses: ${GATE_SETUP_ACTIONS.setupPython}
         with:
           python-version: "3.x"
       - run: python -m pip install build
       - run: python -m build
       # Record the digests Drydock reviews and the publish job re-checks.
       - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: ${GATE_SETUP_ACTIONS.uploadArtifact}
         with:
           name: ${PYPI_GATE_ARTIFACT_NAME}
           path: dist/
@@ -170,21 +191,23 @@ jobs:
     # queued until the release is approved in Drydock.
     environment: "${environmentName}"
     permissions:
+      # OIDC for PyPI trusted publishing; no API token exists in this workflow.
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: ${GATE_SETUP_ACTIONS.downloadArtifact}
         with:
           name: ${PYPI_GATE_ARTIFACT_NAME}
           path: dist
       # Fail closed if the downloaded bytes drifted from what was reviewed.
       - run: cd dist && sha256sum --check --strict SHA256SUMS
       - run: rm dist/SHA256SUMS
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: ${PYPI_PUBLISH_ACTION}
 `,
     notes: [
       `On PyPI, add a trusted publisher for \`${packageName}\`: this repository, \`drydock-pypi-release.yml\`, and the environment set to \`${environmentName}\`.`,
       "Delete any remaining PyPI API tokens for the project once the trusted publisher works, so the gated workflow is the only credentialed publish path.",
-      `A large wheel matrix can upload one bounded artifact per distribution: name the shards \`${PYPI_GATE_ARTIFACT_NAME}-*\`. The release target created alongside this workflow is already pinned to PyPI, which is what makes those shard names match.`,
+      "This workflow builds once, on one runner. A platform wheel matrix needs the sharded shape in Drydock's PyPI gate docs instead: one upload per build leg, and a publish job that downloads and checks every shard.",
+      GATE_SETUP_PINNING_NOTE,
     ],
   };
 }

@@ -141,11 +141,17 @@ makes "the reviewed bytes are the published bytes" enforceable in CI rather than
 assumed.
 
 ```yaml
+permissions: {} # each job asks for exactly what it needs
+
 jobs:
   build-release-artifacts:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # the build runs third-party backends next
       - run: python -m build
       # Record the digest of every artifact Drydock will review. These are the
       # bytes the gate approves; the publish job re-verifies against them, and
@@ -168,8 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi # the gate: Drydock's deployment protection rule lives here
     permissions:
-      id-token: write # OIDC for PyPI Trusted Publishing
-      contents: read
+      id-token: write # OIDC for PyPI Trusted Publishing; nothing else
     steps:
       # No checkout, no rebuild: GitHub artifact storage is immutable, so the
       # bytes the gate approved are the bytes we download and publish here.
@@ -219,6 +224,8 @@ with `artifact_identity_inconsistent` rather than binding two digests to one
 manifest path. Build the sdist in its own job, as below.
 
 ```yaml
+permissions: {}
+
 jobs:
   build-wheel:
     strategy:
@@ -228,8 +235,12 @@ jobs:
           - { shard: macos-arm64, os: macos-14 }
           - { shard: windows-x64, os: windows-latest }
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: ./ci/build-wheel "${{ matrix.shard }}" # writes one or more dist/*.whl
       - run: cd dist && sha256sum *.whl > "SHA256SUMS-${{ matrix.shard }}"
       - uses: actions/upload-artifact@v4
@@ -240,8 +251,12 @@ jobs:
 
   build-sdist:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: python -m build --sdist
       - run: cd dist && sha256sum *.tar.gz > SHA256SUMS-sdist
       - uses: actions/upload-artifact@v4

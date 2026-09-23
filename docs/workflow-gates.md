@@ -24,7 +24,7 @@ The GitHub webhook is public but signed with `GITHUB_APP_WEBHOOK_SECRET` and byp
 Step 1 of the contract used to be a manual walk through GitHub settings. **Settings → Integrations → Guided gate setup** (`/dashboard/settings#gate-setup`) now walks it with Drydock generating the workflow and checking the result:
 
 1. Pick the installation and repository the App can already see.
-2. Create the GitHub Environment (Drydock links straight to the repository's environment settings), then **Check it** — Drydock reads the environment list back.
+2. Create the GitHub Environment (Drydock links straight to the repository's environment settings), then **Check it** — Drydock reads that environment back by name.
 3. Enable Drydock as that environment's custom deployment-protection rule in GitHub, then **Check it** — Drydock reads the environment's protection rules and confirms its own App id is among them.
 4. Pick the ecosystem and package name; Drydock generates the publish workflow for it.
 5. Copy the workflow, or follow the link to GitHub's new-file editor with the path prefilled, and commit it yourself.
@@ -34,7 +34,7 @@ A maintainer who has not installed the GitHub App yet still lands on this sectio
 
 ### Why Drydock does not do the GitHub steps for you
 
-Creating the environment and registering the protection rule need **Administration: write**; committing a file under `.github/workflows/` needs **Contents: write** plus **Workflows: write**, and opening the pull request needs **Pull requests: write**. Those are standing grants on every gated repository, and `workflows: write` is specifically the power to rewrite the workflow the gate exists to protect — the same power the generated workflow's own checklist tells you to lock down with `CODEOWNERS`. A security tool should not hold it to save a dozen one-time clicks.
+Creating the environment and registering the protection rule need **Administration: write**; committing a file under `.github/workflows/` needs **Contents: write** plus **Workflows: write**, and opening the pull request needs **Pull requests: write**. Those are standing grants on every gated repository, and `workflows: write` is specifically the power to rewrite the workflow the gate exists to protect — the same power the wizard's own hardening checklist tells you to lock down with `CODEOWNERS`. A security tool should not hold it to save a dozen one-time clicks.
 
 Acting _as_ the gate needs none of that. GitHub's only requirement for the review callback is that an App may review its own custom deployment-protection rules, so Drydock's runtime permissions are unchanged by guided setup. The App's full registration — two read-only repository permissions and two webhook events — is in [`self-hosting.md`](./self-hosting.md#repository-permissions).
 
@@ -49,13 +49,26 @@ Both are owner/admin-only (`roleCanManageIntegrations`), scoped through `ensureI
 
 ### Verification, not bookkeeping
 
-`verify` returns `{ environment, protectionRule, defaultBranch }` where each check is `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and the wizard renders a gate as armed only on `protectionRule: "present"`. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup. Nothing logs a GitHub response body, header, or the installation token.
+`verify` returns `{ environment, protectionRule, adminBypass, defaultBranch }`. `environment` and `protectionRule` are `present`, `absent`, or `unknown`. A read Drydock could not complete resolves to `unknown` — never to a confident `absent` — and that includes an installation token GitHub would not mint for a transient reason (5xx, rate limit). A token GitHub refuses outright (403 suspended, 404 removed) is the explicit `installation_inactive` 409 instead. Neither answer ever carries GitHub's response body, and nothing logs a body, header, or the installation token.
+
+The wizard renders a gate as armed only when GitHub reports `protectionRule: "present"` **and** the organization has a release target mapped to that repository and environment — without the mapping, the webhook has nowhere to route and the gate holds nothing. That is a read of GitHub's live state rather than a record of what Drydock believes it did, so it also catches a rule that was switched off after setup.
+
+`adminBypass` is `allowed`, `blocked`, or `unknown`, read from the environment's `can_admins_bypass` field (GitHub's "Allow administrators to bypass configured protection rules", on by default). It is reported beside the gate rather than folded into it: the rule still holds every run nobody overrides, but a repository admin can push a held release past Drydock, so the wizard warns and links to the environment settings to turn it off. The field is missing from GitHub's published OpenAPI description, so anything but an explicit boolean is `unknown`.
 
 Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable.
 
 ### Generated workflows
 
 The YAML comes from the ecosystem's gate adapter, through the optional `gateSetupTemplate({ environmentName, packageName })` method on `WorkflowGateAdapter` (`server/lib/ecosystems/<id>/workflow-gate.ts`). The `/github-app/config` response derives the wizard's ecosystem choices from that same registry, so adding a template also makes the option visible without a second client-side list. Routes never branch on ecosystem names; an ecosystem with no template is a 400 and the maintainer falls back to the shapes documented below. Each template writes `.github/workflows/drydock-<ecosystem>-release.yml` and reproduces the canonical contract: build once, record `SHA256SUMS`, upload both, gate the publish job on `environment:`, re-verify with `sha256sum --check --strict`, publish the reviewed bytes.
+
+The generated workflows are also least-privilege, and each property is pinned by `test/workers/gate-setup-template.test.ts`:
+
+- Top-level `permissions: {}`. The build job gets `contents: read` and nothing else; the npm and PyPI publish jobs get `id-token: write` and nothing else; the VS Code publish job gets no scope, because its only credential is the Marketplace PAT in the environment's secrets.
+- `actions/checkout` runs with `persist-credentials: false`, since the build job goes on to run dependency install scripts and build backends.
+- Every action is pinned to a full commit SHA with its release in a trailing comment (`server/lib/workflow-gates/gate-setup-actions.ts`), which Dependabot's `github-actions` updates can move. `setup-node` restores no package-manager cache in a release build.
+- Tools that run beside a credential are exact versions: the npm CLI the publish job installs for OIDC (`NPM_CLI_VERSION` in `npm/workflow-gate.ts`) and `@vscode/vsce` (`VSCE_VERSION` in `vscode/workflow-gate.ts`). A Marketplace PAT is not bound to the workflow and outlives the run, so an unpinned `vsce` would hand it to whatever release is newest.
+- The npm publish carries no `--provenance`: trusted publishing attaches provenance by itself from a public repository, and the flag fails the publish from a private one.
+- The PyPI template is the single-build shape. A platform wheel matrix needs the sharded example in [`pypi-workflow-gate.md`](./pypi-workflow-gate.md#large-compiled-releases).
 
 Drydock generates these files but does not review them. Read the workflow before you commit it.
 
@@ -129,9 +142,16 @@ The candidate is the uploaded npm pack artifact. Drydock detects npm candidates 
 Recommended workflow shape:
 
 ```yaml
+permissions: {} # each job asks for exactly what it needs
+
 jobs:
   pack:
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # npm ci runs install scripts next
       - run: npm ci
       - run: npm pack --json > pack.json
       # Record the digests Drydock reviews and the publish job re-checks.
@@ -179,24 +199,40 @@ The VS Code adapter (`server/lib/ecosystems/vscode/`):
 Recommended workflow shape:
 
 ```yaml
+permissions: {} # each job asks for exactly what it needs
+
 jobs:
   package:
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # npm ci runs install scripts next
       - run: npm ci
-      - run: npx @vscode/vsce package --out dist/extension.vsix
+      - run: npx --yes @vscode/vsce@4.0.0 package --out dist/extension.vsix
+      - run: cd dist && sha256sum *.vsix > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: vscode-release-candidate
-          path: dist/*.vsix
+          path: dist/
   publish:
     needs: package
-    environment: production
+    environment: production # VSCE_PAT is a secret on this environment
     steps:
       - uses: actions/download-artifact@v4
-      - run: npx @vscode/vsce publish --packagePath dist/*.vsix
+        with:
+          name: vscode-release-candidate
+          path: dist
+      - run: cd dist && sha256sum --check --strict SHA256SUMS
+      - run: npx --yes @vscode/vsce@4.0.0 publish --packagePath dist/extension.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
 ```
 
-The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary.
+The publish job must publish the reviewed VSIX bytes. Repacking after approval breaks the review boundary. Pin `@vscode/vsce` to an exact version: the job holds a Marketplace PAT that outlives the run, so an unpinned tool hands it to whatever release is newest.
+
+These shapes use action tags for brevity. The workflows guided setup generates pin every action to a commit SHA instead — see [Generated workflows](#generated-workflows).
 
 ## Observing publication
 
