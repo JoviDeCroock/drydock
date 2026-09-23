@@ -28,7 +28,9 @@ export const handleAppError: ErrorHandler<{ Bindings: Bindings; Variables: Varia
   // instead of threading a nullable identity through every return type.
   if (err instanceof UnauthorizedError) return c.json({ error: "unauthorized" }, 401);
   // Raised by requireOrganizationRole once the caller's membership is known.
-  if (err instanceof ForbiddenError) return c.json({ error: "forbidden" }, 403);
+  if (err instanceof ForbiddenError) {
+    return c.json({ error: "forbidden", ...(err.code ? { code: err.code } : {}) }, 403);
+  }
   emitOperationalEvent("error", "request.unhandled_error", {
     method: c.req.method,
     path: redactCapabilityPath(c.req.path),

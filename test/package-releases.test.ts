@@ -140,6 +140,12 @@ describe("describeBaseline", () => {
 describe("package release paths", () => {
   test("keeps a scoped name's slash in the path and omits the npm default", () => {
     expect(packageReleasesPath("@scope/name")).toBe("/dashboard/packages/@scope/name");
+    expect(packageReleasesPath("@scope/name", "npm", "org_1")).toBe(
+      "/dashboard/packages/@scope/name?org=org_1",
+    );
+    expect(packageReleasesPath("requests", "pypi", "personal:abc")).toBe(
+      "/dashboard/packages/requests?ecosystem=pypi&org=personal%3Aabc",
+    );
     expect(packageReleasesPath("weird name")).toBe("/dashboard/packages/weird%20name");
     expect(packageReleasesPath("requests", "pypi")).toBe(
       "/dashboard/packages/requests?ecosystem=pypi",

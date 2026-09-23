@@ -18,7 +18,11 @@ export class UnauthorizedError extends Error {
  * `{ error: "forbidden" }` 403 the inline checks used to return.
  */
 export class ForbiddenError extends Error {
-  constructor(message = "forbidden") {
+  constructor(
+    message = "forbidden",
+    /** A stable reason the client can act on; the body's `error` stays "forbidden". */
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "ForbiddenError";
   }

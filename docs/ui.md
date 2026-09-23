@@ -199,7 +199,15 @@ keeps its slash in both paths (`/dashboard/packages/@scope/name`, as `/diff`
 does — the asset layer redirects an encoded slash to a literal one, so a
 single encoded segment does not survive a hard load); both routes take the
 name as a rest parameter and `src/lib/package-releases-path.ts` builds the
-URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. Each row shows the version, what it was compared against
+URLs. The ecosystem rides in `?ecosystem=` only when it is not npm. The
+organization rides in `?org=` and stays in the address: the page pins it
+(`usePinnedOrganization`), so every request the page and any of its sections
+make carries it strictly through `apiFetch`, and a non-member sees an explicit
+error rather than their personal organization's history. A link without
+`?org=` is rewritten to the remembered organization before anything is read.
+The header names the organization and carries the organization switcher,
+which changes `?org=`; every link to the page (dashboard rows, scan header,
+publication monitor, alert emails) includes it. Each row shows the version, what it was compared against
 (`describeBaseline` in `src/features/package-releases.ts` turns the persisted
 baseline selection into "2.0.0-beta.1 (beta)" / "(previous version)" /
 "(highest published)" / "no baseline"), release risk, the decision

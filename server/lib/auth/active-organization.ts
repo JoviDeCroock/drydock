@@ -8,6 +8,13 @@ import type { OrganizationRole } from "./roles";
 import type { Bindings, Variables } from "../../types";
 
 export const ACTIVE_ORG_HEADER = "x-organization-id";
+/**
+ * Sent by a page whose URL names its organization. A selector for an
+ * organization the caller does not belong to is then refused rather than
+ * answered from their personal organization, which would render a believable
+ * page about the wrong organization.
+ */
+export const ACTIVE_ORG_STRICT_HEADER = "x-organization-strict";
 
 type AppContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
@@ -39,6 +46,9 @@ export async function requireActiveOrganizationContext(
       )
       .limit(1);
     if (membership) return membership;
+    if (c.req.header(ACTIVE_ORG_STRICT_HEADER) === "1") {
+      throw new ForbiddenError("not a member of this organization", "not_organization_member");
+    }
   }
   const organizationId = await ensurePersonalOrganization(db, session);
   if (!organizationId) throw new UnauthorizedError();

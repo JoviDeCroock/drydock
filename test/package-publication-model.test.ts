@@ -11,6 +11,7 @@ let model: InstanceType<typeof PackagePublicationModel> | null = null;
 
 const watch: PublicationWatch = {
   id: "watch-1",
+  organizationId: "org-1",
   packageName: "@scope/package",
   source: "manual",
   createdAt: "2026-09-01T00:00:00.000Z",

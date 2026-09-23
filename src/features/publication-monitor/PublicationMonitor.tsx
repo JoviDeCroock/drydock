@@ -147,7 +147,7 @@ export function PublicationMonitor({
                 <div class="px-5 py-3.5 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 transition-colors duration-150 hover:bg-surface-2">
                   <div class="flex min-w-0 flex-col gap-1.5">
                     <a
-                      href={packageReleasesPath(watch.packageName)}
+                      href={packageReleasesPath(watch.packageName, null, watch.organizationId)}
                       class="min-w-0 truncate text-[14px] font-medium text-ink"
                     >
                       {watch.packageName}

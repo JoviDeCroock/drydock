@@ -4,6 +4,7 @@ import { apiFetch, apiJson, errorMessage } from "./api";
 
 export interface PublicationWatch {
   id: string;
+  organizationId: string;
   packageName: string;
   source: "manual" | "staged_discovery" | "published_history";
   createdAt: string;

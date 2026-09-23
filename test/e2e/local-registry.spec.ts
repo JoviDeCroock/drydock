@@ -428,6 +428,66 @@ test("publication monitor observes an unreviewed public release", async ({ brows
   }
 });
 
+test("a package link names its organization, whatever this browser had active", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await registerAndConnect(page);
+    await page.goto("/dashboard");
+    const created = await createScan(page, uiStageId);
+    expect(created.status).toBe(202);
+    await pollScanUntilTerminal(page, String(created.body?.scan?.id));
+    // Org A holds the review; org B is created afterwards and made active.
+    const orgs = await evaluateOnStablePage(
+      page,
+      async () => {
+        const list = (await fetch("/api/v1/organizations").then((response) => response.json())) as {
+          organizations: { id: string; name: string }[];
+        };
+        const created = (await fetch("/api/v1/organizations", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Second workspace" }),
+        }).then((response) => response.json())) as { organization: { id: string; name: string } };
+        return {
+          a: list.organizations[0]!,
+          b: created.organization,
+        };
+      },
+      undefined,
+    );
+    await page.evaluate(
+      (id) => localStorage.setItem("drydock:active-organization-id", id),
+      orgs.b.id,
+    );
+
+    const linkToA = `/dashboard/packages/@drydock/e2e-native?org=${encodeURIComponent(orgs.a.id)}`;
+    await page.goto(linkToA);
+    await expect(page.getByRole("heading", { name: "@drydock/e2e-native" })).toBeVisible();
+    await expect(page.getByText(orgs.a.name, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("1 review", { exact: true })).toBeVisible();
+    // The organization stays in the address, so the page can be shared as-is.
+    expect(new URL(page.url()).searchParams.get("org")).toBe(orgs.a.id);
+
+    await page.goto(`/dashboard/packages/@drydock/e2e-native?org=${encodeURIComponent(orgs.b.id)}`);
+    await expect(page.getByText(/have been reviewed in\s+Second workspace\s+yet/)).toBeVisible();
+
+    await page.goto("/dashboard/packages/@drydock/e2e-native?org=org-that-is-not-mine");
+    await expect(
+      page.getByText(/You are not a member of the organization this link names/),
+    ).toBeVisible();
+    await expect(page.getByText("1 review", { exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("publication monitor automatically watches public staged discoveries and respects stop watching", async ({
   browser,
   baseURL,

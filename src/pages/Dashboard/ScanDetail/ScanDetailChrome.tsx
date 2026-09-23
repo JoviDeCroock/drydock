@@ -63,6 +63,7 @@ export function ScanDetailHeader({
     ? packageReleasesPath(
         detail.scan.packageName,
         scanEcosystem(detail.scan.source ?? "manual", detail.scan.summaryJson),
+        detail.scan.organizationId,
       )
     : null;
   return (

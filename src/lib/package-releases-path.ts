@@ -7,14 +7,22 @@
  * load. The client route and the API route both take the name as a rest
  * parameter. The ecosystem rides in the query only when it is not npm, so the
  * common link stays short and the page can default the same way the API does.
+ * The organization rides in `?org=` and stays there: the page shows one
+ * organization's history, and a link without it would show whichever
+ * organization the reader's browser last had active.
  */
 import { encodePackageName } from "./package-diff-path";
 
-export function packageReleasesPath(packageName: string, ecosystem?: string | null): string {
-  const path = `/dashboard/packages/${encodePackageName(packageName)}`;
-  return ecosystem && ecosystem !== "npm"
-    ? `${path}?ecosystem=${encodeURIComponent(ecosystem)}`
-    : path;
+export function packageReleasesPath(
+  packageName: string,
+  ecosystem?: string | null,
+  organizationId?: string | null,
+): string {
+  const params = new URLSearchParams();
+  if (ecosystem && ecosystem !== "npm") params.set("ecosystem", ecosystem);
+  if (organizationId) params.set("org", organizationId);
+  const qs = params.toString();
+  return `/dashboard/packages/${encodePackageName(packageName)}${qs ? `?${qs}` : ""}`;
 }
 
 export function packageReleasesApiPath(

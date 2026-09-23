@@ -601,7 +601,11 @@ function ScanRows({
                 {scan.packageName ? (
                   <span class="flex min-w-0 items-baseline">
                     <a
-                      href={packageReleasesPath(scan.packageName, scan.ecosystem)}
+                      href={packageReleasesPath(
+                        scan.packageName,
+                        scan.ecosystem,
+                        scan.organizationId,
+                      )}
                       class="min-w-0 truncate text-[14px] font-medium"
                       title={`All reviewed releases of ${scan.packageName}`}
                     >

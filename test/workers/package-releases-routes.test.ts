@@ -2,6 +2,10 @@ import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
+import {
+  ACTIVE_ORG_HEADER,
+  ACTIVE_ORG_STRICT_HEADER,
+} from "../../server/lib/auth/active-organization";
 import { createScanJob, recordRegistryVersionStatus } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { packagesRoutes } from "../../server/routes/packages";
@@ -87,10 +91,14 @@ async function seedRelease(owner: SeededUser, packageName: string, options: Seed
   return scanId;
 }
 
-async function fetchReleases(owner: SeededUser, path: string) {
+async function fetchReleases(
+  owner: SeededUser,
+  path: string,
+  headers: Record<string, string> = {},
+) {
   const ctx = createExecutionContext();
   const res = await buildTestApp(mountPackages, owner).fetch(
-    new Request(`http://test.local${path}`, { method: "GET" }),
+    new Request(`http://test.local${path}`, { method: "GET", headers }),
     env,
     ctx,
   );
@@ -140,6 +148,39 @@ describe("GET /api/v1/packages/:name/releases", () => {
     const intruderBody = (await intruderRes.json()) as ReleasesBody;
     expect(intruderBody.releases.map((row) => row.id)).not.toContain(ownedId);
     expect(intruderBody.summary.totalReviews).toBe(1);
+  });
+
+  test("a page bound to an organization by its URL is refused for a non-member, never answered from their own", async () => {
+    const owner = await seedUser();
+    const outsider = await seedUser();
+    const name = `@org/pinned-${crypto.randomUUID().slice(0, 8)}`;
+    const ownedId = await seedRelease(owner, name, { version: "1.0.0" });
+    await seedRelease(outsider, name, { version: "2.0.0" });
+    const path = `/api/v1/packages/${name}/releases`;
+    const pinned = (organizationId: string) => ({
+      [ACTIVE_ORG_HEADER]: organizationId,
+      [ACTIVE_ORG_STRICT_HEADER]: "1",
+    });
+
+    const refused = await fetchReleases(outsider, path, pinned(owner.organizationId));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "forbidden", code: "not_organization_member" });
+
+    const member = await fetchReleases(owner, path, pinned(owner.organizationId));
+    expect(member.status).toBe(200);
+    expect(((await member.json()) as ReleasesBody).releases.map((row) => row.id)).toEqual([
+      ownedId,
+    ]);
+
+    // Without the strict flag a stale remembered selector still falls back,
+    // as the dashboard relies on.
+    const fallback = await fetchReleases(outsider, path, {
+      [ACTIVE_ORG_HEADER]: owner.organizationId,
+    });
+    expect(fallback.status).toBe(200);
+    expect(((await fallback.json()) as ReleasesBody).releases.map((row) => row.id)).not.toContain(
+      ownedId,
+    );
   });
 
   test("round-trips a scoped name with its slash in the path", async () => {
