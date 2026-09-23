@@ -200,9 +200,12 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
-      # The lockfile's vsce and nothing newer, with no install scripts: this is
-      # the one job that can read the PAT. Nothing here rebuilds the extension.
-      - run: npm ci --ignore-scripts
+      # The lockfile's vsce and nothing newer, with no install scripts and no
+      # git dependencies (npm still runs a git dependency's prepare scripts
+      # under --ignore-scripts): this is the one job that can read the PAT.
+      # Nothing here rebuilds the extension.
+      - run: npm install -g npm@11.19.1
+      - run: npm ci --ignore-scripts --allow-git=none
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: vscode-release-candidate

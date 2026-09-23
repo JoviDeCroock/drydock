@@ -239,7 +239,10 @@ export default function SettingsPage() {
                 <GateSetupWizard
                   activeInstallations={activeGithubInstallations}
                   releaseTargets={
-                    targets.releaseTargetsError.value === null ? targets.releaseTargets.value : null
+                    targets.releaseTargetsLoaded.value &&
+                    targets.releaseTargetsLoadError.value === null
+                      ? targets.releaseTargets.value
+                      : null
                   }
                   gateSetupEcosystems={githubApp.config.value?.gateSetupEcosystems ?? []}
                   canManage={canManageIntegrations(organizations)}

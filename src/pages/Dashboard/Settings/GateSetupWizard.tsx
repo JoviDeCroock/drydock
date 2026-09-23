@@ -118,8 +118,9 @@ export function GateSetupWizard({
   const releaseTarget = gateSetup.resolvedReleaseTarget.value;
 
   // The model resolves the mapping in force (and the armed badge) from these,
-  // so it has to see what the parent last loaded. `null` is a load that failed:
-  // the wizard keeps the list it has, because reading a failed refresh right
+  // so it has to see what the parent last loaded. `null` is a list not loaded
+  // yet, or a load that failed: the wizard keeps the list it has (none, at
+  // first, which it reads as unknown rather than empty), because reading a failed refresh right
   // after its own create as "no mapping" withdrew a just-armed gate and offered
   // a create that then failed as a duplicate.
   const releaseTargetsKey = releaseTargets?.map((target) => target.id).join(",") ?? null;
@@ -721,6 +722,7 @@ function ReleaseTargetStep({
 }) {
   const environmentPicked = gateSetup.environmentPicked.value;
   const busy = gateSetup.busy.value;
+  const mappingsKnown = gateSetup.releaseTargetsKnown.value;
 
   const create = async () => {
     const created = await gateSetup.createReleaseTarget();
@@ -764,13 +766,20 @@ function ReleaseTargetStep({
             <Button
               variant={current === 6 ? "primary" : "secondary"}
               onClick={() => void create()}
-              disabled={busy || !environmentPicked}
+              disabled={busy || !environmentPicked || !mappingsKnown}
             >
               <PendingLabel gateSetup={gateSetup} step="release_target" pending="Mapping…">
                 Create release target
               </PendingLabel>
             </Button>
-            {!environmentPicked ? <Blocked>Pick an environment in step 2 first.</Blocked> : null}
+            {!environmentPicked ? (
+              <Blocked>Pick an environment in step 2 first.</Blocked>
+            ) : !mappingsKnown ? (
+              <Blocked>
+                This organization's release targets have not loaded, so an existing mapping cannot
+                be ruled out yet.
+              </Blocked>
+            ) : null}
           </div>
         )}
         <StepError gateSetup={gateSetup} step="release_target" />
