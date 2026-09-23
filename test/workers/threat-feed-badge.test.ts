@@ -2831,7 +2831,7 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     });
   });
 
-  test("a stable release published under another tag leaves the latest badge alone", async () => {
+  test("an unapproved stable release under another tag still greys the latest badge", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -2847,7 +2847,9 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: ["next"] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    // Recorded tags only add supersessions; the version-shape floor still
+    // counts a newer stable release on `latest`'s line.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
   });
 
   test("the tag's own badge is superseded by the release npm points it at", async () => {
@@ -2885,7 +2887,7 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("2.9.9 not reviewed");
   });
 
-  test("a release npm moved the tag off does not supersede the quote holding it", async () => {
+  test("moving the tag back to the quote does not clear a newer unapproved release", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -2901,10 +2903,12 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
       "published_without_approval",
       { distTags: [] },
     );
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    // Whoever can publish 3.0.1 can also point `latest` back at 3.0.0; that
+    // must not turn the badge green while 3.0.1 is still published.
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 not reviewed");
   });
 
-  test("an alert is placed by where the tag stands", async () => {
+  test("a recorded tag holder never clears an alert", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -2917,10 +2921,10 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
   });
 
-  test("with no observed holder of the tag, a missing tag is not read as off the line", async () => {
+  test("a missing tag is never read as off the line", async () => {
     const owner = await seedUser();
     const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
@@ -2935,9 +2939,8 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
 
-    // Its tags lack `latest`, but nothing observed holds `latest` either — the
-    // quote was published before the watch, or the check could not record
-    // every tag — so the newer stable release is inferred onto the line.
+    // Its tags lack `latest`, but a missing tag proves nothing — the newer
+    // stable release is inferred onto the line.
     await recordObservation(
       owner.organizationId,
       packageName,
@@ -2947,10 +2950,11 @@ describe("the badge follows the dist-tags the monitor recorded", () => {
     );
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
 
-    // Once the monitor has seen where `latest` stands, the tags decide.
+    // Seeing `latest` on the quote does not take it back: a recorded tag is
+    // a snapshot, and the newer unapproved release is still published.
     await recordObservation(owner.organizationId, packageName, "3.0.0", "approved_match", {
       distTags: ["latest"],
     });
-    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.0 approved");
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("4.0.0 not reviewed");
   });
 });

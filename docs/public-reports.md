@@ -495,24 +495,16 @@ reviewed`, lightgrey. A green `3.0.0 approved` beside published bytes that
   own discrepancy statuses can grey it — the listing is the maintainer's
   deliberate claim, and its report shows the integrity verdict.
 
-Which release stands where the quote did is read from the dist-tags the
-monitor recorded for each observation at its latest check. A version other
-than the quoted one that npm points the badge's tag at supersedes the quote,
-whatever its version shape or order, because installing that tag fetches it:
-a prerelease published without `--tag` takes `latest` on npm, so it greys the
-`latest` badge. Once the monitor has seen which version holds the tag — the
-quote itself, an approved match, anything — every other observed version is
-off that line, so a stable release published under `next` leaves the
-`latest` badge alone.
-
-A tag that is merely absent from a version's recorded tags is never read as
-placing it off the line, because it proves nothing on its own: the evidence
-may be an alert whose observation is gone with its watch, or an observation
-recorded before the monitor kept tags; a check may not record every tag of a
-packument; and the tag may point at a version published before the watch
-existed, which the monitor never observed. With no observed holder of the
-tag, the line is inferred from the badge's tag and the version's shape, and
-only a newer version counts: `latest` is superseded by newer stable versions
+Which release stands where the quote did is read two ways, and either is
+enough. The dist-tags the monitor recorded for each observation at its latest
+check can only _add_ a supersession: a version other than the quoted one that
+npm points the badge's tag at supersedes the quote, whatever its version shape
+or order, because installing that tag fetches it — a prerelease published
+without `--tag` takes `latest` on npm, so it greys the `latest` badge. They
+never remove one: a recorded tag is a snapshot of the last check that could
+read the packument, and whoever can publish can also move a tag back or keep
+the monitor from refreshing it. So the version-shape inference always applies
+as a floor, and only a newer version counts there: `latest` is superseded by newer stable versions
 (and newer prereleases too when the pick is itself a prerelease); another tag
 with a stable pick is a maintenance line that stays within its major; another
 tag with a prerelease pick is that channel, matched on the leading prerelease
