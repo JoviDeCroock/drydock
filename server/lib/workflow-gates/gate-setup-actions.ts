@@ -20,6 +20,18 @@ export const GATE_SETUP_ACTIONS = {
   downloadArtifact: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
 } as const;
 
+/**
+ * The npm CLI a generated publish job installs before it touches the registry
+ * or the lockfile. npm's OIDC trusted publishing needs >= 11.5.1, newer than
+ * the npm bundled with Node 22, and `--allow-git` (which keeps a git
+ * dependency's prepare scripts from running beside a credential) is npm 11
+ * only. These jobs hold `id-token: write` or a Marketplace PAT, so it is an
+ * exact version, bumped deliberately, never a range a compromised release
+ * could satisfy. npm bundles its own dependencies, so the version pins
+ * everything it loads.
+ */
+export const GATE_SETUP_NPM_CLI_VERSION = "11.19.1";
+
 /** The hardening note every template carries about the pins above. */
 export const GATE_SETUP_PINNING_NOTE =
   "Every action is pinned to a full commit SHA, with its release in the trailing comment: a tag can be moved to new code, a commit cannot. Let Dependabot's `github-actions` updates move the pins, and review those bumps like any other change to the release path.";

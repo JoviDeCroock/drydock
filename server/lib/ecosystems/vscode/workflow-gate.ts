@@ -11,6 +11,7 @@ import { WorkflowArtifactError } from "../../github-app/artifacts";
 import {
   GATE_SETUP_ACTIONS,
   GATE_SETUP_PINNING_NOTE,
+  GATE_SETUP_NPM_CLI_VERSION,
 } from "../../workflow-gates/gate-setup-actions";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
 import type {
@@ -162,9 +163,12 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
-      # The lockfile's vsce and nothing newer, with no install scripts: this is
-      # the one job that can read the PAT. Nothing here rebuilds the extension.
-      - run: npm ci --ignore-scripts
+      # The lockfile's vsce and nothing newer, with no install scripts and no
+      # git dependencies (npm still runs a git dependency's prepare scripts
+      # under --ignore-scripts): this is the one job that can read the PAT.
+      # Nothing here rebuilds the extension.
+      - run: npm install -g npm@${GATE_SETUP_NPM_CLI_VERSION}
+      - run: npm ci --ignore-scripts --allow-git=none
       - uses: ${GATE_SETUP_ACTIONS.downloadArtifact}
         with:
           name: ${VSCODE_GATE_ARTIFACT_NAME}
@@ -179,7 +183,7 @@ jobs:
       `Store the Marketplace PAT as a secret on the \`${environmentName}\` environment, not as a repository secret — an environment secret is only readable from the job the gate has released.`,
       `Publish the reviewed VSIX bytes for \`${packageName}\`: repacking after approval breaks the review boundary.`,
       "Scope the PAT to the publisher and rotate it on the same schedule as any other release credential.",
-      "Add `@vscode/vsce` to `devDependencies` and commit the lockfile. Both jobs run that exact tree — the publish job with install scripts off — because the PAT outlives the run: `npx @vscode/vsce@<version>` pins vsce itself but still resolves its dependencies fresh on every run.",
+      "Add `@vscode/vsce` to `devDependencies` and commit the lockfile. Both jobs run that exact tree — the publish job with install scripts off and git dependencies refused — because the PAT outlives the run: `npx @vscode/vsce@<version>` pins vsce itself but still resolves its dependencies fresh on every run. A git dependency anywhere in the lockfile is left out of the publish job's install, so keep vsce's tree free of them.",
       GATE_SETUP_PINNING_NOTE,
     ],
   };
