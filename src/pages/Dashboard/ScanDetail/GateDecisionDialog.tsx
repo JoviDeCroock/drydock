@@ -42,9 +42,13 @@ function gateStatusLabel(status: PublicWorkflowGate["status"]): string {
 
 // Only a package that blocks the release gets a colored chip. Approved,
 // reviewing, and awaiting-decision are the expected states of a roster row and
-// read as plain text, so the one row holding the release up stands out.
-function packageDecisionNeedsAttention(pkg: GatePackageScan): boolean {
-  return pkg.decision === "no_publish" || pkg.status === "failed";
+// read as plain text, so the one row holding the release up stands out. A
+// failed review holds it up only until someone decides: approving the package
+// anyway is allowed, and that row then reads "approved", not an alarm.
+export function packageDecisionNeedsAttention(
+  pkg: Pick<GatePackageScan, "decision" | "status">,
+): boolean {
+  return pkg.decision === "no_publish" || (!pkg.decision && pkg.status === "failed");
 }
 
 function packageDecisionLabel(pkg: GatePackageScan): string {

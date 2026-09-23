@@ -276,7 +276,7 @@ The only chart in the v1 product.
 - **Total label:** mono `11px / --fg-subtle`, sits to the right of the bar (`findings by severity` mono-label on the left, `N total` on the right).
 - **Legend:** mono `10px / 0.1em uppercase / --fg-subtle`, one entry per non-zero bucket, `8px×8px` square swatch + `severity · count`. No axis, no grid, no tooltip.
 
-### Count tiles (already in code as `SummaryCard`)
+### Count tiles (the dashboard `OverviewStrip`)
 
 - Wrapper: `--surface` background, `1px --border`, `8px` radius, `12px 14px` padding, vertical `4px` gap.
 - Label: mono `11px / 0.1em uppercase / --fg-subtle`.

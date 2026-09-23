@@ -4,6 +4,7 @@ import {
   registryStatusNoticeVariant,
   registryStatusVariant,
 } from "../src/features/registry-status";
+import { releaseAttention } from "../src/features/package-releases";
 
 describe("registry status variant", () => {
   test("npm blocking a version is its own signal, whatever we decided", () => {
@@ -71,7 +72,9 @@ describe("registry status badge", () => {
       registryStatusBadge({ registryVersionStatus: "staged", decision: "publish" })?.tone,
     ).toBe("medium");
     expect(registryStatusBadge({ registryVersionStatus: "validating" })?.tone).toBe(null);
-    expect(registryStatusBadge({ registryVersionStatus: "deleted" })?.tone).toBe(null);
+    expect(
+      registryStatusBadge({ registryVersionStatus: "deleted", decision: "publish" })?.tone,
+    ).toBe(null);
     expect(registryStatusBadge({})).toBe(null);
   });
 
@@ -89,7 +92,44 @@ describe("registry status badge", () => {
   });
 
   test("describes deleted versions as removed rather than pre-publication withdrawals", () => {
-    expect(registryStatusBadge({ registryVersionStatus: "deleted" })?.label).toBe("npm removed");
+    expect(
+      registryStatusBadge({ registryVersionStatus: "deleted", decision: "publish" })?.label,
+    ).toBe("npm removed");
+    expect(registryStatusBadge({ registryVersionStatus: "deleted" })).toEqual({
+      label: "npm removed, no decision",
+      tone: "medium",
+    });
+    expect(
+      registryStatusBadge({ registryVersionStatus: "deleted", decision: "no_publish" }),
+    ).toEqual({ label: "npm removed, published over a block", tone: "critical" });
+  });
+
+  test("reads an outcome a failed review proved, not only npm's reported status", () => {
+    expect(registryStatusBadge({ registryReleaseOutcome: "published" })).toEqual({
+      label: "npm published, no decision",
+      tone: "medium",
+    });
+    expect(
+      registryStatusBadge({
+        registryReleaseOutcome: "published",
+        registryStatusSupersededAt: 1,
+      }),
+    ).toBe(null);
+  });
+
+  test("tones exactly the releases the package view fills for attention", () => {
+    for (const registryVersionStatus of [null, "staged", "published", "deleted", "blocked"]) {
+      for (const decision of [null, "publish", "no_publish"]) {
+        const release = { registryVersionStatus, decision, registryReleaseOutcome: null };
+        const attention = releaseAttention(release);
+        const tone = registryStatusBadge(release)?.tone ?? null;
+        if (attention === "published_without_review") expect(tone).toBe("medium");
+        else if (attention === "published_despite_block") expect(tone).toBe("critical");
+        else if (registryVersionStatus !== "blocked" && registryVersionStatus !== "staged") {
+          expect(tone).toBe(null);
+        }
+      }
+    }
   });
 });
 

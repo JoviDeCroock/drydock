@@ -133,7 +133,8 @@ there is none. A second chip appears only when npm's state asks something of
 the reader (`registryStatusBadge` returns a tone: blocked, awaiting approval
 after an approval here, published with no decision or over a block); quieter npm
 states end the mono meta line as plain text. There is no "undecided" chip — the
-row's Decide button says it — and a recorded decision renders as plain
+row's Decide button says it; a gate or superseded row, which offers no button
+there, says `undecided` / `superseded` in plain text — and a recorded decision renders as plain
 `DecisionState` text beside Update. Row Decide/Update buttons are `secondary`:
 the same action repeated down a list is not the region's primary action.
 

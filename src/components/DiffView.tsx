@@ -81,7 +81,7 @@ function useLineTokens(text: string, lang: string | undefined): TokenLine[] | nu
  * file whose opposite side is unavailable — a public report shares the staged
  * artifact and never a baseline — and tinting every row as inserted would be a
  * claim about the release that is wrong on every line the file did not change.
- * The status badge above the body keeps carrying the real verdict.
+ * The status label above the body keeps carrying the real verdict.
  */
 export function singleSidedTone(
   status: string,

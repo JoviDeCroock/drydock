@@ -648,6 +648,13 @@ function ScanRows({
             </div>
             <div class="flex items-center gap-3">
               <DecisionState decision={scan.decision} decidedAt={scan.decidedAt} />
+              {/* The Decide button is what says "undecided" on a row; a gate or
+                  superseded review offers none here, so it says so in words. */}
+              {!scan.decision && scan.status === "complete" && !canQuickDecide(scan) ? (
+                <p class="m-0 font-mono text-[11px] text-ink-subtle whitespace-nowrap">
+                  {scan.registryStatusSupersededAt != null ? "superseded" : "undecided"}
+                </p>
+              ) : null}
               {canQuickDecide(scan) ? (
                 // Secondary on every row: one action repeated down a list is
                 // not the page's primary action.

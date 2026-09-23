@@ -10,7 +10,7 @@ import { EmptyLine, LoadingLine } from "../../components/Typography";
  * Single-sided by construction: the share token buys the staged artifact's
  * redacted samples and nothing else, because reaching the published previous
  * version means spending the organization's npm credentials. `DiffView` keeps
- * the release's own status badge and pins the findings to their staged lines,
+ * the release's own status label and pins the findings to their staged lines,
  * so the reader still sees which lines a rule matched — they just do not get
  * the baseline text next to it. The page says so once, as the panel label's
  * aside (`REPORT_DIFF_ASIDE`), rather than letting the missing side read as

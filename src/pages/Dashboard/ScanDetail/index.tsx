@@ -51,7 +51,7 @@ import {
 } from "./ReleaseRecommendation";
 import { ReleaseTimeline } from "./ReleaseTimeline";
 import { PersistedReportSections } from "./ReportSections";
-import { ReviewerSummary, reviewerSummaryVisible } from "./ReviewerSummary";
+import { assistantFlagsRelease, ReviewerSummary } from "./ReviewerSummary";
 import {
   DecisionControl,
   ScanDetailHeader,
@@ -252,13 +252,8 @@ export default function ScanDetailPage() {
   // every scan, so they alone would hold the notes open on a clean release.
   // The same goes for the assistant now that it runs by default: a clean
   // "nothing unusual" reading stays folded; one that flags the release opens.
-  const aiReading = ai.value;
-  const aiFlagsRelease =
-    reviewerSummaryVisible(aiReading) &&
-    aiReading?.kind === "complete" &&
-    (aiReading.requiresManualReview || aiReading.releaseAssessment !== "nothing_unusual");
   const hasReviewNotes =
-    aiFlagsRelease || releaseConsistencyDiverged(summary.value.releaseConsistency);
+    assistantFlagsRelease(ai.value) || releaseConsistencyDiverged(summary.value.releaseConsistency);
 
   const inspectFindings = () => focusReportSection("risk-signals");
   const canInspectFinding = (finding: ReviewFinding) =>
@@ -337,13 +332,16 @@ export default function ScanDetailPage() {
   // The decision and its button ride the verdict strip on a completed review,
   // opposite the verdict they answer. A failed gate review renders no strip,
   // so there they stay in the header.
-  const decisionControl = detail ? (
-    <DecisionControl
-      decision={detail.scan.decision}
-      decidedAt={detail.scan.decidedAt}
-      onDecideClick={onDecideClick}
-    />
-  ) : null;
+  // Null, not an empty element, when there is nothing to show: the header
+  // reserves its actions row for any truthy slot.
+  const decisionControl =
+    detail && (detail.scan.decision || onDecideClick) ? (
+      <DecisionControl
+        decision={detail.scan.decision}
+        decidedAt={detail.scan.decidedAt}
+        onDecideClick={onDecideClick}
+      />
+    ) : null;
   const decisionInStrip = detail?.scan.status === "complete" && verdict != null;
 
   const onShareClick =

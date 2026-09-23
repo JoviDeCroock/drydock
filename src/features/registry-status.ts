@@ -18,6 +18,8 @@ export interface RegistryStatusScan {
   stageId?: string | null;
   registryUrl?: string | null;
   registryStatusSupersededAt?: string | number | Date | null;
+  /** Server-derived settled outcome; also set when a failed review proved it. */
+  registryReleaseOutcome?: string | null;
 }
 
 /**
@@ -91,24 +93,32 @@ export function registryStatusPhrase(status: string | null | undefined): string 
 export function registryStatusBadge(
   scan: RegistryStatusScan,
 ): { label: string; tone: BadgeTone | null } | null {
-  switch (registryStatusVariant(scan)) {
-    case null:
-      return null;
+  const variant = registryStatusVariant(scan);
+  switch (variant) {
     case "blocked":
       return { label: `npm ${REGISTRY_STATUS_PHRASE.blocked}`, tone: "critical" };
     case "awaiting_approval":
       return { label: `npm ${REGISTRY_STATUS_PHRASE.staged}`, tone: "medium" };
     case "validating":
       return { label: `npm ${REGISTRY_STATUS_PHRASE.validating}`, tone: null };
-    case "deleted":
-      return { label: `npm ${REGISTRY_STATUS_PHRASE.deleted}`, tone: null };
-    case "published":
-      if (scan.decision === "no_publish") {
-        return { label: `npm ${REGISTRY_STATUS_PHRASE.published} over a block`, tone: "critical" };
-      }
-      if (!scan.decision) {
-        return { label: `npm ${REGISTRY_STATUS_PHRASE.published}, no decision`, tone: "medium" };
-      }
-      return { label: `npm ${REGISTRY_STATUS_PHRASE.published}`, tone: null };
   }
+  // A version npm published — including one later removed, and one a failed
+  // review proved published (`registryReleaseOutcome`) — is read against the
+  // decision here. Same conditions as `releaseAttention` and the "Published,
+  // no decision" filter, so a row's fill, this label, and the counts agree.
+  const outcome =
+    scan.registryStatusSupersededAt != null
+      ? null
+      : (scan.registryReleaseOutcome ??
+        (variant === "published" || variant === "deleted" ? variant : null));
+  if (outcome !== "published" && outcome !== "deleted") return null;
+  const state = `npm ${REGISTRY_STATUS_PHRASE[outcome]}`;
+  if (scan.decision === "no_publish") {
+    return {
+      label: outcome === "published" ? `${state} over a block` : `${state}, published over a block`,
+      tone: "critical",
+    };
+  }
+  if (!scan.decision) return { label: `${state}, no decision`, tone: "medium" };
+  return { label: state, tone: null };
 }

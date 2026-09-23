@@ -34,7 +34,7 @@ import {
   groupReleasesByChannel,
   releaseAttention,
 } from "../../../features/package-releases";
-import { registryStatusBadge, registryStatusPhrase } from "../../../features/registry-status";
+import { registryStatusBadge } from "../../../features/registry-status";
 import { DecisionState } from "../../../features/review/DecisionState";
 import { scanSourceLabel } from "../../../features/scan-source";
 
@@ -298,10 +298,7 @@ function ReleaseRow({ release }: { release: PackageRelease }) {
 // approved version); the expected endings read as plain text.
 function RegistryCell({ release }: { release: PackageRelease }) {
   const registry = registryStatusBadge(release);
-  if (!registry) {
-    const outcome = registryStatusPhrase(release.registryReleaseOutcome);
-    return <PlainState>{outcome ? `npm ${outcome}` : "—"}</PlainState>;
-  }
+  if (!registry) return <PlainState>—</PlainState>;
   return (
     <div class="flex flex-col items-start gap-1">
       {registry.tone ? (

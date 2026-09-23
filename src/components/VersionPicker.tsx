@@ -42,7 +42,15 @@ export function VersionPicker({
           disabled={disabled || options.length === 0}
           mono
         >
-          {!options.length ? <option value="">no published versions</option> : null}
+          {/* The version list can come back empty while the review still has a
+              persisted baseline (the packument lookup failed, or a gate scan in
+              an ecosystem the list does not cover). Name that baseline rather
+              than claim nothing was published above a tree of modified files. */}
+          {!options.length ? (
+            <option value={selected ?? ""}>
+              {defaultVersion ? `${defaultVersion} (default)` : "no published versions"}
+            </option>
+          ) : null}
           {options.map((option) => {
             const tagSuffix = option.distTags.length ? ` [${option.distTags.join(", ")}]` : "";
             const defaultSuffix = option.version === defaultVersion ? " (default)" : "";
