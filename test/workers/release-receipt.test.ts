@@ -255,6 +255,7 @@ describe("canonical release receipt v1", () => {
     const owner = await seedOwner();
     const gateContinuity = {
       status: "matched",
+      reason: null,
       algorithm: "sha256",
       stagedDigest: "e".repeat(64),
       review: {
@@ -294,7 +295,7 @@ describe("canonical release receipt v1", () => {
 
     const receipt = (await (
       await request(appFor(owner), scanId, "release-receipt.json")
-    ).json()) as any;
+    ).json()) as ReleaseReceiptDocument;
     expect(receipt.content.release.control.classification).toBe("advisory");
     expect(receipt.content.evidence.status).toBe("complete");
     expect(receipt.content.evidence.gateContinuity).toEqual({
@@ -304,52 +305,58 @@ describe("canonical release receipt v1", () => {
   });
 
   test.each([
-    ["digest-mismatch", "conflicting", "conflicting"],
-    ["gate-not-approved", "conflicting", "conflicting"],
-    ["unverified", "partial", "partial"],
-    ["ungated", "partial", "partial"],
-  ])(
-    "a %s stage of a gated package is %s continuity evidence",
-    async (status, evidence, aggregate) => {
-      const owner = await seedOwner();
-      const scanId = await seedCompleted(owner, {
-        summary: {
-          intentEnvelope: { tier: "absent", repository: null, signals: [] },
-          stagedPublish: {
-            artifactIntegrity: {
-              algorithm: "sha1",
-              status: "verified",
-              declared: "b".repeat(40),
-              computed: "b".repeat(40),
-            },
-          },
-          gateContinuity: {
-            status,
-            algorithm: "sha256",
-            stagedDigest: "f".repeat(64),
-            review:
-              status === "ungated"
-                ? null
-                : { scanId: "scan_gate", gateId: "gate_1", sha256: "e".repeat(64) },
+    ["digest-mismatch", null, "conflicting", "conflicting"],
+    ["gate-not-approved", null, "conflicting", "conflicting"],
+    ["unverified", "review-window-truncated", "partial", "partial"],
+    // A gate scan of this version that has not completed: no review to name,
+    // and still never quieter than `ungated`.
+    ["unverified", "gate-review-incomplete", "partial", "partial"],
+    ["ungated", null, "partial", "partial"],
+    // The check could not run. Not `not_applicable`: nothing established that
+    // the organization does not gate the package.
+    ["unknown", "history-unavailable", "unknown", "partial"],
+  ])("a %s (%s) stage is %s continuity evidence", async (status, reason, evidence, aggregate) => {
+    const owner = await seedOwner();
+    const reviewed =
+      status !== "ungated" && status !== "unknown" && reason !== "gate-review-incomplete";
+    const scanId = await seedCompleted(owner, {
+      summary: {
+        intentEnvelope: { tier: "absent", repository: null, signals: [] },
+        stagedPublish: {
+          artifactIntegrity: {
+            algorithm: "sha1",
+            status: "verified",
+            declared: "b".repeat(40),
+            computed: "b".repeat(40),
           },
         },
-      });
-      await createDb(env.DB)
-        .update(schema.scans)
-        .set({
-          decision: "publish",
-          decidedByUserId: owner.userId,
-          decidedAt: new Date("2026-08-03T00:00:00.000Z"),
-        })
-        .where(eq(schema.scans.id, scanId));
+        gateContinuity: {
+          status,
+          reason,
+          algorithm: "sha256",
+          stagedDigest: "f".repeat(64),
+          review: reviewed
+            ? { scanId: "scan_gate", gateId: "gate_1", sha256: "e".repeat(64) }
+            : null,
+        },
+      },
+    });
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({
+        decision: "publish",
+        decidedByUserId: owner.userId,
+        decidedAt: new Date("2026-08-03T00:00:00.000Z"),
+      })
+      .where(eq(schema.scans.id, scanId));
 
-      const receipt = (await (
-        await request(appFor(owner), scanId, "release-receipt.json")
-      ).json()) as any;
-      expect(receipt.content.evidence.gateContinuity.status).toBe(evidence);
-      expect(receipt.content.evidence.status).toBe(aggregate);
-    },
-  );
+    const receipt = (await (
+      await request(appFor(owner), scanId, "release-receipt.json")
+    ).json()) as ReleaseReceiptDocument;
+    expect(receipt.content.evidence.gateContinuity.status).toBe(evidence);
+    expect(receipt.content.evidence.gateContinuity.record).toMatchObject({ status, reason });
+    expect(receipt.content.evidence.status).toBe(aggregate);
+  });
 
   test("binds workflow identity and durable decision without claiming callback delivery", async () => {
     const owner = await seedOwner();

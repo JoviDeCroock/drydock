@@ -56,7 +56,7 @@ export {
   type BatchApprovableScan,
 } from "./scan-decisions";
 
-export { loadGateReviewHistory } from "./scan-gate-continuity";
+export { hasLiveReleaseTarget, loadGateReviewHistory } from "./scan-gate-continuity";
 
 export {
   compareBadgeCandidates,
