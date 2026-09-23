@@ -160,3 +160,65 @@ function normalizePersistedDigest(value: unknown): string | null | undefined {
   if (typeof value !== "string") return undefined;
   return normalizeDigest(value) ?? undefined;
 }
+
+/** Digests of one archive's wire bytes; either may be absent. */
+export interface ArchiveDigests {
+  sha1: string | null;
+  sha256: string | null;
+}
+
+const SHA1_HEX = /^[0-9a-f]{40}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Lowercase, well-formed hex only; null when neither digest is usable. */
+export function normalizeArchiveDigests(
+  digests: { sha1?: unknown; sha256?: unknown } | null | undefined,
+): ArchiveDigests | null {
+  const sha1 = typeof digests?.sha1 === "string" ? digests.sha1.toLowerCase() : null;
+  const sha256 = typeof digests?.sha256 === "string" ? digests.sha256.toLowerCase() : null;
+  const normalized = {
+    sha1: sha1 && SHA1_HEX.test(sha1) ? sha1 : null,
+    sha256: sha256 && SHA256_HEX.test(sha256) ? sha256 : null,
+  };
+  return normalized.sha1 || normalized.sha256 ? normalized : null;
+}
+
+/**
+ * The digests a published-pair review persisted for the release it reviewed,
+ * re-validated from its summary. Null for any other scan, and for a review
+ * whose sandbox could not observe the whole archive.
+ */
+export function publishedPairArtifactDigest(summaryJson: unknown): ArchiveDigests | null {
+  if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return null;
+  const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
+  if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
+    return null;
+  }
+  const details = stagedPublish as { mode?: unknown; artifactDigest?: unknown };
+  if (details.mode !== "published_pair") return null;
+  const digest = details.artifactDigest;
+  if (!digest || typeof digest !== "object" || Array.isArray(digest)) return null;
+  return normalizeArchiveDigests(digest as { sha1?: unknown; sha256?: unknown });
+}
+
+/**
+ * Whether two sets of digests identify the same bytes. `match` needs at least
+ * one algorithm both carry, and every shared one to agree; any shared one
+ * disagreeing is `differ`. A digest only one side has is no evidence either
+ * way, so with nothing shared the answer is `incomparable`, never a match.
+ */
+export function compareArchiveDigests(
+  a: ArchiveDigests | null,
+  b: ArchiveDigests | null,
+): "match" | "differ" | "incomparable" {
+  if (!a || !b) return "incomparable";
+  let compared = 0;
+  for (const algorithm of ["sha1", "sha256"] as const) {
+    const left = a[algorithm];
+    const right = b[algorithm];
+    if (!left || !right) continue;
+    if (left !== right) return "differ";
+    compared++;
+  }
+  return compared > 0 ? "match" : "incomparable";
+}
