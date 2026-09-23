@@ -16,8 +16,8 @@
  * Nothing here logs a GitHub response body, header, or the installation token.
  */
 import { getInstallationAccessToken } from "./api";
+import { githubHeaders } from "./client";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
-import { githubInstallationHeaders } from "./http";
 import {
   GATE_SETUP_ENVIRONMENT_NAME_RE,
   GATE_SETUP_PACKAGE_NAME_RE,
@@ -137,7 +137,7 @@ export async function readGateSetupState(
 
   let headers: Record<string, string>;
   try {
-    headers = githubInstallationHeaders(await getInstallationAccessToken(config, installationId));
+    headers = githubHeaders(await getInstallationAccessToken(config, installationId));
   } catch (err) {
     if (err instanceof GithubAppValidationError) throw err;
     return unavailable({}, "Drydock could not authenticate to GitHub for this installation.");
