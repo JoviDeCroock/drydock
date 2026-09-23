@@ -34,12 +34,12 @@ export interface GateReviewHistory {
   forVersion: GateReviewRow[];
   /**
    * Whether the organization gates this package today: a completed gate
-   * review of it ran through a release target that is still configured, on a
-   * GitHub App installation that is still active, and that target is not
-   * pinned to another ecosystem. Gate history alone is not enough — an
-   * organization that ran one test gate and deleted the target, or uninstalled
-   * the app, is no longer gating the package, and a stage of it did not skip a
-   * gate that exists.
+   * review of it ran through a release target that is still configured — or
+   * through the same repository as one — on a GitHub App installation that is
+   * still active, and that target is not pinned to another ecosystem. Gate
+   * history alone is not enough — an organization that ran one test gate and
+   * deleted the target, or uninstalled the app, is no longer gating the
+   * package, and a stage of it did not skip a gate that exists.
    */
   packageHasLiveGate: boolean;
   /**
@@ -151,12 +151,20 @@ export async function loadGateReviewHistory(
     db
       .select({ id: scans.id })
       .from(scans)
-      .innerJoin(githubWorkflowGates, gateRowOfScan)
+      .leftJoin(githubWorkflowGates, gateRowOfScan)
       .innerJoin(
         githubReleaseTargets,
         and(
-          eq(githubReleaseTargets.id, githubWorkflowGates.releaseTargetId),
           releaseTargetFor(input.organizationId, input.ecosystem),
+          or(
+            eq(githubReleaseTargets.id, githubWorkflowGates.releaseTargetId),
+            // A target cannot be edited, only deleted and recreated, and the
+            // delete cascades to its gate rows and unlinks their scans. The
+            // repository the gate attested survives on the scan, so a
+            // recreated target for the same repository still counts; without
+            // this, `ungated` would go quiet until its next gate review.
+            sql`lower(json_extract(${scans.summaryJson}, '$.intentEnvelope.repository')) = lower('https://github.com/' || ${githubReleaseTargets.repositoryFullName})`,
+          ),
         ),
       )
       .innerJoin(githubAppInstallations, activeInstallation(input.organizationId))

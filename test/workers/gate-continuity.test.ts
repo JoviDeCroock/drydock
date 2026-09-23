@@ -23,6 +23,7 @@ async function seedGateTarget(
   input: {
     ecosystem?: Ecosystem | null;
     installationStatus?: "active" | "suspended" | "uninstalled";
+    repositoryFullName?: string;
   } = {},
 ): Promise<GateTarget> {
   const db = createDb(env.DB);
@@ -47,7 +48,7 @@ async function seedGateTarget(
     installationRowId: installationId,
     ecosystem: input.ecosystem === undefined ? "npm" : input.ecosystem,
     repositoryId: 42,
-    repositoryFullName: "octo/pkg",
+    repositoryFullName: input.repositoryFullName ?? "octo/pkg",
     environment: "production",
     createdAt: now,
     updatedAt: now,
@@ -151,6 +152,13 @@ async function seedGateScan(
           mode: "workflow_gate",
           artifacts: [{ path: "pkg.tgz", kind: "tarball", sha256: input.sha256 }],
         },
+      },
+      // What the pipeline records for a gate-attested scan: the repository
+      // the signed webhook bound, in normalized URL form.
+      intentEnvelope: {
+        tier: "attested",
+        repository: "https://github.com/Octo/Pkg",
+        signals: [],
       },
     },
     ai: null,
@@ -309,6 +317,35 @@ describe("gate review history for gate continuity", () => {
     });
     await seedGateScan(auto, { version: "1.0.0", sha256: GATED, gateId: autoGate.gateId });
     expect((await historyOf(auto)).packageHasLiveGate).toBe(true);
+  });
+
+  test("keeps gating live across a deleted and recreated release target", async () => {
+    // Targets cannot be edited, only deleted and recreated. The delete
+    // cascades to the gate rows and unlinks their scans, but the repository
+    // the gate attested is still on the scan.
+    const db = createDb(env.DB);
+    const owner = await seedUser();
+    const first = await seedGateRow(owner, { decidedAt: new Date() });
+    await seedGateScan(owner, { version: "1.0.0", sha256: GATED, gateId: first.gateId });
+    await db
+      .delete(schema.githubReleaseTargets)
+      .where(eq(schema.githubReleaseTargets.id, first.releaseTargetId));
+    expect((await historyOf(owner)).packageHasLiveGate).toBe(false);
+
+    await seedGateTarget(owner);
+    const history = await historyOf(owner);
+    expect(history.packageHasLiveGate).toBe(true);
+    expect(evaluateGateContinuity(history, OTHER, true)?.status).toBe("ungated");
+
+    // A target on a different repository does not gate this package.
+    const moved = await seedUser();
+    const old = await seedGateRow(moved, { decidedAt: new Date() });
+    await seedGateScan(moved, { version: "1.0.0", sha256: GATED, gateId: old.gateId });
+    await db
+      .delete(schema.githubReleaseTargets)
+      .where(eq(schema.githubReleaseTargets.id, old.releaseTargetId));
+    await seedGateTarget(moved, { repositoryFullName: "octo/elsewhere" });
+    expect((await historyOf(moved)).packageHasLiveGate).toBe(false);
   });
 
   test("never reads another ecosystem's gate of the same name as this package's history", async () => {
