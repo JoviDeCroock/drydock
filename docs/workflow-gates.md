@@ -57,7 +57,9 @@ The wizard renders a gate as armed only when GitHub reports `protectionRule: "pr
 
 Identity allowlisting (`assertGateSetupEnvironment` / `assertGateSetupPackageName`, `GATE_SETUP_*_RE` in `server/lib/github-app/validation.ts`) applies to `preview` only: those values are interpolated into YAML a maintainer will merge. `verify` deliberately accepts any name GitHub accepted, because an environment created by hand — `production/eu`, say — still has to be checkable and mappable; only the generated workflow is unavailable for it.
 
-Existing mappings are detected in the wizard, and a pinned ecosystem stays locked until the maintainer explicitly removes that mapping, avoiding a duplicate create against the unique repository/environment pair.
+Existing mappings are detected in the wizard the way the webhook resolves them — installation, GitHub repository **id**, and environment — so a renamed repository still shows its mapping instead of offering a create that fails as a duplicate. A pinned ecosystem stays locked until the maintainer explicitly removes that mapping. The wizard reads mappings only from the organization's stored list (updated in place by its own create/remove), so a mapping removed anywhere else — the GitHub App card, another tab — stops counting toward "armed" as soon as that list changes. A verification that fails outright clears the previous answer rather than leaving an earlier "armed" standing, and the error renders on the step whose button asked.
+
+The workflow examples on the public Docs page (`src/pages/Docs/gate-workflow-examples.ts`) are copies of the adapter templates rendered for placeholder names; `test/workers/gate-setup-template.test.ts` fails when a copy drifts, which is what keeps the page's "the files the wizard writes" claim true.
 
 ### Generated workflows
 

@@ -1,9 +1,12 @@
 import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
-import { useModel } from "@preact/signals";
+import { useComputed, useModel } from "@preact/signals";
+import { Show } from "@preact/signals/utils";
 import {
+  type GateSetupAction,
   GateSetupModel,
   NEW_ENVIRONMENT_CHOICE,
+  type VerifyOrigin,
   environmentSettingsUrl,
   newWorkflowFileUrl,
 } from "../../../models/gate-setup";
@@ -81,7 +84,8 @@ function renderNote(note: string): ComponentChildren {
  *
  * That verification is what the summary badge rests on: a mapped release target
  * only means Drydock knows where a held deployment goes, so the wizard reports
- * a gate as armed only when GitHub confirms Drydock is the protection rule.
+ * a gate as armed only when GitHub confirms Drydock is the protection rule and
+ * the organization's stored targets still map this repository and environment.
  */
 export function GateSetupWizard({
   activeInstallations,
@@ -165,26 +169,11 @@ export function GateSetupWizard({
     );
   }
 
-  const verification = gateSetup.verification.value;
-  const preview = gateSetup.preview.value;
   // Read, never recomputed: `gateArmed` is the one claim this card makes about
-  // the gate, and a second copy here is a second thing to keep honest.
+  // the gate, and a second copy here is a second thing to keep honest. The same
+  // goes for `currentStep`, which lives in the model so it is unit-tested.
   const gateArmed = gateSetup.gateArmed.value;
-  // The first unfinished step. Exactly one step owns the primary button, so the
-  // card has a single next action instead of six competing ones.
-  const current = !gateSetup.repositoryPicked.value
-    ? 1
-    : verification?.environment !== "present"
-      ? 2
-      : verification.protectionRule !== "present"
-        ? 3
-        : !gateSetup.templateReady.value
-          ? 4
-          : !preview
-            ? 5
-            : !releaseTarget
-              ? 6
-              : 7;
+  const current = gateSetup.currentStep.value;
 
   return (
     <div id="gate-setup" class="scroll-mt-6">
@@ -236,7 +225,9 @@ export function GateSetupWizard({
           onChanged={onReleaseTargetsChanged}
           current={current}
         />
-        {current === 7 ? <GateArmedSummary gateSetup={gateSetup} /> : null}
+        <Show when={gateSetup.flowComplete}>
+          {() => <GateArmedSummary gateSetup={gateSetup} />}
+        </Show>
       </CollapsibleCard>
     </div>
   );
@@ -403,7 +394,6 @@ function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current
   const repositoryFullName = gateSetup.repositoryFullName.value;
   const environment = gateSetup.environment.value;
   const verification = gateSetup.verification.value;
-  const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
   const creatingNew = choice === NEW_ENVIRONMENT_CHOICE;
   const found = verification?.environment === "present";
@@ -474,10 +464,12 @@ function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current
             ) : null}
             <Button
               variant={!creatingNew && current === 2 ? "primary" : "secondary"}
-              onClick={() => void gateSetup.verify()}
+              onClick={() => void gateSetup.verify("environment")}
               disabled={busy || !environment}
             >
-              {busyStep === "verify" ? "Checking…" : "Check it"}
+              <PendingLabel gateSetup={gateSetup} step="verify" pending="Checking…">
+                Check it
+              </PendingLabel>
             </Button>
           </div>
         ) : null}
@@ -486,7 +478,7 @@ function EnvironmentStep({ gateSetup, current }: { gateSetup: GateSetup; current
           check={verification?.environment}
           absent={`Drydock cannot see an environment called "${environment}" on ${repositoryFullName}. Create it on GitHub, then check again.`}
         />
-        <StepError gateSetup={gateSetup} step="verify" />
+        <StepError gateSetup={gateSetup} step="verify" origin="environment" />
       </SettingsCardBody>
     </div>
   );
@@ -498,7 +490,6 @@ function ProtectionRuleStep({ gateSetup, current }: { gateSetup: GateSetup; curr
   const environmentFound = verification?.environment === "present";
   const environment = gateSetup.environment.value;
   const repositoryFullName = gateSetup.repositoryFullName.value;
-  const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
   const enabled = verification?.protectionRule === "present";
 
@@ -525,8 +516,14 @@ function ProtectionRuleStep({ gateSetup, current }: { gateSetup: GateSetup; curr
               >
                 Open environment settings ↗
               </LinkButton>
-              <Button variant="secondary" onClick={() => void gateSetup.verify()} disabled={busy}>
-                {busyStep === "verify" ? "Checking…" : enabled ? "Re-check" : "Check the rule"}
+              <Button
+                variant="secondary"
+                onClick={() => void gateSetup.verify("protection_rule")}
+                disabled={busy}
+              >
+                <PendingLabel gateSetup={gateSetup} step="verify" pending="Checking…">
+                  {enabled ? "Re-check" : "Check the rule"}
+                </PendingLabel>
               </Button>
             </>
           ) : (
@@ -540,11 +537,15 @@ function ProtectionRuleStep({ gateSetup, current }: { gateSetup: GateSetup; curr
             a Drydock review.
           </Alert>
         ) : null}
+        <Show when={gateSetup.adminBypassAllowed}>
+          {() => <AdminBypassWarning gateSetup={gateSetup} />}
+        </Show>
         <VerificationNotice
           gateSetup={gateSetup}
           check={environmentFound ? verification?.protectionRule : undefined}
           absent={`Drydock is not yet a protection rule on "${environment}", so nothing is holding this environment's deployments. Enable it on GitHub, then check again.`}
         />
+        <StepError gateSetup={gateSetup} step="verify" origin="protection_rule" />
       </SettingsCardBody>
     </div>
   );
@@ -631,7 +632,6 @@ function WorkflowStep({ gateSetup, current }: { gateSetup: GateSetup; current: n
   const environmentIssue = gateSetup.environmentIssue.value;
   const verification = gateSetup.verification.value;
   const repositoryFullName = gateSetup.repositoryFullName.value;
-  const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
 
   return (
@@ -652,11 +652,9 @@ function WorkflowStep({ gateSetup, current }: { gateSetup: GateSetup; current: n
             onClick={() => void gateSetup.loadPreview()}
             disabled={busy || !templateReady}
           >
-            {busyStep === "preview"
-              ? "Generating…"
-              : preview
-                ? "Regenerate workflow"
-                : "Generate workflow"}
+            <PendingLabel gateSetup={gateSetup} step="preview" pending="Generating…">
+              {preview ? "Regenerate workflow" : "Generate workflow"}
+            </PendingLabel>
           </Button>
           {preview ? (
             <LinkButton
@@ -717,7 +715,6 @@ function ReleaseTargetStep({
   current: number;
 }) {
   const environmentPicked = gateSetup.environmentPicked.value;
-  const busyStep = gateSetup.busyStep.value;
   const busy = gateSetup.busy.value;
 
   const create = async () => {
@@ -752,7 +749,9 @@ function ReleaseTargetStep({
               ]}
             />
             <Button variant="ghost" size="sm" onClick={() => void remove()} disabled={busy}>
-              {busyStep === "release_target_delete" ? "Removing…" : "Remove mapping"}
+              <PendingLabel gateSetup={gateSetup} step="release_target_delete" pending="Removing…">
+                Remove mapping
+              </PendingLabel>
             </Button>
           </div>
         ) : (
@@ -762,7 +761,9 @@ function ReleaseTargetStep({
               onClick={() => void create()}
               disabled={busy || !environmentPicked}
             >
-              {busyStep === "release_target" ? "Mapping…" : "Create release target"}
+              <PendingLabel gateSetup={gateSetup} step="release_target" pending="Mapping…">
+                Create release target
+              </PendingLabel>
             </Button>
             {!environmentPicked ? <Blocked>Pick an environment in step 2 first.</Blocked> : null}
           </div>
@@ -786,6 +787,10 @@ function GateArmedSummary({ gateSetup }: { gateSetup: GateSetup }) {
           and this organization owns the release target. Merge the publish workflow, then push a
           release tag: the publish job will queue, its artifacts will arrive here for review, and
           nothing reaches the registry until you approve.
+          <Show when={gateSetup.adminBypassAllowed}>
+            {" "}
+            One gap remains: repository admins can still bypass the rule — see step 3.
+          </Show>
         </Muted>
         <div class="flex flex-wrap items-center gap-3">
           <LinkButton href="/dashboard" size="sm" variant="secondary">
@@ -840,15 +845,78 @@ function VerificationNotice({
   return null;
 }
 
-/** An error rendered against the step that raised it. */
+/**
+ * An error rendered against the step that raised it.
+ *
+ * Verification is shared by steps 2 and 3, so its failure renders where the
+ * maintainer asked for it (`origin`) — "Re-check" lives in step 3, and an
+ * error in step 2 would be off-screen from the button that caused it.
+ */
 function StepError({
   gateSetup,
   step,
+  origin,
 }: {
   gateSetup: GateSetup;
-  step: "verify" | "preview" | "release_target" | "release_target_delete" | null;
+  step: GateSetupAction | null;
+  origin?: VerifyOrigin;
 }) {
   const error = gateSetup.error.value;
   if (!error || gateSetup.errorStep.value !== step) return null;
+  if (origin && gateSetup.verifyOrigin.value !== origin) return null;
+  if (step === "verify") {
+    return (
+      <Alert tone="critical">
+        Drydock could not check GitHub, so it is not claiming anything about this gate: {error}
+      </Alert>
+    );
+  }
   return <Alert tone="critical">{error}</Alert>;
+}
+
+/**
+ * A button label that follows its own action's in-flight state, so the step
+ * rendering the button does not re-render for it.
+ */
+function PendingLabel({
+  gateSetup,
+  step,
+  pending,
+  children,
+}: {
+  gateSetup: GateSetup;
+  step: GateSetupAction;
+  pending: string;
+  children: ComponentChildren;
+}) {
+  const active = useComputed(() => gateSetup.pendingSteps.value.includes(step));
+  return (
+    <Show when={active} fallback={<>{children}</>}>
+      {pending}
+    </Show>
+  );
+}
+
+/**
+ * GitHub's admin bypass, which is on by default. It does not unarm the gate —
+ * the rule still holds every run nobody overrides — so it is a warning beside
+ * the rule rather than a failed check.
+ */
+function AdminBypassWarning({ gateSetup }: { gateSetup: GateSetup }) {
+  return (
+    <Alert tone="warn">
+      Repository admins can still push a held release past Drydock:{" "}
+      <strong>Allow administrators to bypass configured protection rules</strong> is on for{" "}
+      <code class="font-mono text-[12px]">{gateSetup.environment.value}</code>, and GitHub turns it
+      on by default.{" "}
+      <a
+        class="underline"
+        href={environmentSettingsUrl(gateSetup.repositoryFullName.value)}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Uncheck it in the environment settings ↗
+      </a>
+    </Alert>
+  );
 }

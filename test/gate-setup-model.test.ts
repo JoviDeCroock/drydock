@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { setActiveOrganizationId } from "../src/models/active-organization";
-import { GateSetupModel, type GateSetupVerification } from "../src/models/gate-setup";
+import {
+  GateSetupModel,
+  NEW_ENVIRONMENT_CHOICE,
+  type GateSetupVerification,
+} from "../src/models/gate-setup";
 import type { PublicReleaseTarget } from "../src/models/release-targets";
 
 type GateSetup = InstanceType<typeof GateSetupModel>;
@@ -40,6 +44,7 @@ afterEach(() => {
 function readyModel(): GateSetup {
   const model = new GateSetupModel();
   model.installationRowId.value = "installation-1";
+  model.repositories.value = [{ id: 1, fullName: "octo/widgets", defaultBranch: "main" }];
   model.repositoryFullName.value = "octo/widgets";
   model.environmentChoice.value = "production";
   model.ecosystem.value = "npm";
@@ -135,17 +140,20 @@ describe("GateSetupModel", () => {
   });
 
   test("invalidates verified state when the environment name changes", () => {
-    const model = new GateSetupModel();
+    const model = readyModel();
+    model.environmentChoice.value = NEW_ENVIRONMENT_CHOICE;
+    model.newEnvironmentName.value = "production";
     model.verification.value = verified();
-    model.releaseTarget.value = releaseTarget();
+    model.knownReleaseTargets.value = [releaseTarget()];
     model.preview.value = { workflowPath: "workflow.yml", yaml: "name: old", notes: [] };
+    expect(model.gateArmed.value).toBe(true);
 
     model.setNewEnvironmentName("next-production");
 
     // A verification proves something about one environment only; carrying it
     // to a renamed one is how the wizard would claim a gate it never checked.
     expect(model.verification.value).toBe(null);
-    expect(model.releaseTarget.value).toBe(null);
+    expect(model.resolvedReleaseTarget.value).toBe(null);
     expect(model.preview.value).toBe(null);
     expect(model.gateArmed.value).toBe(false);
   });
@@ -177,10 +185,58 @@ describe("GateSetupModel", () => {
 
   test("does not resolve a stored mapping belonging to another draft", () => {
     const model = readyModel();
-    model.knownReleaseTargets.value = [{ ...releaseTarget(), repositoryFullName: "octo/other" }];
+    model.knownReleaseTargets.value = [
+      { ...releaseTarget(), repositoryId: 2, repositoryFullName: "octo/other" },
+    ];
 
     expect(model.resolvedReleaseTarget.value).toBeNull();
     model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(false);
+  });
+
+  test("resolves a stored mapping by repository id after a rename", () => {
+    const model = readyModel();
+    // Storage keys on GitHub's repository id; the stored full name is whatever
+    // the repository was called when it was mapped. Matching on the name showed
+    // a renamed repository as unmapped, and creating a mapping then failed as a
+    // duplicate of the one the wizard could not see.
+    model.knownReleaseTargets.value = [{ ...releaseTarget(), repositoryFullName: "octo/old-name" }];
+
+    expect(model.resolvedReleaseTarget.value?.id).toBe("target-1");
+    model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(true);
+  });
+
+  test("stops claiming a mapping once the parent's list no longer has it", () => {
+    const model = readyModel();
+    model.verification.value = verified();
+    model.preview.value = { workflowPath: "workflow.yml", yaml: "name: x", notes: [] };
+    model.knownReleaseTargets.value = [releaseTarget()];
+    expect(model.gateArmed.value).toBe(true);
+    expect(model.flowComplete.value).toBe(true);
+
+    // Removed from the GitHub App card: the wizard's own remove never ran.
+    model.knownReleaseTargets.value = [];
+
+    expect(model.resolvedReleaseTarget.value).toBeNull();
+    expect(model.gateArmed.value).toBe(false);
+    expect(model.currentStep.value).toBe(6);
+  });
+
+  test("a target created this session counts only while the stored list has it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ releaseTarget: releaseTarget() }, { status: 201 })),
+    );
+    setActiveOrganizationId("org-1");
+    const model = readyModel();
+    model.verification.value = verified();
+
+    await model.createReleaseTarget();
+    // Counted before the parent's refetch lands, so the flow does not flicker.
+    expect(model.gateArmed.value).toBe(true);
+
+    model.knownReleaseTargets.value = [];
     expect(model.gateArmed.value).toBe(false);
   });
 
@@ -204,7 +260,7 @@ describe("GateSetupModel", () => {
 
   test("reports the gate armed only when GitHub confirms the protection rule", () => {
     const model = readyModel();
-    model.releaseTarget.value = releaseTarget();
+    model.knownReleaseTargets.value = [releaseTarget()];
 
     // A mapped release target alone is where the old summary badge stopped, and
     // it says nothing about whether GitHub will hold a deployment.
@@ -217,39 +273,67 @@ describe("GateSetupModel", () => {
     model.verification.value = verified();
     expect(model.gateArmed.value).toBe(true);
 
-    model.releaseTarget.value = null;
+    model.knownReleaseTargets.value = [];
     expect(model.gateArmed.value).toBe(false);
   });
 
+  test("an environment GitHub confirms with an unreadable rule is not armed", () => {
+    const model = readyModel();
+    model.knownReleaseTargets.value = [releaseTarget()];
+    model.verification.value = {
+      ...verified(),
+      protectionRule: "unknown",
+      unavailableReason: "Drydock could not read this environment's protection rules.",
+    };
+
+    expect(model.gateArmed.value).toBe(false);
+    expect(model.currentStep.value).toBe(3);
+  });
+
+  test("flags admin bypass beside an armed rule without unarming it", () => {
+    const model = readyModel();
+    model.knownReleaseTargets.value = [releaseTarget()];
+
+    model.verification.value = { ...verified(), adminBypass: "allowed" };
+    expect(model.adminBypassAllowed.value).toBe(true);
+    expect(model.gateArmed.value).toBe(true);
+
+    model.verification.value = { ...verified(), adminBypass: "blocked" };
+    expect(model.adminBypassAllowed.value).toBe(false);
+
+    // Nothing to bypass without the rule; step 3 already says the rule is missing.
+    model.verification.value = { ...verified(), protectionRule: "absent", adminBypass: "allowed" };
+    expect(model.adminBypassAllowed.value).toBe(false);
+  });
+
   test("keeps a mapped ecosystem pinned until the release target is removed", () => {
-    const model = new GateSetupModel();
-    model.ecosystem.value = "npm";
+    const model = readyModel();
     model.verification.value = verified();
-    model.releaseTarget.value = releaseTarget("npm");
+    model.knownReleaseTargets.value = [releaseTarget("npm")];
 
     model.selectEcosystem("pypi");
 
     expect(model.ecosystem.value).toBe("npm");
     expect(model.verification.value?.protectionRule).toBe("present");
-    expect(model.releaseTarget.value?.id).toBe("target-1");
+    expect(model.resolvedReleaseTarget.value?.id).toBe("target-1");
   });
 
   test("allows a workflow ecosystem beside an auto-detect release target", () => {
-    const model = new GateSetupModel();
-    model.releaseTarget.value = { ...releaseTarget(), ecosystem: null };
+    const model = readyModel();
+    model.knownReleaseTargets.value = [{ ...releaseTarget(), ecosystem: null }];
 
     model.selectEcosystem("pypi");
 
     expect(model.ecosystem.value).toBe("pypi");
-    expect(model.releaseTarget.value?.ecosystem).toBe(null);
+    expect(model.resolvedReleaseTarget.value?.ecosystem).toBe(null);
   });
 
   test("invalidates only the generated workflow when the package name changes", () => {
-    const model = new GateSetupModel();
+    const model = readyModel();
     const target = releaseTarget();
     model.preview.value = { workflowPath: "workflow.yml", yaml: "name: old", notes: [] };
     model.verification.value = verified();
-    model.releaseTarget.value = target;
+    model.knownReleaseTargets.value = [target];
 
     model.setPackageName("@acme/next");
 
@@ -257,7 +341,66 @@ describe("GateSetupModel", () => {
     // becomes stale.
     expect(model.preview.value).toBe(null);
     expect(model.verification.value?.protectionRule).toBe("present");
-    expect(model.releaseTarget.value).toBe(target);
+    expect(model.resolvedReleaseTarget.value).toBe(target);
+  });
+
+  test("a mapping's ecosystem pin does not discard the verification it raced", async () => {
+    const pending = deferredResponse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => pending.promise),
+    );
+    setActiveOrganizationId("org-1");
+    const model = readyModel();
+    model.ecosystem.value = "";
+    model.knownReleaseTargets.value = [releaseTarget("npm")];
+
+    // Choosing the environment verifies it; the stored mapping for it then
+    // pins the ecosystem (the wizard's effect), which resets the workflow step.
+    // A shared request id made that reset drop the verification in flight.
+    const choosing = model.selectEnvironmentChoice("production");
+    model.selectEcosystem("npm");
+    pending.resolve(Response.json({ state: verified() }));
+    await choosing;
+
+    expect(model.ecosystem.value).toBe("npm");
+    expect(model.verification.value?.protectionRule).toBe("present");
+    expect(model.gateArmed.value).toBe(true);
+    expect(model.pendingSteps.value).toEqual([]);
+  });
+
+  test("a failed re-check withdraws the earlier answer and says where it was asked", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "internal error" }, { status: 500 })),
+    );
+    setActiveOrganizationId("org-1");
+    const model = readyModel();
+    model.knownReleaseTargets.value = [releaseTarget()];
+    model.verification.value = verified();
+    expect(model.gateArmed.value).toBe(true);
+
+    await model.verify("protection_rule");
+
+    // A check that could not complete says nothing about GitHub now; keeping
+    // the earlier answer is how a switched-off rule would keep a green badge.
+    expect(model.verification.value).toBe(null);
+    expect(model.gateArmed.value).toBe(false);
+    expect(model.errorStep.value).toBe("verify");
+    expect(model.verifyOrigin.value).toBe("protection_rule");
+  });
+
+  test("an environment the template cannot quote moves the flow past the workflow steps", () => {
+    const model = readyModel();
+    model.environmentChoice.value = "production/eu";
+    model.verification.value = verified();
+
+    // Steps 4 and 5 are unavailable for this name, so the next action is the
+    // release target, and a mapped, verified gate completes the flow.
+    expect(model.currentStep.value).toBe(6);
+    model.knownReleaseTargets.value = [{ ...releaseTarget(), environment: "production/eu" }];
+    expect(model.currentStep.value).toBe(7);
+    expect(model.flowComplete.value).toBe(true);
   });
 
   test("blocks only the generated workflow for an environment outside the template allowlist", () => {
@@ -290,7 +433,7 @@ describe("GateSetupModel", () => {
       {
         start: (model) => model.createReleaseTarget(),
         response: { releaseTarget: releaseTarget() },
-        read: (model) => model.releaseTarget.value,
+        read: (model) => model.resolvedReleaseTarget.value,
       },
     ];
 
@@ -310,7 +453,7 @@ describe("GateSetupModel", () => {
 
       expect(entry.read(model)).toBe(null);
       expect(model.error.value).toBe(null);
-      expect(model.busyStep.value).toBe(null);
+      expect(model.pendingSteps.value).toEqual([]);
     }
   });
 
@@ -330,13 +473,13 @@ describe("GateSetupModel", () => {
     first.resolve(Response.json({ workflowPath: "old.yml", yaml: "name: old", notes: [] }));
     await firstLoad;
 
-    expect(model.busyStep.value).toBe("preview");
+    expect(model.pendingSteps.value).toEqual(["preview"]);
     expect(model.preview.value).toBe(null);
 
     second.resolve(Response.json({ workflowPath: "new.yml", yaml: "name: new", notes: [] }));
     await secondLoad;
 
-    expect(model.busyStep.value).toBe(null);
+    expect(model.pendingSteps.value).toEqual([]);
     expect(model.preview.value?.workflowPath).toBe("new.yml");
   });
 
@@ -355,7 +498,7 @@ describe("GateSetupModel", () => {
     await load;
 
     expect(model.error.value).toBe(null);
-    expect(model.busyStep.value).toBe(null);
+    expect(model.pendingSteps.value).toEqual([]);
   });
 
   test("removes a mapped target before allowing another ecosystem", async () => {
@@ -365,12 +508,12 @@ describe("GateSetupModel", () => {
     );
     setActiveOrganizationId("org-1");
     const model = readyModel();
-    model.releaseTarget.value = releaseTarget();
+    model.knownReleaseTargets.value = [releaseTarget()];
 
     expect(await model.removeReleaseTarget("target-1")).toBe(true);
     model.selectEcosystem("pypi");
 
-    expect(model.releaseTarget.value).toBe(null);
+    expect(model.resolvedReleaseTarget.value).toBe(null);
     expect(model.ecosystem.value).toBe("pypi");
   });
 });

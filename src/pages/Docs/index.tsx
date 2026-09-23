@@ -10,6 +10,7 @@ import { InlineCode, Prose, SectionLabel } from "../../components/Typography";
 import { docsPageSeo, PageSeo } from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
+import { GATE_WORKFLOW_EXAMPLES } from "./gate-workflow-examples";
 import {
   Callout,
   JourneyCard,
@@ -526,8 +527,9 @@ export default function DocsPage() {
                 committing workflow files would mean holding the power to rewrite the very publish
                 workflow the gate protects. So the wizard generates the workflow, links to each
                 GitHub screen, and then reads GitHub back: it reports the gate as armed only when
-                GitHub confirms Drydock is the environment's protection rule. The examples below are
-                the same files the wizard writes.
+                GitHub confirms Drydock is the environment's protection rule and a release target
+                maps that repository and environment. The examples below are the files the wizard
+                writes, for placeholder package names.
               </Callout>
               <div class="flex flex-wrap gap-2 pt-1">
                 <LinkButton href="/dashboard/settings#gate-setup" size="sm">
@@ -567,94 +569,18 @@ export default function DocsPage() {
             <Subsection id="gate-workflow" title="Workflow examples">
               <Prose>
                 Each workflow has the same contract: build once, record checksums, upload, pause at
-                the environment, verify the download, and publish without rebuilding.
+                the environment, verify the download, and publish without rebuilding. Each also
+                grants no token scope by default, keeps the checkout token off disk while
+                dependencies install, and pins every action to a commit SHA.
               </Prose>
               <WorkflowExample title="PyPI with Trusted Publishing" defaultOpen>
-                {`jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-      - run: python -m pip install build
-      - run: python -m build
-      - run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pypi-release-candidate
-          path: dist/
-
-  publish:
-    needs: build
-    environment: production
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: pypi-release-candidate
-          path: dist
-      - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: rm dist/SHA256SUMS
-      - uses: pypa/gh-action-pypi-publish@release/v1`}
+                {GATE_WORKFLOW_EXAMPLES.pypi.yaml}
               </WorkflowExample>
-              <WorkflowExample title="npm packed artifacts">
-                {`jobs:
-  pack:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npm run pack:all # write dist/*.tgz
-      - run: cd dist && sha256sum *.tgz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-release-candidates
-          path: dist/
-
-  publish:
-    needs: pack
-    environment: production
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-release-candidates
-          path: dist
-      - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: |
-          for tgz in dist/*.tgz; do
-            npm publish "$tgz" --access public --provenance
-          done`}
+              <WorkflowExample title="npm with trusted publishing">
+                {GATE_WORKFLOW_EXAMPLES.npm.yaml}
               </WorkflowExample>
               <WorkflowExample title="VS Code extension">
-                {`jobs:
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npx @vscode/vsce package --out dist/extension.vsix
-      - run: cd dist && sha256sum *.vsix > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vscode-release-candidate
-          path: dist/
-
-  publish:
-    needs: package
-    environment: production
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: vscode-release-candidate
-          path: dist
-      - run: cd dist && sha256sum --check --strict SHA256SUMS
-      - run: npx @vscode/vsce publish --packagePath dist/extension.vsix`}
+                {GATE_WORKFLOW_EXAMPLES.vscode.yaml}
               </WorkflowExample>
               <Callout label="Authentication stays in the publish job">
                 Add the registry authentication your release already uses—for example PyPI Trusted
