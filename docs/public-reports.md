@@ -183,8 +183,8 @@ is false unless all three of these are provable:
 
 - **A registry-verified source, under npm's name.** npm let the
   organization's own token read that exact stage, and the reviewed manifest's
-  name agrees with npm's name for the stage (see "npm's name, not the
-  manifest's" below). A `workflow_gate` review only _claims_ the name in a
+  name agrees with npm's name for the stage (see "npm's name, on npm, not
+  the manifest's" below). A `workflow_gate` review only _claims_ the name in a
   tarball manifest — anyone can build one — so without this, approving a review
   of a tarball calling itself `react` would mint an authoritative-looking
   approval for a package the reviewer has no claim on. Manifest-claimed reviews
@@ -205,7 +205,7 @@ predating the column are backfilled by
 `pnpm run db:backfill:badge-package-key:remote`, whose header states the
 assumptions that backfill makes and the read-only queries that check them.
 
-**npm's name, not the manifest's.** `package_name` is the reviewed tarball's
+**npm's name, on npm, not the manifest's.** `package_name` is the reviewed tarball's
 manifest — package bytes — and a stage the organization's token can read may
 carry a manifest naming any package. What the token establishes is npm's name
 for the stage, `registry_package_name`, which Drydock records from npm's stage
@@ -215,8 +215,11 @@ identity — its listed `public_package_key`, and `badge_public` — is npm's na
 and only while the manifest agrees with it; npm resolves names exactly, so
 agreement is exact equality. A staged review whose manifest disagrees, or that
 has no name from npm (rows predating migration 0027), has no public identity at
-all: it can still be shared and feed-listed, but it answers no badge under
-either name. `scanPublicPackageName` is the rule; `listBadgeCandidateScans` and
+all: it can still be shared and feed-listed (as `manifest-claimed`, see
+package identity below), but it answers no badge under either name. The same
+holds for a stage from any registry other than public npm: an organization may
+point its npm connection at any https registry, including one it runs, and
+that registry's stage record says nothing about a public npm name. `scanPublicPackageName` is the rule; `listBadgeCandidateScans` and
 `listDefaultBadgeCandidateScans` enforce it again in SQL, so a key written
 before the rule existed cannot answer either. Only a manifest-claimed gate
 review answers under its own manifest name, which is exactly the claim it makes
@@ -522,15 +525,24 @@ Each feed entry carries `packageIdentity`, which says what the scan's source
 proves about the reviewer's relationship to the package name — never about the
 quality of the review:
 
-- `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`).
-  The artifact was fetched from the registry with the org's npm token, and npm
-  let that token read that exact stage. That proves the organization can see
-  the package's stages, not that it can publish: a read-only token passes. It
-  is the only identity backed by a credential, and the only one the badge
-  treats as authoritative — under npm's name for the stage, never the
-  manifest's (see "npm's name, not the manifest's" above).
-- `manifest-claimed` — workflow-gate reviews. The reviewed artifact is
-  repo-built and its manifest claims the name; nothing verifies ownership yet.
+- `registry-verified` — staged-publish reviews (`manual`, `auto_discovery`)
+  of a stage on the public npm registry whose manifest agrees with npm's name
+  for it. The artifact was fetched with the org's npm token, and npm let that
+  token read that exact stage. That proves the organization can see the
+  package's stages, not that it can publish: a read-only token passes. It is
+  the only identity backed by a credential, and the only one the badge treats
+  as authoritative (see "npm's name, on npm, not the manifest's" above).
+- `manifest-claimed` — workflow-gate reviews, and any staged review that
+  falls short of the above: its manifest names a package other than npm's
+  name for the stage, npm gave no name, or the stage came from a registry
+  other than public npm (an organization may point its connection at any
+  https registry, including one it runs). The entry's `package` is still the
+  report's own evidence — what the manifest says — but it is labelled a claim,
+  so a decision is never presented as verified for a name no credential
+  reached. Such a review stays listable: a stage whose bytes claim another
+  package is exactly what the feed exists to surface. The reviewed artifact
+  of a gate review is repo-built and its manifest claims the name; nothing
+  verifies ownership yet.
   Consumers should weigh these accordingly. The authenticated
   [publication monitor](./publication-monitor.md) can compare an enrolled npm
   package's published bytes with prior gate approvals. Those observations do

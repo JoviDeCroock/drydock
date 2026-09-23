@@ -191,6 +191,42 @@ function scanPackageIdentity(source: string): PackageIdentity {
 }
 
 /**
+ * The registry whose names the public `npm` badge and feed speak for. Stored
+ * registry URLs are normalized (`normalizeRegistryUrl`: lowercase host, no
+ * trailing slash, no default port), so this is an exact comparison, and the
+ * SQL twins compare against the same two strings.
+ */
+export const PUBLIC_NPM_REGISTRY_URLS = [
+  "https://registry.npmjs.org",
+  "https://registry.npmjs.org/",
+] as const;
+
+function isPublicNpmRegistryUrl(registryUrl: string | null): boolean {
+  return (PUBLIC_NPM_REGISTRY_URLS as readonly string[]).includes(registryUrl ?? "");
+}
+
+/**
+ * What one scan proves about the name it carries — the identity every
+ * anonymous surface renders. A credential-backed *source* earns
+ * `registry-verified` only while the scan has a public name
+ * (`scanPublicPackageName`): a stage on the public npm registry whose manifest
+ * agrees with npm's name for it. Otherwise the name on the entry is only what
+ * the manifest claims, and the entry says so — the same tier as a workflow
+ * gate — so a decision is never presented as verified for a name no
+ * credential reached.
+ */
+function scanIdentity(row: {
+  source: string;
+  packageName: string | null;
+  registryPackageName: string | null;
+  registryUrl: string | null;
+}): PackageIdentity {
+  const identity = scanPackageIdentity(row.source);
+  if (identity !== "registry-verified") return identity;
+  return scanPublicPackageName(row) ? "registry-verified" : "manifest-claimed";
+}
+
+/**
  * Whether a scan may answer the global `/public/badge/:ecosystem/:package`
  * index, which is keyed by package name alone and reads as the maintainer's own
  * verdict on the release.
@@ -237,6 +273,11 @@ export function badgeEcosystem(source: string, summaryJson: unknown): PublicEcos
  * no public identity at all. npm resolves package names exactly — no case
  * folding or other normalization — so agreement is plain equality.
  *
+ * And only on the public npm registry. An organization may point its npm
+ * connection at any https registry, including one it runs itself, so a stage
+ * record from anywhere else proves nothing about a name on the public
+ * registry the `npm` badge and feed speak for.
+ *
  * Only a manifest-claimed source answers under its own manifest name, which is
  * exactly the claim it makes and why it renders `unverified`. Every other
  * source must agree with npm, so a source added later has no identity until
@@ -246,9 +287,12 @@ export function scanPublicPackageName(row: {
   source: string;
   packageName: string | null;
   registryPackageName: string | null;
+  registryUrl: string | null;
 }): string | null {
   if (!row.packageName) return null;
-  if (scanPackageIdentity(row.source) === "manifest-claimed") return row.packageName;
+  const identity = scanPackageIdentity(row.source);
+  if (identity === "manifest-claimed") return row.packageName;
+  if (identity !== "registry-verified" || !isPublicNpmRegistryUrl(row.registryUrl)) return null;
   return row.registryPackageName === row.packageName ? row.registryPackageName : null;
 }
 
@@ -263,6 +307,7 @@ export function badgeLookupKey(row: {
   source: string;
   packageName: string | null;
   registryPackageName: string | null;
+  registryUrl: string | null;
   summaryJson: unknown;
 }): string | null {
   const name = scanPublicPackageName(row);
@@ -288,6 +333,7 @@ export function badgeReleaseLineKey(row: {
   source: string;
   packageName: string | null;
   registryPackageName: string | null;
+  registryUrl: string | null;
   summaryJson: unknown;
 }): string | null {
   if (scanPackageIdentity(row.source) !== "registry-verified") return badgeLookupKey(row);
@@ -363,11 +409,7 @@ export function isDefaultBadgePublic(row: {
 // unaffiliated public review must not occupy the badge at all.
 export function pickBadgeScan(rows: SharedScanRow[]): SharedScanRow | null {
   const eligible = rows.filter((row) => isBadgeEligibleSource(row.source));
-  return (
-    eligible.find((row) => scanPackageIdentity(row.source) === "registry-verified") ??
-    eligible[0] ??
-    null
-  );
+  return eligible.find((row) => scanIdentity(row) === "registry-verified") ?? eligible[0] ?? null;
 }
 
 function sharedScanReleaseRisk(row: SharedScanRow): string {
@@ -402,7 +444,7 @@ export function buildThreatFeedEntry(row: SharedScanRow, origin: string): Threat
     previousVersion: row.previousVersion,
     ecosystem: scanEcosystem(row.source, row.summaryJson),
     tag: scanDistTag(row.summaryJson),
-    packageIdentity: scanPackageIdentity(row.source),
+    packageIdentity: scanIdentity(row),
     releaseRisk: sharedScanReleaseRisk(row),
     artifactRisk: row.risk,
     decision: row.decision,
@@ -453,7 +495,7 @@ function badgeLabel(row: SharedScanRow | null, tag: string): string {
     ...(tag === DEFAULT_BADGE_TAG ? [] : [tag]),
     // Anything short of registry-verified says so, so a row that ever reaches
     // here without the registry's proof cannot read as the maintainer's own.
-    ...(row && scanPackageIdentity(row.source) !== "registry-verified" ? ["unverified"] : []),
+    ...(row && scanIdentity(row) !== "registry-verified" ? ["unverified"] : []),
   ];
   return qualifiers.length > 0 ? `${BADGE_LABEL} (${qualifiers.join(", ")})` : BADGE_LABEL;
 }
@@ -527,7 +569,7 @@ export function buildBadgePayload(
       schemaVersion: 1,
       label: badgeLabel(row, tag),
       message: `${version} approved`,
-      color: scanPackageIdentity(row.source) === "registry-verified" ? "brightgreen" : "lightgrey",
+      color: scanIdentity(row) === "registry-verified" ? "brightgreen" : "lightgrey",
       cacheSeconds: BADGE_CACHE_SECONDS,
     };
   }
@@ -537,7 +579,7 @@ export function buildBadgePayload(
     label: badgeLabel(row, tag),
     message: `${version} reviewed · ${risk} risk`,
     color:
-      scanPackageIdentity(row.source) === "registry-verified"
+      scanIdentity(row) === "registry-verified"
         ? (RISK_BADGE_COLOR[risk] ?? "lightgrey")
         : risk === "low"
           ? "lightgrey"

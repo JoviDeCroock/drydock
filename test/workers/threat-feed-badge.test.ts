@@ -1136,6 +1136,46 @@ describe("a staged review answers only under npm's name for the stage", () => {
     expect((await fetchBadge(app, "npm", claimed)).body.message).toBe("not reviewed");
   });
 
+  test("the feed does not call a tarball's claimed name registry-verified", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const stagedAs = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    const claimed = `victim-${crypto.randomUUID().slice(0, 8)}`;
+    const scanId = await seedCompletedScan(owner, {
+      packageName: claimed,
+      version: "3.0.1",
+      registryPackageName: stagedAs,
+    });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+
+    // The entry is the report's evidence — what the tarball says — so its
+    // name stays the manifest's; but no credential reached that name, so it
+    // is labelled a manifest claim, the tier a workflow gate already has.
+    const entry = (await fetchFeed(app)).entries.find((e) => e.package === claimed);
+    expect(entry).toMatchObject({ packageIdentity: "manifest-claimed", decision: "publish" });
+    expect((await fetchFeed(app)).entries.some((e) => e.package === stagedAs)).toBe(false);
+  });
+
+  test("a stage from any registry but public npm has no public identity", async () => {
+    const owner = await seedUser();
+    const app = buildTestApp(owner);
+    const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
+    // An organization may point its connection at any https registry, even
+    // one it runs; that registry's stage record says nothing about npm.
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "99.0.0",
+      registryUrl: "https://registry.example.com",
+    });
+    await decide(app, scanId, "publish");
+    await share(app, scanId, { threatFeed: true });
+
+    expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
+    const entry = (await fetchFeed(app)).entries.find((e) => e.package === packageName);
+    expect(entry?.packageIdentity).toBe("manifest-claimed");
+  });
+
   test("names that agree keep answering", async () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
@@ -1144,6 +1184,8 @@ describe("a staged review answers only under npm's name for the stage", () => {
     await decide(app, scanId, "publish");
     await share(app, scanId, { threatFeed: true });
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("3.0.1 approved");
+    const entry = (await fetchFeed(app)).entries.find((e) => e.package === packageName);
+    expect(entry?.packageIdentity).toBe("registry-verified");
   });
 });
 
@@ -2194,7 +2236,12 @@ describe("reading a package's badge state", () => {
     const owner = await seedUser();
     const app = buildTestApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.1" });
+    // Restricted, so only the listing can make it answer.
+    const scanId = await seedCompletedScan(owner, {
+      packageName,
+      version: "3.0.1",
+      access: "restricted",
+    });
     await share(app, scanId, { threatFeed: true });
     expect((await readBadgeVisibility(app, packageName)).body.badge).toMatchObject({
       answersByDefault: false,

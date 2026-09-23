@@ -4,6 +4,7 @@ import { compareSemver } from "../lib/ecosystems/npm/registry";
 import {
   BADGE_INELIGIBLE_SOURCES,
   DEFAULT_BADGE_TAG,
+  PUBLIC_NPM_REGISTRY_URLS,
   badgeLookupKey,
   publicPackageLookupKey,
   scanDistTag,
@@ -241,6 +242,7 @@ export async function revokePublicShare(
       // just went stale is recomputed from the (untouched) identity columns.
       source: scans.source,
       registryPackageName: scans.registryPackageName,
+      registryUrl: scans.registryUrl,
       summaryJson: scans.summaryJson,
     });
   if (updated.length === 0) return { revoked: false, publicPackageKey: null, publicBadgeTag: null };
@@ -287,6 +289,7 @@ export async function setThreatFeedListing(
       source: scans.source,
       packageName: scans.packageName,
       registryPackageName: scans.registryPackageName,
+      registryUrl: scans.registryUrl,
       summaryJson: scans.summaryJson,
     })
     .from(scans)
@@ -351,6 +354,7 @@ const SHARED_SCAN_COLUMNS = {
   // organization whose review it is about, in the same read.
   organizationId: scans.organizationId,
   registryPackageName: scans.registryPackageName,
+  registryUrl: scans.registryUrl,
   source: scans.source,
   packageName: scans.packageName,
   stagedVersion: scans.stagedVersion,
@@ -480,9 +484,13 @@ const badgeEligibleSource = notInArray(scans.source, [...BADGE_INELIGIBLE_SOURCE
 // that name is npm's name for the stage. A key written before the write-side
 // rule existed — or by a future write that forgets it — must still never let a
 // tarball's claimed name speak for a package the credential did not reach.
-// SQLite compares text exactly, which is how npm resolves names. Coalesced so
-// a missing name reads as "no", never as NULL, and the predicate can be negated.
-const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' or ${scans.packageName} = ${scans.registryPackageName}, 0)`;
+// SQLite compares text exactly, which is how npm resolves names, and only the
+// public npm registry's names count. Coalesced so a missing name reads as "no",
+// never as NULL, and the predicate can be negated.
+const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' or (${scans.packageName} = ${scans.registryPackageName} and ${scans.registryUrl} in (${sql.join(
+  PUBLIC_NPM_REGISTRY_URLS.map((url) => sql`${url}`),
+  sql`, `,
+)})), 0)`;
 
 /**
  * Recent badge candidates for one package name that an organization

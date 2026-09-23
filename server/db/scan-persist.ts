@@ -138,16 +138,14 @@ export async function persistScan(db: AppDb, input: PersistedScanInput) {
     // was created or reconciled against it during acquisition. The INSERT
     // branch has none, so its scan has no public identity.
     registryPackageName: existing[0]?.registryPackageName ?? null,
+    registryUrl: existing[0]?.registryUrl ?? null,
     summaryJson: scanValues.summaryJson,
   };
   const badgePackageKey = badgeReleaseLineKey(badgeRow);
   // Decided here, not by readers: the INSERT branch has no job row to take a
   // registry from, so it resolves to false and the review keeps the explicit
   // opt-in — the safe direction for a surface that needs no credential to read.
-  const badgePublic = isDefaultBadgePublic({
-    ...badgeRow,
-    registryUrl: existing[0]?.registryUrl ?? null,
-  });
+  const badgePublic = isDefaultBadgePublic(badgeRow);
 
   // The UPDATE branch assumes the existing row is non-terminal and therefore
   // carries NULL artifact key columns: the pre-read above and `claimScanForRun`

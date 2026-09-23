@@ -373,6 +373,7 @@ function ScanDialogs({ model, view }: SectionProps) {
             source: detail.scan.source ?? "",
             packageName: detail.scan.packageName ?? null,
             registryPackageName: detail.scan.registryPackageName ?? null,
+            registryUrl: detail.scan.registryUrl ?? null,
           })}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}

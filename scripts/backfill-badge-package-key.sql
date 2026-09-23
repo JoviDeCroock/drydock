@@ -65,7 +65,8 @@
 -- all (an unaffiliated review of someone else's package), the same rule as
 -- `isBadgeEligibleSource`.
 
--- 1. A listed staged review keeps its badge key only under npm's name.
+-- 1. A listed staged review keeps its badge key only under npm's name, on the
+--    public npm registry.
 UPDATE scans
 SET public_package_key = NULL
 WHERE public_package_key IS NOT NULL
@@ -74,6 +75,8 @@ WHERE public_package_key IS NOT NULL
     registry_package_name IS NULL
     OR package_name IS NULL
     OR package_name != registry_package_name
+    OR registry_url IS NULL
+    OR registry_url NOT IN ('https://registry.npmjs.org', 'https://registry.npmjs.org/')
   );
 
 -- 2. The release line (npm's name, whatever the manifest says) and default-on
