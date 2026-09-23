@@ -575,7 +575,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
                     "while there is still time to say no. The maintainer keeps the final decision."}
             </Muted>
             <div class="flex gap-3 mt-1">
-              <LinkButton href="/register">Create account</LinkButton>
+              <LinkButton href="/register">Review my next release</LinkButton>
               <LinkButton href="/docs" variant="secondary">
                 Read the docs
               </LinkButton>

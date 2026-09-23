@@ -64,9 +64,9 @@ describe("isPrerenderedRoute", () => {
 });
 
 describe("page SEO metadata", () => {
-  it("names the package-security category in the home result", () => {
+  it("names the product and the artifact promise in the home result", () => {
     expect(homePageSeo).toMatchObject({
-      title: "Drydock Package Review: pre-publish package security",
+      title: "Drydock Package Review: read the artifact before you publish",
     });
     expect(homePageSeo.description).toContain("exact npm, PyPI, or VS Code artifact");
   });

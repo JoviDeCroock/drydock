@@ -12,6 +12,12 @@ export const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
 export const OG_IMAGE_ALT =
   "Drydock Package Review — pre-publish package security for npm, PyPI, and VS Code maintainers";
 
+// Describes the entity, for the schema.org graph. The page meta description is
+// written to be read in a search result and addresses the reader directly, which
+// is the wrong voice for an Organization or SoftwareApplication description.
+export const PRODUCT_DESCRIPTION =
+  "Drydock reviews the built npm, PyPI, or VS Code release artifact before publication, diffing it against the last published version and pinning deterministic supply-chain findings to changed lines.";
+
 // Standard 1.91:1 share-card ratio, matching server/lib/og-card.ts. The static
 // site-wide card is 1200x800; per-diff cards are generated at 1200x630.
 export const OG_CARD_IMAGE_WIDTH = 1200;
@@ -110,9 +116,9 @@ export function packageDiffOgImageAlt(
 }
 
 export const homePageSeo: PageSeoMetadata = {
-  title: "Drydock Package Review: pre-publish package security",
+  title: "Drydock Package Review: read the artifact before you publish",
   description:
-    "Review the exact npm, PyPI, or VS Code artifact before publication. Drydock diffs built package bytes and pins supply-chain risks to changed lines.",
+    "Your pull request got reviewed; the published tarball did not. Drydock diffs the exact npm, PyPI, or VS Code artifact and pins supply-chain findings to changed lines.",
   path: "/",
 };
 

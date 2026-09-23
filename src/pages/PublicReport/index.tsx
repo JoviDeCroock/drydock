@@ -343,7 +343,7 @@ export default function PublicReportPage() {
             when={authed}
             fallback={
               <>
-                <LinkButton href="/register">Create account</LinkButton>
+                <LinkButton href="/register">Review my next release</LinkButton>
                 <LinkButton href="/diff" variant="secondary">
                   Diff a package
                 </LinkButton>
