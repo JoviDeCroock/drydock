@@ -221,4 +221,88 @@ describe("the public badge counts a publisher's decision after release", () => {
       color: "red",
     });
   });
+
+  test("a release whose tarball claims another name and version can still be declined onto the badge", async () => {
+    const { owner, app, packageName } = await publisherWithDirectRelease();
+    // Manifest confusion: the published tarball's package.json says it is
+    // something else, which is exactly the release a maintainer must decline.
+    const scanId = await seedPublishedReview(owner, packageName, "1.0.1", {
+      manifest: { name: "left-pad", version: "9.9.9" },
+    });
+    await linkReview(owner, packageName, "1.0.1", scanId);
+    expect((await decide(app, scanId, "no_publish")).postRelease).toMatchObject({
+      packageName,
+      version: "1.0.1",
+      resolution: "declined_after_release",
+      resolutionBadge: "applied",
+    });
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 blocked",
+      color: "red",
+    });
+    expect((await fetchBadge(app, "left-pad")).message).toBe("not reviewed");
+  });
+
+  test("an organization that handed over the package claim cannot answer over the claim holder's decline", async () => {
+    // The organization that first staged this name on public npm, watched it,
+    // and saw 1.0.1 published without an approval...
+    const previous = await seedUser();
+    const previousApp = appFor(previous);
+    const packageName = newPackage();
+    await seedStagedRelease(previous, previousApp, packageName, "1.0.0", { decision: null });
+    await seedAlert(previous, packageName, "1.0.1");
+    // ...then moved the package's management to another organization, keeping
+    // its alert and its staged history.
+    const owner = await seedUser();
+    const app = appFor(owner);
+    await createDb(env.DB)
+      .update(schema.npmPackageClaims)
+      .set({ organizationId: owner.organizationId })
+      .where(eq(schema.npmPackageClaims.packageName, packageName));
+    await seedStagedRelease(owner, app, packageName, "1.0.0");
+    await seedAlert(owner, packageName, "1.0.1");
+    const approval = await seedPublishedReview(previous, packageName, "1.0.1");
+    await linkReview(previous, packageName, "1.0.1", approval);
+
+    const decline = await seedPublishedReview(owner, packageName, "1.0.1");
+    await linkReview(owner, packageName, "1.0.1", decline);
+    await decide(app, decline, "no_publish");
+    // Deciding last does not let the previous organization answer green over
+    // it: without the claim it is not a registry-verified publisher.
+    expect((await decide(previousApp, approval, "publish")).postRelease).toMatchObject({
+      resolutionBadge: "not_a_verified_publisher",
+    });
+    expect(await fetchBadge(app, packageName)).toMatchObject({
+      message: "1.0.1 blocked",
+      color: "red",
+    });
+  });
+
+  test("the badge section says a guarded decision answers only while it still would", async () => {
+    const owner = await seedUser();
+    const app = appFor(owner);
+    const packageName = newPackage();
+    // A publisher with nothing that answers by default: its one staged
+    // review was of a stage npm reported as restricted.
+    await seedStagedRelease(owner, app, packageName, "1.0.0", { access: "restricted" });
+    await seedAlert(owner, packageName, "1.0.1");
+    const read = async () =>
+      (
+        await (
+          await call(app, "GET", `/api/v1/packages/${packageName}/badge`)
+        ).json<{
+          badge: { answersByDefault: boolean };
+        }>()
+      ).badge.answersByDefault;
+    expect(await read()).toBe(false);
+    const scanId = await seedPublishedReview(owner, packageName, "1.0.1");
+    await linkReview(owner, packageName, "1.0.1", scanId);
+    await decide(app, scanId, "publish");
+    expect(await read()).toBe(true);
+    await createDb(env.DB)
+      .update(schema.scans)
+      .set({ decision: "no_publish" })
+      .where(eq(schema.scans.id, scanId));
+    expect(await read()).toBe(false);
+  });
 });
