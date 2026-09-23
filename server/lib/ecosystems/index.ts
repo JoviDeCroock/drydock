@@ -1,6 +1,7 @@
 import { atpmPublicDiff } from "./atpm/public-diff";
 import { npmAdapter } from "./npm";
 import { npmPublicDiff } from "./npm/public-diff";
+import { npmPublicationMonitor } from "./npm/publication-monitor";
 import { npmWorkflowGateAdapter } from "./npm/workflow-gate";
 import { pypiPublicDiff } from "./pypi/public-diff";
 import { pypiWorkflowGateAdapter } from "./pypi/workflow-gate";
@@ -8,7 +9,7 @@ import { vscodeWorkflowGateAdapter } from "./vscode/workflow-gate";
 import { type AnyPackageAdapter, erasePackageAdapter } from "./package-adapter";
 import { publishedPairAdapter, type PublishedPairAdapter } from "./published-pair";
 import { ECOSYSTEM_LABELS } from "./labels";
-import type { EcosystemId, EcosystemModule } from "./types";
+import type { EcosystemId, EcosystemModule, PublicationMonitorAdapter } from "./types";
 import type { ArchiveContents, WorkflowGateAdapter } from "../workflow-gates/types";
 import type { PublicDiffAdapter } from "../public-diff/types";
 
@@ -20,6 +21,7 @@ const ECOSYSTEM_MODULES: Record<EcosystemId, EcosystemModule> = {
     gate: npmWorkflowGateAdapter,
     publicDiff: npmPublicDiff,
     published: publishedPairAdapter(npmPublicDiff),
+    publicationMonitor: npmPublicationMonitor,
   },
   pypi: {
     id: "pypi",
@@ -67,6 +69,10 @@ export function getPublicDiffAdapter(ecosystem: string): PublicDiffAdapter | und
 
 export function getPublishedAdapter(ecosystem: string): PublishedPairAdapter | undefined {
   return getEcosystem(ecosystem)?.published;
+}
+
+export function getPublicationMonitor(ecosystem: string): PublicationMonitorAdapter | undefined {
+  return getEcosystem(ecosystem)?.publicationMonitor;
 }
 
 export function getStagedAdapter(ecosystem: string): AnyPackageAdapter {

@@ -1,20 +1,20 @@
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { createDb } from "../../server/db/client";
 import {
   createPublicationWatch,
   deletePublicationWatch,
   getPublicationWatch,
   listPublicationObservations,
 } from "../../server/db/publication-watches";
-import { publicationWatches, scans, user } from "../../server/db/schema";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
+import { publicationWatches, scans } from "../../server/db/schema";
 import {
   checkNpmPublicationWatch,
   classifyPublication,
+  type ReviewEvidence,
 } from "../../server/lib/ecosystems/npm/publication-monitor";
 import { createHash } from "node:crypto";
+import { seedUser } from "./helpers/seed";
 
 const name = "@drydock/publication-test";
 const version = "1.0.0";
@@ -22,7 +22,7 @@ const bytes = new TextEncoder().encode("inert artifact bytes; never execute");
 const sha1 = createHash("sha1").update(bytes).digest("hex");
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 const published = new Date("2026-09-12T12:00:00Z");
-function review(overrides = {}) {
+function review(overrides: Partial<ReviewEvidence> = {}): ReviewEvidence {
   return {
     id: "scan1",
     source: "auto_discovery",
@@ -48,13 +48,7 @@ function review(overrides = {}) {
   };
 }
 async function seed() {
-  const db = createDb(env.DB);
-  const id = crypto.randomUUID();
-  const now = new Date();
-  await db
-    .insert(user)
-    .values({ id, name: "Watcher", email: `${id}@example.com`, createdAt: now, updatedAt: now });
-  const organizationId = await ensurePersonalOrganization(db, { userId: id });
+  const { db, organizationId } = await seedUser({ name: "Watcher" });
   const watch = await createPublicationWatch(db, organizationId, name);
   return { db, organizationId, watch };
 }
@@ -242,7 +236,7 @@ describe("public package monitoring", () => {
   });
 });
 
-test.each(["publish", "no_publish"])(
+test.each(["publish", "no_publish"] as const)(
   "persisted complete staged review produces the correct %s publication outcome",
   async (decision) => {
     const { db, organizationId, watch } = await seed();

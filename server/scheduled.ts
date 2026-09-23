@@ -4,6 +4,7 @@ import { pruneExpiredAuthRows } from "./db/auth-retention";
 import { listAutoDiscoveryNpmConnections } from "./db/npm-connections";
 import { getOrganizationOwnerUserId } from "./db/organizations";
 import { pruneExpiredRateLimitBuckets } from "./db/rate-limits";
+import { ECOSYSTEMS } from "./lib/ecosystems";
 import { allowInsecureLocalRegistry } from "./lib/ecosystems/npm/connection";
 import {
   createStageStartCoordinator,
@@ -140,6 +141,34 @@ async function runStagedPublishesDiscoveryCron(env: Cloudflare.Env, ctx: Executi
   });
 }
 
+// Public release monitoring also covers organizations with no registry
+// credential or discovery connection, so it runs outside the discovery sweep. Each
+// phase fails on its own: a broken backfill must not stop watches already
+// enrolled from being checked, and neither may disable stage review.
+async function runPublicationMonitorCron(env: Cloudflare.Env) {
+  const db = createDb(env.DB);
+  for (const ecosystem of ECOSYSTEMS) {
+    const monitor = ecosystem.publicationMonitor;
+    if (!monitor) continue;
+    try {
+      await monitor.backfillWatches(db, env);
+    } catch (err) {
+      emitOperationalEvent("error", "publication_monitor.backfill_failed", {
+        ecosystem: ecosystem.id,
+        error: describeOperationalError(err),
+      });
+    }
+    try {
+      await monitor.sweepWatches(db, env);
+    } catch (err) {
+      emitOperationalEvent("error", "publication_monitor.cron_failed", {
+        ecosystem: ecosystem.id,
+        error: describeOperationalError(err),
+      });
+    }
+  }
+}
+
 // Flat-window retention for the organization audit log. Runs each tick; a
 // bounded DELETE keeps the sweep cheap. Never let pruning failures abort the
 // discovery cron.
@@ -192,7 +221,10 @@ async function pruneStaleRateLimitBuckets(env: Cloudflare.Env) {
   }
 }
 
-/** The cron handler `server/index.ts` exports: the discovery sweep, then retention. */
+/**
+ * The cron handler `server/index.ts` exports: the discovery sweep, public
+ * publication monitoring, then retention.
+ */
 export async function scheduled(
   _event: ScheduledController,
   env: Cloudflare.Env,
@@ -209,6 +241,7 @@ export async function scheduled(
       error: describeOperationalError(err),
     });
   }
+  await runPublicationMonitorCron(env);
   await pruneStaleAuditEvents(env);
   await pruneStaleAuthRows(env);
   await pruneStaleRateLimitBuckets(env);

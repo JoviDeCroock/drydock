@@ -29,6 +29,7 @@ import { Alert } from "../../components/Alert";
 import { Badge, severityTone } from "../../components/Badge";
 import { EmailVerificationBanner } from "../../features/account/EmailVerificationBanner";
 import { useAuthedDashboardSession } from "../../features/account/useAuthedDashboardSession";
+import { PublicationMonitor } from "../../features/publication-monitor/PublicationMonitor";
 import { OverviewStrip } from "../../features/overview/OverviewStrip";
 import { registryStatusBadge } from "../../features/registry-status";
 import { scanSourceLabel } from "../../features/scan-source";

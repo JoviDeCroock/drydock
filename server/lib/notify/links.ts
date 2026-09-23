@@ -30,6 +30,10 @@ export function scanUrl(
   return appUrl(env, `/dashboard/scans/${encodeURIComponent(scanId)}`, { org: organizationId });
 }
 
+export function dashboardUrl(env: Cloudflare.Env, organizationId: string): string | null {
+  return appUrl(env, "/dashboard", { org: organizationId });
+}
+
 export function settingsUrl(env: Cloudflare.Env, organizationId?: string): string | null {
   return appUrl(env, "/dashboard/settings", { tab: "integrations", org: organizationId });
 }

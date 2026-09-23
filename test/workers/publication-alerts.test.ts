@@ -1,8 +1,6 @@
 import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
-import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { savePublicationObservation } from "../../server/db/publication-alerts";
 import {
   createPublicationWatch,
@@ -15,8 +13,8 @@ import {
   publicationObservations,
   publicationWatches,
   scanEvents,
-  user,
 } from "../../server/db/schema";
+import { seedUser } from "./helpers/seed";
 
 const notify = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../server/lib/notify", () => ({ notifyPublicationDiscrepancy: notify }));
@@ -26,13 +24,7 @@ afterEach(() => {
 });
 
 async function setup() {
-  const db = createDb(env.DB);
-  const id = crypto.randomUUID();
-  const now = new Date();
-  await db
-    .insert(user)
-    .values({ id, name: "Watcher", email: `${id}@example.com`, createdAt: now, updatedAt: now });
-  const organizationId = await ensurePersonalOrganization(db, { userId: id });
+  const { db, organizationId } = await seedUser({ name: "Watcher" });
   const watch = await createPublicationWatch(db, organizationId, "alert-package");
   return { db, organizationId, watch };
 }

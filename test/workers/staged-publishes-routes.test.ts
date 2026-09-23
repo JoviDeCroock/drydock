@@ -12,12 +12,15 @@ import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
 import { stagedPublishesRoutes } from "../../server/routes/staged-publishes";
+import { scansRoutes } from "../../server/routes/scans";
 import type { Bindings } from "../../server/types";
 import { buildTestApp, type TestApp } from "./helpers/app";
 import { seedUser } from "./helpers/seed";
 
-const mountStagedPublishes = (app: TestApp) =>
+const mountStagedPublishes = (app: TestApp) => {
   app.route("/api/v1/staged-publishes", stagedPublishesRoutes);
+  app.route("/api/v1/scans", scansRoutes);
+};
 
 describe("staged publishes route", () => {
   afterEach(() => {
@@ -151,7 +154,7 @@ test("a manually submitted public stage enrolls before its queued review runs", 
   });
   try {
     const ctx = createExecutionContext();
-    const response = await buildTestApp(owner).fetch(
+    const response = await buildTestApp(mountStagedPublishes, owner).fetch(
       new Request("http://test.local/api/v1/scans", {
         method: "POST",
         headers: { "content-type": "application/json" },

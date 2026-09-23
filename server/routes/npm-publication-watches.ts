@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { acknowledgePublicationAlert } from "../db/publication-alerts";
-import { createDb } from "../db/client";
 import {
   createPublicationWatch,
   deletePublicationWatch,
@@ -14,20 +13,19 @@ import { checkNpmPublicationWatch } from "../lib/ecosystems/npm/publication-moni
 import { reconcilePublicationWatches } from "../lib/ecosystems/npm/publication-auto-enrollment";
 import { npmPublicationRegistry } from "../lib/ecosystems/npm/publication-registry";
 import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
-import { isRecord } from "../lib/platform/guards";
-import { rateLimitResponse } from "../lib/platform/http";
-import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
+import { readJsonObject } from "../lib/platform/http";
+import { guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
 
-export const publicationWatchRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+export const npmPublicationWatchRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-publicationWatchRoutes.use("*", async (c, next) => {
+npmPublicationWatchRoutes.use("*", async (c, next) => {
   c.header("cache-control", "private, no-store");
   await next();
 });
 
-publicationWatchRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.get("/", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const autoEnrollment = await reconcilePublicationWatches(
     db,
@@ -37,12 +35,11 @@ publicationWatchRoutes.get("/", async (c) => {
   return c.json({ watches: await listPublicationWatches(db, organizationId), autoEnrollment });
 });
 
-publicationWatchRoutes.post("/", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.post("/", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
-  const body: unknown = await c.req.json().catch(() => null);
-  const packageName =
-    isRecord(body) && typeof body.packageName === "string" ? body.packageName.trim() : "";
+  const body = await readJsonObject<{ packageName: unknown }>(c);
+  const packageName = typeof body.packageName === "string" ? body.packageName.trim() : "";
   if (!isValidNpmPackageName(packageName)) {
     return c.json({ error: "Enter a valid public npm package name." }, 400);
   }
@@ -57,8 +54,8 @@ publicationWatchRoutes.post("/", async (c) => {
   }
 });
 
-publicationWatchRoutes.get("/:id", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.get("/:id", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
   if (!watch) return c.json({ error: "not found" }, 404);
@@ -68,8 +65,8 @@ publicationWatchRoutes.get("/:id", async (c) => {
   });
 });
 
-publicationWatchRoutes.delete("/:id", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.delete("/:id", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
   if (!watch) return c.json({ error: "not found" }, 404);
@@ -77,23 +74,17 @@ publicationWatchRoutes.delete("/:id", async (c) => {
   return c.json({ deleted: true });
 });
 
-publicationWatchRoutes.post("/:id/check", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.post("/:id/check", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const watch = await getPublicationWatch(db, organizationId, c.req.param("id"));
   if (!watch) return c.json({ error: "not found" }, 404);
-  try {
-    await enforceRateLimit(c.env, {
-      key: `publication-watches:check:${organizationId}`,
-      limit: 10,
-      windowMs: 60 * 1000,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "publication check rate limit exceeded", err);
-    }
-    throw err;
-  }
+  const limited = await guardRateLimit(
+    c,
+    { key: `publication-watches:check:${organizationId}`, limit: 10, windowMs: 60 * 1000 },
+    "publication check rate limit exceeded",
+  );
+  if (limited) return limited;
   await checkNpmPublicationWatch(db, c.env, watch);
   const current = await getPublicationWatch(db, organizationId, watch.id);
   if (!current) return c.json({ error: "not found" }, 404);
@@ -103,11 +94,10 @@ publicationWatchRoutes.post("/:id/check", async (c) => {
   });
 });
 
-publicationWatchRoutes.post("/:id/observations/:observationId/acknowledge", async (c) => {
-  const db = createDb(c.env.DB);
+npmPublicationWatchRoutes.post("/:id/observations/:observationId/acknowledge", async (c) => {
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const session = c.get("authSession");
-  if (!session) return c.json({ error: "unauthorized" }, 401);
   const acknowledged = await acknowledgePublicationAlert(db, {
     organizationId,
     watchId: c.req.param("id"),

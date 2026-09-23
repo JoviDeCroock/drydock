@@ -6,7 +6,7 @@ import {
   type PublicationAlertStatus,
 } from "../../../db/publication-alerts";
 import { notifyPublicationDiscrepancy } from "../../notify";
-import { recordProductEvent } from "../../platform/analytics";
+import { recordProductEvent } from "../../analytics";
 import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
@@ -20,7 +20,9 @@ import { isRecord } from "../../platform/guards";
 import { parseStagedArtifactIntegrity } from "../artifact-integrity";
 import { parseNpmReleaseManifest } from "./manifest";
 import { isPublishedTarballUrlAllowed } from "./published-tarball";
+import { backfillNpmPublicationWatches, enrollStagedReleases } from "./publication-auto-enrollment";
 import { npmPublicationRegistry } from "./publication-registry";
+import type { PublicationMonitorAdapter } from "../types";
 import { emitOperationalEvent } from "../../platform/observability";
 
 const REGISTRY = "https://registry.npmjs.org";
@@ -28,7 +30,7 @@ const RELEASES_PER_CHECK = 3;
 const METADATA_LIMIT = 4 * 1024 * 1024;
 const TARBALL_LIMIT = 16 * 1024 * 1024;
 
-type ReviewEvidence = Pick<
+export type ReviewEvidence = Pick<
   typeof scans.$inferSelect,
   | "id"
   | "source"
@@ -492,7 +494,7 @@ async function redeliverPendingAlerts(
   }
 }
 
-export async function sweepNpmPublicationWatches(db: AppDb, env: Cloudflare.Env) {
+async function sweepNpmPublicationWatches(db: AppDb, env: Cloudflare.Env) {
   const watches = await db
     .select()
     .from(publicationWatches)
@@ -506,3 +508,9 @@ export async function sweepNpmPublicationWatches(db: AppDb, env: Cloudflare.Env)
     .limit(8);
   for (const watch of watches) await checkNpmPublicationWatch(db, env, watch);
 }
+
+export const npmPublicationMonitor: PublicationMonitorAdapter = {
+  backfillWatches: (db, env) => backfillNpmPublicationWatches(db, npmPublicationRegistry(env)),
+  sweepWatches: sweepNpmPublicationWatches,
+  registerStagedReleases: enrollStagedReleases,
+};

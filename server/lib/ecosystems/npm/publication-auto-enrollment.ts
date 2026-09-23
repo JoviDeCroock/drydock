@@ -1,7 +1,10 @@
 import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import type { AppDb } from "../../../db/client";
 import { publicationWatchCandidates, publicationWatches } from "../../../db/schema";
+import { emitOperationalEvent } from "../../platform/observability";
+import type { StagedReleaseVisibility } from "../types";
 import { isLoopbackHostname, registryProtocolAllowed } from "./connection";
+import { npmPublicationRegistry } from "./publication-registry";
 import { isValidNpmPackageName } from "./registry";
 
 const PUBLIC_NPM = "https://registry.npmjs.org";
@@ -200,6 +203,36 @@ export async function registerStagedPublicationCandidates(
     "staged_discovery",
   );
   return reconcilePublicationWatches(db, organizationId, registryUrl);
+}
+
+/**
+ * Stages fetched from the organization's npm connection enroll only when that
+ * connection is the registry the monitor reads publications from. Enrollment is
+ * best-effort: a failure is logged and never fails the review that found it.
+ */
+export async function enrollStagedReleases(
+  db: AppDb,
+  env: Cloudflare.Env,
+  input: {
+    organizationId: string;
+    registryUrl: string;
+    releases: readonly StagedReleaseVisibility[];
+  },
+): Promise<void> {
+  const publicationRegistry = npmPublicationRegistry(env);
+  if (input.registryUrl.replace(/\/$/, "") !== publicationRegistry) return;
+  try {
+    await registerStagedPublicationCandidates(
+      db,
+      input.organizationId,
+      input.releases,
+      publicationRegistry,
+    );
+  } catch {
+    emitOperationalEvent("warn", "npm.publication_monitor.enrollment_failed", {
+      organizationId: input.organizationId,
+    });
+  }
 }
 
 export async function backfillNpmPublicationWatches(db: AppDb, registryUrl = PUBLIC_NPM) {

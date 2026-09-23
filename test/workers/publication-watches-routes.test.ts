@@ -1,58 +1,33 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
+import { env } from "cloudflare:test";
 import { expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { and, eq } from "drizzle-orm";
 import { savePublicationObservation } from "../../server/db/publication-alerts";
 import { createPublicationWatch } from "../../server/db/publication-watches";
-import { scanEvents, scans, user } from "../../server/db/schema";
-import { publicationWatchRoutes } from "../../server/routes/publication-watches";
-import type { Bindings, Variables } from "../../server/types";
+import { scanEvents, scans } from "../../server/db/schema";
+import { npmPublicationWatchRoutes } from "../../server/routes/npm-publication-watches";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-async function seedOwner() {
-  const db = createDb(env.DB);
-  const userId = crypto.randomUUID();
-  const now = new Date();
-  await db.insert(user).values({
-    id: userId,
-    name: "Publication reviewer",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
+const seedOwner = () => seedUser({ name: "Publication reviewer" });
 
-async function request(
+const mountPublicationWatches = (app: TestApp) => {
+  app.route("/api/v1/publication-watches", npmPublicationWatchRoutes);
+};
+
+function request(
   owner: { userId: string },
   method: string,
   path = "",
   body?: unknown,
   requestedOrganizationId?: string,
 ) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", owner);
-    await next();
-  });
-  app.route("/api/v1/publication-watches", publicationWatchRoutes);
-  const headers = new Headers({ "content-type": "application/json" });
-  if (requestedOrganizationId) headers.set("x-organization-id", requestedOrganizationId);
-  const ctx = createExecutionContext();
-  const response = await app.fetch(
-    new Request(`http://example.com/api/v1/publication-watches${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-    env,
-    ctx,
+  return call(
+    buildTestApp(mountPublicationWatches, owner),
+    method,
+    `/api/v1/publication-watches${path}`,
+    { body, activeOrganizationId: requestedOrganizationId },
   );
-  await waitOnExecutionContext(ctx);
-  return response;
 }
 
 test("enrolls a public package without an existing scan or npm connection", async () => {

@@ -1,6 +1,5 @@
 import { and, asc, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import type { AppDb } from "./client";
-import { isValidNpmPackageName } from "../lib/ecosystems/npm/registry";
 import {
   publicationAlerts,
   publicationObservations,
@@ -11,7 +10,6 @@ import {
 export type PublicationWatch = typeof publicationWatches.$inferSelect;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
-class PublicationWatchNameError extends Error {}
 
 const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
 
@@ -32,13 +30,12 @@ export async function getPublicationWatch(db: AppDb, organizationId: string, id:
     .limit(1);
   return watch ?? null;
 }
+/** `packageName` is validated against the registry's name grammar by the caller. */
 export async function createPublicationWatch(
   db: AppDb,
   organizationId: string,
   packageName: string,
 ) {
-  if (!isValidNpmPackageName(packageName))
-    throw new PublicationWatchNameError("Invalid npm package name");
   const id = crypto.randomUUID();
   const now = new Date();
   // Clear stop intent only when the cap allows a watch (or one already exists).

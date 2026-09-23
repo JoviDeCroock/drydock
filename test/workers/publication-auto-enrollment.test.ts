@@ -2,35 +2,21 @@ import { env } from "cloudflare:test";
 import { eq, inArray } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import {
   createPublicationWatch,
   deletePublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
-import {
-  publicationWatchCandidates,
-  publicationWatches,
-  scans,
-  user,
-} from "../../server/db/schema";
+import { publicationWatchCandidates, publicationWatches, scans } from "../../server/db/schema";
 import {
   backfillNpmPublicationWatches,
   reconcilePublicationWatches,
   registerStagedPublicationCandidates,
 } from "../../server/lib/ecosystems/npm/publication-auto-enrollment";
+import { seedUser } from "./helpers/seed";
 
 const registry = "https://registry.npmjs.org";
-async function seed() {
-  const db = createDb(env.DB);
-  const id = crypto.randomUUID();
-  const now = new Date();
-  await db
-    .insert(user)
-    .values({ id, name: "Monitor", email: `${id}@example.com`, createdAt: now, updatedAt: now });
-  const organizationId = await ensurePersonalOrganization(db, { userId: id });
-  return { db, organizationId };
-}
+const seed = () => seedUser({ name: "Monitor" });
 async function historicalScan(
   organizationId: string,
   name: string,

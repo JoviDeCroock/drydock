@@ -142,7 +142,7 @@ Persistence lives in `publication_watches`, `publication_observations`, and
 `publication_alerts` (durable notification deduplication and acknowledgment).
 `server/lib/ecosystems/npm/publication-auto-enrollment.ts` owns enrollment;
 `server/lib/ecosystems/npm/publication-monitor.ts` owns acquisition and comparison;
-`server/routes/publication-watches.ts` owns the authenticated API. Operational
+`server/routes/npm-publication-watches.ts` owns the authenticated API. Operational
 failures use safe codes through `emitOperationalEvent`, never raw registry errors.
 
 The local fake-registry harness may use the existing explicitly enabled loopback
