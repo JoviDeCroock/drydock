@@ -7,6 +7,8 @@ function row(overrides: Partial<SharedScanRow> = {}): SharedScanRow {
     scanId: "scan_1",
     organizationId: "org_1",
     registryVersion: "3.0.0",
+    registryPackageName: "docula",
+    registryUrl: "https://registry.npmjs.org",
     source: "auto_discovery",
     packageName: "docula",
     stagedVersion: "3.0.0",

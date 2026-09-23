@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d2be9bb5-bccb-420f-b2e2-5e08baa03c29",
-  "prevId": "09a67038-430f-4a99-9ea8-ba7aa748e148",
+  "id": "31cc64a9-f5d1-43de-b0a1-1387246897b9",
+  "prevId": "65c79649-14d5-4ebb-8921-bdd2746d6a03",
   "tables": {
     "account": {
       "name": "account",
@@ -1538,6 +1538,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "delivery_claimed_at": {
+          "name": "delivery_claimed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1666,6 +1673,27 @@
         "scan_id": {
           "name": "scan_id",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "previous_version": {
+          "name": "previous_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dist_tags": {
+          "name": "dist_tags",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_notified_at": {
+          "name": "coverage_notified_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -1868,6 +1896,34 @@
         "last_error": {
           "name": "last_error",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap": {
+          "name": "coverage_gap",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap_since": {
+          "name": "coverage_gap_since",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "coverage_gap_notified_at": {
+          "name": "coverage_gap_notified_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dist_tags_checked_at": {
+          "name": "dist_tags_checked_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -2140,6 +2196,13 @@
         "staged_created_at": {
           "name": "staged_created_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "staged_declared_sha1": {
+          "name": "staged_declared_sha1",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

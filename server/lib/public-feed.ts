@@ -1,11 +1,22 @@
 import type { scans } from "../db/schema";
+import { parseStagedArtifactIntegrity } from "./ecosystems/artifact-integrity";
 import { coloCacheDelete } from "./platform/colo-cache";
 
 export const THREAT_FEED_SCHEMA = "drydock.threat-feed.v1";
 
-/** The scan columns a public surface (feed entry, badge) is built from. */
+/**
+ * The scan columns a public surface (feed entry, badge) is built from.
+ * `registryVersion`, `organizationId`, `registryPackageName` and `registryUrl`
+ * are internal only: they order and bind releases, and are never serialized
+ * into a public feed entry or badge. `registryVersion` is the registry's own
+ * version string, never the manifest's.
+ */
 export type SharedScanRow = Pick<
   typeof scans.$inferSelect,
+  | "registryVersion"
+  | "organizationId"
+  | "registryPackageName"
+  | "registryUrl"
   | "source"
   | "packageName"
   | "stagedVersion"

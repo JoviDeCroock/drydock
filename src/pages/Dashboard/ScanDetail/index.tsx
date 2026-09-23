@@ -1,7 +1,11 @@
 import { useModel } from "@preact/signals";
 import { useRoute } from "preact-iso";
 import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
-import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed";
+import {
+  badgeEcosystem,
+  scanDistTag,
+  scanPublicPackageName,
+} from "../../../../server/lib/public-feed";
 import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";

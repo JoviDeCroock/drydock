@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
-import { compareSemver } from "../lib/ecosystems/npm/registry";
+import { compareSemver } from "../lib/ecosystems/semver";
 import {
   DEFAULT_BADGE_TAG,
   scanDistTag,

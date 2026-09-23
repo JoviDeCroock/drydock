@@ -790,6 +790,7 @@ export const packageBadgeOptOuts = sqliteTable(
     uniqueIndex("package_badge_opt_outs_package_org").on(table.packageKey, table.organizationId),
   ],
 );
+
 export const publicationAlerts = sqliteTable(
   "publication_alerts",
   {

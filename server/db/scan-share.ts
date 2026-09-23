@@ -12,7 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { base64UrlEncode } from "../lib/platform/crypto-utils";
-import { compareSemver } from "../lib/ecosystems/npm/registry";
+import { compareSemver } from "../lib/ecosystems/semver";
 import {
   BADGE_INELIGIBLE_SOURCES,
   DEFAULT_BADGE_TAG,

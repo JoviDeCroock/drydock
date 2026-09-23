@@ -11,7 +11,7 @@ import { guardRateLimit } from "../../lib/rate-limit";
 import type { AppDb } from "../../db/client";
 import { recordScanEvent } from "../../db/events";
 import { organizationRequiresTwoFactorForReleaseDecisions } from "../../db/organizations";
-import { badgeLookupKey, getScan, recordGatePackageDecision } from "../../db/scans";
+import { getScan, recordGatePackageDecision } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { userHasTwoFactor, verifyTotpStepUp } from "../../lib/auth";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
@@ -20,7 +20,7 @@ import {
   optionalWorkerExecutionContext,
   workerExecutionContext,
 } from "../../lib/platform/execution-context";
-import { purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
+import { badgeLookupKey, purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
 import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";

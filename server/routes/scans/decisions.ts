@@ -3,18 +3,12 @@
  */
 import { Hono } from "hono";
 import { requireVerifiedEmail } from "../../lib/auth/email-verification";
-import {
-  SCAN_DECISIONS,
-  type ScanDecision,
-  badgeLookupKey,
-  getScan,
-  recordScanDecision,
-} from "../../db/scans";
+import { SCAN_DECISIONS, type ScanDecision, getScan, recordScanDecision } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
 import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
 import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
-import { purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
+import { badgeLookupKey, purgePublicFeedCache, scanDistTag } from "../../lib/public-feed";
 import type { Bindings, Variables } from "../../types";
 
 export const scanDecisionRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();

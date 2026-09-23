@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { attachDb } from "../middleware/db";
 import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
+import { findBadgeSupersession } from "../db/badge-publication-evidence";
+import { badgePackage, isPackageBadgeSwitchedOff } from "../db/package-badge";
 import {
   getScan,
   getScanFile,
@@ -36,6 +38,7 @@ import { optionalWorkerExecutionContext } from "../lib/platform/execution-contex
 import { buildAttestationStatement, loadAttestationKey, signAttestation } from "../lib/attestation";
 import { sha256Hex } from "../lib/platform/crypto-utils";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import { recordProductEvent } from "../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
   buildReportExport,
@@ -191,7 +194,28 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   const tag = resolveBadgeTag(rawTag);
 
   const db = c.var.db;
-  const rows = await listBadgeCandidateScans(db, packageName, ecosystem, tag);
+  // Two ways in, unioned: reviews an organization deliberately listed, and
+  // approved releases of packages that need no opt-in at all. A review can
+  // satisfy both, so dedupe by id, and order the union rather than either
+  // half — `pickBadgeScan` reads position to break ties.
+  //
+  // A registry-verified publisher's "public badge: off" silences both routes
+  // for every organization: letting another organization's review answer
+  // instead would make "off" mean nothing. It answers exactly like a package
+  // nobody reviewed, so it adds no enumeration signal.
+  const target = badgePackage(ecosystem, packageName);
+  const [listed, defaultOn, switchedOff] = await Promise.all([
+    listBadgeCandidateScans(db, packageName, ecosystem, tag),
+    listDefaultBadgeCandidateScans(db, target.packageKey, tag),
+    isPackageBadgeSwitchedOff(db, target),
+  ]);
+  const byScanId = new Map(
+    ([] as SharedScanRow[])
+      .concat(switchedOff ? [] : defaultOn, switchedOff ? [] : listed)
+      .map((r) => [r.scanId, r]),
+  );
+  // By release, not by scan completion — see `compareBadgeCandidates`.
+  const rows = [...byScanId.values()].sort(compareBadgeCandidates);
   const match = pickBadgeScan(
     rows.filter(
       (row) =>

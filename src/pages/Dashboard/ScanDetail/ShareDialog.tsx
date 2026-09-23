@@ -159,20 +159,6 @@ export function ShareDialog({
               index that security partners consume, not just behind this link.
             </span>
           </label>
-          {badge ? (
-            <div class="flex flex-col gap-1.5">
-              <MonoLabel as="span">README badge</MonoLabel>
-              <div class="flex items-center gap-2">
-                <Input value={badge} readOnly mono class="flex-1" />
-                <CopyButton text={badge} />
-              </div>
-              <EmptyLine>
-                Paste into the package&apos;s README. The badge always shows the newest listed
-                review on the <code class="font-mono">{badgeLine}</code> tag — a review of another
-                release line never displaces it; unlisting reverts it to &ldquo;not reviewed&rdquo;.
-              </EmptyLine>
-            </div>
-          ) : null}
         </>
       ) : (
         <EmptyLine>
@@ -186,13 +172,7 @@ export function ShareDialog({
           <MonoLabel as="span">README badge</MonoLabel>
           <div class="flex items-center gap-2">
             <Input value={badge} readOnly mono class="flex-1" />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void copyToClipboard(badge, badgeCopied)}
-            >
-              {badgeCopyLabel}
-            </Button>
+            <CopyButton text={badge} />
           </div>
           {badgePublic ? (
             <EmptyLine>

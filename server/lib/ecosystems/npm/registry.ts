@@ -1,4 +1,7 @@
 import { reliableFetch } from "../../platform/reliable-fetch";
+import { compareParsedSemver, parseSemver, type ParsedSemver } from "../semver";
+
+export { compareSemver } from "../semver";
 
 export interface RegistryMetadata {
   versions?: Record<string, { dist?: { tarball?: string } }>;
@@ -181,13 +184,6 @@ export function pickBaselineVersion(
   };
 }
 
-export function compareSemver(a: string, b: string) {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  if (pa && pb) return compareParsedSemver(pa, pb);
-  return a.localeCompare(b);
-}
-
 function pickSemverFallbackVersion(
   versionsByName: Record<string, unknown>,
   stagedVersion: string,
@@ -219,52 +215,4 @@ function pickSemverFallbackVersion(
     source: "highest-published",
     reason: "highest-published-fallback",
   };
-}
-
-interface ParsedSemver {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string[];
-}
-
-function parseSemver(version: string): ParsedSemver | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.+)?$/.exec(version);
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ? match[4].split(".") : [],
-  };
-}
-
-function compareParsedSemver(a: ParsedSemver, b: ParsedSemver) {
-  for (const key of ["major", "minor", "patch"] as const) {
-    const diff = a[key] - b[key];
-    if (diff) return diff;
-  }
-  if (!a.prerelease.length && !b.prerelease.length) return 0;
-  if (!a.prerelease.length) return 1;
-  if (!b.prerelease.length) return -1;
-  for (let i = 0; i < Math.max(a.prerelease.length, b.prerelease.length); i++) {
-    const left = a.prerelease[i];
-    const right = b.prerelease[i];
-    if (left === undefined) return -1;
-    if (right === undefined) return 1;
-    const leftNumber = /^\d+$/.test(left) ? Number(left) : null;
-    const rightNumber = /^\d+$/.test(right) ? Number(right) : null;
-    if (leftNumber !== null && rightNumber !== null) {
-      const diff = leftNumber - rightNumber;
-      if (diff) return diff;
-    } else if (leftNumber !== null) {
-      return -1;
-    } else if (rightNumber !== null) {
-      return 1;
-    } else {
-      const diff = left.localeCompare(right);
-      if (diff) return diff;
-    }
-  }
-  return 0;
 }
