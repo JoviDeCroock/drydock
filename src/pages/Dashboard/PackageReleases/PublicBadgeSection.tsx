@@ -30,7 +30,7 @@ function describeBadge(state: PackageBadgeState, ecosystem: PublicEcosystem): st
     return "This badge has no off switch: only npm has registry-verified reviews. To withdraw one of your own reviews from it, unlist the review.";
   }
   if (!state.eligible) {
-    return "Only an organization with a registry-verified review of this package — a staged release on public npm whose manifest matches npm's name — can switch its badge off. To withdraw one of your own reviews from it, unlist the review.";
+    return "This organization has no confirmed badge authority for this npm package. The canonical package assignment and a completed registry-verified review are required to control its badge. Reports remain shareable; contact support if historical ownership needs review.";
   }
   const since = state.switchedOffAt ? ` since ${formatDateTime(state.switchedOffAt)}` : "";
   if (state.switchedOffByYou && state.switchedOffElsewhere) {
@@ -154,7 +154,7 @@ export function PublicBadgeSection({
                 )
               ) : null}
             </div>
-            {markdown ? <ReadmeSnippet markdown={markdown} /> : null}
+            {state.eligible && markdown ? <ReadmeSnippet markdown={markdown} /> : null}
           </Card>
         )}
       </Show>

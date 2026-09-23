@@ -1,7 +1,8 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
+import { claimScanForRun, getScan } from "../../server/db/scans";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
 import { createPackageDiff } from "../../server/lib/review";
 import { scanArtifactPrefix } from "../../server/lib/scan/artifacts/keys";
@@ -48,7 +49,7 @@ describe("scan completion atomicity", () => {
     const stageId = "stage-atomicity-000001";
 
     const readerDb = createDb(env.DB);
-    await createScanJob(readerDb, {
+    await seedLegacyScanJob(readerDb, {
       id: scanId,
       stageId,
       organizationId,
@@ -146,7 +147,7 @@ describe("scan completion atomicity", () => {
     const stageId = "stage-atomicity-000002";
 
     const db = createDb(env.DB);
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId,

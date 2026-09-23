@@ -187,7 +187,7 @@ export function PublicationMonitor({
                     <Button
                       variant="secondary"
                       size="sm"
-                      disabled={model.busy}
+                      disabled={watch.ownershipConflict || model.busy}
                       onClick={() => void check(watch.id)}
                       title="Fetch the latest releases from npm and compare them with recorded approvals"
                     >

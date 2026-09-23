@@ -35,6 +35,7 @@
     "e2e:dev": "node test/e2e/dev-server.mjs",
     "e2e:dev:seed": "node test/e2e/dev-server.mjs --seed",
     "e2e:seed": "node scripts/e2e-seed.mjs",
+    "ops:package-claims": "node scripts/package-claims-audit.mjs",
     "ops:snapshot": "node scripts/ops-snapshot.mjs",
     "agent:tour": "node scripts/agent-tour.mjs",
     "test:e2e": "playwright test",

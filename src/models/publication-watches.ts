@@ -11,6 +11,7 @@ export interface PublicationWatch {
   lastCheckedAt: string | null;
   lastError: string | null;
   unresolvedAlertCount: number;
+  ownershipConflict?: boolean;
   /** A package-wide reason no release can be verified, and since when. */
   coverageGap: string | null;
   coverageGapSince: string | null;

@@ -1,9 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { getPriorApprovedScanFindings } from "../../server/db/release-memory";
-import { createScanJob, getScan, recordScanDecision } from "../../server/db/scans";
+import { getScan, recordScanDecision } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { buildReportExport } from "../../server/lib/scan/report-export";
 import type { Finding } from "../../server/lib/review";
@@ -61,7 +62,7 @@ describe("AI finding persistence", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,
@@ -119,7 +120,7 @@ describe("AI finding persistence (report artifact)", () => {
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
     const stageId = `stage-${scanId.slice(-12)}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId: owner.organizationId,

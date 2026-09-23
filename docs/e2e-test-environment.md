@@ -128,6 +128,8 @@ This flag exists for local testability only. Do not set it in production Wrangle
 
 ## Scenario Contract
 
+The registry-access-failure scenario rejects admission with 503 and creates no scan or package claim. The registry-failure scenario permits the access probe and then fails the full artifact download, preserving coverage of failed-review deletion after verified admission. The browser suite also verifies that a second organization cannot admit the same staged package or create a competing watch.
+
 The scenario matrix is executable instead of duplicated in docs. Add a directory under `test/e2e-fixtures/scenarios/`, define the package inputs, and put the expected risk, rule IDs, baseline, or failure response in `scenario.json`. The Playwright smoke reads the generated `.context/e2e-registry/registry.json` and asserts those expectations automatically.
 
 ## Notes

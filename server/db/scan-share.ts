@@ -26,6 +26,7 @@ import {
 
 export type { SharedScanRow };
 import type { AppDb } from "./client";
+import { npmPackageClaimMatches } from "./package-claims";
 import { recordScanEvent } from "./events";
 import { scans } from "./schema";
 
@@ -484,11 +485,24 @@ const publicNameIsRegistryName = sql`coalesce(${scans.source} = 'workflow_gate' 
   sql`, `,
 )})), 0)`;
 
+// Sharing a report never grants another organization authority over npm's
+// package namespace, including when a historical row retained a badge key.
+const canonicalNpmBadgeOwner = and(
+  inArray(scans.source, [...REGISTRY_VERIFIED_SCAN_SOURCES]),
+  inArray(scans.registryUrl, [...PUBLIC_NPM_REGISTRY_URLS]),
+  npmPackageClaimMatches(
+    "https://registry.npmjs.org",
+    scans.registryPackageName,
+    scans.organizationId,
+  ),
+);
+
 /**
  * Recent badge candidates for one package name that an organization
  * deliberately listed. The opt-in route: a privately shared link never becomes
  * name-queryable, and this is the only way an undecided or rejected review —
- * or a scoped, PyPI, VS Code, or manifest-claimed one — reaches the badge.
+ * or a PyPI or VS Code review — reaches the badge. npm additionally requires
+ * registry identity and the package claim, even with explicit listing.
  * `listDefaultBadgeCandidateScans` is the other route, for OSS packages that
  * need no opt-in at all.
  *
@@ -525,6 +539,9 @@ export async function listBadgeCandidateScans(
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
         ecosystemMatches,
+        ecosystem === "npm"
+          ? and(canonicalNpmBadgeOwner, eq(scans.registryPackageName, packageName))
+          : undefined,
         badgeTagMatchesSql(tag),
         badgeEligibleSource,
         publicNameIsRegistryName,
@@ -592,7 +609,9 @@ export async function listDefaultBadgeCandidateScans(
     .where(
       and(
         eq(scans.badgePackageKey, packageKey),
+        sql`('npm:' || ${scans.registryPackageName}) = ${packageKey}`,
         eq(scans.badgePublic, true),
+        canonicalNpmBadgeOwner,
         eq(scans.decision, "publish"),
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
@@ -662,7 +681,9 @@ export async function findNewerPublishedRelease(
     .where(
       and(
         eq(scans.badgePackageKey, packageKey),
+        sql`('npm:' || ${scans.registryPackageName}) = ${packageKey}`,
         eq(scans.organizationId, pick.organizationId),
+        canonicalNpmBadgeOwner,
         eq(scans.status, "complete"),
         isNull(scans.registryStatusSupersededAt),
         // Not a badge candidate by either route: neither listed under this

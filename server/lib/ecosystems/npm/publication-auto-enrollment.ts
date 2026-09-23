@@ -1,4 +1,6 @@
 import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
+import { npmPackageClaimMatches } from "../../../db/package-claims";
+import { publicationWatchOwnershipConflict } from "../../../db/publication-watches";
 import type { AppDb } from "../../../db/client";
 import { publicationWatchCandidates, publicationWatches } from "../../../db/schema";
 import { emitOperationalEvent } from "../../platform/observability";
@@ -44,18 +46,20 @@ function historicalEligibility(registryUrl: string): SQL {
   return sql`${validHistoricalName(sql`s.registry_package_name`)} and s.source in ('manual', 'auto_discovery') and s.status = 'complete'
     and s.registry_url in (${registryUrl}, ${registryUrl + "/"})
     and s.registry_version_status = 'published'
+    and ${npmPackageClaimMatches(registryUrl, sql`s.registry_package_name`, sql`s.organization_id`)}
     and s.registry_package_name is not null and s.registry_version is not null
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.access') end = 'public'
     and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.registry_package_name and (c.source != 'workflow_gate' or c.stopped_at is not null))`;
 }
 
-function gateEligibility(): SQL {
+function gateEligibility(registryUrl: string): SQL {
   return sql`${validHistoricalName(sql`s.package_name`)} and s.source = 'workflow_gate' and s.status = 'complete' and s.package_name is not null
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.mode') end = 'workflow_gate'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.schema') end = 'drydock.release-artifacts.v1'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.ecosystem') end = 'npm'
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.package') end = s.package_name
     and case when json_valid(s.summary_json) then json_extract(s.summary_json, '$.stagedPublish.manifest.version') end = s.staged_version
+    and not ${publicationWatchOwnershipConflict(registryUrl, sql`s.package_name`, sql`s.organization_id`)}
     and not exists (select 1 from publication_watch_candidates c where c.organization_id = s.organization_id and c.package_name = s.package_name)`;
 }
 
@@ -90,7 +94,7 @@ async function recordCandidates(
   }
 }
 
-async function enrollCandidates(db: AppDb, organizationId: string) {
+async function enrollCandidates(db: AppDb, organizationId: string, registryUrl: string) {
   const pending = await db
     .select({
       packageName: publicationWatchCandidates.packageName,
@@ -101,6 +105,11 @@ async function enrollCandidates(db: AppDb, organizationId: string) {
       and(
         eq(publicationWatchCandidates.organizationId, organizationId),
         isNull(publicationWatchCandidates.stoppedAt),
+        npmPackageClaimMatches(
+          registryUrl ?? PUBLIC_NPM,
+          publicationWatchCandidates.packageName,
+          organizationId,
+        ),
         sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history')`,
         sql`not exists(select 1 from publication_watches w where w.organization_id = ${organizationId} and w.package_name = ${publicationWatchCandidates.packageName})`,
       ),
@@ -114,6 +123,7 @@ async function enrollCandidates(db: AppDb, organizationId: string) {
       .insert(publicationWatches)
       .select(sql`select ${crypto.randomUUID()}, ${organizationId}, ${candidate.packageName}, ${candidate.source}, ${Date.now()}, null, null, null, null, null, null
       where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20
+      and ${npmPackageClaimMatches(registryUrl, candidate.packageName, organizationId)}
       and exists(select 1 from publication_watch_candidates where organization_id = ${organizationId} and package_name = ${candidate.packageName} and stopped_at is null and source in ('staged_discovery', 'published_history'))`)
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
@@ -134,6 +144,11 @@ async function enrollmentSummary(
       and(
         eq(publicationWatchCandidates.organizationId, organizationId),
         isNull(publicationWatchCandidates.stoppedAt),
+        npmPackageClaimMatches(
+          registryUrl ?? PUBLIC_NPM,
+          publicationWatchCandidates.packageName,
+          organizationId,
+        ),
         sql`${publicationWatchCandidates.source} in ('staged_discovery', 'published_history')`,
         missingWatch,
       ),
@@ -146,6 +161,7 @@ async function enrollmentSummary(
         eq(publicationWatchCandidates.organizationId, organizationId),
         isNull(publicationWatchCandidates.stoppedAt),
         eq(publicationWatchCandidates.source, "workflow_gate"),
+        sql`not ${publicationWatchOwnershipConflict(registryUrl ?? PUBLIC_NPM, publicationWatchCandidates.packageName, organizationId)}`,
         missingWatch,
       ),
     )
@@ -175,7 +191,7 @@ export async function reconcilePublicationWatches(
     "published_history",
   );
   const gates = await db.all<{ packageName: string }>(
-    sql`select s.package_name as packageName from scans s where s.organization_id = ${organizationId} and ${gateEligibility()} group by s.package_name order by min(s.created_at), s.package_name limit ${HISTORY_BATCH}`,
+    sql`select s.package_name as packageName from scans s where s.organization_id = ${organizationId} and ${gateEligibility(registryUrl)} group by s.package_name order by min(s.created_at), s.package_name limit ${HISTORY_BATCH}`,
   );
   await recordCandidates(
     db,
@@ -183,7 +199,7 @@ export async function reconcilePublicationWatches(
     gates.map((item) => item.packageName),
     "workflow_gate",
   );
-  await enrollCandidates(db, organizationId);
+  await enrollCandidates(db, organizationId, registryUrl);
   return enrollmentSummary(db, organizationId, registryUrl);
 }
 
@@ -242,10 +258,11 @@ export async function backfillNpmPublicationWatches(db: AppDb, registryUrl = PUB
   const organizations = await db.all<{ organizationId: string }>(sql`
     select organizationId from (
       select s.organization_id as organizationId, min(s.created_at) as pendingAt from scans s
-      where s.organization_id is not null and (${historicalEligibility(registryUrl)} or ${gateEligibility()}) group by s.organization_id
+      where s.organization_id is not null and (${historicalEligibility(registryUrl)} or ${gateEligibility(registryUrl)}) group by s.organization_id
       union all
       select c.organization_id as organizationId, min(c.created_at) as pendingAt from publication_watch_candidates c
       where c.stopped_at is null and c.source in ('staged_discovery', 'published_history')
+      and ${npmPackageClaimMatches(registryUrl, sql`c.package_name`, sql`c.organization_id`)}
       and not exists(select 1 from publication_watches w where w.organization_id = c.organization_id and w.package_name = c.package_name)
       and (select count(*) from publication_watches w where w.organization_id = c.organization_id) < 20
       group by c.organization_id

@@ -1,10 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { ensurePersonalOrganization } from "../../server/db/organizations";
-import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { canonicalJson } from "../../server/lib/platform/canonical-json";
 import { sha256Hex } from "../../server/lib/platform/crypto-utils";
@@ -67,7 +67,7 @@ async function seedCompleted(
   const db = createDb(env.DB);
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage_${crypto.randomUUID()}`;
-  await createScanJob(db, {
+  await seedLegacyScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
@@ -353,7 +353,7 @@ describe("canonical release receipt v1", () => {
     );
 
     const pendingScanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(createDb(env.DB), {
+    await seedLegacyScanJob(createDb(env.DB), {
       id: pendingScanId,
       stageId: `stage_${crypto.randomUUID()}`,
       organizationId: owner.organizationId,

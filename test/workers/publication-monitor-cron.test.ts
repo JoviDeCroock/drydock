@@ -5,7 +5,7 @@ import {
   createPublicationWatch,
   listPublicationWatches,
 } from "../../server/db/publication-watches";
-import { publicationWatches, scans } from "../../server/db/schema";
+import { npmPackageClaims, publicationWatches, scans } from "../../server/db/schema";
 import { sweepNpmPublicationWatches } from "../../server/lib/ecosystems/npm/publication-monitor";
 import worker from "../../server";
 import { seedUser } from "./helpers/seed";
@@ -32,6 +32,14 @@ function runScheduled() {
 test("the scheduled handler backfills watches from review history and checks due watches", async () => {
   const { db, organizationId } = await seedUser({ name: "Watcher" });
   await createPublicationWatch(db, organizationId, name);
+  await db.insert(npmPackageClaims).values({
+    registryUrl: "https://registry.npmjs.org",
+    ecosystem: "npm",
+    packageName: "history-package",
+    organizationId,
+    firstStageId: "history-stage",
+    claimedAt: new Date(),
+  });
   // A published public release reviewed through staged discovery is the
   // history the backfill enrolls from.
   await db.insert(scans).values({

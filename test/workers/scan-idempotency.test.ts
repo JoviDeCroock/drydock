@@ -1,3 +1,4 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env } from "cloudflare:test";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
@@ -5,7 +6,6 @@ import { createDb } from "../../server/db/client";
 import {
   chunkForD1,
   claimScanForRun,
-  createScanJob,
   getScan,
   listExistingScanStageIds,
   markScanFailed,
@@ -38,7 +38,7 @@ describe("scan persistence idempotency", () => {
   test("claimScanForRun transitions pending → running once and refuses terminal rows", async () => {
     const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-aaaa",
       organizationId,
@@ -70,7 +70,7 @@ describe("scan persistence idempotency", () => {
   test("markScanFailed refuses to overwrite a completed scan", async () => {
     const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-bbbb",
       organizationId,
@@ -99,7 +99,7 @@ describe("scan persistence idempotency", () => {
   test("persistScan is a no-op when the scan is already terminal", async () => {
     const { db, organizationId, userId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-cccc",
       organizationId,
@@ -165,7 +165,7 @@ describe("scan persistence idempotency", () => {
     ];
     const diff = createPackageDiff(previousFiles, files);
 
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId,
       organizationId,
@@ -212,7 +212,7 @@ describe("scan persistence idempotency", () => {
     const untouchedStageId = `stage-${crypto.randomUUID()}`;
 
     const completedScanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(ownerA.db, {
+    await seedLegacyScanJob(ownerA.db, {
       id: completedScanId,
       stageId: sharedStageId,
       organizationId: ownerA.organizationId,
@@ -230,7 +230,7 @@ describe("scan persistence idempotency", () => {
     });
 
     const inProgressScanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(ownerA.db, {
+    await seedLegacyScanJob(ownerA.db, {
       id: inProgressScanId,
       stageId: inProgressStageId,
       organizationId: ownerA.organizationId,
@@ -238,7 +238,7 @@ describe("scan persistence idempotency", () => {
     });
 
     const orgBOwnScanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(ownerB.db, {
+    await seedLegacyScanJob(ownerB.db, {
       id: orgBOwnScanId,
       stageId: orgBOnlyStageId,
       organizationId: ownerB.organizationId,
@@ -264,7 +264,7 @@ describe("scan persistence idempotency", () => {
   test("listExistingScanStageIds handles more stage ids than D1's parameter cap", async () => {
     const owner = await seedUser();
     const knownStageId = `stage-${crypto.randomUUID()}`;
-    await createScanJob(owner.db, {
+    await seedLegacyScanJob(owner.db, {
       id: `scan_${crypto.randomUUID()}`,
       stageId: knownStageId,
       organizationId: owner.organizationId,
@@ -293,7 +293,7 @@ describe("scan persistence idempotency", () => {
     const ownerA = await seedUser();
     const ownerB = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(ownerA.db, {
+    await seedLegacyScanJob(ownerA.db, {
       id: scanId,
       stageId: "stage-dddd",
       organizationId: ownerA.organizationId,

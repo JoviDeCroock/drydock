@@ -167,6 +167,8 @@ export function coverageGapMessage(
 }
 
 export function watchMetaLine(watch: PublicationWatch): string {
+  if (watch.ownershipConflict)
+    return "Monitoring inactive · package assigned to another organization · previous observations retained";
   const checked = watch.lastCheckedAt
     ? `checked ${formatDateTime(watch.lastCheckedAt)}`
     : "not checked yet";

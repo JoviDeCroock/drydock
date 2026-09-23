@@ -1,9 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import { deleteOrganization, deleteUserAccount } from "../../server/db/organizations";
-import { createScanJob, discardGateScans } from "../../server/db/scans";
+import { discardGateScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { createReleaseTarget, upsertInstallation } from "../../server/lib/github-app/persistence";
 import type { DiffEntry, FileRecord } from "../../server/lib/review";
@@ -141,7 +142,7 @@ describe("R2 cleanup follows D1 deletion", () => {
     const { db, userId, organizationId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await seedScanArtifacts(organizationId, scanId);
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-1",
       organizationId,
@@ -160,7 +161,7 @@ describe("R2 cleanup follows D1 deletion", () => {
     const { db, userId, organizationId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
     await seedScanArtifacts(organizationId, scanId);
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-1",
       organizationId,
@@ -177,7 +178,7 @@ describe("R2 cleanup follows D1 deletion", () => {
     const gateId = await seedGate(db, organizationId);
     const scanId = `scan_${crypto.randomUUID()}`;
     await seedScanArtifacts(organizationId, scanId);
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-1",
       organizationId,
@@ -194,7 +195,7 @@ describe("R2 cleanup follows D1 deletion", () => {
   test("deleteOrganization without a bucket leaves D1 clean and never throws", async () => {
     const { db, userId, organizationId } = await seedUser();
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-1",
       organizationId,

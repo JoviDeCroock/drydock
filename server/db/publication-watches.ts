@@ -10,9 +10,12 @@ import {
   ne,
   or,
   sql,
+  type SQLWrapper,
 } from "drizzle-orm";
+import { npmPackageClaimMatches } from "./package-claims";
 import type { AppDb } from "./client";
 import {
+  npmPackageClaims,
   publicationAlerts,
   publicationObservations,
   publicationWatchCandidates,
@@ -24,6 +27,38 @@ export type PublicationWatch = typeof publicationWatches.$inferSelect;
 const PUBLICATION_WATCH_LIMIT = 20;
 export type PublicationObservation = typeof publicationObservations.$inferSelect;
 export class PublicationWatchLimitError extends Error {}
+export class PublicationWatchOwnershipError extends Error {}
+
+const PUBLIC_NPM = "https://registry.npmjs.org";
+
+export function publicationWatchOwnershipConflict(
+  registryUrl: string,
+  packageName: string | SQLWrapper,
+  organizationId: string | SQLWrapper,
+) {
+  return sql<boolean>`(exists (select 1 from ${npmPackageClaims} claim
+    where claim.registry_url = ${registryUrl} and claim.ecosystem = 'npm'
+      and claim.package_name = ${packageName}
+      and (claim.organization_id is null or claim.organization_id != ${organizationId}))
+    or (exists (select 1 from ${npmPackageClaims} reserved
+      where reserved.registry_url = '*' and reserved.ecosystem = 'npm'
+        and reserved.package_name = ${packageName})
+      and not ${npmPackageClaimMatches(registryUrl, packageName, organizationId)}))`.mapWith(
+    Boolean,
+  );
+}
+
+export async function getPublicationOwnershipConflict(
+  db: AppDb,
+  organizationId: string,
+  packageName: string,
+  registryUrl = PUBLIC_NPM,
+): Promise<boolean> {
+  const [result] = await db.all<{ conflict: number }>(
+    sql`select ${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)} as conflict`,
+  );
+  return Boolean(result?.conflict);
+}
 
 const unresolvedAlertCount = sql<number>`(select count(*) from publication_alerts a where a.organization_id = publication_watches.organization_id and a.package_name = publication_watches.package_name and a.acknowledged_at is null and exists(select 1 from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = a.organization_id and o.version = a.version))`;
 
@@ -58,15 +93,24 @@ function releaseCoverageGap(now: Date) {
 const unverifiedReleaseCount = () =>
   sql<number>`(select count(*) from publication_observations o where o.watch_id = publication_watches.id and o.organization_id = publication_watches.organization_id and o.status = 'unknown' and o.reason in ${sql.raw(`(${RELEASE_COVERAGE_GAP_REASONS.map((reason) => `'${reason}'`).join(", ")})`)} and o.first_seen_at <= ${Date.now() - COVERAGE_GAP_AFTER_MS})`;
 
-const watchColumns = () => ({
+const watchColumns = (registryUrl: string) => ({
   ...getTableColumns(publicationWatches),
   unresolvedAlertCount,
   unverifiedReleaseCount: unverifiedReleaseCount(),
+  ownershipConflict: publicationWatchOwnershipConflict(
+    registryUrl,
+    sql`publication_watches.package_name`,
+    sql`publication_watches.organization_id`,
+  ),
 });
 
-export function listPublicationWatches(db: AppDb, organizationId: string) {
+export function listPublicationWatches(
+  db: AppDb,
+  organizationId: string,
+  registryUrl = PUBLIC_NPM,
+) {
   return db
-    .select(watchColumns())
+    .select(watchColumns(registryUrl))
     .from(publicationWatches)
     .where(eq(publicationWatches.organizationId, organizationId))
     .orderBy(asc(publicationWatches.createdAt));
@@ -75,9 +119,10 @@ export async function getPublicationWatchByPackage(
   db: AppDb,
   organizationId: string,
   packageName: string,
+  registryUrl = PUBLIC_NPM,
 ) {
   const [watch] = await db
-    .select(watchColumns())
+    .select(watchColumns(registryUrl))
     .from(publicationWatches)
     .where(
       and(
@@ -132,9 +177,14 @@ export async function getPublicationEnrollment(
   return { state: watches >= PUBLICATION_WATCH_LIMIT ? "deferred" : "pending" };
 }
 
-export async function getPublicationWatch(db: AppDb, organizationId: string, id: string) {
+export async function getPublicationWatch(
+  db: AppDb,
+  organizationId: string,
+  id: string,
+  registryUrl = PUBLIC_NPM,
+) {
   const [watch] = await db
-    .select(watchColumns())
+    .select(watchColumns(registryUrl))
     .from(publicationWatches)
     .where(
       and(eq(publicationWatches.organizationId, organizationId), eq(publicationWatches.id, id)),
@@ -147,6 +197,7 @@ export async function createPublicationWatch(
   db: AppDb,
   organizationId: string,
   packageName: string,
+  registryUrl = PUBLIC_NPM,
 ) {
   const id = crypto.randomUUID();
   const now = new Date();
@@ -155,7 +206,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatches)
       .select(
-        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20`,
+        sql`select ${id}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null, null, null, null, null, null where (select count(*) from publication_watches where organization_id = ${organizationId}) < 20 and not ${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)}`,
       )
       .onConflictDoNothing({
         target: [publicationWatches.organizationId, publicationWatches.packageName],
@@ -163,7 +214,7 @@ export async function createPublicationWatch(
     db
       .insert(publicationWatchCandidates)
       .select(
-        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName})`,
+        sql`select ${crypto.randomUUID()}, ${organizationId}, ${packageName}, 'manual', ${now.getTime()}, null where exists(select 1 from publication_watches where organization_id = ${organizationId} and package_name = ${packageName}) and not ${publicationWatchOwnershipConflict(registryUrl, packageName, organizationId)}`,
       )
       .onConflictDoUpdate({
         target: [publicationWatchCandidates.organizationId, publicationWatchCandidates.packageName],
@@ -171,7 +222,7 @@ export async function createPublicationWatch(
       }),
   ]);
   const [watch] = await db
-    .select(watchColumns())
+    .select(watchColumns(registryUrl))
     .from(publicationWatches)
     .where(
       and(
@@ -180,6 +231,14 @@ export async function createPublicationWatch(
       ),
     )
     .limit(1);
+  if (
+    watch?.ownershipConflict ||
+    (!watch &&
+      (await getPublicationOwnershipConflict(db, organizationId, packageName, registryUrl)))
+  )
+    throw new PublicationWatchOwnershipError(
+      "This package is already assigned to another organization.",
+    );
   if (!watch)
     throw new PublicationWatchLimitError("At most 20 packages can be monitored per organization");
   return watch;

@@ -121,7 +121,9 @@ function MonitorAside({ model }: { model: Model }) {
   return (
     <Show<PackagePublication | null> when={model.publication}>
       {(publication) =>
-        publication.watch ? (
+        publication.ownershipConflict || publication.watch?.ownershipConflict ? (
+          <Badge tone="neutral">monitoring inactive</Badge>
+        ) : publication.watch ? (
           publication.watch.unresolvedAlertCount > 0 ? (
             <Badge tone="critical">
               {publication.watch.unresolvedAlertCount} unacknowledged{" "}
@@ -156,11 +158,15 @@ function PublicationBody({
   if (!watch) {
     return (
       <div class="px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-        <EmptyLine>{notWatchedReason(publication.packageName, publication.enrollment)}</EmptyLine>
+        <EmptyLine>
+          {publication.ownershipConflict
+            ? "Monitoring inactive because this package is assigned to another organization. Previous observations remain available."
+            : notWatchedReason(publication.packageName, publication.enrollment)}
+        </EmptyLine>
         <Button
           variant="secondary"
           size="sm"
-          disabled={model.busy}
+          disabled={publication.ownershipConflict || model.busy}
           onClick={() => void model.start()}
           title="Compare this package's public npm releases with this organization's approvals"
         >
@@ -184,7 +190,7 @@ function PublicationBody({
           <Button
             variant="secondary"
             size="sm"
-            disabled={model.busy}
+            disabled={publication.ownershipConflict || watch.ownershipConflict || model.busy}
             onClick={() => void model.check()}
             title="Fetch the latest releases from npm and compare them with recorded approvals"
           >

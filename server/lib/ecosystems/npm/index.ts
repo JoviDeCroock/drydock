@@ -1,3 +1,5 @@
+import { normalizeRegistryUrl } from "./connection";
+import { isValidNpmPackageName } from "./registry";
 import type { NpmStagedDetails } from "./staged-publishes";
 import type { PackageAdapter } from "../package-adapter";
 import { acquireBaselineNpm, acquireStagedNpm, type NpmAdapterInput } from "./acquire";
@@ -27,6 +29,16 @@ export const npmAdapter: PackageAdapter<NpmAdapterInput, NpmBroker> = {
     }
     const maxFiles = typeof value.maxFiles === "number" ? value.maxFiles : undefined;
     return { stageId, maxFiles };
+  },
+
+  stagedClaimIdentity({ registryUrl, packageName, version }) {
+    if (!registryUrl || !packageName || !isValidNpmPackageName(packageName) || !version?.trim())
+      return null;
+    return {
+      registryUrl: normalizeRegistryUrl(registryUrl, { allowInsecureLocalhost: true }),
+      packageName,
+      version,
+    };
   },
 
   createBroker(ctx, ref) {

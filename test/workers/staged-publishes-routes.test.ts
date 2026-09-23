@@ -1,3 +1,4 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -7,7 +8,7 @@ import {
   updateNpmConnectionValidation,
   upsertNpmConnection,
 } from "../../server/db/npm-connections";
-import { createScanJob, listScans } from "../../server/db/scans";
+import { listScans } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
 import type { QueueMessage } from "../../server/lib/scan/job";
@@ -43,7 +44,7 @@ describe("staged publishes route", () => {
       validationStatus: "valid",
       validatedAt: new Date(),
     });
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: `scan_${crypto.randomUUID()}`,
       stageId: "stage-existing-123",
       organizationId: owner.organizationId,

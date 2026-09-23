@@ -1,9 +1,10 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { createExecutionContext, env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
 import type { ScanSource, ScanStatus } from "../../server/db/enums";
 import { loadReleaseFingerprintHistory } from "../../server/db/release-fingerprint";
-import { claimScanForRun, createScanJob, getScan } from "../../server/db/scans";
+import { claimScanForRun, getScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import type { PackageAdapter } from "../../server/lib/ecosystems/package-adapter";
 import { RELEASE_PROCESS_FINDING_FILE } from "../../server/lib/release-fingerprint";
@@ -160,7 +161,7 @@ async function runFakeScan(args: {
 }) {
   const scanId = `scan_${crypto.randomUUID()}`;
   const stageId = `stage-${crypto.randomUUID()}`;
-  await createScanJob(args.db, {
+  await seedLegacyScanJob(args.db, {
     id: scanId,
     stageId,
     organizationId: args.organizationId,

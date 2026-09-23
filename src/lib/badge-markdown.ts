@@ -21,3 +21,20 @@ export function badgeMarkdown({
   const alt = query ? `Drydock review (${tag})` : "Drydock review";
   return `[![${alt}](${image})](${target})`;
 }
+
+/** Sharing a report cannot grant authority over a public npm badge. */
+export function shareBadgeMarkdown(input: {
+  origin: string;
+  ecosystem: PublicEcosystem | null;
+  packageName: string | null;
+  reportUrl: string;
+  tag?: string | null;
+  badgePublic: boolean;
+  feedListed: boolean;
+  npmPackageClaimOwned?: boolean;
+}): string | null {
+  if (!input.ecosystem || !input.packageName || (!input.badgePublic && !input.feedListed))
+    return null;
+  if (input.ecosystem === "npm" && input.npmPackageClaimOwned !== true) return null;
+  return badgeMarkdown({ ...input, ecosystem: input.ecosystem, packageName: input.packageName });
+}

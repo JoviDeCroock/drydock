@@ -381,6 +381,7 @@ function ScanDialogs({ model, view }: SectionProps) {
           })}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
           badgePublic={Boolean(detail.scan.badgePublic)}
+          npmPackageClaimOwned={detail.scan.npmPackageClaimOwned}
           onEnable={() => void model.enableShare()}
           onRevoke={() => void model.revokeShare()}
           onSetFeedListing={(listed) => void model.setFeedListing(listed)}

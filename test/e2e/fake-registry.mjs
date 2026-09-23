@@ -74,7 +74,12 @@ const server = createServer(async (request, response) => {
         await sendJson(request, response, startedAt, 404, { error: "stage not found" });
         return;
       }
-      if (scenario.failure?.stagedTarballStatus) {
+      // Let this scenario prove access, then lose availability during analysis.
+      const accessProbe = request.headers.range === "bytes=0-0";
+      if (
+        scenario.failure?.stagedTarballStatus &&
+        !(scenario.failure.fullDownloadOnly && accessProbe)
+      ) {
         await sendJson(request, response, startedAt, scenario.failure.stagedTarballStatus, {
           error: "configured staged tarball failure",
         });

@@ -23,6 +23,7 @@ interface RegistryScenario {
     previousVersion?: string | null;
     ruleIds?: string[];
     baseline?: Record<string, unknown>;
+    admissionStatus?: number;
     errorCode?: string;
     errorIncludes?: string;
   };
@@ -280,14 +281,37 @@ test("a shared review is readable as an anonymous public report", async ({ brows
 
 for (const scenario of scenarios.filter((item) => item.stageId !== uiStageId)) {
   test(`scenario: ${scenario.name}`, async ({ browser, baseURL }) => {
-    const { context, page } = await openAuthenticatedPage(browser, baseURL);
+    // Admission-only probes use their own organization's request budget.
+    const context = scenario.expected.admissionStatus
+      ? await browser.newContext({ baseURL })
+      : (await openAuthenticatedPage(browser, baseURL)).context;
+    const page = context.pages()[0] ?? (await context.newPage());
     try {
+      if (scenario.expected.admissionStatus) await registerAndConnect(page);
       await page.goto("/dashboard");
       await expect(page.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({
         timeout: 30_000,
       });
 
       const created = await createScan(page, scenario.stageId);
+      if (scenario.expected.admissionStatus) {
+        expect(created.status, scenario.name).toBe(scenario.expected.admissionStatus);
+        expect((created.body as { error?: string })?.error).toContain(
+          scenario.expected.errorIncludes,
+        );
+        expect(created.body).not.toHaveProperty("scan");
+        const rows = await evaluateOnStablePage(
+          page,
+          async () => fetch("/api/v1/scans").then((response) => response.json()),
+          undefined,
+        );
+        expect(
+          (rows as { scans: { stageId: string }[] }).scans.some(
+            (scan: { stageId: string }) => scan.stageId === scenario.stageId,
+          ),
+        ).toBe(false);
+        return;
+      }
       expect(created.status, scenario.name).toBe(202);
       const scanId = created.body?.scan?.id;
       expect(scanId, `${scenario.name}: scan id present`).toBeTruthy();
@@ -446,16 +470,16 @@ test("a package link names its organization, whatever this browser had active", 
   browser,
   baseURL,
 }) => {
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
-    await registerAndConnect(page);
+    // Reuse the fixture's claiming organization and completed review. This
+    // browser context owns its active-org selection, so org B cannot affect
+    // later tests or acquire the package from the existing owner.
+    expect(reviewedScanId).not.toBeNull();
     await page.goto("/dashboard");
-    const created = await createScan(page, uiStageId);
-    expect(created.status).toBe(202);
-    await pollScanUntilTerminal(page, String(created.body?.scan?.id));
+    await pollScanUntilTerminal(page, reviewedScanId!);
     // Org A holds the review; org B is created afterwards and made active.
     const orgs = await evaluateOnStablePage(
       page,
@@ -580,12 +604,10 @@ test("publication monitor automatically watches public staged discoveries and re
   browser,
   baseURL,
 }) => {
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
+  const { context, page } = await openAuthenticatedPage(browser, baseURL);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
-    await registerAndConnect(page);
     await page.goto("/dashboard");
     const monitor = page
       .locator("section")
@@ -593,7 +615,6 @@ test("publication monitor automatically watches public staged discoveries and re
     const reviews = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: "Recent reviews", exact: true }) });
-    await expect(monitor.getByText(/No packages watched yet/)).toBeVisible();
     await reviews.getByRole("button", { name: "Check npm", exact: true }).click();
     const nativeRow = monitor
       .locator("li")
@@ -625,6 +646,50 @@ test("publication monitor automatically watches public staged discoveries and re
       fullPage: true,
     });
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a second organization cannot claim or watch an already managed staged package", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  try {
+    await registerAndConnect(page);
+    const attempted = await createScan(page, uiStageId);
+    expect(attempted.status).toBe(409);
+    expect(attempted.body).not.toHaveProperty("scan");
+    const state = await page.evaluate(async () => {
+      const discovery = await fetch("/api/v1/staged-publishes/scan", { method: "POST" });
+      const scans = await fetch("/api/v1/scans").then((response) => response.json());
+      return { discoveryStatus: discovery.status, scans };
+    });
+    expect(state.discoveryStatus).toBe(202);
+    expect(
+      (state.scans as { scans: { stageId: string }[] }).scans.some(
+        (scan: { stageId: string }) => scan.stageId === uiStageId,
+      ),
+    ).toBe(false);
+    await page.reload();
+    const monitor = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Publication monitor", exact: true }) });
+    await monitor.getByLabel("Public npm package").fill("@drydock/e2e-native");
+    const conflict = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/v1/publication-watches") &&
+        response.request().method() === "POST",
+    );
+    await monitor.getByRole("button", { name: "Watch package", exact: true }).click();
+    expect((await conflict).status()).toBe(409);
+    await expect(monitor.getByText(/another organization|managed elsewhere/i)).toBeVisible();
+    await page.screenshot({
+      path: path.join(artifactsDir, "package-claim-conflict.png"),
+      fullPage: true,
+    });
   } finally {
     await context.close();
   }

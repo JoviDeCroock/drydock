@@ -1,8 +1,9 @@
+import { seedLegacyScanJob } from "./helpers/seed-scan-job";
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { createScanJob, getScan, getScanCompareData, persistScan } from "../../server/db/scans";
+import { getScan, getScanCompareData, persistScan } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import {
   DETERMINISTIC_RULES_VERSION,
@@ -274,7 +275,7 @@ async function seedArtifactBackedScan(owner: SeededUser) {
     generatedAt: "2026-06-08T00:00:00.000Z",
   });
 
-  await createScanJob(db, {
+  await seedLegacyScanJob(db, {
     id: scanId,
     stageId,
     organizationId: owner.organizationId,
@@ -371,7 +372,7 @@ describe("scan status poll route", () => {
     const app = buildTestApp(mountScans, owner);
     const db = createDb(env.DB);
     const scanId = `scan_${crypto.randomUUID()}`;
-    await createScanJob(db, {
+    await seedLegacyScanJob(db, {
       id: scanId,
       stageId: "stage-queued-timeline-000001",
       organizationId: owner.organizationId,

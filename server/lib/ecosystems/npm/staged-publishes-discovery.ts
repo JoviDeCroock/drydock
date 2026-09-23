@@ -15,6 +15,8 @@ import { recordProductEvent } from "../../analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { resolveNpmReleaseOutcomes } from "./release-outcome";
 import { enrollStagedReleases } from "./publication-auto-enrollment";
+import { isValidNpmPackageName } from "./registry";
+import { PackageClaimConflictError } from "../../../db/package-claims";
 import {
   checkStagedPublishAccess,
   listStagedPublishes,
@@ -236,11 +238,6 @@ export async function discoverAndQueueStagedPublishes(
     allowInsecureLocalhost,
   });
   await markNpmConnectionUsed(db, organizationId);
-  await enrollStagedReleases(db, env, {
-    organizationId,
-    registryUrl: connection.registryUrl,
-    releases: stagedItems,
-  });
   const stageIds = stagedItems.map((item) => item.id);
   const existingStageIds = await listExistingScanStageIds(db, organizationId, stageIds);
   const scanCandidates = filterNewStagedPublishesByStageId(stagedItems, existingStageIds);
@@ -250,6 +247,13 @@ export async function discoverAndQueueStagedPublishes(
     (item) =>
       stageStartCoordinator.run(item.id, async () => {
         const stageId = item.id;
+        if (
+          !item.packageName ||
+          !isValidNpmPackageName(item.packageName) ||
+          !item.version?.trim()
+        ) {
+          return null;
+        }
         const access = await checkStagedPublishAccess(
           connection.registryUrl,
           connection.token,
@@ -258,7 +262,14 @@ export async function discoverAndQueueStagedPublishes(
             allowInsecureLocalhost,
           },
         );
-        if (!access.allowed) return null;
+        if (
+          !access.allowed ||
+          access.status === null ||
+          access.status < 200 ||
+          access.status >= 300
+        ) {
+          return null;
+        }
         const scanId = crypto.randomUUID();
         const detail = await createScanJob(db, {
           id: scanId,
@@ -271,6 +282,10 @@ export async function discoverAndQueueStagedPublishes(
           stagedCreatedAt: item.createdAt,
           stagedDeclaredSha1: item.shasum,
           registryUrl: connection.registryUrl,
+          stageAccessStatus: access.status,
+        }).catch((err: unknown) => {
+          if (err instanceof PackageClaimConflictError) return null;
+          throw err;
         });
         if (!detail) return null;
         recordProductEvent(env, {
@@ -311,6 +326,11 @@ export async function discoverAndQueueStagedPublishes(
       }),
   );
   const startedScans = scanStarts.filter(isStartedStagedPublishScan);
+  await enrollStagedReleases(db, env, {
+    organizationId,
+    registryUrl: connection.registryUrl,
+    releases: stagedItems,
+  });
 
   // Resolving npm's own state for already-reviewed releases is advisory
   // annotation. Start it only after newly discovered scan rows exist, so a

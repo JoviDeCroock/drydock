@@ -1,5 +1,5 @@
 import { DEFAULT_BADGE_TAG, type PublicEcosystem } from "../../../../server/lib/public-feed";
-import { badgeMarkdown } from "../../../lib/badge-markdown";
+import { shareBadgeMarkdown } from "../../../lib/badge-markdown";
 import { formatDateTime } from "../../../lib/format";
 import type { DecisionStatus, PublicShareInfo } from "../../../models/scan";
 import { publicReportAttestationUrl } from "../../../models/scan";
@@ -22,6 +22,7 @@ export function ShareDialog({
   packageName,
   badgeTag,
   badgePublic,
+  npmPackageClaimOwned,
   onEnable,
   onRevoke,
   onSetFeedListing,
@@ -44,6 +45,7 @@ export function ShareDialog({
    * whether the snippet is worth handing over before anything is shared.
    */
   badgePublic: boolean;
+  npmPackageClaimOwned?: boolean;
   onEnable: () => void;
   onRevoke: () => void;
   onSetFeedListing: (listed: boolean) => void;
@@ -53,20 +55,16 @@ export function ShareDialog({
   const attestationAvailable = readSignalProp(attestationAvailableProp);
   const saving = readSignalProp(status) === "saving";
 
-  // The snippet appears exactly when the endpoint would render something: an
-  // OSS package answers from the organization's approvals with nothing shared
-  // at all, and everything else answers once this report is feed-listed.
-  const badgeAnswers = badgePublic || (share !== null && share.threatFeedListedAt !== null);
-  const badge =
-    badgeAnswers && badgeEcosystem && packageName
-      ? badgeMarkdown({
-          origin: location.origin,
-          ecosystem: badgeEcosystem,
-          packageName,
-          reportUrl: share?.url ?? "",
-          tag: badgeTag,
-        })
-      : null;
+  const badge = shareBadgeMarkdown({
+    origin: location.origin,
+    ecosystem: badgeEcosystem,
+    packageName,
+    reportUrl: share?.url ?? "",
+    tag: badgeTag,
+    badgePublic,
+    feedListed: share !== null && share.threatFeedListedAt !== null,
+    npmPackageClaimOwned,
+  });
   // What the badge answers for. An untagged scan only ever answers the default
   // badge, so it reads as `latest` rather than as nothing.
   const badgeLine = badgeTag ?? DEFAULT_BADGE_TAG;
@@ -167,6 +165,13 @@ export function ShareDialog({
         </EmptyLine>
       )}
 
+      {badgeEcosystem === "npm" && npmPackageClaimOwned !== true ? (
+        <EmptyLine>
+          This organization has no confirmed assignment for this npm package. Its reports remain
+          shareable, but its reviews cannot control the public badge. Contact support if historical
+          ownership needs review.
+        </EmptyLine>
+      ) : null}
       {badge ? (
         <div class="flex flex-col gap-1.5">
           <MonoLabel as="span">README badge</MonoLabel>
