@@ -3,7 +3,7 @@ import {
   ANALYTICS_EVENT_NAMES,
   ANALYTICS_SCHEMA_VERSION,
   recordProductEvent,
-} from "../server/lib/platform/analytics.ts";
+} from "../server/lib/analytics.ts";
 
 function fakeDataset() {
   const points = [];

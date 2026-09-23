@@ -6,15 +6,14 @@
  * because starting a scan spends registry egress and queue budget.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
-import { getNpmConnection } from "../../db/npm-connections";
-import { recordScanEvent } from "../../db/events";
 import {
   ORGANIZATION_SCAN_LIMIT,
   ORGANIZATION_SCAN_WINDOW_MS,
-  RateLimitError,
-  enforceRateLimit,
-} from "../../lib/platform/rate-limit";
+  guardRateLimit,
+} from "../../lib/rate-limit";
+import type { AppDb } from "../../db/client";
+import { getNpmConnection } from "../../db/npm-connections";
+import { recordScanEvent } from "../../db/events";
 import {
   LIST_SCANS_DEFAULT_LIMIT,
   LIST_SCANS_MAX_LIMIT,
@@ -30,7 +29,7 @@ import {
 } from "../../db/scans";
 import { requireActiveOrganization } from "../../lib/auth/active-organization";
 import { deleteScanArtifacts, scanArtifactReadBucket } from "../../lib/scan/artifacts";
-import { canonicalOrigin, rateLimitResponse } from "../../lib/platform/http";
+import { canonicalOrigin, parseLimitQuery, readJsonObject } from "../../lib/platform/http";
 import { workerExecutionContext } from "../../lib/platform/execution-context";
 import { allowInsecureLocalRegistry, decryptNpmToken } from "../../lib/ecosystems/npm/connection";
 import {
@@ -43,81 +42,79 @@ import { PublicDiffError } from "../../lib/public-diff/error";
 import { parseScanInput, type PublishedScanRequest } from "../../lib/scan/input";
 import { executeScanJob, type ScanQueueMessage } from "../../lib/scan/job";
 import { encodeListScansCursor, parseListScansCursor } from "../../lib/scan/list-cursor";
-import { recordProductEvent } from "../../lib/platform/analytics";
+import { recordProductEvent } from "../../lib/analytics";
 import { describeOperationalError, emitOperationalEvent } from "../../lib/platform/observability";
 import type { Bindings, ScanInput, Variables } from "../../types";
 
 export const scanLifecycleRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 scanLifecycleRoutes.post("/", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as Partial<ScanInput>;
+  const body = await readJsonObject<ScanInput>(c);
   const parsed = parseScanInput(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
 
-  try {
-    const db = createDb(c.env.DB);
-    const session = c.get("authSession");
-    const organizationId = await requireActiveOrganization(c, db);
-    await enforceRateLimit(c.env, {
+  const db = c.var.db;
+  const session = c.get("authSession");
+  const organizationId = await requireActiveOrganization(c, db);
+  const limited = await guardRateLimit(
+    c,
+    {
       key: `scan:${organizationId}`,
       limit: ORGANIZATION_SCAN_LIMIT,
       windowMs: ORGANIZATION_SCAN_WINDOW_MS,
-    });
+    },
+    "scan rate limit exceeded",
+  );
+  if (limited) return limited;
 
-    const prepared =
-      parsed.kind === "published"
-        ? await preparePublishedScan(c, parsed.request)
-        : await prepareStagedScan(c, db, organizationId, parsed.input);
-    if ("error" in prepared) return prepared.error;
+  const prepared =
+    parsed.kind === "published"
+      ? await preparePublishedScan(c, parsed.request)
+      : await prepareStagedScan(c, db, organizationId, parsed.input);
+  if ("error" in prepared) return prepared.error;
 
-    const scanId = crypto.randomUUID();
-    const detail = await createScanJob(db, {
-      id: scanId,
-      stageId: prepared.input.stageId,
-      organizationId,
-      ownerUserId: session.userId,
-      source: prepared.source,
-      packageName: prepared.packageName,
-      stagedVersion: prepared.version,
-      stagedCreatedAt: prepared.stagedCreatedAt,
-      registryUrl: prepared.registryUrl,
-    });
-    if (!detail) return c.json({ error: "failed to create scan" }, 500);
-    const message: ScanQueueMessage = {
-      ...prepared.input,
-      scanId,
-      organizationId,
-      actorUserId: session.userId,
-      source: prepared.source,
-    };
+  const scanId = crypto.randomUUID();
+  const detail = await createScanJob(db, {
+    id: scanId,
+    stageId: prepared.input.stageId,
+    organizationId,
+    ownerUserId: session.userId,
+    source: prepared.source,
+    packageName: prepared.packageName,
+    stagedVersion: prepared.version,
+    stagedCreatedAt: prepared.stagedCreatedAt,
+    registryUrl: prepared.registryUrl,
+  });
+  if (!detail) return c.json({ error: "failed to create scan" }, 500);
+  const message: ScanQueueMessage = {
+    ...prepared.input,
+    scanId,
+    organizationId,
+    actorUserId: session.userId,
+    source: prepared.source,
+  };
 
-    // Counted at creation, not completion, so the queued → completed drop-off
-    // is visible: a scan that never reaches a terminal state emits neither
-    // `scan.completed` nor `scan.failed` and would otherwise vanish.
-    recordProductEvent(c.env, {
-      name: "scan.queued",
-      organizationId,
-      ecosystem: prepared.ecosystem,
-      source: message.source ?? "manual",
-    });
+  // Counted at creation, not completion, so the queued → completed drop-off
+  // is visible: a scan that never reaches a terminal state emits neither
+  // `scan.completed` nor `scan.failed` and would otherwise vanish.
+  recordProductEvent(c.env, {
+    name: "scan.queued",
+    organizationId,
+    ecosystem: prepared.ecosystem,
+    source: message.source ?? "manual",
+  });
 
-    if (c.env.SCAN_QUEUE) {
-      await c.env.SCAN_QUEUE.send(message);
-    } else {
-      c.executionCtx.waitUntil(
-        executeScanJob(c.env, workerExecutionContext(c.executionCtx), message, db, {
-          finalAttempt: true,
-        }),
-      );
-    }
-
-    return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "scan rate limit exceeded", err);
-    }
-    throw err;
+  if (c.env.SCAN_QUEUE) {
+    await c.env.SCAN_QUEUE.send(message);
+  } else {
+    c.executionCtx.waitUntil(
+      executeScanJob(c.env, workerExecutionContext(c.executionCtx), message, db, {
+        finalAttempt: true,
+      }),
+    );
   }
+
+  return c.json({ scan: detail?.scan, queued: Boolean(c.env.SCAN_QUEUE) }, 202);
 });
 
 type ScanRouteContext = import("hono").Context<{ Bindings: Bindings; Variables: Variables }>;
@@ -143,7 +140,7 @@ interface PreparedScan {
 
 async function prepareStagedScan(
   c: ScanRouteContext,
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
   organizationId: string,
   input: ScanInput,
 ): Promise<PreparedScan | { error: Response }> {
@@ -245,7 +242,7 @@ async function preparePublishedScan(
 const DECISION_FILTER_SET = new Set<ScanDecisionFilter>(SCAN_DECISION_FILTERS);
 
 scanLifecycleRoutes.get("/", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
 
   const rawFilter = c.req.query("filter");
@@ -255,10 +252,10 @@ scanLifecycleRoutes.get("/", async (c) => {
     ? (rawFilter as ScanDecisionFilter)
     : "undecided";
 
-  const rawLimit = Number(c.req.query("limit"));
-  const limit = Number.isFinite(rawLimit)
-    ? Math.min(LIST_SCANS_MAX_LIMIT, Math.max(1, Math.floor(rawLimit)))
-    : LIST_SCANS_DEFAULT_LIMIT;
+  const limit = parseLimitQuery(c.req.query("limit"), {
+    default: LIST_SCANS_DEFAULT_LIMIT,
+    max: LIST_SCANS_MAX_LIMIT,
+  });
 
   const cursor = parseListScansCursor(c.req.query("cursor"));
 
@@ -272,7 +269,7 @@ scanLifecycleRoutes.get("/", async (c) => {
 });
 
 scanLifecycleRoutes.delete("/:id", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
   const organizationId = await requireActiveOrganization(c, db);
   const scanId = c.req.param("id");
@@ -300,7 +297,7 @@ scanLifecycleRoutes.delete("/:id", async (c) => {
 // /public/reports/:token to anyone holding the link — an explicit, elevated
 
 scanLifecycleRoutes.get("/:id", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScan(db, c.req.param("id"), organizationId, scanArtifactReadBucket(c.env), {
     files: "list",
@@ -319,7 +316,7 @@ scanLifecycleRoutes.get("/:id", async (c) => {
 });
 
 scanLifecycleRoutes.get("/:id/status", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const scan = await getScanStatus(db, c.req.param("id"), organizationId);
   if (!scan) return c.json({ error: "not found" }, 404);
@@ -329,7 +326,7 @@ scanLifecycleRoutes.get("/:id/status", async (c) => {
 scanLifecycleRoutes.get("/:id/file", async (c) => {
   const path = c.req.query("path") || "";
   if (!path) return c.json({ error: "path is required" }, 400);
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await requireActiveOrganization(c, db);
   const file = await getScanFile(
     db,

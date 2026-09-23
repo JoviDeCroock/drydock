@@ -1,14 +1,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import * as schema from "../../server/db/schema";
 import { EMAIL_VERIFICATION_REQUIRED_CODE } from "../../server/lib/auth/email-verification";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
 import { githubAppRoutes } from "../../server/routes/github-app";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
 // The guard is inert on deployments that cannot send mail, so these tests must
 // supply both halves of `emailVerificationAvailable`. The pool reuses one env
@@ -23,33 +20,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function seedUser() {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Unverified",
-    email: `${userId}@example.com`,
-    emailVerified: false,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await ensurePersonalOrganization(db, { userId });
-  return userId;
-}
-
-function buildApp(userId: string, emailVerified: boolean) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId, emailVerified });
-    await next();
-  });
-  app.route("/api/v1/npm-connection", npmConnectionRoutes);
-  app.route("/api/v1/scans", scansRoutes);
-  app.route("/api/v1/github-app", githubAppRoutes);
-  return app;
-}
+const buildApp = (userId: string, emailVerified: boolean) =>
+  buildTestApp(
+    (app) => {
+      app.route("/api/v1/npm-connection", npmConnectionRoutes);
+      app.route("/api/v1/scans", scansRoutes);
+      app.route("/api/v1/github-app", githubAppRoutes);
+    },
+    { userId, emailVerified },
+  );
 
 async function post(
   app: ReturnType<typeof buildApp>,
@@ -70,7 +49,7 @@ async function post(
 
 describe("email verification guard", () => {
   test("blocks connecting an npm token until the address is verified", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ emailVerified: false });
 
     const blocked = await post(buildApp(userId, false), "/api/v1/npm-connection", {
       token: "npm_guard_token_0123456789",
@@ -85,7 +64,7 @@ describe("email verification guard", () => {
   });
 
   test("lets an unverified account run a published-pair review", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ emailVerified: false });
     const packageName = `pkg-${crypto.randomUUID()}`;
     vi.stubGlobal(
       "fetch",
@@ -117,7 +96,7 @@ describe("email verification guard", () => {
   });
 
   test("guards both halves of GitHub installation and every release-decision route", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ emailVerified: false });
     const app = buildApp(userId, false);
 
     for (const path of [

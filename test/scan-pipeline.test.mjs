@@ -59,8 +59,19 @@ vi.mock("../server/lib/ai-review/index.ts", async () => ({
 
 const { runScanPipeline } = await import("../server/lib/scan/pipeline");
 const { npmAdapter } = await import("../server/lib/ecosystems/npm");
+const { npmGateAdapter } = await import("../server/lib/ecosystems/npm/gate-review");
 const { BASELINE_TEXT_SAMPLE_LIMIT } = await import("../server/lib/sample-retention");
 const { AI_MODEL } = await import("../server/lib/ai-review/index.ts");
+
+describe("npm adapter pattern set", () => {
+  test("annotates with the JavaScript set npm detection scans with", () => {
+    // Undefined would let diff annotation pick Python patterns for a `.py`
+    // file in an npm package, re-matching a finding against a set that never
+    // produced it.
+    expect(npmAdapter.codePatternSet).toBe("javascript");
+    expect(npmGateAdapter.codePatternSet).toBe("javascript");
+  });
+});
 
 describe("scan pipeline baseline selection", () => {
   beforeEach(() => {

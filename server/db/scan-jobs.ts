@@ -11,7 +11,8 @@ import { deleteScanArtifacts } from "../lib/scan/artifacts";
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import { getScan } from "./scan-detail";
-import { registrySupersessionPatch } from "./scan-registry-status";
+import type { ScanSource } from "./enums";
+import { NON_TERMINAL_STATUSES, registrySupersessionPatch } from "./scan-status";
 import { scans } from "./schema";
 
 export interface CreateScanJobInput {
@@ -43,8 +44,6 @@ export interface CreateScanJobInput {
 // `published` is a manual review of an already-public release: no registry
 // credential, no staged candidate, and deliberately outside the registry
 // status/supersession machinery below, which only tracks staged npm releases.
-export const SCAN_SOURCES = ["manual", "auto_discovery", "workflow_gate", "published"] as const;
-export type ScanSource = (typeof SCAN_SOURCES)[number];
 
 /**
  * The registry declares this timestamp, so the only thing checked is that it
@@ -75,7 +74,7 @@ export async function createScanJob(db: AppDb, input: CreateScanJobInput) {
     registryVersion:
       source !== "workflow_gate" && input.registryUrl ? (input.stagedVersion ?? null) : null,
     risk: "unknown",
-    status: "pending",
+    status: "pending" as const,
     source,
     createdAt: now,
     updatedAt: now,
@@ -172,8 +171,6 @@ export async function listExistingScanStageIds(
   }
   return known;
 }
-
-export const NON_TERMINAL_STATUSES = ["pending", "running"] as const;
 
 export async function claimScanForRun(db: AppDb, scanId: string, organizationId: string) {
   const now = new Date();

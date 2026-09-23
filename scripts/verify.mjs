@@ -30,6 +30,11 @@ import {
   resolveMergeBase,
 } from "./lib/changed-files.mjs";
 import { condenseFailureOutput } from "./lib/output-truncation.mjs";
+import {
+  vitestProjectChecks,
+  vitestProseCheck,
+  vitestRelatedChecks,
+} from "./lib/vitest-commands.mjs";
 
 const quick = process.argv.includes("--quick");
 const fileFlagIndex = process.argv.indexOf("--file");
@@ -107,14 +112,11 @@ function buildQuickChecks() {
     { name: "knip", args: ["run", "knip"] },
     // Deletions also count as changes for Vitest's related-test resolution, so
     // these always run even when the existing-file change set above is empty.
-    {
-      name: "test:node:changed",
-      args: ["exec", "vitest", "run", "--project", "node", "--changed", mergeBase],
-    },
-    {
-      name: "test:workers:changed",
-      args: ["exec", "vitest", "run", "--project", "workers", "--changed", mergeBase],
-    },
+    ...vitestProjectChecks({
+      prefix: "test:",
+      suffix: ":changed",
+      extra: ["--changed", mergeBase],
+    }),
   ];
 }
 
@@ -160,55 +162,9 @@ function buildFileChecks(files) {
         ]
       : []),
     { name: "typecheck", args: ["run", "typecheck"] },
-    // `related` resolves importers through Vite's module graph, so a change to
-    // a widely imported helper still fans out to every suite that depends on
-    // it; a leaf file runs only its own tests. `--passWithNoTests` keeps a file
-    // with no importers in one project (UI code and the workers project) green.
-    {
-      name: "test:node:related",
-      args: [
-        "exec",
-        "vitest",
-        "related",
-        ...files,
-        "--run",
-        "--project",
-        "node",
-        "--passWithNoTests",
-      ],
-    },
-    {
-      name: "test:workers:related",
-      args: [
-        "exec",
-        "vitest",
-        "related",
-        ...files,
-        "--run",
-        "--project",
-        "workers",
-        "--passWithNoTests",
-      ],
-    },
-    // Markdown is read, not imported, so `related` cannot see the prose checks
-    // (path and command references, the agent context budget). Run them by
-    // name when a doc is in the set.
-    ...(files.some((file) => file.endsWith(".md"))
-      ? [
-          {
-            name: "test:prose",
-            args: [
-              "exec",
-              "vitest",
-              "run",
-              "--project",
-              "node",
-              "test/prose-",
-              "test/agent-context-budget",
-            ],
-          },
-        ]
-      : []),
+    ...vitestRelatedChecks(files),
+    // Run the prose checks by name when a doc is in the set.
+    ...(files.some((file) => file.endsWith(".md")) ? [vitestProseCheck()] : []),
   ];
 }
 

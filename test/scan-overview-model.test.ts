@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { formatCompactDuration, overviewTiles } from "../src/features/overview/tiles";
+import { formatCompactDuration } from "../src/lib/format";
+import { overviewTiles } from "../src/features/overview/tiles";
 import { setActiveOrganizationId } from "../src/models/active-organization";
 import { ScanOverviewModel, type ScanOverview } from "../src/models/scan-overview";
+import { jsonResponse } from "./helpers/fetch-stub";
 
 type ScanOverviewModelInstance = InstanceType<typeof ScanOverviewModel>;
 
@@ -20,13 +22,6 @@ function overview(partial: Partial<ScanOverview> = {}): ScanOverview {
     decided: { count: 6, approved: 5, rejected: 1, medianDecisionMs: 42 * 60 * 1000 },
     ...partial,
   };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
 }
 
 function deferred<T>() {

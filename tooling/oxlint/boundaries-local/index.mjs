@@ -4,9 +4,11 @@
  * Loaded via `jsPlugins` in `.oxlintrc.json` under the `boundaries-local` alias.
  * Rules:
  *   - boundaries-local/no-cross-page-import
+ *   - boundaries-local/no-platform-domain-import
  */
 
 import noCrossPageImport from "./no-cross-page-import.mjs";
+import noPlatformDomainImport from "./no-platform-domain-import.mjs";
 
 const plugin = {
   meta: {
@@ -15,6 +17,7 @@ const plugin = {
   },
   rules: {
     "no-cross-page-import": noCrossPageImport,
+    "no-platform-domain-import": noPlatformDomainImport,
   },
 };
 

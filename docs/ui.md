@@ -21,10 +21,18 @@ This file is only a compact implementation map.
 
 Prefer existing primitives in `src/components/` before adding one-off classes:
 
-- layout/content: `PageShell`, `Card`, `SectionLabel`, `Toolbar`;
-- controls: `Button`, `LinkButton`, `Input`, `Field`, `Select`, `Tabs`;
-- feedback/status: `Badge`, `Alert`, `Progress`, `EmptyState`, `Skeleton`;
-- data/review: table, diff, finding, and risk-summary components colocated with their surfaces.
+- layout/content: `PageShell`, `Card` (`CollapsibleCard`, `SettingsCard`), `SectionLabel` and the
+  other `Typography` exports, `StatusStrip`;
+- controls: `Button`, `LinkButton`, `LoadMoreButton`, `CopyButton`, `CloseButton`, `Input`,
+  `Field`, `Select`, `VersionPicker`/`VersionPairPicker`, `Menu`, `Dialog`, `ConfirmDialog`;
+- feedback/status: `Badge`, `Alert`, `Toast`, `LoadingState`/`LoadingLine`/`IndeterminateBar`,
+  `SeverityBar`;
+- data/review: `FileTree`, `DiffView`, `DiffOverview`, `FindingCard`, `PackageJsonDiffView`.
+
+A primitive whose `open`/`status`/`error` may change at round-trip rate (`Dialog`,
+`ConfirmDialog`, `LoadMoreButton`, and the scan-detail dialogs) accepts either a plain
+value or a signal; `readSignalProp` in `src/components/signal-props.ts` unwraps it inside
+the primitive, which makes the primitive the subscriber rather than the page.
 
 ## Shared review surface
 
@@ -39,6 +47,9 @@ What they use lives in `src/features/review/`:
   `scanId`/`ruleVersion` values to satisfy a shared component.
 - `diff-entries.ts` — `filterDiffEntries` and `findingCountsByPath`.
 - `RiskSignalsSection.tsx` — the changed-file/package-context findings split.
+- `useSelectedDiffFile.ts` — the entry and findings for the open path;
+  `hasNoLoadableBody` in `diff-entries.ts` is the one place that decides a
+  binary or content-skipped file has nothing to fetch.
 - `ReviewWorkbench.tsx` — the release tree + file diff pair. Filter state
   arrives as signals and is read inside the component, so a keystroke in the
   filter box re-renders the tree and not the page body (which on the scan
@@ -56,6 +67,17 @@ what is tied to the persisted scan model (`scanFilesToFileRecords`,
 `annotatePersistedFindings`, the `DiffWorkbench` state machine). Pages must not
 import from another page's directory — if a second surface needs something,
 move it into `src/features/` instead.
+
+## Authenticated dashboard pages
+
+Every `/dashboard*` page runs `useAuthedDashboardSession` from
+`src/features/account/` on mount: it loads the session, redirects a signed-out
+visitor to `/login?returnTo=<this page>`, remembers the list surfaces as the
+review's back link, and only then runs the page's own loads. The scan detail
+page composes its computeds and handlers in `ScanDetail/hooks/useScanDetailView.ts`
+and renders them through sections that each subscribe to what they show.
+`useNow(intervalMs)` in `src/lib/use-now.ts` is the ticking clock behind
+"checked 2 minutes ago" labels.
 
 ## Review page order
 

@@ -91,14 +91,16 @@ connections and notification recipients. Members are read-only (`403` on write).
 
 ## Delivery
 
-`server/lib/notify/index.ts` runs email and Slack concurrently. `notifyScanCompletion`,
-`notifyWorkflowGateReview`, and `notifyStagedReleaseApprovable` (npm finished
-validating a reviewed stage; see `registry-version-status.md`) build a
-`SlackNotificationPayload`, then
-`deliverToSlackConnection` loads the org's `getSlackConnectionSecret`, and — only
-if the connection exists, is enabled, and has a channel — decrypts the token,
-renders one Block Kit message (`renderSlackMessage`), and POSTs it with
-`chat.postMessage`. It is isolated from email: a missing connection or a failing
+Every notifier is a message builder that hands `deliverOrganizationNotification`
+(`server/lib/notify/deliver.ts`) an email body and an optional
+`SlackNotificationPayload`; the helper resolves the organization owner (the
+recorded event actor and the recipient fallback), then runs email and Slack
+concurrently. `notifyScanCompletion`, `notifyWorkflowGateReview`, and
+`notifyStagedReleaseApprovable` (npm finished validating a reviewed stage; see
+`registry-version-status.md`) supply a Slack payload; the helper loads the org's
+`getSlackConnectionSecret`, and — only if the connection exists, is enabled, and
+has a channel — decrypts the token, renders one Block Kit message
+(`renderSlackMessage`), and POSTs it with `chat.postMessage`. It is isolated from email: a missing connection or a failing
 post only records a `notification_failed` event and **never throws**, so it
 cannot block scan completion or gate processing. Slack delivery is decoupled from
 email recipients — it still fires when no email recipients resolve. Completed

@@ -1,86 +1,28 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
 import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-async function seedCompletedScan(owner: SeededUser, packageName: string) {
-  return seedCompletedScanWithStage(owner, packageName, undefined);
-}
-
-async function seedCompletedScanWithStage(
-  owner: SeededUser,
-  packageName: string,
-  stageIdOverride?: string,
-) {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = stageIdOverride ?? `stage-${scanId.slice(-12)}`;
-  await createScanJob(db, {
-    id: scanId,
+function seedPackageScan(owner: ScanOwner, packageName: string, stageId?: string) {
+  return seedCompletedScan(owner, {
     stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
     packageJson: { name: packageName, version: "1.2.3" },
-    risk: "low",
-    status: "complete",
     summary: { ok: true },
-    ai: null,
     files: [],
     diff: [],
-    findings: [],
-    report: { version: 1, digest: "digest" },
   });
-  return scanId;
 }
 
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
-  app.route("/api/v1/scans", scansRoutes);
-  return app;
-}
+const mountScans = (app: TestApp) => app.route("/api/v1/scans", scansRoutes);
 
-async function fetchWithSession(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-) {
+async function fetchWithSession(app: TestApp, path: string) {
   const ctx = createExecutionContext();
   const res = await app.fetch(new Request(`http://test.local${path}`, { method: "GET" }), env, ctx);
   await waitOnExecutionContext(ctx);
@@ -91,14 +33,14 @@ describe("scans routes enforce organization boundaries", () => {
   test("GET /scans only lists scans owned by the caller's organization", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/owned-package");
+    const scanId = await seedPackageScan(owner, "@org/owned-package");
 
-    const ownerRes = await fetchWithSession(buildTestApp(owner), "/api/v1/scans");
+    const ownerRes = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans");
     expect(ownerRes.status).toBe(200);
     const ownerBody = (await ownerRes.json()) as { scans: Array<{ id: string }> };
     expect(ownerBody.scans.map((s) => s.id)).toContain(scanId);
 
-    const intruderRes = await fetchWithSession(buildTestApp(intruder), "/api/v1/scans");
+    const intruderRes = await fetchWithSession(buildTestApp(mountScans, intruder), "/api/v1/scans");
     expect(intruderRes.status).toBe(200);
     const intruderBody = (await intruderRes.json()) as { scans: Array<{ id: string }> };
     expect(intruderBody.scans.map((s) => s.id)).not.toContain(scanId);
@@ -136,9 +78,9 @@ describe("scans routes enforce organization boundaries", () => {
         { path: "README.md", size: 20, sha256: "b", flags: [], textSample: "docs" },
       ],
       diff: [
-        { path: "package.json", status: "modified" },
-        { path: "README.md", status: "unchanged" },
-        { path: "OLD.md", status: "removed" },
+        { path: "package.json", status: "modified", flags: [] },
+        { path: "README.md", status: "unchanged", flags: [] },
+        { path: "OLD.md", status: "removed", flags: [] },
       ],
       findings: [
         {
@@ -148,10 +90,9 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "install lifecycle hook changed",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
-    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans");
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       scans: Array<{ id: string; changedFileCount: number; findingCount: number }>;
@@ -180,7 +121,7 @@ describe("scans routes enforce organization boundaries", () => {
       risk: "high",
       status: "complete",
       summary: {
-        diff: [{ path: "src/server.ts", status: "modified" }],
+        diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       },
       ai: null,
       files: [
@@ -201,7 +142,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
         },
       ],
-      diff: [{ path: "src/server.ts", status: "modified" }],
+      diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -218,10 +159,9 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "changed release line",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
-    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), `/api/v1/scans/${scanId}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       riskSummary: {
@@ -275,7 +215,7 @@ describe("scans routes enforce organization boundaries", () => {
       risk: "high",
       status: "complete",
       summary: {
-        diff: [{ path: "src/server.ts", status: "modified" }],
+        diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
         risk: {
           artifactRisk: "high",
           releaseRisk: "low",
@@ -304,7 +244,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: "fetch('/existing-risk');\nexport const value = 1;\n",
         },
       ],
-      diff: [{ path: "src/server.ts", status: "modified" }],
+      diff: [{ path: "src/server.ts", status: "modified", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -314,10 +254,9 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "existing network path",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
-    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans?filter=all");
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans?filter=all");
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       scans: Array<{
@@ -352,7 +291,7 @@ describe("scans routes enforce organization boundaries", () => {
       ownerUserId: owner.userId,
     });
 
-    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), `/api/v1/scans/${scanId}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { scan: { status: string }; riskSummary: unknown };
     expect(body.scan.status).toBe("pending");
@@ -363,8 +302,8 @@ describe("scans routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
     const stageId = `stage-${crypto.randomUUID().slice(0, 12)}`;
-    const olderId = await seedCompletedScanWithStage(owner, "@org/retry-package", stageId);
-    const newerId = await seedCompletedScanWithStage(owner, "@org/retry-package", stageId);
+    const olderId = await seedPackageScan(owner, "@org/retry-package", stageId);
+    const newerId = await seedPackageScan(owner, "@org/retry-package", stageId);
 
     await Promise.all([
       db
@@ -377,7 +316,7 @@ describe("scans routes enforce organization boundaries", () => {
         .where(eq(schema.scans.id, newerId)),
     ]);
 
-    const res = await fetchWithSession(buildTestApp(owner), "/api/v1/scans?filter=all");
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), "/api/v1/scans?filter=all");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { scans: Array<{ id: string; stageId: string }> };
     const matching = body.scans.filter((scan) => scan.stageId === stageId);
@@ -389,7 +328,7 @@ describe("scans routes enforce organization boundaries", () => {
     const db = createDb(env.DB);
     const ids: string[] = [];
     for (let i = 0; i < 3; i += 1) {
-      ids.push(await seedCompletedScan(owner, "@org/page-package"));
+      ids.push(await seedPackageScan(owner, "@org/page-package"));
     }
     // Decide the oldest so it should be filtered out of the default view.
     const decidedId = ids[0]!;
@@ -399,7 +338,7 @@ describe("scans routes enforce organization boundaries", () => {
       .where(eq(schema.scans.id, decidedId));
 
     const firstPage = await fetchWithSession(
-      buildTestApp(owner),
+      buildTestApp(mountScans, owner),
       "/api/v1/scans?limit=1&filter=undecided",
     );
     expect(firstPage.status).toBe(200);
@@ -412,7 +351,7 @@ describe("scans routes enforce organization boundaries", () => {
     expect(firstBody.nextCursor).toBeTypeOf("string");
 
     const secondPage = await fetchWithSession(
-      buildTestApp(owner),
+      buildTestApp(mountScans, owner),
       `/api/v1/scans?limit=1&filter=undecided&cursor=${encodeURIComponent(firstBody.nextCursor!)}`,
     );
     const secondBody = (await secondPage.json()) as {
@@ -427,10 +366,10 @@ describe("scans routes enforce organization boundaries", () => {
 
   test("POST /scans/:id/decision records a publish decision on completed scans", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/decide-package");
+    const scanId = await seedPackageScan(owner, "@org/decide-package");
 
     const ctx = createExecutionContext();
-    const res = await buildTestApp(owner).fetch(
+    const res = await buildTestApp(mountScans, owner).fetch(
       new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -450,10 +389,10 @@ describe("scans routes enforce organization boundaries", () => {
 
   test("POST /scans/:id/decision rejects invalid decision values", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/decide-package");
+    const scanId = await seedPackageScan(owner, "@org/decide-package");
 
     const ctx = createExecutionContext();
-    const res = await buildTestApp(owner).fetch(
+    const res = await buildTestApp(mountScans, owner).fetch(
       new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -478,7 +417,7 @@ describe("scans routes enforce organization boundaries", () => {
     });
 
     const ctx = createExecutionContext();
-    const res = await buildTestApp(owner).fetch(
+    const res = await buildTestApp(mountScans, owner).fetch(
       new Request(`http://test.local/api/v1/scans/${scanId}/decision`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -494,18 +433,24 @@ describe("scans routes enforce organization boundaries", () => {
   test("GET /scans/:id returns 404 for scans owned by another organization", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/private-package");
+    const scanId = await seedPackageScan(owner, "@org/private-package");
 
-    const ownerRes = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const ownerRes = await fetchWithSession(
+      buildTestApp(mountScans, owner),
+      `/api/v1/scans/${scanId}`,
+    );
     expect(ownerRes.status).toBe(200);
 
-    const intruderRes = await fetchWithSession(buildTestApp(intruder), `/api/v1/scans/${scanId}`);
+    const intruderRes = await fetchWithSession(
+      buildTestApp(mountScans, intruder),
+      `/api/v1/scans/${scanId}`,
+    );
     expect(intruderRes.status).toBe(404);
   });
 
   test("GET /scans/:id includes scan-scoped events for the owning organization", async () => {
     const owner = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/timeline-package");
+    const scanId = await seedPackageScan(owner, "@org/timeline-package");
     const db = createDb(env.DB);
 
     await db.insert(schema.scanEvents).values([
@@ -533,7 +478,7 @@ describe("scans routes enforce organization boundaries", () => {
       },
     ]);
 
-    const res = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const res = await fetchWithSession(buildTestApp(mountScans, owner), `/api/v1/scans/${scanId}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       events: Array<{ type: string; metadataJson: Record<string, unknown> }>;
@@ -551,10 +496,10 @@ describe("scans routes enforce organization boundaries", () => {
   test("GET /scans/:id/versions returns 404 for foreign scan ids", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/private-package");
+    const scanId = await seedPackageScan(owner, "@org/private-package");
 
     const intruderRes = await fetchWithSession(
-      buildTestApp(intruder),
+      buildTestApp(mountScans, intruder),
       `/api/v1/scans/${scanId}/versions`,
     );
     expect(intruderRes.status).toBe(404);
@@ -563,10 +508,10 @@ describe("scans routes enforce organization boundaries", () => {
   test("GET /scans/:id/compare returns 404 before touching the registry for foreign scans", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/private-package");
+    const scanId = await seedPackageScan(owner, "@org/private-package");
 
     const compareRes = await fetchWithSession(
-      buildTestApp(intruder),
+      buildTestApp(mountScans, intruder),
       `/api/v1/scans/${scanId}/compare?version=1.0.0`,
     );
     expect(compareRes.status).toBe(404);
@@ -575,10 +520,10 @@ describe("scans routes enforce organization boundaries", () => {
   test("GET /scans/:id/compare/file returns 404 for foreign scans even with path query", async () => {
     const owner = await seedUser();
     const intruder = await seedUser();
-    const scanId = await seedCompletedScan(owner, "@org/private-package");
+    const scanId = await seedPackageScan(owner, "@org/private-package");
 
     const fileRes = await fetchWithSession(
-      buildTestApp(intruder),
+      buildTestApp(mountScans, intruder),
       `/api/v1/scans/${scanId}/compare/file?version=1.0.0&path=package.json`,
     );
     expect(fileRes.status).toBe(404);
@@ -615,7 +560,7 @@ describe("scans routes enforce organization boundaries", () => {
           textSample: '{"name":"@org/with-files"}',
         },
       ],
-      diff: [{ path: "package.json", status: "added" }],
+      diff: [{ path: "package.json", status: "added", flags: [] }],
       findings: [
         {
           severity: "high",
@@ -625,10 +570,12 @@ describe("scans routes enforce organization boundaries", () => {
           reason: "lifecycle script touches network",
         },
       ],
-      report: { version: 1, digest: "digest" },
     });
 
-    const ownerRes = await fetchWithSession(buildTestApp(owner), `/api/v1/scans/${scanId}`);
+    const ownerRes = await fetchWithSession(
+      buildTestApp(mountScans, owner),
+      `/api/v1/scans/${scanId}`,
+    );
     expect(ownerRes.status).toBe(200);
     const ownerBody = (await ownerRes.json()) as {
       files: Array<{ path: string }>;
@@ -647,7 +594,10 @@ describe("scans routes enforce organization boundaries", () => {
       releaseDelta: true,
     });
 
-    const intruderRes = await fetchWithSession(buildTestApp(intruder), `/api/v1/scans/${scanId}`);
+    const intruderRes = await fetchWithSession(
+      buildTestApp(mountScans, intruder),
+      `/api/v1/scans/${scanId}`,
+    );
     expect(intruderRes.status).toBe(404);
   });
 });

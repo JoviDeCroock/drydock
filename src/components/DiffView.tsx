@@ -1,5 +1,6 @@
 import { Fragment, type ComponentChildren } from "preact";
 import { useSignal, type Signal } from "@preact/signals";
+import { formatSize } from "../lib/format";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { Badge } from "./Badge";
 import { partitionFindingsByLine, type DiffFinding } from "./diff-annotations";
@@ -25,9 +26,8 @@ import {
 import {
   canHighlight,
   ensureHighlighter,
-  highlighterReady,
   langForPath,
-  tokenizeLines,
+  useLineTokens,
   type TokenLine,
 } from "./highlight";
 import { cn } from "./cn";
@@ -53,24 +53,6 @@ export interface DiffViewProps {
   // diff so a truncated sample can't hide a signal.
   findings?: DiffFinding[];
   findingTarget?: DiffFinding | null;
-}
-
-// Tokenize an entire side once, memoized on the text/language/ready signal.
-// Sides beyond the highlight cap stay plain text: tokenizing them would block
-// the main thread for seconds (see HIGHLIGHT_MAX_LINES).
-//
-// The cap is applied to the text actually handed to shiki, which is the
-// reformatted one when the reformat is on. Its cost is dominated by per-line
-// work, not by total characters: a 128 KiB bundle re-flows to ~5,700 lines and
-// measures ~0.5s -> ~1.9s per side, so exempting reformatted sides would blow
-// the very budget HIGHLIGHT_MAX_LINES exists to hold. Past the cap the reformat
-// still runs — structure a reviewer can read beats colour.
-function useLineTokens(text: string, lang: string | undefined): TokenLine[] | null {
-  const ready = highlighterReady.value;
-  return useMemo(
-    () => (lang && ready && text && canHighlight(text) ? tokenizeLines(text, lang) : null),
-    [text, lang, ready],
-  );
 }
 
 /**
@@ -1095,9 +1077,3 @@ function SingleSidedView({
 }
 
 // them.
-
-function formatSize(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
-}

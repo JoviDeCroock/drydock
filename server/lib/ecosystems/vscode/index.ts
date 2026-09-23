@@ -48,10 +48,11 @@ export const vscodeAdapter: PackageAdapter<VscodeAdapterInput, VscodeBroker> = {
 
   async acquireBaseline(_ctx, input, broker) {
     if (!input.previousArtifact) {
-      const selected = pickVscodeBaselineVersion(
-        await broker.fetchExtensionVersions(input.manifest.package),
-        input.manifest.version,
-      );
+      const versions = await broker.fetchExtensionVersions(input.manifest.package);
+      if (versions === null) {
+        return { artifact: null, baseline: emptyBaseline("metadata-unavailable") };
+      }
+      const selected = pickVscodeBaselineVersion(versions, input.manifest.version);
       if (!selected) {
         return {
           artifact: null,

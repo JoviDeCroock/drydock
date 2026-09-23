@@ -1,7 +1,9 @@
 import { Hono } from "hono";
-import { createDb } from "../db/client";
+import { parseContentLength } from "../lib/platform/bounded-body";
+import { attachDb } from "../middleware/db";
+import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
+import type { AppDb } from "../db/client";
 import { recordScanEvent } from "../db/events";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import {
   GithubAppConfigError,
   isGithubAppConfigured,
@@ -14,11 +16,13 @@ import {
   parseGithubWebhookEvent,
   verifyGithubWebhookSignature,
 } from "../lib/github-app/webhook";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import { emitOperationalEvent } from "../lib/platform/observability";
 import type { Bindings, Variables } from "../types";
 
 export const githubWebhookRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+// Anonymous surface mounted outside /api, so it attaches its own db handle.
+githubWebhookRoutes.use("*", attachDb);
 
 // Bound how much body we'll read from a webhook delivery before failing closed.
 // GitHub deliveries are well under 256KB; anything bigger is either misconfigured
@@ -72,8 +76,11 @@ githubWebhookRoutes.post("/github", async (c) => {
     return c.json({ error: "missing github webhook headers" }, 400);
   }
 
-  const declaredBodyBytes = parseContentLength(c.req.header("content-length"));
-  if (declaredBodyBytes === "invalid") {
+  const contentLength = c.req.header("content-length");
+  const declaredBodyBytes = parseContentLength(contentLength);
+  // The shared parser folds a malformed header into "absent"; a webhook with a
+  // header that does not parse is rejected rather than read to the cap.
+  if (declaredBodyBytes === null && contentLength != null) {
     emitOperationalEvent("warn", "github_webhook.invalid_content_length", {
       deliveryId,
       eventName,
@@ -170,7 +177,7 @@ githubWebhookRoutes.post("/github", async (c) => {
     throw err;
   }
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   try {
     const outcome = await applyGithubWebhookEvent(db, parsed, { deliveryId });
     await recordOutcomeAudit(db, deliveryId, eventName, outcome);
@@ -205,7 +212,7 @@ githubWebhookRoutes.post("/github", async (c) => {
 });
 
 async function recordOutcomeAudit(
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
   deliveryId: string,
   eventName: string,
   outcome: WebhookOutcome,
@@ -239,14 +246,6 @@ function summarizeOutcome(outcome: WebhookOutcome) {
     return { result: "installation_updated", action: outcome.action };
   }
   return { result: "ignored", reason: outcome.reason };
-}
-
-function parseContentLength(value: string | null | undefined): number | "invalid" | null {
-  if (value == null) return null;
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) return "invalid";
-  const parsed = Number.parseInt(trimmed, 10);
-  return Number.isSafeInteger(parsed) ? parsed : "invalid";
 }
 
 async function readLimitedWebhookBody(

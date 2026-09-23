@@ -31,6 +31,7 @@ async function seedConnection(): Promise<string> {
     updatedAt: now,
   });
   const organizationId = await ensurePersonalOrganization(db, { userId });
+  if (!organizationId) throw new Error(`no personal organization for ${userId}`);
   const encrypted = await encryptNpmToken(env, TOKEN);
   await upsertNpmConnection(db, {
     organizationId,

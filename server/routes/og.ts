@@ -1,9 +1,9 @@
 import { Hono, type Context } from "hono";
+import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { coloCache } from "../lib/platform/http";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
-import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import {
   renderOgCardSvg,
   type OgCardStats,

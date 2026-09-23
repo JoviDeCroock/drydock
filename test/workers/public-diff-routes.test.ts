@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import worker from "../../server";
 import { atpmPublicDiff } from "../../server/lib/ecosystems/atpm/public-diff";
 import { PUBLIC_NPM_REGISTRY } from "../../server/lib/ecosystems/npm/public-diff";
+import { summarizePackageJsonDiff } from "../../server/lib/review/serialize";
 import {
   computePublicDiffCacheKey,
   PublicDiffError,
@@ -27,9 +28,17 @@ function cachedPayload(packageName: string): PublicPackageDiff {
       { path: "index.js", size: textSample.length, sha256: "after", flags: [], textSample },
     ],
     diff: [{ path: "index.js", status: "modified", flags: [] }],
-    packageJsonDiff: {},
+    packageJsonDiff: summarizePackageJsonDiff(null, null),
     findings: [],
-    risk: { artifactRisk: "low", releaseRisk: "low", contextRisk: "low", aiRisk: "low" },
+    risk: {
+      artifactRisk: "low",
+      releaseRisk: "low",
+      contextRisk: "low",
+      releaseFindingCount: 0,
+      contextFindingCount: 0,
+      unknownFindingCount: 0,
+      priorApprovedContextFindingCount: 0,
+    },
     cachedAt: "2026-07-15T00:00:00.000Z",
   };
 }

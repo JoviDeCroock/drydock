@@ -1,30 +1,10 @@
-import type { ComponentProps } from "preact";
-import { useEffect } from "preact/hooks";
-import {
-  type ReadonlySignal,
-  batch,
-  useComputed,
-  useModel,
-  useSignal,
-  useSignalEffect,
-} from "@preact/signals";
-import { useLocation, useRoute } from "preact-iso";
-import { npmStagedPackagesUrlFor } from "../../../lib/npm-staged-url";
-import { getDashboardReturnUrl, useQuerySignal } from "../../../lib/query-state";
-import { sortFindingsBySeverity } from "../../../lib/findings";
-import { sessionModel } from "../../../models/auth";
-import {
-  ScanDetailModel,
-  type DecisionStatus,
-  type DeleteStatus,
-  type PublicShareInfo,
-  type ScanDecision,
-} from "../../../models/scan";
-import type { WorkflowGateDecision } from "../../../models/github-app";
-import { displayedAiResult, type AiReview } from "../../../../server/lib/ai-review/types";
-import { normalizeIntentEnvelope } from "../../../../server/lib/intent-envelope";
+import { useModel } from "@preact/signals";
+import { useRoute } from "preact-iso";
+import { ScanDetailModel, type ScanDetailModelInstance } from "../../../models/scan";
 import { badgeEcosystem, scanDistTag } from "../../../../server/lib/public-feed";
-import { createPackageDiff, type DiffEntry } from "../../../../server/lib/review";
+import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
+import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
+import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
 import { Alert } from "../../../components/Alert";
 import { Button } from "../../../components/Button";
 import { CollapsibleCard } from "../../../components/Card";
@@ -37,21 +17,17 @@ import { DecisionDialog } from "./DecisionDialog";
 import { GateContextPanel, GateDecisionDialog, GatePackagesPanel } from "./GateDecisionDialog";
 import { StageCommandDialogHost } from "./StageCommandDialog";
 import { DiffWorkbench } from "./DiffWorkbench";
-import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
-import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
-import type { ReviewFinding } from "../../../features/review/types";
 import { IntentEnvelopeSection } from "./IntentEnvelopeSection";
 import { RegistryStatusNotice } from "./RegistryStatusNotice";
-import { ReleaseConsistencyNotice, releaseConsistencyDiverged } from "./ReleaseConsistencyNotice";
+import { ReleaseConsistencyNotice } from "./ReleaseConsistencyNotice";
 import {
-  buildReleaseVerdict,
   ReleaseChangesSummary,
   ReleaseVerdictEvidence,
   ReleaseVerdictStrip,
 } from "./ReleaseRecommendation";
 import { ReleaseTimeline } from "./ReleaseTimeline";
 import { PersistedReportSections } from "./ReportSections";
-import { assistantFlagsRelease, ReviewerSummary } from "./ReviewerSummary";
+import { ReviewerSummary } from "./ReviewerSummary";
 import {
   DecisionControl,
   ScanDetailHeader,
@@ -59,156 +35,29 @@ import {
   VersionPickerSkeleton,
 } from "./ScanDetailChrome";
 import { ShareDialog } from "./ShareDialog";
-import { findingCountsByPath } from "../../../features/review/diff-entries";
-import { scanFilesToFileRecords } from "./diff-helpers";
-import { useFindingsWithDiff } from "./hooks/useFindingsWithDiff";
-import { useScanFileContent } from "./hooks/useScanFileContent";
-import { useScanVersions } from "./hooks/useScanVersions";
-import type { PersistedSummary } from "./types";
+import {
+  focusReportSection,
+  useScanDetailView,
+  type ScanDetailView,
+} from "./hooks/useScanDetailView";
 
-function focusReportSection(id: string) {
-  const section = document.getElementById(id);
-  section?.focus({ preventScroll: true });
-  section?.scrollIntoView({ block: "start" });
-}
-
+/**
+ * The page is split into sections that each read the model signals they
+ * render. `ScanReport` holds the risk index (one card per finding, thousands
+ * for a large package), so anything that changes at keystroke or round-trip
+ * rate — the tree filter, a dialog's save status, the selected file's body —
+ * is read by a narrower component or by the dialog itself.
+ */
 export default function ScanDetailPage() {
-  const location = useLocation();
   const route = useRoute();
   const id = route.params.id;
   const model = useModel(() => new ScanDetailModel(id));
-  const sessionChecked = useSignal(false);
-  const fileFilter = useSignal("");
-  const changedFilesOnly = useSignal(true);
-  const findingTarget = useSignal<ReviewFinding | null>(null);
-  const decisionDialogOpen = useSignal(false);
-  const gateDialogOpen = useSignal(false);
-  const deleteDialogOpen = useSignal(false);
-  const shareDialogOpen = useSignal(false);
-  const npmStagedPackagesUrlSignal = useComputed(() => {
-    const scan = model.detail.value?.scan;
-    return scan ? npmStagedPackagesUrlFor(scan) : null;
+  const sessionChecked = useAuthedDashboardSession({
+    onReady: () => model.load(),
+    deps: [id],
+    rememberReturnUrl: false,
   });
-
-  // Two-way bind filter state to query params. The text filter is debounced
-  // because it fires on every keystroke; the rest write through immediately.
-  useQuerySignal(fileFilter, {
-    name: "file",
-    parse: (raw) => raw ?? "",
-    serialize: (value) => value || null,
-    debounceMs: 250,
-  });
-  useQuerySignal(changedFilesOnly, {
-    name: "changedOnly",
-    parse: (raw) => raw !== "0",
-    serialize: (value) => (value ? null : "0"),
-  });
-  useQuerySignal(model.selectedVersion, {
-    name: "version",
-    parse: (raw) => raw ?? null,
-    serialize: (value) => value,
-  });
-  useQuerySignal(model.selectedPath, {
-    name: "path",
-    parse: (raw) => raw ?? null,
-    serialize: (value) => value,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await sessionModel.load();
-      if (cancelled) return;
-      if (!data) {
-        location.route(`/login?returnTo=${encodeURIComponent(location.url)}`, true);
-        return;
-      }
-      sessionChecked.value = true;
-      await model.load();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
-
-  const versionsSignal = useScanVersions(model);
-
-  // Load the workflow gate once the review reaches a terminal state. Completed
-  // and failed scans may both be linked to the pending gate so the workbench can
-  // show the held GitHub job context.
-  useSignalEffect(() => {
-    if (!model.isWorkflowGate.value) return;
-    if (model.status.value !== "complete" && model.status.value !== "failed") return;
-    if (model.gateLoaded.value) return;
-    void model.loadGate();
-    const retryTimer = window.setInterval(() => {
-      if (!model.gateLoaded.peek()) void model.loadGate();
-    }, 2500);
-    return () => window.clearInterval(retryTimer);
-  });
-
-  const summary = useComputed(() => asPersistedSummary(model.detail.value?.scan.summaryJson));
-  const ai = useComputed(() => displayedAiResult(asAiReview(model.detail.value?.scan.aiJson)));
-  // Older scans have no envelope; the normalizer returns null and the section
-  // is simply not rendered.
-  const intentEnvelope = useComputed(() => normalizeIntentEnvelope(summary.value.intentEnvelope));
-
-  const diffEntries = useComputed<DiffEntry[]>(() => {
-    const detail = model.detail.value;
-    const compare = model.compare.value;
-    const isDefault = model.isDefaultComparison.value;
-    const persistedSummary = summary.value;
-    if (!detail) return [];
-    if (compare && !isDefault) {
-      const stagedRecords = scanFilesToFileRecords(detail.files);
-      return createPackageDiff(compare.files, stagedRecords);
-    }
-    const persistedDiff = persistedSummary.diff ?? [];
-    if (persistedDiff.length) return persistedDiff;
-    return detail.files.map((file) => ({
-      path: file.path,
-      status: (file.status as DiffEntry["status"]) || "unchanged",
-      stagedSize: file.size ?? undefined,
-      stagedSha256: file.sha256 ?? undefined,
-      flags: Array.isArray(file.flagsJson) ? (file.flagsJson as string[]) : [],
-    }));
-  });
-
-  const selectedEntry = useComputed(() => {
-    const path = model.selectedPath.value;
-    const entries = diffEntries.value;
-    if (!path) return null;
-    return entries.find((entry) => entry.path === path) ?? null;
-  });
-
-  const findingsWithDiffStatus = useFindingsWithDiff(
-    model.detail,
-    model.compare,
-    diffEntries,
-    model.isDefaultComparison,
-  );
-
-  // Deterministic findings for the file open in the workbench, pinned to their
-  // staged line inside DiffView. The diff is the headline; findings ride the
-  // hunk that triggered them rather than a separate list (diff-first direction).
-  const selectedFindings = useComputed(() => {
-    const path = model.selectedPath.value;
-    const all = findingsWithDiffStatus.value;
-    if (!path) return [];
-    return sortFindingsBySeverity(
-      all.filter((item) => item.finding.file === path).map((item) => item.finding),
-    );
-  });
-
-  // Per-file finding counts for the tree, built once from the same finding set
-  // that feeds the inline annotations and the risk-signals index.
-  const findingCounts = useComputed(() => findingCountsByPath(findingsWithDiffStatus.value));
-
-  const { stagedFileMeta, stagedFile, previousFileMeta, previousFile } = useScanFileContent(
-    model,
-    model.selectedPath,
-    model.selectedVersion,
-  );
+  const view = useScanDetailView(model);
 
   if (!sessionChecked.value) {
     return (
@@ -219,151 +68,47 @@ export default function ScanDetailPage() {
     );
   }
 
+  return (
+    <PageShell>
+      <ScanHeader model={model} view={view} />
+      <ScanNotices model={model} view={view} />
+      <ScanReport model={model} view={view} />
+      <ScanDialogs model={model} view={view} />
+    </PageShell>
+  );
+}
+
+type SectionProps = { model: ScanDetailModelInstance; view: ScanDetailView };
+
+function ScanHeader({ model, view }: SectionProps) {
   const detail = model.detail.value;
-  const versions = versionsSignal.value;
-  const error = model.error.value;
-  const pollingStalled = model.pollingStalled.value;
-  const compareLoading = model.compareLoading.value;
-  const compareError = model.compareError.value;
-  const selectedVersion = model.selectedVersion.value;
-  const compare = model.compare.value;
-  const hasRuleFindings = Boolean(detail?.findings.length);
-
-  const isWorkflowGate = model.isWorkflowGate.value;
-  const gate = model.gate.value;
-  const envelope = intentEnvelope.value;
-
-  const verdict =
-    detail && detail.scan.status === "complete"
-      ? buildReleaseVerdict({
-          detail,
-          summary: summary.value,
-          diffCount: diffEntries.value.filter((entry) => entry.status !== "unchanged").length,
-          findingsWithDiffStatus: findingsWithDiffStatus.value,
-          usePersistedRiskSummary: model.isDefaultComparison.value || !compare,
-          isWorkflowGate,
-        })
-      : null;
-
-  // Open the advisory group when it carries context worth reading. Its title
-  // stays quiet; repeating every nested section name in the summary made the
-  // report header harder to scan than its contents. Source binding and release
-  // memory that agrees with the last approved release are present on nearly
-  // every scan, so they alone would hold the notes open on a clean release.
-  // The same goes for the assistant now that it runs by default: a clean
-  // "nothing unusual" reading stays folded; one that flags the release opens.
-  const hasReviewNotes =
-    assistantFlagsRelease(ai.value) || releaseConsistencyDiverged(summary.value.releaseConsistency);
-
-  const inspectFindings = () => focusReportSection("risk-signals");
-  const canInspectFinding = (finding: ReviewFinding) =>
-    finding.source !== "ai" && diffEntries.peek().some((entry) => entry.path === finding.file);
-  const inspectFile = (path: string, finding: ReviewFinding | null = null) => {
-    const entry = diffEntries.peek().find((item) => item.path === path);
-    if (!entry) {
-      inspectFindings();
-      return;
-    }
-    batch(() => {
-      fileFilter.value = "";
-      if (entry.status === "unchanged") changedFilesOnly.value = false;
-      // A fresh request also seeks the annotation when this file is already open.
-      findingTarget.value = finding ? { ...finding } : null;
-      model.selectPath(path);
-    });
-    focusReportSection("release-workbench");
-  };
-  const inspectFinding = (finding: ReviewFinding) => {
-    if (!canInspectFinding(finding)) {
-      inspectFindings();
-      return;
-    }
-    inspectFile(finding.file, finding);
-  };
-
-  const handleDecisionSubmit = async (decision: ScanDecision, reason: string | null) => {
-    await model.setDecision(decision, reason);
-    const saved = model.decisionStatus.peek() === "idle";
-    if (saved) {
-      decisionDialogOpen.value = false;
-    }
-    return saved;
-  };
-
-  const handleGateDecision = async (
-    decision: WorkflowGateDecision,
-    comment: string | null,
-    totpCode: string | null,
-  ) => {
-    await model.decideGate(decision, comment, totpCode);
-    if (model.gateDecisionStatus.peek() === "idle") {
-      gateDialogOpen.value = false;
-    }
-  };
-
-  const handleGateRetry = async () => {
-    await model.retryGate();
-    if (model.gateRetryStatus.peek() === "idle") {
-      location.route("/dashboard", true);
-    }
-  };
-
-  const handleDelete = async () => {
-    const deleted = await model.deleteFailed();
-    if (deleted) location.route(getDashboardReturnUrl(), true);
-    return deleted;
-  };
-
-  const gateReviewComplete = detail?.scan.status === "complete";
-  const gateReviewFailed = detail?.scan.status === "failed";
-
-  // npm scans become decidable once complete; gate scans are decidable while
-  // pending after the review either completes or fails. Human decisions remain
-  // allowed even when automated review fails; the retry action gives a safer
-  // first move when the maintainer wants a fresh automated pass.
-  const onDecideClick = isWorkflowGate
-    ? gate?.status === "pending" && (gateReviewComplete || gateReviewFailed)
-      ? () => (gateDialogOpen.value = true)
-      : undefined
-    : detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
-      ? () => (decisionDialogOpen.value = true)
-      : undefined;
-
   // The decision and its button ride the verdict strip on a completed review,
   // opposite the verdict they answer. A failed gate review renders no strip,
   // so there they stay in the header.
-  // Null, not an empty element, when there is nothing to show: the header
-  // reserves its actions row for any truthy slot.
-  const decisionControl =
-    detail && (detail.scan.decision || onDecideClick) ? (
-      <DecisionControl
-        decision={detail.scan.decision}
-        decidedAt={detail.scan.decidedAt}
-        onDecideClick={onDecideClick}
-      />
-    ) : null;
-  const decisionInStrip = detail?.scan.status === "complete" && verdict != null;
-
-  const onShareClick =
-    detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null
-      ? () => {
-          shareDialogOpen.value = true;
-          void model.loadAttestationAvailability();
-        }
-      : undefined;
-
+  const inStrip = detail?.scan.status === "complete" && view.verdict.value != null;
   return (
-    <PageShell>
-      <ScanDetailHeader
-        detail={detail}
-        decision={decisionInStrip ? null : decisionControl}
-        onDeleteClick={
-          detail?.scan.status === "failed" ? () => (deleteDialogOpen.value = true) : undefined
-        }
-        onShareClick={onShareClick}
-        shareSignal={model.share}
-      />
+    <ScanDetailHeader
+      detail={detail}
+      decision={
+        !inStrip && hasDecisionControl(model, view) ? (
+          <VerdictDecision model={model} view={view} />
+        ) : null
+      }
+      onDeleteClick={view.deleteAction.value}
+      onShareClick={view.shareAction.value}
+      shareSignal={model.share}
+    />
+  );
+}
 
+function ScanNotices({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  const error = model.error.value;
+  const pollingStalled = model.pollingStalled.value;
+  const isWorkflowGate = model.isWorkflowGate.value;
+  const gate = model.gate.value;
+  return (
+    <>
       {error ? <Alert tone="critical">{error}</Alert> : null}
       {pollingStalled ? (
         <Alert tone="warn">
@@ -379,14 +124,20 @@ export default function ScanDetailPage() {
         <GateContextPanel
           gate={gate}
           packageName={detail.scan.packageName}
-          canRetry={gate?.status === "pending" && gateReviewFailed && !detail.scan.decision}
+          canRetry={
+            gate?.status === "pending" && view.gateReviewFailed.value && !detail.scan.decision
+          }
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}
-          onRetry={handleGateRetry}
+          onRetry={view.handleGateRetry}
         />
       ) : null}
       {isWorkflowGate && detail && gate ? (
-        <GatePackagesPanel gate={gate} currentScanId={detail.scan.id} onDecide={onDecideClick} />
+        <GatePackagesPanel
+          gate={gate}
+          currentScanId={detail.scan.id}
+          onDecide={view.decideAction.value}
+        />
       ) : null}
       {detail?.scan.status === "failed" ? (
         <ScanFailureAlert errorJson={detail.scan.errorJson} />
@@ -402,154 +153,219 @@ export default function ScanDetailPage() {
       {!detail && !error ? (
         <LoadingState title="Loading saved review" detail="fetching report · normalizing diff" />
       ) : null}
+    </>
+  );
+}
 
-      {detail ? (
-        detail.scan.status === "complete" && verdict ? (
-          <>
-            {/* Verdict and decision — one strip, then the diff with its
-                comparison control. Everything explaining the verdict moves
-                below the workbench: a reviewer reads the change first. */}
-            <ReleaseVerdictStrip verdict={verdict} ai={ai.value} decision={decisionControl} />
+function ScanReport({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  const verdict = view.verdict.value;
+  const summary = view.summary.value;
+  const ai = view.ai.value;
+  const envelope = view.intentEnvelope.value;
+  const findingsWithDiffStatus = view.findingsWithDiffStatus.value;
+  const pollingStalled = model.pollingStalled.value;
+  if (!detail) return null;
+  const hasRuleFindings = Boolean(detail.findings.length);
 
-            <div class="flex flex-col gap-3">
-              {detail.scan.packageName ? (
-                versions ? (
-                  <VersionPicker
-                    options={versions.versions}
-                    selected={selectedVersion}
-                    defaultVersion={versions.defaultPreviousVersion}
-                    stagedVersion={versions.stagedVersion}
-                    onChange={(value) => model.selectVersion(value)}
-                    disabled={compareLoading}
-                  />
-                ) : (
-                  <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
-                )
-              ) : null}
-              {compareLoading ? (
-                <LoadingLine size="inline">Fetching {selectedVersion} via sandbox</LoadingLine>
-              ) : null}
-              {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+  return (
+    <>
+      {detail.scan.status === "complete" && verdict ? (
+        <>
+          {/* Verdict and decision — one strip, then the diff with its
+              comparison control. Everything explaining the verdict moves
+              below the workbench: a reviewer reads the change first. */}
+          <ReleaseVerdictStrip
+            verdict={verdict}
+            ai={ai}
+            decision={
+              hasDecisionControl(model, view) ? <VerdictDecision model={model} view={view} /> : null
+            }
+          />
 
-              <ReviewWorkbench
-                id="release-workbench"
-                entries={diffEntries}
-                fileFilter={fileFilter}
-                changedFilesOnly={changedFilesOnly}
-                selectedPath={model.selectedPath}
-                findingCounts={findingCounts}
-                onSelect={(path) => {
-                  findingTarget.value = null;
-                  model.selectPath(path);
-                }}
-              >
-                <DiffWorkbench
-                  entry={selectedEntry.value}
-                  stagedMeta={stagedFileMeta.value}
-                  staged={stagedFile.value}
-                  previousMeta={previousFileMeta.value}
-                  previousContent={previousFile.value}
-                  compareReady={Boolean(compare)}
-                  compareLoading={compareLoading}
-                  selectedVersion={selectedVersion}
-                  stagedVersion={detail.scan.stagedVersion}
-                  findings={selectedFindings.value}
-                  findingTarget={
-                    findingTarget.value?.file === model.selectedPath.value
-                      ? findingTarget.value
-                      : null
-                  }
-                />
-              </ReviewWorkbench>
-            </div>
+          <div class="flex flex-col gap-3">
+            {detail.scan.packageName ? <VerdictComparison model={model} view={view} /> : null}
+            <CompareStatus model={model} />
 
-            <CollapsibleCard
-              title="Review notes"
-              defaultOpen={hasReviewNotes || verdict.hasSignals}
+            <ReviewWorkbench
+              id="release-workbench"
+              entries={view.diffEntries}
+              fileFilter={view.fileFilter}
+              changedFilesOnly={view.changedFilesOnly}
+              selectedPath={model.selectedPath}
+              findingCounts={view.findingCounts}
+              onSelect={(path) => {
+                view.findingTarget.value = null;
+                model.selectPath(path);
+              }}
             >
-              <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
-                <ReleaseVerdictEvidence
-                  verdict={verdict}
-                  onSelectFinding={inspectFinding}
-                  canInspectFinding={canInspectFinding}
-                  onInspectFindings={inspectFindings}
-                  consistencyNote={
-                    <ReleaseConsistencyNotice
-                      value={summary.value.releaseConsistency}
-                      approvedContextCount={
-                        detail.riskSummary?.priorApprovedContextFindingCount ?? 0
-                      }
-                    />
-                  }
-                />
-                <ReleaseChangesSummary
-                  verdict={verdict}
-                  onInspectChanges={() => focusReportSection("manifest-changes")}
-                />
-                <ReviewerSummary
-                  ai={ai.value}
-                  findings={detail.findings}
-                  onInspectFindings={inspectFindings}
-                />
-                {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
-              </div>
-            </CollapsibleCard>
+              <ScanDiffPanel model={model} view={view} />
+            </ReviewWorkbench>
+          </div>
 
-            {hasRuleFindings ? (
-              <RiskSignalsSection
-                id="risk-signals"
-                findings={findingsWithDiffStatus.value}
-                onSelect={(file) => inspectFile(file)}
+          <CollapsibleCard title="Review notes" defaultOpen={view.reviewNotesOpen.value}>
+            <div class="px-5 pb-5 pt-4 flex flex-col gap-5">
+              <ReleaseVerdictEvidence
+                verdict={verdict}
+                onSelectFinding={view.inspectFinding}
+                canInspectFinding={view.canInspectFinding}
+                onInspectFindings={view.inspectFindings}
+                consistencyNote={
+                  <ReleaseConsistencyNotice
+                    value={summary.releaseConsistency}
+                    approvedContextCount={detail.riskSummary?.priorApprovedContextFindingCount ?? 0}
+                  />
+                }
               />
-            ) : null}
+              <ReleaseChangesSummary
+                verdict={verdict}
+                onInspectChanges={() => focusReportSection("manifest-changes")}
+              />
+              <ReviewerSummary
+                ai={ai}
+                findings={detail.findings}
+                onInspectFindings={view.inspectFindings}
+              />
+              {envelope ? <IntentEnvelopeSection envelope={envelope} /> : null}
+            </div>
+          </CollapsibleCard>
 
-            <PersistedReportSections summary={summary.value} />
-          </>
-        ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
-          // While stalled the pulsing line would falsely promise an
-          // auto-refresh; the warn Alert above carries the state instead.
-          pollingStalled ? null : (
-            <LoadingState
-              title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
-              detail="auto-refreshes when the report is ready"
+          {hasRuleFindings ? (
+            <RiskSignalsSection
+              id="risk-signals"
+              findings={findingsWithDiffStatus}
+              onSelect={(file) => view.inspectFile(file)}
             />
-          )
-        ) : null
+          ) : null}
+
+          <PersistedReportSections summary={summary} />
+        </>
+      ) : detail.scan.status === "pending" || detail.scan.status === "running" ? (
+        // While stalled the pulsing line would falsely promise an
+        // auto-refresh; the warn Alert above carries the state instead.
+        pollingStalled ? null : (
+          <LoadingState
+            title={detail.scan.status === "pending" ? "Review queued" : "Reviewing release"}
+            detail="auto-refreshes when the report is ready"
+          />
+        )
       ) : null}
 
       {/* Below the report on purpose: pipeline latency is supporting context,
           not the verdict. Rendered for every status so a failed or queued
           review still shows how far the release got. */}
-      {detail ? <ReleaseTimeline scan={detail.scan} summary={summary.value} /> : null}
+      <ReleaseTimeline scan={detail.scan} summary={summary} />
+    </>
+  );
+}
 
-      {detail &&
-      detail.scan.status === "complete" &&
-      !isWorkflowGate &&
-      detail.scan.registryStatusSupersededAt == null ? (
-        <DecisionDialogHost
-          openSignal={decisionDialogOpen}
-          onClose={() => (decisionDialogOpen.value = false)}
+// The version picker and decision button, read apart from the report so a
+// comparison fetch does not re-render the risk index.
+function VerdictComparison({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  const versions = view.versions.value;
+  if (!detail) return null;
+  return versions ? (
+    <VersionPicker
+      options={versions.versions}
+      selected={model.selectedVersion.value}
+      defaultVersion={versions.defaultPreviousVersion}
+      stagedVersion={versions.stagedVersion}
+      onChange={(value) => model.selectVersion(value)}
+      disabled={model.compareLoading.value}
+    />
+  ) : (
+    <VersionPickerSkeleton stagedVersion={detail.scan.stagedVersion ?? null} />
+  );
+}
+
+// Null rather than an empty element when there is nothing to show: the header
+// reserves its actions row for any truthy slot.
+function hasDecisionControl(model: ScanDetailModelInstance, view: ScanDetailView): boolean {
+  return Boolean(model.detail.value?.scan.decision || view.decideAction.value);
+}
+
+function VerdictDecision({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  if (!detail) return null;
+  return (
+    <DecisionControl
+      decision={detail.scan.decision}
+      decidedAt={detail.scan.decidedAt}
+      onDecideClick={view.decideAction.value}
+    />
+  );
+}
+
+function CompareStatus({ model }: { model: ScanDetailModelInstance }) {
+  const compareLoading = model.compareLoading.value;
+  const compareError = model.compareError.value;
+  return (
+    <>
+      {compareLoading ? (
+        <LoadingLine size="inline">Fetching {model.selectedVersion.value} via sandbox</LoadingLine>
+      ) : null}
+      {compareError ? <Alert tone="warn">{compareError}</Alert> : null}
+    </>
+  );
+}
+
+// Selecting a file swaps its body in here and nowhere else.
+function ScanDiffPanel({ model, view }: SectionProps) {
+  return (
+    <DiffWorkbench
+      entry={view.selectedEntry.value}
+      stagedMeta={view.stagedFileMeta.value}
+      staged={view.stagedFile.value}
+      previousMeta={view.previousFileMeta.value}
+      previousContent={view.previousFile.value}
+      compareReady={Boolean(model.compare.value)}
+      compareLoading={model.compareLoading.value}
+      selectedVersion={model.selectedVersion.value}
+      stagedVersion={model.detail.value?.scan.stagedVersion ?? null}
+      findings={view.selectedFindings.value}
+      findingTarget={
+        view.findingTarget.value?.file === model.selectedPath.value
+          ? view.findingTarget.value
+          : null
+      }
+    />
+  );
+}
+
+// The dialogs read their own open/status/error signals, so mounting them here
+// costs this section a subscription to `detail` and nothing more.
+function ScanDialogs({ model, view }: SectionProps) {
+  const detail = model.detail.value;
+  const isWorkflowGate = model.isWorkflowGate.value;
+  const gate = model.gate.value;
+  const completeAndCurrent =
+    detail?.scan.status === "complete" && detail.scan.registryStatusSupersededAt == null;
+  return (
+    <>
+      {detail && completeAndCurrent && !isWorkflowGate ? (
+        <DecisionDialog
+          open={view.decisionDialogOpen}
+          onClose={() => (view.decisionDialogOpen.value = false)}
           decision={detail.scan.decision}
           decisionReason={detail.scan.decisionReason}
           decidedAt={detail.scan.decidedAt}
-          statusSignal={model.decisionStatus}
-          errorSignal={model.decisionError}
-          npmStagedPackagesUrlSignal={npmStagedPackagesUrlSignal}
+          status={model.decisionStatus}
+          error={model.decisionError}
+          npmStagedPackagesUrl={view.npmStagedPackagesUrl}
           scan={detail.scan}
-          onSubmit={handleDecisionSubmit}
+          onSubmit={view.handleDecisionSubmit}
         />
       ) : null}
 
-      {detail &&
-      detail.scan.status === "complete" &&
-      detail.scan.registryStatusSupersededAt == null ? (
-        <ShareDialogHost
-          openSignal={shareDialogOpen}
-          onClose={() => (shareDialogOpen.value = false)}
-          shareSignal={model.share}
-          statusSignal={model.shareStatus}
-          errorSignal={model.shareError}
-          attestationAvailableSignal={model.attestationAvailable}
+      {detail && completeAndCurrent ? (
+        <ShareDialog
+          open={view.shareDialogOpen}
+          onClose={() => (view.shareDialogOpen.value = false)}
+          share={model.share}
+          status={model.shareStatus}
+          error={model.shareError}
+          attestationAvailable={model.attestationAvailable}
           badgeEcosystem={badgeEcosystem(detail.scan.source ?? "", detail.scan.summaryJson)}
           packageName={detail.scan.packageName}
           badgeTag={scanDistTag(detail.scan.summaryJson)}
@@ -560,13 +376,14 @@ export default function ScanDetailPage() {
       ) : null}
 
       {detail && isWorkflowGate && gate ? (
-        <GateDialogHost
-          openSignal={gateDialogOpen}
-          onClose={() => (gateDialogOpen.value = false)}
+        <GateDecisionDialog
+          open={view.gateDialogOpen}
+          onClose={() => (view.gateDialogOpen.value = false)}
           gate={gate}
           packageName={detail.scan.packageName}
-          statusSignal={model.gateDecisionStatus}
-          errorSignal={model.gateDecisionError}
+          status={model.gateDecisionStatus}
+          error={model.gateDecisionError}
+          requireTwoFactor={view.requireTwoFactor}
           packageDecision={
             detail.scan.decision === "publish" || detail.scan.decision === "no_publish"
               ? detail.scan.decision
@@ -577,142 +394,22 @@ export default function ScanDetailPage() {
             (detail.scan.status === "complete" || detail.scan.status === "failed")
           }
           reviewFailed={detail.scan.status === "failed"}
-          onSubmit={handleGateDecision}
+          onSubmit={view.handleGateDecision}
         />
       ) : null}
 
       <StageCommandDialogHost />
 
       {detail?.scan.status === "failed" ? (
-        <DeleteDialogHost
-          openSignal={deleteDialogOpen}
-          onClose={() => (deleteDialogOpen.value = false)}
+        <DeleteScanDialog
+          open={view.deleteDialogOpen}
+          onClose={() => (view.deleteDialogOpen.value = false)}
           packageName={detail.scan.packageName}
-          statusSignal={model.deleteStatus}
-          errorSignal={model.deleteError}
-          onConfirm={handleDelete}
+          status={model.deleteStatus}
+          error={model.deleteError}
+          onConfirm={view.handleDelete}
         />
       ) : null}
-    </PageShell>
+    </>
   );
-}
-
-// The dialog's reactive inputs (open/status/error) are read as signals inside
-// these thin hosts rather than in ScanDetailPage's body. Reading `.value` here
-// subscribes only the host, so opening the dialog and the save round-trip
-// (idle → saving → idle/error) re-render the dialog alone — not the whole page,
-// which includes the risk-signals list (one card per finding, thousands for a
-// large package). Reading any of these in the page body re-renders that list
-// synchronously and freezes the main thread for seconds.
-function DecisionDialogHost({
-  openSignal,
-  statusSignal,
-  errorSignal,
-  npmStagedPackagesUrlSignal,
-  ...props
-}: Omit<
-  ComponentProps<typeof DecisionDialog>,
-  "open" | "status" | "error" | "npmStagedPackagesUrl"
-> & {
-  openSignal: ReadonlySignal<boolean>;
-  statusSignal: ReadonlySignal<DecisionStatus>;
-  errorSignal: ReadonlySignal<string | null>;
-  npmStagedPackagesUrlSignal: ReadonlySignal<string | null>;
-}) {
-  return (
-    <DecisionDialog
-      open={openSignal.value}
-      status={statusSignal.value}
-      error={errorSignal.value}
-      npmStagedPackagesUrl={npmStagedPackagesUrlSignal.value}
-      {...props}
-    />
-  );
-}
-
-function DeleteDialogHost({
-  openSignal,
-  statusSignal,
-  errorSignal,
-  ...props
-}: Omit<ComponentProps<typeof DeleteScanDialog>, "open" | "status" | "error"> & {
-  openSignal: ReadonlySignal<boolean>;
-  statusSignal: ReadonlySignal<DeleteStatus>;
-  errorSignal: ReadonlySignal<string | null>;
-}) {
-  return (
-    <DeleteScanDialog
-      {...props}
-      open={openSignal.value}
-      status={statusSignal.value}
-      error={errorSignal.value}
-    />
-  );
-}
-
-function ShareDialogHost({
-  openSignal,
-  shareSignal,
-  statusSignal,
-  errorSignal,
-  attestationAvailableSignal,
-  ...props
-}: Omit<
-  ComponentProps<typeof ShareDialog>,
-  "open" | "share" | "status" | "error" | "attestationAvailable"
-> & {
-  openSignal: ReadonlySignal<boolean>;
-  shareSignal: ReadonlySignal<PublicShareInfo | null>;
-  statusSignal: ReadonlySignal<DecisionStatus>;
-  errorSignal: ReadonlySignal<string | null>;
-  attestationAvailableSignal: ReadonlySignal<boolean | null>;
-}) {
-  return (
-    <ShareDialog
-      open={openSignal.value}
-      share={shareSignal.value}
-      status={statusSignal.value}
-      error={errorSignal.value}
-      attestationAvailable={attestationAvailableSignal.value}
-      {...props}
-    />
-  );
-}
-
-function GateDialogHost({
-  openSignal,
-  statusSignal,
-  errorSignal,
-  ...props
-}: Omit<
-  ComponentProps<typeof GateDecisionDialog>,
-  "open" | "status" | "error" | "requireTwoFactor"
-> & {
-  openSignal: ReadonlySignal<boolean>;
-  statusSignal: ReadonlySignal<DecisionStatus>;
-  errorSignal: ReadonlySignal<string | null>;
-}) {
-  // Read the session here so a step-up prompt only appears for members who
-  // enrolled in 2FA. Reading it inside the host keeps the subscription off the
-  // page body (which renders the per-finding risk list).
-  const requireTwoFactor = Boolean(sessionModel.session.value?.user.twoFactorEnabled);
-  return (
-    <GateDecisionDialog
-      open={openSignal.value}
-      status={statusSignal.value}
-      error={errorSignal.value}
-      requireTwoFactor={requireTwoFactor}
-      {...props}
-    />
-  );
-}
-
-function asPersistedSummary(value: unknown): PersistedSummary {
-  if (!value || typeof value !== "object") return {};
-  return value as PersistedSummary;
-}
-
-function asAiReview(value: unknown): AiReview | null {
-  if (!value || typeof value !== "object") return null;
-  return value as AiReview;
 }

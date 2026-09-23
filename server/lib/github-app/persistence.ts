@@ -162,6 +162,29 @@ async function getInstallationForOrganization(
   return row ? readInstallationRow(row) : null;
 }
 
+/**
+ * The GitHub installation id behind one of our installation rows, scoped to
+ * the organization so a gate can never post a decision through another
+ * organization's installation.
+ */
+export async function getInstallationExternalId(
+  db: AppDb,
+  installationRowId: string,
+  organizationId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ installationId: githubAppInstallations.installationId })
+    .from(githubAppInstallations)
+    .where(
+      and(
+        eq(githubAppInstallations.id, installationRowId),
+        eq(githubAppInstallations.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row?.installationId ?? null;
+}
+
 export async function markInstallationStatus(
   db: AppDb,
   installationId: string,

@@ -1,60 +1,14 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
+import { env } from "cloudflare:test";
 import { describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
+import { addOrganizationMember } from "../../server/db/invitations";
 import { getNpmConnection } from "../../server/db/npm-connections";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import * as schema from "../../server/db/schema";
 import { npmConnectionRoutes } from "../../server/routes/npm-connection";
-import type { Bindings, Variables } from "../../server/types";
+import { buildTestApp, call, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string }) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId: session.userId });
-    await next();
-  });
+const mountNpmConnection = (app: TestApp) =>
   app.route("/api/v1/npm-connection", npmConnectionRoutes);
-  return app;
-}
-
-async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  method: string,
-  path: string,
-  body?: unknown,
-) {
-  const ctx = createExecutionContext();
-  const init: RequestInit = { method };
-  if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { "content-type": "application/json" };
-  }
-  const res = await app.fetch(new Request(`http://test.local${path}`, init), env, ctx);
-  await waitOnExecutionContext(ctx);
-  return res;
-}
 
 const OWNER_TOKEN = "npm_owner_secret_token_AAAAAAA";
 const INTRUDER_TOKEN = "npm_intruder_secret_token_ZZZZZZZ";
@@ -64,18 +18,33 @@ describe("npm-connection routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const intruder = await seedUser();
 
-    const upsert = await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: OWNER_TOKEN,
-      label: "owner registry",
-    });
+    const upsert = await call(
+      buildTestApp(mountNpmConnection, owner),
+      "POST",
+      "/api/v1/npm-connection",
+      {
+        body: {
+          token: OWNER_TOKEN,
+          label: "owner registry",
+        },
+      },
+    );
     expect(upsert.status).toBe(200);
 
-    const intruderRes = await call(buildTestApp(intruder), "GET", "/api/v1/npm-connection");
+    const intruderRes = await call(
+      buildTestApp(mountNpmConnection, intruder),
+      "GET",
+      "/api/v1/npm-connection",
+    );
     expect(intruderRes.status).toBe(200);
     const intruderBody = (await intruderRes.json()) as { connection: unknown };
     expect(intruderBody.connection).toBeNull();
 
-    const ownerRes = await call(buildTestApp(owner), "GET", "/api/v1/npm-connection");
+    const ownerRes = await call(
+      buildTestApp(mountNpmConnection, owner),
+      "GET",
+      "/api/v1/npm-connection",
+    );
     expect(ownerRes.status).toBe(200);
     const ownerBody = (await ownerRes.json()) as {
       connection: { organizationId: string; tokenLast4: string | null; label: string } | null;
@@ -90,15 +59,24 @@ describe("npm-connection routes enforce organization boundaries", () => {
     const intruder = await seedUser();
     const db = createDb(env.DB);
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: OWNER_TOKEN,
-      label: "owner registry",
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: {
+        token: OWNER_TOKEN,
+        label: "owner registry",
+      },
     });
 
-    const upsert = await call(buildTestApp(intruder), "POST", "/api/v1/npm-connection", {
-      token: INTRUDER_TOKEN,
-      label: "intruder registry",
-    });
+    const upsert = await call(
+      buildTestApp(mountNpmConnection, intruder),
+      "POST",
+      "/api/v1/npm-connection",
+      {
+        body: {
+          token: INTRUDER_TOKEN,
+          label: "intruder registry",
+        },
+      },
+    );
     expect(upsert.status).toBe(200);
 
     const ownerConnection = await getNpmConnection(db, owner.organizationId);
@@ -114,11 +92,18 @@ describe("npm-connection routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const db = createDb(env.DB);
 
-    const res = await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: OWNER_TOKEN,
-      label: "custom registry",
-      registryUrl: "https://registry.example.com",
-    });
+    const res = await call(
+      buildTestApp(mountNpmConnection, owner),
+      "POST",
+      "/api/v1/npm-connection",
+      {
+        body: {
+          token: OWNER_TOKEN,
+          label: "custom registry",
+          registryUrl: "https://registry.example.com",
+        },
+      },
+    );
 
     expect(res.status).toBe(200);
     const connection = await getNpmConnection(db, owner.organizationId);
@@ -130,12 +115,18 @@ describe("npm-connection routes enforce organization boundaries", () => {
     const intruder = await seedUser();
     const db = createDb(env.DB);
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: OWNER_TOKEN,
-      label: "owner registry",
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: {
+        token: OWNER_TOKEN,
+        label: "owner registry",
+      },
     });
 
-    const deleteRes = await call(buildTestApp(intruder), "DELETE", "/api/v1/npm-connection");
+    const deleteRes = await call(
+      buildTestApp(mountNpmConnection, intruder),
+      "DELETE",
+      "/api/v1/npm-connection",
+    );
     expect(deleteRes.status).toBe(200);
 
     const ownerConnection = await getNpmConnection(db, owner.organizationId);
@@ -148,7 +139,12 @@ describe("npm-connection routes enforce organization boundaries", () => {
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     try {
-      const res = await call(buildTestApp(intruder), "POST", "/api/v1/npm-connection/validate", {});
+      const res = await call(
+        buildTestApp(mountNpmConnection, intruder),
+        "POST",
+        "/api/v1/npm-connection/validate",
+        { body: {} },
+      );
       expect(res.status).toBe(404);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
@@ -160,18 +156,55 @@ describe("npm-connection routes enforce organization boundaries", () => {
     const owner = await seedUser();
     const intruder = await seedUser();
 
-    await call(buildTestApp(owner), "POST", "/api/v1/npm-connection", {
-      token: OWNER_TOKEN,
-      label: "owner registry",
+    await call(buildTestApp(mountNpmConnection, owner), "POST", "/api/v1/npm-connection", {
+      body: {
+        token: OWNER_TOKEN,
+        label: "owner registry",
+      },
     });
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     try {
-      const res = await call(buildTestApp(intruder), "POST", "/api/v1/npm-connection/validate", {});
+      const res = await call(
+        buildTestApp(mountNpmConnection, intruder),
+        "POST",
+        "/api/v1/npm-connection/validate",
+        { body: {} },
+      );
       expect(res.status).toBe(404);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("npm-connection routes answer role denials as 403", () => {
+  // Regression: requireOrganizationRole throws inside the handlers' try blocks,
+  // and the catch used to rethrow only UnauthorizedError, so a member's denial
+  // was logged as a storage failure and answered 500.
+  test("a member cannot store or validate the shared organization's token", async () => {
+    const owner = await seedUser();
+    const member = await seedUser();
+    await addOrganizationMember(createDb(env.DB), {
+      organizationId: owner.organizationId,
+      userId: member.userId,
+      role: "member",
+    });
+    const app = buildTestApp(mountNpmConnection, member);
+
+    const upsert = await call(app, "POST", "/api/v1/npm-connection", {
+      body: { token: INTRUDER_TOKEN },
+      activeOrganizationId: owner.organizationId,
+    });
+    expect(upsert.status).toBe(403);
+    expect(await upsert.json()).toEqual({ error: "forbidden" });
+
+    const validate = await call(app, "POST", "/api/v1/npm-connection/validate", {
+      body: {},
+      activeOrganizationId: owner.organizationId,
+    });
+    expect(validate.status).toBe(403);
+    expect(await validate.json()).toEqual({ error: "forbidden" });
   });
 });

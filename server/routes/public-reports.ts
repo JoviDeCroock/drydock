@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
-import { createDb } from "../db/client";
+import { attachDb } from "../middleware/db";
+import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
 import {
+  getScan,
+  getScanFile,
   encodeThreatFeedCursor,
   listBadgeCandidateScans,
   listThreatFeedScans,
@@ -8,8 +11,7 @@ import {
   resolvePublicShareToken,
   threatFeedNextCursor,
   THREAT_FEED_MAX_ENTRIES,
-} from "../db/scan-share";
-import { getScan, getScanFile } from "../db/scans";
+} from "../db/scans";
 import {
   buildBadgePayload,
   buildThreatFeedEntry,
@@ -31,7 +33,6 @@ import { optionalWorkerExecutionContext } from "../lib/platform/execution-contex
 import { buildAttestationStatement, loadAttestationKey, signAttestation } from "../lib/attestation";
 import { sha256Hex } from "../lib/platform/crypto-utils";
 import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
-import { RateLimitError, enforceRateLimit } from "../lib/platform/rate-limit";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
 import {
   buildReportExport,
@@ -45,6 +46,8 @@ import type { Bindings, Variables } from "../types";
 
 // The unguessable share token is the authentication boundary for report routes.
 export const publicReportsRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+// Anonymous surface mounted outside /api, so it attaches its own db handle.
+publicReportsRoutes.use("*", attachDb);
 
 const PUBLIC_READ_RATE = { bucket: "public-report", limit: 120, windowMs: 60 * 1000 };
 const PUBLIC_BADGE_READ_RATE = { bucket: "public-badge", limit: 120, windowMs: 60 * 1000 };
@@ -130,7 +133,7 @@ publicReportsRoutes.get("/attestation-key", async (c) => {
 });
 
 publicReportsRoutes.get("/threat-feed.json", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const after = parseThreatFeedCursor(c.req.query("after"));
   const requested = Number(c.req.query("limit"));
   const limit = Number.isFinite(requested)
@@ -175,7 +178,7 @@ publicReportsRoutes.get("/badge/:ecosystem/*", async (c) => {
   }
   const tag = resolveBadgeTag(rawTag);
 
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const rows = await listBadgeCandidateScans(db, packageName, ecosystem, tag);
   const match = pickBadgeScan(
     rows.filter(
@@ -299,7 +302,7 @@ function sharedScanNotFound(c: Context<{ Bindings: Bindings; Variables: Variable
 async function resolveSharedScan(c: Context<{ Bindings: Bindings; Variables: Variables }>) {
   const token = c.req.param("token") ?? "";
   if (!SHARE_TOKEN_RE.test(token)) return { error: sharedScanNotFound(c) } as const;
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   // Already refuses anything that is not a live, complete, non-superseded scan.
   const resolved = await resolvePublicShareToken(db, token);
   if (!resolved) return { error: sharedScanNotFound(c) } as const;

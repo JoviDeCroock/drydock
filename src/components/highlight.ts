@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { useMemo } from "preact/hooks";
 import type { HighlighterCore } from "shiki/core";
 
 interface Token {
@@ -158,4 +159,26 @@ export function tokenizeLines(text: string, lang: string): TokenLine[] | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Per-line tokens for one side of a code view, or null until the highlighter
+ * is ready, when the language is unknown, or when `canHighlight` rejects the
+ * text. Reads `highlighterReady` so the caller re-renders once shiki loads.
+ *
+ * Sides beyond the highlight cap stay plain text: tokenizing them would block
+ * the main thread for seconds (see HIGHLIGHT_MAX_LINES). The cap is applied to
+ * the text actually handed to shiki, which is the reformatted one when the
+ * reformat is on. Its cost is dominated by per-line work, not by total
+ * characters: a 128 KiB bundle re-flows to ~5,700 lines and measures ~0.5s ->
+ * ~1.9s per side, so exempting reformatted sides would blow the very budget
+ * HIGHLIGHT_MAX_LINES exists to hold. Past the cap the reformat still runs —
+ * structure a reviewer can read beats colour.
+ */
+export function useLineTokens(text: string, lang: string | undefined): TokenLine[] | null {
+  const ready = highlighterReady.value;
+  return useMemo(
+    () => (lang && ready && text && canHighlight(text) ? tokenizeLines(text, lang) : null),
+    [text, lang, ready],
+  );
 }

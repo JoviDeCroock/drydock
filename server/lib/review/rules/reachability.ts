@@ -1,4 +1,5 @@
-import type { CodePatternSet, FileRecord, PackageJsonSummary } from "..";
+import type { PackageJsonSummary } from "../serialize";
+import type { CodePatternSet, FileRecord } from "../types";
 import { isTestPath } from "./file-types";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "./patterns";
 

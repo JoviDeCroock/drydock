@@ -1,3 +1,4 @@
+import type { NpmConnectionValidationStatus } from "./enums";
 import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type { AppDb } from "./client";
 import { npmConnections } from "./schema";
@@ -15,7 +16,7 @@ export interface NpmConnectionInput {
 
 export interface NpmConnectionValidationInput {
   organizationId: string;
-  validationStatus: "valid" | "invalid" | "unvalidated";
+  validationStatus: NpmConnectionValidationStatus;
   capabilities?: unknown;
   validatedAt?: Date | null;
 }
@@ -31,7 +32,7 @@ export async function upsertNpmConnection(db: AppDb, input: NpmConnectionInput) 
     tokenNonce: input.tokenNonce,
     tokenFingerprint: input.tokenFingerprint,
     tokenLast4: input.tokenLast4 || null,
-    validationStatus: "unvalidated",
+    validationStatus: "unvalidated" as const,
     capabilitiesJson: null,
     validatedAt: null,
     lastUsedAt: null,

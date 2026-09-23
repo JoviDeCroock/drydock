@@ -11,6 +11,19 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * The caller is authenticated and a member of the organization, but its role
+ * does not grant the action. Thrown by `requireOrganizationRole` so a handler
+ * states its role predicate once; `app.onError` turns it into the same
+ * `{ error: "forbidden" }` 403 the inline checks used to return.
+ */
+export class ForbiddenError extends Error {
+  constructor(message = "forbidden") {
+    super(message);
+    this.name = "ForbiddenError";
+  }
+}
+
 export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === "object") {

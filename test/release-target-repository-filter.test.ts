@@ -3,7 +3,7 @@ import {
   selectUnmappedRepositories,
   type InstallationRepository,
   type PublicReleaseTarget,
-} from "../src/models/github-app";
+} from "../src/models/release-targets";
 
 const repos: InstallationRepository[] = [
   { id: 1, fullName: "octo/alpha", defaultBranch: "main" },
@@ -17,6 +17,7 @@ function target(repositoryId: number): PublicReleaseTarget {
     organizationId: "org_1",
     installationRowId: "inst_1",
     ecosystem: "pypi",
+    artifactName: null,
     repositoryId,
     repositoryFullName: "octo/whatever",
     environment: "pypi-release",

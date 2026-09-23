@@ -4,7 +4,28 @@ import {
   evaluateGithubArtifactEgress,
   fetchReleaseBundleWithToken,
   processReleaseBundleWithToken,
-} from "../../server/lib/github-app/artifacts";
+} from "../server/lib/github-app/artifacts";
+import { buildZip, concatBytes, type ZipEntry } from "./helpers/archive-fixtures";
+import { stubGithubFetch } from "./helpers/github-fetch-stub";
+
+function stubArtifacts(options: StubOptions) {
+  const artifacts = options.artifacts ?? [
+    {
+      id: options.artifactId ?? ARTIFACT_ID,
+      name: options.artifactName ?? ARTIFACT_NAME,
+      bundleZip: options.bundleZip,
+      expired: false,
+    },
+  ];
+  return stubGithubFetch({
+    artifacts: artifacts.map((artifact) => ({
+      ...artifact,
+      bundleZip: artifact.bundleZip ?? undefined,
+    })),
+    artifactsResponse: options.artifactsResponse,
+    contentLength: options.contentLength,
+  });
+}
 
 const TOKEN = "ghs_installation_test_token";
 const REPO = "octo/example";
@@ -26,97 +47,6 @@ beforeEach(() => {
 // ── Tiny store-only ZIP builder (no deflate; matches existing readZipArchive
 // expectations of compressionMethod === 0) ────────────────────────────────────
 
-interface ZipEntry {
-  path: string;
-  body: Uint8Array | string;
-}
-
-function makeZip(entries: ZipEntry[]): Uint8Array {
-  const encoder = new TextEncoder();
-  const records: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const body = typeof entry.body === "string" ? encoder.encode(entry.body) : entry.body;
-    const nameBytes = encoder.encode(entry.path);
-    const crc = crc32(body);
-    const local = new Uint8Array(30 + nameBytes.length + body.length);
-    const localView = new DataView(local.buffer);
-    localView.setUint32(0, 0x04034b50, true);
-    localView.setUint16(4, 20, true); // version needed
-    localView.setUint16(6, 0, true); // flags
-    localView.setUint16(8, 0, true); // method = stored
-    localView.setUint16(10, 0, true); // time
-    localView.setUint16(12, 0, true); // date
-    localView.setUint32(14, crc, true);
-    localView.setUint32(18, body.length, true);
-    localView.setUint32(22, body.length, true);
-    localView.setUint16(26, nameBytes.length, true);
-    localView.setUint16(28, 0, true); // extra
-    local.set(nameBytes, 30);
-    local.set(body, 30 + nameBytes.length);
-    records.push(local);
-
-    const c = new Uint8Array(46 + nameBytes.length);
-    const cView = new DataView(c.buffer);
-    cView.setUint32(0, 0x02014b50, true);
-    cView.setUint16(4, 20, true); // version made by
-    cView.setUint16(6, 20, true); // version needed
-    cView.setUint16(8, 0, true); // flags
-    cView.setUint16(10, 0, true); // method = stored
-    cView.setUint16(12, 0, true);
-    cView.setUint16(14, 0, true);
-    cView.setUint32(16, crc, true);
-    cView.setUint32(20, body.length, true);
-    cView.setUint32(24, body.length, true);
-    cView.setUint16(28, nameBytes.length, true);
-    cView.setUint16(30, 0, true);
-    cView.setUint16(32, 0, true); // comment
-    cView.setUint16(34, 0, true); // disk
-    cView.setUint16(36, 0, true); // internal attrs
-    cView.setUint32(38, 0, true); // external attrs
-    cView.setUint32(42, offset, true);
-    c.set(nameBytes, 46);
-    central.push(c);
-    offset += local.length;
-  }
-  const centralStart = offset;
-  const centralBytes = concat(central);
-  const eocd = new Uint8Array(22);
-  const eocdView = new DataView(eocd.buffer);
-  eocdView.setUint32(0, 0x06054b50, true);
-  eocdView.setUint16(4, 0, true);
-  eocdView.setUint16(6, 0, true);
-  eocdView.setUint16(8, entries.length, true);
-  eocdView.setUint16(10, entries.length, true);
-  eocdView.setUint32(12, centralBytes.length, true);
-  eocdView.setUint32(16, centralStart, true);
-  eocdView.setUint16(20, 0, true);
-  return concat([...records, centralBytes, eocd]);
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let cursor = 0;
-  for (const part of parts) {
-    out.set(part, cursor);
-    cursor += part.length;
-  }
-  return out;
-}
-
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -134,7 +64,7 @@ function makeWheelBytes(name: string, version: string): FakeWheel {
   // adapter would later be able to parse them; this test only needs the bytes
   // for digest verification.
   const path = `dist/${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`;
-  const wheelBytes = makeZip([
+  const wheelBytes = buildZip([
     {
       path: `${name.replace(/-/g, "_")}-${version}.dist-info/METADATA`,
       body: `Metadata-Version: 2.3\nName: ${name}\nVersion: ${version}\n`,
@@ -160,7 +90,7 @@ async function buildFixture(opts?: {
 }): Promise<{
   wheel: FakeWheel;
   wheelSha: string;
-  bundleZip: Uint8Array;
+  bundleZip: Uint8Array<ArrayBuffer>;
 }> {
   const wheel = makeWheelBytes("demo-package", "1.2.0");
   const wheelBytes = opts?.mutateWheel ? opts.mutateWheel(wheel.bytes) : wheel.bytes;
@@ -171,79 +101,24 @@ async function buildFixture(opts?: {
     entries.push({ path: wheel.path, body: wheelBytes });
   }
   if (opts?.extraEntries) entries.push(...opts.extraEntries);
-  const bundleZip = makeZip(entries);
+  const bundleZip = buildZip(entries);
   return { wheel: { bytes: wheelBytes, path: wheel.path }, wheelSha, bundleZip };
 }
 
 // ── Fetch stub ───────────────────────────────────────────────────────────────
 
 interface StubOptions {
-  bundleZip: Uint8Array | null;
+  bundleZip: Uint8Array<ArrayBuffer> | null;
   artifacts?: Array<{
     id: number;
     name: string;
-    bundleZip: Uint8Array | null;
+    bundleZip: Uint8Array<ArrayBuffer> | null;
     expired?: boolean;
   }>;
   artifactsResponse?: () => Response;
   artifactId?: number;
   artifactName?: string;
   contentLength?: number | null;
-}
-
-function stubGithubFetch(options: StubOptions) {
-  const calls: { url: string; authorization: string | null }[] = [];
-  const artifacts = options.artifacts ?? [
-    {
-      id: options.artifactId ?? ARTIFACT_ID,
-      name: options.artifactName ?? ARTIFACT_NAME,
-      bundleZip: options.bundleZip,
-      expired: false,
-    },
-  ];
-  const artifactsBody = JSON.stringify({
-    total_count: artifacts.length,
-    artifacts: artifacts.map((artifact) => ({
-      id: artifact.id,
-      name: artifact.name,
-      size_in_bytes: artifact.bundleZip?.length ?? 0,
-      expired: artifact.expired === true,
-    })),
-  });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const request = input instanceof Request ? input : new Request(input, init);
-      calls.push({
-        url: request.url,
-        authorization: request.headers.get("authorization"),
-      });
-      if (request.url.includes("/actions/runs/")) {
-        if (options.artifactsResponse) return options.artifactsResponse();
-        return new Response(artifactsBody, {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (request.url.includes("/actions/artifacts/")) {
-        const match = request.url.match(/\/actions\/artifacts\/(\d+)\/zip$/);
-        const artifactId = match ? Number.parseInt(match[1], 10) : Number.NaN;
-        const artifact = artifacts.find((candidate) => candidate.id === artifactId);
-        if (!artifact?.bundleZip) {
-          return new Response("not found", { status: 404 });
-        }
-        const headers: Record<string, string> = {
-          "content-type": "application/zip",
-        };
-        if (options.contentLength !== null) {
-          headers["content-length"] = String(options.contentLength ?? artifact.bundleZip.length);
-        }
-        return new Response(artifact.bundleZip, { status: 200, headers });
-      }
-      throw new Error(`unexpected fetch in test: ${request.url}`);
-    }),
-  );
-  return calls;
 }
 
 function source(overrides: Partial<WorkflowArtifactSource> = {}): WorkflowArtifactSource {
@@ -272,7 +147,7 @@ function classifyArtifact(path: string): { ecosystem: string; kind: string } | n
 describe("fetchReleaseBundleWithToken", () => {
   test("returns the verified wheel bytes on the happy path", async () => {
     const fixture = await buildFixture();
-    const calls = stubGithubFetch({ bundleZip: fixture.bundleZip });
+    const calls = stubArtifacts({ bundleZip: fixture.bundleZip });
 
     const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
@@ -293,7 +168,7 @@ describe("fetchReleaseBundleWithToken", () => {
     const fixture = await buildFixture({
       extraEntries: [{ path: sdistPath, body: sdistBytes }],
     });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
+    stubArtifacts({ bundleZip: fixture.bundleZip });
 
     const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
@@ -307,8 +182,8 @@ describe("fetchReleaseBundleWithToken", () => {
   test("collects reviewable files across every non-expired workflow artifact", async () => {
     const first = await buildFixture();
     const secondWheel = makeWheelBytes("other-package", "2.0.0");
-    const secondZip = makeZip([{ path: secondWheel.path, body: secondWheel.bytes }]);
-    stubGithubFetch({
+    const secondZip = buildZip([{ path: secondWheel.path, body: secondWheel.bytes }]);
+    stubArtifacts({
       bundleZip: null,
       artifacts: [
         {
@@ -324,7 +199,7 @@ describe("fetchReleaseBundleWithToken", () => {
         {
           id: ARTIFACT_ID + 2,
           name: "expired-upload",
-          bundleZip: makeZip([{ path: "dist/expired-1.0.0.tar.gz", body: "expired" }]),
+          bundleZip: buildZip([{ path: "dist/expired-1.0.0.tar.gz", body: "expired" }]),
           expired: true,
         },
       ],
@@ -344,15 +219,15 @@ describe("fetchReleaseBundleWithToken", () => {
       return {
         id: ARTIFACT_ID + index,
         name: `${ARTIFACT_NAME}-${String(index).padStart(2, "0")}`,
-        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+        bundleZip: buildZip([{ path: wheel.path, body: wheel.bytes }]),
       };
     });
     artifacts.push({
       id: ARTIFACT_ID + 100,
       name: "unrelated-build-output",
-      bundleZip: makeZip([{ path: "dist/unrelated-1.0.0.tar.gz", body: "ignored" }]),
+      bundleZip: buildZip([{ path: "dist/unrelated-1.0.0.tar.gz", body: "ignored" }]),
     });
-    stubGithubFetch({ bundleZip: null, artifacts });
+    stubArtifacts({ bundleZip: null, artifacts });
 
     let activeProcessors = 0;
     let maxActiveProcessors = 0;
@@ -381,17 +256,17 @@ describe("fetchReleaseBundleWithToken", () => {
       {
         id: ARTIFACT_ID,
         name: `${ARTIFACT_NAME}-linux`,
-        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+        bundleZip: buildZip([{ path: wheel.path, body: wheel.bytes }]),
       },
       {
         id: ARTIFACT_ID + 1,
         name: `${ARTIFACT_NAME}-macos`,
-        bundleZip: makeZip([
-          { path: wheel.path, body: concat([wheel.bytes, new Uint8Array([0])]) },
+        bundleZip: buildZip([
+          { path: wheel.path, body: concatBytes([wheel.bytes, new Uint8Array([0])]) },
         ]),
       },
     ];
-    stubGithubFetch({ bundleZip: null, artifacts });
+    stubArtifacts({ bundleZip: null, artifacts });
 
     await expect(
       processReleaseBundleWithToken(
@@ -407,8 +282,8 @@ describe("fetchReleaseBundleWithToken", () => {
     // A matrix leg that runs a full `python -m build` ships the sdist next to
     // its wheel, so the same sdist can arrive from several shards.
     const wheel = makeWheelBytes("demo-package", "1.2.0");
-    const bundleZip = makeZip([{ path: wheel.path, body: wheel.bytes }]);
-    stubGithubFetch({
+    const bundleZip = buildZip([{ path: wheel.path, body: wheel.bytes }]);
+    stubArtifacts({
       bundleZip: null,
       artifacts: [
         { id: ARTIFACT_ID, name: `${ARTIFACT_NAME}-linux`, bundleZip },
@@ -436,10 +311,10 @@ describe("fetchReleaseBundleWithToken", () => {
       return {
         id: ARTIFACT_ID + index,
         name: `unrelated-build-output-${index}`,
-        bundleZip: makeZip([{ path: wheel.path, body: wheel.bytes }]),
+        bundleZip: buildZip([{ path: wheel.path, body: wheel.bytes }]),
       };
     });
-    stubGithubFetch({ bundleZip: null, artifacts });
+    stubArtifacts({ bundleZip: null, artifacts });
 
     await expect(
       processReleaseBundleWithToken(
@@ -459,7 +334,7 @@ describe("fetchReleaseBundleWithToken", () => {
         { path: "README.md", body: "# notes\n" },
       ],
     });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
+    stubArtifacts({ bundleZip: fixture.bundleZip });
 
     const bundle = await fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact);
 
@@ -472,7 +347,7 @@ describe("fetchReleaseBundleWithToken", () => {
       includeWheel: false,
       extraEntries: [{ path: "drydock-sha256.txt", body: "placeholder\n" }],
     });
-    stubGithubFetch({ bundleZip: fixture.bundleZip });
+    stubArtifacts({ bundleZip: fixture.bundleZip });
 
     await expect(
       fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
@@ -486,8 +361,8 @@ describe("fetchReleaseBundleWithToken", () => {
     for (let index = 0; index < 21; index += 1) {
       entries.push({ path: `dist/demo_package-1.2.${index}.tar.gz`, body: `sdist ${index}` });
     }
-    const bundleZip = makeZip(entries);
-    stubGithubFetch({ bundleZip });
+    const bundleZip = buildZip(entries);
+    stubArtifacts({ bundleZip });
 
     await expect(
       fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
@@ -498,7 +373,7 @@ describe("fetchReleaseBundleWithToken", () => {
 
   test("bundle_unavailable when an explicit artifact name does not exist", async () => {
     const fixture = await buildFixture();
-    stubGithubFetch({ bundleZip: fixture.bundleZip, artifactName: "something-else" });
+    stubArtifacts({ bundleZip: fixture.bundleZip, artifactName: "something-else" });
 
     await expect(
       fetchReleaseBundleWithToken(TOKEN, source({ artifactName: ARTIFACT_NAME }), classifyArtifact),
@@ -509,7 +384,7 @@ describe("fetchReleaseBundleWithToken", () => {
   });
 
   test("bundle_unavailable when list-artifacts returns 404", async () => {
-    stubGithubFetch({
+    stubArtifacts({
       bundleZip: null,
       artifactsResponse: () => new Response("missing", { status: 404 }),
     });
@@ -521,9 +396,85 @@ describe("fetchReleaseBundleWithToken", () => {
     });
   });
 
+  test("bundle_unavailable when the artifact listing is truncated by the page cap", async () => {
+    // Every page advertises another one, so the walk stops on the page cap with
+    // a `next` still outstanding. The matching artifact is present and readable
+    // on page one — the point is that a listing we could not finish must not
+    // resolve to the subset we happened to see, because the shard that is
+    // missing is exactly the one an attacker would add last.
+    const fixture = await buildFixture();
+    let page = 0;
+    stubArtifacts({
+      bundleZip: fixture.bundleZip,
+      artifactsResponse: () => {
+        page += 1;
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, size_in_bytes: 1, expired: false }],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              link: `<https://api.github.com/repos/o/r/actions/runs/1/artifacts?page=${page + 1}>; rel="next"`,
+            },
+          },
+        );
+      },
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
+      name: "WorkflowArtifactError",
+      code: "bundle_unavailable",
+    });
+    // Bounded by the page cap rather than following `next` forever.
+    expect(page).toBeLessThanOrEqual(10);
+  });
+
+  test("bundle_unavailable when the artifact listing stops at an off-host pagination link", async () => {
+    // The host veto refuses to send the installation token to whatever a forged
+    // `Link` names. Refusing to walk the chain still leaves the rest of the
+    // listing unread, so it has to fail closed the same way the page cap does —
+    // otherwise the one case the veto exists for is the one that resolves to a
+    // subset.
+    const fixture = await buildFixture();
+    let page = 0;
+    stubArtifacts({
+      bundleZip: fixture.bundleZip,
+      artifactsResponse: () => {
+        page += 1;
+        return new Response(
+          JSON.stringify({
+            total_count: 1,
+            artifacts: [{ id: ARTIFACT_ID, name: ARTIFACT_NAME, size_in_bytes: 1, expired: false }],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              link: `<https://attacker.example/repos/o/r/actions/runs/1/artifacts?page=2>; rel="next"`,
+            },
+          },
+        );
+      },
+    });
+
+    await expect(
+      fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),
+    ).rejects.toMatchObject({
+      name: "WorkflowArtifactError",
+      code: "bundle_unavailable",
+    });
+    // The vetoed link was never fetched.
+    expect(page).toBe(1);
+  });
+
   test("bundle_too_large when content-length exceeds the cap", async () => {
     const fixture = await buildFixture();
-    stubGithubFetch({
+    stubArtifacts({
       bundleZip: fixture.bundleZip,
       contentLength: 26 * 1024 * 1024,
     });
@@ -537,8 +488,8 @@ describe("fetchReleaseBundleWithToken", () => {
 
   test("artifact_path_unsafe when the bundle includes a traversal path", async () => {
     const sneaky = makeWheelBytes("demo-package", "1.2.0");
-    const bundle = makeZip([{ path: "../../etc/passwd", body: sneaky.bytes }]);
-    stubGithubFetch({ bundleZip: bundle });
+    const bundle = buildZip([{ path: "../../etc/passwd", body: sneaky.bytes }]);
+    stubArtifacts({ bundleZip: bundle });
 
     await expect(
       fetchReleaseBundleWithToken(TOKEN, source(), classifyArtifact),

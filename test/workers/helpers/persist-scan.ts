@@ -3,7 +3,7 @@ import type { AppDb } from "../../../server/db/client";
 import { persistScan, type PersistedScanInput } from "../../../server/db/scans";
 import { annotateFindingsWithDiffStatus } from "../../../server/lib/review";
 import { sha256Hex } from "../../../server/lib/platform/crypto-utils";
-import { stableJson } from "../../../server/lib/platform/stable-json";
+import { canonicalJson } from "../../../server/lib/platform/canonical-json";
 import { writeScanArtifactsWithRetry } from "../../../server/lib/scan/artifacts";
 
 type SeedInput = Omit<PersistedScanInput, "artifacts" | "report"> & {
@@ -22,7 +22,7 @@ export async function persistScanWithArtifacts(db: AppDb, input: SeedInput) {
       codePatternSet: input.codePatternSet,
     },
   );
-  const reportJson = stableJson({
+  const reportJson = canonicalJson({
     version: 1,
     stageId: input.stageId,
     package: {

@@ -21,7 +21,8 @@ export const SAFE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._!+-]{0,127}$/;
 export const SHA256_RE = /^[a-f0-9]{64}$/i;
 // Large compiled projects publish one wheel per Python/ABI/platform tuple.
 // NumPy currently ships 44 distributions, so the release manifest must cover
-// substantially more than the raw-byte collector's legacy 20-file limit.
+// substantially more than the raw-byte collector's 20-file limit
+// (`fetchReleaseBundleWithToken`, exercised by the ingestion invariant tests).
 export const PYPI_ARTIFACT_LIMIT = 128;
 
 export type PyPiArtifactKind = "wheel" | "sdist";

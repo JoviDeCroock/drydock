@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "deploy": "pnpm run build && wrangler deploy --config dist/staged_publish_review/wrangler.json",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json --noEmit",
     "knip": "knip --config tooling/knip.jsonc",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",

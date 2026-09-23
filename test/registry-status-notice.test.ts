@@ -120,7 +120,13 @@ describe("registry status badge", () => {
   test("tones exactly the releases the package view fills for attention", () => {
     for (const registryVersionStatus of [null, "staged", "published", "deleted", "blocked"]) {
       for (const decision of [null, "publish", "no_publish"]) {
-        const release = { registryVersionStatus, decision, registryReleaseOutcome: null };
+        const release = {
+          id: "scan",
+          tag: "latest",
+          registryVersionStatus,
+          decision,
+          registryReleaseOutcome: null,
+        };
         const attention = releaseAttention(release);
         const tone = registryStatusBadge(release)?.tone ?? null;
         if (attention === "published_without_review") expect(tone).toBe("medium");

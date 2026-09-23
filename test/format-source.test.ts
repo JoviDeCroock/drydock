@@ -1057,7 +1057,11 @@ describe("remapFindingLines", () => {
           const source = parts.join("");
           const formatted = formatSource(source, "js");
           if (!formatted) return;
-          const [finding] = remapFindingLines([{ id: "a", line }], formatted);
+          const [finding] = remapFindingLines<{
+            id: string;
+            line: number | null;
+            sourceLine?: number | null;
+          }>([{ id: "a", line }], formatted);
           // The caption always names the artifact's line, pinned or not.
           expect(finding.sourceLine ?? finding.line).toBe(line);
           const row = finding.line;

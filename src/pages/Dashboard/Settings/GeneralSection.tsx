@@ -5,7 +5,7 @@ import { Alert } from "../../../components/Alert";
 import { Badge } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
 import { SettingsCard } from "../../../components/Card";
-import { Dialog } from "../../../components/Dialog";
+import { ConfirmDialog } from "../../../components/Dialog";
 import { Field } from "../../../components/Field";
 import { Input } from "../../../components/Input";
 import { MonoDetail, Muted, SectionLabel } from "../../../components/Typography";
@@ -103,27 +103,16 @@ export function OrganizationDangerZone({
         </Button>
       </div>
 
-      <Dialog
-        open={confirming.value}
+      <ConfirmDialog
+        open={confirming}
         onClose={closeConfirm}
         title={`Delete ${active.name}?`}
         description="This permanently deletes the organization and everything scoped to it. This action cannot be undone."
-        footer={
-          <>
-            <Button variant="secondary" size="sm" onClick={closeConfirm} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant="danger"
-              size="sm"
-              form="org-delete-form"
-              disabled={deleting || confirmName.value !== active.name}
-            >
-              {deleting ? "Deleting…" : "Delete organization"}
-            </Button>
-          </>
-        }
+        busy={deleting}
+        busyLabel="Deleting…"
+        confirmLabel="Delete organization"
+        confirmDisabled={confirmName.value !== active.name}
+        form="org-delete-form"
       >
         <form id="org-delete-form" onSubmit={onConfirmDelete} class="flex flex-col gap-3">
           <Field label={`Type ${active.name} to confirm`} for="confirmOrgName">
@@ -140,7 +129,7 @@ export function OrganizationDangerZone({
           </Field>
           {error ? <Alert tone="critical">{error}</Alert> : null}
         </form>
-      </Dialog>
+      </ConfirmDialog>
     </SettingsCard>
   );
 }

@@ -44,7 +44,7 @@ export async function resolveBundleArtifact(
     if (claims.length === 0) {
       throw new WorkflowArtifactError(
         "artifact_identity_missing",
-        `${file.path} is not a recognizable npm or PyPI release artifact`,
+        `${file.path} is not a recognizable release artifact for any supported ecosystem`,
       );
     }
     if (claims.length > 1) {

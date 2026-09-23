@@ -22,27 +22,9 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { registrySupersessionPatch } from "./scan-status";
 import type { AppDb } from "./client";
 import { scans } from "./schema";
-
-/**
- * Retire every live signal attached to an obsolete registry-stage identity.
- * The share token is a public capability and the feed/badge are public trust
- * assertions, so they must stop with the registry ownership they described.
- */
-export function registrySupersessionPatch(supersededAt: Date) {
-  return {
-    registryStatusSupersededAt: supersededAt,
-    registryVersionStatus: null,
-    registryVersionStatusAt: null,
-    publicShareToken: null,
-    publicSharedAt: null,
-    publicSharedByUserId: null,
-    publicShareIncludesFiles: false,
-    publicFeedListedAt: null,
-    publicPackageKey: null,
-  };
-}
 
 export async function getScanReleaseIdentity(
   db: AppDb,

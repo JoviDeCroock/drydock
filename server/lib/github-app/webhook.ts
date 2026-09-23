@@ -1,6 +1,7 @@
 import { hexDecode, hmacSha256, timingSafeEqual } from "../platform/crypto-utils";
 import { type AppDb } from "../../db/client";
 import { getInstallationAccessToken } from "./api";
+import { githubHeaders } from "./client";
 import type { GithubAppConfig } from "./config";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { markInstallationStatus, resolveDeploymentProtectionTarget } from "./persistence";
@@ -289,13 +290,7 @@ export async function postDeploymentProtectionDecision(
   const comment = input.comment.slice(0, 140);
   const response = await reliableFetch(input.callbackUrl, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
-      "User-Agent": "drydock-app",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
+    headers: githubHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify({
       state: input.state,
       environment_name: input.environment,

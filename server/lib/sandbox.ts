@@ -376,35 +376,61 @@ export async function downloadInSandboxStream(
   });
 }
 
+interface LoadSandboxOptions {
+  npmRegistry?: string;
+  archiveFormat: "tgz" | "zip" | "vsix";
+  maxFiles?: number;
+  archiveDigestAlgorithms?: readonly ArchiveDigestAlgorithm[];
+  maxTextSampleChars?: number;
+  tarRootStrip?: TarRootStrip;
+  /** What the gateway may attach; `{}` keeps the sandbox credential-free. */
+  gatewayProps: NpmStageGatewayProps;
+  /** Outbound budget: 0 for inline bodies, a few for a gateway-fetched tarball. */
+  subRequests: number;
+}
+
+// Every sandbox Worker is loaded the same way; only the archive contract and
+// the gateway's credential scope vary between the inline and URL paths.
+function loadSandbox(env: Cloudflare.Env, ctx: ExecutionContext, options: LoadSandboxOptions) {
+  return env.LOADER.load({
+    compatibilityDate: "2026-05-20",
+    mainModule: "sandbox.js",
+    modules: { "sandbox.js": sandboxSource() },
+    env: {
+      NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
+      ARCHIVE_FORMAT: options.archiveFormat,
+      MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
+      MAX_ENTRIES,
+      MAX_TAR_BYTES,
+      MAX_STREAM_TAR_BYTES,
+      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(options.archiveDigestAlgorithms),
+      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(options.maxTextSampleChars),
+      TAR_ROOT_STRIP: normalizeTarRootStrip(options.tarRootStrip),
+    },
+    globalOutbound: (
+      ctx as unknown as {
+        exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher };
+      }
+    ).exports.NpmStageGateway({ props: options.gatewayProps }),
+    limits: { cpuMs: 2_000, subRequests: options.subRequests },
+  });
+}
+
 async function parseInCredentialsFreeSandbox(
   env: Cloudflare.Env,
   ctx: ExecutionContext,
   body: ArrayBuffer | ReadableStream<Uint8Array>,
   format: "tgz" | "zip" | "vsix",
   maxFiles?: number,
-  parse: { maxTextSampleChars?: number; tarRootStrip?: TarRootStrip } = {},
+  options: { maxTextSampleChars?: number; tarRootStrip?: TarRootStrip } = {},
 ): Promise<DownloadResult> {
-  const sandbox = env.LOADER.load({
-    compatibilityDate: "2026-05-20",
-    mainModule: "sandbox.js",
-    modules: { "sandbox.js": sandboxSource() },
-    env: {
-      NPM_REGISTRY: env.NPM_REGISTRY || "https://registry.npmjs.org",
-      ARCHIVE_FORMAT: format,
-      MAX_FILES: Math.min(maxFiles ?? MAX_FILES, MAX_FILES),
-      MAX_ENTRIES,
-      MAX_TAR_BYTES,
-      MAX_STREAM_TAR_BYTES,
-      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(),
-      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(parse.maxTextSampleChars),
-      TAR_ROOT_STRIP: normalizeTarRootStrip(parse.tarRootStrip),
-    },
-    globalOutbound: (
-      ctx as unknown as {
-        exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher };
-      }
-    ).exports.NpmStageGateway({ props: {} }),
-    limits: { cpuMs: 2_000, subRequests: 0 },
+  const sandbox = loadSandbox(env, ctx, {
+    archiveFormat: format,
+    maxFiles,
+    maxTextSampleChars: options.maxTextSampleChars,
+    tarRootStrip: options.tarRootStrip,
+    gatewayProps: {},
+    subRequests: 0,
   });
 
   const response = await sandbox.getEntrypoint().fetch(
@@ -452,33 +478,19 @@ export async function downloadInSandbox(
       throw new SandboxError(JSON.stringify({ error: "invalid tarball URL", status: 400 }));
     }
   }
-  const sandbox = env.LOADER.load({
-    compatibilityDate: "2026-05-20",
-    mainModule: "sandbox.js",
-    modules: { "sandbox.js": sandboxSource() },
-    env: {
-      NPM_REGISTRY: options.npmRegistry || env.NPM_REGISTRY || "https://registry.npmjs.org",
-      ARCHIVE_FORMAT: options.archiveFormat || "tgz",
-      MAX_FILES: Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES),
-      MAX_ENTRIES,
-      MAX_TAR_BYTES,
-      MAX_STREAM_TAR_BYTES,
-      ARCHIVE_DIGEST_ALGORITHMS: serializeArchiveDigestAlgorithms(options.archiveDigestAlgorithms),
-      MAX_TEXT_SAMPLE_CHARS: normalizeTextSampleCap(options.maxTextSampleChars),
-      TAR_ROOT_STRIP: normalizeTarRootStrip(options.tarRootStrip),
+  const sandbox = loadSandbox(env, ctx, {
+    npmRegistry: options.npmRegistry,
+    archiveFormat: options.archiveFormat || "tgz",
+    maxFiles: options.maxFiles,
+    archiveDigestAlgorithms: options.archiveDigestAlgorithms,
+    maxTextSampleChars: options.maxTextSampleChars,
+    tarRootStrip: options.tarRootStrip,
+    gatewayProps: {
+      npmToken: options.npmToken,
+      npmRegistry: options.npmRegistry,
+      publicArtifactUrls: options.publicArtifactUrls,
     },
-    globalOutbound: (
-      ctx as unknown as {
-        exports: { NpmStageGateway(options: { props: NpmStageGatewayProps }): Fetcher };
-      }
-    ).exports.NpmStageGateway({
-      props: {
-        npmToken: options.npmToken,
-        npmRegistry: options.npmRegistry,
-        publicArtifactUrls: options.publicArtifactUrls,
-      },
-    }),
-    limits: { cpuMs: 2_000, subRequests: 4 },
+    subRequests: 4,
   });
 
   const response = await sandbox.getEntrypoint().fetch(

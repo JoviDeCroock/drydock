@@ -12,7 +12,7 @@ interface SessionUser {
   emailVerified?: boolean;
 }
 
-interface AuthSession {
+export interface AuthSession {
   user: SessionUser;
   session?: unknown;
 }

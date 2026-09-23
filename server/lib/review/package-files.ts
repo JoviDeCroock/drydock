@@ -1,4 +1,4 @@
-import type { PackageJsonSummary } from "./";
+import type { PackageJsonSummary } from "./serialize";
 
 export function isOutsidePackageFilesAllowlist(
   path: string,

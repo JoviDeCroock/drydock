@@ -8,6 +8,7 @@
     }
   ],
   "rules": {
-    "boundaries-local/no-cross-page-import": "error"
+    "boundaries-local/no-cross-page-import": "error",
+    "boundaries-local/no-platform-domain-import": "error"
   }
 }

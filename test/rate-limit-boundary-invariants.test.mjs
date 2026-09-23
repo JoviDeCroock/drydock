@@ -13,6 +13,13 @@ import { describe, expect, test } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const OWNER = "server/lib/platform/rate-limit.ts";
+// The D1 fallback table is owned by one db module; the limiter above is the
+// only module that decides when to fall back to it.
+const D1_OWNER = "server/db/rate-limits.ts";
+// The platform limiter takes its fallback as a parameter so it stays free of
+// persistence; this module is where the app wires the D1 table in. Routes call
+// it (or its `guardRateLimit`), never the platform module.
+const APP_LIMITER = "server/lib/rate-limit.ts";
 
 // The binding names appear in their own declaration and in the owner's tier
 // table; anywhere else is a second limiter.
@@ -60,10 +67,26 @@ describe("rate limiting has one owner", () => {
     ).toEqual([]);
   });
 
+  test("only the app limiter composes the platform limiter with the D1 fallback", () => {
+    const offenders = sources().filter(
+      (file) =>
+        file !== APP_LIMITER &&
+        file !== OWNER &&
+        /from\s+["'][./]*(?:lib\/)?platform\/rate-limit["']/.test(read(file)),
+    );
+    expect(
+      offenders,
+      `Import enforceRateLimit/guardRateLimit from ${APP_LIMITER}; the platform limiter has no ` +
+        "default persistence and a second composition is a second limiter.",
+    ).toEqual([]);
+    expect(read(OWNER)).not.toMatch(/from\s+["'][./]*db\//);
+    expect(read(APP_LIMITER)).toMatch(/enforceD1RateLimit/);
+  });
+
   test("no module outside the limiter queries the rate_limits table", () => {
     const offenders = sources().filter(
       (file) =>
-        file !== OWNER && file !== "server/db/schema.ts" && /\brateLimits\b/.test(read(file)),
+        file !== D1_OWNER && file !== "server/db/schema.ts" && /\brateLimits\b/.test(read(file)),
     );
     expect(offenders).toEqual([]);
   });

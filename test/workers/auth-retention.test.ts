@@ -5,6 +5,7 @@ import { createDb } from "../../server/db/client";
 import { AUTH_ROW_RETENTION_GRACE_MS, pruneExpiredAuthRows } from "../../server/db/auth-retention";
 import * as schema from "../../server/db/schema";
 import worker from "../../server";
+import { seedUser } from "./helpers/seed";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -14,21 +15,6 @@ function scheduledController(): ScheduledController {
     cron: "*/15 * * * *",
     noRetry() {},
   } as unknown as ScheduledController;
-}
-
-async function seedUser(): Promise<string> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Retention Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  return userId;
 }
 
 async function seedSession(userId: string, expiresAt: Date): Promise<string> {
@@ -88,7 +74,7 @@ describe("expired auth row retention", () => {
   });
 
   test("deletes only rows past expiry plus the grace period", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ personalOrganization: false });
     const now = new Date();
 
     const live = await seedSession(userId, new Date(now.getTime() + 7 * 24 * HOUR_MS));
@@ -115,7 +101,7 @@ describe("expired auth row retention", () => {
   });
 
   test("keeps the surviving session usable", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ personalOrganization: false });
     const now = new Date();
     const live = await seedSession(userId, new Date(now.getTime() + 7 * 24 * HOUR_MS));
     await seedSession(userId, new Date(now.getTime() - AUTH_ROW_RETENTION_GRACE_MS - HOUR_MS));
@@ -131,7 +117,7 @@ describe("expired auth row retention", () => {
   });
 
   test("is a no-op when nothing has aged out", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ personalOrganization: false });
     const now = new Date();
     await seedSession(userId, new Date(now.getTime() + HOUR_MS));
 
@@ -142,7 +128,7 @@ describe("expired auth row retention", () => {
   });
 
   test("the scheduled tick sweeps expired rows", async () => {
-    const userId = await seedUser();
+    const { userId } = await seedUser({ personalOrganization: false });
     const now = Date.now();
     const stale = await seedSession(
       userId,

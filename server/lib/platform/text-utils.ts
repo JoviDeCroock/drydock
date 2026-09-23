@@ -95,3 +95,9 @@ export function firstMatchingSourceLine(
   if (firstIndex === undefined) return undefined;
   return text.slice(0, firstIndex).split("\n").length;
 }
+
+const UTF8_ENCODER = new TextEncoder();
+
+export function utf8Size(value: string): number {
+  return UTF8_ENCODER.encode(value).byteLength;
+}

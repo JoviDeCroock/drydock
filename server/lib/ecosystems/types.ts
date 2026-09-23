@@ -1,4 +1,4 @@
-import type { AdapterBroker, PackageAdapter } from "./package-adapter";
+import type { AnyPackageAdapter } from "./package-adapter";
 import type { WorkflowGateAdapter } from "../workflow-gates/types";
 import type { PublicDiffAdapter } from "../public-diff/types";
 import type { PublishedPairAdapter } from "./published-pair";
@@ -37,7 +37,7 @@ export interface EcosystemModule {
   readonly id: EcosystemId;
   /** Human-facing name used in UI copy and report sections. */
   readonly label: string;
-  readonly staged?: PackageAdapter<never, AdapterBroker>;
+  readonly staged?: AnyPackageAdapter;
   readonly gate?: WorkflowGateAdapter;
   readonly publicDiff?: PublicDiffAdapter;
   readonly published?: PublishedPairAdapter;

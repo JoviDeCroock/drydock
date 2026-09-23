@@ -6,23 +6,24 @@
  * export. Both serve the scan report and nothing else.
  */
 import { Hono, type Context } from "hono";
-import { createDb } from "../../db/client";
+import type { AppDb } from "../../db/client";
 import { getOrganizationRole } from "../../db/invitations";
-import { getScan, getScanStatus } from "../../db/scans";
 import {
-  requireActiveOrganization,
-  requireActiveOrganizationContext,
-} from "../../lib/auth/active-organization";
-import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
-import { canonicalOrigin } from "../../lib/platform/http";
-import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
-import { purgePublicFeedCache } from "../../lib/public-feed";
-import {
+  getScan,
+  getScanStatus,
   enablePublicShare,
   readPublicShare,
   revokePublicShare,
   setThreatFeedListing,
-} from "../../db/scan-share";
+} from "../../db/scans";
+import {
+  requireActiveOrganization,
+  requireOrganizationRole,
+} from "../../lib/auth/active-organization";
+import { scanArtifactReadBucket } from "../../lib/scan/artifacts";
+import { canonicalOrigin, readJsonObject } from "../../lib/platform/http";
+import { optionalWorkerExecutionContext } from "../../lib/platform/execution-context";
+import { purgePublicFeedCache } from "../../lib/public-feed";
 import { reportExportFilename, serializeReportExport } from "../../lib/scan/report-export";
 import {
   buildReleaseReceipt,
@@ -42,11 +43,10 @@ scanSharingRoutes.post("/:id/share", async (c) => {
   const unverified = requireVerifiedEmail(c);
   if (unverified) return unverified;
   // `?? {}` also covers a literal `null` body, which json() parses successfully.
-  const body = ((await c.req.json().catch(() => ({}))) ?? {}) as Partial<{ threatFeed: boolean }>;
-  const db = createDb(c.env.DB);
+  const body = await readJsonObject<{ threatFeed: boolean }>(c);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManagePublicShares);
 
   // `threatFeed: false` is a *withdrawal*. Routing it through
   // enablePublicShare would mint a fresh token whenever the scan has none, so
@@ -105,10 +105,9 @@ scanSharingRoutes.post("/:id/share", async (c) => {
 });
 
 scanSharingRoutes.delete("/:id/share", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const session = c.get("authSession");
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManagePublicShares(role)) return c.json({ error: "forbidden" }, 403);
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManagePublicShares);
 
   const { revoked, publicPackageKey, publicBadgeTag } = await revokePublicShare(db, {
     scanId: c.req.param("id"),
@@ -148,7 +147,7 @@ function publicShareResponse(
 }
 
 scanSharingRoutes.get("/:id/report.json", async (c) => {
-  const db = createDb(c.env.DB);
+  const db = c.var.db;
   const organizationId = await resolveReportExportOrganization(c, db);
   if (!organizationId) return c.json({ error: "not found" }, 404);
   // Full-detail export: the findings come from R2 for artifact-backed scans, so
@@ -186,7 +185,7 @@ scanSharingRoutes.get("/:id/report.json", async (c) => {
 scanSharingRoutes.get(
   "/:id/release-receipt.json",
   async (c: Context<{ Bindings: Bindings; Variables: Variables }>) => {
-    const db = createDb(c.env.DB);
+    const db = c.var.db;
     const organizationId = await resolveReportExportOrganization(c, db);
     if (!organizationId) return c.json({ error: "not found" }, 404);
     const scanId = c.req.param("id");
@@ -220,7 +219,7 @@ scanSharingRoutes.get(
 
 async function resolveReportExportOrganization(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
-  db: ReturnType<typeof createDb>,
+  db: AppDb,
 ): Promise<string | null> {
   const requested = c.req.query("organizationId")?.trim() || null;
   if (!requested) return requireActiveOrganization(c, db);

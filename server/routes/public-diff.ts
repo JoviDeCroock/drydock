@@ -1,12 +1,12 @@
 import { Hono, type Context } from "hono";
+import { guardRateLimit } from "../lib/rate-limit";
 import { escapeHtmlText } from "../lib/platform/html-escape";
-import { enforceRateLimit, RateLimitError } from "../lib/platform/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
-import { canonicalOrigin, rateLimitResponse } from "../lib/platform/http";
+import { canonicalOrigin } from "../lib/platform/http";
 import { workerExecutionContext } from "../lib/platform/execution-context";
 import { resolveAtpmStagedReview } from "../lib/ecosystems/atpm/staged-review";
-import { recordProductEvent } from "../lib/platform/analytics";
+import { recordProductEvent } from "../lib/analytics";
 import {
   computePublicDiffCacheKey,
   loadPublicPackageDiff,
@@ -73,19 +73,11 @@ async function enforcePublicRateLimit(
   bucket: string,
   limit: number,
 ): Promise<Response | null> {
-  try {
-    await enforceRateLimit(c.env, {
-      key: `public-diff:${bucket}:${clientIp(c)}`,
-      limit,
-      windowMs: 60 * 1000,
-    });
-    return null;
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return rateLimitResponse(c, "rate limit exceeded", err);
-    }
-    throw err;
-  }
+  return guardRateLimit(
+    c,
+    { key: `public-diff:${bucket}:${clientIp(c)}`, limit, windowMs: 60 * 1000 },
+    "rate limit exceeded",
+  );
 }
 
 // The ecosystem registry is the authority on which ecosystems /diff serves: an
@@ -197,7 +189,7 @@ async function loadRequestedDiff(
 // The growth loop's only measurement. Anonymous by construction: the package
 // name is already public in the request URL, the cache key, and the page's own
 // Open Graph metadata, and nothing about the visitor is recorded — no IP, no
-// user agent, no session, no cookie. See server/lib/platform/analytics.ts.
+// user agent, no session, no cookie. See server/lib/analytics.ts.
 function recordPublicDiffView(
   c: PublicDiffContext,
   payload: PublicPackageDiff,

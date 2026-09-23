@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { setActiveOrganizationId } from "../src/models/active-organization";
 import { ScanListModel } from "../src/models/scan-list-model";
 import type { ScanListItem } from "../src/models/scan-api";
+import { jsonResponse } from "./helpers/fetch-stub";
 
 /**
  * The getting-started funnel's exit: has this organization ever had a review?
@@ -23,13 +24,6 @@ function scan(overrides: Partial<ScanListItem> = {}): ScanListItem {
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
-}
-
-function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
 }
 
 /** Serves `/api/v1/scans` from a per-filter map and records the filters asked for. */

@@ -1,17 +1,15 @@
 import { hasImplicitNodeGypInstall } from "../tar-parser.js";
 import { hasMatchingCodeLine } from "../platform/text-utils";
+import { DETERMINISTIC_RULE_IDS, deterministicFindings, safeJson } from "./rules";
 import {
   codePatternsFor,
-  DETERMINISTIC_RULE_IDS,
-  deterministicFindings,
   FINDING_SECRET_PATTERNS,
   JS_PATTERN_SET,
   PROMPT_INJECTION_PATTERN_SET,
   PYTHON_PATTERN_SET,
   REVIEW_MANIPULATION_PATTERN_SET,
-  safeJson,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
-} from "./rules";
+} from "./rules/patterns";
 import { changedStagedLines, splitComparableLines } from "./rules/context";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import type {
@@ -21,8 +19,8 @@ import type {
   FindingDiffAnnotation,
   FindingDiffStatus,
   Finding,
-  PackageJsonSummary,
-} from "./";
+} from "./types";
+import type { PackageJsonSummary } from "./serialize";
 
 export function projectReleaseRuleFindings(
   findings: Array<Finding & FindingDiffAnnotation>,

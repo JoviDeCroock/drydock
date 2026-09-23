@@ -1,79 +1,28 @@
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { eq } from "drizzle-orm";
-import { Hono } from "hono";
 import { describe, expect, test } from "vitest";
 import { listOrganizationAuditEvents } from "../../server/db/audit-log";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
 import { createScanJob } from "../../server/db/scans";
 import * as schema from "../../server/db/schema";
 import { describeAuditEvent } from "../../server/lib/auth/audit-events";
 import { publicFeedCacheKey } from "../../server/lib/public-feed";
+import type { RiskLevel } from "../../server/lib/review/types";
 import { publicReportsRoutes } from "../../server/routes/public-reports";
 import { scansRoutes } from "../../server/routes/scans";
-import type { Bindings, Variables } from "../../server/types";
-import { persistScanWithArtifacts } from "./helpers/persist-scan";
+import { buildTestApp, type TestApp } from "./helpers/app";
+import { type SeededUser, seedUser } from "./helpers/seed";
+import { type ScanOwner, seedCompletedScan } from "./helpers/seed";
 
-interface SeededUser {
-  userId: string;
-  organizationId: string;
-}
-
-async function seedUser(): Promise<SeededUser> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
-function buildTestApp(session: { userId: string } | null) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.route("/public", publicReportsRoutes);
-  if (session) {
-    app.use("/api/*", async (c, next) => {
-      c.set("authSession", { userId: session.userId });
-      await next();
-    });
-    app.route("/api/v1/scans", scansRoutes);
-  }
-  return app;
-}
-
-async function request(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
-  path: string,
-  options: RequestInit = {},
-) {
-  const ctx = createExecutionContext();
-  const headers = new Headers(options.headers);
-  if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  const res = await app.fetch(
-    new Request(`http://test.local${path}`, { ...options, headers }),
-    env,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  return res;
-}
-
-async function seedCompletedScan(
-  owner: SeededUser,
+function seedBadgeScan(
+  owner: ScanOwner,
   options: {
     packageName?: string;
     version?: string;
-    risk?: string;
-    releaseRisk?: string;
+    risk?: RiskLevel;
+    releaseRisk?: RiskLevel;
     ecosystem?: "npm" | "pypi" | "vscode";
-    source?: "manual" | "workflow_gate" | "published";
+    source?: "manual" | "auto_discovery" | "workflow_gate" | "published";
     registryUrl?: string;
     // The dist-tag the release was staged under. Only npm staged-publish scans
     // carry one; omitted means a review that was never staged under a tag.
@@ -83,9 +32,6 @@ async function seedCompletedScan(
     withoutProvenance?: boolean;
   } = {},
 ): Promise<string> {
-  const db = createDb(env.DB);
-  const scanId = `scan_${crypto.randomUUID()}`;
-  const stageId = `stage-${scanId.slice(-12)}`;
   const packageName = options.packageName ?? "@org/pkg";
   const version = options.version ?? "1.1.0";
   const risk = options.risk ?? "low";
@@ -113,33 +59,24 @@ async function seedCompletedScan(
           notices: [],
         }
       : null;
-  await createScanJob(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
-    source,
-    packageName:
-      source === "published" || (source !== "workflow_gate" && options.registryUrl)
-        ? packageName
-        : null,
-    stagedVersion:
-      source === "published" || (source !== "workflow_gate" && options.registryUrl)
-        ? version
-        : null,
-    // A published-pair review claims no registry coordinates: the release it
-    // reviews is already public and belongs to whoever published it.
-    registryUrl:
-      source === "manual" || source === "auto_discovery" ? (options.registryUrl ?? null) : null,
-  });
-  await persistScanWithArtifacts(db, {
-    id: scanId,
-    stageId,
-    organizationId: owner.organizationId,
-    ownerUserId: owner.userId,
+  return seedCompletedScan(owner, {
+    job: {
+      source,
+      packageName:
+        source === "published" || (source !== "workflow_gate" && options.registryUrl)
+          ? packageName
+          : null,
+      stagedVersion:
+        source === "published" || (source !== "workflow_gate" && options.registryUrl)
+          ? version
+          : null,
+      // A published-pair review claims no registry coordinates: the release it
+      // reviews is already public and belongs to whoever published it.
+      registryUrl:
+        source === "manual" || source === "auto_discovery" ? (options.registryUrl ?? null) : null,
+    },
     packageJson: { name: packageName, version },
     risk,
-    status: "complete",
     summary: {
       report: { version: 1, digest: "abc123", digestAlgorithm: "sha256" },
       ...(publishedPair ? { stagedPublish: publishedPair } : {}),
@@ -163,21 +100,44 @@ async function seedCompletedScan(
           }
         : {}),
     },
-    ai: null,
     files: [],
     diff: [],
-    findings: [],
-    riskSummary: {
-      artifactRisk: risk,
-      releaseRisk: options.releaseRisk ?? risk,
-      contextRisk: "low",
-      releaseFindingCount: 0,
-      contextFindingCount: 0,
-      unknownFindingCount: 0,
+    persist: {
+      riskSummary: {
+        artifactRisk: risk,
+        releaseRisk: options.releaseRisk ?? risk,
+        contextRisk: "low",
+        releaseFindingCount: 0,
+        contextFindingCount: 0,
+        unknownFindingCount: 0,
+        priorApprovedContextFindingCount: 0,
+      },
     },
-    report: { version: 1, digest: "abc123" },
   });
-  return scanId;
+}
+
+// Anonymous `/public` is always mounted; the session (and the scans API) only when signed in.
+const publicApp = (session: SeededUser | null) =>
+  buildTestApp(
+    (app) => {
+      app.route("/public", publicReportsRoutes);
+      if (session) app.route("/api/v1/scans", scansRoutes);
+    },
+    session,
+    { authPath: "/api/*" },
+  );
+
+async function request(app: TestApp, path: string, options: RequestInit = {}) {
+  const ctx = createExecutionContext();
+  const headers = new Headers(options.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  const res = await app.fetch(
+    new Request(`http://test.local${path}`, { ...options, headers }),
+    env,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return res;
 }
 
 async function share(
@@ -272,7 +232,7 @@ async function fetchBadge(
 describe("shields badge endpoint", () => {
   test("only feed-listed reviews surface; sharing alone stays not reviewed", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
 
     const before = await fetchBadge(app, "npm", packageName);
@@ -284,7 +244,7 @@ describe("shields badge endpoint", () => {
       color: "lightgrey",
     });
 
-    const scanId = await seedCompletedScan(owner, { packageName, version: "2.0.0", risk: "low" });
+    const scanId = await seedBadgeScan(owner, { packageName, version: "2.0.0", risk: "low" });
     // Not shared yet — still not reviewed publicly.
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe("not reviewed");
 
@@ -305,11 +265,11 @@ describe("shields badge endpoint", () => {
 
   test("restaging retires the obsolete public report, badge, and feed entry", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     const version = "2.0.0";
     const registryUrl = "https://registry.npmjs.org";
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version,
       registryUrl,
@@ -370,35 +330,35 @@ describe("shields badge endpoint", () => {
 
   test("registry-verified reviews outrank newer manifest-claimed gate scans", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
 
-    const staged = await seedCompletedScan(owner, { packageName, version: "1.0.0", risk: "low" });
+    const staged = await seedBadgeScan(owner, { packageName, version: "1.0.0", risk: "low" });
     await share(app, staged, { threatFeed: true });
 
     // A later workflow-gate scan claims the same npm name (manifest-claimed
     // identity) — it must not override the registry-verified badge.
     const spoofer = await seedUser();
-    const gate = await seedCompletedScan(spoofer, {
+    const gate = await seedBadgeScan(spoofer, {
       packageName,
       version: "9.9.9",
       risk: "high",
       releaseRisk: "high",
       source: "workflow_gate",
     });
-    await share(buildTestApp(spoofer), gate, { threatFeed: true });
+    await share(publicApp(spoofer), gate, { threatFeed: true });
 
     const badge = await fetchBadge(app, "npm", packageName);
     expect(badge.body.message).toBe("1.0.0 reviewed · low risk");
 
     // With no verified review, the gate scan is what the org published — shown.
     const gateOnlyName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const gateOnly = await seedCompletedScan(spoofer, {
+    const gateOnly = await seedBadgeScan(spoofer, {
       packageName: gateOnlyName,
       version: "2.0.0",
       source: "workflow_gate",
     });
-    await share(buildTestApp(spoofer), gateOnly, { threatFeed: true });
+    await share(publicApp(spoofer), gateOnly, { threatFeed: true });
     // A gate-only claim still answers the badge — but says so. The registry
     // never proved this org can publish under that name.
     expect((await fetchBadge(app, "npm", gateOnlyName)).body).toMatchObject({
@@ -415,9 +375,9 @@ describe("shields badge endpoint", () => {
     // thing separating a maintainer's review from anyone's claim on the name.
     for (const ecosystem of ["pypi", "vscode"] as const) {
       const claimant = await seedUser();
-      const claimantApp = buildTestApp(claimant);
+      const claimantApp = publicApp(claimant);
       const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-      const scanId = await seedCompletedScan(claimant, {
+      const scanId = await seedBadgeScan(claimant, {
         packageName,
         version: "2.99.0",
         ecosystem,
@@ -436,9 +396,9 @@ describe("shields badge endpoint", () => {
     // is attacker-shaped. shields renders the message into SVG text, so a
     // right-to-left override would reverse the visible run.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "1.0.0\u202E ksir hgih\u0007",
     });
@@ -453,16 +413,16 @@ describe("shields badge endpoint", () => {
 
   test("manifest-claimed scans cannot crowd a verified review out of the candidate page", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const staged = await seedCompletedScan(owner, { packageName, version: "1.0.0", risk: "low" });
+    const staged = await seedBadgeScan(owner, { packageName, version: "1.0.0", risk: "low" });
     await share(app, staged, { threatFeed: true });
     await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(staged).run();
 
     const spoofer = await seedUser();
-    const spooferApp = buildTestApp(spoofer);
+    const spooferApp = publicApp(spoofer);
     for (let index = 0; index < 21; index += 1) {
-      const gate = await seedCompletedScan(spoofer, {
+      const gate = await seedBadgeScan(spoofer, {
         packageName,
         version: `9.9.${index}`,
         risk: "high",
@@ -480,9 +440,9 @@ describe("shields badge endpoint", () => {
 
   test("badge and feed responses are served from the colo cache", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, version: "5.0.0" });
+    const scanId = await seedBadgeScan(owner, { packageName, version: "5.0.0" });
     await share(app, scanId, { threatFeed: true });
 
     const first = await fetchBadge(app, "npm", packageName);
@@ -501,10 +461,10 @@ describe("shields badge endpoint", () => {
 
   test("hostile version strings are clamped in the badge message", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
     const longVersion = `1.0.0-${"x".repeat(200)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, version: longVersion });
+    const scanId = await seedBadgeScan(owner, { packageName, version: longVersion });
     await share(app, scanId, { threatFeed: true });
 
     const badge = await fetchBadge(app, "npm", packageName);
@@ -514,9 +474,9 @@ describe("shields badge endpoint", () => {
 
   test("scoped npm names with slashes resolve through the wildcard route", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `@scope-${crypto.randomUUID().slice(0, 6)}/pkg`;
-    const scanId = await seedCompletedScan(owner, { packageName });
+    const scanId = await seedBadgeScan(owner, { packageName });
     await share(app, scanId, { threatFeed: true });
 
     const badge = await fetchBadge(app, "npm", packageName);
@@ -528,9 +488,9 @@ describe("shields badge endpoint", () => {
 
   test("high risk and blocked releases surface as red badges", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "3.0.0",
       risk: "high",
@@ -555,9 +515,9 @@ describe("shields badge endpoint", () => {
 
   test("an approved release reads approved, not its pre-decision risk grade", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "4.0.0",
       risk: "medium",
@@ -602,11 +562,11 @@ describe("shields badge endpoint", () => {
     // not launder a prerelease onto the default badge, and the purge the
     // decision route fires has to address the line the badge actually occupies.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    const stable = await seedBadgeScan(owner, { packageName, version: "1.0.0", tag: "latest" });
     await share(app, stable, { threatFeed: true });
-    const rc = await seedCompletedScan(owner, {
+    const rc = await seedBadgeScan(owner, {
       packageName,
       version: "2.0.0-rc.0",
       risk: "medium",
@@ -645,9 +605,9 @@ describe("shields badge endpoint", () => {
 
   test("an approved manifest-claimed release stays visibly unverified", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "2.0.0",
       source: "workflow_gate",
@@ -668,9 +628,9 @@ describe("shields badge endpoint", () => {
     // Nothing about this org relates to the package: a published-pair scan
     // needs no npm credential and runs against any already-public release.
     const stranger = await seedUser();
-    const app = buildTestApp(stranger);
+    const app = publicApp(stranger);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(stranger, {
+    const scanId = await seedBadgeScan(stranger, {
       packageName,
       version: "3.0.0",
       source: "published",
@@ -705,9 +665,9 @@ describe("shields badge endpoint", () => {
 
   test("a published-pair review cannot displace a registry-verified badge", async () => {
     const maintainer = await seedUser();
-    const app = buildTestApp(maintainer);
+    const app = publicApp(maintainer);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const staged = await seedCompletedScan(maintainer, {
+    const staged = await seedBadgeScan(maintainer, {
       packageName,
       version: "1.0.0",
       risk: "low",
@@ -715,8 +675,8 @@ describe("shields badge endpoint", () => {
     await share(app, staged, { threatFeed: true });
 
     const attacker = await seedUser();
-    const attackerApp = buildTestApp(attacker);
-    const forged = await seedCompletedScan(attacker, {
+    const attackerApp = publicApp(attacker);
+    const forged = await seedBadgeScan(attacker, {
       packageName,
       version: "9.9.9",
       source: "published",
@@ -733,9 +693,9 @@ describe("shields badge endpoint", () => {
     // Second lock: a row that acquired a key before its source was classified
     // ineligible must still never be picked.
     const stranger = await seedUser();
-    const app = buildTestApp(stranger);
+    const app = publicApp(stranger);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(stranger, {
+    const scanId = await seedBadgeScan(stranger, {
       packageName,
       version: "3.0.0",
       source: "published",
@@ -750,9 +710,9 @@ describe("shields badge endpoint", () => {
 
   test("the badge is ecosystem-scoped", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `demo-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, ecosystem: "pypi" });
+    const scanId = await seedBadgeScan(owner, { packageName, ecosystem: "pypi" });
     await share(app, scanId, { threatFeed: true });
 
     expect((await fetchBadge(app, "pypi", packageName)).body.message).toContain("reviewed");
@@ -761,9 +721,9 @@ describe("shields badge endpoint", () => {
 
   test("a gate scan with no provenance snapshot claims no ecosystem's badge", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `demo-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       source: "workflow_gate",
       withoutProvenance: true,
@@ -787,16 +747,16 @@ describe("shields badge endpoint", () => {
 
   test("canonical ecosystem aliases resolve to the same public badge", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
 
-    const pypiScan = await seedCompletedScan(owner, {
+    const pypiScan = await seedBadgeScan(owner, {
       packageName: "Demo_Package.Name",
       ecosystem: "pypi",
     });
     await share(app, pypiScan, { threatFeed: true });
     expect((await fetchBadge(app, "pypi", "demo-package-name")).body.message).toContain("reviewed");
 
-    const vscodeScan = await seedCompletedScan(owner, {
+    const vscodeScan = await seedBadgeScan(owner, {
       packageName: "Publisher.PowerShell",
       ecosystem: "vscode",
     });
@@ -808,11 +768,11 @@ describe("shields badge endpoint", () => {
 
   test("accepts valid VS Code identities beyond the npm and PyPI length limit", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `${"p".repeat(120)}.${"e".repeat(120)}`;
     expect(packageName.length).toBeGreaterThan(214);
 
-    const scanId = await seedCompletedScan(owner, { packageName, ecosystem: "vscode" });
+    const scanId = await seedBadgeScan(owner, { packageName, ecosystem: "vscode" });
     await share(app, scanId, { threatFeed: true });
 
     const badge = await fetchBadge(app, "vscode", packageName);
@@ -821,14 +781,14 @@ describe("shields badge endpoint", () => {
   });
 
   test("rejects unknown ecosystems and malformed names", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
     expect((await request(app, "/public/badge/cargo/serde")).status).toBe(404);
     expect((await request(app, `/public/badge/npm/${"a".repeat(300)}`)).status).toBe(400);
   });
 
   test("a throttled badge says unavailable, never not-reviewed", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     // A package Drydock explicitly blocked. Its badge must never be throttled
     // into the same payload as a package nobody reviewed: shields honours the
     // `cacheSeconds` field and enforces a 300s floor of its own, so a "not
@@ -837,7 +797,7 @@ describe("shields badge endpoint", () => {
     // packages through shared egress addresses, so an unrelated burst is
     // enough to trigger it.
     const packageName = `blocked-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, version: "3.0.0", risk: "high" });
+    const scanId = await seedBadgeScan(owner, { packageName, version: "3.0.0", risk: "high" });
     await share(app, scanId, { threatFeed: true });
     await request(app, `/api/v1/scans/${scanId}/decision`, {
       method: "POST",
@@ -892,10 +852,10 @@ describe("shields badge endpoint", () => {
     // embedded badge — including the one sitting next to `npm i <pkg>` — at a
     // release nobody installs by default.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
 
-    const stable = await seedCompletedScan(owner, {
+    const stable = await seedBadgeScan(owner, {
       packageName,
       version: "10.29.8",
       tag: "latest",
@@ -904,7 +864,7 @@ describe("shields badge endpoint", () => {
     await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(stable).run();
 
     // Newer in every ordering the query applies, and still not the default.
-    const rc = await seedCompletedScan(owner, {
+    const rc = await seedBadgeScan(owner, {
       packageName,
       version: "11.0.0-rc.0",
       risk: "medium",
@@ -940,9 +900,9 @@ describe("shields badge endpoint", () => {
     // intact. Treating `~` as malformed made the persisted non-null tag miss
     // both the default SQL population and every explicitly queryable line.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "2.0.0-beta.1",
       tag: "beta~edge",
@@ -962,12 +922,12 @@ describe("shields badge endpoint", () => {
     // it has to be folded into the key or `?tag=beta` is served the `latest`
     // body for the rest of the TTL.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
 
-    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    const stable = await seedBadgeScan(owner, { packageName, version: "1.0.0", tag: "latest" });
     await share(app, stable, { threatFeed: true });
-    const beta = await seedCompletedScan(owner, {
+    const beta = await seedBadgeScan(owner, {
       packageName,
       version: "2.0.0-beta.1",
       tag: "beta",
@@ -1002,9 +962,9 @@ describe("shields badge endpoint", () => {
     // installs by default, so they must keep working — without answering a
     // question about some other release line.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const legacy = await seedCompletedScan(owner, { packageName, version: "4.0.0" });
+    const legacy = await seedBadgeScan(owner, { packageName, version: "4.0.0" });
     await share(app, legacy, { threatFeed: true });
 
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
@@ -1016,7 +976,7 @@ describe("shields badge endpoint", () => {
 
     // Same for an ecosystem with no dist-tag concept at all.
     const pypiName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const pypi = await seedCompletedScan(owner, {
+    const pypi = await seedBadgeScan(owner, {
       packageName: pypiName,
       version: "1.2.3",
       ecosystem: "pypi",
@@ -1037,14 +997,14 @@ describe("shields badge endpoint", () => {
     // would be all `rc` rows and the default badge would read "not reviewed"
     // with a listed stable review sitting just past the limit.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const stable = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    const stable = await seedBadgeScan(owner, { packageName, version: "1.0.0", tag: "latest" });
     await share(app, stable, { threatFeed: true });
     await env.DB.prepare("UPDATE scans SET completed_at = 1 WHERE id = ?").bind(stable).run();
 
     for (let index = 0; index < 21; index += 1) {
-      const rc = await seedCompletedScan(owner, {
+      const rc = await seedBadgeScan(owner, {
         packageName,
         version: `2.0.0-rc.${index}`,
         tag: "rc",
@@ -1059,9 +1019,9 @@ describe("shields badge endpoint", () => {
 
   test("a malformed tag is rejected rather than resolved to latest", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `pkg-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName, version: "1.0.0", tag: "latest" });
+    const scanId = await seedBadgeScan(owner, { packageName, version: "1.0.0", tag: "latest" });
     await share(app, scanId, { threatFeed: true });
     // Warm the default entry: a malformed tag must not be answered out of it.
     expect((await fetchBadge(app, "npm", packageName)).body.message).toBe(
@@ -1082,7 +1042,7 @@ describe("shields badge endpoint", () => {
   });
 
   test("badge misses are not written to the colo cache", async () => {
-    const app = buildTestApp(null);
+    const app = publicApp(null);
     // Every invented name would otherwise add an entry to the same
     // caches.default namespace that holds published-tarball bytes.
     const missName = `never-scanned-${crypto.randomUUID().slice(0, 8)}`;
@@ -1100,9 +1060,9 @@ describe("shields badge endpoint", () => {
 describe("public threat feed", () => {
   test("sharing alone does not list; the feed opt-in does", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, {
+    const scanId = await seedBadgeScan(owner, {
       packageName,
       version: "9.9.9",
       risk: "high",
@@ -1140,9 +1100,9 @@ describe("public threat feed", () => {
 
   test("unlisting and revoking both drop the entry", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName });
+    const scanId = await seedBadgeScan(owner, { packageName });
     await share(app, scanId, { threatFeed: true });
     expect((await fetchFeed(app)).entries.some((entry) => entry.package === packageName)).toBe(
       true,
@@ -1168,8 +1128,8 @@ describe("public threat feed", () => {
 
   test("feed listing changes are audited as scan events", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
-    const scanId = await seedCompletedScan(owner, {
+    const app = publicApp(owner);
+    const scanId = await seedBadgeScan(owner, {
       packageName: `feed-${crypto.randomUUID().slice(0, 8)}`,
     });
     await share(app, scanId, { threatFeed: true });
@@ -1197,17 +1157,17 @@ describe("public threat feed", () => {
 
   test("gate scans are labeled manifest-claimed and the feed orders newest listing first", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const first = `feed-${crypto.randomUUID().slice(0, 8)}`;
     const second = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const gateScan = await seedCompletedScan(owner, {
+    const gateScan = await seedBadgeScan(owner, {
       packageName: first,
       source: "workflow_gate",
     });
     await share(app, gateScan, { threatFeed: true });
     // Ensure a strictly later listing timestamp for a deterministic order.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const stagedScan = await seedCompletedScan(owner, { packageName: second });
+    const stagedScan = await seedBadgeScan(owner, { packageName: second });
     await share(app, stagedScan, { threatFeed: true });
 
     const feed = await fetchFeed(app);
@@ -1221,12 +1181,12 @@ describe("public threat feed", () => {
 
   test("published-pair reviews are listed as public-review under their own ecosystem", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const npmName = `feed-${crypto.randomUUID().slice(0, 8)}`;
     const pypiName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const npmScan = await seedCompletedScan(owner, { packageName: npmName, source: "published" });
+    const npmScan = await seedBadgeScan(owner, { packageName: npmName, source: "published" });
     await share(app, npmScan, { threatFeed: true });
-    const pypiScan = await seedCompletedScan(owner, {
+    const pypiScan = await seedBadgeScan(owner, {
       packageName: pypiName,
       source: "published",
       ecosystem: "pypi",
@@ -1255,13 +1215,13 @@ describe("public threat feed", () => {
     // The tag is the axis the badge is queried on, so a partner walking
     // feed → badge has to see the same value the badge filters by.
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const tagged = `feed-${crypto.randomUUID().slice(0, 8)}`;
     const untagged = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    await share(app, await seedCompletedScan(owner, { packageName: tagged, tag: "beta" }), {
+    await share(app, await seedBadgeScan(owner, { packageName: tagged, tag: "beta" }), {
       threatFeed: true,
     });
-    await share(app, await seedCompletedScan(owner, { packageName: untagged }), {
+    await share(app, await seedBadgeScan(owner, { packageName: untagged }), {
       threatFeed: true,
     });
 
@@ -1273,8 +1233,8 @@ describe("public threat feed", () => {
 
   test("a null JSON body shares without touching the listing", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
-    const scanId = await seedCompletedScan(owner, {
+    const app = publicApp(owner);
+    const scanId = await seedBadgeScan(owner, {
       packageName: `feed-${crypto.randomUUID().slice(0, 8)}`,
     });
     const res = await request(app, `/api/v1/scans/${scanId}/share`, {
@@ -1291,13 +1251,13 @@ describe("public threat feed", () => {
 
   test("another organization cannot list a scan it does not own", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName });
+    const scanId = await seedBadgeScan(owner, { packageName });
     await share(app, scanId);
 
     const outsider = await seedUser();
-    const res = await request(buildTestApp(outsider), `/api/v1/scans/${scanId}/share`, {
+    const res = await request(publicApp(outsider), `/api/v1/scans/${scanId}/share`, {
       method: "POST",
       body: JSON.stringify({ threatFeed: true }),
     });
@@ -1309,9 +1269,9 @@ describe("public threat feed", () => {
 
   test("unlisting a revoked share does not republish it", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName });
+    const scanId = await seedBadgeScan(owner, { packageName });
     await share(app, scanId, { threatFeed: true });
 
     // Another admin (or the same user in another tab) revokes the link.
@@ -1340,9 +1300,9 @@ describe("public threat feed", () => {
 
   test("unlisting a live share still works and leaves the link alone", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageName = `feed-${crypto.randomUUID().slice(0, 8)}`;
-    const scanId = await seedCompletedScan(owner, { packageName });
+    const scanId = await seedBadgeScan(owner, { packageName });
     const { share: listed } = await share(app, scanId, { threatFeed: true });
 
     const { share: unlisted } = await share(app, scanId, { threatFeed: false });
@@ -1355,12 +1315,12 @@ describe("public threat feed", () => {
 
   test("the feed pages backwards so a burst of listings cannot hide older entries", async () => {
     const owner = await seedUser();
-    const app = buildTestApp(owner);
+    const app = publicApp(owner);
     const packageNames = [] as string[];
     for (let i = 0; i < 3; i += 1) {
       const packageName = `page-${crypto.randomUUID().slice(0, 8)}`;
       packageNames.push(packageName);
-      const scanId = await seedCompletedScan(owner, { packageName });
+      const scanId = await seedBadgeScan(owner, { packageName });
       await share(app, scanId, { threatFeed: true });
     }
 

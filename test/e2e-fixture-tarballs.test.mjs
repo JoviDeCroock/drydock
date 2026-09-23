@@ -6,7 +6,7 @@ import {
   tarEntryNames,
   tarballEntryNames,
 } from "./e2e/tarball-entries.mjs";
-import { TAR_BLOCK, buildTar, concatBytes, tarEntriesOnly } from "./helpers/archive-fixtures.mjs";
+import { TAR_BLOCK, buildTar, concatBytes, tarEntriesOnly } from "./helpers/archive-fixtures";
 
 describe("tarEntryNames", () => {
   test("lists packed members in archive order", () => {

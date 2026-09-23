@@ -1,7 +1,8 @@
 import type { AiReview } from "../ai-review/types";
 import { displayedAiResult } from "../ai-review/types";
 import type { FindingProfileEntry, ReleaseConsistency } from "../scan/release-memory";
-import { combineRisk, computeRisk, normalizeRisk, type Finding, type RiskLevel } from "./";
+import { combineRisk, computeRisk, normalizeRisk } from "./";
+import type { Finding, RiskLevel } from "./types";
 import { deterministicRuleIds } from "./rules/rule-ids";
 
 export interface ScanRiskBreakdown {

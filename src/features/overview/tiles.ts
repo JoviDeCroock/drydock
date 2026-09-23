@@ -2,7 +2,7 @@
  * What each overview tile says, derived from the aggregate. Kept apart from the
  * component so the copy and the number formatting can be pinned in tests.
  */
-import { pluralize } from "../../lib/format";
+import { formatCompactDuration, pluralize } from "../../lib/format";
 import type { ScanDecisionFilter } from "../../models/scan";
 import type { ScanOverview } from "../../models/scan-overview";
 
@@ -19,19 +19,6 @@ export interface OverviewTile {
   /** Tints the value only (docs/design.md "Count tiles"); null reads as plain ink. */
   tone: "warn" | null;
   filter: ScanDecisionFilter;
-}
-
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-
-/** Compact mono duration: `<1m`, `42m`, `3h`, `5d`. */
-export function formatCompactDuration(ms: number): string {
-  const clamped = Math.max(0, ms);
-  if (clamped < MINUTE_MS) return "<1m";
-  if (clamped < HOUR_MS) return `${Math.floor(clamped / MINUTE_MS)}m`;
-  if (clamped < 2 * DAY_MS) return `${Math.floor(clamped / HOUR_MS)}h`;
-  return `${Math.floor(clamped / DAY_MS)}d`;
 }
 
 export function overviewTiles(overview: ScanOverview, now: number): OverviewTile[] {

@@ -10,6 +10,7 @@ import {
 import { ensurePersonalOrganization } from "../../server/db/organizations";
 import * as schema from "../../server/db/schema";
 import { encryptNpmToken } from "../../server/lib/ecosystems/npm/connection";
+import type { QueueMessage } from "../../server/lib/scan/job";
 import worker from "../../server";
 
 const REGISTRY_URL = "https://registry.npmjs.org";
@@ -45,6 +46,7 @@ async function seedOrg(input: {
     updatedAt: now,
   });
   const organizationId = await ensurePersonalOrganization(db, { userId });
+  if (!organizationId) throw new Error(`no personal organization for ${userId}`);
   let connectionCreatorUserId = userId;
   let connectionCreatorEmail = email;
   if (input.connectionCreator === "other") {
@@ -176,7 +178,7 @@ describe("staged publishes discovery cron", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const queue = { send: vi.fn(async () => undefined) };
+    const queue = { send: vi.fn(async (_message: QueueMessage) => undefined) };
     const send = vi.fn(async () => undefined);
     const ctx = createExecutionContext();
     await worker.scheduled(

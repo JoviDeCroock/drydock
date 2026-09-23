@@ -25,7 +25,7 @@ declare global {
       // Aggregate product counters. Optional: every call site is a no-op
       // without it, so local dev, tests, and self-hosted deployments that omit
       // the binding behave exactly as before. See
-      // server/lib/platform/analytics.ts.
+      // server/lib/analytics.ts.
       PRODUCT_ANALYTICS?: AnalyticsEngineDataset;
       SCAN_QUEUE?: Queue<import("./lib/scan/job").QueueMessage>;
       NPM_REGISTRY: string;

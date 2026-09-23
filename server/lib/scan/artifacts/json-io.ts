@@ -14,7 +14,7 @@ import {
  */
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
 import { sha256Hex } from "../../platform/crypto-utils";
-import { utf8Size } from "../../platform/stable-json";
+import { utf8Size } from "../../platform/text-utils";
 
 export async function putVerifiedJson(
   bucket: R2Bucket,

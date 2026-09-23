@@ -4,8 +4,8 @@ import {
   GithubAppModel,
   type InstallationStatus,
   type PublicGithubAppInstallation,
-  type PublicReleaseTarget,
 } from "../../../models/github-app";
+import { ReleaseTargetsModel, type PublicReleaseTarget } from "../../../models/release-targets";
 import { Alert } from "../../../components/Alert";
 import { Badge, type BadgeTone } from "../../../components/Badge";
 import { Button } from "../../../components/Button";
@@ -20,9 +20,11 @@ import { ReleaseTargetForm } from "./ReleaseTargetForm";
 
 export function GithubAppSection({
   githubApp,
+  targets,
   defaultOpen = false,
 }: {
   githubApp: ReturnType<typeof useModel<typeof GithubAppModel.prototype>>;
+  targets: ReturnType<typeof useModel<typeof ReleaseTargetsModel.prototype>>;
   defaultOpen?: boolean;
 }) {
   const configured = githubApp.config.value?.configured === true;
@@ -31,8 +33,8 @@ export function GithubAppSection({
   const error = githubApp.error.value;
   const lastLinked = githubApp.lastLinked.value;
   const busy = githubApp.busy.value;
-  const releaseTargets: PublicReleaseTarget[] = githubApp.releaseTargets.value;
-  const releaseTargetsError = githubApp.releaseTargetsError.value;
+  const releaseTargets: PublicReleaseTarget[] = targets.releaseTargets.value;
+  const releaseTargetsError = targets.releaseTargetsError.value;
   const activeInstallations = installations.filter(
     (row: PublicGithubAppInstallation) => row.status === "active",
   );
@@ -111,7 +113,7 @@ export function GithubAppSection({
           }
         />
         {activeInstallations.length ? (
-          <ReleaseTargetForm githubApp={githubApp} activeInstallations={activeInstallations} />
+          <ReleaseTargetForm targets={targets} activeInstallations={activeInstallations} />
         ) : (
           <SettingsCardBody inset="belowHeader" gap="none">
             <Muted class="text-[13px] m-0">
@@ -129,7 +131,7 @@ export function GithubAppSection({
           <ReleaseTargetList
             releaseTargets={releaseTargets}
             installations={installations}
-            onDelete={(id) => void githubApp.deleteReleaseTarget(id)}
+            onDelete={(id) => void targets.deleteReleaseTarget(id)}
           />
         ) : null}
       </div>

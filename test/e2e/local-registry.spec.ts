@@ -197,7 +197,10 @@ test("a shared review is readable as an anonymous public report", async ({ brows
           headers: { "content-type": "application/json" },
           body: "{}",
         });
-        return { status: response.status, body: await response.json().catch(() => null) };
+        const body = (await response.json().catch(() => null)) as {
+          share?: { token?: string; includesFiles?: boolean };
+        } | null;
+        return { status: response.status, body };
       },
       String(reviewedScanId),
     );
@@ -385,7 +388,9 @@ async function registerAndConnect(page: Page) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ stageId: "stage-benign-diff-000001" }),
       });
-      const body = await validate.json().catch(() => null);
+      const body = (await validate.json().catch(() => null)) as {
+        validation?: { ok?: boolean };
+      } | null;
       if (!validate.ok || !body?.validation?.ok) {
         throw new Error(
           `npm connection validation failed: ${validate.status} ${await validate.text()}`,
@@ -409,7 +414,15 @@ async function openAuthenticatedPage(
   return { context, page };
 }
 
-async function createScan(page: Page, stageId: string): Promise<{ status: number; body: any }> {
+interface CreateScanBody {
+  scan?: { id?: string };
+  queued?: boolean;
+}
+
+async function createScan(
+  page: Page,
+  stageId: string,
+): Promise<{ status: number; body: CreateScanBody | null }> {
   return evaluateOnStablePage(
     page,
     async (inputStageId) => {
@@ -418,7 +431,7 @@ async function createScan(page: Page, stageId: string): Promise<{ status: number
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ stageId: inputStageId }),
       });
-      const body = await response.json().catch(() => null);
+      const body = (await response.json().catch(() => null)) as CreateScanBody | null;
       return { status: response.status, body };
     },
     stageId,
@@ -459,9 +472,11 @@ async function pollScanUntilTerminal(
   }
 }
 
+// Playwright does not export PageFunction, so the callback type is read off
+// the two-type-parameter `evaluate` overload via an instantiation expression.
 async function evaluateOnStablePage<Arg, Result>(
   page: Page,
-  pageFunction: (arg: Arg) => Promise<Result>,
+  pageFunction: Parameters<typeof page.evaluate<Result, Arg>>[0],
   arg: Arg,
 ): Promise<Result> {
   for (let attempt = 0; attempt < 3; attempt++) {

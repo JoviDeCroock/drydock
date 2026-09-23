@@ -6,14 +6,13 @@
  * multiple trusted-publishing configurations make maintainers ask.
  */
 import type { ComponentChildren } from "preact";
-import { useEffect } from "preact/hooks";
-import { useComputed, useModel, useSignal } from "@preact/signals";
+import { useComputed, useModel } from "@preact/signals";
 import { Show } from "@preact/signals/utils";
 import { useLocation, useRoute } from "preact-iso";
 import { ecosystemLabel } from "../../../../server/lib/ecosystems/labels";
 import { formatDateTime, pluralize } from "../../../lib/format";
-import { rememberDashboardReturnUrl } from "../../../lib/query-state";
 import { sessionModel } from "../../../models/auth";
+import { useAuthedDashboardSession } from "../../../features/account/useAuthedDashboardSession";
 import {
   PackageReleasesModel,
   type PackageRelease,
@@ -21,7 +20,7 @@ import {
 } from "../../../models/package-releases";
 import { Alert } from "../../../components/Alert";
 import { Badge, severityTone } from "../../../components/Badge";
-import { Button, LinkButton } from "../../../components/Button";
+import { LinkButton, LoadMoreButton } from "../../../components/Button";
 import { Card } from "../../../components/Card";
 import { LoadingState } from "../../../components/Loading";
 import { PageShell } from "../../../components/PageShell";
@@ -64,28 +63,7 @@ function PackageReleasesView({
 }) {
   const location = useLocation();
   const model = useModel(() => new PackageReleasesModel(packageName, ecosystem));
-  const sessionChecked = useSignal(false);
-
-  useEffect(() => {
-    rememberDashboardReturnUrl(location.url);
-  }, [location.url]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await sessionModel.load();
-      if (cancelled) return;
-      if (!data) {
-        location.route(`/login?returnTo=${encodeURIComponent(location.url)}`, true);
-        return;
-      }
-      sessionChecked.value = true;
-      await model.load();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const sessionChecked = useAuthedDashboardSession({ onReady: () => model.load() });
 
   const channels = useComputed(() => groupReleasesByChannel(model.releases.value));
   const ready = useComputed(() => sessionChecked.value && model.loaded.value);
@@ -151,16 +129,11 @@ function PackageReleasesView({
                   <Show when={model.nextCursor}>
                     {() => (
                       <div class="flex justify-center">
-                        <Button
-                          variant="secondary"
-                          size="sm"
+                        <LoadMoreButton
+                          loading={model.loadingMore}
+                          label="Load older releases"
                           onClick={() => void model.loadMore()}
-                          disabled={model.loadingMore}
-                        >
-                          <Show when={model.loadingMore} fallback="Load older releases">
-                            Loading…
-                          </Show>
-                        </Button>
+                        />
                       </div>
                     )}
                   </Show>

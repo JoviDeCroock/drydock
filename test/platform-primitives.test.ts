@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { mapWithConcurrency } from "../server/lib/platform/concurrency";
 import {
   hexDecode,
@@ -86,11 +86,20 @@ describe("isRecord", () => {
 });
 
 describe("mapWithConcurrency", () => {
+  // Worker delays are fake timers so the ordering and concurrency assertions
+  // do not depend on wall-clock scheduling.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   test("preserves input order regardless of completion order", async () => {
-    const result = await mapWithConcurrency([30, 10, 20], 3, async (ms) => {
+    vi.useFakeTimers();
+    const pending = mapWithConcurrency([30, 10, 20], 3, async (ms) => {
       await new Promise((resolve) => setTimeout(resolve, ms / 10));
       return ms;
     });
+    await vi.runAllTimersAsync();
+    const result = await pending;
     expect(result).toEqual([30, 10, 20]);
   });
 
@@ -106,9 +115,10 @@ describe("mapWithConcurrency", () => {
   });
 
   test("never runs more than `concurrency` workers at once", async () => {
+    vi.useFakeTimers();
     let inFlight = 0;
     let peak = 0;
-    await mapWithConcurrency(
+    const pending = mapWithConcurrency(
       Array.from({ length: 20 }, (_, i) => i),
       3,
       async (i) => {
@@ -119,6 +129,8 @@ describe("mapWithConcurrency", () => {
         return i;
       },
     );
+    await vi.runAllTimersAsync();
+    await pending;
     expect(peak).toBeLessThanOrEqual(3);
   });
 
@@ -156,15 +168,18 @@ describe("mapWithConcurrency", () => {
   test("awaits in-flight workers before rethrowing, leaving nothing dangling", async () => {
     // Workers outliving the rejection is what makes an unhandled rejection
     // escape the request context in a Worker.
+    vi.useFakeTimers();
     let settled = 0;
-    await expect(
-      mapWithConcurrency([0, 1], 2, async (n) => {
-        if (n === 0) throw new Error("boom");
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        settled += 1;
-        return n;
-      }),
-    ).rejects.toThrow("boom");
+    const pending = mapWithConcurrency([0, 1], 2, async (n) => {
+      if (n === 0) throw new Error("boom");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      settled += 1;
+      return n;
+    });
+    // Attach the assertion before draining timers so the rejection is observed.
+    const rejects = expect(pending).rejects.toThrow("boom");
+    await vi.runAllTimersAsync();
+    await rejects;
     expect(settled).toBe(1);
   });
 });

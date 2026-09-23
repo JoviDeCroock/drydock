@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   annotatePersistedFindings,
-  hasNoLoadableBodyFlags,
   scanFilesToFileRecords,
   selectDiffWorkbenchState,
 } from "../src/pages/Dashboard/ScanDetail/diff-helpers";
+import { hasNoLoadableBody } from "../src/features/review/diff-entries";
 
 describe("scanFilesToFileRecords", () => {
   test("maps persisted files and defaults missing size/sha/flags", () => {
@@ -44,12 +44,12 @@ describe("scanFilesToFileRecords", () => {
   });
 });
 
-describe("hasNoLoadableBodyFlags", () => {
+describe("hasNoLoadableBody", () => {
   test("treats binary and content-skipped files as unpreviewable", () => {
-    expect(hasNoLoadableBodyFlags(["binary"])).toBe(true);
-    expect(hasNoLoadableBodyFlags(["content-skipped"])).toBe(true);
-    expect(hasNoLoadableBodyFlags(["truncated"])).toBe(false);
-    expect(hasNoLoadableBodyFlags([])).toBe(false);
+    expect(hasNoLoadableBody(["binary"])).toBe(true);
+    expect(hasNoLoadableBody(["content-skipped"])).toBe(true);
+    expect(hasNoLoadableBody(["truncated"])).toBe(false);
+    expect(hasNoLoadableBody([])).toBe(false);
   });
 });
 

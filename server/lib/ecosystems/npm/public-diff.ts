@@ -1,7 +1,6 @@
 import { isPkgPrNewUrl, parsePkgPrNewUrl } from "../../../../src/lib/pkg-pr-new";
 import { publicDiffDownloadError } from "../../public-diff/download";
 import { PublicDiffError } from "../../public-diff/error";
-import { fetchPublicPackageMetadata } from "../../public-diff/metadata";
 import type {
   PublicDiffAcquiredSources,
   PublicDiffAdapter,
@@ -9,6 +8,7 @@ import type {
   PublicDiffVersionListing,
 } from "../../public-diff/types";
 import { DETERMINISTIC_RULES_VERSION } from "../../review";
+import { fetchPublicPackageMetadata } from "./public-metadata";
 import { parseSandboxErrorDetail } from "../../sandbox";
 import { buildNpmFindings } from "./findings";
 import {
