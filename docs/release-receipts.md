@@ -70,8 +70,8 @@ risk, and a structured decision with decision time and the authenticated Drydock
   gate scan, gate identity, and decision), `conflicting` on `digest-mismatch`
   or `gate-not-approved`, `partial` when the stage is `ungated` or
   `unverified` (with or without a review to name), `unknown` when the check
-  could not run (gate history unreadable, or npm's stage record unavailable
-  while the organization has a live npm-capable release target), and
+  could not run for an organization with a live npm-capable release target
+  (gate history unreadable, or npm's stage record unavailable), and
   `not_applicable` for gate receipts and for packages the organization does not
   gate. It carries the gate's evidence second-hand; the receipt's control
   classification stays `advisory`. The full record, gate identity included,
