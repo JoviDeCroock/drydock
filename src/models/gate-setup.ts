@@ -5,7 +5,7 @@ import type {
   InstallationRepository,
   PublicReleaseTarget,
   RepositoryEnvironment,
-} from "./github-app";
+} from "./release-targets";
 import {
   GATE_SETUP_ENVIRONMENT_NAME_RE,
   GATE_SETUP_PACKAGE_NAME_RE,
@@ -14,8 +14,8 @@ import {
 /**
  * State for the guided workflow-gate setup wizard.
  *
- * Deliberately separate from `GithubAppModel`: that model's form signals back
- * the plain "map a release target" form, and the wizard walks the same
+ * Deliberately separate from `ReleaseTargetsModel`: that model's form signals
+ * back the plain "map a release target" form, and the wizard walks the same
  * repository/environment pickers with its own, longer-lived draft. Sharing the
  * signals would make one form reset the other mid-flow.
  *
