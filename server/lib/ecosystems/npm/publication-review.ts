@@ -39,21 +39,17 @@ import { npmPublicationRegistry } from "./publication-registry";
 import { PUBLIC_NPM_REGISTRY } from "./publication-verdict";
 
 /** Whether the review's summary names exactly the alerted release. */
-function reviewedCoordinatesMatch(
-  summaryJson: unknown,
-  alert: { packageName: string; version: string },
-): boolean {
+// Whether the summary is a published-pair review's. Its name and version are
+// not compared: the summary is stored through the secret redactor, so a
+// version or package name shaped like a token (`1.0.1-AKIA…`) no longer equals
+// the alert's. The unredacted stage id carries the coordinates instead.
+function isPublishedPairSummary(summaryJson: unknown): boolean {
   if (!summaryJson || typeof summaryJson !== "object" || Array.isArray(summaryJson)) return false;
   const stagedPublish = (summaryJson as { stagedPublish?: unknown }).stagedPublish;
   if (!stagedPublish || typeof stagedPublish !== "object" || Array.isArray(stagedPublish)) {
     return false;
   }
-  const details = stagedPublish as { mode?: unknown; packageName?: unknown; version?: unknown };
-  return (
-    details.mode === "published_pair" &&
-    details.packageName === alert.packageName &&
-    details.version === alert.version
-  );
+  return (stagedPublish as { mode?: unknown }).mode === "published_pair";
 }
 
 /** The registry a published-pair review says it read the release from. */
@@ -178,10 +174,11 @@ export async function resolvePostReleaseReview(
     scan.status !== "complete" ||
     !scan.decision ||
     // The linked review was started for these coordinates; it may only ever
-    // resolve the release it reviewed. Its stage id and summary carry the
-    // registry-resolved pair; `package_name`/`staged_version` are rewritten
-    // from the reviewed tarball's own manifest, which a hostile release can
-    // make say anything, so they must not decide whether a decline lands.
+    // resolve the release it reviewed. Its stage id carries the
+    // registry-resolved pair and is never redacted; `package_name` /
+    // `staged_version` are rewritten from the reviewed tarball's own manifest,
+    // which a hostile release can make say anything, and the summary's copy
+    // is redacted, so neither may decide whether a decline lands.
     scan.stageId !==
       publishedPairStageId({
         ecosystem: "npm",
@@ -189,7 +186,7 @@ export async function resolvePostReleaseReview(
         version: alert.version,
         baselineVersion: "",
       }) ||
-    !reviewedCoordinatesMatch(scan.summaryJson, alert)
+    !isPublishedPairSummary(scan.summaryJson)
   ) {
     return null;
   }
