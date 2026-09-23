@@ -17,8 +17,7 @@
  * ecosystem-generic.
  */
 import { Hono } from "hono";
-import { createDb } from "../../db/client";
-import { requireActiveOrganizationContext } from "../../lib/auth/active-organization";
+import { requireOrganizationRole } from "../../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../../lib/auth/roles";
 import { getEcosystem, supportedWorkflowGateEcosystems } from "../../lib/ecosystems";
 import {
@@ -32,8 +31,8 @@ import {
   readGithubAppConfig,
 } from "../../lib/github-app/config";
 import { parseRepositoryFullName } from "../../lib/github-app/validation";
-import { rateLimitResponse } from "../../lib/platform/http";
-import { RateLimitError, enforceRateLimit } from "../../lib/platform/rate-limit";
+import { readJsonObject } from "../../lib/platform/http";
+import { guardRateLimit } from "../../lib/rate-limit";
 import type { GateSetupTemplate } from "../../lib/workflow-gates/types";
 import type { Bindings, Variables } from "../../types";
 import {
@@ -125,6 +124,11 @@ function resolveTemplate(draft: GateSetupDraft): GateSetupTemplate {
  * Everything both endpoints need before they touch GitHub: an owner/admin of
  * the active organization, a validated draft, a configured App, an installation
  * this organization owns, and rate-limit headroom.
+ *
+ * A refused role is thrown (`ForbiddenError`, the app's 403) rather than
+ * returned, so it must not pass through the handlers' `validationErrorResponse`,
+ * which would turn it into a 500. Only this module's own validation errors are
+ * mapped here.
  */
 async function prepare(
   c: RouteContext,
@@ -137,52 +141,52 @@ async function prepare(
     return { response: configErrorResponse(c, err) } as const;
   }
 
-  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-  const draft = readDraft(body);
-  // Throws `GithubAppValidationError` for a disallowed identity; the caller's
-  // try/catch maps it to a 400 with an `invalid_input` code.
-  const invalid = validateDraft(draft, options.requireTemplate);
+  const draft = readDraft(await readJsonObject(c));
+  let invalid: string | null;
+  try {
+    invalid = validateDraft(draft, options.requireTemplate);
+  } catch (err) {
+    return { response: validationErrorResponse(c, err) } as const;
+  }
   if (invalid) return { response: c.json({ error: invalid }, 400) } as const;
 
-  const db = createDb(c.env.DB);
-  const { organizationId, role } = await requireActiveOrganizationContext(c, db);
-  if (!roleCanManageIntegrations(role)) {
-    return { response: c.json({ error: "forbidden" }, 403) } as const;
-  }
+  const db = c.var.db;
+  const { organizationId } = await requireOrganizationRole(c, db, roleCanManageIntegrations);
 
   // Ownership first, then the budget — the sibling installation routes order it
   // this way, and it keeps a replayed bad installation id from spending the
   // caller's own organization out of its window.
-  const installation = await ensureInstallationOwnedBy(db, organizationId, draft.installationRowId);
-
+  let installation: Awaited<ReturnType<typeof ensureInstallationOwnedBy>>;
   try {
-    await enforceRateLimit(c.env, {
+    installation = await ensureInstallationOwnedBy(db, organizationId, draft.installationRowId);
+  } catch (err) {
+    return { response: validationErrorResponse(c, err) } as const;
+  }
+
+  const limited = await guardRateLimit(
+    c,
+    {
       key: `github-app:gate-setup:${options.scope}:${organizationId}`,
       limit: options.limit,
       windowMs: options.windowMs,
-    });
-  } catch (err) {
-    if (err instanceof RateLimitError) {
-      return {
-        response: rateLimitResponse(c, "gate setup rate limit exceeded", err),
-      } as const;
-    }
-    throw err;
-  }
+    },
+    "gate setup rate limit exceeded",
+  );
+  if (limited) return { response: limited } as const;
 
   return { config, draft, installation } as const;
 }
 
 gateSetupRoutes.post("/gate-setup/preview", async (c) => {
+  const prepared = await prepare(c, {
+    requireTemplate: true,
+    limit: PREVIEW_LIMIT,
+    windowMs: PREVIEW_WINDOW_MS,
+    scope: "preview",
+  });
+  if ("response" in prepared) return prepared.response;
+  const { draft } = prepared;
   try {
-    const prepared = await prepare(c, {
-      requireTemplate: true,
-      limit: PREVIEW_LIMIT,
-      windowMs: PREVIEW_WINDOW_MS,
-      scope: "preview",
-    });
-    if ("response" in prepared) return prepared.response;
-    const { draft } = prepared;
     const template = resolveTemplate(draft);
     return c.json({
       ecosystem: draft.ecosystem,
@@ -199,15 +203,15 @@ gateSetupRoutes.post("/gate-setup/preview", async (c) => {
 });
 
 gateSetupRoutes.post("/gate-setup/verify", async (c) => {
+  const prepared = await prepare(c, {
+    requireTemplate: false,
+    limit: VERIFY_LIMIT,
+    windowMs: VERIFY_WINDOW_MS,
+    scope: "verify",
+  });
+  if ("response" in prepared) return prepared.response;
+  const { config, draft, installation } = prepared;
   try {
-    const prepared = await prepare(c, {
-      requireTemplate: false,
-      limit: VERIFY_LIMIT,
-      windowMs: VERIFY_WINDOW_MS,
-      scope: "verify",
-    });
-    if ("response" in prepared) return prepared.response;
-    const { config, draft, installation } = prepared;
     const state = await readGateSetupState(
       config,
       installation.installationId,

